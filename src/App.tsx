@@ -64,10 +64,10 @@ const MENUS = [
 
 const WORKSPACE_IDS = APP_WORKSPACES.map((w) => w.id)
 
-function renderToolWorkspace(id: AppWorkspaceId) {
+function renderToolWorkspace(id: AppWorkspaceId, active: boolean) {
   switch (id) {
     case 'mc-skin':
-      return <McSkinWorkspace />
+      return <McSkinWorkspace active={active} />
     default:
       return null
   }
@@ -215,7 +215,7 @@ function App() {
               activeWorkspaceId === ws.id ? ' active' : ''
             }`}
           >
-            {renderToolWorkspace(ws.id)}
+            {renderToolWorkspace(ws.id, activeWorkspaceId === ws.id)}
           </div>
         ))}
       </div>
