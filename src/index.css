@@ -1,0 +1,28 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  font-family:
+    "Segoe UI",
+    "Microsoft YaHei UI",
+    "Microsoft YaHei",
+    sans-serif;
+  font-size: 15px;
+  -webkit-font-smoothing: antialiased;
+  background: #2a2d33;
+  color: #d8d4ce;
+}
+
+button {
+  font-family: inherit;
+}
