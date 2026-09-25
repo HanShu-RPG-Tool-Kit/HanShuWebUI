@@ -72,12 +72,35 @@ import {
 } from './AgentDiffModal'
 import { pushFileBackup, pushFileVersion } from './agent/fileBackup'
 import { HistoryModal } from './HistoryModal'
+import {
+  type BoundProject,
+  createProjectFromPicker,
+  openProjectFromPicker,
+  saveProjectAsToPicker,
+  saveProjectToDirectory,
+  supportsDirectoryPicker,
+  tryRestoreLastProject,
+} from './project'
 import './App.css'
 
 const MENUS = [
   {
     label: '文件',
-    items: ['新建剧本', '新建包', '保存', '历史版本', '导出资源包', '导出资产包', '—', '退出'],
+    items: [
+      '打开工程…',
+      '新建工程…',
+      '—',
+      '新建剧本',
+      '新建包',
+      '保存',
+      '另存为工程…',
+      '历史版本',
+      '—',
+      '导出资源包',
+      '导出资产包',
+      '—',
+      '退出',
+    ],
   },
   {
     label: '编辑',
@@ -120,6 +143,8 @@ function formatSavedAt(ts: number | null) {
 
 function App() {
   const [workspace, setWorkspace] = useState<Workspace>(() => loadWorkspace())
+  const [project, setProject] = useState<BoundProject | null>(null)
+  const [projectBusy, setProjectBusy] = useState(false)
   const active = useMemo(
     () => findScript(workspace, workspace.activeScriptId),
     [workspace],
@@ -133,6 +158,7 @@ function App() {
   const [savedAt, setSavedAt] = useState<number | null>(
     () => active?.script.updatedAt ?? null,
   )
+  const [diskSavedAt, setDiskSavedAt] = useState<number | null>(null)
   const [openMenu, setOpenMenu] = useState<string | null>(null)
   const [mdPreviewOn, setMdPreviewOn] = useState(true)
   const [hscPreviewOn, setHscPreviewOn] = useState(false)
@@ -152,10 +178,12 @@ function App() {
   const valueRef = useRef(value)
   const workspaceRef = useRef(workspace)
   const activeIdRef = useRef(workspace.activeScriptId)
+  const projectRef = useRef(project)
   rolesRef.current = roles
   valueRef.current = value
   workspaceRef.current = workspace
   activeIdRef.current = workspace.activeScriptId
+  projectRef.current = project
 
   const lineCount = value.split('\n').length
   const charCount = value.length
@@ -180,6 +208,56 @@ function App() {
     setRoles((prev) =>
       fillRolesFromSpeakers(prev, extractSpeakersFromText(text)),
     )
+  }
+
+  const applyLoadedProject = (result: {
+    binding: BoundProject
+    workspace: Workspace
+  }) => {
+    const { binding, workspace: next } = result
+    projectRef.current = binding
+    setProject(binding)
+    commitWorkspace(next)
+    const hit = findScript(next, next.activeScriptId)
+    const text = hit?.script.content ?? ''
+    setValue(text)
+    valueRef.current = text
+    editorRef.current?.setValue(text)
+    setSavedAt(hit?.script.updatedAt ?? Date.now())
+    setDiskSavedAt(Date.now())
+    setAgentDiffs([])
+    setDiffOpen(false)
+    if (hit && isHanshuFile(hit.script.name)) {
+      syncRolesFromText(text)
+    } else {
+      setRoles(createDefaultRoles())
+    }
+  }
+
+  const isProjectCancel = (err: unknown) =>
+    (err instanceof DOMException && err.name === 'AbortError') ||
+    (err instanceof Error && /取消/.test(err.message))
+
+  const flushProjectToDisk = async () => {
+    const bound = projectRef.current
+    if (!bound) return
+    setProjectBusy(true)
+    try {
+      const id = activeIdRef.current
+      let ws = workspaceRef.current
+      if (id) {
+        ws = updateScriptContent(ws, id, valueRef.current)
+        workspaceRef.current = ws
+        setWorkspace(ws)
+        saveWorkspace(ws)
+      }
+      const saved = await saveProjectToDirectory(bound, ws)
+      projectRef.current = saved
+      setProject(saved)
+      setDiskSavedAt(Date.now())
+    } finally {
+      setProjectBusy(false)
+    }
   }
 
   const persistActiveContent = (text: string) => {
@@ -213,6 +291,104 @@ function App() {
 
     commitWorkspace(next)
     setSavedAt(Date.now())
+
+    if (projectRef.current) {
+      void flushProjectToDisk().catch((err) => {
+        window.alert(
+          `写入工程文件夹失败：${err instanceof Error ? err.message : String(err)}`,
+        )
+      })
+    }
+  }
+
+  const handleOpenProject = async () => {
+    if (!supportsDirectoryPicker()) {
+      window.alert(
+        '当前浏览器不支持文件夹 API。\n请用 Chrome / Edge 打开本开发页（localhost）。',
+      )
+      return
+    }
+    setProjectBusy(true)
+    try {
+      const result = await openProjectFromPicker()
+      applyLoadedProject(result)
+    } catch (err) {
+      if (!isProjectCancel(err)) {
+        window.alert(
+          `打开工程失败：${err instanceof Error ? err.message : String(err)}`,
+        )
+      }
+    } finally {
+      setProjectBusy(false)
+    }
+  }
+
+  const handleCreateProject = async () => {
+    if (!supportsDirectoryPicker()) {
+      window.alert(
+        '当前浏览器不支持文件夹 API。\n请用 Chrome / Edge 打开本开发页（localhost）。',
+      )
+      return
+    }
+    setProjectBusy(true)
+    try {
+      const result = await createProjectFromPicker()
+      applyLoadedProject(result)
+    } catch (err) {
+      if (!isProjectCancel(err)) {
+        window.alert(
+          `新建工程失败：${err instanceof Error ? err.message : String(err)}`,
+        )
+      }
+    } finally {
+      setProjectBusy(false)
+    }
+  }
+
+  const handleSaveProjectAs = async () => {
+    if (!supportsDirectoryPicker()) {
+      window.alert(
+        '当前浏览器不支持文件夹 API。\n请用 Chrome / Edge 打开本开发页（localhost）。',
+      )
+      return
+    }
+    // 先落本地缓存与 .lines，再写盘
+    const text = valueRef.current
+    const id = activeIdRef.current
+    if (id) {
+      const name = findScript(workspaceRef.current, id)?.script.name ?? ''
+      let next = updateScriptContent(workspaceRef.current, id, text)
+      if (isHanshuFile(name)) {
+        next = upsertPackageFile(
+          next,
+          id,
+          linesFileNameForHs(name),
+          buildLinesContent(text),
+        )
+      }
+      commitWorkspace(next)
+      setSavedAt(Date.now())
+    }
+    setProjectBusy(true)
+    try {
+      const preferred =
+        projectRef.current?.manifest.id ??
+        workspaceRef.current.packages[0]?.id ??
+        null
+      const result = await saveProjectAsToPicker(
+        workspaceRef.current,
+        preferred,
+      )
+      applyLoadedProject(result)
+    } catch (err) {
+      if (!isProjectCancel(err)) {
+        window.alert(
+          `另存为失败：${err instanceof Error ? err.message : String(err)}`,
+        )
+      }
+    } finally {
+      setProjectBusy(false)
+    }
   }
 
   const openScript = (scriptId: string) => {
@@ -699,6 +875,24 @@ function App() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
 
+  // 尝试恢复上次授权的工程文件夹（Chrome 会再弹一次权限）
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      if (!supportsDirectoryPicker()) return
+      try {
+        const result = await tryRestoreLastProject()
+        if (cancelled || !result) return
+        applyLoadedProject(result)
+      } catch {
+        // 忽略：无句柄或用户拒绝权限
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   useEffect(() => {
     const onMove = (event: PointerEvent) => {
       if (!draggingRef.current || !splitRef.current) return
@@ -755,6 +949,18 @@ function App() {
 
   const handleMenuAction = (item: string) => {
     setOpenMenu(null)
+    if (item === '打开工程…') {
+      void handleOpenProject()
+      return
+    }
+    if (item === '新建工程…') {
+      void handleCreateProject()
+      return
+    }
+    if (item === '另存为工程…') {
+      void handleSaveProjectAs()
+      return
+    }
     if (item === '保存') {
       persistNow()
       return
@@ -772,6 +978,11 @@ function App() {
       return
     }
     if (item === '新建包') {
+      if (projectRef.current) {
+        window.alert(
+          '当前已绑定文件夹工程：磁盘上只保存当前这一个包。\n新建包仅留在浏览器缓存；多工程请用「另存为工程…」。',
+        )
+      }
       handleNewPackage()
       return
     }
@@ -1222,7 +1433,8 @@ function App() {
           </nav>
         </div>
         <div className="titlebar-center">
-          {titleName} — {packageName}
+          {titleName} — {project ? project.folderName : packageName}
+          {projectBusy ? '（读写中…）' : ''}
         </div>
         <div className="titlebar-right" aria-hidden>
           <span className="win-btn">─</span>
@@ -1455,9 +1667,19 @@ function App() {
 
       <footer className="statusbar">
         <div className="statusbar-left">
+          <span title={project ? project.folderName : '未绑定文件夹工程'}>
+            {project ? `工程 · ${project.folderName}` : '仅浏览器缓存'}
+          </span>
           <span>{packageName}</span>
           <span>{charCount} 字符</span>
           <span>{formatSavedAt(savedAt)}</span>
+          {project && (
+            <span title="最近写入工程文件夹">
+              {diskSavedAt
+                ? `已落盘 ${new Date(diskSavedAt).toLocaleTimeString()}`
+                : '工程未写入'}
+            </span>
+          )}
           {agentDiffs.length > 0 && (
             <span
               className="status-on"
