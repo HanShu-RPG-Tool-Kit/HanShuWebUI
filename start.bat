@@ -9,14 +9,14 @@ if errorlevel 1 (
   exit /b 1
 )
 
-if not exist "node_modules" (
-  echo [HanShu] Installing dependencies...
-  call npm install
-  if errorlevel 1 (
-    echo [HanShu] npm install failed
-    pause
-    exit /b 1
-  )
+rem Always sync: after git pull, new deps (e.g. skinview3d) would be missed
+rem if we only install when node_modules is missing.
+echo [HanShu] Syncing dependencies...
+call npm install --no-fund --no-audit
+if errorlevel 1 (
+  echo [HanShu] npm install failed
+  pause
+  exit /b 1
 )
 
 echo [HanShu] Starting dev server...

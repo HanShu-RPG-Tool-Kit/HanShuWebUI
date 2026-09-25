@@ -1,0 +1,548 @@
+//! Storage + import pipeline integration tests, mirroring the old Node
+//! routes/normalize test suite against temporary libraries.
+
+use skin_core::codec::{decode_skin_code, encode_skin_code, SkinModel};
+use skin_core::imports::{ImportInput, ImportManager, JobState};
+use skin_core::normalize::rgba_to_png;
+use skin_core::storage::{BatchPatch, LibraryQuery, PatchEntry, Storage};
+use std::collections::HashSet;
+use std::path::Path;
+use std::sync::Arc;
+
+fn fixture(name: &str) -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name)
+}
+
+fn temp_root(tag: &str) -> std::path::PathBuf {
+    tempfile::TempDir::new().unwrap().keep().join(tag)
+}
+
+fn sample_code() -> String {
+    std::fs::read_to_string(fixture("modern-classic.skincode"))
+        .unwrap()
+        .trim()
+        .to_string()
+}
+
+fn sample_code_2() -> String {
+    std::fs::read_to_string(fixture("modern-slim.skincode"))
+        .unwrap()
+        .trim()
+        .to_string()
+}
+
+// ---------------------------------------------------------------------------
+// schema load / migrate
+// ---------------------------------------------------------------------------
+
+#[test]
+fn loads_v3_library() {
+    let root = temp_root("v3");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::copy(fixture("library-v3.json"), root.join("library.json")).unwrap();
+    let storage = Storage::open(&root).unwrap();
+    let page = storage.list_entries(&LibraryQuery::default());
+    assert_eq!(page.total, 2);
+    let (_, tags) = storage.tag_tree_with_stats();
+    assert_eq!(tags.len(), 2);
+    let (_, folders) = storage.folder_tree_with_stats();
+    assert_eq!(folders.len(), 1);
+    // revision preserved from file
+    assert_eq!(storage.revision(), 7);
+}
+
+#[test]
+fn migrates_v2_to_v3() {
+    let root = temp_root("v2");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::copy(fixture("library-v2.json"), root.join("library.json")).unwrap();
+    let storage = Storage::open(&root).unwrap();
+    let page = storage.list_entries(&LibraryQuery::default());
+    assert_eq!(page.total, 2);
+    // v2 entries become 未归档
+    for e in &page.entries {
+        assert_eq!(e.folder_id, None);
+    }
+    // persisted as v3 now
+    let raw = std::fs::read_to_string(root.join("library.json")).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(v["schemaVersion"], 3);
+    assert_eq!(v["folders"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn migrates_v1_dedupes_nfc_tags_and_keeps_backup() {
+    let root = temp_root("v1");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::copy(fixture("library-v1.json"), root.join("library.json")).unwrap();
+    let storage = Storage::open(&root).unwrap();
+    let (_, tags) = storage.tag_tree_with_stats();
+    // "精灵" and "精灵 " (trailing space) merge; "战士" stays → 2 root tags
+    let names: Vec<&str> = tags.iter().map(|t| t.name.as_str()).collect();
+    assert!(names.contains(&"精灵"));
+    assert!(names.contains(&"战士"));
+    assert_eq!(tags.len(), 2);
+    // untouched v1 backup kept under the dedicated name
+    assert!(root.join("library.json.v1-migration-backup").exists());
+    // entry keeps its id and gains tagIds
+    let page = storage.list_entries(&LibraryQuery::default());
+    assert_eq!(page.total, 1);
+    assert_eq!(page.entries[0].entry_id, "66666666-6666-4666-8666-666666666666");
+    assert_eq!(page.entries[0].tag_ids.len(), 2);
+    // migration is idempotent: reopening does not duplicate tags
+    drop(storage);
+    let storage2 = Storage::open(&root).unwrap();
+    let (_, tags2) = storage2.tag_tree_with_stats();
+    assert_eq!(tags2.len(), 2);
+}
+
+#[test]
+fn refuses_newer_schema() {
+    let root = temp_root("v9");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(
+        root.join("library.json"),
+        r#"{"schemaVersion": 9, "revision": 1, "tags": [], "folders": [], "entries": []}"#,
+    )
+    .unwrap();
+    let err = match Storage::open(&root) { Err(e) => e, Ok(_) => panic!("expected error") };
+    assert!(err.to_string().contains("newer than supported"));
+}
+
+#[test]
+fn corrupt_library_and_backup_refuses_empty_overwrite() {
+    let root = temp_root("corrupt");
+    std::fs::create_dir_all(&root).unwrap();
+    std::fs::write(root.join("library.json"), "{not json").unwrap();
+    std::fs::write(root.join("library.json.bak"), "{also not json").unwrap();
+    let err = match Storage::open(&root) { Err(e) => e, Ok(_) => panic!("expected error") };
+    assert!(err.to_string().contains("refusing to overwrite"));
+    // and the corrupt files are still there
+    assert!(root.join("library.json").exists());
+}
+
+// ---------------------------------------------------------------------------
+// objects + GC
+// ---------------------------------------------------------------------------
+
+#[test]
+fn objects_round_trip_and_gc() {
+    let root = temp_root("obj");
+    let storage = Storage::open(&root).unwrap();
+    let (skin_id, model) = storage.put_object(&sample_code()).unwrap();
+    assert_eq!(model, SkinModel::Classic);
+    assert!(root.join("objects").join(&skin_id[..2]).join(format!("{skin_id}.hskin")).exists());
+
+    let obj = storage.get_object(&skin_id).unwrap().unwrap();
+    assert_eq!(obj.0.trim(), sample_code());
+
+    // GC with no references removes it; with a staged ref it is protected.
+    let removed = storage.gc_objects(&HashSet::new()).unwrap();
+    assert!(removed.contains(&skin_id));
+    assert!(!root.join("objects").join(&skin_id[..2]).join(format!("{skin_id}.hskin")).exists());
+
+    let (skin_id2, _) = storage.put_object(&sample_code()).unwrap();
+    let mut protected = HashSet::new();
+    protected.insert(skin_id2.clone());
+    let removed2 = storage.gc_objects(&protected).unwrap();
+    assert!(!removed2.contains(&skin_id2));
+}
+
+#[test]
+fn bad_skin_id_rejected() {
+    let root = temp_root("badid");
+    let storage = Storage::open(&root).unwrap();
+    assert!(storage.get_object("../etc/passwd").is_err());
+    assert!(storage.get_object("ABCDEF").is_err());
+    assert!(storage.get_object(&"a".repeat(64)).unwrap().is_none());
+}
+
+// ---------------------------------------------------------------------------
+// entries / tags / folders semantics
+// ---------------------------------------------------------------------------
+
+fn storage_with_entry() -> (std::path::PathBuf, Storage, String) {
+    let root = temp_root("entry");
+    let storage = Storage::open(&root).unwrap();
+    let (skin_id, model) = storage.put_object(&sample_code()).unwrap();
+    let entry = storage
+        .add_entry(skin_core::storage::AddEntryInput {
+            skin_id: skin_id.clone(),
+            name: "测试一".into(),
+            tag_ids: vec![],
+            folder_id: None,
+            favorite: false,
+            model,
+            source: skin_core::storage::schema::EntrySource::SkinCode,
+        })
+        .unwrap();
+    (root, storage, entry.entry_id)
+}
+
+#[test]
+fn rename_keeps_skin_id_and_stale_revision_rejected() {
+    let (_root, storage, entry_id) = storage_with_entry();
+    let entry = storage.get_entry(&entry_id).unwrap();
+    let updated = storage
+        .patch_entry(&entry_id, entry.revision, PatchEntry {
+            name: Some("改名".into()),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(updated.name, "改名");
+    assert_eq!(updated.skin_id, entry.skin_id);
+    // stale revision now fails
+    let err = storage
+        .patch_entry(&entry_id, entry.revision, PatchEntry {
+            name: Some("再次".into()),
+            ..Default::default()
+        })
+        .unwrap_err();
+    assert_eq!(err.code(), "REVISION_MISMATCH");
+}
+
+#[test]
+fn same_skin_id_multiple_entries() {
+    let (_root, storage, entry_id) = storage_with_entry();
+    let entry = storage.get_entry(&entry_id).unwrap();
+    storage
+        .add_entry(skin_core::storage::AddEntryInput {
+            skin_id: entry.skin_id.clone(),
+            name: "同对象第二条例".into(),
+            tag_ids: vec![],
+            folder_id: None,
+            favorite: false,
+            model: SkinModel::Classic,
+            source: skin_core::storage::schema::EntrySource::SkinCode,
+        })
+        .unwrap();
+    assert_eq!(storage.entries_using(&entry.skin_id).len(), 2);
+    // deleting one keeps the other and the object
+    storage.remove_entry(&entry_id).unwrap();
+    assert_eq!(storage.entries_using(&entry.skin_id).len(), 1);
+}
+
+#[test]
+fn tag_guards_and_three_state_folder() {
+    let root = temp_root("tags");
+    let storage = Storage::open(&root).unwrap();
+    let t1 = storage.create_tag("精灵", None, None).unwrap();
+    let t2 = storage.create_tag("森林精灵", Some(t1.tag_id.clone()), None).unwrap();
+    // sibling name conflict (NFC)
+    let err = storage.create_tag("精灵", None, None).unwrap_err();
+    assert_eq!(err.code(), "TAG_NAME_CONFLICT");
+    // cycle: move parent under its child
+    let err = storage
+        .patch_tag(&t1.tag_id, skin_core::storage::PatchTag {
+            parent_id: Some(skin_core::storage::PatchField::Value(t2.tag_id.clone())),
+            ..Default::default()
+        })
+        .unwrap_err();
+    assert_eq!(err.code(), "TAG_CYCLE");
+    // has-children delete refused in single mode
+    let err = storage.delete_tag(&t1.tag_id, false, None).unwrap_err();
+    assert_eq!(err.code(), "TAG_HAS_CHILDREN");
+
+    // entry with folder + tags
+    let (skin_id, model) = storage.put_object(&sample_code()).unwrap();
+    let folder = storage.create_folder("主角", None).unwrap();
+    let entry = storage
+        .add_entry(skin_core::storage::AddEntryInput {
+            skin_id,
+            name: "带标签".into(),
+            tag_ids: vec![t2.tag_id.clone()],
+            folder_id: Some(folder.folder_id.clone()),
+            favorite: false,
+            model,
+            source: skin_core::storage::schema::EntrySource::SkinCode,
+        })
+        .unwrap();
+
+    // three-state folderId on patch: missing = unchanged, null = unfile, value = move
+    storage
+        .patch_entry(&entry.entry_id, entry.revision, PatchEntry::default())
+        .unwrap();
+    let e = storage.get_entry(&entry.entry_id).unwrap();
+    assert_eq!(e.folder_id, Some(folder.folder_id.clone())); // unchanged
+
+    let e2 = storage
+        .patch_entry(&entry.entry_id, e.revision, PatchEntry {
+            folder_id: Some(skin_core::storage::PatchField::Null),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(e2.folder_id, None); // cleared
+
+    let folder2 = storage.create_folder("配角", None).unwrap();
+    let e3 = storage
+        .patch_entry(&entry.entry_id, e2.revision, PatchEntry {
+            folder_id: Some(skin_core::storage::PatchField::Value(folder2.folder_id.clone())),
+            ..Default::default()
+        })
+        .unwrap();
+    assert_eq!(e3.folder_id, Some(folder2.folder_id.clone())); // moved
+
+    // query three-state: no filter / null filter / folder filter
+    assert_eq!(storage.list_entries(&LibraryQuery::default()).total, 1);
+    assert_eq!(
+        storage
+            .list_entries(&LibraryQuery {
+                folder_id: Some("nonexistent".into()),
+                ..Default::default()
+            })
+            .total,
+        0
+    );
+    // folder not empty → delete refused
+    let err = storage.delete_folder(&folder2.folder_id).unwrap_err();
+    assert_eq!(err.code(), "FOLDER_NOT_EMPTY");
+}
+
+#[test]
+fn batch_patch_is_all_or_nothing() {
+    let (_root, storage, entry_id) = storage_with_entry();
+    let tag = storage.create_tag("批量", None, None).unwrap();
+    // one valid + one invalid entry id → whole batch rejected
+    let err = storage
+        .batch_patch_entries(BatchPatch {
+            entry_ids: vec![entry_id.clone(), "missing".into()],
+            add_tag_ids: Some(vec![tag.tag_id.clone()]),
+            remove_tag_ids: None,
+            folder_id: None,
+        })
+        .unwrap_err();
+    assert_eq!(err.code(), "NOT_FOUND");
+    // entry untouched
+    let e = storage.get_entry(&entry_id).unwrap();
+    assert!(e.tag_ids.is_empty());
+    // valid batch applies
+    let (updated, _) = storage
+        .batch_patch_entries(BatchPatch {
+            entry_ids: vec![entry_id.clone()],
+            add_tag_ids: Some(vec![tag.tag_id.clone()]),
+            remove_tag_ids: None,
+            folder_id: None,
+        })
+        .unwrap();
+    assert_eq!(updated, 1);
+    assert_eq!(storage.get_entry(&entry_id).unwrap().tag_ids, vec![tag.tag_id]);
+}
+
+#[test]
+fn restart_persistence() {
+    let root = temp_root("restart");
+    {
+        let storage = Storage::open(&root).unwrap();
+        let (skin_id, model) = storage.put_object(&sample_code()).unwrap();
+        let tag = storage.create_tag("重启", None, None).unwrap();
+        storage
+            .add_entry(skin_core::storage::AddEntryInput {
+                skin_id,
+                name: "持久".into(),
+                tag_ids: vec![tag.tag_id],
+                folder_id: None,
+                favorite: true,
+                model,
+                source: skin_core::storage::schema::EntrySource::SkinCode,
+            })
+            .unwrap();
+    }
+    let storage = Storage::open(&root).unwrap();
+    let page = storage.list_entries(&LibraryQuery::default());
+    assert_eq!(page.total, 1);
+    assert_eq!(page.entries[0].name, "持久");
+    assert!(page.entries[0].favorite);
+    assert_eq!(page.entries[0].tag_ids.len(), 1);
+}
+
+// ---------------------------------------------------------------------------
+// import pipeline (offline kinds)
+// ---------------------------------------------------------------------------
+
+fn drive(mgr: &Arc<ImportManager>, input: ImportInput) -> skin_core::imports::ImportJob {
+    let job = mgr.start(input);
+    // Jobs run on the injected spawner; in tests we poll until terminal.
+    for _ in 0..500 {
+        let j = mgr.get(&job.job_id).unwrap();
+        if matches!(j.state, JobState::Ready | JobState::Failed | JobState::Cancelled) {
+            return j;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    panic!("job did not settle");
+}
+
+fn install_test_spawner() {
+    skin_core::imports::set_spawn_hook(|fut| {
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(fut);
+        });
+    });
+}
+
+#[test]
+fn skin_code_import_save_preview_restart() {
+    let root = temp_root("import");
+    let storage = Arc::new(Storage::open(&root).unwrap());
+    let mgr = Arc::new(ImportManager::new(storage.clone()));
+    install_test_spawner();
+
+    let job = drive(&mgr, ImportInput::SkinCode { code: sample_code() });
+    assert_eq!(job.state, JobState::Ready);
+    let result = job.result.unwrap();
+    let expected_id = std::fs::read_to_string(fixture("modern-classic.skinid"))
+        .unwrap()
+        .trim()
+        .to_string();
+    assert_eq!(result.skin_id, expected_id);
+
+    // preview PNG was generated and decodes back to the same rgba
+    let png = storage.get_preview_png(&result.skin_id).unwrap().unwrap();
+    let back = skin_core::normalize::normalize_png(&png).unwrap();
+    let (decoded, _) = decode_skin_code(&sample_code()).unwrap();
+    assert_eq!(back.rgba, decoded.rgba);
+
+    // save → entry exists; restart keeps it
+    let entry = mgr
+        .save_entry(&job.job_id, "导入的皮肤", vec![], vec![], None, false)
+        .unwrap();
+    assert_eq!(entry.name, "导入的皮肤");
+    drop(mgr);
+    drop(storage);
+    let storage2 = Storage::open(&root).unwrap();
+    assert_eq!(storage2.list_entries(&LibraryQuery::default()).total, 1);
+}
+
+#[test]
+fn png_file_import_full_chain() {
+    let root = temp_root("pngimport");
+    let storage = Arc::new(Storage::open(&root).unwrap());
+    let mgr = Arc::new(ImportManager::new(storage.clone()));
+    install_test_spawner();
+
+    let png_bytes = std::fs::read(fixture("legacy32-classic.png")).unwrap();
+    let job = drive(
+        &mgr,
+        ImportInput::PngFile {
+            bytes: png_bytes,
+            file_name: "legacy.png".into(),
+            model_override: SkinModel::Classic,
+        },
+    );
+    assert_eq!(job.state, JobState::Ready, "{:?}", job.error);
+    let result = job.result.unwrap();
+    let expected_id = std::fs::read_to_string(fixture("legacy32-classic.skinid"))
+        .unwrap()
+        .trim()
+        .to_string();
+    assert_eq!(result.skin_id, expected_id);
+    assert_eq!(result.suggested_name, "legacy");
+
+    let entry = mgr
+        .save_entry(&job.job_id, "旧版皮肤", vec![], vec![], None, false)
+        .unwrap();
+    assert!(matches!(
+        entry.source,
+        skin_core::storage::schema::EntrySource::PngFile { .. }
+    ));
+}
+
+#[test]
+fn portable_v2_and_v1_import() {
+    let root = temp_root("portable");
+    let storage = Arc::new(Storage::open(&root).unwrap());
+    let mgr = Arc::new(ImportManager::new(storage.clone()));
+    install_test_spawner();
+
+    // v2 with tagPaths
+    let v2 = std::fs::read(fixture("portable-v2.json")).unwrap();
+    let job = drive(&mgr, ImportInput::SkinFile { bytes: v2, file_name: Some("便携.skin.json".into()) });
+    assert_eq!(job.state, JobState::Ready, "{:?}", job.error);
+    let result = job.result.clone().unwrap();
+    assert_eq!(result.suggested_name, "便携皮肤");
+    assert_eq!(
+        result.suggested_tag_paths.unwrap(),
+        vec![vec!["精灵".to_string(), "森林精灵".to_string()]]
+    );
+    // save materializes the tag paths
+    let entry = mgr
+        .save_entry(&job.job_id, "便携皮肤", vec![], vec![], None, false)
+        .unwrap();
+    assert_eq!(entry.tag_ids.len(), 1);
+    let (_, tags) = storage.tag_tree_with_stats();
+    assert_eq!(tags.len(), 2); // 精灵 + 森林精灵
+
+    // v1 flat tags become root paths
+    let v1 = std::fs::read(fixture("portable-v1.json")).unwrap();
+    let job1 = drive(&mgr, ImportInput::SkinFile { bytes: v1, file_name: None });
+    assert_eq!(job1.state, JobState::Ready, "{:?}", job1.error);
+    let entry1 = mgr
+        .save_entry(&job1.job_id, "旧便携", vec![], vec![], None, false)
+        .unwrap();
+    assert_eq!(entry1.tag_ids.len(), 2); // 精灵 + 战士
+}
+
+#[test]
+fn portable_with_mismatched_skin_id_rejected() {
+    let root = temp_root("mismatch");
+    let storage = Arc::new(Storage::open(&root).unwrap());
+    let mgr = Arc::new(ImportManager::new(storage.clone()));
+    install_test_spawner();
+    let mut v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(fixture("portable-v2.json")).unwrap())
+            .unwrap();
+    v["skinId"] = serde_json::json!("0".repeat(64));
+    let job = drive(
+        &mgr,
+        ImportInput::SkinFile { bytes: serde_json::to_vec(&v).unwrap(), file_name: None },
+    );
+    assert_eq!(job.state, JobState::Failed);
+    assert_eq!(job.error.unwrap().code, "FORMAT_ERROR");
+}
+
+#[test]
+fn queued_job_cancelled() {
+    let root = temp_root("cancel");
+    let storage = Arc::new(Storage::open(&root).unwrap());
+    let mgr = Arc::new(ImportManager::new(storage.clone()));
+    // No spawn hook: the job stays queued (spawned nowhere), so cancel works.
+    let job = mgr.start(ImportInput::SkinCode { code: sample_code() });
+    let cancelled = mgr.cancel(&job.job_id).unwrap();
+    assert_eq!(cancelled.state, JobState::Cancelled);
+}
+
+#[test]
+fn malformed_skin_code_fails_with_stable_code() {
+    let root = temp_root("badcode");
+    let storage = Arc::new(Storage::open(&root).unwrap());
+    let mgr = Arc::new(ImportManager::new(storage.clone()));
+    install_test_spawner();
+    let job = drive(&mgr, ImportInput::SkinCode { code: "hskin1:!!!!".into() });
+    assert_eq!(job.state, JobState::Failed);
+    assert_eq!(job.error.unwrap().code, "BAD_BASE64");
+}
+
+#[test]
+fn encode_decode_roundtrip_via_storage() {
+    let root = temp_root("roundtrip");
+    let storage = Storage::open(&root).unwrap();
+    // Two different skins → different ids; same skin + different model → different ids.
+    let (id1, m1) = storage.put_object(&sample_code()).unwrap();
+    let (id2, m2) = storage.put_object(&sample_code_2()).unwrap();
+    assert_ne!(id1, id2);
+    assert_eq!(m1, SkinModel::Classic);
+    assert_eq!(m2, SkinModel::Slim);
+    // re-put same code is idempotent
+    let (id1b, _) = storage.put_object(&sample_code()).unwrap();
+    assert_eq!(id1, id1b);
+    // encode from rgba produces a decodable code with the same id
+    let (decoded, _) = decode_skin_code(&sample_code()).unwrap();
+    let re_encoded = encode_skin_code(SkinModel::Classic, &decoded.rgba).unwrap();
+    let (_, re_id) = decode_skin_code(&re_encoded).unwrap();
+    assert_eq!(re_id, id1);
+    let _ = rgba_to_png(&decoded.rgba).unwrap();
+}
