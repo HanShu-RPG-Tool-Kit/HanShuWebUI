@@ -93,6 +93,15 @@ import type {
   ScriptChromeInfo,
   ScriptWorkspaceHandle,
 } from './scriptTypes'
+import { LanguageSelect } from '../LanguageSelect'
+import { LangTextEditBox } from '../LangTextEditBox'
+import { LangTextMap, langFileNameFor } from '../i18n/langTextMap'
+import {
+  bindLangText,
+  type LangEditRequest,
+  type LangTextBinding,
+} from '../monaco/langTextEditor'
+import { loadLocale, saveLocale } from '../storage'
 
 
 function formatSavedAt(ts: number | null) {
@@ -171,6 +180,68 @@ export const ScriptWorkspace = forwardRef<
     setWorkspace(next)
     saveWorkspace(next)
   }
+
+  const [locale, setLocale] = useState(loadLocale)
+  const [langEdit, setLangEdit] = useState<{
+    id: number
+    request: LangEditRequest
+  } | null>(null)
+  const langMapRef = useRef<LangTextMap | null>(null)
+  const langBindingRef = useRef<LangTextBinding | null>(null)
+  const langEditSeqRef = useRef(0)
+  /** 仅活动文件是 .hs 时才有语言文本映射 */
+  const langScriptName = editingHanshu ? titleName : ''
+  const handleLocaleChange = (tag: string) => {
+    setLocale(tag)
+    saveLocale(tag)
+  }
+
+  // 语言文本映射实例：活动 .hs 文件 + 当前语言标签 → `<文件名>.lang.<语言标签>`
+  // 缓存是权威，写穿到同包内的虚拟文件；换成真实磁盘只需换一个 sink 实现。
+  useEffect(() => {
+    if (!langScriptName) {
+      langMapRef.current = null
+      langBindingRef.current?.refresh()
+      return
+    }
+
+    const fileName = langFileNameFor(langScriptName, locale)
+    const readSink = () => {
+      const base = workspaceRef.current
+      const hit = findScript(base, base.activeScriptId)
+      if (!hit) return null
+      const found = hit.pkg.scripts.find(
+        (item) => item.name.toLowerCase() === fileName.toLowerCase(),
+      )
+      return found?.content ?? null
+    }
+    const writeSink = (content: string) => {
+      const base = workspaceRef.current
+      const id = base.activeScriptId
+      if (!id) return
+      // 先把编辑器里的当前正文并回 workspace，避免覆盖未保存的输入
+      const merged = updateScriptContent(base, id, valueRef.current)
+      commitWorkspace(upsertPackageFile(merged, id, fileName, content))
+    }
+
+    const map = new LangTextMap({
+      fileName,
+      locale,
+      sink: { read: readSink, write: writeSink },
+    })
+    langMapRef.current = map
+    const unsubscribe = map.subscribe(() => langBindingRef.current?.refresh())
+    map.load()
+    langBindingRef.current?.refresh()
+
+    return () => {
+      unsubscribe()
+      if (langMapRef.current === map) langMapRef.current = null
+    }
+  }, [langScriptName, locale])
+
+  // 工具卸载时解绑编辑器
+  useEffect(() => () => langBindingRef.current?.dispose(), [])
 
   const syncRolesFromText = (text: string) => {
     setRoles((prev) =>
@@ -1466,6 +1537,17 @@ export const ScriptWorkspace = forwardRef<
                       bindChoiceInsertHotkeys(editor, monaco)
                       bindSpeakerHotkeys(editor, monaco, () => rolesRef.current)
                       bindCopyDialogueHotkey(editor, monaco)
+                      langBindingRef.current?.dispose()
+                      langBindingRef.current = bindLangText(editor, monaco, {
+                        getMap: () => langMapRef.current,
+                        onEditRequest: (request) => {
+                          langEditSeqRef.current += 1
+                          setLangEdit({
+                            id: langEditSeqRef.current,
+                            request,
+                          })
+                        },
+                      })
                     }}
                     onChange={(next) => {
                       setValue(next ?? '')
@@ -1621,8 +1703,26 @@ export const ScriptWorkspace = forwardRef<
           <span>空格: 2</span>
           <span>UTF-8</span>
           <span>汉书</span>
+          <LanguageSelect value={locale} onChange={handleLocaleChange} />
         </div>
       </footer>
+      {langEdit && (
+        <LangTextEditBox
+          key={langEdit.id}
+          mode={langEdit.request.mode}
+          initial={langEdit.request.initial}
+          rect={langEdit.request.rect}
+          onCommit={(next) => {
+            const edit = langEdit
+            setLangEdit((current) => (current?.id === edit.id ? null : current))
+            edit.request.apply(next)
+          }}
+          onCancel={() => {
+            const edit = langEdit
+            setLangEdit((current) => (current?.id === edit.id ? null : current))
+          }}
+        />
+      )}
     </div>
   )
 })

@@ -1434,6 +1434,37 @@ body.is-resizing .monaco-editor {
   background: rgba(255, 255, 255, 0.12);
 }
 
+/* —— 语言选择器挂在底部状态栏时（下拉向上弹，并抵消状态栏对 span 的通用内边距） —— */
+.statusbar .lang-select {
+  height: auto;
+  margin-right: 0;
+}
+
+.statusbar .lang-select .lang-trigger {
+  height: var(--ui-statusbar-h);
+  padding: 0 8px;
+  border-radius: 0;
+}
+
+.statusbar .lang-select .lang-trigger:hover,
+.statusbar .lang-select .lang-trigger.open {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.statusbar .lang-select .lang-dropdown {
+  top: auto;
+  bottom: 100%;
+}
+
+.statusbar .lang-select span {
+  padding: 0;
+  line-height: normal;
+}
+
+.statusbar .lang-select span:hover {
+  background: transparent;
+}
+
 /* —— Agent Diff 对比 —— */
 .diff-modal-backdrop {
   position: fixed;
