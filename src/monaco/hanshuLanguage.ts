@@ -72,9 +72,7 @@ export function registerHanshuLanguage(monaco: Monaco) {
             'hanshu.define.body',
           ],
         ],
-        // 只有行首（可含前导空白）才是注释，行内 `#` 属于正文：
-        // 与编译去噪 src/hanshu/lines.ts 的 `/^\s*#/` 保持一致
-        [/^\s*#.*$/, 'comment'],
+        [/#.*$/, 'comment'],
         [
           /''''/,
           {
@@ -109,8 +107,7 @@ export function registerHanshuLanguage(monaco: Monaco) {
           ['hanshu.call.mark', 'hanshu.call.name'],
         ],
         [/\/\//, { token: 'hanshu.block.end', next: '@pop' }],
-        // 同 root：块内也只有行首 `#` 才是注释
-        [/^\s*#.*$/, 'comment'],
+        [/#.*$/, 'comment'],
         [
           /''''/,
           {
