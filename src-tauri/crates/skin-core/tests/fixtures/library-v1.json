@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "entryId": "66666666-6666-4666-8666-666666666666",
+      "skinId": "ad147f99dbc1d96792affd3dfa6eb5aadc7f17f803de2ba0230dc6ea8a142063",
+      "name": "旧版皮肤",
+      "tags": [
+        "精灵",
+        "精灵 ",
+        "战士"
+      ],
+      "favorite": false,
+      "model": "classic",
+      "source": {
+        "kind": "skin-code"
+      },
+      "createdAt": "2026-01-01T00:00:00.000Z",
+      "updatedAt": "2026-01-01T00:00:00.000Z",
+      "revision": 1
+    }
+  ]
+}
