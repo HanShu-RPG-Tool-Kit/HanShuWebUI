@@ -45,6 +45,11 @@ export type LangSpan = {
 const SPEAKER_LINE = /^([a-zA-Z_][a-zA-Z0-9_]*):(.*)$/
 const CHOICE_LINE = /^(-+)([\s\S]*?)\/\/\s*$/
 const BLOCK_END = /^\/\/\s*$/
+/**
+ * 块正文里出现这些行的行首，说明这个块没闭合（docs §1：选项行不能出现在对白块内部）：
+ * 行首 `-`（选项）、`speaker:` 形（新对白）、`>` / `>>`（跳转 / 函数调用）。
+ */
+const STARTS_NEW_STATEMENT = /^(-|[a-zA-Z_][a-zA-Z0-9_]*:|>>?)/
 const TRAILING_TERMINATOR = /\/\/\s*$/
 
 /** HS 转义还原（与 .lines 编译一致） */
@@ -172,29 +177,71 @@ export function parseLangSpans(source: string): LangSpan[] {
       const restStart = line.start + speaker[1].length + 1
 
       if (/^\s*$/.test(rest)) {
-        // 多行块：从这一行往下吃到单独一行的 `//`
+        // 多行块：正文若干行，由 `//` 收尾（docs/hanshu-syntax.md §1）。
+        // 成键的唯一依据是 `//`：单独一行的 `//`，或正文某行行尾的 `//`。
+        // 没有 `//`（读到结构行或文件末尾）→ 这段文本永久不成键，原文原样保留。
+        // 结构行（选项 / 新对白 / 跳转调用）只是"这个块到此为止"的边界：`//` 会向前
+        // 绑定到离它最近的结构标识，所以 `test:` 后面直接跟 `-msg:<<msg//` 时，
+        // 那个 `//` 属于选项行，属于 `test:` 的正文根本不存在。
         i++
         const bodyLines: Line[] = []
         const bodyIndexes: number[] = []
-        while (i < lines.length && !BLOCK_END.test(lines[i].text)) {
+        /** 行尾 `//` 的绝对偏移：正文到它之前为止，`//` 归这个片段 */
+        let inlineTerminator: number | null = null
+        let inlineTerminatorLine: number | null = null
+        /** 是否见到 `//` —— 没有它就不成键 */
+        let ended = false
+        while (i < lines.length) {
           const bodyLine = lines[i]
-          const t = countEmbedDelimiters(bodyLine.text)
-          if (t % 2 === 1) inPython = !inPython
+          if (BLOCK_END.test(bodyLine.text)) {
+            ended = true
+            i++
+            break
+          }
+          // 结构行：`//` 属于它自己那条语句，本块没有 `//`，到此为止（不成键）
+          if (!inPython && STARTS_NEW_STATEMENT.test(bodyLine.text)) break
+          const inline = inPython ? null : TRAILING_TERMINATOR.exec(bodyLine.text)
+          if (inline) {
+            // 行尾 `//`：同属一个语句，正文包含这一行 `//` 之前的部分
+            bodyLines.push(bodyLine)
+            bodyIndexes.push(i)
+            inlineTerminator = bodyLine.start + inline.index
+            inlineTerminatorLine = i
+            ended = true
+            i++
+            break
+          }
+          if (countEmbedDelimiters(bodyLine.text) % 2 === 1) {
+            // 开围栏留作切段标记（闭围栏不重复留）：围栏行与 Python 正文都不进值，
+            // 但正文不能被跨越 Python 段合并成一段
+            if (!inPython) {
+              bodyLines.push(bodyLine)
+              bodyIndexes.push(i)
+            }
+            inPython = !inPython
+            i++
+            continue
+          }
           if (!inPython) {
             bodyLines.push(bodyLine)
             bodyIndexes.push(i)
           }
           i++
         }
-        if (i < lines.length && BLOCK_END.test(lines[i].text)) i++
+        // 没有 `//` → 永久不成键
+        if (!ended) continue
 
-        // 按 `#` / `@` 行切段（空行不切）
+        // 按 `#` / `@` / Python 围栏行切段（空行不切）
         const runs: Array<{ from: number; to: number }> = []
         let current: { from: number; to: number } | null = null
         let broken = false
         bodyLines.forEach((bodyLine, idx) => {
           if (!bodyLine.text.trim()) return
-          if (bodyLine.text.startsWith('#') || bodyLine.text.startsWith('@')) {
+          if (
+            bodyLine.text.startsWith('#') ||
+            bodyLine.text.startsWith('@') ||
+            countEmbedDelimiters(bodyLine.text) % 2 === 1
+          ) {
             broken = true
             return
           }
@@ -213,14 +260,26 @@ export function parseLangSpans(source: string): LangSpan[] {
         for (const run of runs) {
           const first = bodyLines[run.from]
           const last = bodyLines[run.to]
+          let end = last.start + last.text.trimEnd().length
+          // 行尾 `//` 归它所在的那一段：正文到 `//` 之前（去掉尾部空白）为止
+          let terminator: { start: number; end: number } | null = null
+          if (
+            inlineTerminator != null &&
+            bodyIndexes[run.to] === inlineTerminatorLine
+          ) {
+            end =
+              last.start +
+              source.slice(last.start, inlineTerminator).trimEnd().length
+            terminator = { start: inlineTerminator, end: inlineTerminator + 2 }
+          }
           const span = makeSpan(source, {
             kind: 'dialogue',
             start: first.start + (first.text.length - first.text.trimStart().length),
-            end: last.start + last.text.trimEnd().length,
+            end,
             fromLine: bodyIndexes[run.from] + 1,
             toLine: bodyIndexes[run.to] + 1,
-            // 多行块的 `//` 独占一行，不属于这个片段
-            terminator: null,
+            // 单独一行的 `//` 不属于这个片段；行尾 `//` 属于（渲染成尾标）
+            terminator,
           })
           if (span) spans.push(span)
         }

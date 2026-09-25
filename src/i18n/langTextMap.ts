@@ -198,6 +198,19 @@ export class LangTextMap {
     this.flush()
   }
 
+  /** 批量删（撤销自动成键时回收条目用，只落盘一次） */
+  deleteMany(keys: Iterable<string>): void {
+    let changed = false
+    for (const key of keys) {
+      const k = normalizeLocaleKey(key)
+      if (!k) continue
+      if (this.cache.delete(k)) changed = true
+    }
+    if (!changed) return
+    this.emit()
+    this.flush()
+  }
+
   /** 强制把缓存写穿一次 */
   flush(): void {
     this.sink.write(this.toFileContent())

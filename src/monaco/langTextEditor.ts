@@ -79,6 +79,9 @@ const MIGRATE_DEBOUNCE_MS = 220
 const BOX_GAP_PX = 3
 
 /** 一行覆盖框：形状即 langCaretOverlay 需要的输入，另加一个用于移除的根节点 */
+/** 一次自动成键写进映射的条目（撤销时要能原样回收 / 重做时放回） */
+type MigrationRecord = { entries: Array<[string, string]> }
+
 type LineEntry = CaretLine & { el: HTMLElement }
 type ZoneEntry = {
   /** 纯占位元素：视觉一律走覆盖层，见 render() 里的注释 */
@@ -111,6 +114,9 @@ export function bindLangText(
 
   let lineEntries: LineEntry[] = []
   let zoneEntries: ZoneEntry[] = []
+  /** 自动成键写下的条目；被撤销的挪进 redoLog，重做时放回 */
+  let migrationLog: MigrationRecord[] = []
+  let redoLog: MigrationRecord[] = []
   let ctrlHeld = false
   let migrating = false
   let disposed = false
@@ -460,7 +466,9 @@ export function bindLangText(
     migrating = true
     try {
       // 先写映射（缓存 + 虚拟文件），再改正文
-      map.setMany(plan.map(({ span, key }) => [key, span.value]))
+      const entries = plan.map(({ span, key }) => [key, span.value] as [string, string])
+      migrationLog.push({ entries })
+      map.setMany(entries)
 
       const edits: editor.IIdentifiedSingleEditOperation[] = plan.map(
         ({ span, key }) => ({
@@ -509,6 +517,56 @@ export function bindLangText(
     }, MIGRATE_DEBOUNCE_MS)
   }
 
+  /**
+   * 撤销 / 重做自动成键时，把映射一起收拾干净（E2）：
+   * - 撤销：正文退回了原文 → 这次成键写入的条目已无人引用 → 删掉（否则 lang 文件里会残留孤儿条目）
+   * - 重做：键名又回到正文 → 把条目放回去，避免变成"缺文本"的红框
+   * 判断依据是"键名是否还在正文里"，不依赖具体编辑批次，多级撤销也能逐条对上。
+   * 期间锁住 migrating：删条目会触发订阅 → refresh → migrateNow，否则会立刻把原文又成键一次。
+   */
+  const reconcileMigrations = (event: editor.IModelContentChangedEvent) => {
+    const model = ed.getModel()
+    const map = host.getMap()
+    if (!model || !map) return
+    const text = model.getValue()
+    const alive = (record: MigrationRecord) =>
+      record.entries.some(([key]) => text.includes(key))
+
+    if (event.isUndoing) {
+      const kept: MigrationRecord[] = []
+      for (const record of migrationLog) {
+        if (alive(record)) {
+          kept.push(record)
+          continue
+        }
+        redoLog.push(record)
+        migrating = true
+        try {
+          map.deleteMany(record.entries.map(([key]) => key))
+        } finally {
+          migrating = false
+        }
+      }
+      migrationLog = kept
+    } else {
+      const kept: MigrationRecord[] = []
+      for (const record of redoLog) {
+        if (!record.entries.every(([key]) => text.includes(key))) {
+          kept.push(record)
+          continue
+        }
+        migrating = true
+        try {
+          map.setMany(record.entries)
+        } finally {
+          migrating = false
+        }
+        migrationLog.push(record)
+      }
+      redoLog = kept
+    }
+  }
+
   const setCtrl = (next: boolean) => {
     if (ctrlHeld === next) return
     ctrlHeld = next
@@ -543,7 +601,15 @@ export function bindLangText(
     openEditor(span, null)
   })
 
-  const contentSub = ed.onDidChangeModelContent(() => scheduleMigrate())
+  const contentSub = ed.onDidChangeModelContent((event) => {
+    // 撤销 / 重做：只收拾映射，不再自动成键（否则刚撤销就被立刻重新成键，撤销等于无效）
+    if (event.isUndoing || event.isRedoing) {
+      reconcileMigrations(event)
+      render()
+      return
+    }
+    scheduleMigrate()
+  })
   const scrollSub = ed.onDidScrollChange(onScroll)
   const layoutSub = ed.onDidLayoutChange(onLayout)
   // 光标进出片段 / 焦点变化时重画自绘光标
