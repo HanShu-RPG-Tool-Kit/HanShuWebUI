@@ -9,7 +9,8 @@ type Props = {
 }
 
 /**
- * 标题栏右上角的语言下拉框。
+ * 语言下拉框。挂在剧本编辑器底部状态栏右侧（`汉书` / `UTF-8` 之后），
+ * 因为状态栏在窗口底部，下拉向上弹出（见 App.css 里的 `.statusbar .lang-select`）。
  * 首行是「常用语言」文本标签 + 三个常用语言，其后按名字列出全部语言。
  */
 export function LanguageSelect({ value, onChange }: Props) {
