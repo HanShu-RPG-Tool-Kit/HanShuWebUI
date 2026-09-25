@@ -6,7 +6,7 @@
  *   多行块取块体整段（跨行算一个片段；块内若夹了 `#` / `@` 行，则按夹断切成多段）。
  * - 选项拆两个键：`-文案:回复//` 的文案与回复各算一个片段；`---只有文案//` 只算文案。
  * - 不是可本地化文本的不算：`:>>func//`、`:>jump//`、空回复。
- * - `#` 注释行、`@` 注入点、`''''…''''` Python 块内的内容一律跳过。
+ * - `#` 注释行（**行首**才算，可含前导空白，与编译去噪一致）、`@` 注入点、`''''…''''` Python 块内的内容一律跳过。
  *
  * 每个片段还记录「紧随其后、同一行上的 `//`」（`terminator`），渲染时要把这个 `//`
  * 挪到覆盖框外的右下角，避免它落进多行框里面。
@@ -43,6 +43,13 @@ export type LangSpan = {
 }
 
 const SPEAKER_LINE = /^([a-zA-Z_][a-zA-Z0-9_]*):(.*)$/
+
+/**
+ * 注释行：行首（可含前导空白）才是注释，行内 `#` 属于正文。
+ * 必须与编译去噪 `src/hanshu/lines.ts` 的 `/^\s*#/` 一致 —— 否则缩进写的注释
+ * 会被编译丢掉，却被这里算进框的正文。
+ */
+const COMMENT_LINE = /^\s*#/
 const CHOICE_LINE = /^(-+)([\s\S]*?)\/\/\s*$/
 const BLOCK_END = /^\/\/\s*$/
 /**
@@ -165,7 +172,7 @@ export function parseLangSpans(source: string): LangSpan[] {
       continue
     }
 
-    if (line.text.startsWith('#') || line.text.startsWith('@')) {
+    if (COMMENT_LINE.test(line.text) || line.text.startsWith('@')) {
       i++
       continue
     }
@@ -238,7 +245,7 @@ export function parseLangSpans(source: string): LangSpan[] {
         bodyLines.forEach((bodyLine, idx) => {
           if (!bodyLine.text.trim()) return
           if (
-            bodyLine.text.startsWith('#') ||
+            COMMENT_LINE.test(bodyLine.text) ||
             bodyLine.text.startsWith('@') ||
             countEmbedDelimiters(bodyLine.text) % 2 === 1
           ) {
