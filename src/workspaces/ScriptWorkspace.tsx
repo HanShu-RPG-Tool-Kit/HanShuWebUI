@@ -95,7 +95,12 @@ import type {
 } from './scriptTypes'
 import { LanguageSelect } from '../LanguageSelect'
 import { LangTextEditBox } from '../LangTextEditBox'
-import { LangTextMap, langFileNameFor } from '../i18n/langTextMap'
+import {
+  LangTextMap,
+  langFileNameFor,
+  type LangTextSink,
+} from '../i18n/langTextMap'
+import { createLangTextSink } from '../i18n/langTextSink'
 import {
   bindLangText,
   type LangEditRequest,
@@ -196,8 +201,10 @@ export const ScriptWorkspace = forwardRef<
     saveLocale(tag)
   }
 
+  const projectHandle = project?.handle ?? null
+
   // 语言文本映射实例：活动 .hs 文件 + 当前语言标签 → `<文件名>.lang.<语言标签>`
-  // 缓存是权威，写穿到同包内的虚拟文件；换成真实磁盘只需换一个 sink 实现。
+  // 绑定文件夹工程时读写真实磁盘同级文件，否则退回包内虚拟文件（见 langTextSink）。
   useEffect(() => {
     if (!langScriptName) {
       langMapRef.current = null
@@ -206,39 +213,53 @@ export const ScriptWorkspace = forwardRef<
     }
 
     const fileName = langFileNameFor(langScriptName, locale)
-    const readSink = () => {
-      const base = workspaceRef.current
-      const hit = findScript(base, base.activeScriptId)
-      if (!hit) return null
-      const found = hit.pkg.scripts.find(
-        (item) => item.name.toLowerCase() === fileName.toLowerCase(),
-      )
-      return found?.content ?? null
-    }
-    const writeSink = (content: string) => {
-      const base = workspaceRef.current
-      const id = base.activeScriptId
-      if (!id) return
-      // 先把编辑器里的当前正文并回 workspace，避免覆盖未保存的输入
-      const merged = updateScriptContent(base, id, valueRef.current)
-      commitWorkspace(upsertPackageFile(merged, id, fileName, content))
+    // 虚拟工作区实现：同包内名为 `<剧本名>.lang.<语言标签>` 的文件
+    const virtualSink: LangTextSink = {
+      read: () => {
+        const base = workspaceRef.current
+        const hit = findScript(base, base.activeScriptId)
+        if (!hit) return null
+        const found = hit.pkg.scripts.find(
+          (item) => item.name.toLowerCase() === fileName.toLowerCase(),
+        )
+        return found?.content ?? null
+      },
+      write: (content: string) => {
+        const base = workspaceRef.current
+        const id = base.activeScriptId
+        if (!id) return
+        // 先把编辑器里的当前正文并回 workspace，避免覆盖未保存的输入
+        const merged = updateScriptContent(base, id, valueRef.current)
+        commitWorkspace(upsertPackageFile(merged, id, fileName, content))
+      },
     }
 
-    const map = new LangTextMap({
-      fileName,
-      locale,
-      sink: { read: readSink, write: writeSink },
-    })
-    langMapRef.current = map
-    const unsubscribe = map.subscribe(() => langBindingRef.current?.refresh())
-    map.load()
-    langBindingRef.current?.refresh()
+    let cancelled = false
+    let unsubscribe: (() => void) | null = null
+    let created: LangTextMap | null = null
+
+    // 磁盘读取是异步的：读完再建映射；磁盘写入在 sink 里 fire-and-forget
+    void (async () => {
+      const sink = await createLangTextSink({
+        project: projectRef.current,
+        fileName,
+        virtual: virtualSink,
+      })
+      if (cancelled) return
+      const map = new LangTextMap({ fileName, locale, sink })
+      created = map
+      langMapRef.current = map
+      unsubscribe = map.subscribe(() => langBindingRef.current?.refresh())
+      map.load()
+      langBindingRef.current?.refresh()
+    })()
 
     return () => {
-      unsubscribe()
-      if (langMapRef.current === map) langMapRef.current = null
+      cancelled = true
+      unsubscribe?.()
+      if (langMapRef.current === created) langMapRef.current = null
     }
-  }, [langScriptName, locale])
+  }, [langScriptName, locale, projectHandle])
 
   // 工具卸载时解绑编辑器
   useEffect(() => () => langBindingRef.current?.dispose(), [])
