@@ -455,8 +455,27 @@ export function bindLangText(
     caretOverlay.update()
   }
 
-  /** 自动成键：把还不是键名的可本地化文本换成新键名 */
-  const migrateNow = () => {
+  /**
+   * 一条语句占的行范围：正文行 + 它的 `//` 所在行。
+   * 单独一行的 `//` 落在正文之后一行，也要算进来（否则光标停在 `//` 行上时会被成键）。
+   */
+  const statementLineRange = (span: LangSpan): { from: number; to: number } => {
+    if (span.terminator) return { from: span.line, to: span.endLine }
+    const model = ed.getModel()
+    if (model && span.endLine < model.getLineCount()) {
+      const next = model.getLineContent(span.endLine + 1)
+      if (/^\s*\/\/\s*$/.test(next)) return { from: span.line, to: span.endLine + 1 }
+    }
+    return { from: span.line, to: span.endLine }
+  }
+
+  /**
+   * 自动成键：把还不是键名的可本地化文本换成新键名。
+   * `skipEditing` 用于"用户正在写"的触发路径：光标还在某条语句里（正文行或它的 `//` 行）
+   * 就先不成键，等光标离开整条语句再说 —— 否则打到一半的正文会被抢走，也没法再改。
+   * 打开文件 / 刷新这类批量路径不带这个选项。
+   */
+  const migrateNow = (options?: { skipEditing?: boolean }) => {
     if (disposed || migrating) return
     const model = ed.getModel()
     const map = host.getMap()
@@ -466,9 +485,17 @@ export function bindLangText(
     const used = new Set<string>()
     for (const [key] of map.entries()) used.add(key)
 
+    const caretLine = options?.skipEditing
+      ? (ed.getPosition()?.lineNumber ?? null)
+      : null
+
     const plan: Array<{ span: LangSpan; key: string }> = []
     for (const span of spans) {
       if (isLocaleKey(span.value)) continue
+      if (caretLine != null) {
+        const range = statementLineRange(span)
+        if (caretLine >= range.from && caretLine <= range.to) continue
+      }
       const key = createLocaleKey((candidate) => used.has(candidate))
       used.add(key)
       plan.push({ span, key })
@@ -528,7 +555,8 @@ export function bindLangText(
     if (timer != null) window.clearTimeout(timer)
     timer = window.setTimeout(() => {
       timer = null
-      migrateNow()
+      // 打字触发：光标还在语句里就不成键
+      migrateNow({ skipEditing: true })
       render()
     }, MIGRATE_DEBOUNCE_MS)
   }
@@ -731,6 +759,8 @@ export function bindLangText(
     const p = ed.getPosition()
     lastCaretOffset = m && p ? m.getOffsetAt(p) : null
     caretOverlay.update()
+    // 光标离开某条语句后补做成键（"光标还在里面就不成键"需要这一脚）
+    scheduleMigrate()
   })
   const focusSub = ed.onDidFocusEditorText?.(() => caretOverlay.update())
   const blurSub = ed.onDidBlurEditorText?.(() => caretOverlay.update())
