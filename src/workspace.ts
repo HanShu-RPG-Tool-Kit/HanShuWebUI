@@ -1,3 +1,5 @@
+import { isLangTextFileName } from './i18n/langTextMap'
+
 const WORKSPACE_KEY = 'hanshu.workspace.v2'
 const LEGACY_DRAFT_KEY = 'hanshu.draft.v1'
 
@@ -69,12 +71,15 @@ export function normalizeResourceName(raw: string): string | null {
   const name = raw.trim()
   if (!name) return null
   if (/[\\/:*?"<>|]/.test(name)) return null
+  // 语言文本文件 `<文件名>.lang.<语言标签>`：末段是语言标签，不在后缀白名单里
+  if (isLangTextFileName(name)) return name
   const ext = getExtension(name)
   if (!isAllowedExtension(ext)) return null
   return name
 }
 
 export function languageForFile(name: string): string {
+  if (isLangTextFileName(name)) return 'json'
   const ext = getExtension(name)
   if (ext === '.md') return 'markdown'
   if (ext === '.char') return 'python'

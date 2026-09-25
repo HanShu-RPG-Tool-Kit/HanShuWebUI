@@ -72,6 +72,15 @@ import {
 } from './AgentDiffModal'
 import { pushFileBackup, pushFileVersion } from './agent/fileBackup'
 import { HistoryModal } from './HistoryModal'
+import { LanguageSelect } from './LanguageSelect'
+import { LangTextEditBox } from './LangTextEditBox'
+import { LangTextMap, langFileNameFor } from './i18n/langTextMap'
+import {
+  bindLangText,
+  type LangEditRequest,
+  type LangTextBinding,
+} from './monaco/langTextEditor'
+import { loadLocale, saveLocale } from './storage'
 import './App.css'
 
 const MENUS = [
@@ -134,9 +143,14 @@ function App() {
     () => active?.script.updatedAt ?? null,
   )
   const [openMenu, setOpenMenu] = useState<string | null>(null)
+  const [locale, setLocale] = useState(loadLocale)
   const [mdPreviewOn, setMdPreviewOn] = useState(true)
   const [hscPreviewOn, setHscPreviewOn] = useState(false)
   const [agentOpen, setAgentOpen] = useState(true)
+  const [langEdit, setLangEdit] = useState<{
+    id: number
+    request: LangEditRequest
+  } | null>(null)
   const [agentDiffs, setAgentDiffs] = useState<AgentDiffSnapshot[]>([])
   const [diffOpen, setDiffOpen] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
@@ -148,6 +162,9 @@ function App() {
   const splitRef = useRef<HTMLDivElement>(null)
   const draggingRef = useRef(false)
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null)
+  const langMapRef = useRef<LangTextMap | null>(null)
+  const langBindingRef = useRef<LangTextBinding | null>(null)
+  const langEditSeqRef = useRef(0)
   const rolesRef = useRef(roles)
   const valueRef = useRef(value)
   const workspaceRef = useRef(workspace)
@@ -168,12 +185,19 @@ function App() {
     : (active?.pkg.name ?? '汉书')
   const editingMarkdown = !viewingAsset && isMarkdownFile(titleName)
   const editingHanshu = !viewingAsset && isHanshuFile(titleName)
+  /** 仅活动文件是 .hs 时才有语言文本映射 */
+  const langScriptName = editingHanshu ? titleName : ''
 
   const commitWorkspace = (next: Workspace) => {
     workspaceRef.current = next
     activeIdRef.current = next.activeScriptId
     setWorkspace(next)
     saveWorkspace(next)
+  }
+
+  const handleLocaleChange = (tag: string) => {
+    setLocale(tag)
+    saveLocale(tag)
   }
 
   const syncRolesFromText = (text: string) => {
@@ -666,6 +690,53 @@ function App() {
         : `已生成 ${created} 个空白 ogg`,
     )
   }
+
+  // 语言文本映射实例：活动 .hs 文件 + 当前语言标签 → `<文件名>.lang.<语言标签>`
+  // 缓存是权威，写穿到同包内的虚拟文件；换成真实磁盘只需换一个 sink 实现。
+  useEffect(() => {
+    if (!langScriptName) {
+      langMapRef.current = null
+      langBindingRef.current?.refresh()
+      return
+    }
+
+    const fileName = langFileNameFor(langScriptName, locale)
+    const readSink = () => {
+      const hit = findScript(workspaceRef.current, activeIdRef.current)
+      if (!hit) return null
+      const found = hit.pkg.scripts.find(
+        (item) => item.name.toLowerCase() === fileName.toLowerCase(),
+      )
+      return found?.content ?? null
+    }
+    const writeSink = (content: string) => {
+      const id = activeIdRef.current
+      if (!id) return
+      const next = upsertPackageFile(workspaceRef.current, id, fileName, content)
+      workspaceRef.current = next
+      activeIdRef.current = next.activeScriptId
+      setWorkspace(next)
+      saveWorkspace(next)
+    }
+
+    const map = new LangTextMap({
+      fileName,
+      locale,
+      sink: { read: readSink, write: writeSink },
+    })
+    langMapRef.current = map
+    const unsubscribe = map.subscribe(() => langBindingRef.current?.refresh())
+    map.load()
+    langBindingRef.current?.refresh()
+
+    return () => {
+      unsubscribe()
+      if (langMapRef.current === map) langMapRef.current = null
+    }
+  }, [langScriptName, locale])
+
+  // 编辑器销毁时解绑
+  useEffect(() => () => langBindingRef.current?.dispose(), [])
 
   // 自动记忆当前剧本正文（看资产时不写回）
   useEffect(() => {
@@ -1224,10 +1295,13 @@ function App() {
         <div className="titlebar-center">
           {titleName} — {packageName}
         </div>
-        <div className="titlebar-right" aria-hidden>
-          <span className="win-btn">─</span>
-          <span className="win-btn">□</span>
-          <span className="win-btn close">×</span>
+        <div className="titlebar-right">
+          <LanguageSelect value={locale} onChange={handleLocaleChange} />
+          <div className="win-buttons" aria-hidden>
+            <span className="win-btn">─</span>
+            <span className="win-btn">□</span>
+            <span className="win-btn close">×</span>
+          </div>
         </div>
       </header>
 
@@ -1349,6 +1423,17 @@ function App() {
                       bindChoiceInsertHotkeys(editor, monaco)
                       bindSpeakerHotkeys(editor, monaco, () => rolesRef.current)
                       bindCopyDialogueHotkey(editor, monaco)
+                      langBindingRef.current?.dispose()
+                      langBindingRef.current = bindLangText(editor, monaco, {
+                        getMap: () => langMapRef.current,
+                        onEditRequest: (request) => {
+                          langEditSeqRef.current += 1
+                          setLangEdit({
+                            id: langEditSeqRef.current,
+                            request,
+                          })
+                        },
+                      })
                     }}
                     onChange={(next) => {
                       setValue(next ?? '')
@@ -1496,6 +1581,24 @@ function App() {
           <span>汉书</span>
         </div>
       </footer>
+
+      {langEdit && (
+        <LangTextEditBox
+          key={langEdit.id}
+          mode={langEdit.request.mode}
+          initial={langEdit.request.initial}
+          rect={langEdit.request.rect}
+          onCommit={(value) => {
+            const edit = langEdit
+            setLangEdit((current) => (current?.id === edit.id ? null : current))
+            edit.request.apply(value)
+          }}
+          onCancel={() => {
+            const edit = langEdit
+            setLangEdit((current) => (current?.id === edit.id ? null : current))
+          }}
+        />
+      )}
     </div>
   )
 }
