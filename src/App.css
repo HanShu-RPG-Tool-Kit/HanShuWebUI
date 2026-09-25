@@ -1465,6 +1465,12 @@ body.is-resizing .monaco-editor {
   background: transparent;
 }
 
+/* 语言文本写盘失败的提示（点击可撤掉） */
+.statusbar .status-warn {
+  color: #ffb4a2;
+  cursor: default;
+}
+
 /* —— Agent Diff 对比 —— */
 .diff-modal-backdrop {
   position: fixed;

@@ -191,6 +191,15 @@ export const ScriptWorkspace = forwardRef<
     id: number
     request: LangEditRequest
   } | null>(null)
+  /**
+   * 语言文本写盘失败：连同它属于哪个「文件 + 语言」一起记下来。
+   * 渲染时只认当前写入周期 —— 既避免切换语言/文件后还挂着旧提示，
+   * 也避免在 effect 里同步 setState。
+   */
+  const [langDiskError, setLangDiskError] = useState<{
+    key: string
+    message: string
+  } | null>(null)
   const langMapRef = useRef<LangTextMap | null>(null)
   const langBindingRef = useRef<LangTextBinding | null>(null)
   const langEditSeqRef = useRef(0)
@@ -202,6 +211,10 @@ export const ScriptWorkspace = forwardRef<
   }
 
   const projectHandle = project?.handle ?? null
+  /** 当前写入周期：活动 .hs 文件 + 语言标签 */
+  const langWriteKey = `${langScriptName}|${locale}`
+  const activeLangDiskError =
+    langDiskError?.key === langWriteKey ? langDiskError.message : null
 
   // 语言文本映射实例：活动 .hs 文件 + 当前语言标签 → `<文件名>.lang.<语言标签>`
   // 绑定文件夹工程时读写真实磁盘同级文件，否则退回包内虚拟文件（见 langTextSink）。
@@ -238,12 +251,25 @@ export const ScriptWorkspace = forwardRef<
     let unsubscribe: (() => void) | null = null
     let created: LangTextMap | null = null
 
-    // 磁盘读取是异步的：读完再建映射；磁盘写入在 sink 里 fire-and-forget
+    // 磁盘读取是异步的：读完再建映射；磁盘写入在 sink 里按顺序串行执行
     void (async () => {
       const sink = await createLangTextSink({
         project: projectRef.current,
         fileName,
         virtual: virtualSink,
+        // 只在磁盘写结束后异步触发。oxlint 的 react(set-state-in-effect) 按词法
+        // 判定，仍会就此报一条告警（规则过度近似：此处不会引发级联渲染）。
+        onWriteResult: (error) => {
+          if (!error) {
+            setLangDiskError(null)
+            return
+          }
+          console.warn('[hanshu] 语言文本写入磁盘失败', error)
+          setLangDiskError({
+            key: langWriteKey,
+            message: error instanceof Error ? error.message : String(error),
+          })
+        },
       })
       if (cancelled) return
       const map = new LangTextMap({ fileName, locale, sink })
@@ -259,7 +285,7 @@ export const ScriptWorkspace = forwardRef<
       unsubscribe?.()
       if (langMapRef.current === created) langMapRef.current = null
     }
-  }, [langScriptName, locale, projectHandle])
+  }, [langScriptName, langWriteKey, locale, projectHandle])
 
   // 工具卸载时解绑编辑器
   useEffect(() => () => langBindingRef.current?.dispose(), [])
@@ -1724,6 +1750,22 @@ export const ScriptWorkspace = forwardRef<
           <span>空格: 2</span>
           <span>UTF-8</span>
           <span>汉书</span>
+          {activeLangDiskError && (
+            <span
+              className="status-warn"
+              title={`语言文本未能写入磁盘：${activeLangDiskError}`}
+              role="button"
+              tabIndex={0}
+              onClick={() => setLangDiskError(null)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  setLangDiskError(null)
+                }
+              }}
+            >
+              语言文本未写入磁盘
+            </span>
+          )}
           <LanguageSelect value={locale} onChange={handleLocaleChange} />
         </div>
       </footer>
