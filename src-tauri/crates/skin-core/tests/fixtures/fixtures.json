@@ -1,0 +1,50 @@
+{
+  "exportedBy": "skin-manager node",
+  "cases": [
+    {
+      "name": "modern-classic",
+      "model": "classic",
+      "wasLegacy": false,
+      "skinId": "ad147f99dbc1d96792affd3dfa6eb5aadc7f17f803de2ba0230dc6ea8a142063",
+      "note": "64x64 random, ~15% transparent",
+      "pngBytes": 16521,
+      "skinCodeChars": 19947
+    },
+    {
+      "name": "modern-slim",
+      "model": "slim",
+      "wasLegacy": false,
+      "skinId": "524c6f53fcfda44babaf4722ca2a1ec99e2f0cca06a5eb45d9b1294b28ccbe58",
+      "note": "64x64 random, slim model",
+      "pngBytes": 16521,
+      "skinCodeChars": 19967
+    },
+    {
+      "name": "legacy32-classic",
+      "model": "classic",
+      "wasLegacy": true,
+      "skinId": "6b80080b7c1e3a4bbd2918a2cd1b7638f943f4a18d26070226d8aaa1a3548256",
+      "note": "legacy 64x32 mirrored expansion",
+      "pngBytes": 8292,
+      "skinCodeChars": 11903
+    },
+    {
+      "name": "gray-classic",
+      "model": "classic",
+      "wasLegacy": false,
+      "skinId": "e0bcb840cddb99b0bdfd75a275a853f06e17687a59ba8884e1d4ecedfc6b1dff",
+      "note": "8-bit grayscale input",
+      "pngBytes": 4279,
+      "skinCodeChars": 5557
+    },
+    {
+      "name": "palette-classic",
+      "model": "classic",
+      "wasLegacy": false,
+      "skinId": "8c08b441dd3d90e2d5a018063792c40d46ce1583c9b4eebf4c298d957df068f3",
+      "note": "palette + tRNS input",
+      "pngBytes": 1467,
+      "skinCodeChars": 2579
+    }
+  ]
+}

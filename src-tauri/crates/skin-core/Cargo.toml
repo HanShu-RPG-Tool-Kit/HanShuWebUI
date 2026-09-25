@@ -1,0 +1,28 @@
+[package]
+name = "skin-core"
+version = "0.1.0"
+description = "Minecraft skin manager domain core: codec, normalize, storage, imports, network"
+license = "MIT"
+edition = "2021"
+rust-version = "1.85"
+
+[dependencies]
+flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
+sha2 = "0.11"
+base64 = "0.23"
+png = "0.18"
+tokio = { version = "1", features = ["net", "time", "sync", "rt", "macros"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
+url = "2.5"
+ipnet = "2.12"
+tempfile = "3"
+unicode-normalization = "0.1"
+tokio-util = "0.7"
+thiserror = "2"
+uuid = { version = "1", features = ["v4"] }
+fs4 = "1.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
