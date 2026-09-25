@@ -8,6 +8,16 @@ import {
 } from '../i18n/langTextMap'
 import { createLangCaretOverlay, type CaretLine } from './langCaretOverlay'
 import {
+  deletionHitsKey,
+  deletionRange,
+  keyedRegions,
+  pickRedone,
+  pickUndone,
+  snapTarget,
+  statementLineRange,
+  type MigrationRecord,
+} from './langKeyRules'
+import {
   createLangSlotStyles,
   longestLineCh,
   SLOT_CLASS,
@@ -30,8 +40,13 @@ import { findSpanAt, parseLangSpans, type LangSpan } from './langTextSpans'
  * - 光标落在片段内时由 langCaretOverlay 接管（原生光标会停在不可见的原文列上）
  *
  * 交互：点击框 = 覆盖弹出编辑框（Ctrl=改键名，否则=改映射值）。
- * 自动成键：`//` 终结的可本地化文本还不是 8 位键名时，生成无冲突随机键名，
- * 写入映射并把原文替换成键名。
+ *
+ * 自动成键（详见 langKeyRules）：
+ * - 只有带 `//` 终结的可本地化文本才成键；文本还不是 8 位键名时生成无冲突随机键名，
+ *   写入映射并把原文替换成键名
+ * - 打字触发的路径会跳过"光标还在里面"的语句，等光标离开整条语句再成键
+ * - 成键后框是原子单位：光标整体跳过，删除只"蹭到"框时无响应
+ * - 撤销 / 重做时按"键名是否还在正文里"回收 / 放回映射条目
  */
 
 export type LangTextRect = {
@@ -80,8 +95,6 @@ const BOX_GAP_PX = 3
 
 /** 一行覆盖框：形状即 langCaretOverlay 需要的输入，另加一个用于移除的根节点 */
 /** 一次自动成键写进映射的条目（撤销时要能原样回收 / 重做时放回） */
-type MigrationRecord = { entries: Array<[string, string]> }
-
 type LineEntry = CaretLine & { el: HTMLElement }
 type ZoneEntry = {
   /** 纯占位元素：视觉一律走覆盖层，见 render() 里的注释 */
@@ -455,19 +468,8 @@ export function bindLangText(
     caretOverlay.update()
   }
 
-  /**
-   * 一条语句占的行范围：正文行 + 它的 `//` 所在行。
-   * 单独一行的 `//` 落在正文之后一行，也要算进来（否则光标停在 `//` 行上时会被成键）。
-   */
-  const statementLineRange = (span: LangSpan): { from: number; to: number } => {
-    if (span.terminator) return { from: span.line, to: span.endLine }
-    const model = ed.getModel()
-    if (model && span.endLine < model.getLineCount()) {
-      const next = model.getLineContent(span.endLine + 1)
-      if (/^\s*\/\/\s*$/.test(next)) return { from: span.line, to: span.endLine + 1 }
-    }
-    return { from: span.line, to: span.endLine }
-  }
+  /** 已成键的框的原子范围（未成键的原文不设防） */
+  const boxRegions = () => keyedRegions(currentSpans())
 
   /**
    * 自动成键：把还不是键名的可本地化文本换成新键名。
@@ -481,7 +483,6 @@ export function bindLangText(
     const map = host.getMap()
     if (!model || !map) return
 
-    const spans = parseLangSpans(model.getValue())
     const used = new Set<string>()
     for (const [key] of map.entries()) used.add(key)
 
@@ -490,10 +491,14 @@ export function bindLangText(
       : null
 
     const plan: Array<{ span: LangSpan; key: string }> = []
-    for (const span of spans) {
+    for (const span of currentSpans()) {
       if (isLocaleKey(span.value)) continue
       if (caretLine != null) {
-        const range = statementLineRange(span)
+        const next =
+          span.endLine < model.getLineCount()
+            ? model.getLineContent(span.endLine + 1)
+            : null
+        const range = statementLineRange(span, next)
         if (caretLine >= range.from && caretLine <= range.to) continue
       }
       const key = createLocaleKey((candidate) => used.has(candidate))
@@ -565,49 +570,43 @@ export function bindLangText(
    * 撤销 / 重做自动成键时，把映射一起收拾干净（E2）：
    * - 撤销：正文退回了原文 → 这次成键写入的条目已无人引用 → 删掉（否则 lang 文件里会残留孤儿条目）
    * - 重做：键名又回到正文 → 把条目放回去，避免变成"缺文本"的红框
-   * 判断依据是"键名是否还在正文里"，不依赖具体编辑批次，多级撤销也能逐条对上。
-   * 期间锁住 migrating：删条目会触发订阅 → refresh → migrateNow，否则会立刻把原文又成键一次。
+   * 判断依据是"键名是否还在正文里"（见 langKeyRules.pickUndone / pickRedone），
+   * 不依赖具体编辑批次，多级撤销也能逐条对上。
    */
   const reconcileMigrations = (event: editor.IModelContentChangedEvent) => {
     const model = ed.getModel()
     const map = host.getMap()
     if (!model || !map) return
     const text = model.getValue()
-    const alive = (record: MigrationRecord) =>
-      record.entries.some(([key]) => text.includes(key))
+
+    // 删条目 / 放回条目会触发订阅 → refresh → migrateNow，锁住避免立刻重新成键
+    const withLock = (apply: () => void) => {
+      migrating = true
+      try {
+        apply()
+      } finally {
+        migrating = false
+      }
+    }
 
     if (event.isUndoing) {
-      const kept: MigrationRecord[] = []
-      for (const record of migrationLog) {
-        if (alive(record)) {
-          kept.push(record)
-          continue
-        }
-        redoLog.push(record)
-        migrating = true
-        try {
+      const { drop, keep } = pickUndone(migrationLog, text)
+      migrationLog = keep
+      if (drop.length === 0) return
+      withLock(() => {
+        for (const record of drop) {
           map.deleteMany(record.entries.map(([key]) => key))
-        } finally {
-          migrating = false
         }
-      }
-      migrationLog = kept
+      })
+      redoLog.push(...drop)
     } else {
-      const kept: MigrationRecord[] = []
-      for (const record of redoLog) {
-        if (!record.entries.every(([key]) => text.includes(key))) {
-          kept.push(record)
-          continue
-        }
-        migrating = true
-        try {
-          map.setMany(record.entries)
-        } finally {
-          migrating = false
-        }
-        migrationLog.push(record)
-      }
-      redoLog = kept
+      const { restore, keep } = pickRedone(redoLog, text)
+      redoLog = keep
+      if (restore.length === 0) return
+      withLock(() => {
+        for (const record of restore) map.setMany(record.entries)
+      })
+      migrationLog.push(...restore)
     }
   }
 
@@ -618,27 +617,7 @@ export function bindLangText(
   }
 
   /**
-   * 框的原子范围：只有被替换掉的那段正文（键名）。
-   * `//` 是作者自己敲的语句记号、渲染上也在框外做尾标，不属于框，
-   * 光标可以停在它与键名之间，也可以从它外侧删掉它。
-   */
-  const atomicRegion = (span: LangSpan): { start: number; end: number } => ({
-    start: span.start,
-    end: span.end,
-  })
-
-  /** 已成键的框（未成键的原文不设防，用户照样能自由编辑） */
-  const keyedRegions = (): Array<{ start: number; end: number }> => {
-    const out: Array<{ start: number; end: number }> = []
-    for (const span of currentSpans()) {
-      if (!normalizeLocaleKey(span.value)) continue
-      out.push(atomicRegion(span))
-    }
-    return out
-  }
-
-  /**
-   * 框是整体：光标不允许停在键名（或归属它的 `//`）里面。
+   * 框是整体：光标不允许停在键名里面。
    * 从左边进来落到框左沿，从右边进来落到框右沿 —— 也就是"直接跳过整个框"。
    * 延迟一拍再改光标：Monaco 自己的联动编辑也走调度器，在光标事件里同步改会被同一轮更新覆盖。
    */
@@ -648,13 +627,12 @@ export function bindLangText(
     const position = ed.getPosition()
     if (!model || !position) return
     const offset = model.getOffsetAt(position)
-    const region = keyedRegions().find((r) => offset > r.start && offset < r.end)
-    if (!region) return
     const dir =
       lastArrowDir ??
       (lastCaretOffset != null && offset < lastCaretOffset ? 'left' : 'right')
+    const target = snapTarget(boxRegions(), offset, dir)
+    if (target == null) return
     lastArrowDir = null
-    const target = dir === 'left' ? region.start : region.end
     snapping = true
     if (snapTimer != null) window.clearTimeout(snapTimer)
     snapTimer = window.setTimeout(() => {
@@ -667,35 +645,31 @@ export function bindLangText(
   }
 
   /**
-   * 删除键只"蹭到"框的一部分（键名或归属的 `//`）时，整键无响应：
+   * 删除键只"蹭到"框的一部分时，整键无响应：
    * 否则会改坏键名，被自动成键逻辑当成新文本再生成一个键。
    * 完整包含整个框的删除（例如选中整行）仍然放行 —— 那是明确的删除意图。
    */
   const deletionTouchesBox = (forward: boolean): boolean => {
     const model = ed.getModel()
     if (!model) return false
-    const regions = keyedRegions()
+    const regions = boxRegions()
     if (regions.length === 0) return false
-    for (const selection of ed.getSelections() ?? []) {
-      let start = model.getOffsetAt({
-        lineNumber: selection.startLineNumber,
-        column: selection.startColumn,
-      })
-      let end = model.getOffsetAt({
-        lineNumber: selection.endLineNumber,
-        column: selection.endColumn,
-      })
-      if (start === end) {
-        if (forward) end += 1
-        else start -= 1
-      }
-      for (const region of regions) {
-        const overlaps = start < region.end && end > region.start
-        const covers = start <= region.start && end >= region.end
-        if (overlaps && !covers) return true
-      }
-    }
-    return false
+    const ranges = (ed.getSelections() ?? []).map((selection) =>
+      deletionRange(
+        {
+          start: model.getOffsetAt({
+            lineNumber: selection.startLineNumber,
+            column: selection.startColumn,
+          }),
+          end: model.getOffsetAt({
+            lineNumber: selection.endLineNumber,
+            column: selection.endColumn,
+          }),
+        },
+        forward,
+      ),
+    )
+    return deletionHitsKey(regions, ranges)
   }
 
   const onKeyDown = (event: KeyboardEvent) => {
@@ -730,10 +704,7 @@ export function bindLangText(
     const model = ed.getModel()
     const position = event.target.position
     if (!model || !position) return
-    const span = findSpanAt(
-      parseLangSpans(model.getValue()),
-      model.getOffsetAt(position),
-    )
+    const span = findSpanAt(currentSpans(), model.getOffsetAt(position))
     if (!span) return
     event.event.preventDefault()
     openEditor(span, null)
