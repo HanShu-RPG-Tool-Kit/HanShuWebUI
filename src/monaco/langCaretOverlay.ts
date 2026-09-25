@@ -98,10 +98,18 @@ export function createLangCaretOverlay(options: {
         // 量出来的实际宽度：框宽 = max(渲染长度)，跟原文列数无关
         const boxWidth = box.getBoundingClientRect?.().width ?? 0
         const tailWidth = tail?.getBoundingClientRect?.().width ?? 0
-        left =
-          span.terminator && offset >= span.terminator.end
-            ? boxWidth + TAIL_GAP_PX + tailWidth
-            : boxWidth
+        const tailStart = boxWidth + TAIL_GAP_PX
+        const term = span.terminator
+        if (term && offset >= term.end) {
+          // `//` 之后
+          left = tailStart + tailWidth
+        } else if (term && offset > term.start) {
+          // 落在两个 `/` 之间：`//` 是 2 个等宽字符，按比例画在尾标内部
+          left = tailStart + (tailWidth * (offset - term.start)) / 2
+        } else {
+          // 键名之内，或键名之后、`//` 之前
+          left = boxWidth
+        }
       }
 
       const caret = document.createElement('div')

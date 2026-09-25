@@ -117,6 +117,13 @@ export function bindLangText(
   /** 自动成键写下的条目；被撤销的挪进 redoLog，重做时放回 */
   let migrationLog: MigrationRecord[] = []
   let redoLog: MigrationRecord[] = []
+  /** 光标"整体跳过框"的辅助状态 */
+  let snapping = false
+  let snapTimer: number | null = null
+  let lastArrowDir: 'left' | 'right' | null = null
+  let lastCaretOffset: number | null = null
+  /** 按 model 版本缓存解析结果（光标移动也要查片段表） */
+  let spanCache: { version: number; spans: LangSpan[] } | null = null
   let ctrlHeld = false
   let migrating = false
   let disposed = false
@@ -143,7 +150,16 @@ export function bindLangText(
 
   const currentSpans = (): LangSpan[] => {
     const model = ed.getModel()
-    return model ? parseLangSpans(model.getValue()) : []
+    if (!model) return []
+    // 光标移动也要查片段表，按 model 版本缓存，避免每次按键都重解析全篇
+    const version =
+      typeof model.getVersionId === 'function' ? model.getVersionId() : -1
+    if (version >= 0 && spanCache && spanCache.version === version) {
+      return spanCache.spans
+    }
+    const spans = parseLangSpans(model.getValue())
+    if (version >= 0) spanCache = { version, spans }
+    return spans
   }
 
   /** 按 offset 换算覆盖框的视口矩形（需要时取元素本身的矩形） */
@@ -573,8 +589,102 @@ export function bindLangText(
     render()
   }
 
-  const onKeyDown = (event: KeyboardEvent) =>
+  /**
+   * 框的原子范围：只有被替换掉的那段正文（键名）。
+   * `//` 是作者自己敲的语句记号、渲染上也在框外做尾标，不属于框，
+   * 光标可以停在它与键名之间，也可以从它外侧删掉它。
+   */
+  const atomicRegion = (span: LangSpan): { start: number; end: number } => ({
+    start: span.start,
+    end: span.end,
+  })
+
+  /** 已成键的框（未成键的原文不设防，用户照样能自由编辑） */
+  const keyedRegions = (): Array<{ start: number; end: number }> => {
+    const out: Array<{ start: number; end: number }> = []
+    for (const span of currentSpans()) {
+      if (!normalizeLocaleKey(span.value)) continue
+      out.push(atomicRegion(span))
+    }
+    return out
+  }
+
+  /**
+   * 框是整体：光标不允许停在键名（或归属它的 `//`）里面。
+   * 从左边进来落到框左沿，从右边进来落到框右沿 —— 也就是"直接跳过整个框"。
+   * 延迟一拍再改光标：Monaco 自己的联动编辑也走调度器，在光标事件里同步改会被同一轮更新覆盖。
+   */
+  const snapCursorOutOfBox = () => {
+    if (disposed || snapping) return
+    const model = ed.getModel()
+    const position = ed.getPosition()
+    if (!model || !position) return
+    const offset = model.getOffsetAt(position)
+    const region = keyedRegions().find((r) => offset > r.start && offset < r.end)
+    if (!region) return
+    const dir =
+      lastArrowDir ??
+      (lastCaretOffset != null && offset < lastCaretOffset ? 'left' : 'right')
+    lastArrowDir = null
+    const target = dir === 'left' ? region.start : region.end
+    snapping = true
+    if (snapTimer != null) window.clearTimeout(snapTimer)
+    snapTimer = window.setTimeout(() => {
+      snapTimer = null
+      snapping = false
+      const m = ed.getModel()
+      if (disposed || !m) return
+      ed.setPosition(m.getPositionAt(target))
+    }, 0)
+  }
+
+  /**
+   * 删除键只"蹭到"框的一部分（键名或归属的 `//`）时，整键无响应：
+   * 否则会改坏键名，被自动成键逻辑当成新文本再生成一个键。
+   * 完整包含整个框的删除（例如选中整行）仍然放行 —— 那是明确的删除意图。
+   */
+  const deletionTouchesBox = (forward: boolean): boolean => {
+    const model = ed.getModel()
+    if (!model) return false
+    const regions = keyedRegions()
+    if (regions.length === 0) return false
+    for (const selection of ed.getSelections() ?? []) {
+      let start = model.getOffsetAt({
+        lineNumber: selection.startLineNumber,
+        column: selection.startColumn,
+      })
+      let end = model.getOffsetAt({
+        lineNumber: selection.endLineNumber,
+        column: selection.endColumn,
+      })
+      if (start === end) {
+        if (forward) end += 1
+        else start -= 1
+      }
+      for (const region of regions) {
+        const overlaps = start < region.end && end > region.start
+        const covers = start <= region.start && end >= region.end
+        if (overlaps && !covers) return true
+      }
+    }
+    return false
+  }
+
+  const onKeyDown = (event: KeyboardEvent) => {
     setCtrl(event.ctrlKey || event.metaKey)
+    if (!ed.hasTextFocus()) return
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      lastArrowDir = event.key === 'ArrowLeft' ? 'left' : 'right'
+      return
+    }
+    if (event.key === 'Backspace' || event.key === 'Delete') {
+      if (deletionTouchesBox(event.key === 'Delete')) {
+        // 捕获阶段拦下：Monaco 的文本框收不到这次按键，等于无响应
+        event.preventDefault()
+        event.stopPropagation()
+      }
+    }
+  }
   const onKeyUp = (event: KeyboardEvent) =>
     setCtrl(event.ctrlKey || event.metaKey)
   const onBlur = () => setCtrl(false)
@@ -602,6 +712,8 @@ export function bindLangText(
   })
 
   const contentSub = ed.onDidChangeModelContent((event) => {
+    // 内容变了，之前记录的光标偏移失效（避免用它判断方向）
+    lastCaretOffset = null
     // 撤销 / 重做：只收拾映射，不再自动成键（否则刚撤销就被立刻重新成键，撤销等于无效）
     if (event.isUndoing || event.isRedoing) {
       reconcileMigrations(event)
@@ -612,8 +724,14 @@ export function bindLangText(
   })
   const scrollSub = ed.onDidScrollChange(onScroll)
   const layoutSub = ed.onDidLayoutChange(onLayout)
-  // 光标进出片段 / 焦点变化时重画自绘光标
-  const caretSub = ed.onDidChangeCursorPosition(() => caretOverlay.update())
+  // 光标进出片段 / 焦点变化时重画自绘光标；进框则整体跳到框的另一侧
+  const caretSub = ed.onDidChangeCursorPosition(() => {
+    snapCursorOutOfBox()
+    const m = ed.getModel()
+    const p = ed.getPosition()
+    lastCaretOffset = m && p ? m.getOffsetAt(p) : null
+    caretOverlay.update()
+  })
   const focusSub = ed.onDidFocusEditorText?.(() => caretOverlay.update())
   const blurSub = ed.onDidBlurEditorText?.(() => caretOverlay.update())
 
@@ -633,6 +751,7 @@ export function bindLangText(
     dispose() {
       disposed = true
       if (timer != null) window.clearTimeout(timer)
+      if (snapTimer != null) window.clearTimeout(snapTimer)
       if (frame != null) window.cancelAnimationFrame(frame)
       window.removeEventListener('keydown', onKeyDown, true)
       window.removeEventListener('keyup', onKeyUp, true)
