@@ -10,6 +10,8 @@ import type { LangTextSink } from './langTextMap'
  * 磁盘**读**发生在建映射之前，所以 `LangTextSink` 仍是同步接口。
  * 磁盘**写**是异步的，但按调用顺序**串行**执行：`writeTextFile` 内部有三步 await，
  * 并发写会让落盘顺序变成「完成顺序」，把新内容覆盖成旧快照。
+ * 工程模式下每次写还会**镜像进工作区模型**：否则资源管理器里看不到这个文件
+ * （它结尾是语言标签、不在后缀白名单里，工程加载另有一处例外判断）。
  * 每次写入的结果通过 `onWriteResult` 上报（成功 null / 失败 error），
  * 失败不影响内存缓存（缓存始终权威），但必须能被界面看见。
  */
@@ -53,6 +55,12 @@ export async function createLangTextSink(
   return {
     // 磁盘上还没有这个文件时，退回虚拟工作区里可能已有的内容
     read: () => diskText ?? virtual.read(),
-    write: enqueue,
+    // 工程模式：先镜像进工作区模型，再写真实磁盘文件。
+    // 镜像让它立刻出现在资源管理器里、也让正常的保存路径认得它；
+    // 磁盘写异步串行执行，结果逐次上报。
+    write: (content: string) => {
+      virtual.write(content)
+      enqueue(content)
+    },
   }
 }
