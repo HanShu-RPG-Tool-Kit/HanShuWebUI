@@ -63,10 +63,10 @@ fn migrates_v2_to_v3() {
     for e in &page.entries {
         assert_eq!(e.folder_id, None);
     }
-    // persisted as v3 now
+    // persisted as v4 now
     let raw = std::fs::read_to_string(root.join("library.json")).unwrap();
     let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
-    assert_eq!(v["schemaVersion"], 3);
+    assert_eq!(v["schemaVersion"], 4);
     assert_eq!(v["folders"].as_array().unwrap().len(), 0);
 }
 
@@ -169,11 +169,15 @@ fn storage_with_entry() -> (std::path::PathBuf, Storage, String) {
         .add_entry(skin_core::storage::AddEntryInput {
             skin_id: skin_id.clone(),
             name: "测试一".into(),
+            active: true,
             tag_ids: vec![],
             folder_id: None,
             favorite: false,
             model,
             source: skin_core::storage::schema::EntrySource::SkinCode,
+            provenance: Default::default(),
+            license: Default::default(),
+            note: String::new(),
         })
         .unwrap();
     (root, storage, entry.entry_id)
@@ -209,11 +213,15 @@ fn same_skin_id_multiple_entries() {
         .add_entry(skin_core::storage::AddEntryInput {
             skin_id: entry.skin_id.clone(),
             name: "同对象第二条例".into(),
+            active: true,
             tag_ids: vec![],
             folder_id: None,
             favorite: false,
             model: SkinModel::Classic,
             source: skin_core::storage::schema::EntrySource::SkinCode,
+            provenance: Default::default(),
+            license: Default::default(),
+            note: String::new(),
         })
         .unwrap();
     assert_eq!(storage.entries_using(&entry.skin_id).len(), 2);
@@ -250,11 +258,15 @@ fn tag_guards_and_three_state_folder() {
         .add_entry(skin_core::storage::AddEntryInput {
             skin_id,
             name: "带标签".into(),
+            active: true,
             tag_ids: vec![t2.tag_id.clone()],
             folder_id: Some(folder.folder_id.clone()),
             favorite: false,
             model,
             source: skin_core::storage::schema::EntrySource::SkinCode,
+            provenance: Default::default(),
+            license: Default::default(),
+            note: String::new(),
         })
         .unwrap();
 
@@ -309,6 +321,8 @@ fn batch_patch_is_all_or_nothing() {
             add_tag_ids: Some(vec![tag.tag_id.clone()]),
             remove_tag_ids: None,
             folder_id: None,
+            active: None,
+            expected_revisions: None,
         })
         .unwrap_err();
     assert_eq!(err.code(), "NOT_FOUND");
@@ -322,6 +336,8 @@ fn batch_patch_is_all_or_nothing() {
             add_tag_ids: Some(vec![tag.tag_id.clone()]),
             remove_tag_ids: None,
             folder_id: None,
+            active: None,
+            expected_revisions: None,
         })
         .unwrap();
     assert_eq!(updated, 1);
@@ -339,11 +355,15 @@ fn restart_persistence() {
             .add_entry(skin_core::storage::AddEntryInput {
                 skin_id,
                 name: "持久".into(),
+                active: true,
                 tag_ids: vec![tag.tag_id],
                 folder_id: None,
                 favorite: true,
                 model,
                 source: skin_core::storage::schema::EntrySource::SkinCode,
+                provenance: Default::default(),
+                license: Default::default(),
+                note: String::new(),
             })
             .unwrap();
     }
@@ -408,7 +428,7 @@ fn skin_code_import_save_preview_restart() {
 
     // save → entry exists; restart keeps it
     let entry = mgr
-        .save_entry(&job.job_id, "导入的皮肤", vec![], vec![], None, false)
+        .save_entry(&job.job_id, "导入的皮肤", vec![], vec![], None, false, None, None, None, None)
         .unwrap();
     assert_eq!(entry.name, "导入的皮肤");
     drop(mgr);
@@ -443,7 +463,7 @@ fn png_file_import_full_chain() {
     assert_eq!(result.suggested_name, "legacy");
 
     let entry = mgr
-        .save_entry(&job.job_id, "旧版皮肤", vec![], vec![], None, false)
+        .save_entry(&job.job_id, "旧版皮肤", vec![], vec![], None, false, None, None, None, None)
         .unwrap();
     assert!(matches!(
         entry.source,
@@ -470,7 +490,7 @@ fn portable_v2_and_v1_import() {
     );
     // save materializes the tag paths
     let entry = mgr
-        .save_entry(&job.job_id, "便携皮肤", vec![], vec![], None, false)
+        .save_entry(&job.job_id, "便携皮肤", vec![], vec![], None, false, None, None, None, None)
         .unwrap();
     assert_eq!(entry.tag_ids.len(), 1);
     let (_, tags) = storage.tag_tree_with_stats();
@@ -481,7 +501,7 @@ fn portable_v2_and_v1_import() {
     let job1 = drive(&mgr, ImportInput::SkinFile { bytes: v1, file_name: None });
     assert_eq!(job1.state, JobState::Ready, "{:?}", job1.error);
     let entry1 = mgr
-        .save_entry(&job1.job_id, "旧便携", vec![], vec![], None, false)
+        .save_entry(&job1.job_id, "旧便携", vec![], vec![], None, false, None, None, None, None)
         .unwrap();
     assert_eq!(entry1.tag_ids.len(), 2); // 精灵 + 战士
 }
@@ -545,4 +565,263 @@ fn encode_decode_roundtrip_via_storage() {
     let (_, re_id) = decode_skin_code(&re_encoded).unwrap();
     assert_eq!(re_id, id1);
     let _ = rgba_to_png(&decoded.rgba).unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// v4 metadata round-trip / filters / sorting / manifest (方案 §5–§7)
+// ---------------------------------------------------------------------------
+
+fn add_meta_entry(
+    storage: &Storage,
+    skin_id: &str,
+    name: &str,
+    active: bool,
+    author: Option<&str>,
+    license_name: Option<&str>,
+    tag_ids: Vec<String>,
+    model: SkinModel,
+) -> skin_core::storage::schema::LibraryEntry {
+    storage
+        .add_entry(skin_core::storage::AddEntryInput {
+            skin_id: skin_id.to_string(),
+            name: name.to_string(),
+            active,
+            tag_ids,
+            folder_id: None,
+            favorite: false,
+            model,
+            source: skin_core::storage::schema::EntrySource::SkinCode,
+            provenance: skin_core::storage::schema::Provenance {
+                author: author.map(|s| s.to_string()),
+                source_name: Some("Nameless".into()),
+                source_url: Some("https://example.com/a".into()),
+                source_note: None,
+                original_created_at: None,
+            },
+            license: skin_core::storage::schema::LicenseInfo {
+                status: if license_name.is_some() {
+                    skin_core::storage::schema::LicenseStatus::Declared
+                } else {
+                    skin_core::storage::schema::LicenseStatus::Unspecified
+                },
+                name: license_name.map(|s| s.to_string()),
+                url: None,
+                note: None,
+            },
+            note: "备注内容".into(),
+        })
+        .unwrap()
+}
+
+#[test]
+fn v4_metadata_round_trip_and_persistence() {
+    let root = temp_root("v4meta");
+    let (skin_id, model) = {
+        let storage = Storage::open(&root).unwrap();
+        let (skin_id, model) = storage.put_object(&sample_code()).unwrap();
+        add_meta_entry(&storage, &skin_id, "守卫", false, Some("Alice"), Some("MIT"), vec![], model);
+        (skin_id, model)
+    };
+    // Reopen: all v4 fields survive a restart.
+    let storage = Storage::open(&root).unwrap();
+    let page = storage.list_entries(&LibraryQuery { search: Some("守卫".into()), ..Default::default() });
+    assert_eq!(page.total, 1);
+    let e = &page.entries[0];
+    assert!(!e.active);
+    assert_eq!(e.provenance.author.as_deref(), Some("Alice"));
+    assert_eq!(e.license.status, skin_core::storage::schema::LicenseStatus::Declared);
+    assert_eq!(e.license.name.as_deref(), Some("MIT"));
+    assert_eq!(e.note, "备注内容");
+    assert_eq!(e.skin_id, skin_id);
+    assert_eq!(e.model, model);
+    // schema version on disk is 4
+    let raw = std::fs::read_to_string(root.join("library.json")).unwrap();
+    assert!(raw.contains("\"schemaVersion\": 4"));
+}
+
+#[test]
+fn positive_and_negative_filters_with_sorting_and_paging() {
+    let root = temp_root("filters");
+    let storage = Storage::open(&root).unwrap();
+    let (id_a, _) = storage.put_object(&sample_code()).unwrap();
+    let (id_b, _) = storage.put_object(&sample_code_2()).unwrap();
+
+    let guard = storage.create_tag("守卫", None, None).unwrap();
+    let modern = storage.create_tag("现代", None, None).unwrap();
+
+    // 守卫+已启用+MIT;守卫+已禁用+未声明;现代+已启用
+    add_meta_entry(&storage, &id_a, "A", true, Some("Alice"), Some("MIT"), vec![guard.tag_id.clone()], SkinModel::Classic);
+    add_meta_entry(&storage, &id_a, "B", false, Some("Bob"), None, vec![guard.tag_id.clone()], SkinModel::Classic);
+    add_meta_entry(&storage, &id_b, "C", true, Some("Alice"), None, vec![modern.tag_id.clone()], SkinModel::Slim);
+
+    // 包含【守卫】 排除【现代】 → A、B
+    let q = LibraryQuery {
+        tag_ids: vec![guard.tag_id.clone()],
+        exclude_tag_ids: vec![modern.tag_id.clone()],
+        ..Default::default()
+    };
+    let page = storage.list_entries(&q);
+    assert_eq!(page.total, 2);
+
+    // + 仅已启用 → A
+    let page = storage.list_entries(&LibraryQuery { active: Some(true), ..q.clone() });
+    assert_eq!(page.total, 1);
+    assert_eq!(page.entries[0].name, "A");
+
+    // + 排除未声明协议(即 licenseUnspecified=false)→ A
+    let page = storage.list_entries(&LibraryQuery {
+        license_unspecified: Some(false),
+        ..q.clone()
+    });
+    assert_eq!(page.total, 1);
+    assert_eq!(page.entries[0].name, "A");
+
+    // 仅未声明协议 → B、C
+    let page = storage.list_entries(&LibraryQuery {
+        license_unspecified: Some(true),
+        ..Default::default()
+    });
+    assert_eq!(page.total, 2);
+
+    // 作者筛选
+    let page = storage.list_entries(&LibraryQuery { author: Some("alice".into()), ..Default::default() });
+    assert_eq!(page.total, 2);
+
+    // 模型筛选
+    let page = storage.list_entries(&LibraryQuery { models: vec![SkinModel::Slim], ..Default::default() });
+    assert_eq!(page.total, 1);
+    assert_eq!(page.entries[0].name, "C");
+
+    // 稳定排序:名称升序,同值按 entryId;分页无重复无遗漏
+    let all = storage.list_entries(&LibraryQuery {
+        sort_by: Some(skin_core::storage::EntrySortBy::Name),
+        sort_direction: Some(skin_core::storage::SortDirection::Asc),
+        ..Default::default()
+    });
+    let names: Vec<&str> = all.entries.iter().map(|e| e.name.as_str()).collect();
+    assert_eq!(names, vec!["A", "B", "C"]);
+
+    let p1 = storage.list_entries(&LibraryQuery { page: Some(1), page_size: Some(2), ..Default::default() });
+    let p2 = storage.list_entries(&LibraryQuery { page: Some(2), page_size: Some(2), ..Default::default() });
+    assert_eq!(p1.total, 3);
+    assert_eq!(p1.entries.len(), 2);
+    assert_eq!(p2.entries.len(), 1);
+    let ids: Vec<&str> = p1.entries.iter().chain(p2.entries.iter()).map(|e| e.entry_id.as_str()).collect();
+    let uniq: std::collections::HashSet<&str> = ids.iter().copied().collect();
+    assert_eq!(ids.len(), uniq.len());
+}
+
+#[test]
+fn usable_manifest_contains_only_active_entries() {
+    let root = temp_root("manifest");
+    let storage = Storage::open(&root).unwrap();
+    let (skin_id, model) = storage.put_object(&sample_code()).unwrap();
+    add_meta_entry(&storage, &skin_id, "启用项", true, Some("Alice"), Some("CC BY 4.0"), vec![], model);
+    add_meta_entry(&storage, &skin_id, "禁用项", false, Some("Bob"), None, vec![], model);
+
+    let usable = storage.list_usable_entries();
+    assert_eq!(usable.len(), 1);
+    assert_eq!(usable[0].name, "启用项");
+    assert_eq!(usable[0].license.name.as_deref(), Some("CC BY 4.0"));
+    // 禁用不删除内容对象
+    assert!(storage.get_object(&skin_id).unwrap().is_some());
+}
+
+#[test]
+fn batch_active_conflict_is_all_or_nothing() {
+    let root = temp_root("batchactive");
+    let storage = Storage::open(&root).unwrap();
+    let (skin_id, model) = storage.put_object(&sample_code()).unwrap();
+    let e1 = add_meta_entry(&storage, &skin_id, "一", true, None, None, vec![], model);
+    let e2 = add_meta_entry(&storage, &skin_id, "二", true, None, None, vec![], model);
+    // Bump e2's revision so the stale expected revision is genuinely stale.
+    let bumped = storage
+        .patch_entry(&e2.entry_id, e2.revision, PatchEntry {
+            favorite: Some(true),
+            ..Default::default()
+        })
+        .unwrap();
+
+    // Stale expected revision for the second entry → whole batch rejected.
+    let err = storage
+        .batch_patch_entries(BatchPatch {
+            entry_ids: vec![e1.entry_id.clone(), e2.entry_id.clone()],
+            active: Some(false),
+            expected_revisions: Some(vec![e1.revision, e2.revision]),
+            ..Default::default()
+        })
+        .unwrap_err();
+    assert_eq!(err.code(), "REVISION_MISMATCH");
+    // Neither entry changed.
+    assert!(storage.get_entry(&e1.entry_id).unwrap().active);
+    assert!(storage.get_entry(&e2.entry_id).unwrap().active);
+
+    // Correct revisions → both disabled.
+    storage
+        .batch_patch_entries(BatchPatch {
+            entry_ids: vec![e1.entry_id.clone(), e2.entry_id.clone()],
+            active: Some(false),
+            expected_revisions: Some(vec![e1.revision, bumped.revision]),
+            ..Default::default()
+        })
+        .unwrap();
+    assert!(!storage.get_entry(&e1.entry_id).unwrap().active);
+    assert!(!storage.get_entry(&e2.entry_id).unwrap().active);
+}
+
+#[test]
+fn portable_v3_export_import_round_trip() {
+    let root = temp_root("portable3");
+    let storage = Storage::open(&root).unwrap();
+    let (skin_id, model) = storage.put_object(&sample_code()).unwrap();
+    let entry = add_meta_entry(&storage, &skin_id, "可转移", true, Some("Alice"), Some("MIT"), vec![], model);
+    let tag = storage.create_tag("守卫", None, None).unwrap();
+    storage
+        .patch_entry(&entry.entry_id, entry.revision, PatchEntry {
+            tag_ids: Some(vec![tag.tag_id.clone()]),
+            ..Default::default()
+        })
+        .unwrap();
+
+    // Serialize the v3 portable shape (as the export commands do).
+    let entry = storage.get_entry(&entry.entry_id).unwrap();
+    let obj = storage.get_object(&entry.skin_id).unwrap().unwrap();
+    let portable = skin_core::storage::schema::PortableSkinFileV3 {
+        schema_version: 3,
+        name: entry.name.clone(),
+        skin_id: entry.skin_id.clone(),
+        skin_code: obj.0.clone(),
+        model: entry.model,
+        tag_paths: vec![vec!["守卫".into()]],
+        active: entry.active,
+        license: entry.license.clone(),
+        provenance: entry.provenance.clone(),
+        note: entry.note.clone(),
+    };
+    let bytes = serde_json::to_vec(&portable).unwrap();
+
+    // Import into a fresh library via the pipeline.
+    let root2 = temp_root("portable3b");
+    let storage2 = Storage::open(&root2).unwrap();
+    let mgr = Arc::new(ImportManager::new(Arc::new(Storage::open(&root2).unwrap())));
+    install_test_spawner();
+    let job = drive(&mgr, ImportInput::SkinFile { bytes, file_name: Some("可转移.skin.json".into()) });
+    assert_eq!(job.state, JobState::Ready);
+    let result = job.result.unwrap();
+    assert_eq!(result.skin_id, skin_id);
+    assert_eq!(result.suggested_active, Some(true));
+    assert_eq!(result.suggested_license.unwrap().name.as_deref(), Some("MIT"));
+    assert_eq!(result.suggested_provenance.unwrap().author.as_deref(), Some("Alice"));
+    assert_eq!(result.suggested_note.as_deref(), Some("备注内容"));
+
+    let saved = mgr
+        .save_entry(&job.job_id, "新名字", vec![], vec![], None, false, None, None, None, None)
+        .unwrap();
+    assert_eq!(saved.skin_id, skin_id);
+    assert_ne!(saved.entry_id, entry.entry_id); // new library → new entryId
+    assert!(saved.active); // active carried from the file
+    assert_eq!(saved.license.name.as_deref(), Some("MIT"));
+    assert_eq!(saved.provenance.author.as_deref(), Some("Alice"));
+    assert_eq!(saved.note, "备注内容");
+    assert_eq!(saved.tag_ids.len(), 1); // tagPaths resolved at save time
 }

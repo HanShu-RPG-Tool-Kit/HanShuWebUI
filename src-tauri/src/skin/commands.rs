@@ -8,7 +8,7 @@ use skin_core::codec::{decode_skin_code, SkinModel};
 use skin_core::error::codes;
 use skin_core::imports::{ImportInput, ImportJob, JobState};
 use skin_core::normalize::rgba_to_png;
-use skin_core::storage::schema::{LibraryEntry, PortableSkinFileV2};
+use skin_core::storage::schema::{LibraryEntry, PortableSkinFileV2, PortableSkinFileV3};
 use skin_core::storage::{
     BatchPatch, LibraryQuery, PatchEntry, PatchFolder, PatchTag, Storage,
 };
@@ -51,9 +51,19 @@ type CmdResult<T> = Result<T, CommandError>;
 #[serde(rename_all = "camelCase")]
 pub struct Capabilities {
     pub tool_version: String,
+    pub api_version: String,
+    pub library_schema_version: u32,
     pub format_version: u32,
     pub import_kinds: [&'static str; 5],
     pub live_apply: bool,
+    pub features: CapabilitiesFeatures,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CapabilitiesFeatures {
+    pub batch_active: bool,
+    pub http_api: bool,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -91,6 +101,14 @@ pub struct SaveEntryRequest {
     pub folder_id: Option<String>,
     #[serde(default)]
     pub favorite: bool,
+    #[serde(default)]
+    pub active: Option<bool>,
+    #[serde(default)]
+    pub license: Option<skin_core::storage::schema::LicenseInfo>,
+    #[serde(default)]
+    pub provenance: Option<skin_core::storage::schema::Provenance>,
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -142,9 +160,15 @@ where
 pub async fn skin_get_capabilities() -> CmdResult<Capabilities> {
     Ok(Capabilities {
         tool_version: env!("CARGO_PKG_VERSION").to_string(),
+        api_version: "1.0.0".to_string(),
+        library_schema_version: skin_core::storage::schema::SCHEMA_VERSION,
         format_version: 1,
         import_kinds: ["png-file", "png-url", "player-name", "skin-code", "skin-file"],
         live_apply: false,
+        features: CapabilitiesFeatures {
+            batch_active: true,
+            http_api: false,
+        },
     })
 }
 
@@ -154,6 +178,18 @@ pub async fn skin_list_entries(
     query: LibraryQuery,
 ) -> CmdResult<skin_core::storage::LibraryPage> {
     with_library(&state, move |lib| Ok(lib.list_entries(&query))).await
+}
+
+#[tauri::command]
+pub async fn skin_get_entry(
+    state: State<'_, SkinState>,
+    entry_id: String,
+) -> CmdResult<LibraryEntry> {
+    with_library(&state, move |lib| {
+        lib.get_entry(&entry_id)
+            .ok_or_else(|| SkinError::api(codes::NOT_FOUND, "entry not found"))
+    })
+    .await
 }
 
 #[tauri::command]
@@ -276,6 +312,10 @@ pub async fn skin_save_entry(
                 body.tag_paths,
                 body.folder_id,
                 body.favorite,
+                body.active,
+                body.license,
+                body.provenance,
+                body.note,
             )
             .map_err(CommandError::from)
     })
@@ -539,14 +579,35 @@ pub async fn skin_export_skin(
                             .collect()
                     })
                     .unwrap_or_default();
-                let portable = PortableSkinFileV2 {
-                    schema_version: 2,
-                    name: entry
-                        .map(|e| e.name)
-                        .unwrap_or_else(|| format!("skin-{}", &skin_id[..8])),
-                    tag_paths,
+                let (name, model, active, license, provenance, note) = match entry {
+                    Some(e) => (
+                        e.name,
+                        e.model,
+                        e.active,
+                        e.license,
+                        e.provenance,
+                        e.note,
+                    ),
+                    None => (
+                        format!("skin-{}", &skin_id[..8]),
+                        skin_core::codec::SkinModel::Classic,
+                        false,
+                        Default::default(),
+                        Default::default(),
+                        Default::default(),
+                    ),
+                };
+                let portable = PortableSkinFileV3 {
+                    schema_version: 3,
+                    name,
                     skin_id: skin_id.clone(),
                     skin_code: obj.0,
+                    model,
+                    tag_paths,
+                    active,
+                    license,
+                    provenance,
+                    note,
                 };
                 Ok(serde_json::to_value(portable)?)
             }
@@ -559,11 +620,12 @@ pub async fn skin_export_skin(
     .await
 }
 
-/// Portable v2 export addressed by entryId (correct per-entry metadata).
+/// Portable v3 export addressed by entryId (correct per-entry metadata).
 #[tauri::command]
 pub async fn skin_export_entry(
     state: State<'_, SkinState>,
     entry_id: String,
+    format: Option<String>,
 ) -> CmdResult<serde_json::Value> {
     with_library(&state, move |lib| {
         let entry = lib
@@ -578,14 +640,59 @@ pub async fn skin_export_entry(
             .map(|id| lib.tag_path(id))
             .filter(|p| !p.is_empty())
             .collect();
-        let portable = PortableSkinFileV2 {
-            schema_version: 2,
-            name: entry.name,
-            tag_paths,
-            skin_id: entry.skin_id,
-            skin_code: obj.0,
-        };
-        Ok(serde_json::to_value(portable)?)
+        match format.as_deref() {
+            Some("v2") => {
+                let portable = PortableSkinFileV2 {
+                    schema_version: 2,
+                    name: entry.name.clone(),
+                    tag_paths,
+                    skin_id: entry.skin_id.clone(),
+                    skin_code: obj.0,
+                };
+                Ok(serde_json::to_value(portable)?)
+            }
+            _ => {
+                let portable = PortableSkinFileV3 {
+                    schema_version: 3,
+                    name: entry.name,
+                    skin_id: entry.skin_id,
+                    skin_code: obj.0,
+                    model: entry.model,
+                    tag_paths,
+                    active: entry.active,
+                    license: entry.license,
+                    provenance: entry.provenance,
+                    note: entry.note,
+                };
+                Ok(serde_json::to_value(portable)?)
+            }
+        }
+    })
+    .await
+}
+
+/// Export a manifest of all active entries (usable materials).
+#[tauri::command]
+pub async fn skin_export_usable_manifest(
+    state: State<'_, SkinState>,
+) -> CmdResult<serde_json::Value> {
+    with_library(&state, move |lib| {
+        let entries = lib.list_usable_entries();
+        let items: Vec<serde_json::Value> = entries
+            .into_iter()
+            .map(|e| {
+                serde_json::json!({
+                    "entryId": e.entry_id,
+                    "skinId": e.skin_id,
+                    "name": e.name,
+                    "model": e.model,
+                    "author": e.provenance.author,
+                    "license": e.license,
+                    "provenance": e.provenance,
+                })
+            })
+            .collect();
+        Ok(serde_json::json!({ "entries": items, "count": items.len() }))
     })
     .await
 }

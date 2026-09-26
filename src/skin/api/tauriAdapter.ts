@@ -70,6 +70,7 @@ export function createTauriSkinApi(deps: TauriDeps): SkinApi {
     capabilities: () => call('skin_get_capabilities'),
 
     listEntries: (query) => call('skin_list_entries', { query }),
+    getEntry: (entryId) => call('skin_get_entry', { entryId }),
     listTags: () => call('skin_list_tags'),
     createTag: (body) => call('skin_create_tag', { body }),
     patchTag: (tagId, body) => call('skin_patch_tag', { tagId, patch: body }),
@@ -89,6 +90,13 @@ export function createTauriSkinApi(deps: TauriDeps): SkinApi {
     startImport: (kind, text, model) =>
       call('skin_start_import', { body: { kind, text, model } }),
     importFile: (path, model) => call('skin_import_file', { path, model }),
+    importFileBlob: () =>
+      Promise.reject(
+        new SkinApiError({
+          code: 'UNSUPPORTED',
+          message: '浏览器文件上传仅在 Web 模式可用;桌面请使用文件对话框。',
+        }),
+      ),
     getImport: (jobId) => call('skin_get_import', { jobId }),
     listImports: () => call('skin_list_imports'),
     cancelImport: (jobId) => call('skin_cancel_import', { jobId }),
@@ -100,7 +108,9 @@ export function createTauriSkinApi(deps: TauriDeps): SkinApi {
       }),
     getSkinCode: (skinId) => call('skin_get_skin_code', { skinId }),
     exportSkin: (skinId, format) => call('skin_export_skin', { skinId, format }),
-    exportEntry: (entryId) => call('skin_export_entry', { entryId }),
+    exportEntry: (entryId, format) =>
+      call('skin_export_entry', { entryId, format: format ?? 'v3' }),
+    exportUsableManifest: () => call('skin_export_usable_manifest'),
     saveExportFile: async (skinId, format) => {
       const defaultName =
         format === 'png' ? `${skinId.slice(0, 12)}.png` : `${skinId.slice(0, 12)}.hskin`

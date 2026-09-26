@@ -5,7 +5,7 @@
 //!   png-url:     safe_fetch → same as png-file
 //!   player-name: resolve → safe_fetch(skinUrl) → same; model from profile
 //!   skin-code:   decode/validate → re-derive id → stage
-//!   skin-file:   portable JSON v1/v2 → validate embedded code → stage
+//!   skin-file:   portable JSON v1/v2/v3 → validate embedded code → stage
 //!
 //! Jobs: queued → fetching/validating → ready (or failed/cancelled). Results
 //! are staged in memory until the client saves; staged objects are protected
@@ -16,7 +16,7 @@ use crate::error::{codes, SkinError, SkinResult};
 use crate::network::player::resolve_player_skin;
 use crate::network::safe_fetch;
 use crate::normalize::{normalize_png, rgba_to_png};
-use crate::storage::schema::EntrySource;
+use crate::storage::schema::{EntrySource, LicenseInfo, Provenance};
 use crate::storage::{AddEntryInput, Storage};
 use std::collections::HashSet;
 
@@ -60,6 +60,14 @@ pub struct ImportResult {
     pub skin_code: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub suggested_tag_paths: Option<Vec<Vec<String>>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggested_active: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggested_license: Option<LicenseInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggested_provenance: Option<Provenance>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggested_note: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -85,6 +93,10 @@ pub struct Staged {
     pub skin_code: String,
     pub suggested_name: String,
     pub suggested_tag_paths: Option<Vec<Vec<String>>>,
+    pub suggested_active: Option<bool>,
+    pub suggested_license: Option<LicenseInfo>,
+    pub suggested_provenance: Option<Provenance>,
+    pub suggested_note: Option<String>,
     pub source: EntrySource,
 }
 
@@ -279,6 +291,10 @@ impl ImportManager {
                         skin_code: code,
                         suggested_name,
                         suggested_tag_paths: None,
+                        suggested_active: None,
+                        suggested_license: None,
+                        suggested_provenance: None,
+                        suggested_note: None,
                         source: EntrySource::SkinCode,
                     },
                 )
@@ -294,10 +310,10 @@ impl ImportManager {
                 let parsed: serde_json::Value = serde_json::from_slice(&bytes)
                     .map_err(|_| SkinError::api(codes::BAD_REQUEST, "portable file is not valid JSON"))?;
                 let version = parsed.get("schemaVersion").and_then(|v| v.as_u64());
-                if !matches!(version, Some(1) | Some(2)) {
+                if !matches!(version, Some(1) | Some(2) | Some(3)) {
                     return Err(SkinError::api(
                         codes::BAD_REQUEST,
-                        "portable file missing schemaVersion=1|2/skinCode",
+                        "portable file missing schemaVersion=1|2|3/skinCode",
                     ));
                 }
                 let skin_code = parsed
@@ -306,7 +322,7 @@ impl ImportManager {
                     .ok_or_else(|| {
                         SkinError::api(
                             codes::BAD_REQUEST,
-                            "portable file missing schemaVersion=1|2/skinCode",
+                            "portable file missing schemaVersion=1|2|3/skinCode",
                         )
                     })?
                     .to_string();
@@ -321,8 +337,8 @@ impl ImportManager {
                     }
                 }
                 // Suggestions only — nodes are created when the user saves.
-                let suggested_tag_paths: Option<Vec<Vec<String>>> = if version == Some(2) {
-                    parsed.get("tagPaths").and_then(|v| v.as_array()).map(|arr| {
+                let suggested_tag_paths: Option<Vec<Vec<String>>> = match version {
+                    Some(3) | Some(2) => parsed.get("tagPaths").and_then(|v| v.as_array()).map(|arr| {
                         arr.iter()
                             .filter_map(|p| p.as_array())
                             .map(|p| {
@@ -335,9 +351,8 @@ impl ImportManager {
                             .filter(|p| !p.is_empty())
                             .take(64)
                             .collect::<Vec<Vec<String>>>()
-                    })
-                } else {
-                    parsed.get("tags").and_then(|v| v.as_array()).map(|arr| {
+                    }),
+                    _ => parsed.get("tags").and_then(|v| v.as_array()).map(|arr| {
                         arr.iter()
                             .filter_map(|s| s.as_str())
                             .map(|s| s.trim().to_string())
@@ -345,7 +360,7 @@ impl ImportManager {
                             .take(32)
                             .map(|t| vec![t])
                             .collect::<Vec<Vec<String>>>()
-                    })
+                    }),
                 };
                 let suggested_name = parsed
                     .get("name")
@@ -354,6 +369,14 @@ impl ImportManager {
                     .filter(|s| !s.is_empty())
                     .or_else(|| file_name.as_deref().map(|f| f.to_string()))
                     .unwrap_or_else(|| format!("skin-{}", &verified_id[..8]));
+                let suggested_active = parsed.get("active").and_then(|v| v.as_bool());
+                let suggested_license = parsed.get("license").and_then(|v| {
+                    serde_json::from_value::<LicenseInfo>(v.clone()).ok()
+                });
+                let suggested_provenance = parsed.get("provenance").and_then(|v| {
+                    serde_json::from_value::<Provenance>(v.clone()).ok()
+                });
+                let suggested_note = parsed.get("note").and_then(|v| v.as_str()).map(|s| s.to_string());
                 let (skin_id, model) = self.storage.put_object(&skin_code)?;
                 let png = rgba_to_png(&decoded.rgba)?;
                 self.storage.put_preview_png(&skin_id, &png)?;
@@ -365,6 +388,10 @@ impl ImportManager {
                         skin_code,
                         suggested_name,
                         suggested_tag_paths,
+                        suggested_active,
+                        suggested_license,
+                        suggested_provenance,
+                        suggested_note,
                         source: EntrySource::SkinFile { file_name },
                     },
                 )
@@ -400,6 +427,10 @@ impl ImportManager {
                 skin_code,
                 suggested_name,
                 suggested_tag_paths: None,
+                suggested_active: None,
+                suggested_license: None,
+                suggested_provenance: None,
+                suggested_note: None,
                 source,
             },
         )
@@ -416,6 +447,10 @@ impl ImportManager {
             suggested_name: staged.suggested_name.clone(),
             skin_code: staged.skin_code.clone(),
             suggested_tag_paths: staged.suggested_tag_paths.clone(),
+            suggested_active: staged.suggested_active,
+            suggested_license: staged.suggested_license.clone(),
+            suggested_provenance: staged.suggested_provenance.clone(),
+            suggested_note: staged.suggested_note.clone(),
         });
         e.staged = Some(staged);
         set_state(&mut e.job, JobState::Ready, None);
@@ -431,6 +466,10 @@ impl ImportManager {
         tag_paths: Vec<Vec<String>>,
         folder_id: Option<String>,
         favorite: bool,
+        active: Option<bool>,
+        license: Option<LicenseInfo>,
+        provenance: Option<Provenance>,
+        note: Option<String>,
     ) -> SkinResult<crate::storage::schema::LibraryEntry> {
         let staged = self
             .take_staged(job_id)
@@ -467,11 +506,15 @@ impl ImportManager {
         self.storage.add_entry(AddEntryInput {
             skin_id: staged.skin_id.clone(),
             name,
+            active: active.or(staged.suggested_active).unwrap_or(false),
             tag_ids: final_tag_ids,
             folder_id,
             favorite,
             model: staged.model,
             source: staged.source,
+            provenance: provenance.or(staged.suggested_provenance).unwrap_or_default(),
+            license: license.or(staged.suggested_license).unwrap_or_default(),
+            note: note.or(staged.suggested_note).unwrap_or_default(),
         })
     }
 }
