@@ -430,7 +430,8 @@
   justify-content: center;
   box-sizing: border-box;
   padding: 2px;
-  margin-left: 4px;
+  /* 左边距由 TS 内联设置（VOICE_BUTTON_GAP_PX）：槽位宽度要把它算进去，
+     写在这里会有两个来源、容易漂移 */
   border-radius: 3px;
   pointer-events: auto;
   cursor: pointer;
@@ -481,7 +482,8 @@
 
 /* 被挪到框外右侧的 `//`：行是 flex-start 对齐，所以它贴在**第一行** */
 .hs-lang-tail {
-  margin-left: 2px;
+  /* 左边距由 TS 内联设置（TAIL_GAP_PX）：槽位宽度按「间距 + 尾标实际宽度」留，
+     写在这里会有两个来源、容易漂移 */
   color: var(--vscode-editor-foreground, var(--text));
   white-space: pre;
   pointer-events: none;
@@ -490,6 +492,16 @@
 /* 自绘光标：光标落在片段里时，原生光标会停在（已隐藏的）键名占位上，
    与渲染出来的值错位。所以藏掉原生光标层，在框的首行画一个同款光标：
    落在片段起点贴框左边，落在键名末尾（语句结束、`//` 之前）贴框右边。 */
+/* 拖拽落点光标：键名拖到文本区时指示插入点（落到键名上没有插入点，不显示）。
+   与自绘光标同色同宽，但不眨眼：它是"将要插到这里"，不是一个真光标。 */
+.hs-lang-drop-caret {
+  position: absolute;
+  width: 2px;
+  background: var(--vscode-editorCursor-foreground, var(--accent));
+  opacity: 0.9;
+  pointer-events: none;
+}
+
 .hs-lang-caret {
   position: absolute;
   top: 0;
@@ -730,6 +742,8 @@
   align-items: center;
   justify-content: center;
   min-width: 0;
+  /* 幕布要绝对定位盖在上面 */
+  position: relative;
   border: 1px solid #34383f;
   border-radius: 4px;
   background: #1d2025;
@@ -745,6 +759,50 @@
 
 .voice-picker-wave.is-empty {
   color: #6a7078;
+}
+
+/* 拖入但还没导入的文件：只缓存在内存里，这里说明状态 */
+.voice-picker-pending {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 0 16px;
+  text-align: center;
+}
+
+.voice-picker-pending-name {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #cfd6de;
+  font-size: 13px;
+}
+
+.voice-picker-pending-hint {
+  color: #8b929b;
+  font-size: 11px;
+}
+
+/* 外部文件拖到预览框上：蓝色**虚线**框 + 一层半透明白色幕布（幕布在下面单独写） */
+.voice-picker-wave.is-drop-target {
+  outline: 2px dashed #4f9ed8;
+  outline-offset: -3px;
+}
+
+/* 幕布：盖住整个预览框，表明"这里能放"；不吃事件（拖拽判定仍打在框上） */
+.voice-picker-wave-scrim {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.12);
+  color: #eaf4ff;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  pointer-events: none;
 }
 
 .voice-picker-wave.is-empty svg {
@@ -1627,11 +1685,27 @@ body.is-resizing .monaco-editor {
   font-size: 12px;
 }
 
-.explorer-pkg.drag-over,
-.explorer-assets.drag-over {
-  outline: 1px dashed #4ec9b0;
+/* 投放高亮：框式（只用 outline，不动背景，避免和选中/悬停态混淆）。
+   资源管理器的目录行与编辑器里的键名容器共用这个类。 */
+.is-drop-target {
+  box-sizing: border-box;
+  border-radius: 3px;
+  outline: 2px solid var(--accent);
   outline-offset: -2px;
-  background: rgba(78, 201, 176, 0.08);
+}
+
+/* 原子单位的选中底色。
+   多行值是覆盖层渲染的，文档里只占一行、一个槽位，Monaco 的原生蓝色盖不到其余行，
+   所以整个单位（含配音按钮）的底色由这里补。
+   用**不透明**色：与原生选区在同一行叠加时不会深一块，两种观感一致。
+   色值取 vs-dark 的默认选区色；编辑器失焦时换成"非活动选区"色。 */
+.hs-lang-unit.is-selected {
+  background: #264f78;
+  border-radius: 2px;
+}
+
+.hs-lang-layer.is-unfocused .hs-lang-unit.is-selected {
+  background: #3a3d41;
 }
 
 .explorer-context-menu {

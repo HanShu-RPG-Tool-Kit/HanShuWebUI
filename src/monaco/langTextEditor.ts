@@ -29,6 +29,16 @@ import {
 } from './voiceIcons'
 import type { VoiceLibrary, VoiceUnitStatus } from '../i18n/voiceLibrary'
 import { formatVoiceDuration } from '../i18n/voiceRuntime'
+import {
+  currentDrag,
+  endDrag,
+  hasExternalFiles,
+  readDragPayload,
+  resolveDropIntent,
+  writeDragPayload,
+  type DragSource,
+  type DropIntent,
+} from '../drag/dragPayload'
 import { findSpanAt, parseLangSpans, type LangSpan } from './langTextSpans'
 
 /**
@@ -88,6 +98,16 @@ export type LangUnitMenuRequest = {
   y: number
 }
 
+/** 上级容器被投放：意图已经解析好（外部文件导入音频 / 资产导入音频 / 另一个键名替换） */
+export type LangUnitDropRequest = {
+  key: string
+  intent: DropIntent
+  /** 外部文件（intent.action === 'import-audio-file' 时有） */
+  files: File[]
+  /** 内部载荷（资产 / 键名） */
+  source: DragSource | null
+}
+
 export type LangTextHost = {
   /** 当前活动文件的语言文本映射；不适用（非 .hs、无活动文件、看资产）时返回 null */
   getMap(): LangTextMap | null
@@ -97,6 +117,10 @@ export type LangTextHost = {
   getVoice?(): VoiceLibrary | null
   /** 上级容器被右键 */
   onUnitMenu?(request: LangUnitMenuRequest): void
+  /** 上级容器被投放（拖拽） */
+  onUnitDrop?(request: LangUnitDropRequest): void
+  /** 点了配音按钮但当前是缺失 / 无效态：请求给这个键挑一个音频 */
+  onVoicePick?(key: string): void
 }
 
 export type LangTextBinding = {
@@ -108,6 +132,8 @@ export type LangTextBinding = {
   editUnit(key: string, mode: LangEditMode): void
   /** 右键菜单用：删除该键的原子范围（键名 + 它自己的那个 `//`） */
   deleteUnit(key: string): void
+  /** 拖拽"替换键名"用：把目标键的原文换成另一个键名 */
+  replaceUnitKey(targetKey: string, nextKey: string): void
   dispose(): void
 }
 
@@ -131,6 +157,29 @@ const VOICE_STATE_CLASS: Record<VoiceButtonState, string> = {
   playing: 'hs-voice-playing',
 }
 const MIGRATE_DEBOUNCE_MS = 220
+/** 投放高亮（框式）：容器与资源管理器的目录行共用 */
+const DROP_TARGET_CLASS = 'is-drop-target'
+/** 拖拽落点光标（键名拖到文本区时的插入点指示） */
+const DROP_CARET_CLASS = 'hs-lang-drop-caret'
+/** 原子单位被文档选区命中（多行值要由覆盖层补底色，见 syncUnitSelection） */
+const SELECTED_CLASS = 'is-selected'
+/** 编辑器失焦：选区底色换成 vs-dark 的"非活动选区"色 */
+const UNFOCUSED_CLASS = 'is-unfocused'
+
+/**
+ * 片段集合的指纹：`起始偏移:结束偏移:值` 拼起来。
+ *
+ * 用途：编辑后判断"只重摆位置"是否安全。**绝不能**用行数变化之类的粗判据 ——
+ * 行数不变但键被删掉（选中行内文本删除、删最后一行）时，上一次渲染留下的
+ * `span.start` 已经越界，而 `model.getPositionAt` 不会报错、会**夹到文档末尾**，
+ * 于是幽灵框会闪现在最后一行最左侧。指纹一变就重建，`positionBoxes` 就永远
+ * 拿不到过期片段。
+ */
+export function spanFingerprint(
+  spans: ReadonlyArray<{ start: number; end: number; value: string }>,
+): string {
+  return spans.map((span) => `${span.start}:${span.end}:${span.value}`).join('|')
+}
 /** 框底留出的空隙，避免相邻行的框交叉 */
 const BOX_GAP_PX = 3
 /**
@@ -139,6 +188,30 @@ const BOX_GAP_PX = 3
  * 所以尺寸固定、由 CSS 的 `align-items: center` 摆在中间。
  */
 const VOICE_BUTTON_PX = 22
+
+/**
+ * 按钮与文本框之间的间距（由 TS 写在按钮的内联样式上，样式表不再声明，
+ * 这样"槽位要留多宽"和"按钮实际占多宽"只有一个来源）。
+ */
+const VOICE_BUTTON_GAP_PX = 6
+
+/**
+ * 尾标 `//` 与容器之间的间距。
+ * 同样只在这里定义：内联给尾标、并计入它的槽位宽度（槽位按**尾标实际宽度**留），
+ * 否则 `//` 后面的正文会从按钮右沿开始、压在尾标上。
+ */
+const TAIL_GAP_PX = 2
+
+/** 尾标的文字（测量槽位宽度与创建元素都用它，避免两处写死） */
+const TAIL_TEXT = '//'
+
+/**
+ * 原子单位比文本框多出来的宽度（间距 + 按钮）。
+ *
+ * 文档里的槽位宽度必须按**整个单位**算：Monaco 的原生选区是按这个区间绘制的，
+ * 只算文本框的话蓝色选中范围会正好短一个按钮宽（光标判定同理）。
+ */
+const VOICE_SLOT_EXTRA_PX = VOICE_BUTTON_PX + VOICE_BUTTON_GAP_PX
 
 /** 一行覆盖框：形状即 langCaretOverlay 需要的输入，另加一个用于移除的根节点 */
 /** 一次自动成键写进映射的条目（撤销时要能原样回收 / 重做时放回） */
@@ -174,6 +247,8 @@ export function bindLangText(
 
   let lineEntries: LineEntry[] = []
   let zoneEntries: ZoneEntry[] = []
+  /** 上次渲染时片段集合的指纹（编辑后据此判断能否只重摆位置） */
+  let renderedFingerprint = ''
   /** 自动成键写下的条目；被撤销的挪进 redoLog，重做时放回 */
   let migrationLog: MigrationRecord[] = []
   let redoLog: MigrationRecord[] = []
@@ -228,9 +303,12 @@ export function bindLangText(
   const caretOverlay = createLangCaretOverlay({
     ed,
     domNode,
-    getLines: () => lineEntries,
+    // 被藏起来的条目（偏移越界的兜底）不参与：否则会按 0 尺寸在左上角画出光标
+    getLines: () => lineEntries.filter((entry) => entry.el.style.display !== 'none'),
     isCtrlHeld: () => ctrlHeld,
     lineHeightPx,
+    // 与尾标内联间距同源，见 TAIL_GAP_PX
+    tailGapPx: TAIL_GAP_PX,
   })
 
   const currentSpans = (): LangSpan[] => {
@@ -360,6 +438,13 @@ export function bindLangText(
 
     for (const entry of lineEntries) {
       const key = normalizeLocaleKey(entry.span.value)
+      // 兜底：片段偏移已经越界（理论上不会发生 —— 指纹一变就重建）。
+      // 一旦越界，`getPositionAt` 会**夹到文档末尾**，把框画到最后一行最左侧闪一下，
+      // 所以这里宁可先藏起来，也别拿过期偏移去测量。
+      if (entry.span.start > model.getValueLength()) {
+        entry.el.style.display = 'none'
+        continue
+      }
       const slot = key ? slots.get(key) : undefined
       const slotRect =
         slot && typeof slot.getBoundingClientRect === 'function'
@@ -383,6 +468,8 @@ export function bindLangText(
       entry.el.style.top = `${pos.top}px`
       entry.el.style.maxWidth = `${Math.max(120, editorWidth - pos.left - 12)}px`
     }
+    // 滚动 / 布局变化后，拖拽落点光标跟着新几何走（否则会留在旧位置）
+    positionDropCaret()
   }
 
   const schedulePosition = () => {
@@ -390,10 +477,96 @@ export function bindLangText(
     frame = window.requestAnimationFrame(positionBoxes)
   }
 
+  /**
+   * 拖拽落点光标：键名拖到**文本区**时指示插入点，落在别处（含键名容器）不显示 ——
+   * 落到键名上是"替换键名"，没有插入点可言。
+   *
+   * 为什么自己画：Monaco 自带的落点指示器（`dnd-target` 装饰）只靠它自己的
+   * drop / dragleave / dragend 清除，而我们在键名容器上 stopPropagation 之后它收不到，
+   * 拖完会永久残留一根虚线，所以那个特性被关掉了（编辑器 options 里的 dropIntoEditor）。
+   * 自己画的这版在所有收尾路径（drop / dragleave / dragend / 离开编辑器）都会清掉。
+   */
+  let dropCaretEl: HTMLElement | null = null
+  let dropCaretPosition: { lineNumber: number; column: number } | null = null
+
+  const positionDropCaret = () => {
+    if (!dropCaretEl || !dropCaretPosition) return
+    const box = ed.getScrolledVisiblePosition(dropCaretPosition)
+    if (!box) {
+      dropCaretEl.style.display = 'none'
+      return
+    }
+    dropCaretEl.style.display = ''
+    dropCaretEl.style.left = `${box.left}px`
+    dropCaretEl.style.top = `${box.top}px`
+    dropCaretEl.style.height = `${box.height || lineHeightPx()}px`
+  }
+
+  const showDropCaretAt = (position: { lineNumber: number; column: number }) => {
+    dropCaretPosition = position
+    if (!dropCaretEl) {
+      dropCaretEl = document.createElement('div')
+      dropCaretEl.className = DROP_CARET_CLASS
+      layer.appendChild(dropCaretEl)
+    }
+    positionDropCaret()
+  }
+
+  const hideDropCaret = () => {
+    dropCaretPosition = null
+    dropCaretEl?.remove()
+    dropCaretEl = null
+  }
+
+  /**
+   * 选区命中：文档选区只要**碰到**某个原子单位，就把整个单位记为选中态。
+   *
+   * 为什么必须由覆盖层来画：多行值是覆盖层渲染的，文档里只占**一行、一个槽位**，
+   * Monaco 的原生蓝色只能盖住那一行 —— 其余行完全没有高亮（选中整行时尤其明显）。
+   * 底色用**不透明**色，否则与原生选区在同一行叠加会深一块、分成两种观感。
+   */
+  const syncUnitSelection = () => {
+    const model = ed.getModel()
+    const selection = ed.getSelection()
+    const start = model && selection ? model.getOffsetAt(selection.getStartPosition()) : 0
+    const end = model && selection ? model.getOffsetAt(selection.getEndPosition()) : 0
+    const ranged = start !== end
+    for (const entry of lineEntries) {
+      const { span } = entry
+      const hit = ranged && start < span.end && end > span.start
+      entry.unit?.classList.toggle(SELECTED_CLASS, hit)
+    }
+    layer.classList.toggle(UNFOCUSED_CLASS, !ed.hasTextFocus?.())
+  }
+
+  /**
+   * 编辑之后**立刻**把覆盖框摆正（成键仍然走 220ms 防抖，那是刻意的）。
+   *
+   * 为什么必须显式做：
+   * 1. 内容变化不重摆的话，覆盖框要等到防抖回调里那次 `render()` 才动 —— 换行 /
+   *    删整行这类整体位移就会肉眼可见地慢约 0.2 秒。
+   * 2. Monaco 自己的视图渲染是 rAF 调度的。要在这一个同步任务里量到**新**几何，
+   *    得先用公开 API `ed.render()` 把它刷出来（否则量到的是上一帧的行位置）。
+   *
+   * 片段指纹变了就重建（键被删掉 / 偏移移动，view zone 的锚点也可能失效）；
+   * 只有指纹完全一致（改动落在片段之外，纯几何位移）才只重摆位置。
+   */
+  const syncOverlayAfterEdit = () => {
+    ed.render()
+    if (spanFingerprint(currentSpans()) !== renderedFingerprint) {
+      render()
+      return
+    }
+    positionBoxes()
+    caretOverlay.update()
+  }
+
   const makeTail = (): HTMLElement => {
     const tail = document.createElement('div')
     tail.className = TAIL_CLASS
-    tail.textContent = '//'
+    tail.textContent = TAIL_TEXT
+    // 间距由这里定义：槽位宽度按「间距 + 尾标实际宽度」留，见 TAIL_GAP_PX
+    tail.style.marginLeft = `${TAIL_GAP_PX}px`
     return tail
   }
 
@@ -431,12 +604,14 @@ export function bindLangText(
     button.className = `${VOICE_CLASS} ${VOICE_STATE_CLASS[state]}`
     button.style.width = `${sizePx}px`
     button.style.height = `${sizePx}px`
+    // 间距也由这里定义：槽位宽度按「文本框 + 间距 + 按钮」算，见 VOICE_SLOT_EXTRA_PX
+    button.style.marginLeft = `${VOICE_BUTTON_GAP_PX}px`
     button.title = title
     button.setAttribute('role', 'button')
     button.setAttribute('aria-label', title)
     button.innerHTML = voiceButtonSvg(state)
     button.addEventListener('mousedown', (event) => {
-      event.preventDefault()
+      // 只拦冒泡：**不能 preventDefault**，否则从按钮上起手就拖不动整个单位
       event.stopPropagation()
     })
     button.addEventListener('click', (event) => {
@@ -447,7 +622,64 @@ export function bindLangText(
     return button
   }
 
-  /** 配音按钮的 tooltip：状态 + 原因 / 时长 */
+  /**
+   * 容器的拖拽接线：
+   * - 作为**拖拽源**：拖出去的载荷是 `{ kind: 'key', key }`
+   * - 作为**投放目标**：外部文件 / 资产 → 尝试导入音频；另一个键名 → 替换键名
+   * 支持的投放才 `preventDefault` 并高亮，其余一律不接管（让浏览器保持默认）。
+   */
+  const bindUnitDragDrop = (unit: HTMLElement, key: string) => {
+    unit.draggable = true
+    unit.addEventListener('dragstart', (event) => {
+      writeDragPayload(event.dataTransfer, { kind: 'key', key })
+    })
+    unit.addEventListener('dragend', () => {
+      unit.classList.remove(DROP_TARGET_CLASS)
+      endDrag()
+    })
+    unit.addEventListener('dragover', (event) => {
+      const intent = resolveDropIntent({
+        target: 'key',
+        source: currentDrag(),
+        hasFiles: hasExternalFiles(event.dataTransfer),
+      })
+      if (!intent) return
+      event.preventDefault()
+      event.stopPropagation()
+      if (event.dataTransfer) {
+        event.dataTransfer.dropEffect =
+          intent.action === 'replace-key' ? 'move' : 'copy'
+      }
+      unit.classList.add(DROP_TARGET_CLASS)
+    })
+    unit.addEventListener('dragleave', (event) => {
+      const next = event.relatedTarget as Node | null
+      if (!next || !unit.contains(next)) unit.classList.remove(DROP_TARGET_CLASS)
+    })
+    unit.addEventListener('drop', (event) => {
+      unit.classList.remove(DROP_TARGET_CLASS)
+      const files = Array.from(event.dataTransfer?.files ?? [])
+      const source = readDragPayload(event.dataTransfer)
+      const intent = resolveDropIntent({
+        target: 'key',
+        source,
+        hasFiles: files.length > 0,
+      })
+      if (!intent) return
+      event.preventDefault()
+      event.stopPropagation()
+      host.onUnitDrop?.({ key, intent, files, source })
+      endDrag()
+      // 拖放结束后把焦点还给编辑器：否则 Ctrl+Z 到不了 Monaco（拖拽改的是正文，
+      // 必须能撤销/重做）
+      ed.focus()
+    })
+  }
+
+  /**
+   * 配音按钮的 tooltip：状态 + 原因 / 时长。
+   * 缺失 / 无效时按钮点下去是"打开选择器"，文案里要说清楚。
+   */
   const voiceButtonTitle = (
     state: VoiceButtonState,
     status: VoiceUnitStatus | null,
@@ -461,7 +693,8 @@ export function bindLangText(
         ? `${label} · 点击播放 · ${duration}`
         : `${label} · 点击播放`
     }
-    return status?.reason ? `${label} · ${status.reason}` : label
+    const hint = state === 'invalid' ? '点击重新选择' : '点击选择'
+    return status?.reason ? `${label} · ${status.reason} · ${hint}` : `${label} · ${hint}`
   }
 
   /** 重建覆盖框与 view zone（内容 / Ctrl / 映射变化） */
@@ -482,6 +715,7 @@ export function bindLangText(
     const map = host.getMap()
     if (!model || !map) {
       collection.clear()
+      renderedFingerprint = ''
       return
     }
 
@@ -523,7 +757,9 @@ export function bindLangText(
     }
     const items: RenderItem[] = []
     const texts: string[] = []
-    for (const span of currentSpans()) {
+    const spans = currentSpans()
+    renderedFingerprint = spanFingerprint(spans)
+    for (const span of spans) {
       const key = normalizeLocaleKey(span.value)
       if (!key) continue
 
@@ -541,6 +777,8 @@ export function bindLangText(
       items.push({ span, key, display, displayLines, showKey, stateClass })
       if (showKey) texts.push(key)
       else texts.push(...displayLines)
+      // 尾标要按实际宽度留槽位，也纳入这批测量
+      if (span.terminator) texts.push(TAIL_TEXT)
     }
 
     // 槽位与框共用同一份实测宽度（px），见 langSlotStyles
@@ -557,10 +795,19 @@ export function bindLangText(
         : Math.max(...displayLines.map(widthOf), 1)
 
       // 原文键名 + 被挪走的 `//` 都改成等宽槽位（保留文档，但占位跟随渲染长度）
-      decorations.push(hide(span.start, span.end, widthPx))
+      // 槽位宽度 = 文本框 + 间距 + 按钮：选区/光标判定按整个原子单位算
+      decorations.push(hide(span.start, span.end, widthPx + VOICE_SLOT_EXTRA_PX))
       if (span.terminator) {
-        // `//` 的渲染替身是我的尾标，槽位宽度取 0
-        decorations.push(hide(span.terminator.start, span.terminator.end, 0))
+        // `//` 的字符隐掉，但槽位按**它的实际宽度**留（再加与容器的间距）：
+        // 尾标由覆盖层画在同一位置，留了宽度，`//` 后面的正文才会排在它之后，
+        // 而不是从按钮右沿开始、压在尾标上。
+        decorations.push(
+          hide(
+            span.terminator.start,
+            span.terminator.end,
+            TAIL_GAP_PX + widthOf(TAIL_TEXT),
+          ),
+        )
       }
 
       // 整个值画成一个框（含真换行），框高 = 行数 × 行高 − 3px 缝隙
@@ -578,7 +825,8 @@ export function bindLangText(
       // 上级容器：文本 + 配音按钮。原子化（右键 / 拖拽 / 打开编辑框）都归它
       const unit = document.createElement('div')
       unit.className = UNIT_CLASS
-      unit.draggable = false
+      // 键名既是拖拽源（拖到别的键名=替换、拖到文本=插入键名文本），也是投放目标
+      bindUnitDragDrop(unit, key)
 
       const box = makeBox(display, stateClass, widthPx, boxHeight, key)
       unit.appendChild(box)
@@ -590,14 +838,28 @@ export function bindLangText(
         voiceState,
         VOICE_BUTTON_PX,
         voiceButtonTitle(voiceState, status),
-        () => voice?.togglePlay(key),
+        () => {
+          // 缺失 / 无效：没有可播的东西，点它就是"挑一个" —— 直接开音频选择器
+          if (voiceState === 'missing' || voiceState === 'invalid') {
+            host.onVoicePick?.(key)
+            return
+          }
+          voice?.togglePlay(key)
+        },
       )
       unit.appendChild(button)
 
-      // 左键：打开等位置编辑框（文本框只负责显示，交互一律走容器）
+      // 左键按下：只拦冒泡（别让 Monaco 收走去动光标）。
+      // **不能 preventDefault** —— 浏览器靠 mousedown 的默认行为启动拖拽手势，
+      // 阻止了键名就拖不动了。打开编辑框挪到 click（拖拽之后不会触发 click，正好区分）。
+      // 代价是焦点会离开编辑器（点不可聚焦的 div 会把焦点丢给 body），
+      // 于是 Monaco 收不到 Ctrl+Z、撤销失效 —— 所以这里显式把焦点还回去。
       unit.addEventListener('mousedown', (event) => {
-        // 只认左键：右键交给下面的 contextmenu，否则右键会顺手弹出编辑框
         if (event.button !== 0) return
+        event.stopPropagation()
+        ed.focus()
+      })
+      unit.addEventListener('click', (event) => {
         event.preventDefault()
         event.stopPropagation()
         openEditor(span, box)
@@ -608,8 +870,6 @@ export function bindLangText(
         event.stopPropagation()
         host.onUnitMenu?.({ key, x: event.clientX, y: event.clientY })
       })
-      // 拖拽：只接管并阻止浏览器默认拖拽（拖图 / 拖选中文本）
-      unit.addEventListener('dragstart', (event) => event.preventDefault())
 
       row.appendChild(unit)
       // `//` 渲染在第一行、框外右侧（行是 flex-start 对齐，所以贴在首行）
@@ -621,6 +881,8 @@ export function bindLangText(
         el: lineEl,
         row,
         box,
+        // 光标定位要用容器右沿（原子单位是文本 + 按钮）
+        unit,
         tail,
         span,
         // 尾标现在排在按钮右边：光标定位要用它的真实左沿
@@ -661,6 +923,7 @@ export function bindLangText(
 
     positionBoxes()
     caretOverlay.update()
+    syncUnitSelection()
   }
 
   /** 已成键的框的原子范围（未成键的原文不设防） */
@@ -689,8 +952,7 @@ export function bindLangText(
   }
 
   /** 右键菜单：改键名 / 改文本（复用等位置覆盖编辑框） */
-  const editUnit = (key: string, mode: LangEditMode) => {
-    const entry = entryFor(key)
+  const editUnit = (key: string, mode: LangEditMode) => {    const entry = entryFor(key)
     const span = entry?.span ?? spanFor(key)
     if (!span) return
     openEditor(span, entry?.box ?? null, mode)
@@ -729,6 +991,102 @@ export function bindLangText(
     ed.executeEdits('hanshu-locale-delete', edits)
     ed.pushUndoStop()
     render()
+  }
+
+  /**
+   * 拖拽「替换键名」：把目标键的原文整体换成另一个键名。
+   * 只改正文（同 deleteUnit 的口径），映射条目不动 —— 换完之后这个片段按新键名取文本。
+   */
+  const replaceUnitKey = (targetKey: string, nextKey: string) => {
+    const model = ed.getModel()
+    const span = entryFor(targetKey)?.span ?? spanFor(targetKey)
+    const normalized = normalizeLocaleKey(nextKey)
+    if (!model || !span || !normalized) return
+    if (normalizeLocaleKey(span.value) === normalized) return
+
+    ed.pushUndoStop()
+    ed.executeEdits('hanshu-locale-replace-key', [
+      {
+        range: monaco.Range.fromPositions(
+          model.getPositionAt(span.start),
+          model.getPositionAt(span.end),
+        ),
+        text: normalized,
+      },
+    ])
+    ed.pushUndoStop()
+    render()
+  }
+
+  /**
+   * 编辑器文本区：只接受**键名**，落点插入键名文本（**只插文本，不主动成键**）。
+   *
+   * 无论是否接受都必须吃掉 dragover/drop 的默认行为：否则把外部文件拖进来时，
+   * 浏览器会直接导航到那个文件，应用状态全丢。
+   * 用捕获阶段（先于 Monaco 自己的拖放处理），但**落在键名容器上的事件要放行**，
+   * 否则祖先上的 stopPropagation 会把事件从容器手里抢走。
+   */
+  const eventInsideUnit = (event: DragEvent): boolean => {
+    const target = event.target as HTMLElement | null
+    return Boolean(target?.closest?.(`.${UNIT_CLASS}`))
+  }
+
+  const onEditorDragOver = (event: DragEvent) => {
+    // 落在键名上 = 替换，不是插入：不该有插入光标
+    if (eventInsideUnit(event)) {
+      hideDropCaret()
+      return
+    }
+    const intent = resolveDropIntent({
+      target: 'text',
+      source: currentDrag(),
+      hasFiles: hasExternalFiles(event.dataTransfer),
+    })
+    event.preventDefault()
+    if (intent?.action !== 'insert-key') {
+      // 不接受的内容（例如外部文件）也别留插入光标
+      hideDropCaret()
+      return
+    }
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
+    const target = ed.getTargetAtClientPoint?.(event.clientX, event.clientY)
+    if (target?.position) showDropCaretAt(target.position)
+    else hideDropCaret()
+  }
+
+  const onEditorDragLeave = (event: DragEvent) => {
+    const next = event.relatedTarget as Node | null
+    if (!next || !domNode?.contains(next)) hideDropCaret()
+  }
+
+  const onEditorDrop = (event: DragEvent) => {
+    if (eventInsideUnit(event)) return
+    event.preventDefault()
+    event.stopPropagation()
+    hideDropCaret()
+    const source = readDragPayload(event.dataTransfer)
+    const intent = resolveDropIntent({
+      target: 'text',
+      source,
+      hasFiles: false,
+    })
+    endDrag()
+    // 拖放后焦点回到编辑器：撤销/重做才有落脚点
+    ed.focus()
+    if (intent?.action !== 'insert-key') return
+
+    const model = ed.getModel()
+    const target = ed.getTargetAtClientPoint?.(event.clientX, event.clientY)
+    const position = target?.position ?? ed.getPosition()
+    if (!model || !position) return
+    ed.pushUndoStop()
+    ed.executeEdits('hanshu-key-insert', [
+      {
+        range: monaco.Range.fromPositions(position),
+        text: intent.source.key,
+      },
+    ])
+    ed.pushUndoStop()
   }
 
   /**
@@ -979,6 +1337,8 @@ export function bindLangText(
       render()
       return
     }
+    // 先摆正覆盖框（同步），再安排成键（防抖）
+    syncOverlayAfterEdit()
     scheduleMigrate()
   })
   const scrollSub = ed.onDidScrollChange(onScroll)
@@ -993,12 +1353,27 @@ export function bindLangText(
     // 光标离开某条语句后补做成键（"光标还在里面就不成键"需要这一脚）
     scheduleMigrate()
   })
-  const focusSub = ed.onDidFocusEditorText?.(() => caretOverlay.update())
-  const blurSub = ed.onDidBlurEditorText?.(() => caretOverlay.update())
+  const focusSub = ed.onDidFocusEditorText?.(() => {
+    caretOverlay.update()
+    syncUnitSelection()
+  })
+  const blurSub = ed.onDidBlurEditorText?.(() => {
+    caretOverlay.update()
+    syncUnitSelection()
+  })
+  // 选区变化：多行值的选中底色由覆盖层补（见 syncUnitSelection）
+  const selectionSub = ed.onDidChangeCursorSelection?.(() => syncUnitSelection())
 
   window.addEventListener('keydown', onKeyDown, true)
   window.addEventListener('keyup', onKeyUp, true)
   window.addEventListener('blur', onBlur)
+  // 拖到文本区：键名插入（捕获阶段，先于 Monaco 自己的拖放处理）
+  domNode?.addEventListener('dragover', onEditorDragOver, true)
+  domNode?.addEventListener('drop', onEditorDrop, true)
+  domNode?.addEventListener('dragleave', onEditorDragLeave, true)
+  // 兜底：任何地方结束拖拽（拖到窗口外、按 ESC 取消）都收掉落点光标
+  window.addEventListener('dragend', hideDropCaret, true)
+  window.addEventListener('drop', hideDropCaret, true)
 
   // 初次：先成键再渲染
   migrateNow()
@@ -1015,6 +1390,7 @@ export function bindLangText(
     },
     editUnit,
     deleteUnit,
+    replaceUnitKey,
     dispose() {
       disposed = true
       if (timer != null) window.clearTimeout(timer)
@@ -1023,10 +1399,17 @@ export function bindLangText(
       window.removeEventListener('keydown', onKeyDown, true)
       window.removeEventListener('keyup', onKeyUp, true)
       window.removeEventListener('blur', onBlur)
+      domNode?.removeEventListener('dragover', onEditorDragOver, true)
+      domNode?.removeEventListener('drop', onEditorDrop, true)
+      domNode?.removeEventListener('dragleave', onEditorDragLeave, true)
+      window.removeEventListener('dragend', hideDropCaret, true)
+      window.removeEventListener('drop', hideDropCaret, true)
+      hideDropCaret()
       contentSub.dispose()
       scrollSub.dispose()
       layoutSub.dispose()
       caretSub.dispose()
+      selectionSub?.dispose()
       focusSub?.dispose()
       blurSub?.dispose()
       mouseSub.dispose()

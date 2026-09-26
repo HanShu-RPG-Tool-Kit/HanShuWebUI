@@ -87,6 +87,8 @@ export type VoiceLibrary = {
   rootDir(): string
   /** 单流预览（选择器试听） */
   preview(path: string): void
+  /** 单流预览：内存里的源（拖入但还没入库的文件；`id` 用于播放态比对） */
+  previewBlob(id: string, name: string, bytes: Uint8Array): void
   /** 选择器用：某资产的解码结果（无副作用；没解过返回 null） */
   peek(path: string): VoiceDecodeResult | null
   /** 选择器用：选中某项时触发解码并返回当前结果 */
@@ -154,9 +156,13 @@ export function createVoiceLibrary(options: {
   }
 
   const unsubscribeRuntime = runtime.subscribe(() => {
-    // 解码是异步的：播到一半才发现不是单通道 Vorbis，就停掉（播放态与四态保持一致）
+    // 解码是异步的：播到一半才发现不是单通道 Vorbis，就停掉（播放态与四态保持一致）。
+    //
+    // 但这条**成品规则只管"某个键的配音"**（play(path, key)）。选择器里的试听是
+    // play(path, null)，面对的是"源"（wav / mp3 都可能），套成品规则会在开播瞬间
+    // 就把它停掉 —— 表现就是"按下播放毫无反应，只有 ogg 能播"。
     const playing = runtime.getPlayback()
-    if (playing) {
+    if (playing && playing.key != null) {
       const decoded = runtime.peek(playing.path)
       if (decoded && !decoded.ok) runtime.stop()
     }
@@ -284,12 +290,18 @@ export function createVoiceLibrary(options: {
       void runtime.play(path, null)
     },
 
-    peek: (path) => runtime.peek(path),
+    previewBlob(id, name, bytes) {
+      // 类型留空，交给 runtime 按 name 的后缀补（wav/mp3… 与成品那条规则无关）
+      void runtime.playBlob(id, name, new Blob([bytes as BlobPart]))
+    },
+
+    // 选择器面对的是"源"：任何平台能解的格式都要给出波形/时长，不能套成品那套 ogg 规则
+    peek: (path) => runtime.peek(path, 'source'),
 
     inspect(path) {
-      const hit = runtime.peek(path)
+      const hit = runtime.peek(path, 'source')
       // 没解过就顺手触发一次：解码完成后 runtime 会 emit，界面自然刷新
-      if (!hit) void runtime.decode(path)
+      if (!hit) void runtime.decode(path, 'source')
       return hit
     },
 

@@ -89,11 +89,21 @@ export type VoiceImportIo = {
   ): Promise<void>
 }
 
+/** 导入的源：资源管理器里的资产，或拖进来的外部文件（外部文件拿不到路径，只能给字节） */
+export type VoiceImportSource =
+  | { kind: 'asset'; path: string }
+  | { kind: 'file'; name: string; bytes: Uint8Array }
+
 export type VoiceImportRequest = {
-  /** 源音频资产路径（资源管理器里选中的那个） */
-  sourcePath: string
+  /** 源音频 */
+  source: VoiceImportSource
   /** 目标对等文件路径（`assets/<tag>/voice/<脚本目录>/<key>.ogg`） */
   targetPath: string
+}
+
+/** 源的展示名（进度条上显示） */
+export function voiceImportSourceLabel(source: VoiceImportSource): string {
+  return source.kind === 'asset' ? source.path : source.name
 }
 
 export type VoiceImportEvents = {
@@ -139,7 +149,8 @@ export function runVoiceImport(
   processor: VoiceImportProcessor,
   events: VoiceImportEvents = {},
 ): VoiceImportRun {
-  const { sourcePath, targetPath } = request
+  const { source, targetPath } = request
+  const sourceLabel = voiceImportSourceLabel(source)
   const signal = { aborted: false }
   let cancelled = false
 
@@ -149,23 +160,27 @@ export function runVoiceImport(
   }
 
   const result = (async (): Promise<VoiceImportReport> => {
-    // —— 取源字节 ——
+    // —— 取源字节：资产走 io 读，外部文件直接用拖进来的字节 ——
     let sourceBytes: Uint8Array | null = null
-    try {
-      sourceBytes = await io.read(sourcePath)
-    } catch (error) {
-      return fail(
-        'interrupted',
-        targetPath,
-        error instanceof Error ? error.message : String(error),
-      )
+    if (source.kind === 'file') {
+      sourceBytes = source.bytes
+    } else {
+      try {
+        sourceBytes = await io.read(source.path)
+      } catch (error) {
+        return fail(
+          'interrupted',
+          targetPath,
+          error instanceof Error ? error.message : String(error),
+        )
+      }
     }
-    if (!sourceBytes) {
-      return fail('interrupted', targetPath, `读不到源文件：${sourcePath}`)
+    if (!sourceBytes || sourceBytes.byteLength === 0) {
+      return fail('interrupted', targetPath, `读不到源音频：${sourceLabel}`)
     }
 
-    // —— 分支 1 / 2：源就是目标对等文件本身 ——
-    if (isSameVoiceFile(sourcePath, targetPath)) {
+    // —— 分支 1 / 2：源就是目标对等文件本身（只有资产源才谈得上"就是那个文件"） ——
+    if (source.kind === 'asset' && isSameVoiceFile(source.path, targetPath)) {
       let info: VoiceSourceInfo
       try {
         info = await processor.inspect(sourceBytes)

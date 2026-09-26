@@ -58,6 +58,8 @@ export const VOICE_GLYPHS: Record<VoiceButtonState, VoiceGlyphPart[]> = {
 export const VOICE_EXTRA_GLYPHS = {
   /** 播放三角（选择器顶部播放键） */
   play: [{ d: 'M8 5.6v12.8L19 12z', mode: 'fill' }] as VoiceGlyphPart[],
+  /** 暂停（正在试听时替换播放三角，与四态里的"播放中"同一组图形） */
+  pause: [PAUSE_A, PAUSE_B] as VoiceGlyphPart[],
   /** 空预览：一个框 + 内部一个叉 */
   emptyBox: [
     { d: 'M3.6 3.6h16.8v16.8H3.6z', mode: 'stroke', width: 1.6 },

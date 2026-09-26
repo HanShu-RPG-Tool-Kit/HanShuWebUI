@@ -29,8 +29,10 @@ export type VoiceDiskSink = {
 
 export function createVoiceDiskSink(
   handle: FileSystemDirectoryHandle | null,
+  /** 写/删的结果回调：失败时给了它就不会被静默吞掉 */
+  onWriteResult?: (path: string, error: unknown) => void,
 ): VoiceDiskSink {
-  const sink = createFileSink({ handle })
+  const sink = createFileSink({ handle, onWriteResult })
 
   return {
     enabled: sink.diskBound,

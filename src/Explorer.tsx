@@ -3,11 +3,81 @@ import type { AssetFile, ScriptPackage, Workspace } from './workspace'
 import { isVoiceMapFile } from './workspace'
 import { packageLocationLabel, packageLocationTitle } from './project/projectLabel'
 import {
+  currentDrag,
+  endDrag,
+  hasExternalFiles,
+  readDragPayload,
+  resolveDropIntent,
+  writeDragPayload,
+  type DragSource,
+} from './drag/dragPayload'
+import {
   assetFileName,
   buildAssetTree,
   type AssetTreeDir,
   type AssetTreeNode,
 } from './assets/paths'
+
+/**
+ * 目录行的投放接线（包行 / assets 目录行共用）：
+ * - 外部文件 → 等价于复制粘贴导入
+ * - 内部的脚本 / 资产 → 等价于剪切移动
+ * 只有**支持**的载荷才 `preventDefault` 并加 `.is-drop-target`（框式高亮），
+ * 其余一律不接管，保持浏览器默认。
+ */
+function useFolderDropTarget(options: {
+  onFiles(files: File[]): void
+  onPayload(source: DragSource): void
+}) {
+  const [active, setActive] = useState(false)
+  const resolve = (event: React.DragEvent) =>
+    resolveDropIntent({
+      target: 'explorer-folder',
+      source: currentDrag(),
+      hasFiles: hasExternalFiles(event.dataTransfer),
+    })
+
+  return {
+    active,
+    handlers: {
+      onDragOver: (event: React.DragEvent) => {
+        const intent = resolve(event)
+        if (!intent) {
+          setActive(false)
+          return
+        }
+        event.preventDefault()
+        event.stopPropagation()
+        if (event.dataTransfer) {
+          event.dataTransfer.dropEffect =
+            intent.action === 'move-into-folder' ? 'move' : 'copy'
+        }
+        setActive(true)
+      },
+      onDragLeave: (event: React.DragEvent) => {
+        const next = event.relatedTarget as Node | null
+        if (!next || !event.currentTarget.contains(next)) setActive(false)
+      },
+      onDrop: (event: React.DragEvent) => {
+        const intent = resolve(event)
+        setActive(false)
+        if (!intent) return
+        event.preventDefault()
+        event.stopPropagation()
+        const files = Array.from(event.dataTransfer?.files ?? [])
+        const source = readDragPayload(event.dataTransfer)
+        endDrag()
+        if (intent.action === 'import-files') {
+          options.onFiles(files)
+          return
+        }
+        if (intent.action === 'move-into-folder' && source) {
+          options.onPayload(source)
+        }
+      },
+    },
+  }
+}
 
 type ExplorerProps = {
   workspace: Workspace
@@ -37,6 +107,12 @@ type ExplorerProps = {
   ) => void
   onPullVoice: (scriptId: string) => void
   onGenerateBlankVoiceOggs: (scriptId: string) => void
+  /** 内部拖拽落到目录行：把载荷里的脚本 / 资产移动到该包该目录 */
+  onDropIntoFolder: (
+    targetPackageId: string,
+    targetDir: string,
+    source: DragSource,
+  ) => void
 }
 
 export function Explorer({
@@ -61,6 +137,7 @@ export function Explorer({
   onImportAssets,
   onPullVoice,
   onGenerateBlankVoiceOggs,
+  onDropIntoFolder,
 }: ExplorerProps) {
   return (
     <aside className="explorer" aria-label="资源管理器">
@@ -119,6 +196,7 @@ export function Explorer({
             onImportAssets={onImportAssets}
             onPullVoice={onPullVoice}
             onGenerateBlankVoiceOggs={onGenerateBlankVoiceOggs}
+            onDropIntoFolder={onDropIntoFolder}
           />
         ))}
         {workspace.packages.length === 0 && (
@@ -150,6 +228,7 @@ function PackageNode({
   onImportAssets,
   onPullVoice,
   onGenerateBlankVoiceOggs,
+  onDropIntoFolder,
 }: {
   pkg: ScriptPackage
   activeScriptId: string | null
@@ -177,8 +256,13 @@ function PackageNode({
   ) => void
   onPullVoice: (scriptId: string) => void
   onGenerateBlankVoiceOggs: (scriptId: string) => void
+  /** 内部拖拽落到目录行 */
+  onDropIntoFolder: (
+    targetPackageId: string,
+    targetDir: string,
+    source: DragSource,
+  ) => void
 }) {
-  const [dragOver, setDragOver] = useState(false)
   const [collapsedDirs, setCollapsedDirs] = useState<Record<string, boolean>>(
     {},
   )
@@ -215,33 +299,16 @@ function PackageNode({
 
   const isDirCollapsed = (path: string) => Boolean(collapsedDirs[path])
 
+  // 包行本身也是投放目标：外部文件进 `assets/`，内部脚本 / 资产移进本包
+  const pkgDrop = useFolderDropTarget({
+    onFiles: (files) => onImportAssets(pkg.id, files, 'assets'),
+    onPayload: (source) => onDropIntoFolder(pkg.id, 'assets', source),
+  })
+
   return (
     <div
-      className={`explorer-pkg${dragOver ? ' drag-over' : ''}`}
-      onDragEnter={(e) => {
-        e.preventDefault()
-        e.stopPropagation()
-        setDragOver(true)
-      }}
-      onDragOver={(e) => {
-        e.preventDefault()
-        e.stopPropagation()
-        setDragOver(true)
-      }}
-      onDragLeave={(e) => {
-        e.preventDefault()
-        if (!e.currentTarget.contains(e.relatedTarget as Node)) {
-          setDragOver(false)
-        }
-      }}
-      onDrop={(e) => {
-        e.preventDefault()
-        e.stopPropagation()
-        setDragOver(false)
-        if (e.dataTransfer.files?.length) {
-          onImportAssets(pkg.id, e.dataTransfer.files, 'assets')
-        }
-      }}
+      className={`explorer-pkg${pkgDrop.active ? ' is-drop-target' : ''}`}
+      {...pkgDrop.handlers}
     >
       <div className="explorer-row explorer-pkg-row">
         <button
@@ -293,6 +360,16 @@ function PackageNode({
                   className={`explorer-row explorer-file-row${
                     script.id === activeScriptId ? ' active' : ''
                   }`}
+                  draggable
+                  onDragStart={(e) => {
+                    writeDragPayload(e.dataTransfer, {
+                      kind: 'script',
+                      packageId: pkg.id,
+                      scriptId: script.id,
+                      name: script.name,
+                    })
+                  }}
+                  onDragEnd={() => endDrag()}
                   onContextMenu={
                     isVoiceMapFile(script.name)
                       ? (e) => {
@@ -389,6 +466,7 @@ function PackageNode({
             onNewAssetFolder={onNewAssetFolder}
             onDeleteAssetFolder={onDeleteAssetFolder}
             onImportAssets={onImportAssets}
+            onDropIntoFolder={onDropIntoFolder}
           />
         </>
       )}
@@ -410,6 +488,7 @@ function AssetFolderBlock({
   onNewAssetFolder,
   onDeleteAssetFolder,
   onImportAssets,
+  onDropIntoFolder,
 }: {
   pkgId: string
   dir: AssetTreeDir
@@ -428,39 +507,25 @@ function AssetFolderBlock({
     files: FileList | File[],
     targetDir?: string,
   ) => void
+  onDropIntoFolder: (
+    targetPackageId: string,
+    targetDir: string,
+    source: DragSource,
+  ) => void
 }) {
   const isRoot = dir.path === 'assets'
   const collapsed = isRoot ? rootCollapsed : isDirCollapsed(dir.path)
-  const [dragOver, setDragOver] = useState(false)
+  // 目录行就是"拖到哪个文件夹"的判定框：外部文件导入、内部载荷移动
+  const dirDrop = useFolderDropTarget({
+    onFiles: (files) => onImportAssets(pkgId, files, dir.path),
+    onPayload: (source) => onDropIntoFolder(pkgId, dir.path, source),
+  })
 
   return (
     <div
-      className={`explorer-assets${dragOver ? ' drag-over' : ''}`}
+      className={`explorer-assets${dirDrop.active ? ' is-drop-target' : ''}`}
       style={{ paddingLeft: depth === 0 ? undefined : 8 }}
-      onDragEnter={(e) => {
-        e.preventDefault()
-        e.stopPropagation()
-        setDragOver(true)
-      }}
-      onDragOver={(e) => {
-        e.preventDefault()
-        e.stopPropagation()
-        setDragOver(true)
-      }}
-      onDragLeave={(e) => {
-        e.preventDefault()
-        if (!e.currentTarget.contains(e.relatedTarget as Node)) {
-          setDragOver(false)
-        }
-      }}
-      onDrop={(e) => {
-        e.preventDefault()
-        e.stopPropagation()
-        setDragOver(false)
-        if (e.dataTransfer.files?.length) {
-          onImportAssets(pkgId, e.dataTransfer.files, dir.path)
-        }
-      }}
+      {...dirDrop.handlers}
     >
       <div
         className={`explorer-row explorer-assets-row${
@@ -542,11 +607,13 @@ function AssetFolderBlock({
                   onNewAssetFolder={onNewAssetFolder}
                   onDeleteAssetFolder={onDeleteAssetFolder}
                   onImportAssets={onImportAssets}
+                  onDropIntoFolder={onDropIntoFolder}
                 />
               </li>
             ) : (
               <AssetRow
                 key={node.asset.id}
+                packageId={pkgId}
                 asset={node.asset as AssetFile}
                 active={node.asset.id === activeAssetId}
                 onOpen={() => onOpenAsset(node.asset.id)}
@@ -569,11 +636,13 @@ function countFiles(node: AssetTreeNode): number {
 }
 
 function AssetRow({
+  packageId,
   asset,
   active,
   onOpen,
   onDelete,
 }: {
+  packageId: string
   asset: AssetFile
   active: boolean
   onOpen: () => void
@@ -585,6 +654,16 @@ function AssetRow({
         className={`explorer-row explorer-file-row explorer-asset-row${
           active ? ' active' : ''
         }`}
+        draggable
+        onDragStart={(e) => {
+          writeDragPayload(e.dataTransfer, {
+            kind: 'asset',
+            packageId,
+            assetId: asset.id,
+            path: asset.path,
+          })
+        }}
+        onDragEnd={() => endDrag()}
       >
         <button
           type="button"

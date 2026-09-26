@@ -63,6 +63,7 @@ import {
 } from '../export/resourcePack'
 import { buildAssetsPackZip } from '../export/assetsPack'
 import { normalizeAssetPath, normalizeFolderPath } from '../assets/paths'
+import { moveAssetToDir, moveScriptToPackage } from '../workspaceMove'
 import {
   deleteAssetBlob,
   deletePackageAssetBlobs,
@@ -107,9 +108,15 @@ import {
   createVoiceLibrary,
   type VoiceLibrary,
 } from '../i18n/voiceLibrary'
-import { runVoiceImport, type VoiceImportIo } from '../i18n/voiceImport'
+import {
+  runVoiceImport,
+  voiceImportSourceLabel,
+  type VoiceImportIo,
+  type VoiceImportSource,
+} from '../i18n/voiceImport'
 import { createVoiceProcessor } from '../i18n/voiceTranscode'
 import { createVoiceDiskSink } from '../project/voiceDiskSink'
+import type { DragSource } from '../drag/dragPayload'
 import { LangUnitMenu, type LangUnitMenuItem } from '../LangUnitMenu'
 import { VoicePickerModal } from '../VoicePickerModal'
 import { VoiceImportProgress } from '../VoiceImportProgress'
@@ -117,6 +124,7 @@ import {
   bindLangText,
   type LangEditRequest,
   type LangTextBinding,
+  type LangUnitDropRequest,
 } from '../monaco/langTextEditor'
 import { loadLocale, saveLocale } from '../storage'
 
@@ -249,7 +257,7 @@ export const ScriptWorkspace = forwardRef<
   } | null>(null)
   /** 正在跑的音频导入（null = 没在导入）：驱动置顶进度条 */
   const [voiceImport, setVoiceImport] = useState<{
-    sourcePath: string
+    sourceLabel: string
     targetPath: string
     progress: number
     phase: 'process' | 'write'
@@ -472,19 +480,24 @@ export const ScriptWorkspace = forwardRef<
   }
 
   /**
-   * 跑一次「音频导入」：源 = 资源管理器里选中的资产，目标 = 该键的对等文件。
-   * 进度条由 voiceImport 状态驱动；中断（点 ×）会让工作流返回 interrupted。
+   * 跑一次「音频导入」：源 = 资源管理器里选中的资产，或拖进来的外部文件；
+   * 目标 = 该键的对等文件。进度条由 voiceImport 状态驱动；中断（点 ×）返回 interrupted。
    */
-  const runVoiceImportFor = (key: string, sourcePath: string) => {
+  const runVoiceImportFor = (key: string, source: VoiceImportSource) => {
     const library = voiceLibraryRef.current
     const packageId = activePackage()?.id
     if (!library || !packageId) return
     const targetPath = library.targetPathOf(key)
     setVoiceImportMessage(null)
-    setVoiceImport({ sourcePath, targetPath, progress: 0, phase: 'process' })
+    setVoiceImport({
+      sourceLabel: voiceImportSourceLabel(source),
+      targetPath,
+      progress: 0,
+      phase: 'process',
+    })
 
     const run = runVoiceImport(
-      { sourcePath, targetPath },
+      { source, targetPath },
       createVoiceImportIo(packageId),
       createVoiceProcessor(),
       {
@@ -508,8 +521,7 @@ export const ScriptWorkspace = forwardRef<
         // 没绑定工程文件夹时，导入只会写进应用内资源（IndexedDB）—— 说清楚，
         // 免得看到"成功"却在磁盘上找不到文件
         hint: projectRef.current?.handle
-          ? undefined
-          : '未绑定工程文件夹，只写入了应用内资源',
+          ? undefined          : '未绑定工程文件夹，只写入了应用内资源',
       })
       if (!report.ok && report.detail) {
         console.warn('[hanshu] 音频导入失败：', report.detail)
@@ -517,9 +529,150 @@ export const ScriptWorkspace = forwardRef<
     })
   }
 
+  /** 把一个外部文件读成「文件源」（拖到键名上导入音频用；外部文件拿不到路径） */
+  const readDroppedFile = async (file: File): Promise<VoiceImportSource> => ({
+    kind: 'file',
+    name: file.name,
+    bytes: new Uint8Array(await file.arrayBuffer()),
+  })
+
+  /**
+   * 键名上的投放（见 dragPayload 的语义表）：
+   * - 外部文件 / 资产 → 尝试导入音频（多文件只取第一个：目标只有一个对等文件）
+   * - 另一个键名 → 替换键名（只改正文，与 deleteUnit 口径一致）
+   */
+  const handleUnitDrop = (request: LangUnitDropRequest) => {
+    const { key, intent, files, source } = request
+
+    if (intent.action === 'replace-key') {
+      if (source?.kind === 'key' && source.key !== key) {
+        langBindingRef.current?.replaceUnitKey(key, source.key)
+      }
+      return
+    }
+
+    if (intent.action === 'import-audio-asset' && source?.kind === 'asset') {
+      runVoiceImportFor(key, { kind: 'asset', path: source.path })
+      return
+    }
+
+    if (intent.action === 'import-audio-file') {
+      const file = files[0]
+      if (!file) return
+      void readDroppedFile(file)
+        .then((next) => runVoiceImportFor(key, next))
+        .catch((error: unknown) => {
+          console.warn('[hanshu] 读取拖入的音频失败', error)
+        })
+    }
+  }
+
+  /**
+   * 资源管理器内部拖拽落到目录行 = **剪切**：
+   * - 脚本：换包（模型里脚本是包内扁平的，没有子目录概念）
+   * - 资产：换目录（同包换文件夹或跨包），blob 与元数据一起搬，保留原 id
+   * 目标已有同名文件时不覆盖，直接忽略（避免出现两条同路径资产）。
+   */
+  /** 剧本换包（模型变换走 workspaceMove 的纯函数） */
+  const applyScriptMove = (
+    scriptId: string,
+    targetPackageId: string,
+  ) => {
+    const base = workspaceRef.current
+    const next = moveScriptToPackage(base, scriptId, targetPackageId)
+    if (next === base) return
+    commitWorkspace(next)
+  }
+
+  /** 资产换目录（blob 与元数据一起搬；模型变换走 workspaceMove 的纯函数） */
+  const applyAssetMove = (
+    assetId: string,
+    targetPackageId: string,
+    targetDir: string,
+  ) => {
+    const result = moveAssetToDir(
+      workspaceRef.current,
+      assetId,
+      targetPackageId,
+      targetDir,
+    )
+    if (!result) return
+
+    void (async () => {
+      const blob = await getAssetBlob(result.fromPackageId, result.fromPath)
+      if (!blob) return
+      await putAssetBlob(result.toPackageId, result.toPath, blob)
+      await deleteAssetBlob(result.fromPackageId, result.fromPath)
+      commitWorkspace(result.workspace)
+    })()
+  }
+
+  const handleDropIntoFolder = (
+    targetPackageId: string,
+    targetDir: string,
+    source: DragSource,
+  ) => {
+    if (source.kind === 'script') {
+      applyScriptMove(source.scriptId, targetPackageId)
+      return
+    }
+    if (source.kind !== 'asset') return
+    applyAssetMove(source.assetId, targetPackageId, targetDir)
+  }
+
+  /**
+   * 删除某个键的配音（右键菜单 Delete Voice）。
+   *
+   * 动作与删除资产一致（元数据 + blob），但**必须连磁盘那一份一起删**：
+   * 配音是写穿到工程目录的，只删应用内的话，下次打开工程又会被读回来。
+   *
+   * 两种确认文案：正常情况就是删这个文件；若它是靠"同名回落"从别的目录解析到的，
+   * 说明可能有其它脚本的键也在用它，得说清楚影响面。
+   */
+  const handleDeleteVoice = (key: string) => {
+    const library = voiceLibraryRef.current
+    const pkg = activePackage()
+    if (!library || !pkg) return
+    const status = library.statusOf(key)
+    const path = status.path
+    if (!path) return
+
+    const targetPath = library.targetPathOf(key)
+    if (path.toLowerCase() === targetPath.toLowerCase()) {
+      if (!window.confirm(`删除配音「${path}」？`)) return
+    } else if (
+      !window.confirm(
+        `该配音来自其它目录：${path}\n删除会影响所有引用它的键，确定删除？`,
+      )
+    ) {
+      return
+    }
+
+    // 正在播就先停掉，否则播的是已经被删掉的音频
+    if (status.state === 'playing') library.togglePlay(key)
+
+    const asset = pkg.assets.find(
+      (item) => item.path.toLowerCase() === path.toLowerCase(),
+    )
+    if (asset) {
+      commitWorkspace(removeAssetMeta(workspaceRef.current, asset.id))
+      void deleteAssetBlob(pkg.id, asset.path)
+    }
+    // 磁盘副本（含可能残留的 .new）：删掉才算真的删了
+    const sink = createVoiceDiskSink(
+      projectRef.current?.handle ?? null,
+      (failedPath, error) => {
+        if (error) {
+          console.warn('[hanshu] 没能删掉磁盘上的配音文件：', failedPath, error)
+        }
+      },
+    )
+    void sink.remove(path)
+  }
+
   /**
    * 上级容器的右键菜单条目。**可扩展**：往这里加一条就多一个功能；
-   * 默认四条 = 改键名 / 改文本 / 改配音 / 删除（红）。
+   * 默认五条 = 改键名 / 改文本 / 改配音 / 删配音 / 删除（红）。
    */
   const unitMenuItems = (key: string): LangUnitMenuItem[] => [
     {
@@ -536,6 +689,13 @@ export const ScriptWorkspace = forwardRef<
       id: 'edit-voice',
       label: 'Edit Voice',
       onSelect: () => openVoicePicker(key),
+    },
+    {
+      id: 'delete-voice',
+      label: 'Delete Voice',
+      // 没有配音文件（缺失态）就没什么可删的
+      disabled: (voiceRuntime?.statusOf(key).path ?? null) == null,
+      onSelect: () => handleDeleteVoice(key),
     },
     {
       id: 'delete',
@@ -1805,6 +1965,7 @@ export const ScriptWorkspace = forwardRef<
           onGenerateBlankVoiceOggs={(scriptId) => {
             void handleGenerateBlankVoiceOggs(scriptId)
           }}
+          onDropIntoFolder={handleDropIntoFolder}
         />
 
         <div className="main-split" ref={splitRef}>
@@ -1881,6 +2042,9 @@ export const ScriptWorkspace = forwardRef<
                           })
                         },
                         onUnitMenu: (request) => setUnitMenu(request),
+                        onUnitDrop: (request) => handleUnitDrop(request),
+                        // 缺失 / 无效态点按钮 = 挑一个音频
+                        onVoicePick: (key) => openVoicePicker(key),
                       })
                     }}
                     onChange={(next) => {
@@ -1900,6 +2064,14 @@ export const ScriptWorkspace = forwardRef<
                       cursorBlinking: 'smooth',
                       overviewRulerBorder: false,
                       stickyScroll: { enabled: false },
+                      /**
+                       * 拖放由覆盖层自己处理（键名容器 / 文本区），所以关掉 Monaco 这一套。
+                       * 否则它在编辑器根节点上监听 dragover/drop，画一个 `dnd-target` 装饰当
+                       * 落点指示器（那个"虚线光标"），而清除只发生在她自己的
+                       * drop / dragleave / dragend 里 —— 我们在容器上 stopPropagation 之后
+                       * 根节点收不到 drop，外部文件（没有页面内 dragend）拖完就会一直挂着。
+                       */
+                      dropIntoEditor: { enabled: false },
                       scrollbar: {
                         verticalScrollbarSize: 14,
                         horizontalScrollbarSize: 14,
@@ -2143,7 +2315,13 @@ export const ScriptWorkspace = forwardRef<
             onImport={(sourcePath) => {
               const key = voicePicker.key
               setVoicePicker(null)
-              runVoiceImportFor(key, sourcePath)
+              runVoiceImportFor(key, { kind: 'asset', path: sourcePath })
+            }}
+            onImportFile={(source) => {
+              // 选择器里已经把这文件缓存在内存里了（拖入 ≠ 导入），这里只负责跑工作流
+              const key = voicePicker.key
+              setVoicePicker(null)
+              runVoiceImportFor(key, { kind: 'file', name: source.name, bytes: source.bytes })
             }}
             onClose={() => setVoicePicker(null)}
           />
@@ -2152,7 +2330,7 @@ export const ScriptWorkspace = forwardRef<
         <VoiceImportProgress
           progress={voiceImport.progress}
           phase={voiceImport.phase}
-          sourcePath={voiceImport.sourcePath}
+          sourceLabel={voiceImport.sourceLabel}
           targetPath={voiceImport.targetPath}
           onCancel={() => voiceImportCancelRef.current?.()}
         />

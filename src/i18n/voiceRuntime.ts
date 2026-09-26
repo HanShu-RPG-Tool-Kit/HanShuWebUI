@@ -45,25 +45,43 @@ export type VoiceSource = {
 
 export type VoicePlayback = { path: string; key: string | null }
 
+/**
+ * 解码用途（结果不同，所以缓存键里也要带它）：
+ *
+ * - `asset`：校验**磁盘上的成品配音**。按引擎约定必须是单通道 Vorbis ogg，
+ *   非 ogg 连解都不解、直接按后缀判死（省一次读盘 + 解码）。
+ * - `source`：选择器里把某个文件当**源**看。任何平台能解的格式（wav / mp3 / flac /
+ *   m4a …）都照解，用来画波形、报时长与声道；不设"单通道"限制，因为导入时会
+ *   统一下混并转码成单通道 Vorbis。
+ *
+ * 之前只有 `asset` 一种口径，选择器复用它，于是 wav 这种完全能解的源也被判成
+ * "解码失败"（其实是后缀规则挡下的，根本没调用 decodeAudioData）。
+ */
+export type VoiceDecodeMode = 'asset' | 'source'
+
 export type VoiceRuntime = {
   /** 缓存里已有的解码结果（同步；没解过返回 null） */
-  peek(path: string): VoiceDecodeResult | null
+  peek(path: string, mode?: VoiceDecodeMode): VoiceDecodeResult | null
   /** 解码（带缓存与并发合并） */
-  decode(path: string): Promise<VoiceDecodeResult>
+  decode(path: string, mode?: VoiceDecodeMode): Promise<VoiceDecodeResult>
   /** 当前播放的资产（没有在播返回 null） */
   getPlayback(): VoicePlayback | null
   /** 「正在播放的就是这条资产」——按钮的播放态判据 */
   isPlaying(path: string): boolean
   /** 播放；同一时刻只有一个，换目标直接替换。返回是否真的开播 */
   play(path: string, key?: string | null): Promise<boolean>
+  /**
+   * 直接播一段**内存里**的音频（选择器里拖入但还没入库的文件）。
+   * `id` 只作播放态标识（`isPlaying` 用它比对），`name` 用来按后缀补 MIME。
+   */
+  playBlob(id: string, name: string, blob: Blob): Promise<boolean>
   /** 停止并释放（回到无播放态） */
   stop(): void
   subscribe(listener: () => void): () => void
   dispose(): void
 }
 
-/** 波形峰值条数（够画形状，也不需要重新解码） */
-const WAVEFORM_BUCKETS = 96
+/** 波形峰值条数（够画形状，也不需要重新解码） */const WAVEFORM_BUCKETS = 96
 /** 解码结果缓存上限（每条只有几百字节，主要防长期积累） */
 const DECODE_CACHE_LIMIT = 64
 /**
@@ -71,6 +89,36 @@ const DECODE_CACHE_LIMIT = 64
  * 串起来跑免得一口气解上百个文件把主线程占住。
  */
 const MAX_DECODE_CONCURRENCY = 2
+
+/**
+ * 后缀 → 明确的音频 MIME。
+ *
+ * 为什么需要：`<audio>` 是按**资源声明的类型**选解复用器的，而资产库里的 blob
+ * 可能是空类型、或 `application/octet-stream`（导入时 `file.type` 为空，
+ * 或磁盘读回时按后缀猜不到 —— 例如 .m4a / .opus / .aac）。类型不对就拒播，
+ * 表现就是"点了没反应"。这里按后缀补一个确定的类型。
+ */
+const AUDIO_MIME_BY_EXTENSION: Record<string, string> = {
+  ogg: 'audio/ogg',
+  oga: 'audio/ogg',
+  opus: 'audio/ogg',
+  wav: 'audio/wav',
+  mp3: 'audio/mpeg',
+  flac: 'audio/flac',
+  m4a: 'audio/mp4',
+  mp4: 'audio/mp4',
+  aac: 'audio/aac',
+  webm: 'audio/webm',
+}
+
+/** 给 blob 补上按后缀推断的类型（认不出后缀就原样返回；slice 不复制字节） */
+export function withAudioMime(blob: Blob, path: string): Blob {
+  const dot = path.lastIndexOf('.')
+  const ext = dot >= 0 ? path.slice(dot + 1).toLowerCase() : ''
+  const type = AUDIO_MIME_BY_EXTENSION[ext]
+  if (!type || blob.type === type) return blob
+  return blob.slice(0, blob.size, type)
+}
 
 /** 时长文案：`3.4s` / `1:02.5`（按十分位取整，避免 3.4-3=0.3999… 这种浮点坑） */
 export function formatVoiceDuration(seconds: number): string {
@@ -144,9 +192,9 @@ export function createVoiceRuntime(source: VoiceSource): VoiceRuntime {
     for (const listener of listeners) listener()
   }
 
-  const cacheKeyOf = (path: string): string | null => {
+  const cacheKeyOf = (path: string, mode: VoiceDecodeMode): string | null => {
     const stat = source.stat(path)
-    return stat ? `${path}::${stat.revision}` : null
+    return stat ? `${path}::${stat.revision}::${mode}` : null
   }
 
   const remember = (key: string, result: VoiceDecodeResult) => {
@@ -179,7 +227,10 @@ export function createVoiceRuntime(source: VoiceSource): VoiceRuntime {
       if (playToken === token) releasePlayback()
     })
     audio.addEventListener('error', () => {
-      if (playToken === token) releasePlayback()
+      if (playToken !== token) return
+      // 别静默：类型不对 / 浏览器不认这个编码时，用户看到的就是"点了没反应"
+      console.warn('[hanshu] 音频解码失败（浏览器不认这个文件）', audio?.src)
+      releasePlayback()
     })
     return audio
   }
@@ -220,9 +271,14 @@ export function createVoiceRuntime(source: VoiceSource): VoiceRuntime {
     decodeQueue.shift()?.()
   }
 
-  const decodeNow = async (path: string, key: string): Promise<VoiceDecodeResult> => {
-    // 非 ogg 不必解码：直接用后缀就能判不合法（省一次读盘 + 解码）
-    if (!isVoiceOggPath(path)) {
+  const decodeNow = async (
+    path: string,
+    key: string,
+    mode: VoiceDecodeMode,
+  ): Promise<VoiceDecodeResult> => {
+    const isOgg = isVoiceOggPath(path)
+    // 成品配音必须是单通道 ogg：非 ogg 不必解码，直接用后缀就能判不合法
+    if (mode === 'asset' && !isOgg) {
       const ext = voiceAssetExtension(path)
       return { ok: false, reason: `只允许单通道 ogg（当前是 ${ext || '无后缀'}）` }
     }
@@ -234,16 +290,20 @@ export function createVoiceRuntime(source: VoiceSource): VoiceRuntime {
     let codec: VoiceOggInfo['codec'] = null
     try {
       const bytes = await blob.arrayBuffer()
-      // 先按字节嗅探容器/编解码器：decodeAudioData 会把 ArrayBuffer detach 掉
-      codec = inspectOggBytes(
-        new Uint8Array(bytes, 0, Math.min(bytes.byteLength, 256)),
-      ).codec
+      // 先按字节嗅探容器/编解码器：decodeAudioData 会把 ArrayBuffer detach 掉。
+      // 只有 ogg 才谈得上 Vorbis / Opus，别的容器留 null。
+      if (isOgg) {
+        codec = inspectOggBytes(
+          new Uint8Array(bytes, 0, Math.min(bytes.byteLength, 256)),
+        ).codec
+      }
       buffer = await context.decodeAudioData(bytes)
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error)
       return { ok: false, reason: `不是合法的音频文件（${detail}）` }
     }
-    if (buffer.numberOfChannels !== 1) {
+    // 成品要求单通道；当"源"看时不设限 —— 导入时会下混成单通道
+    if (mode === 'asset' && buffer.numberOfChannels !== 1) {
       return {
         ok: false,
         reason: `只允许单通道（当前 ${formatVoiceChannels(buffer.numberOfChannels)}）`,
@@ -261,8 +321,11 @@ export function createVoiceRuntime(source: VoiceSource): VoiceRuntime {
     return { ok: true, info }
   }
 
-  const decode = (path: string): Promise<VoiceDecodeResult> => {
-    const key = cacheKeyOf(path)
+  const decode = (
+    path: string,
+    mode: VoiceDecodeMode = 'asset',
+  ): Promise<VoiceDecodeResult> => {
+    const key = cacheKeyOf(path, mode)
     if (!key) return Promise.resolve({ ok: false, reason: '资产不存在' })
     const hit = cache.get(key)
     if (hit) return Promise.resolve(hit)
@@ -270,7 +333,7 @@ export function createVoiceRuntime(source: VoiceSource): VoiceRuntime {
     if (running) return running
 
     const task = acquireDecodeSlot()
-      .then(() => decodeNow(path, key))
+      .then(() => decodeNow(path, key, mode))
       .then((result) => {
         // decodeNow 里 ok 的结果已经写过缓存；失败的也记下来，避免反复解码坏文件
         if (!result.ok) remember(key, result)
@@ -293,9 +356,61 @@ export function createVoiceRuntime(source: VoiceSource): VoiceRuntime {
     return task
   }
 
+  /**
+   * 开播的公共部分（单流：换目标直接替换掉上一个）。
+   * `resolveBlob` 决定字节从哪来：资产库按路径读，或者直接用内存里的 blob。
+   * `warmDecode` 只在按路径播放时开 —— 那条"预热解码"需要能按路径读到文件。
+   */
+  const runPlayback = async (
+    id: string,
+    name: string,
+    key: string | null,
+    resolveBlob: () => Promise<Blob | null>,
+    warmDecode: boolean,
+  ): Promise<boolean> => {
+    if (disposed) {
+      console.warn('[hanshu] 播放器已释放，忽略这次播放', id)
+      return false
+    }
+    const myToken = ++token
+    playToken = myToken
+    // 单流：换目标直接替换掉上一个
+    releasePlayback()
+    const blob = await resolveBlob()
+    if (disposed || myToken !== token) return false
+    if (!blob) {
+      // 别静默：树里有元数据但 IndexedDB 里没 blob 时，用户看到的就是"点了没反应"
+      console.warn('[hanshu] 读不到资产数据（IndexedDB 里没有这个文件）', id)
+      return false
+    }
+    const el = ensureAudio()
+    if (!el) {
+      console.warn('[hanshu] 当前环境没有 Audio 元素，无法播放', id)
+      return false
+    }
+    // 补类型：blob 的 type 可能是空的或 octet-stream，那样 <audio> 会拒播
+    objectUrl = URL.createObjectURL(withAudioMime(blob, name))
+    el.src = objectUrl
+    playback = { path: id, key }
+    emit()
+    try {
+      await el.play()
+    } catch (error) {
+      if (myToken === token) {
+        releasePlayback()
+        console.warn('[hanshu] 音频播放失败', id, error)
+      }
+      return false
+    }
+    if (disposed || myToken !== token) return false
+    // 预热解码：拿到时长/声道/波形，若发现不是单通道 ogg 由上层停掉
+    if (warmDecode) void decode(id)
+    return true
+  }
+
   return {
-    peek(path) {
-      const key = cacheKeyOf(path)
+    peek(path, mode = 'asset') {
+      const key = cacheKeyOf(path, mode)
       return key ? (cache.get(key) ?? null) : null
     },
 
@@ -310,33 +425,12 @@ export function createVoiceRuntime(source: VoiceSource): VoiceRuntime {
     },
 
     async play(path, key = null) {
-      if (disposed) return false
-      const myToken = ++token
-      playToken = myToken
-      // 单流：换目标直接替换掉上一个
-      releasePlayback()
-      const blob = await source.read(path)
-      if (disposed || myToken !== token) return false
-      if (!blob) return false
-      const el = ensureAudio()
-      if (!el) return false
-      objectUrl = URL.createObjectURL(blob)
-      el.src = objectUrl
-      playback = { path, key: key ?? null }
-      emit()
-      try {
-        await el.play()
-      } catch (error) {
-        if (myToken === token) {
-          releasePlayback()
-          console.warn('[hanshu] 音频播放失败', path, error)
-        }
-        return false
-      }
-      if (disposed || myToken !== token) return false
-      // 预热解码：拿到时长/声道/波形，若发现不是单通道 ogg 由上层停掉
-      void decode(path)
-      return true
+      return runPlayback(path, path, key ?? null, () => source.read(path), true)
+    },
+
+    async playBlob(id, name, blob) {
+      // 内存里的字节没有资产路径：不预热解码（那条路要按路径从库里读）
+      return runPlayback(id, name, null, async () => blob, false)
     },
 
     stop() {

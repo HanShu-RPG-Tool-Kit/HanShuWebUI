@@ -14,8 +14,8 @@ export type VoiceImportProgressProps = {
   progress: number
   /** 当前阶段 */
   phase: VoiceImportPhase
-  /** 源音频路径（显示用） */
-  sourcePath: string
+  /** 源音频的展示名（资产路径或外部文件名） */
+  sourceLabel: string
   /** 对等目标路径（显示用） */
   targetPath: string
   /** 点 ×：请求中断 */
@@ -25,7 +25,7 @@ export type VoiceImportProgressProps = {
 export function VoiceImportProgress({
   progress,
   phase,
-  sourcePath,
+  sourceLabel,
   targetPath,
   onCancel,
 }: VoiceImportProgressProps) {
@@ -59,8 +59,8 @@ export function VoiceImportProgress({
         <div className="voice-import-body">
           <div className="voice-import-row">
             <span className="voice-import-label">源</span>
-            <span className="voice-import-value" title={sourcePath}>
-              {sourcePath}
+            <span className="voice-import-value" title={sourceLabel}>
+              {sourceLabel}
             </span>
           </div>
           <div className="voice-import-row">
