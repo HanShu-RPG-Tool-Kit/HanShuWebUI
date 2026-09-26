@@ -1,6 +1,8 @@
 /**
  * MC 皮肤站 IPC 契约 — 与 Rust 侧 DTO 一一对应(camelCase JSON)。
  * 纯类型与常量,不引入任何 Node 内置模块,可安全进入浏览器 bundle。
+ *
+ * schema v5：标签为条目上的自由字符串；listTags 从全库条目自动收集。
  */
 
 export type SkinModel = 'classic' | 'slim'
@@ -18,39 +20,23 @@ export interface Capabilities {
   }
 }
 
-/* ---------- tags (flat in v3) ---------- */
+/* ---------- tags (freeform strings collected from entries) ---------- */
 
-export interface TagNode {
-  tagId: string
+/** Unique tag name + how many entries use it. Identity is the normalized name. */
+export interface CollectedTag {
   name: string
-  /** Legacy; new UI treats tags as flat. */
-  parentId: string | null
-  sortOrder: number
+  count: number
 }
 
-export interface TagWithStats extends TagNode {
-  directCount: number
-  subtreeCount: number
-  path: string[]
-}
-
-export interface TagTreeResponse {
+export interface TagListResponse {
   revision: number
-  tags: TagWithStats[]
+  tags: CollectedTag[]
 }
 
-export interface CreateTagRequest {
-  name: string
-  parentId?: string | null
+export interface RenameTagRequest {
+  from: string
+  to: string
   expectedRevision?: number
-}
-
-export interface PatchTagRequest {
-  expectedRevision?: number
-  name?: string
-  parentId?: string | null
-  sortOrder?: number
-  sortSiblingsByName?: boolean
 }
 
 /* ---------- folders ---------- */
@@ -114,7 +100,8 @@ export interface LibraryEntry {
   skinId: string
   name: string
   active: boolean
-  tagIds: string[]
+  /** Freeform tag names attached to this skin (NFC + trim, unique per entry). */
+  tags: string[]
   folderId: string | null
   favorite: boolean
   model: SkinModel
@@ -127,7 +114,6 @@ export interface LibraryEntry {
   revision: number
 }
 
-export type TagScope = 'subtree' | 'direct'
 export type TagMatch = 'any' | 'all'
 export type EntrySortBy = 'name' | 'createdAt' | 'updatedAt' | 'author'
 export type SortDirection = 'asc' | 'desc'
@@ -135,9 +121,9 @@ export type EntryScope = 'all' | 'unfiled' | 'folder'
 
 export interface LibraryQuery {
   search?: string
-  tagIds?: string[]
-  excludeTagIds?: string[]
-  tagScope?: TagScope
+  /** Include entries that match these tag names. */
+  tags?: string[]
+  excludeTags?: string[]
   tagMatch?: TagMatch
   untagged?: boolean
   favorite?: boolean
@@ -203,7 +189,8 @@ export interface ImportJob {
 export interface SaveEntryRequest {
   jobId: string
   name: string
-  tagIds?: string[]
+  tags?: string[]
+  /** Portable import alias — flattened to freeform `tags`. */
   tagPaths?: string[][]
   folderId?: string | null
   favorite?: boolean
@@ -216,12 +203,13 @@ export interface SaveEntryRequest {
 export interface PatchEntryRequest {
   revision: number
   name?: string
-  tagIds?: string[]
-  addTagIds?: string[]
-  removeTagIds?: string[]
+  tags?: string[]
+  addTags?: string[]
+  removeTags?: string[]
   favorite?: boolean
   folderId?: string | null
   active?: boolean
+  model?: SkinModel
   license?: LicenseInfo
   provenance?: Provenance
   note?: string
@@ -229,8 +217,8 @@ export interface PatchEntryRequest {
 
 export interface BatchPatchRequest {
   entryIds: string[]
-  addTagIds?: string[]
-  removeTagIds?: string[]
+  addTags?: string[]
+  removeTags?: string[]
   folderId?: string | null
   active?: boolean
   /** Expected revisions per entry; must match entryIds length when provided. */

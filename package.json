@@ -11,7 +11,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "desktop:dev": "tauri dev",
-    "desktop:build": "tauri build"
+    "desktop:build": "tauri build",
+    "test:skin-codec": "tsx scripts/verify-skin-codec.ts"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
@@ -20,6 +21,7 @@
     "dompurify": "^3.4.15",
     "jszip": "^3.10.2",
     "marked": "^18.0.14",
+    "pako": "^3.0.2",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "skinview3d": "^3.4.2"
@@ -29,11 +31,13 @@
     "@types/dompurify": "^3.0.5",
     "@types/jszip": "^3.4.0",
     "@types/node": "^24.13.3",
+    "@types/pako": "^2.0.4",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-react": "^6.1.1",
     "esbuild": "^0.28.2",
     "oxlint": "^1.81.0",
+    "tsx": "^4.23.15",
     "typescript": "~6.0.2",
     "vite": "^8.3.0"
   }

@@ -24,7 +24,11 @@ interface Props {
   autoRotate: boolean
   /** Workspace visible; false pauses all animation. */
   active: boolean
-  onResetView?: () => void
+  viewMode?: 'model' | 'flat'
+  onViewModeChange?: (mode: 'model' | 'flat') => void
+  onToggleOuter?: (v: boolean) => void
+  onToggleWalking?: (v: boolean) => void
+  onToggleAutoRotate?: (v: boolean) => void
 }
 
 export function SkinPreview3D({
@@ -34,7 +38,11 @@ export function SkinPreview3D({
   walking,
   autoRotate,
   active,
-  onResetView,
+  viewMode = 'model',
+  onViewModeChange,
+  onToggleOuter,
+  onToggleWalking,
+  onToggleAutoRotate,
 }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -168,21 +176,59 @@ export function SkinPreview3D({
     viewer.animation = walking && active ? new skinview3d.WalkingAnimation() : null
   }, [walking, active])
 
-  const resetView = () => {
-    const viewer = viewerRef.current
-    if (!viewer) return
-    viewer.adjustCameraDistance()
-    viewer.playerObject.rotation.y = 0
-    dragState.current.resumeAt = 0
-    onResetView?.()
-  }
-
   return (
     <div className={styles.previewWrap} ref={wrapRef}>
       <canvas ref={canvasRef} className={styles.previewCanvas} aria-label="3D 皮肤预览" />
-      <button type="button" className={styles.previewReset} onClick={resetView}>
-        重置视角
-      </button>
+      <div className={styles.previewHoverBar}>
+        {onViewModeChange && (
+          <div className={styles.previewModeSeg} role="tablist" aria-label="预览方式">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={viewMode === 'model'}
+              className={viewMode === 'model' ? styles.active : undefined}
+              onClick={() => onViewModeChange('model')}
+            >
+              模型
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={viewMode === 'flat'}
+              className={viewMode === 'flat' ? styles.active : undefined}
+              onClick={() => onViewModeChange('flat')}
+            >
+              展开图
+            </button>
+          </div>
+        )}
+        <div className={styles.previewHoverRight}>
+          <button
+            type="button"
+            className={showOuterLayers ? styles.previewToggleOn : styles.previewToggleOff}
+            aria-pressed={showOuterLayers}
+            onClick={() => onToggleOuter?.(!showOuterLayers)}
+          >
+            外层
+          </button>
+          <button
+            type="button"
+            className={walking ? styles.previewToggleOn : styles.previewToggleOff}
+            aria-pressed={walking}
+            onClick={() => onToggleWalking?.(!walking)}
+          >
+            行走
+          </button>
+          <button
+            type="button"
+            className={autoRotate ? styles.previewToggleOn : styles.previewToggleOff}
+            aria-pressed={autoRotate}
+            onClick={() => onToggleAutoRotate?.(!autoRotate)}
+          >
+            转动
+          </button>
+        </div>
+      </div>
     </div>
   )
 }

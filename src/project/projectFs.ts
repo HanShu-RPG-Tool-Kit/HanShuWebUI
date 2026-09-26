@@ -396,6 +396,7 @@ export async function saveProjectToDirectory(
   }
 
   // 3) assets：整树重写（先删再写，逻辑简单可靠）
+  // 注意：绝不触碰 `.hanshu/`（皮肤库等工程附属数据）
   await removeEntryIfExists(root, 'assets', { recursive: true })
   if (pkg.assetFolders.length > 0 || pkg.assets.length > 0) {
     await root.getDirectoryHandle('assets', { create: true })

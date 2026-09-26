@@ -12,7 +12,7 @@ name = "hanshu_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [workspace]
-members = ["crates/skin-core", "crates/skin-http"]
+members = ["crates/skin-core"]
 
 [build-dependencies]
 tauri-build = { version = "2.6.3", features = [] }

@@ -3,12 +3,11 @@
  */
 
 import { useMemo } from 'react'
-import type { FolderWithStats, LibraryEntry, TagWithStats } from '../contracts/types.ts'
+import type { FolderWithStats, LibraryEntry } from '../contracts/types.ts'
 import styles from '../styles/workspace.module.css'
 
 export interface LibraryTableProps {
   entries: LibraryEntry[]
-  tags: TagWithStats[]
   folders: FolderWithStats[]
   checked: Set<string>
   onToggleChecked: (entryId: string) => void
@@ -19,7 +18,6 @@ export interface LibraryTableProps {
 
 export function LibraryTable({
   entries,
-  tags,
   folders,
   checked,
   onToggleChecked,
@@ -27,7 +25,6 @@ export function LibraryTable({
   onContextMenu,
   showPath,
 }: LibraryTableProps) {
-  const tagById = useMemo(() => new Map(tags.map((t) => [t.tagId, t])), [tags])
   const folderById = useMemo(() => new Map(folders.map((f) => [f.folderId, f])), [folders])
 
   const formatDate = (iso: string) => {
@@ -39,7 +36,7 @@ export function LibraryTable({
   }
 
   const entryPath = (e: LibraryEntry): string => {
-    if (e.folderId === null) return '未归档'
+    if (e.folderId === null) return '皮肤库'
     return folderById.get(e.folderId)?.path.join(' / ') ?? ''
   }
 
@@ -102,16 +99,16 @@ export function LibraryTable({
         <tbody>
           {entries.map((e) => {
             const isChecked = checked.has(e.entryId)
-            const displayTags = e.tagIds
-              .map((id) => tagById.get(id)?.name ?? id)
-              .filter(Boolean)
+            const displayTags = e.tags.filter(Boolean)
             const tagText = displayTags.length > 2
               ? `${displayTags.slice(0, 2).join(', ')} +${displayTags.length - 2}`
               : displayTags.join(', ')
             return (
               <tr
                 key={e.entryId}
-                className={isChecked ? styles.checked : ''}
+                className={[isChecked ? styles.checked : '', !e.active ? styles.rowInactive : '']
+                  .filter(Boolean)
+                  .join(' ')}
                 onClick={() => onSelect(e)}
                 onContextMenu={(ev) => onContextMenu(ev, e)}
               >
@@ -127,7 +124,13 @@ export function LibraryTable({
                   {e.favorite ? '★ ' : ''}
                   {e.name}
                 </td>
-                <td>{e.active ? '已启用' : '已禁用'}</td>
+                <td>
+                  <span
+                    className={`${styles.statusPill} ${e.active ? styles.statusActive : styles.statusInactive}`}
+                  >
+                    {e.active ? '已启用' : '已禁用'}
+                  </span>
+                </td>
                 <td title={displayTags.join(', ')}>{tagText}</td>
                 <td>{licenseLabel(e)}</td>
                 <td>{authorLabel(e)}</td>

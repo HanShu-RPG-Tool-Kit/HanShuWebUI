@@ -462,7 +462,7 @@ impl ImportManager {
         &self,
         job_id: &str,
         name: &str,
-        tag_ids: Vec<String>,
+        tags: Vec<String>,
         tag_paths: Vec<Vec<String>>,
         folder_id: Option<String>,
         favorite: bool,
@@ -480,25 +480,23 @@ impl ImportManager {
         if job.state != JobState::Ready {
             return Err(SkinError::api(codes::CONFLICT, "import job not ready"));
         }
-        // Direct tagIds come from the picker; tagPaths (portable import) are
-        // resolved/created now — at save time, never during preview.
-        let mut final_tag_ids = tag_ids;
+        // Direct tags from the picker; tagPaths (portable import) flatten to leaf names.
+        use crate::storage::{normalize_tag_list, tag_paths_to_names};
+        let mut final_tags = normalize_tag_list(tags);
         if !tag_paths.is_empty() {
-            let (resolved, _) = self.storage.resolve_tag_paths(&tag_paths)?;
-            for id in resolved {
-                if !final_tag_ids.contains(&id) {
-                    final_tag_ids.push(id);
-                }
-            }
+            final_tags = normalize_tag_list(
+                final_tags
+                    .into_iter()
+                    .chain(tag_paths_to_names(&tag_paths)),
+            );
         } else if let Some(suggested) =
             staged.suggested_tag_paths.as_ref().filter(|p| !p.is_empty())
         {
-            if final_tag_ids.is_empty() {
-                let (resolved, _) = self.storage.resolve_tag_paths(suggested)?;
-                final_tag_ids = resolved;
+            if final_tags.is_empty() {
+                final_tags = tag_paths_to_names(suggested);
             }
         }
-        final_tag_ids.truncate(64);
+        final_tags.truncate(64);
         let name = name.trim().to_string();
         if name.is_empty() {
             return Err(SkinError::api(codes::BAD_REQUEST, "name required"));
@@ -507,7 +505,7 @@ impl ImportManager {
             skin_id: staged.skin_id.clone(),
             name,
             active: active.or(staged.suggested_active).unwrap_or(false),
-            tag_ids: final_tag_ids,
+            tags: final_tags,
             folder_id,
             favorite,
             model: staged.model,

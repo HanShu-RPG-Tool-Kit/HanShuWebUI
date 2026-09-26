@@ -17,3 +17,10 @@ export {
   type BoundProject,
   type LoadProjectResult,
 } from './projectFs'
+export {
+  getBoundProject,
+  getBoundProjectHandle,
+  setBoundProject,
+  subscribeProjectBinding,
+  type ProjectBindingListener,
+} from './bindingBus'

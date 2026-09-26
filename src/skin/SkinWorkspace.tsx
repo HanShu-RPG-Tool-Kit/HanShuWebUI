@@ -1,20 +1,26 @@
 /**
  * MC 皮肤管理工作区(新版):
  *   顶部:标题 + 搜索 + 导入 + 布局切换
- *   左侧:范围导航 + 文件夹树 + 管理标签入口
- *   中间:面包屑 + 返回上级 + 筛选 + 子文件夹卡片 + 皮肤网格/列表 + 批量工具条
- *   右侧:详情面板(active/ID/协议/作者/出处/备注)
+ *   左侧:范围导航 + 文件夹树 + 筛选排序
+ *   中间:面包屑 + 返回上级 + 子文件夹卡片 + 皮肤网格/列表 + 批量工具条
+ *   右侧:详情面板（就地编辑）
  *
  * 支持:
- *   - v4 数据模型(active/license/provenance/note)
+ *   - v5 数据模型(自由字符串 tags，随皮肤存在并自动收集)
  *   - 正反筛选、排序、三种布局(大图标/小图标/列表)
  *   - 右键菜单(空白/文件夹/单皮肤/多选)
  *   - 返回上级导航
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { getSkinApi } from './api/index.ts'
+import {
+  getBoundProject,
+  subscribeProjectBinding,
+  type BoundProject,
+} from '../project'
+import { getSkinApi, resetSkinApiCache } from './api/index.ts'
 import type { SkinApi } from './api/SkinApi.ts'
+import { FSA_SKIN_ROOT_LABEL } from './api/fsaAdapter.ts'
 import { FolderTree } from './components/FolderTree.tsx'
 import { ImportQueuePanel } from './components/ImportQueuePanel.tsx'
 import { SkinThumb } from './components/SkinThumb.tsx'
@@ -22,7 +28,6 @@ import { ContextMenu, type ContextMenuItem } from './components/ContextMenu.tsx'
 import { LibraryFilters } from './components/LibraryFilters.tsx'
 import { LibraryTable } from './components/LibraryTable.tsx'
 import { EntryDetails } from './components/EntryDetails.tsx'
-import { EntryEditor } from './components/EntryEditor.tsx'
 import { TagPicker } from './components/TagPicker.tsx'
 import { TextureViewerDialog } from './components/TextureViewerDialog.tsx'
 import type {
@@ -33,11 +38,12 @@ import type {
   SkinModel,
   SortDirection,
   TagMatch,
-  TagWithStats,
+  CollectedTag,
 } from './contracts/types.ts'
+import './styles/workspace-shell.css'
 import styles from './styles/workspace.module.css'
 
-type Scope = 'all' | 'favorites' | 'recent' | 'unfiled' | 'folder'
+type Scope = 'all' | 'favorites' | 'recent' | 'folder'
 type LayoutMode = 'large' | 'small' | 'list'
 type ThumbType = 'avatar' | 'bust' | 'full' | 'flat'
 
@@ -58,8 +64,11 @@ interface ContextMenuState {
 export function SkinWorkspace({ active }: SkinWorkspaceProps) {
   const [api, setApi] = useState<SkinApi | null>(null)
   const [initError, setInitError] = useState<string | null>(null)
+  const [project, setProject] = useState<BoundProject | null>(() =>
+    getBoundProject(),
+  )
 
-  const [tags, setTags] = useState<TagWithStats[]>([])
+  const [tags, setTags] = useState<CollectedTag[]>([])
   const [folders, setFolders] = useState<FolderWithStats[]>([])
 
   const [entries, setEntries] = useState<LibraryEntry[]>([])
@@ -67,14 +76,12 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
   const [page, setPage] = useState(1)
   const pageSize = 48
   const [search, setSearch] = useState('')
-  const [searchWholeLibrary, setSearchWholeLibrary] = useState(false)
-  const [scope, setScope] = useState<Scope>('all')
+  const [scope, setScope] = useState<Scope>('folder')
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null)
-  const [includeSubfolders, setIncludeSubfolders] = useState(false)
 
   // Filters
-  const [includeTagIds, setIncludeTagIds] = useState<string[]>([])
-  const [excludeTagIds, setExcludeTagIds] = useState<string[]>([])
+  const [includeTags, setIncludeTags] = useState<string[]>([])
+  const [excludeTags, setExcludeTags] = useState<string[]>([])
   const [tagMatch, setTagMatch] = useState<TagMatch>('all')
   const [activeFilter, setActiveFilter] = useState<'all' | 'active' | 'inactive'>('all')
   const [modelFilter, setModelFilter] = useState<SkinModel | 'all'>('all')
@@ -88,7 +95,6 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
   const [checked, setChecked] = useState<Set<string>>(new Set())
 
   const [showImport, setShowImport] = useState(false)
-  const [showTagManager, setShowTagManager] = useState(false)
   const [showOuter, setShowOuter] = useState(true)
   const [walking, setWalking] = useState(true)
   const [autoRotate, setAutoRotate] = useState(true)
@@ -97,7 +103,6 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
   const [layoutMode, setLayoutMode] = useState<LayoutMode>('large')
   const [thumbType, setThumbType] = useState<ThumbType>('full')
   const [moveDialog, setMoveDialog] = useState<{ entryIds: string[] } | null>(null)
-  const [editDialog, setEditDialog] = useState<LibraryEntry | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [textureViewerFor, setTextureViewerFor] = useState<LibraryEntry | null>(null)
   const [newFolderUnder, setNewFolderUnder] = useState<string | null | 'root' | undefined>(undefined)
@@ -112,9 +117,23 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
 
   const folderById = useMemo(() => new Map(folders.map((f) => [f.folderId, f])), [folders])
 
-  /* ---------- init: resolve the API once ---------- */
+  useEffect(() => subscribeProjectBinding(setProject), [])
+
+  /* ---------- init: resolve the API when project binding changes ---------- */
   useEffect(() => {
     let cancelled = false
+    resetSkinApiCache()
+    setApi(null)
+    setInitError(null)
+    if (!project) {
+      setEntries([])
+      setTags([])
+      setFolders([])
+      setTotal(0)
+      return () => {
+        cancelled = true
+      }
+    }
     void getSkinApi()
       .then((a) => {
         if (!cancelled) setApi(a)
@@ -125,7 +144,7 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [project])
 
   const refreshTags = useCallback(async () => {
     if (!api) return
@@ -165,22 +184,11 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
     const seq = ++requestSeqRef.current
 
     let folderId: string | null | undefined
-    let includeSub: boolean | undefined
     let scopeParam: 'all' | 'unfiled' | 'folder' | undefined
     if (scope === 'folder') {
       scopeParam = 'folder'
       folderId = currentFolderId
-      includeSub = includeSubfolders
-    } else if (scope === 'unfiled') {
-      scopeParam = 'unfiled'
-      folderId = undefined
-      includeSub = false
     } else {
-      scopeParam = 'all'
-    }
-    if (debouncedSearch && searchWholeLibrary) {
-      folderId = undefined
-      includeSub = undefined
       scopeParam = 'all'
     }
 
@@ -195,9 +203,9 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
     try {
       result = await api.listEntries({
         search: debouncedSearch || undefined,
-        tagIds: includeTagIds.length ? includeTagIds : undefined,
-        excludeTagIds: excludeTagIds.length ? excludeTagIds : undefined,
-        tagMatch: includeTagIds.length > 1 ? tagMatch : undefined,
+        tags: includeTags.length ? includeTags : undefined,
+        excludeTags: excludeTags.length ? excludeTags : undefined,
+        tagMatch: includeTags.length > 1 ? tagMatch : undefined,
         active: activeParam,
         models: modelsParam,
         author: authorFilter.trim() || undefined,
@@ -206,7 +214,6 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
         favorite: scope === 'favorites' ? true : undefined,
         scope: scopeParam,
         folderId,
-        includeSubfolders: includeSub,
         // "最近导入" is a whole-library server-side sort, not a re-sort of the
         // current page — pagination must reflect the full-library order.
         sortBy: scope === 'recent' ? 'createdAt' : sortBy,
@@ -228,25 +235,31 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
     setListError(null)
     setEntries(result.entries)
     setTotal(result.total)
-  }, [api, debouncedSearch, searchWholeLibrary, scope, currentFolderId, includeSubfolders, includeTagIds, excludeTagIds, tagMatch, activeFilter, modelFilter, licenseFilter, authorFilter, sortBy, sortDirection, page])
+  }, [api, debouncedSearch, scope, currentFolderId, includeTags, excludeTags, tagMatch, activeFilter, modelFilter, licenseFilter, authorFilter, sortBy, sortDirection, page])
 
-  // After the API resolves, run the first query. If it fails (the backend is
-  // still coming up), retry once after a short delay before showing the error.
+  // Boot folders/tags once per API; entry list tracks `refresh` identity (filters).
   useEffect(() => {
     if (!api) return
     let cancelled = false
-    const retryTimer = window.setTimeout(async () => {
-      // only meaningful if the first attempt left an error
-      if (!cancelled && listError) {
-        await refresh()
+    const loadMeta = async () => {
+      try {
+        await Promise.all([refreshFolders(), refreshTags()])
+      } catch (e) {
+        if (!cancelled) {
+          setListError((e as Error)?.message ?? '加载皮肤库失败')
+        }
       }
-    }, 1500)
-    void Promise.all([refresh(), refreshTags(), refreshFolders()])
+    }
+    void loadMeta()
     return () => {
       cancelled = true
-      window.clearTimeout(retryTimer)
     }
-  }, [refresh, refreshTags, refreshFolders, api])
+  }, [api, refreshFolders, refreshTags])
+
+  useEffect(() => {
+    if (!api) return
+    void refresh()
+  }, [api, refresh])
 
   /* ---------- events: subscribe first, then query snapshots ---------- */
   useEffect(() => {
@@ -311,7 +324,7 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
   useEffect(() => {
     setPage(1)
     setChecked(new Set())
-  }, [debouncedSearch, scope, currentFolderId, includeSubfolders, includeTagIds, excludeTagIds, activeFilter, modelFilter, licenseFilter, authorFilter])
+  }, [debouncedSearch, scope, currentFolderId, includeTags, excludeTags, activeFilter, modelFilter, licenseFilter, authorFilter])
 
   /* ---------- hover / pinned ---------- */
 
@@ -367,14 +380,15 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
   useEffect(() => {
     setHovered(null)
     setPinned(null)
-  }, [scope, currentFolderId, includeSubfolders, search, page])
+  }, [scope, currentFolderId, search, page])
 
   const directChildFolders: FolderWithStats[] = useMemo(() => {
-    if (scope !== 'folder' || includeSubfolders) return []
+    if (scope !== 'folder') return []
+    const parent = currentFolderId
     return folders
-      .filter((f) => f.parentId === currentFolderId)
+      .filter((f) => (f.parentId ?? null) === parent)
       .sort((a, b) => a.sortOrder - b.sortOrder)
-  }, [folders, scope, currentFolderId, includeSubfolders])
+  }, [folders, scope, currentFolderId])
 
   /* ---------- preview URL helper (object URL cache) ---------- */
   const previewUrlRef = useRef(new Map<string, Promise<string>>())
@@ -411,7 +425,7 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
 
   if (initError) {
     return (
-      <div className={styles.workspace}>
+      <div className={`skinWorkspace ${styles.workspace}`}>
         <main className={styles.centered}>
           <h1>无法使用皮肤管理</h1>
           <p>{initError}</p>
@@ -421,7 +435,7 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
   }
   if (!api) {
     return (
-      <div className={styles.workspace}>
+      <div className={`skinWorkspace ${styles.workspace}`}>
         <main className={styles.centered}>
           <p>正在初始化皮肤库…</p>
         </main>
@@ -446,17 +460,6 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
   const copyContentId = async (skinId: string) => {
     await navigator.clipboard.writeText(skinId)
     showNotice('内容 ID(完整)已复制')
-  }
-
-  /* ---- tag callbacks ---- */
-  const createTag = async (name: string, parentId: string | null): Promise<string | null> => {
-    try {
-      await api.createTag({ name, parentId })
-      await refreshTags()
-      return null
-    } catch (e) {
-      return asError(e)
-    }
   }
 
   /* ---- folder callbacks ---- */
@@ -500,7 +503,7 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
     try {
       await api.deleteFolder(folderId)
       if (currentFolderId === folderId) {
-        setScope('all')
+        setScope('folder')
         setCurrentFolderId(null)
       }
       await refreshFolders()
@@ -513,12 +516,18 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
 
   /* ---- 面包屑 ---- */
   const breadcrumb = (): { label: string; onClick?: () => void }[] => {
+    const goRoot = () => {
+      setScope('folder')
+      setCurrentFolderId(null)
+    }
     if (scope === 'folder') {
-      if (currentFolderId === null) return [{ label: '未归档' }]
+      if (currentFolderId === null) return [{ label: '皮肤库' }]
       const f = folderById.get(currentFolderId)
-      if (!f) return [{ label: '文件夹' }]
+      if (!f) return [{ label: '皮肤库', onClick: goRoot }, { label: '文件夹' }]
       const segments = f.path
-      const trail: { label: string; onClick?: () => void }[] = []
+      const trail: { label: string; onClick?: () => void }[] = [
+        { label: '皮肤库', onClick: goRoot },
+      ]
       let cur: FolderWithStats | undefined = folders.find(
         (x) => x.name === segments[0] && x.parentId === null,
       )
@@ -549,8 +558,6 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
         return [{ label: '收藏' }]
       case 'recent':
         return [{ label: '最近导入' }]
-      case 'unfiled':
-        return [{ label: '未归档' }]
       default:
         return [{ label: '全部皮肤' }]
     }
@@ -565,9 +572,9 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
     })
   }
 
-  const showEntryPath = scope !== 'folder' || includeSubfolders
+  const showEntryPath = scope !== 'folder'
   const entryPathLabel = (e: LibraryEntry): string => {
-    if (e.folderId === null) return '未归档'
+    if (e.folderId === null) return '皮肤库'
     return folderById.get(e.folderId)?.path.join(' / ') ?? ''
   }
 
@@ -583,7 +590,7 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
       })
       const targetLabel =
         targetFolderId === null
-          ? '未归档'
+          ? '皮肤库'
           : (folderById.get(targetFolderId)?.path.join(' / ') ?? '')
       showNotice(`已移动 ${moveDialog.entryIds.length} 个条目到 ${targetLabel}`)
       setMoveDialog(null)
@@ -612,7 +619,7 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
     if (current.parentId) {
       setCurrentFolderId(current.parentId)
     } else {
-      setScope('all')
+      setScope('folder')
       setCurrentFolderId(null)
     }
   }
@@ -659,19 +666,18 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
     // Clear every filter so the target entry is guaranteed to be visible,
     // navigate to its folder, then fetch and pin it directly.
     setSearch('')
-    setIncludeTagIds([])
-    setExcludeTagIds([])
+    setIncludeTags([])
+    setExcludeTags([])
     setActiveFilter('all')
     setModelFilter('all')
     setLicenseFilter('')
     setAuthorFilter('')
-    setSearchWholeLibrary(false)
     setPage(1)
     if (folderId) {
       setScope('folder')
       setCurrentFolderId(folderId)
     } else {
-      setScope('unfiled')
+      setScope('folder')
       setCurrentFolderId(null)
     }
     try {
@@ -725,11 +731,17 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
             isPinned ? styles.selected : '',
             isHovered && !isPinned ? styles.hovered : '',
             isChecked ? styles.checked : '',
+            !e.active ? styles.cardInactive : '',
           ]
             .filter(Boolean)
             .join(' ')}
           onClick={() => setPinned(e)}
         >
+          <span
+            className={`${styles.cardStatus} ${e.active ? styles.cardStatusOn : styles.cardStatusOff}`}
+            title={e.active ? '已启用' : '已禁用'}
+            aria-label={e.active ? '已启用' : '已禁用'}
+          />
           <PreviewImage
             skinId={e.skinId}
             model={e.model}
@@ -763,7 +775,9 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
       label: '新建文件夹',
       onClick: () => {
         // 聚合视图默认根目录;文件夹内建在当前位置。弹窗显示目标位置。
-        setNewFolderUnder(scope === 'folder' && currentFolderId ? currentFolderId : 'root')
+        setNewFolderUnder(
+          scope === 'folder' ? (currentFolderId ?? 'root') : 'root',
+        )
         setNewFolderName('')
       },
     },
@@ -816,7 +830,7 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
     }
     return [
       { label: e.active ? '禁用' : '启用', onClick: () => void toggleEntryActive(e) },
-      { label: '编辑资料…', onClick: () => { setPinned(e); setEditDialog(e) } },
+      { label: '在右侧编辑', onClick: () => setPinned(e) },
       { label: e.favorite ? '取消收藏' : '收藏', onClick: () => void toggleEntryFavorite(e) },
       { separator: true, label: '', onClick: () => {} },
       { label: '复制内容 ID', onClick: () => void copyContentId(e.skinId) },
@@ -889,126 +903,185 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
   }
 
   /* ---------- 渲染 ---------- */
-  return (
-    <div className={styles.workspace}>
-      <main className={styles.layout}>
-        <header className={styles.topbar}>
-          <h1 className={styles.topbarTitle}>皮肤库</h1>
-          <input
-            type="search"
-            className={styles.topbarSearch}
-            placeholder={
-              scope === 'folder' && !searchWholeLibrary
-                ? `在「${currentFolderId ? (folderById.get(currentFolderId)?.name ?? '') : '未归档'}」中搜索…`
-                : '搜索整个皮肤库…'
-            }
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            aria-label="搜索皮肤"
-          />
-          <label className={styles.searchScope}>
-            <input
-              type="checkbox"
-              checked={searchWholeLibrary}
-              onChange={(e) => setSearchWholeLibrary(e.target.checked)}
-            />
-            搜索整个皮肤库
-          </label>
-          <div className={styles.layoutToggle} role="tablist" aria-label="布局模式">
-            {(['large', 'small', 'list'] as const).map((m) => (
-              <button
-                key={m}
-                role="tab"
-                aria-selected={layoutMode === m}
-                className={layoutMode === m ? styles.active : ''}
-                onClick={() => setLayoutMode(m)}
-              >
-                {layoutIcons[m]}
-              </button>
-            ))}
-          </div>
-          <button
-            className={styles.primaryBtn}
-            onClick={() => {
-              setNewFolderUnder(scope === 'folder' && currentFolderId ? currentFolderId : 'root')
-              setNewFolderName('')
-            }}
-          >
-            新建文件夹
-          </button>
-          <button className={styles.primaryBtn} onClick={() => setShowImport(true)}>
-            导入皮肤
-          </button>
-        </header>
+  if (!project) {
+    return (
+      <div className={`skinWorkspace ${styles.workspace}`} data-active={active ? '1' : '0'}>
+        <div className={styles.empty} style={{ padding: 48, maxWidth: 480 }}>
+          <h2 style={{ marginTop: 0 }}>需要先打开剧本工程</h2>
+          <p>
+            皮肤库现在保存在工程目录的{' '}
+            <code>{FSA_SKIN_ROOT_LABEL}</code>，与剧本共用同一文件夹。
+          </p>
+          <p>请切换到「剧本」工作区：文件 → 打开工程… / 新建工程…</p>
+        </div>
+      </div>
+    )
+  }
 
-        <aside className={styles.left}>
-          <nav className={styles.scopeNav} aria-label="浏览范围">
-            <button
-              className={scope === 'all' ? styles.active : ''}
-              onClick={() => {
-                setScope('all')
-                setCurrentFolderId(null)
+  if (initError) {
+    return (
+      <div className={`skinWorkspace ${styles.workspace}`} data-active={active ? '1' : '0'}>
+        <p className={styles.error} style={{ padding: 24 }}>
+          皮肤库初始化失败：{initError}
+        </p>
+      </div>
+    )
+  }
+
+  if (!api) {
+    return (
+      <div className={`skinWorkspace ${styles.workspace}`} data-active={active ? '1' : '0'}>
+        <p className={styles.empty} style={{ padding: 24 }}>
+          正在打开皮肤库（{project.folderName}/{FSA_SKIN_ROOT_LABEL}）…
+        </p>
+      </div>
+    )
+  }
+
+  return (
+    <div className={`skinWorkspace ${styles.workspace}`}>
+      <main className={`skinWorkspaceLayout ${styles.layout}`}>
+        <aside className={`skinWorkspaceLeft ${styles.left}`}>
+          <div className={styles.leftTop}>
+            <input
+              type="search"
+              className={styles.sideSearch}
+              placeholder={
+                scope === 'folder'
+                  ? `搜索「${currentFolderId ? (folderById.get(currentFolderId)?.name ?? '') : '皮肤库'}」…`
+                  : scope === 'favorites'
+                    ? '搜索收藏…'
+                    : scope === 'recent'
+                      ? '搜索最近导入…'
+                      : '搜索全部皮肤…'
+              }
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              aria-label="搜索皮肤"
+            />
+            <nav className={styles.quickNav} aria-label="快速访问">
+              <div className={styles.quickNavHead}>
+                <span>快速访问</span>
+              </div>
+              {(
+                [
+                  {
+                    id: 'library',
+                    label: '皮肤库',
+                    icon: '📁',
+                    active: scope === 'folder' && currentFolderId === null,
+                    onClick: () => {
+                      setScope('folder')
+                      setCurrentFolderId(null)
+                    },
+                  },
+                  {
+                    id: 'all',
+                    label: '全部皮肤',
+                    icon: '▦',
+                    active: scope === 'all',
+                    onClick: () => {
+                      setScope('all')
+                      setCurrentFolderId(null)
+                    },
+                  },
+                  {
+                    id: 'favorites',
+                    label: '收藏',
+                    icon: '★',
+                    active: scope === 'favorites',
+                    onClick: () => {
+                      setScope('favorites')
+                      setCurrentFolderId(null)
+                    },
+                  },
+                  {
+                    id: 'recent',
+                    label: '最近导入',
+                    icon: '◷',
+                    active: scope === 'recent',
+                    onClick: () => {
+                      setScope('recent')
+                      setCurrentFolderId(null)
+                    },
+                  },
+                ] as const
+              ).map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={`${styles.navRow}${item.active ? ` ${styles.active}` : ''}`}
+                  aria-current={item.active ? 'page' : undefined}
+                  onClick={item.onClick}
+                >
+                  <span className={styles.navIcon} aria-hidden>
+                    {item.icon}
+                  </span>
+                  <span className={styles.navLabel}>{item.label}</span>
+                </button>
+              ))}
+            </nav>
+            <FolderTree
+              folders={folders}
+              selectedFolderId={scope === 'folder' ? currentFolderId : null}
+              onSelect={(fid) => {
+                setScope('folder')
+                setCurrentFolderId(fid)
               }}
-            >
-              全部皮肤
-            </button>
-            <button
-              className={scope === 'favorites' ? styles.active : ''}
-              onClick={() => {
-                setScope('favorites')
-                setCurrentFolderId(null)
-              }}
-            >
-              收藏
-            </button>
-            <button
-              className={scope === 'recent' ? styles.active : ''}
-              onClick={() => {
-                setScope('recent')
-                setCurrentFolderId(null)
-              }}
-            >
-              最近导入
-            </button>
-            <button
-              className={scope === 'unfiled' ? styles.active : ''}
-              onClick={() => {
-                setScope('unfiled')
-                setCurrentFolderId(null)
-              }}
-            >
-              未归档
-            </button>
-          </nav>
-          <FolderTree
-            folders={folders}
-            selectedFolderId={scope === 'folder' ? currentFolderId : null}
-            onSelect={(fid) => {
-              setScope('folder')
-              setCurrentFolderId(fid)
-            }}
-            onCreate={createFolder}
-            onRename={renameFolder}
-            onMove={moveFolder}
-            onSortByName={sortFolderSiblings}
-            onDelete={deleteFolder}
-          />
-          <div className={styles.leftFooter}>
-            <button className={styles.linkBtn} onClick={() => setShowTagManager(true)}>
-              管理标签
-            </button>
+              onFolderContextMenu={(f, e) => openContextMenu(e, folderContextMenuItems(f))}
+              onBlankContextMenu={(e) =>
+                openContextMenu(e, [
+                  {
+                    label: '新建文件夹',
+                    onClick: () => {
+                      setNewFolderUnder('root')
+                      setNewFolderName('')
+                    },
+                  },
+                ])
+              }
+            />
+          </div>
+          <div className={styles.leftBottom}>
+            <div className={styles.leftBottomHead}>
+              <span>筛选与排序</span>
+            </div>
+            <div className={styles.leftBottomScroll}>
+              <LibraryFilters
+                layout="sidebar"
+                tags={tags}
+                includeTags={includeTags}
+                excludeTags={excludeTags}
+                onIncludeTagsChange={setIncludeTags}
+                onExcludeTagsChange={setExcludeTags}
+                tagMatch={tagMatch}
+                onTagMatchChange={setTagMatch}
+                activeFilter={activeFilter}
+                onActiveFilterChange={setActiveFilter}
+                modelFilter={modelFilter}
+                onModelFilterChange={setModelFilter}
+                licenseFilter={licenseFilter}
+                onLicenseFilterChange={setLicenseFilter}
+                authorFilter={authorFilter}
+                onAuthorFilterChange={setAuthorFilter}
+                sortBy={sortBy}
+                onSortByChange={setSortBy}
+                sortDirection={sortDirection}
+                onSortDirectionChange={setSortDirection}
+                onClearAll={() => {
+                  setIncludeTags([])
+                  setExcludeTags([])
+                  setActiveFilter('all')
+                  setModelFilter('all')
+                  setLicenseFilter('')
+                  setAuthorFilter('')
+                }}
+              />
+            </div>
           </div>
         </aside>
 
-        <section
-          className={styles.grid}
-          aria-label="皮肤列表"
-          onContextMenu={(e) => {
-            // Blank-area menu only when the event did not hit a card/row.
-            if ((e.target as HTMLElement).closest(`.${styles.cardWrap}, .${styles.tableWrap}, .${styles.folderCards}`)) return
-            openContextMenu(e, blankContextMenuItems)
-          }}
-        >
+        <section className={`skinWorkspaceCenter ${styles.grid}`} aria-label="皮肤列表">
           <div className={styles.gridToolbar}>
             <nav className={styles.breadcrumb} aria-label="当前位置">
               {scope === 'folder' && currentFolderId !== null && (
@@ -1038,65 +1111,36 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
                 </span>
               ))}
             </nav>
-            <div className={styles.thumbToggle} role="tablist" aria-label="缩略图类型">
-              {(['avatar', 'bust', 'full', 'flat'] as const).map((t) => (
-                <button
-                  key={t}
-                  role="tab"
-                  aria-selected={thumbType === t}
-                  className={thumbType === t ? styles.active : ''}
-                  onClick={() => setThumbType(t)}
-                  disabled={layoutMode === 'list'}
-                >
-                  {t === 'avatar' ? '头像' : t === 'bust' ? '半身' : t === 'full' ? '全身' : '展开图'}
-                </button>
-              ))}
+            <div className={styles.viewToggles}>
+              <div className={styles.layoutToggle} role="tablist" aria-label="布局模式">
+                {(['large', 'small', 'list'] as const).map((m) => (
+                  <button
+                    key={m}
+                    role="tab"
+                    aria-selected={layoutMode === m}
+                    className={layoutMode === m ? styles.active : ''}
+                    onClick={() => setLayoutMode(m)}
+                  >
+                    {layoutIcons[m]}
+                  </button>
+                ))}
+              </div>
+              <div className={styles.thumbToggle} role="tablist" aria-label="缩略图类型">
+                {(['avatar', 'bust', 'full', 'flat'] as const).map((t) => (
+                  <button
+                    key={t}
+                    role="tab"
+                    aria-selected={thumbType === t}
+                    className={thumbType === t ? styles.active : ''}
+                    onClick={() => setThumbType(t)}
+                    disabled={layoutMode === 'list'}
+                  >
+                    {t === 'avatar' ? '头像' : t === 'bust' ? '半身' : t === 'full' ? '全身' : '展开图'}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
-
-          <LibraryFilters
-            tags={tags}
-            includeTagIds={includeTagIds}
-            excludeTagIds={excludeTagIds}
-            onIncludeTagIdsChange={setIncludeTagIds}
-            onExcludeTagIdsChange={setExcludeTagIds}
-            tagMatch={tagMatch}
-            onTagMatchChange={setTagMatch}
-            activeFilter={activeFilter}
-            onActiveFilterChange={setActiveFilter}
-            modelFilter={modelFilter}
-            onModelFilterChange={setModelFilter}
-            licenseFilter={licenseFilter}
-            onLicenseFilterChange={setLicenseFilter}
-            authorFilter={authorFilter}
-            onAuthorFilterChange={setAuthorFilter}
-            sortBy={sortBy}
-            onSortByChange={setSortBy}
-            sortDirection={sortDirection}
-            onSortDirectionChange={setSortDirection}
-            createTag={createTag}
-            onClearAll={() => {
-              setIncludeTagIds([])
-              setExcludeTagIds([])
-              setActiveFilter('all')
-              setModelFilter('all')
-              setLicenseFilter('')
-              setAuthorFilter('')
-            }}
-          />
-
-          {scope === 'folder' && (
-            <div className={styles.filterBar} aria-label="文件夹浏览选项">
-              <label>
-                <input
-                  type="checkbox"
-                  checked={includeSubfolders}
-                  onChange={(e) => setIncludeSubfolders(e.target.checked)}
-                />
-                包含子文件夹
-              </label>
-            </div>
-          )}
 
           {checked.size > 0 && (
             <div className={styles.batchBar} role="toolbar" aria-label="批量操作">
@@ -1116,18 +1160,34 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
                   void refresh()
                   void refreshTags()
                 }}
-                createTag={createTag}
               />
               <button onClick={() => setChecked(new Set())}>取消选择</button>
               <button onClick={() => void exportUsableManifest()}>导出已启用清单</button>
             </div>
           )}
 
+          <div
+            className={styles.browsePane}
+            onContextMenu={(e) => {
+              // Skip only concrete folder/entry cards; gaps and empty space use blank menu.
+              const el = e.target as HTMLElement
+              if (
+                el.closest(
+                  `.${styles.folderCard}, .${styles.cardWrap}, .${styles.tableWrap} tbody tr`,
+                )
+              ) {
+                return
+              }
+              openContextMenu(e, blankContextMenuItems)
+            }}
+          >
           {directChildFolders.length > 0 && (
-            <div className={styles.folderCards}>
+            <div className={styles.folderCards} role="list" aria-label="子文件夹">
               {directChildFolders.map((f) => (
                 <button
                   key={f.folderId}
+                  type="button"
+                  role="listitem"
                   className={styles.folderCard}
                   onClick={() => {
                     setScope('folder')
@@ -1161,20 +1221,22 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
           )}
           {entries.length === 0 && directChildFolders.length === 0 && !listError && (
             <p className={styles.empty}>
-              {total === 0 && (search || includeTagIds.length > 0 || excludeTagIds.length > 0)
+              {total === 0 && (search || includeTags.length > 0 || excludeTags.length > 0)
                 ? '没有匹配的皮肤。'
                 : scope === 'folder'
-                  ? '此文件夹为空。'
+                  ? currentFolderId === null
+                    ? '皮肤库为空。右键空白处可新建文件夹或导入皮肤。'
+                    : '此文件夹为空。右键空白处可新建子文件夹或导入皮肤。'
                   : '还没有皮肤,导入文件开始整理。'}
-              {(search || includeTagIds.length > 0 || excludeTagIds.length > 0) && (
+              {(search || includeTags.length > 0 || excludeTags.length > 0) && (
                 <>
                   {' '}
                   <button
                     className={styles.linkBtn}
                     onClick={() => {
                       setSearch('')
-                      setIncludeTagIds([])
-                      setExcludeTagIds([])
+                      setIncludeTags([])
+                      setExcludeTags([])
                     }}
                   >
                     清空筛选
@@ -1187,7 +1249,6 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
           {layoutMode === 'list' ? (
             <LibraryTable
               entries={entries}
-              tags={tags}
               folders={folders}
               checked={checked}
               onToggleChecked={toggleChecked}
@@ -1214,14 +1275,15 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
               </button>
             </div>
           )}
+          </div>
         </section>
 
-        <aside className={styles.right} onMouseEnter={onRightEnter} onMouseLeave={onRightLeave}>
+        <aside className={`skinWorkspaceRight ${styles.right}`} onMouseEnter={onRightEnter} onMouseLeave={onRightLeave}>
           {displayed ? (
             <EntryDetails
               entry={displayed}
-              tags={tags}
               folders={folders}
+              tags={tags}
               showOuter={showOuter}
               walking={walking}
               autoRotate={autoRotate}
@@ -1229,10 +1291,6 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
               onToggleOuter={setShowOuter}
               onToggleWalking={setWalking}
               onToggleAutoRotate={setAutoRotate}
-              onEdit={() => {
-                setPinned(displayed)
-                setEditDialog(displayed)
-              }}
               onToggleActive={() => void toggleEntryActive(displayed)}
               onToggleFavorite={() => void toggleEntryFavorite(displayed)}
               onCopyId={() => void copyContentId(displayed.skinId)}
@@ -1243,6 +1301,16 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
               onViewTexture={() => setTextureViewerFor(displayed)}
               onDelete={() => void deleteEntry(displayed)}
               getPreviewUrl={getPreviewUrl}
+              onPatch={(entryId, body) => api.patchEntry(entryId, body)}
+              onUpdated={(updated) => {
+                if (pinned?.entryId === updated.entryId) setPinned(updated)
+                if (hovered?.entryId === updated.entryId) setHovered(updated)
+                setEntries((prev) =>
+                  prev.map((e) => (e.entryId === updated.entryId ? updated : e)),
+                )
+                void refreshTags()
+                void refreshFolders()
+              }}
             />
           ) : (
             <p className={styles.empty}>悬浮查看皮肤,点击后可保留选中。</p>
@@ -1256,7 +1324,6 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
             folders={folders}
             tags={tags}
             defaultFolderId={scope === 'folder' ? currentFolderId : null}
-            createTag={createTag}
             onLocateEntry={(entryId, folderId) => void locateEntry(entryId, folderId)}
             onSaved={() => {
               void refresh()
@@ -1267,59 +1334,12 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
           />
         )}
 
-        {showTagManager && (
-          <TagManagerDialog
-            tags={tags}
-            createTag={createTag}
-            onRename={async (tagId, name) => {
-              try {
-                await api.patchTag(tagId, { name })
-                await refreshTags()
-                return null
-              } catch (e) {
-                return asError(e)
-              }
-            }}
-            onDelete={async (tagId) => {
-              try {
-                await api.deleteTag(tagId, 'single')
-                setIncludeTagIds((prev) => prev.filter((id) => id !== tagId))
-                await refreshTags()
-                await refresh()
-                return null
-              } catch (e) {
-                return asError(e)
-              }
-            }}
-            onClose={() => setShowTagManager(false)}
-          />
-        )}
-
         {moveDialog && (
           <MoveToFolderDialog
             folders={folders}
             count={moveDialog.entryIds.length}
             onPick={(fid) => void doMoveEntries(fid)}
             onClose={() => setMoveDialog(null)}
-          />
-        )}
-
-        {editDialog && (
-          <EntryEditor
-            entry={editDialog}
-            folders={folders}
-            tags={tags}
-            createTag={createTag}
-            onSaved={(updated) => {
-              if (pinned?.entryId === updated.entryId) setPinned(updated)
-              if (hovered?.entryId === updated.entryId) setHovered(updated)
-              setEditDialog(null)
-              void refresh()
-              void refreshTags()
-              void refreshFolders()
-            }}
-            onClose={() => setEditDialog(null)}
-            onPatch={async (entryId, body) => api.patchEntry(entryId, body)}
           />
         )}
 
@@ -1444,13 +1464,11 @@ function BatchTagBar({
   tags,
   entryIds,
   onDone,
-  createTag,
 }: {
   api: SkinApi
-  tags: TagWithStats[]
+  tags: CollectedTag[]
   entryIds: string[]
   onDone: () => void
-  createTag: (name: string, parentId: string | null) => Promise<string | null>
 }) {
   const [mode, setMode] = useState<'add' | 'remove' | null>(null)
   const [picked, setPicked] = useState<string[]>([])
@@ -1461,8 +1479,8 @@ function BatchTagBar({
     try {
       await api.batchPatchEntries({
         entryIds,
-        addTagIds: mode === 'add' ? picked : undefined,
-        removeTagIds: mode === 'remove' ? picked : undefined,
+        addTags: mode === 'add' ? picked : undefined,
+        removeTags: mode === 'remove' ? picked : undefined,
       })
       onDone()
     } catch (e) {
@@ -1495,7 +1513,7 @@ function BatchTagBar({
   return (
     <div className={styles.batchPicker}>
       <strong>{mode === 'add' ? '为选中条目添加:' : '从选中条目移除:'}</strong>
-      <TagPicker tags={tags} selected={picked} onChange={setPicked} onCreate={createTag} />
+      <TagPicker tags={tags} selected={picked} onChange={setPicked} />
       <button disabled={picked.length === 0} onClick={() => void run()}>
         应用
       </button>
@@ -1558,7 +1576,7 @@ function MoveToFolderDialog({
         </header>
         <div className={styles.modalBody}>
           <button className={styles.folderOption} onClick={() => onPick(null)}>
-            未归档{excludeFolderId ? '(根级)' : ''}
+            皮肤库{excludeFolderId ? '（根目录）' : ''}
           </button>
           {folders.map((f) => (
             <button
@@ -1640,133 +1658,6 @@ function NewFolderDialog({
           >
             创建
           </button>
-        </footer>
-      </div>
-    </div>
-  )
-}
-
-/* ========================================================================== */
-/* 标签管理对话框                                                              */
-/* ========================================================================== */
-
-function TagManagerDialog({
-  tags,
-  createTag,
-  onRename,
-  onDelete,
-  onClose,
-}: {
-  tags: TagWithStats[]
-  createTag: (name: string, parentId: string | null) => Promise<string | null>
-  onRename: (tagId: string, name: string) => Promise<string | null>
-  onDelete: (tagId: string) => Promise<string | null>
-  onClose: () => void
-}) {
-  const [newName, setNewName] = useState('')
-  const [editing, setEditing] = useState<{ tagId: string; value: string } | null>(null)
-  const [error, setError] = useState<string | null>(null)
-
-  const sorted = useMemo(
-    () => tags.slice().sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN')),
-    [tags],
-  )
-
-  return (
-    <div className={styles.modalBackdrop} onClick={onClose}>
-      <div
-        className={styles.modal}
-        onClick={(e) => e.stopPropagation()}
-        role="dialog"
-        aria-label="管理标签"
-      >
-        <header className={styles.modalHead}>
-          <h3>管理标签</h3>
-          <button className={styles.iconBtn} onClick={onClose} aria-label="关闭">
-            ✕
-          </button>
-        </header>
-        <div className={styles.modalBody}>
-          <div className={styles.formRow}>
-            <input
-              value={newName}
-              placeholder="新建标签名称"
-              onChange={(e) => setNewName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && newName.trim()) {
-                  void createTag(newName.trim(), null).then((err) => {
-                    if (err) setError(err)
-                    else setNewName('')
-                  })
-                }
-              }}
-            />
-            <button
-              disabled={!newName.trim()}
-              onClick={() =>
-                void createTag(newName.trim(), null).then((err) => {
-                  if (err) setError(err)
-                  else setNewName('')
-                })
-              }
-            >
-              新建
-            </button>
-          </div>
-          <ul className={styles.tagManagerList}>
-            {sorted.map((t) => (
-              <li key={t.tagId}>
-                {editing?.tagId === t.tagId ? (
-                  <input
-                    autoFocus
-                    value={editing.value}
-                    onChange={(e) => setEditing({ tagId: t.tagId, value: e.target.value })}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        void onRename(t.tagId, editing.value.trim()).then((err) => {
-                          if (err) setError(err)
-                          else setEditing(null)
-                        })
-                      }
-                      if (e.key === 'Escape') setEditing(null)
-                    }}
-                    onBlur={() => {
-                      void onRename(t.tagId, editing.value.trim()).then((err) => {
-                        if (err) setError(err)
-                        else setEditing(null)
-                      })
-                    }}
-                  />
-                ) : (
-                  <>
-                    <span className={styles.tagName}>{t.name}</span>
-                    <span className={styles.tagCountHint}>({t.directCount})</span>
-                    <button onClick={() => setEditing({ tagId: t.tagId, value: t.name })}>
-                      改名
-                    </button>
-                    <button
-                      className={styles.danger}
-                      onClick={() => {
-                        if (
-                          !confirm(`删除标签「${t.name}」?将移除 ${t.directCount} 个条目上的标注。`)
-                        )
-                          return
-                        void onDelete(t.tagId).then((err) => {
-                          if (err) setError(err)
-                        })
-                      }}
-                    >
-                      删除
-                    </button>
-                  </>
-                )}
-              </li>
-            ))}
-          </ul>
-          {error && <p className={styles.error}>{error}</p>}
-        </div>
-        <footer className={styles.modalFoot}>
-          <button onClick={onClose}>关闭</button>
         </footer>
       </div>
     </div>

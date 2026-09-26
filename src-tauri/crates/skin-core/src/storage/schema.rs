@@ -1,14 +1,14 @@
 //! Disk schema DTOs for library.json — field names, types and meanings are
-//! identical to the Node implementation (schemaVersion 4). Rust-internal
+//! identical to the Node implementation (schemaVersion 5). Rust-internal
 //! naming is snake_case; serde maps to camelCase on disk.
 
 use crate::codec::SkinModel;
 use serde::{Deserialize, Serialize};
 
-pub const SCHEMA_VERSION: u32 = 4;
-pub const MAX_TAG_DEPTH: usize = 8;
+pub const SCHEMA_VERSION: u32 = 5;
 pub const MAX_FOLDER_DEPTH: usize = 8;
 
+/// Legacy tag registry node (v2–v4 on disk only; migrated away on load).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TagNode {
@@ -75,9 +75,10 @@ pub struct LibraryEntry {
     pub name: String,
     #[serde(default = "default_active")]
     pub active: bool,
-    /// Directly attached tag IDs — flat labels only.
-    pub tag_ids: Vec<String>,
-    /// Archive location; null = 未归档.
+    /// Freeform tag names (NFC + trim, unique per entry, case-insensitive).
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// Archive location; null = library root.
     pub folder_id: Option<String>,
     pub favorite: bool,
     pub model: SkinModel,
@@ -100,15 +101,14 @@ fn default_active() -> bool {
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct LibraryFileV4<'a> {
+pub struct LibraryFileV5<'a> {
     pub schema_version: u32,
     pub revision: u64,
-    pub tags: &'a [TagNode],
     pub folders: &'a [FolderNode],
     pub entries: &'a [LibraryEntry],
 }
 
-/// v3 file: same as v4 minus active/license/provenance/note.
+/// v3 file: same shape as v4 minus active/license/provenance/note on entries.
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LibraryFileV3 {

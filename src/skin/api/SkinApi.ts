@@ -9,7 +9,6 @@ import type {
   BatchPatchResponse,
   Capabilities,
   CreateFolderRequest,
-  CreateTagRequest,
   EntryExport,
   FolderNode,
   FolderTreeResponse,
@@ -19,12 +18,10 @@ import type {
   LibraryQuery,
   PatchEntryRequest,
   PatchFolderRequest,
-  PatchTagRequest,
   SaveEntryRequest,
   SkinEvent,
   SkinModel,
-  TagNode,
-  TagTreeResponse,
+  TagListResponse,
   UsableManifest,
 } from '../contracts/types.ts'
 
@@ -33,14 +30,12 @@ export interface SkinApi {
   listEntries(query: LibraryQuery): Promise<LibraryPage>
   /** Direct entry lookup — details must not depend on the current page cache. */
   getEntry(entryId: string): Promise<LibraryEntry>
-  listTags(): Promise<TagTreeResponse>
-  createTag(body: CreateTagRequest): Promise<TagNode>
-  patchTag(tagId: string, body: PatchTagRequest): Promise<TagNode>
-  deleteTag(
-    tagId: string,
-    mode: 'single' | 'branch',
-    expectedRevision?: number,
-  ): Promise<{ removedTagIds: string[]; affectedEntries: number }>
+  /** Auto-collected unique tags from all entries. */
+  listTags(): Promise<TagListResponse>
+  /** Rename a tag across every entry that uses it. */
+  renameTag(from: string, to: string): Promise<{ affectedEntries: number }>
+  /** Remove a tag name from every entry. */
+  deleteTag(name: string): Promise<{ affectedEntries: number }>
   listFolders(): Promise<FolderTreeResponse>
   createFolder(body: CreateFolderRequest): Promise<FolderNode>
   patchFolder(folderId: string, body: PatchFolderRequest): Promise<FolderNode>

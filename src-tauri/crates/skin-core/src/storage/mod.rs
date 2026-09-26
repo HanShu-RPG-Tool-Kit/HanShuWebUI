@@ -53,16 +53,12 @@ pub fn data_layout(root: &Path) -> DataLayout {
 /// In-memory snapshot; replaced wholesale on each successful commit.
 #[derive(Debug, Clone, Default)]
 struct Snapshot {
-    tags: Vec<TagNode>,
     folders: Vec<FolderNode>,
     entries: Vec<LibraryEntry>,
     revision: u64,
 }
 
 impl Snapshot {
-    fn tag_ids(&self) -> HashSet<String> {
-        self.tags.iter().map(|t| t.tag_id.clone()).collect()
-    }
     fn folder_ids(&self) -> HashSet<String> {
         self.folders.iter().map(|f| f.folder_id.clone()).collect()
     }
@@ -71,6 +67,78 @@ impl Snapshot {
 /// NFC + trim — tag/folder name identity within a sibling group.
 pub fn normalize_name(name: &str) -> String {
     name.trim().nfc().collect::<String>()
+}
+
+/// NFC + trim; empty → None (matches TS normalizeTagName).
+pub fn normalize_tag_name(name: &str) -> Option<String> {
+    let n = normalize_name(name);
+    if n.is_empty() {
+        None
+    } else {
+        Some(n)
+    }
+}
+
+/// Dedupe case-insensitively while preserving first-seen casing.
+pub fn normalize_tag_list<I: IntoIterator<Item = String>>(input: I) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut seen = HashSet::new();
+    for raw in input {
+        let Some(n) = normalize_tag_name(&raw) else {
+            continue;
+        };
+        let key = n.to_lowercase();
+        if seen.insert(key) {
+            out.push(n);
+        }
+    }
+    out
+}
+
+/// Portable import: each path → leaf segment, then normalize/dedupe.
+pub fn tag_paths_to_names(paths: &[Vec<String>]) -> Vec<String> {
+    let leaves: Vec<String> = paths
+        .iter()
+        .filter_map(|p| p.last())
+        .map(|s| s.to_string())
+        .collect();
+    normalize_tag_list(leaves)
+}
+
+fn entry_has_tag(entry: &LibraryEntry, want: &str) -> bool {
+    let key = want.to_lowercase();
+    entry.tags.iter().any(|t| t.to_lowercase() == key)
+}
+
+fn tag_registry(tags: &[TagNode]) -> HashMap<String, String> {
+    let mut registry = HashMap::new();
+    for t in tags {
+        if let Some(n) = normalize_tag_name(&t.name) {
+            registry.insert(t.tag_id.clone(), n);
+        }
+    }
+    registry
+}
+
+fn tags_from_legacy_ids(tag_ids: &[String], registry: &HashMap<String, String>) -> Vec<String> {
+    normalize_tag_list(
+        tag_ids
+            .iter()
+            .filter_map(|id| registry.get(id).cloned())
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn unique_tag_count(entries: &[LibraryEntry]) -> usize {
+    let mut keys = HashSet::new();
+    for e in entries {
+        for t in &e.tags {
+            if let Some(n) = normalize_tag_name(t) {
+                keys.insert(n.to_lowercase());
+            }
+        }
+    }
+    keys.len()
 }
 
 fn now_iso() -> String {
@@ -129,13 +197,6 @@ pub struct MigrationReport {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
-pub enum TagScope {
-    Subtree,
-    Direct,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
 pub enum TagMatch {
     Any,
     All,
@@ -171,9 +232,8 @@ pub enum EntryScope {
 #[serde(rename_all = "camelCase", default)]
 pub struct LibraryQuery {
     pub search: Option<String>,
-    pub tag_ids: Vec<String>,
-    pub exclude_tag_ids: Vec<String>,
-    pub tag_scope: Option<TagScope>,
+    pub tags: Vec<String>,
+    pub exclude_tags: Vec<String>,
     pub tag_match: Option<TagMatch>,
     pub untagged: bool,
     pub favorite: Option<bool>,
@@ -207,14 +267,9 @@ pub struct LibraryPage {
 
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct TagWithStats {
-    pub tag_id: String,
+pub struct CollectedTag {
     pub name: String,
-    pub parent_id: Option<String>,
-    pub sort_order: i64,
-    pub direct_count: usize,
-    pub subtree_count: usize,
-    pub path: Vec<String>,
+    pub count: usize,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -253,16 +308,6 @@ impl<T> PatchField<T> {
 
 #[derive(Debug, Default, serde::Deserialize)]
 #[serde(rename_all = "camelCase", default)]
-pub struct PatchTag {
-    pub expected_revision: Option<u64>,
-    pub name: Option<String>,
-    pub parent_id: Option<PatchField<String>>,
-    pub sort_order: Option<i64>,
-    pub sort_siblings_by_name: bool,
-}
-
-#[derive(Debug, Default, serde::Deserialize)]
-#[serde(rename_all = "camelCase", default)]
 pub struct PatchFolder {
     pub name: Option<String>,
     pub parent_id: Option<PatchField<String>>,
@@ -274,12 +319,13 @@ pub struct PatchFolder {
 #[serde(rename_all = "camelCase", default)]
 pub struct PatchEntry {
     pub name: Option<String>,
-    pub tag_ids: Option<Vec<String>>,
-    pub add_tag_ids: Option<Vec<String>>,
-    pub remove_tag_ids: Option<Vec<String>>,
+    pub tags: Option<Vec<String>>,
+    pub add_tags: Option<Vec<String>>,
+    pub remove_tags: Option<Vec<String>>,
     pub favorite: Option<bool>,
     pub folder_id: Option<PatchField<String>>,
     pub active: Option<bool>,
+    pub model: Option<SkinModel>,
     pub license: Option<LicenseInfo>,
     pub provenance: Option<Provenance>,
     pub note: Option<String>,
@@ -289,8 +335,8 @@ pub struct PatchEntry {
 #[serde(rename_all = "camelCase", default)]
 pub struct BatchPatch {
     pub entry_ids: Vec<String>,
-    pub add_tag_ids: Option<Vec<String>>,
-    pub remove_tag_ids: Option<Vec<String>>,
+    pub add_tags: Option<Vec<String>>,
+    pub remove_tags: Option<Vec<String>>,
     pub folder_id: Option<PatchField<String>>,
     pub active: Option<bool>,
     pub expected_revisions: Option<Vec<u64>>,
@@ -368,16 +414,21 @@ impl Storage {
         };
         let version = parsed.get("schemaVersion").and_then(|v| v.as_u64());
         let snap = match version {
+            Some(5) => {
+                let v5: LibraryFileV5Owned = serde_json::from_value(parsed).map_err(|e| {
+                    SkinError::api(codes::INTERNAL, format!("library.json v5 invalid: {e}"))
+                })?;
+                Snapshot {
+                    folders: v5.folders,
+                    entries: v5.entries,
+                    revision: v5.revision,
+                }
+            }
             Some(4) => {
                 let v4: LibraryFileV4Owned = serde_json::from_value(parsed).map_err(|e| {
                     SkinError::api(codes::INTERNAL, format!("library.json v4 invalid: {e}"))
                 })?;
-                Snapshot {
-                    tags: v4.tags,
-                    folders: v4.folders,
-                    entries: v4.entries,
-                    revision: v4.revision,
-                }
+                self.migrate_from_v4(v4, &raw)?
             }
             Some(3) => {
                 let v3: LibraryFileV3 = serde_json::from_value(parsed).map_err(|e| {
@@ -389,7 +440,7 @@ impl Storage {
                 let mut v2: LibraryFileV2 = serde_json::from_value(parsed).map_err(|e| {
                     SkinError::api(codes::INTERNAL, format!("library.json v2 invalid: {e}"))
                 })?;
-                // v2 → v4: entries become 未归档 (no folders exist in v2, so
+                // v2 → v4: entries land at library root (no folders exist in v2, so
                 // any stray folderId has no valid target and is dropped).
                 for e in &mut v2.entries {
                     e.folder_id = None;
@@ -414,7 +465,7 @@ impl Storage {
                 return Err(SkinError::api(
                     codes::INTERNAL,
                     format!(
-                        "library.json schemaVersion {v} is newer than supported (4); \
+                        "library.json schemaVersion {v} is newer than supported (5); \
                          restore the pre-migration backup"
                     ),
                 ));
@@ -426,31 +477,21 @@ impl Storage {
         Ok(())
     }
 
-    /// Convert flat v1 string tags to root-level tag nodes, dedupe by NFC name.
+    /// Convert flat v1 string tags on entries (NFC dedupe per entry).
     fn migrate_from_v1(&self, v1: LibraryFileV1, raw: &str) -> SkinResult<Snapshot> {
-        let mut name_to_id: HashMap<String, String> = HashMap::new();
         let mut merged: Vec<String> = Vec::new();
-        let mut tags: Vec<TagNode> = Vec::new();
-        let mut order: i64 = 0;
+        let mut seen_global: HashMap<String, String> = HashMap::new();
         for e in &v1.entries {
             for t in &e.tags {
                 let norm = normalize_name(t);
                 if norm.is_empty() {
                     continue;
                 }
-                match name_to_id.get(&norm) {
+                match seen_global.get(&norm) {
                     None => {
-                        let tag_id = new_id();
-                        name_to_id.insert(norm.clone(), tag_id.clone());
-                        tags.push(TagNode {
-                            tag_id,
-                            name: norm,
-                            parent_id: None,
-                            sort_order: order,
-                        });
-                        order += 1;
+                        seen_global.insert(norm.clone(), t.clone());
                     }
-                    Some(_) if norm != *t => merged.push(t.clone()),
+                    Some(original) if original != t => merged.push(t.clone()),
                     _ => {}
                 }
             }
@@ -458,41 +499,30 @@ impl Storage {
         let entries = v1
             .entries
             .into_iter()
-            .map(|e| {
-                let mut ids: Vec<String> = Vec::new();
-                let mut seen = HashSet::new();
-                for t in &e.tags {
-                    let norm = normalize_name(t);
-                    if norm.is_empty() {
-                        continue;
-                    }
-                    if let Some(id) = name_to_id.get(&norm) {
-                        if seen.insert(id.clone()) {
-                            ids.push(id.clone());
-                        }
-                    }
-                }
-                LibraryEntry {
-                    entry_id: e.entry_id.unwrap_or_else(new_id),
-                    skin_id: e.skin_id,
-                    name: e.name,
-                    active: true,
-                    tag_ids: ids,
-                    folder_id: None,
-                    favorite: e.favorite,
-                    model: e.model,
-                    source: e.source,
-                    provenance: Provenance::default(),
-                    license: LicenseInfo::default(),
-                    note: String::new(),
-                    created_at: e.created_at.unwrap_or_else(now_iso),
-                    updated_at: e.updated_at.unwrap_or_else(now_iso),
-                    revision: e.revision.unwrap_or(1),
-                }
+            .map(|e| LibraryEntry {
+                entry_id: e.entry_id.unwrap_or_else(new_id),
+                skin_id: e.skin_id,
+                name: e.name,
+                active: true,
+                tags: normalize_tag_list(e.tags),
+                folder_id: None,
+                favorite: e.favorite,
+                model: e.model,
+                source: e.source,
+                provenance: Provenance::default(),
+                license: LicenseInfo::default(),
+                note: String::new(),
+                created_at: e.created_at.unwrap_or_else(now_iso),
+                updated_at: e.updated_at.unwrap_or_else(now_iso),
+                revision: e.revision.unwrap_or(1),
             })
             .collect();
-        let snap = Snapshot { tags, folders: Vec::new(), entries, revision: 1 };
-        // Keep the untouched v1 file under a dedicated name before any v4 write.
+        let snap = Snapshot {
+            folders: Vec::new(),
+            entries,
+            revision: 1,
+        };
+        // Keep the untouched v1 file under a dedicated name before any v5 write.
         if !self.layout.migration_backup_v1.exists() {
             atomic_write(&self.layout.migration_backup_v1, raw.as_bytes())?;
         }
@@ -500,38 +530,65 @@ impl Storage {
             migrated: true,
             from_version: 1,
             to_version: SCHEMA_VERSION,
-            tag_count: snap.tags.len(),
+            tag_count: unique_tag_count(&snap.entries),
             entry_count: snap.entries.len(),
             merged_names: merged,
         });
         Ok(snap)
     }
 
-    /// Migrate v3 (or v2-upgraded-to-v3) entries into v4 with new metadata defaults.
+    /// Migrate v4 registry + tagIds → entry.tags (freeform).
+    fn migrate_from_v4(&self, v4: LibraryFileV4Owned, raw: &str) -> SkinResult<Snapshot> {
+        let registry = tag_registry(&v4.tags);
+        let entries = v4
+            .entries
+            .into_iter()
+            .map(|e| legacy_entry_to_v5(e, &registry))
+            .collect();
+        let snap = Snapshot {
+            folders: v4.folders,
+            entries,
+            revision: v4.revision,
+        };
+        *self.migration_report.lock().unwrap() = Some(MigrationReport {
+            migrated: true,
+            from_version: 4,
+            to_version: SCHEMA_VERSION,
+            tag_count: unique_tag_count(&snap.entries),
+            entry_count: snap.entries.len(),
+            merged_names: Vec::new(),
+        });
+        let _ = raw;
+        Ok(snap)
+    }
+
+    /// Migrate v3 (or v2-upgraded-to-v3) entries into v5 with new metadata defaults.
     fn migrate_from_v3(&self, v3: LibraryFileV3, raw: &str) -> SkinResult<Snapshot> {
+        let registry = tag_registry(&v3.tags);
         let entries = v3
             .entries
             .into_iter()
-            .map(|e| LibraryEntry {
-                entry_id: e.entry_id,
-                skin_id: e.skin_id,
-                name: e.name,
-                active: true,
-                tag_ids: e.tag_ids,
-                folder_id: e.folder_id,
-                favorite: e.favorite,
-                model: e.model,
-                source: e.source,
-                provenance: Provenance::default(),
-                license: LicenseInfo::default(),
-                note: String::new(),
-                created_at: e.created_at,
-                updated_at: e.updated_at,
-                revision: e.revision,
+            .map(|e| {
+                LibraryEntry {
+                    entry_id: e.entry_id,
+                    skin_id: e.skin_id,
+                    name: e.name,
+                    active: true,
+                    tags: tags_from_legacy_ids(&e.tag_ids, &registry),
+                    folder_id: e.folder_id,
+                    favorite: e.favorite,
+                    model: e.model,
+                    source: e.source,
+                    provenance: Provenance::default(),
+                    license: LicenseInfo::default(),
+                    note: String::new(),
+                    created_at: e.created_at,
+                    updated_at: e.updated_at,
+                    revision: e.revision,
+                }
             })
             .collect();
         let snap = Snapshot {
-            tags: v3.tags,
             folders: v3.folders,
             entries,
             revision: v3.revision,
@@ -543,7 +600,7 @@ impl Storage {
             migrated: true,
             from_version: 3,
             to_version: SCHEMA_VERSION,
-            tag_count: snap.tags.len(),
+            tag_count: unique_tag_count(&snap.entries),
             entry_count: snap.entries.len(),
             merged_names: Vec::new(),
         });
@@ -573,10 +630,9 @@ impl Storage {
 
     /// Serialize the snapshot to disk (backup rotation + atomic replace).
     fn persist(&self, snap: &Snapshot) -> SkinResult<()> {
-        let payload = LibraryFileV4 {
+        let payload = LibraryFileV5 {
             schema_version: SCHEMA_VERSION,
             revision: snap.revision,
-            tags: &snap.tags,
             folders: &snap.folders,
             entries: &snap.entries,
         };
@@ -709,295 +765,95 @@ impl Storage {
         self.snapshot().revision
     }
 
-    pub fn tag_tree_with_stats(&self) -> (u64, Vec<TagWithStats>) {
+    /// Collect unique tag names from all entries (auto inventory).
+    pub fn list_tags(&self) -> (u64, Vec<CollectedTag>) {
         let snap = self.snapshot();
-        let maps = TagMaps::of(&snap.tags);
-        let mut direct: HashMap<&str, HashSet<&str>> = HashMap::new();
+        let mut counts: HashMap<String, (String, usize)> = HashMap::new();
         for e in &snap.entries {
-            for id in &e.tag_ids {
-                direct.entry(id.as_str()).or_default().insert(e.entry_id.as_str());
+            for raw in &e.tags {
+                let Some(n) = normalize_tag_name(raw) else {
+                    continue;
+                };
+                let key = n.to_lowercase();
+                counts
+                    .entry(key)
+                    .and_modify(|(_, c)| *c += 1)
+                    .or_insert((n, 1));
             }
         }
-        let mut out = Vec::with_capacity(snap.tags.len());
-        for t in &snap.tags {
-            let subtree = maps.subtree_ids(&t.tag_id);
-            let mut entries: HashSet<&str> = HashSet::new();
-            for id in &subtree {
-                if let Some(set) = direct.get(id.as_str()) {
-                    entries.extend(set.iter().copied());
-                }
-            }
-            out.push(TagWithStats {
-                tag_id: t.tag_id.clone(),
-                name: t.name.clone(),
-                parent_id: t.parent_id.clone(),
-                sort_order: t.sort_order,
-                direct_count: direct.get(t.tag_id.as_str()).map(|s| s.len()).unwrap_or(0),
-                subtree_count: entries.len(),
-                path: maps.path_of(&t.tag_id),
-            });
-        }
-        // Depth-first order: parent immediately followed by children.
-        out.sort_by(|a, b| a.path.cmp(&b.path).then(a.sort_order.cmp(&b.sort_order)));
+        let mut out: Vec<CollectedTag> = counts
+            .into_values()
+            .map(|(name, count)| CollectedTag { name, count })
+            .collect();
+        out.sort_by(|a, b| a.name.cmp(&b.name));
         (snap.revision, out)
     }
 
-    pub fn tag_path(&self, tag_id: &str) -> Vec<String> {
-        TagMaps::of(&self.snapshot().tags).path_of(tag_id)
+    /// Portable import: flatten tag paths to freeform leaf names (no registry).
+    pub fn resolve_tag_paths(&self, paths: &[Vec<String>]) -> Vec<String> {
+        let _ = self;
+        tag_paths_to_names(paths)
     }
 
-    /// Resolve tag paths (each an array of names from a root) to tagIds,
-    /// creating missing nodes along the way. Returns direct leaf tagIds.
-    pub fn resolve_tag_paths(&self, paths: &[Vec<String>]) -> SkinResult<(Vec<String>, u64)> {
+    /// Rename a tag across all entries (case-insensitive match on `from`).
+    pub fn rename_tag(&self, from: &str, to: &str) -> SkinResult<(usize, u64)> {
+        let from_key = normalize_tag_name(from)
+            .ok_or_else(|| SkinError::api(codes::BAD_REQUEST, "from name required"))?
+            .to_lowercase();
+        let to_name = normalize_tag_name(to)
+            .ok_or_else(|| SkinError::api(codes::BAD_REQUEST, "to name required"))?;
         self.mutate(|snap| {
-            let mut ids: Vec<String> = Vec::new();
-            let mut changed = false;
-            for raw_path in paths {
-                if raw_path.is_empty() {
+            let mut affected = 0usize;
+            let now = now_iso();
+            for e in &mut snap.entries {
+                if !e.tags.iter().any(|t| t.to_lowercase() == from_key) {
                     continue;
                 }
-                let segments: Vec<String> = raw_path
-                    .iter()
-                    .map(|s| normalize_name(s))
-                    .filter(|s| !s.is_empty())
-                    .collect();
-                if segments.is_empty() {
-                    continue;
-                }
-                let mut parent_id: Option<String> = None;
-                for seg in segments.iter().take(MAX_TAG_DEPTH) {
-                    let existing = snap.tags.iter().find(|t| {
-                        t.parent_id == parent_id && normalize_name(&t.name) == *seg
-                    });
-                    match existing {
-                        Some(t) => parent_id = Some(t.tag_id.clone()),
-                        None => {
-                            let node = TagNode {
-                                tag_id: new_id(),
-                                name: seg.clone(),
-                                parent_id: parent_id.clone(),
-                                sort_order: count_siblings(&snap.tags, &parent_id),
-                            };
-                            parent_id = Some(node.tag_id.clone());
-                            snap.tags.push(node);
-                            changed = true;
-                        }
+                e.tags = normalize_tag_list(e.tags.iter().map(|t| {
+                    if t.to_lowercase() == from_key {
+                        to_name.clone()
+                    } else {
+                        t.clone()
                     }
-                }
-                if let Some(id) = parent_id {
-                    if !ids.contains(&id) {
-                        ids.push(id);
-                    }
-                }
+                }));
+                e.revision += 1;
+                e.updated_at = now.clone();
+                affected += 1;
             }
-            if changed {
+            if affected > 0 {
                 snap.revision += 1;
             }
-            Ok((ids, snap.revision))
+            Ok((affected, snap.revision))
         })
     }
 
-    pub fn create_tag(
-        &self,
-        name: &str,
-        parent_id: Option<String>,
-        expected_revision: Option<u64>,
-    ) -> SkinResult<TagNode> {
+    /// Remove a tag name from all entries (case-insensitive).
+    pub fn delete_tag(&self, name: &str) -> SkinResult<(usize, u64)> {
+        let key = normalize_tag_name(name)
+            .ok_or_else(|| SkinError::api(codes::BAD_REQUEST, "name required"))?
+            .to_lowercase();
         self.mutate(|snap| {
-            if let Some(expected) = expected_revision {
-                if expected != snap.revision {
-                    return Err(SkinError::api(
-                        codes::REVISION_MISMATCH,
-                        "tree changed; reload",
-                    ));
-                }
-            }
-            let norm = normalize_name(name);
-            if norm.is_empty() {
-                return Err(SkinError::api(codes::TAG_NAME_CONFLICT, "name required"));
-            }
-            if let Some(pid) = &parent_id {
-                if !snap.tags.iter().any(|t| &t.tag_id == pid) {
-                    return Err(SkinError::api(codes::NOT_FOUND, "parent tag not found"));
-                }
-            }
-            if snap
-                .tags
-                .iter()
-                .any(|t| &t.parent_id == &parent_id && normalize_name(&t.name) == norm)
-            {
-                return Err(SkinError::api(
-                    codes::TAG_NAME_CONFLICT,
-                    "a sibling with this name already exists",
-                ));
-            }
-            let maps = TagMaps::of(&snap.tags);
-            if let Some(pid) = &parent_id {
-                if maps.depth_of(pid) + 1 > MAX_TAG_DEPTH as u32 {
-                    return Err(SkinError::api(
-                        codes::TAG_DEPTH,
-                        "maximum tag depth reached",
-                    ));
-                }
-            }
-            let node = TagNode {
-                tag_id: new_id(),
-                name: norm,
-                parent_id,
-                sort_order: count_siblings(&snap.tags, &snap.tags.last().and_then(|_| None)),
-            };
-            let node = TagNode { sort_order: 0, ..node };
-            let node = TagNode {
-                sort_order: snap
+            let mut affected = 0usize;
+            let now = now_iso();
+            for e in &mut snap.entries {
+                let next: Vec<String> = e
                     .tags
                     .iter()
-                    .filter(|t| t.parent_id == node.parent_id)
-                    .count() as i64,
-                ..node
-            };
-            snap.tags.push(node.clone());
-            snap.revision += 1;
-            Ok(node)
-        })
-    }
-
-    pub fn patch_tag(&self, tag_id: &str, patch: PatchTag) -> SkinResult<TagNode> {
-        self.mutate(|snap| {
-            if let Some(expected) = patch.expected_revision {
-                if expected != snap.revision {
-                    return Err(SkinError::api(
-                        codes::REVISION_MISMATCH,
-                        "tree changed; reload",
-                    ));
+                    .filter(|t| t.to_lowercase() != key)
+                    .cloned()
+                    .collect();
+                if next.len() == e.tags.len() {
+                    continue;
                 }
+                e.tags = next;
+                e.revision += 1;
+                e.updated_at = now.clone();
+                affected += 1;
             }
-            let idx = snap
-                .tags
-                .iter()
-                .position(|t| t.tag_id == tag_id)
-                .ok_or_else(|| SkinError::api(codes::NOT_FOUND, "tag not found"))?;
-
-            if let Some(pf) = &patch.parent_id {
-                let new_parent = pf.as_option().cloned();
-                if new_parent != snap.tags[idx].parent_id {
-                    if let Some(np) = &new_parent {
-                        if !snap.tags.iter().any(|t| &t.tag_id == np) {
-                            return Err(SkinError::api(
-                                codes::NOT_FOUND,
-                                "parent tag not found",
-                            ));
-                        }
-                        let maps = TagMaps::of(&snap.tags);
-                        if maps.subtree_ids(tag_id).contains(np.as_str()) {
-                            return Err(SkinError::api(
-                                codes::TAG_CYCLE,
-                                "cannot move a tag into itself or its descendant",
-                            ));
-                        }
-                        let max_sub = maps.max_subtree_depth(tag_id);
-                        if maps.depth_of(np) + 1 + max_sub > MAX_TAG_DEPTH as u32 {
-                            return Err(SkinError::api(
-                                codes::TAG_DEPTH,
-                                "maximum tag depth reached",
-                            ));
-                        }
-                    }
-                    let norm =
-                        normalize_name(patch.name.as_ref().unwrap_or(&snap.tags[idx].name));
-                    let dup = snap.tags.iter().any(|t| {
-                        &t.tag_id != tag_id
-                            && t.parent_id.as_deref() == new_parent.as_deref()
-                            && normalize_name(&t.name) == norm
-                    });
-                    if dup {
-                        return Err(SkinError::api(
-                            codes::TAG_NAME_CONFLICT,
-                            "a sibling with this name already exists",
-                        ));
-                    }
-                    snap.tags[idx].parent_id = new_parent.clone();
-                    snap.tags[idx].sort_order =
-                        count_siblings_excluding(&snap.tags, &new_parent, tag_id);
-                }
+            if affected > 0 {
+                snap.revision += 1;
             }
-
-            if let Some(name) = &patch.name {
-                let norm = normalize_name(name);
-                if norm.is_empty() {
-                    return Err(SkinError::api(codes::TAG_NAME_CONFLICT, "name required"));
-                }
-                let dup = snap.tags.iter().any(|t| {
-                    &t.tag_id != tag_id
-                        && t.parent_id == snap.tags[idx].parent_id
-                        && normalize_name(&t.name) == norm
-                });
-                if dup {
-                    return Err(SkinError::api(
-                        codes::TAG_NAME_CONFLICT,
-                        "a sibling with this name already exists",
-                    ));
-                }
-                snap.tags[idx].name = norm;
-            }
-
-            if let Some(target) = patch.sort_order {
-                reorder_siblings_tag(snap, &snap.tags[idx].parent_id.clone(), tag_id, target);
-            }
-            if patch.sort_siblings_by_name {
-                sort_siblings_by_name_tag(snap, &snap.tags[idx].parent_id.clone());
-            }
-
-            snap.revision += 1;
-            Ok(snap.tags[idx].clone())
-        })
-    }
-
-    /// Delete a tag. branch=false refuses when children exist; branch=true
-    /// removes the node and all descendants. Entries keep remaining tagIds.
-    pub fn delete_tag(
-        &self,
-        tag_id: &str,
-        branch: bool,
-        expected_revision: Option<u64>,
-    ) -> SkinResult<(Vec<String>, usize)> {
-        self.mutate(|snap| {
-            if let Some(expected) = expected_revision {
-                if expected != snap.revision {
-                    return Err(SkinError::api(
-                        codes::REVISION_MISMATCH,
-                        "tree changed; reload",
-                    ));
-                }
-            }
-            if !snap.tags.iter().any(|t| t.tag_id == tag_id) {
-                return Err(SkinError::api(codes::NOT_FOUND, "tag not found"));
-            }
-            let has_children = snap.tags.iter().any(|t| t.parent_id.as_deref() == Some(tag_id));
-            if has_children && !branch {
-                return Err(SkinError::api(
-                    codes::TAG_HAS_CHILDREN,
-                    "tag has children; move them first or delete the whole branch",
-                ));
-            }
-            let maps = TagMaps::of(&snap.tags);
-            let removed: HashSet<String> = if branch {
-                maps.subtree_ids(tag_id)
-            } else {
-                HashSet::from([tag_id.to_string()])
-            };
-            let mut affected = 0usize;
-            for e in &mut snap.entries {
-                let before = e.tag_ids.len();
-                e.tag_ids.retain(|id| !removed.contains(id));
-                if e.tag_ids.len() != before {
-                    affected += 1;
-                    e.revision += 1;
-                    e.updated_at = now_iso();
-                }
-            }
-            snap.tags.retain(|t| !removed.contains(&t.tag_id));
-            snap.revision += 1;
-            Ok((removed.into_iter().collect(), affected))
+            Ok((affected, snap.revision))
         })
     }
 
@@ -1205,7 +1061,6 @@ impl Storage {
 
     pub fn list_entries(&self, q: &LibraryQuery) -> LibraryPage {
         let snap = self.snapshot();
-        let maps = TagMaps::of(&snap.tags);
         let fmaps = FolderMaps::of(&snap.folders);
         let mut out: Vec<&LibraryEntry> = snap.entries.iter().collect();
 
@@ -1227,6 +1082,9 @@ impl Storage {
                     } else {
                         out.retain(|e| e.folder_id.as_deref() == Some(fid.as_str()));
                     }
+                } else {
+                    // Library root: entries with no folder
+                    out.retain(|e| e.folder_id.is_none());
                 }
             }
             _ => {
@@ -1298,39 +1156,18 @@ impl Storage {
             out.retain(|e| e.created_at.as_str() <= to.as_str());
         }
         if q.untagged {
-            out.retain(|e| e.tag_ids.is_empty());
-        } else if !q.tag_ids.is_empty() {
-            let scope = q.tag_scope.unwrap_or(TagScope::Subtree);
+            out.retain(|e| e.tags.is_empty());
+        } else if !q.tags.is_empty() {
             let m = q.tag_match.unwrap_or(TagMatch::Any);
-            let id_sets: Vec<HashSet<String>> = q
-                .tag_ids
-                .iter()
-                .map(|id| match scope {
-                    TagScope::Subtree => maps.subtree_ids(id),
-                    TagScope::Direct => HashSet::from([id.clone()]),
-                })
-                .collect();
-            out.retain(|e| {
-                let has = |set: &HashSet<String>| e.tag_ids.iter().any(|t| set.contains(t));
-                match m {
-                    TagMatch::All => id_sets.iter().all(has),
-                    TagMatch::Any => id_sets.iter().any(has),
-                }
+            let want: Vec<String> = q.tags.clone();
+            out.retain(|e| match m {
+                TagMatch::All => want.iter().all(|t| entry_has_tag(e, t)),
+                TagMatch::Any => want.iter().any(|t| entry_has_tag(e, t)),
             });
         }
-        if !q.exclude_tag_ids.is_empty() {
-            let scope = q.tag_scope.unwrap_or(TagScope::Subtree);
-            let exclude_sets: Vec<HashSet<String>> = q
-                .exclude_tag_ids
-                .iter()
-                .map(|id| match scope {
-                    TagScope::Subtree => maps.subtree_ids(id),
-                    TagScope::Direct => HashSet::from([id.clone()]),
-                })
-                .collect();
-            out.retain(|e| {
-                !exclude_sets.iter().any(|set| e.tag_ids.iter().any(|t| set.contains(t)))
-            });
+        if !q.exclude_tags.is_empty() {
+            let exclude = q.exclude_tags.clone();
+            out.retain(|e| !exclude.iter().any(|t| entry_has_tag(e, t)));
         }
         if let Some(search) = &q.search {
             if !search.is_empty() {
@@ -1355,10 +1192,10 @@ impl Storage {
                     if e.skin_id.to_lowercase().contains(&needle) {
                         return true;
                     }
-                    e.tag_ids.iter().any(|id| {
+                    e.tags.iter().any(|t| {
                         let p = path_cache
-                            .entry(id.clone())
-                            .or_insert_with(|| maps.path_of(id).join("/").to_lowercase());
+                            .entry(t.clone())
+                            .or_insert_with(|| t.to_lowercase());
                         p.contains(&needle)
                     })
                 });
@@ -1430,21 +1267,15 @@ impl Storage {
     pub fn add_entry(&self, input: AddEntryInput) -> SkinResult<LibraryEntry> {
         self.mutate(|snap| {
             let now = now_iso();
-            let tag_ids_set = snap.tag_ids();
             let folder_ids_set = snap.folder_ids();
-            let mut tag_ids: Vec<String> = Vec::new();
-            for id in input.tag_ids {
-                if tag_ids_set.contains(&id) && !tag_ids.contains(&id) {
-                    tag_ids.push(id);
-                }
-            }
+            let tags = normalize_tag_list(input.tags);
             let folder_id = input.folder_id.filter(|f| folder_ids_set.contains(f));
             let entry = LibraryEntry {
                 entry_id: new_id(),
                 skin_id: input.skin_id,
                 name: input.name,
                 active: input.active,
-                tag_ids,
+                tags,
                 folder_id,
                 favorite: input.favorite,
                 model: input.model,
@@ -1480,29 +1311,31 @@ impl Storage {
                     "entry was modified; reload and retry",
                 ));
             }
-            let tag_ids_set = snap.tag_ids();
             let folder_ids_set = snap.folder_ids();
             if let Some(name) = &patch.name {
                 snap.entries[idx].name = name.clone();
             }
-            if let Some(tag_ids) = &patch.tag_ids {
-                let mut merged: Vec<String> = Vec::new();
-                for id in tag_ids {
-                    if tag_ids_set.contains(id) && !merged.contains(id) {
-                        merged.push(id.clone());
-                    }
-                }
-                snap.entries[idx].tag_ids = merged;
+            if let Some(tags) = &patch.tags {
+                snap.entries[idx].tags = normalize_tag_list(tags.clone());
             }
-            if let Some(add) = &patch.add_tag_ids {
-                for id in add {
-                    if tag_ids_set.contains(id) && !snap.entries[idx].tag_ids.contains(id) {
-                        snap.entries[idx].tag_ids.push(id.clone());
-                    }
-                }
+            if let Some(add) = &patch.add_tags {
+                let merged = normalize_tag_list(
+                    snap.entries[idx]
+                        .tags
+                        .iter()
+                        .cloned()
+                        .chain(add.iter().cloned()),
+                );
+                snap.entries[idx].tags = merged;
             }
-            if let Some(remove) = &patch.remove_tag_ids {
-                snap.entries[idx].tag_ids.retain(|id| !remove.contains(id));
+            if let Some(remove) = &patch.remove_tags {
+                let keys: HashSet<String> = remove
+                    .iter()
+                    .filter_map(|r| normalize_tag_name(r).map(|n| n.to_lowercase()))
+                    .collect();
+                snap.entries[idx]
+                    .tags
+                    .retain(|t| !keys.contains(&t.to_lowercase()));
             }
             if let Some(fav) = patch.favorite {
                 snap.entries[idx].favorite = fav;
@@ -1513,6 +1346,9 @@ impl Storage {
             }
             if let Some(active) = patch.active {
                 snap.entries[idx].active = active;
+            }
+            if let Some(model) = patch.model {
+                snap.entries[idx].model = model;
             }
             if let Some(license) = &patch.license {
                 snap.entries[idx].license = license.clone();
@@ -1554,36 +1390,31 @@ impl Storage {
                 }
                 targets.push(idx);
             }
-            let tag_ids_set = snap.tag_ids();
             let folder_ids_set = snap.folder_ids();
-            let add: Vec<String> = batch
-                .add_tag_ids
-                .as_deref()
-                .unwrap_or(&[])
-                .iter()
-                .filter(|id| tag_ids_set.contains(*id))
-                .cloned()
-                .collect();
+            let add = normalize_tag_list(
+                batch
+                    .add_tags
+                    .as_deref()
+                    .unwrap_or(&[])
+                    .iter()
+                    .cloned(),
+            );
             let remove: HashSet<String> = batch
-                .remove_tag_ids
+                .remove_tags
                 .as_deref()
                 .unwrap_or(&[])
                 .iter()
-                .cloned()
+                .filter_map(|r| normalize_tag_name(r).map(|n| n.to_lowercase()))
                 .collect();
             let now = now_iso();
             let mut updated = 0usize;
             for idx in targets {
                 let e = &mut snap.entries[idx];
                 if !add.is_empty() {
-                    for id in &add {
-                        if !e.tag_ids.contains(id) {
-                            e.tag_ids.push(id.clone());
-                        }
-                    }
+                    e.tags = normalize_tag_list(e.tags.iter().cloned().chain(add.iter().cloned()));
                 }
                 if !remove.is_empty() {
-                    e.tag_ids.retain(|id| !remove.contains(id));
+                    e.tags.retain(|t| !remove.contains(&t.to_lowercase()));
                 }
                 if let Some(pf) = &batch.folder_id {
                     e.folder_id = pf.as_option().filter(|f| folder_ids_set.contains(*f)).cloned();
@@ -1618,7 +1449,7 @@ pub struct AddEntryInput {
     pub skin_id: String,
     pub name: String,
     pub active: bool,
-    pub tag_ids: Vec<String>,
+    pub tags: Vec<String>,
     pub folder_id: Option<String>,
     pub favorite: bool,
     pub model: SkinModel,
@@ -1641,6 +1472,17 @@ pub fn is_valid_skin_id(skin_id: &str) -> bool {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct LibraryFileV5Owned {
+    #[serde(default = "default_revision")]
+    revision: u64,
+    #[serde(default)]
+    folders: Vec<FolderNode>,
+    #[serde(default)]
+    entries: Vec<LibraryEntry>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct LibraryFileV4Owned {
     #[serde(default = "default_revision")]
     revision: u64,
@@ -1649,23 +1491,68 @@ struct LibraryFileV4Owned {
     #[serde(default)]
     folders: Vec<FolderNode>,
     #[serde(default)]
-    entries: Vec<LibraryEntry>,
+    entries: Vec<LibraryEntryLegacy>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LibraryEntryLegacy {
+    pub entry_id: String,
+    pub skin_id: String,
+    pub name: String,
+    #[serde(default)]
+    pub active: bool,
+    #[serde(default)]
+    pub tag_ids: Vec<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    pub folder_id: Option<String>,
+    #[serde(default)]
+    pub favorite: bool,
+    pub model: SkinModel,
+    pub source: EntrySource,
+    #[serde(default)]
+    pub provenance: Provenance,
+    #[serde(default)]
+    pub license: LicenseInfo,
+    #[serde(default)]
+    pub note: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub revision: u64,
 }
 
 fn default_revision() -> u64 {
     1
 }
 
-/// Drop dangling references after load (files are user-readable).
-fn sanitize(mut snap: Snapshot) -> Snapshot {
-    let tag_ids: HashSet<String> = snap.tags.iter().map(|t| t.tag_id.clone()).collect();
-    for t in &mut snap.tags {
-        if let Some(pid) = &t.parent_id {
-            if !tag_ids.contains(pid) {
-                t.parent_id = None;
-            }
-        }
+fn legacy_entry_to_v5(e: LibraryEntryLegacy, registry: &HashMap<String, String>) -> LibraryEntry {
+    let tags = if !e.tags.is_empty() {
+        normalize_tag_list(e.tags)
+    } else {
+        tags_from_legacy_ids(&e.tag_ids, registry)
+    };
+    LibraryEntry {
+        entry_id: e.entry_id,
+        skin_id: e.skin_id,
+        name: e.name,
+        active: e.active,
+        tags,
+        folder_id: e.folder_id,
+        favorite: e.favorite,
+        model: e.model,
+        source: e.source,
+        provenance: e.provenance,
+        license: e.license,
+        note: e.note,
+        created_at: e.created_at,
+        updated_at: e.updated_at,
+        revision: e.revision,
     }
+}
+
+/// Drop dangling folder refs; normalize entry tags after load.
+fn sanitize(mut snap: Snapshot) -> Snapshot {
     let folder_ids: HashSet<String> = snap.folders.iter().map(|f| f.folder_id.clone()).collect();
     for f in &mut snap.folders {
         if let Some(pid) = &f.parent_id {
@@ -1675,7 +1562,7 @@ fn sanitize(mut snap: Snapshot) -> Snapshot {
         }
     }
     for e in &mut snap.entries {
-        e.tag_ids.retain(|id| tag_ids.contains(id));
+        e.tags = normalize_tag_list(e.tags.iter().cloned());
         if let Some(fid) = &e.folder_id {
             if !folder_ids.contains(fid) {
                 e.folder_id = None;
@@ -1683,89 +1570,6 @@ fn sanitize(mut snap: Snapshot) -> Snapshot {
         }
     }
     snap
-}
-
-struct TagMaps {
-    by_id: HashMap<String, TagNode>,
-    children_of: HashMap<Option<String>, Vec<String>>,
-}
-
-impl TagMaps {
-    fn of(tags: &[TagNode]) -> Self {
-        let mut by_id = HashMap::new();
-        let mut children_of: HashMap<Option<String>, Vec<String>> = HashMap::new();
-        for t in tags {
-            by_id.insert(t.tag_id.clone(), t.clone());
-            children_of.entry(t.parent_id.clone()).or_default().push(t.tag_id.clone());
-        }
-        for (pid, list) in &mut children_of {
-            list.sort_by_key(|id| by_id[id].sort_order);
-            let _ = pid;
-        }
-        Self { by_id, children_of }
-    }
-
-    fn path_of(&self, tag_id: &str) -> Vec<String> {
-        let mut path = Vec::new();
-        let mut cur = self.by_id.get(tag_id).cloned();
-        let mut guard = 0;
-        while let Some(node) = cur {
-            if guard > MAX_TAG_DEPTH + 2 {
-                break;
-            }
-            guard += 1;
-            path.insert(0, node.name.clone());
-            cur = node.parent_id.and_then(|p| self.by_id.get(&p).cloned());
-        }
-        path
-    }
-
-    fn subtree_ids(&self, tag_id: &str) -> HashSet<String> {
-        let mut out = HashSet::new();
-        let mut stack = vec![tag_id.to_string()];
-        while let Some(id) = stack.pop() {
-            if !out.insert(id.clone()) {
-                continue;
-            }
-            if let Some(children) = self.children_of.get(&Some(id.clone())) {
-                stack.extend(children.iter().cloned());
-            }
-        }
-        out
-    }
-
-    fn depth_of(&self, tag_id: &str) -> u32 {
-        let mut depth = 1;
-        let mut cur = self.by_id.get(tag_id).cloned();
-        let mut guard = 0;
-        while let Some(node) = cur {
-            if guard > MAX_TAG_DEPTH + 2 {
-                break;
-            }
-            guard += 1;
-            match node.parent_id {
-                Some(pid) => {
-                    depth += 1;
-                    cur = self.by_id.get(&pid).cloned();
-                }
-                None => break,
-            }
-        }
-        depth
-    }
-
-    fn max_subtree_depth(&self, tag_id: &str) -> u32 {
-        fn walk(maps: &TagMaps, id: &str, d: u32) -> u32 {
-            let mut max = d;
-            if let Some(children) = maps.children_of.get(&Some(id.to_string())) {
-                for c in children {
-                    max = max.max(walk(maps, c, d + 1));
-                }
-            }
-            max
-        }
-        walk(self, tag_id, 0)
-    }
 }
 
 struct FolderMaps {
@@ -1850,16 +1654,6 @@ impl FolderMaps {
     }
 }
 
-fn count_siblings(tags: &[TagNode], parent_id: &Option<String>) -> i64 {
-    tags.iter().filter(|t| &t.parent_id == parent_id).count() as i64
-}
-
-fn count_siblings_excluding(tags: &[TagNode], parent_id: &Option<String>, exclude: &str) -> i64 {
-    tags.iter()
-        .filter(|t| &t.parent_id == parent_id && t.tag_id != exclude)
-        .count() as i64
-}
-
 fn count_folder_siblings_excluding(
     folders: &[FolderNode],
     parent_id: &Option<String>,
@@ -1869,41 +1663,6 @@ fn count_folder_siblings_excluding(
         .iter()
         .filter(|f| &f.parent_id == parent_id && f.folder_id != exclude)
         .count() as i64
-}
-
-fn reorder_siblings_tag(snap: &mut Snapshot, parent_id: &Option<String>, tag_id: &str, target: i64) {
-    let mut siblings: Vec<TagNode> = snap
-        .tags
-        .iter()
-        .filter(|t| &t.parent_id == parent_id)
-        .cloned()
-        .collect();
-    siblings.sort_by_key(|t| t.sort_order);
-    if let Some(from) = siblings.iter().position(|t| t.tag_id == tag_id) {
-        let to = (target.max(0) as usize).min(siblings.len() - 1);
-        let item = siblings.remove(from);
-        siblings.insert(to, item);
-        for (i, t) in siblings.iter().enumerate() {
-            if let Some(node) = snap.tags.iter_mut().find(|x| x.tag_id == t.tag_id) {
-                node.sort_order = i as i64;
-            }
-        }
-    }
-}
-
-fn sort_siblings_by_name_tag(snap: &mut Snapshot, parent_id: &Option<String>) {
-    let mut siblings: Vec<TagNode> = snap
-        .tags
-        .iter()
-        .filter(|t| &t.parent_id == parent_id)
-        .cloned()
-        .collect();
-    siblings.sort_by(|a, b| a.name.cmp(&b.name));
-    for (i, t) in siblings.iter().enumerate() {
-        if let Some(node) = snap.tags.iter_mut().find(|x| x.tag_id == t.tag_id) {
-            node.sort_order = i as i64;
-        }
-    }
 }
 
 fn reorder_siblings_folder(

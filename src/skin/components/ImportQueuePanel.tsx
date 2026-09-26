@@ -15,7 +15,7 @@ import type {
   LicenseInfo,
   Provenance,
   SkinModel,
-  TagWithStats,
+  CollectedTag,
 } from '../contracts/types.ts'
 import { getPlatformFiles, pickedKind, type PickedFile } from '../platform/files.ts'
 import { TagPicker } from './TagPicker.tsx'
@@ -59,9 +59,8 @@ export interface QueueRow {
 interface Props {
   api: SkinApi
   folders: FolderWithStats[]
-  tags: TagWithStats[]
+  tags: CollectedTag[]
   defaultFolderId: string | null
-  createTag: (name: string, parentId: string | null) => Promise<string | null>
   /** Locate an existing entry in the main view (clears filters, pins it). */
   onLocateEntry: (entryId: string, folderId: string | null) => void
   onSaved: () => void
@@ -84,14 +83,13 @@ export function ImportQueuePanel({
   folders,
   tags,
   defaultFolderId,
-  createTag,
   onLocateEntry,
   onSaved,
   onClose,
 }: Props) {
   const [rows, setRows] = useState<QueueRow[]>([])
   const [targetFolderId, setTargetFolderId] = useState<string | null>(defaultFolderId)
-  const [commonTagIds, setCommonTagIds] = useState<string[]>([])
+  const [commonTags, setCommonTags] = useState<string[]>([])
   const [defaultModel, setDefaultModel] = useState<SkinModel>('classic')
   const [defaultActive, setDefaultActive] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -105,7 +103,7 @@ export function ImportQueuePanel({
   const folderById = useMemo(() => new Map(folders.map((f) => [f.folderId, f])), [folders])
 
   const folderPathLabel = (folderId: string | null): string => {
-    if (folderId === null) return '未归档'
+    if (folderId === null) return '皮肤库'
     return folderById.get(folderId)?.path.join(' / ') ?? folderId
   }
 
@@ -313,7 +311,7 @@ export function ImportQueuePanel({
       const saved = await api.saveEntry({
         jobId: row.job.jobId,
         name,
-        tagIds: commonTagIds,
+        tags: commonTags.length > 0 ? commonTags : undefined,
         tagPaths:
           row.suggestedTagPaths && row.suggestedTagPaths.length > 0
             ? row.suggestedTagPaths
@@ -558,7 +556,7 @@ export function ImportQueuePanel({
                 value={targetFolderId ?? ''}
                 onChange={(e) => setTargetFolderId(e.target.value || null)}
               >
-                <option value="">未归档</option>
+                <option value="">皮肤库</option>
                 {folders.map((f) => (
                   <option key={f.folderId} value={f.folderId}>
                     {f.path.join(' / ')}
@@ -587,13 +585,8 @@ export function ImportQueuePanel({
           </div>
 
           <details className={styles.importCommonTags}>
-            <summary>统一添加标签({commonTagIds.length})</summary>
-            <TagPicker
-              tags={tags}
-              selected={commonTagIds}
-              onChange={setCommonTagIds}
-              onCreate={createTag}
-            />
+            <summary>统一添加标签({commonTags.length})</summary>
+            <TagPicker tags={tags} selected={commonTags} onChange={setCommonTags} />
           </details>
         </div>
 

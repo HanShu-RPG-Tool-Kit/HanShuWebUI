@@ -9,9 +9,7 @@ use skin_core::error::codes;
 use skin_core::imports::{ImportInput, ImportJob, JobState};
 use skin_core::normalize::rgba_to_png;
 use skin_core::storage::schema::{LibraryEntry, PortableSkinFileV2, PortableSkinFileV3};
-use skin_core::storage::{
-    BatchPatch, LibraryQuery, PatchEntry, PatchFolder, PatchTag, Storage,
-};
+use skin_core::storage::{BatchPatch, CollectedTag, LibraryQuery, PatchEntry, PatchFolder, Storage};
 use skin_core::SkinError;
 use std::sync::Arc;
 use tauri::ipc::Response;
@@ -68,9 +66,9 @@ pub struct CapabilitiesFeatures {
 
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct TagTreeResponse {
+pub struct TagListResponse {
     pub revision: u64,
-    pub tags: Vec<skin_core::storage::TagWithStats>,
+    pub tags: Vec<CollectedTag>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -95,7 +93,7 @@ pub struct SaveEntryRequest {
     pub job_id: String,
     pub name: String,
     #[serde(default)]
-    pub tag_ids: Vec<String>,
+    pub tags: Vec<String>,
     #[serde(default)]
     pub tag_paths: Vec<Vec<String>>,
     pub folder_id: Option<String>,
@@ -193,54 +191,52 @@ pub async fn skin_get_entry(
 }
 
 #[tauri::command]
-pub async fn skin_list_tags(state: State<'_, SkinState>) -> CmdResult<TagTreeResponse> {
+pub async fn skin_list_tags(state: State<'_, SkinState>) -> CmdResult<TagListResponse> {
     with_library(&state, move |lib| {
-        let (revision, tags) = lib.tag_tree_with_stats();
-        Ok(TagTreeResponse { revision, tags })
+        let (revision, tags) = lib.list_tags();
+        Ok(TagListResponse { revision, tags })
     })
     .await
 }
 
-#[tauri::command]
-pub async fn skin_create_tag(
-    app: AppHandle,
-    state: State<'_, SkinState>,
-    body: CreateNodeRequest,
-) -> CmdResult<skin_core::storage::schema::TagNode> {
-    let out = with_library(&state, move |lib| {
-        lib.create_tag(&body.name, body.parent_id, body.expected_revision)
-    })
-    .await?;
-    events::emit_library_updated(&app, &state, "tags");
-    Ok(out)
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenameTagRequest {
+    pub from: String,
+    pub to: String,
 }
 
 #[tauri::command]
-pub async fn skin_patch_tag(
+pub async fn skin_rename_tag(
     app: AppHandle,
     state: State<'_, SkinState>,
-    tag_id: String,
-    patch: PatchTag,
-) -> CmdResult<skin_core::storage::schema::TagNode> {
-    let out = with_library(&state, move |lib| lib.patch_tag(&tag_id, patch)).await?;
+    body: RenameTagRequest,
+) -> CmdResult<serde_json::Value> {
+    let out = with_library(&state, move |lib| {
+        let (affected, _revision) = lib.rename_tag(&body.from, &body.to)?;
+        Ok(serde_json::json!({ "affectedEntries": affected }))
+    })
+    .await?;
     events::emit_library_updated(&app, &state, "tags");
+    events::emit_library_updated(&app, &state, "entries");
     Ok(out)
+}
+
+#[derive(Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeleteTagRequest {
+    pub name: String,
 }
 
 #[tauri::command]
 pub async fn skin_delete_tag(
     app: AppHandle,
     state: State<'_, SkinState>,
-    tag_id: String,
-    branch: bool,
-    expected_revision: Option<u64>,
+    body: DeleteTagRequest,
 ) -> CmdResult<serde_json::Value> {
     let out = with_library(&state, move |lib| {
-        let (removed, affected) = lib.delete_tag(&tag_id, branch, expected_revision)?;
-        Ok(serde_json::json!({
-            "removedTagIds": removed,
-            "affectedEntries": affected,
-        }))
+        let (affected, _revision) = lib.delete_tag(&body.name)?;
+        Ok(serde_json::json!({ "affectedEntries": affected }))
     })
     .await?;
     events::emit_library_updated(&app, &state, "tags");
@@ -308,7 +304,7 @@ pub async fn skin_save_entry(
             .save_entry(
                 &body.job_id,
                 &body.name,
-                body.tag_ids,
+                body.tags,
                 body.tag_paths,
                 body.folder_id,
                 body.favorite,
@@ -335,7 +331,7 @@ pub async fn skin_patch_entry(
     patch: PatchEntry,
 ) -> CmdResult<LibraryEntry> {
     let touched_tags =
-        patch.tag_ids.is_some() || patch.add_tag_ids.is_some() || patch.remove_tag_ids.is_some();
+        patch.tags.is_some() || patch.add_tags.is_some() || patch.remove_tags.is_some();
     let touched_folder = patch.folder_id.is_some();
     let out = with_library(&state, move |lib| lib.patch_entry(&entry_id, revision, patch)).await?;
     events::emit_library_updated(&app, &state, "entries");
@@ -571,13 +567,7 @@ pub async fn skin_export_skin(
                     if candidates.len() == 1 { candidates.into_iter().next() } else { None };
                 let tag_paths: Vec<Vec<String>> = entry
                     .as_ref()
-                    .map(|e| {
-                        e.tag_ids
-                            .iter()
-                            .map(|id| lib.tag_path(id))
-                            .filter(|p| !p.is_empty())
-                            .collect()
-                    })
+                    .map(|e| e.tags.iter().map(|name| vec![name.clone()]).collect())
                     .unwrap_or_default();
                 let (name, model, active, license, provenance, note) = match entry {
                     Some(e) => (
@@ -635,10 +625,9 @@ pub async fn skin_export_entry(
             .get_object(&entry.skin_id)?
             .ok_or_else(|| SkinError::api(codes::NOT_FOUND, "skin object missing"))?;
         let tag_paths: Vec<Vec<String>> = entry
-            .tag_ids
+            .tags
             .iter()
-            .map(|id| lib.tag_path(id))
-            .filter(|p| !p.is_empty())
+            .map(|name| vec![name.clone()])
             .collect();
         match format.as_deref() {
             Some("v2") => {
@@ -741,4 +730,38 @@ pub async fn skin_write_export_file(
         Ok(())
     })
     .await
+}
+
+// ---------------------------------------------------------------------------
+// Network helpers for FSA mode (storage stays in the project folder; only
+// SSRF-guarded fetch / Mojang resolve go through Rust).
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResolvedPlayerDto {
+    pub uuid: String,
+    pub player_name: String,
+    pub skin_url: String,
+    pub model: String,
+}
+
+#[tauri::command]
+pub async fn skin_net_fetch_png(url: String) -> CmdResult<String> {
+    let fetched = skin_core::network::safe_fetch(&url).await?;
+    Ok(b64_encode(&fetched.body))
+}
+
+#[tauri::command]
+pub async fn skin_net_resolve_player(name: String) -> CmdResult<ResolvedPlayerDto> {
+    let r = skin_core::network::player::resolve_player_skin(&name).await?;
+    Ok(ResolvedPlayerDto {
+        uuid: r.uuid,
+        player_name: r.player_name,
+        skin_url: r.skin_url,
+        model: match r.model {
+            SkinModel::Slim => "slim".into(),
+            SkinModel::Classic => "classic".into(),
+        },
+    })
 }

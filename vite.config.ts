@@ -13,12 +13,25 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     host: host || false,
-    // Browser dev mode: proxy the skin API to the standalone skin-http service
-    // (same-origin, so the HTTP adapter works without CORS in dev).
+    // Mojang JSON APIs lack CORS; same-origin proxy for browser player-name import.
     proxy: {
-      '/api': {
-        target: process.env.SKIN_HTTP_URL ?? 'http://127.0.0.1:23891',
+      '/__skin_net/name': {
+        target: 'https://api.minecraftservices.com',
         changeOrigin: true,
+        rewrite: (path) =>
+          path.replace(
+            /^\/__skin_net\/name/,
+            '/minecraft/profile/lookup/name',
+          ),
+      },
+      '/__skin_net/session': {
+        target: 'https://sessionserver.mojang.com',
+        changeOrigin: true,
+        rewrite: (path) =>
+          path.replace(
+            /^\/__skin_net\/session/,
+            '/session/minecraft/profile',
+          ),
       },
     },
     hmr: host
@@ -30,6 +43,28 @@ export default defineConfig({
       : undefined,
     watch: {
       ignored: ['**/src-tauri/**'],
+    },
+  },
+  preview: {
+    proxy: {
+      '/__skin_net/name': {
+        target: 'https://api.minecraftservices.com',
+        changeOrigin: true,
+        rewrite: (path) =>
+          path.replace(
+            /^\/__skin_net\/name/,
+            '/minecraft/profile/lookup/name',
+          ),
+      },
+      '/__skin_net/session': {
+        target: 'https://sessionserver.mojang.com',
+        changeOrigin: true,
+        rewrite: (path) =>
+          path.replace(
+            /^\/__skin_net\/session/,
+            '/session/minecraft/profile',
+          ),
+      },
     },
   },
   envPrefix: ['VITE_', 'TAURI_ENV_*'],

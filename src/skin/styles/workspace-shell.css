@@ -1,0 +1,163 @@
+/**
+ * Critical skin workspace shell (GLOBAL, not CSS-modules).
+ * Keeps the three-pane layout and dark form chrome working even if
+ * workspace.module.css HMR/injection desyncs hashed class names.
+ */
+
+.skinWorkspace {
+  --skin-bg: #1d1d1d;
+  --skin-panel: #303030;
+  --skin-panel-2: #232323;
+  --skin-border: #1a1a1a;
+  --skin-hover: #3d3d3d;
+  --skin-accent: #4772b3;
+  --skin-accent-soft: #3a5278;
+  --skin-text: #e6e6e6;
+  --skin-text-dim: #b0b0b0;
+  --skin-text-faint: #888888;
+  --skin-edge: #404040;
+  --skin-radius: 0;
+
+  box-sizing: border-box;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--skin-bg);
+  color: var(--skin-text);
+  color-scheme: dark;
+  font-family: -apple-system, 'PingFang SC', 'Segoe UI', sans-serif;
+  user-select: none;
+}
+
+.skinWorkspace *,
+.skinWorkspace *::before,
+.skinWorkspace *::after {
+  box-sizing: border-box;
+}
+
+.skinWorkspaceLayout {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: row;
+  align-items: stretch;
+  gap: 2px;
+  padding: 2px;
+  background: var(--skin-border);
+}
+
+.skinWorkspaceLeft,
+.skinWorkspaceCenter,
+.skinWorkspaceRight {
+  background: var(--skin-panel);
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.skinWorkspaceLeft {
+  flex: 0 0 260px;
+  width: 260px;
+  max-width: 280px;
+}
+
+.skinWorkspaceCenter {
+  flex: 1 1 auto;
+  overflow: auto;
+}
+
+.skinWorkspaceRight {
+  flex: 0 0 380px;
+  width: 380px;
+  max-width: 420px;
+}
+
+/* Dark native controls — prevents white browser defaults. */
+.skinWorkspace input[type='text'],
+.skinWorkspace input[type='search'],
+.skinWorkspace input:not([type]),
+.skinWorkspace select,
+.skinWorkspace textarea {
+  background: var(--skin-panel-2);
+  border: 1px solid var(--skin-edge);
+  border-radius: var(--skin-radius);
+  color: var(--skin-text);
+  color-scheme: dark;
+}
+
+.skinWorkspace button {
+  color: inherit;
+  font: inherit;
+}
+
+/* Tag field: one outer box; inner input must not show its own chrome. */
+.skinWorkspace .skinTagPicker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 3px 4px;
+  border: 1px solid var(--skin-edge);
+  border-radius: var(--skin-radius);
+  background: var(--skin-panel-2);
+  cursor: text;
+}
+.skinWorkspace .skinTagPicker:focus-within {
+  border-color: var(--skin-accent);
+}
+.skinWorkspace .skinTagPicker input,
+.skinWorkspace .skinTagPicker input[type='text'],
+.skinWorkspace .skinTagPicker input:not([type]) {
+  flex: 1 1 4em;
+  min-width: 4em;
+  width: auto !important;
+  margin: 0;
+  padding: 2px 4px;
+  border: 0 !important;
+  border-radius: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  color: inherit;
+  font: inherit;
+  line-height: 1.35;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.skinWorkspace .skinTagPicker input:focus {
+  border: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+@media (max-width: 1100px) {
+  .skinWorkspaceLayout {
+    flex-wrap: wrap;
+  }
+  .skinWorkspaceLeft {
+    flex: 0 0 220px;
+    width: 220px;
+  }
+  .skinWorkspaceCenter {
+    flex: 1 1 calc(100% - 224px);
+  }
+  .skinWorkspaceRight {
+    flex: 1 1 100%;
+    width: 100%;
+    max-width: none;
+    max-height: 40%;
+  }
+}

@@ -72,10 +72,8 @@ export function createTauriSkinApi(deps: TauriDeps): SkinApi {
     listEntries: (query) => call('skin_list_entries', { query }),
     getEntry: (entryId) => call('skin_get_entry', { entryId }),
     listTags: () => call('skin_list_tags'),
-    createTag: (body) => call('skin_create_tag', { body }),
-    patchTag: (tagId, body) => call('skin_patch_tag', { tagId, patch: body }),
-    deleteTag: (tagId, mode, expectedRevision) =>
-      call('skin_delete_tag', { tagId, branch: mode === 'branch', expectedRevision }),
+    renameTag: (from, to) => call('skin_rename_tag', { from, to }),
+    deleteTag: (name) => call('skin_delete_tag', { name }),
     listFolders: () => call('skin_list_folders'),
     createFolder: (body) => call('skin_create_folder', { body }),
     patchFolder: (folderId, body) => call('skin_patch_folder', { folderId, patch: body }),

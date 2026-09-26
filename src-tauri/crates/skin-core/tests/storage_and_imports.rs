@@ -43,8 +43,9 @@ fn loads_v3_library() {
     let storage = Storage::open(&root).unwrap();
     let page = storage.list_entries(&LibraryQuery::default());
     assert_eq!(page.total, 2);
-    let (_, tags) = storage.tag_tree_with_stats();
-    assert_eq!(tags.len(), 2);
+    let (_, tags) = storage.list_tags();
+    assert_eq!(tags.len(), 1);
+    assert_eq!(tags[0].name, "精灵");
     let (_, folders) = storage.folder_tree_with_stats();
     assert_eq!(folders.len(), 1);
     // revision preserved from file
@@ -59,14 +60,15 @@ fn migrates_v2_to_v3() {
     let storage = Storage::open(&root).unwrap();
     let page = storage.list_entries(&LibraryQuery::default());
     assert_eq!(page.total, 2);
-    // v2 entries become 未归档
+    // v2 entries become library-root (folder_id = None)
     for e in &page.entries {
         assert_eq!(e.folder_id, None);
     }
     // persisted as v4 now
     let raw = std::fs::read_to_string(root.join("library.json")).unwrap();
     let v: serde_json::Value = serde_json::from_str(&raw).unwrap();
-    assert_eq!(v["schemaVersion"], 4);
+    assert_eq!(v["schemaVersion"], 5);
+    assert!(v.get("tags").is_none());
     assert_eq!(v["folders"].as_array().unwrap().len(), 0);
 }
 
@@ -76,23 +78,23 @@ fn migrates_v1_dedupes_nfc_tags_and_keeps_backup() {
     std::fs::create_dir_all(&root).unwrap();
     std::fs::copy(fixture("library-v1.json"), root.join("library.json")).unwrap();
     let storage = Storage::open(&root).unwrap();
-    let (_, tags) = storage.tag_tree_with_stats();
-    // "精灵" and "精灵 " (trailing space) merge; "战士" stays → 2 root tags
+    let (_, tags) = storage.list_tags();
+    // "精灵" and "精灵 " (trailing space) merge; "战士" stays → 2 unique tags
     let names: Vec<&str> = tags.iter().map(|t| t.name.as_str()).collect();
     assert!(names.contains(&"精灵"));
     assert!(names.contains(&"战士"));
     assert_eq!(tags.len(), 2);
     // untouched v1 backup kept under the dedicated name
     assert!(root.join("library.json.v1-migration-backup").exists());
-    // entry keeps its id and gains tagIds
+    // entry keeps its id and freeform tags
     let page = storage.list_entries(&LibraryQuery::default());
     assert_eq!(page.total, 1);
     assert_eq!(page.entries[0].entry_id, "66666666-6666-4666-8666-666666666666");
-    assert_eq!(page.entries[0].tag_ids.len(), 2);
+    assert_eq!(page.entries[0].tags.len(), 2);
     // migration is idempotent: reopening does not duplicate tags
     drop(storage);
     let storage2 = Storage::open(&root).unwrap();
-    let (_, tags2) = storage2.tag_tree_with_stats();
+    let (_, tags2) = storage2.list_tags();
     assert_eq!(tags2.len(), 2);
 }
 
@@ -102,7 +104,7 @@ fn refuses_newer_schema() {
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(
         root.join("library.json"),
-        r#"{"schemaVersion": 9, "revision": 1, "tags": [], "folders": [], "entries": []}"#,
+        r#"{"schemaVersion": 9, "revision": 1, "folders": [], "entries": []}"#,
     )
     .unwrap();
     let err = match Storage::open(&root) { Err(e) => e, Ok(_) => panic!("expected error") };
@@ -170,7 +172,7 @@ fn storage_with_entry() -> (std::path::PathBuf, Storage, String) {
             skin_id: skin_id.clone(),
             name: "测试一".into(),
             active: true,
-            tag_ids: vec![],
+            tags: vec![],
             folder_id: None,
             favorite: false,
             model,
@@ -214,7 +216,7 @@ fn same_skin_id_multiple_entries() {
             skin_id: entry.skin_id.clone(),
             name: "同对象第二条例".into(),
             active: true,
-            tag_ids: vec![],
+            tags: vec![],
             folder_id: None,
             favorite: false,
             model: SkinModel::Classic,
@@ -231,25 +233,9 @@ fn same_skin_id_multiple_entries() {
 }
 
 #[test]
-fn tag_guards_and_three_state_folder() {
+fn freeform_tags_and_three_state_folder() {
     let root = temp_root("tags");
     let storage = Storage::open(&root).unwrap();
-    let t1 = storage.create_tag("精灵", None, None).unwrap();
-    let t2 = storage.create_tag("森林精灵", Some(t1.tag_id.clone()), None).unwrap();
-    // sibling name conflict (NFC)
-    let err = storage.create_tag("精灵", None, None).unwrap_err();
-    assert_eq!(err.code(), "TAG_NAME_CONFLICT");
-    // cycle: move parent under its child
-    let err = storage
-        .patch_tag(&t1.tag_id, skin_core::storage::PatchTag {
-            parent_id: Some(skin_core::storage::PatchField::Value(t2.tag_id.clone())),
-            ..Default::default()
-        })
-        .unwrap_err();
-    assert_eq!(err.code(), "TAG_CYCLE");
-    // has-children delete refused in single mode
-    let err = storage.delete_tag(&t1.tag_id, false, None).unwrap_err();
-    assert_eq!(err.code(), "TAG_HAS_CHILDREN");
 
     // entry with folder + tags
     let (skin_id, model) = storage.put_object(&sample_code()).unwrap();
@@ -259,7 +245,7 @@ fn tag_guards_and_three_state_folder() {
             skin_id,
             name: "带标签".into(),
             active: true,
-            tag_ids: vec![t2.tag_id.clone()],
+            tags: vec!["森林精灵".into()],
             folder_id: Some(folder.folder_id.clone()),
             favorite: false,
             model,
@@ -270,7 +256,18 @@ fn tag_guards_and_three_state_folder() {
         })
         .unwrap();
 
+    let (affected, _) = storage.rename_tag("森林精灵", "精灵").unwrap();
+    assert_eq!(affected, 1);
+    assert_eq!(
+        storage.get_entry(&entry.entry_id).unwrap().tags,
+        vec!["精灵".to_string()]
+    );
+    let (affected, _) = storage.delete_tag("精灵").unwrap();
+    assert_eq!(affected, 1);
+    assert!(storage.get_entry(&entry.entry_id).unwrap().tags.is_empty());
+
     // three-state folderId on patch: missing = unchanged, null = unfile, value = move
+    let entry = storage.get_entry(&entry.entry_id).unwrap();
     storage
         .patch_entry(&entry.entry_id, entry.revision, PatchEntry::default())
         .unwrap();
@@ -313,13 +310,12 @@ fn tag_guards_and_three_state_folder() {
 #[test]
 fn batch_patch_is_all_or_nothing() {
     let (_root, storage, entry_id) = storage_with_entry();
-    let tag = storage.create_tag("批量", None, None).unwrap();
     // one valid + one invalid entry id → whole batch rejected
     let err = storage
         .batch_patch_entries(BatchPatch {
             entry_ids: vec![entry_id.clone(), "missing".into()],
-            add_tag_ids: Some(vec![tag.tag_id.clone()]),
-            remove_tag_ids: None,
+            add_tags: Some(vec!["批量".into()]),
+            remove_tags: None,
             folder_id: None,
             active: None,
             expected_revisions: None,
@@ -328,20 +324,23 @@ fn batch_patch_is_all_or_nothing() {
     assert_eq!(err.code(), "NOT_FOUND");
     // entry untouched
     let e = storage.get_entry(&entry_id).unwrap();
-    assert!(e.tag_ids.is_empty());
+    assert!(e.tags.is_empty());
     // valid batch applies
     let (updated, _) = storage
         .batch_patch_entries(BatchPatch {
             entry_ids: vec![entry_id.clone()],
-            add_tag_ids: Some(vec![tag.tag_id.clone()]),
-            remove_tag_ids: None,
+            add_tags: Some(vec!["批量".into()]),
+            remove_tags: None,
             folder_id: None,
             active: None,
             expected_revisions: None,
         })
         .unwrap();
     assert_eq!(updated, 1);
-    assert_eq!(storage.get_entry(&entry_id).unwrap().tag_ids, vec![tag.tag_id]);
+    assert_eq!(
+        storage.get_entry(&entry_id).unwrap().tags,
+        vec!["批量".to_string()]
+    );
 }
 
 #[test]
@@ -350,13 +349,12 @@ fn restart_persistence() {
     {
         let storage = Storage::open(&root).unwrap();
         let (skin_id, model) = storage.put_object(&sample_code()).unwrap();
-        let tag = storage.create_tag("重启", None, None).unwrap();
         storage
             .add_entry(skin_core::storage::AddEntryInput {
                 skin_id,
                 name: "持久".into(),
                 active: true,
-                tag_ids: vec![tag.tag_id],
+                tags: vec!["重启".into()],
                 folder_id: None,
                 favorite: true,
                 model,
@@ -372,7 +370,7 @@ fn restart_persistence() {
     assert_eq!(page.total, 1);
     assert_eq!(page.entries[0].name, "持久");
     assert!(page.entries[0].favorite);
-    assert_eq!(page.entries[0].tag_ids.len(), 1);
+    assert_eq!(page.entries[0].tags, vec!["重启".to_string()]);
 }
 
 // ---------------------------------------------------------------------------
@@ -492,18 +490,16 @@ fn portable_v2_and_v1_import() {
     let entry = mgr
         .save_entry(&job.job_id, "便携皮肤", vec![], vec![], None, false, None, None, None, None)
         .unwrap();
-    assert_eq!(entry.tag_ids.len(), 1);
-    let (_, tags) = storage.tag_tree_with_stats();
-    assert_eq!(tags.len(), 2); // 精灵 + 森林精灵
+    assert_eq!(entry.tags, vec!["森林精灵".to_string()]);
 
-    // v1 flat tags become root paths
+    // v1 flat tags become entry tags
     let v1 = std::fs::read(fixture("portable-v1.json")).unwrap();
     let job1 = drive(&mgr, ImportInput::SkinFile { bytes: v1, file_name: None });
     assert_eq!(job1.state, JobState::Ready, "{:?}", job1.error);
     let entry1 = mgr
         .save_entry(&job1.job_id, "旧便携", vec![], vec![], None, false, None, None, None, None)
         .unwrap();
-    assert_eq!(entry1.tag_ids.len(), 2); // 精灵 + 战士
+    assert_eq!(entry1.tags.len(), 2); // 精灵 + 战士
 }
 
 #[test]
@@ -578,7 +574,7 @@ fn add_meta_entry(
     active: bool,
     author: Option<&str>,
     license_name: Option<&str>,
-    tag_ids: Vec<String>,
+    tags: Vec<String>,
     model: SkinModel,
 ) -> skin_core::storage::schema::LibraryEntry {
     storage
@@ -586,7 +582,7 @@ fn add_meta_entry(
             skin_id: skin_id.to_string(),
             name: name.to_string(),
             active,
-            tag_ids,
+            tags,
             folder_id: None,
             favorite: false,
             model,
@@ -636,7 +632,8 @@ fn v4_metadata_round_trip_and_persistence() {
     assert_eq!(e.model, model);
     // schema version on disk is 4
     let raw = std::fs::read_to_string(root.join("library.json")).unwrap();
-    assert!(raw.contains("\"schemaVersion\": 4"));
+    assert!(raw.contains("\"schemaVersion\": 5"));
+    assert!(!raw.contains("\"tagIds\""));
 }
 
 #[test]
@@ -646,18 +643,15 @@ fn positive_and_negative_filters_with_sorting_and_paging() {
     let (id_a, _) = storage.put_object(&sample_code()).unwrap();
     let (id_b, _) = storage.put_object(&sample_code_2()).unwrap();
 
-    let guard = storage.create_tag("守卫", None, None).unwrap();
-    let modern = storage.create_tag("现代", None, None).unwrap();
-
     // 守卫+已启用+MIT;守卫+已禁用+未声明;现代+已启用
-    add_meta_entry(&storage, &id_a, "A", true, Some("Alice"), Some("MIT"), vec![guard.tag_id.clone()], SkinModel::Classic);
-    add_meta_entry(&storage, &id_a, "B", false, Some("Bob"), None, vec![guard.tag_id.clone()], SkinModel::Classic);
-    add_meta_entry(&storage, &id_b, "C", true, Some("Alice"), None, vec![modern.tag_id.clone()], SkinModel::Slim);
+    add_meta_entry(&storage, &id_a, "A", true, Some("Alice"), Some("MIT"), vec!["守卫".into()], SkinModel::Classic);
+    add_meta_entry(&storage, &id_a, "B", false, Some("Bob"), None, vec!["守卫".into()], SkinModel::Classic);
+    add_meta_entry(&storage, &id_b, "C", true, Some("Alice"), None, vec!["现代".into()], SkinModel::Slim);
 
     // 包含【守卫】 排除【现代】 → A、B
     let q = LibraryQuery {
-        tag_ids: vec![guard.tag_id.clone()],
-        exclude_tag_ids: vec![modern.tag_id.clone()],
+        tags: vec!["守卫".into()],
+        exclude_tags: vec!["现代".into()],
         ..Default::default()
     };
     let page = storage.list_entries(&q);
@@ -775,10 +769,9 @@ fn portable_v3_export_import_round_trip() {
     let storage = Storage::open(&root).unwrap();
     let (skin_id, model) = storage.put_object(&sample_code()).unwrap();
     let entry = add_meta_entry(&storage, &skin_id, "可转移", true, Some("Alice"), Some("MIT"), vec![], model);
-    let tag = storage.create_tag("守卫", None, None).unwrap();
     storage
         .patch_entry(&entry.entry_id, entry.revision, PatchEntry {
-            tag_ids: Some(vec![tag.tag_id.clone()]),
+            tags: Some(vec!["守卫".into()]),
             ..Default::default()
         })
         .unwrap();
@@ -823,5 +816,5 @@ fn portable_v3_export_import_round_trip() {
     assert_eq!(saved.license.name.as_deref(), Some("MIT"));
     assert_eq!(saved.provenance.author.as_deref(), Some("Alice"));
     assert_eq!(saved.note, "备注内容");
-    assert_eq!(saved.tag_ids.len(), 1); // tagPaths resolved at save time
+    assert_eq!(saved.tags, vec!["守卫".to_string()]); // tagPaths flattened at save time
 }

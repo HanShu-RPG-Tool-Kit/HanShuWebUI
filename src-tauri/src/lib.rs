@@ -24,8 +24,7 @@ pub fn run() {
             skin::commands::skin_list_entries,
             skin::commands::skin_get_entry,
             skin::commands::skin_list_tags,
-            skin::commands::skin_create_tag,
-            skin::commands::skin_patch_tag,
+            skin::commands::skin_rename_tag,
             skin::commands::skin_delete_tag,
             skin::commands::skin_list_folders,
             skin::commands::skin_create_folder,
@@ -46,6 +45,8 @@ pub fn run() {
             skin::commands::skin_export_usable_manifest,
             skin::commands::skin_get_skin_code,
             skin::commands::skin_write_export_file,
+            skin::commands::skin_net_fetch_png,
+            skin::commands::skin_net_resolve_player,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
