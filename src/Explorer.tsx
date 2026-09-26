@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AssetFile, ScriptPackage, Workspace } from './workspace'
 import { isVoiceMapFile } from './workspace'
+import { packageLocationLabel, packageLocationTitle } from './project/projectLabel'
 import {
   assetFileName,
   buildAssetTree,
@@ -12,6 +13,10 @@ type ExplorerProps = {
   workspace: Workspace
   activeScriptId: string | null
   activeAssetId: string | null
+  /** 绑定到本地工程文件夹的那个包 id（null = 没有绑定工程） */
+  boundPackageId: string | null
+  /** 该工程的本地位置（浏览器 API 只给得到文件夹名） */
+  boundFolderName: string | null
   onOpenScript: (scriptId: string) => void
   onOpenAsset: (assetId: string) => void
   onTogglePackage: (packageId: string) => void
@@ -38,6 +43,8 @@ export function Explorer({
   workspace,
   activeScriptId,
   activeAssetId,
+  boundPackageId,
+  boundFolderName,
   onOpenScript,
   onOpenAsset,
   onTogglePackage,
@@ -88,6 +95,15 @@ export function Explorer({
             pkg={pkg}
             activeScriptId={activeScriptId}
             activeAssetId={activeAssetId}
+            locationLabel={packageLocationLabel({
+              packageId: pkg.id,
+              boundPackageId,
+            })}
+            locationTitle={packageLocationTitle({
+              packageId: pkg.id,
+              boundPackageId,
+              boundFolderName,
+            })}
             onOpenScript={onOpenScript}
             onOpenAsset={onOpenAsset}
             onTogglePackage={onTogglePackage}
@@ -117,6 +133,8 @@ function PackageNode({
   pkg,
   activeScriptId,
   activeAssetId,
+  locationLabel,
+  locationTitle,
   onOpenScript,
   onOpenAsset,
   onTogglePackage,
@@ -136,6 +154,10 @@ function PackageNode({
   pkg: ScriptPackage
   activeScriptId: string | null
   activeAssetId: string | null
+  /** 这个包的本地位置标签（小灰字：Local Mirror / Virtual Cache） */
+  locationLabel: string
+  /** 标签的说明（tooltip） */
+  locationTitle: string
   onOpenScript: (scriptId: string) => void
   onOpenAsset: (assetId: string) => void
   onTogglePackage: (packageId: string) => void
@@ -238,7 +260,11 @@ function PackageNode({
           title="双击重命名；可拖入文件到包内 assets/"
         >
           <span className="explorer-icon pkg" aria-hidden />
-          {pkg.name}
+          <span className="explorer-pkg-name">{pkg.name}</span>
+          {/* 本地位置：小灰字。Local Mirror = 绑定了磁盘上的工程文件夹 */}
+          <span className="explorer-pkg-path" title={locationTitle}>
+            {locationLabel}
+          </span>
         </button>
         <div className="explorer-row-actions">
           <button

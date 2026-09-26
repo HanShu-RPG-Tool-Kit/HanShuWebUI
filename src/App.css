@@ -1568,6 +1568,25 @@ body.is-resizing .monaco-editor {
   border-radius: 2px;
 }
 
+/* 包名：过长时省略号（位置标签要让位给它） */
+.explorer-pkg-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 包的本地位置标签：小灰字（Local Mirror = 已绑定磁盘上的工程文件夹） */
+.explorer-pkg-path {
+  flex: 0 1 auto;
+  min-width: 0;
+  color: var(--text);
+  font-size: 11px;
+  opacity: 0.65;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
 .explorer-icon.pkg {
   background: linear-gradient(135deg, #c9a227 0%, #8a7019 100%);
 }
