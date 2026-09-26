@@ -1,0 +1,19 @@
+[package]
+name = "skin-http"
+version = "0.1.0"
+description = "Thin HTTP adapter over skin-core for browser access"
+license = "MIT"
+edition = "2021"
+rust-version = "1.85"
+
+[dependencies]
+skin-core = { path = "../skin-core" }
+axum = { version = "0.8", features = ["multipart"] }
+tokio = { version = "1", features = ["full"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "fs"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+fs4 = { version = "1.1", features = ["sync"] }
+futures-util = "0.3"

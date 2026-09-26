@@ -13,6 +13,14 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     host: host || false,
+    // Browser dev mode: proxy the skin API to the standalone skin-http service
+    // (same-origin, so the HTTP adapter works without CORS in dev).
+    proxy: {
+      '/api': {
+        target: process.env.SKIN_HTTP_URL ?? 'http://127.0.0.1:23891',
+        changeOrigin: true,
+      },
+    },
     hmr: host
       ? {
           protocol: 'ws',

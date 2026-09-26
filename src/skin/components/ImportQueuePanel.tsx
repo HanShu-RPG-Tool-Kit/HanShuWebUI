@@ -1,10 +1,10 @@
 /**
- * 批量导入弹窗:
- *   - 多文件进入同一队列;URL / 玩家名 / 皮肤码 / .skin.json 也进同一列表
- *   - 顶部统一设置:目标文件夹、统一添加标签
- *   - 行内编辑:单项名称、模型;行状态:待检查/可导入/重复/无效/导入中/已导入/失败
- *   - 同内容重复默认跳过,可另存;队列内重复提示;部分失败仅重试失败项
- * 文件选择走原生对话框(tauri-plugin-dialog),路径交给 skin_import_file。
+ * 批量导入弹窗(方案 §4.2/§13.2):
+ *   - 文件选择走平台层(桌面原生对话框 / 浏览器 input+拖放),URL/玩家名/皮肤码进同一队列
+ *   - 顶部统一设置:目标文件夹、统一标签、默认模型、默认启用
+ *   - 行内确认:名称、模型、启用、协议、作者、出处、备注 —— 便携文件的
+ *     suggested 元数据全部进入表单,保存时贯穿到 SaveEntryRequest,不中途丢失
+ *   - 重复检测按 skinId 全库查询(不是当前页);同内容默认跳过,可另存
  */
 
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -12,10 +12,12 @@ import type { SkinApi } from '../api/SkinApi.ts'
 import type {
   FolderWithStats,
   ImportJob,
-  LibraryEntry,
+  LicenseInfo,
+  Provenance,
   SkinModel,
   TagWithStats,
 } from '../contracts/types.ts'
+import { getPlatformFiles, pickedKind, type PickedFile } from '../platform/files.ts'
 import { TagPicker } from './TagPicker.tsx'
 import styles from '../styles/workspace.module.css'
 
@@ -33,17 +35,22 @@ type RowState =
 export interface QueueRow {
   rowId: string
   sourceLabel: string
-  /** Native file path (png-file / skin-file via dialog). */
-  filePath?: string
+  /** Desktop: native path; browser: File handle. */
+  picked?: PickedFile
   text?: string
   kind: 'png-file' | 'png-url' | 'player-name' | 'skin-code' | 'skin-file'
   overrideName?: string
   overrideFolderId?: string | null
   overrideModel?: SkinModel
+  /** Per-row metadata confirmation (defaults from job suggestions). */
+  active?: boolean
+  license?: LicenseInfo
+  provenance?: Provenance
+  note?: string
   job?: ImportJob
   state: RowState
   errorMessage?: string
-  duplicateOf?: { entryId: string; name: string; folderPath: string }
+  duplicateOf?: { entryId: string; name: string; folderId: string | null; folderPath: string }
   savedEntryId?: string
   checked: boolean
   suggestedTagPaths?: string[][]
@@ -55,12 +62,22 @@ interface Props {
   tags: TagWithStats[]
   defaultFolderId: string | null
   createTag: (name: string, parentId: string | null) => Promise<string | null>
-  existingEntries: LibraryEntry[]
+  /** Locate an existing entry in the main view (clears filters, pins it). */
+  onLocateEntry: (entryId: string, folderId: string | null) => void
   onSaved: () => void
   onClose: () => void
 }
 
 const ROW_ID = () => `r_${Math.random().toString(36).slice(2, 10)}`
+
+const EMPTY_LICENSE: LicenseInfo = { status: 'unspecified', name: null, url: null, note: null }
+const EMPTY_PROVENANCE: Provenance = {
+  author: null,
+  sourceName: null,
+  sourceUrl: null,
+  sourceNote: null,
+  originalCreatedAt: null,
+}
 
 export function ImportQueuePanel({
   api,
@@ -68,7 +85,7 @@ export function ImportQueuePanel({
   tags,
   defaultFolderId,
   createTag,
-  existingEntries,
+  onLocateEntry,
   onSaved,
   onClose,
 }: Props) {
@@ -76,17 +93,16 @@ export function ImportQueuePanel({
   const [targetFolderId, setTargetFolderId] = useState<string | null>(defaultFolderId)
   const [commonTagIds, setCommonTagIds] = useState<string[]>([])
   const [defaultModel, setDefaultModel] = useState<SkinModel>('classic')
+  const [defaultActive, setDefaultActive] = useState(false)
   const [busy, setBusy] = useState(false)
   const [activeTab, setActiveTab] = useState<'file' | 'url' | 'player' | 'code'>('file')
   const [textInput, setTextInput] = useState('')
   const [dragOver, setDragOver] = useState(false)
+  const [expandedRow, setExpandedRow] = useState<string | null>(null)
   const checkingRef = useRef(false)
+  const platform = useMemo(() => getPlatformFiles(), [])
 
   const folderById = useMemo(() => new Map(folders.map((f) => [f.folderId, f])), [folders])
-  const skinIdToEntry = useMemo(
-    () => new Map(existingEntries.map((e) => [e.skinId, e])),
-    [existingEntries],
-  )
 
   const folderPathLabel = (folderId: string | null): string => {
     if (folderId === null) return '未归档'
@@ -95,19 +111,17 @@ export function ImportQueuePanel({
 
   /* ---------------- queue manipulation ---------------- */
 
-  const addPaths = (paths: string[]) => {
-    if (paths.length === 0) return
+  const addPicked = (picked: PickedFile[]) => {
+    if (picked.length === 0) return
     setRows((prev) => {
       const next = [...prev]
-      for (const p of paths) {
-        const name = p.split(/[\\/]/).pop() ?? 'file'
-        const isPortable = /\.skin\.json$/i.test(name)
-        const isPng = /\.png$/i.test(name)
-        if (!isPortable && !isPng) {
+      for (const p of picked) {
+        const kind = pickedKind(p)
+        if (!kind) {
           next.push({
             rowId: ROW_ID(),
-            sourceLabel: name,
-            filePath: p,
+            sourceLabel: p.name,
+            picked: p,
             kind: 'png-file',
             state: 'invalid',
             errorMessage: '仅支持 PNG 或 .skin.json 文件',
@@ -117,9 +131,9 @@ export function ImportQueuePanel({
         }
         next.push({
           rowId: ROW_ID(),
-          sourceLabel: name,
-          filePath: p,
-          kind: isPortable ? 'skin-file' : 'png-file',
+          sourceLabel: p.name,
+          picked: p,
+          kind,
           state: 'pending',
           checked: true,
         })
@@ -179,13 +193,24 @@ export function ImportQueuePanel({
     patchRow(row.rowId, { state: 'checking' })
     try {
       let jobId: string
-      if ((row.kind === 'png-file' || row.kind === 'skin-file') && row.filePath) {
-        jobId = (
-          await api.importFile(
-            row.filePath,
-            row.kind === 'png-file' ? (row.overrideModel ?? defaultModel) : undefined,
-          )
-        ).jobId
+      if ((row.kind === 'png-file' || row.kind === 'skin-file') && row.picked) {
+        if (row.picked.path) {
+          jobId = (
+            await api.importFile(
+              row.picked.path,
+              row.kind === 'png-file' ? (row.overrideModel ?? defaultModel) : undefined,
+            )
+          ).jobId
+        } else if (row.picked.file) {
+          jobId = (
+            await api.importFileBlob(
+              row.picked.file,
+              row.kind === 'png-file' ? (row.overrideModel ?? defaultModel) : undefined,
+            )
+          ).jobId
+        } else {
+          throw new Error('缺少文件内容')
+        }
       } else if (row.kind === 'png-url' || row.kind === 'player-name' || row.kind === 'skin-code') {
         jobId = (
           await api.startImport(
@@ -214,7 +239,9 @@ export function ImportQueuePanel({
         })
         return
       }
-      const existing = skinIdToEntry.get(job.result.skinId)
+      // Whole-library duplicate check by skinId — not just the current page.
+      const existingPage = await api.listEntries({ search: job.result.skinId, pageSize: 50 })
+      const existing = existingPage.entries.find((e) => e.skinId === job.result!.skinId)
       setRows((prev) => {
         const queueDup = prev.find(
           (r) =>
@@ -228,12 +255,17 @@ export function ImportQueuePanel({
             ...r,
             job: job!,
             suggestedTagPaths: job!.result!.suggestedTagPaths,
+            active: job!.result!.suggestedActive ?? defaultActive,
+            license: job!.result!.suggestedLicense ?? EMPTY_LICENSE,
+            provenance: job!.result!.suggestedProvenance ?? EMPTY_PROVENANCE,
+            note: job!.result!.suggestedNote ?? '',
           }
           if (existing) {
             next.state = 'duplicate'
             next.duplicateOf = {
               entryId: existing.entryId,
               name: existing.name,
+              folderId: existing.folderId,
               folderPath: folderPathLabel(existing.folderId),
             }
             next.checked = false
@@ -287,6 +319,10 @@ export function ImportQueuePanel({
             ? row.suggestedTagPaths
             : undefined,
         folderId,
+        active: row.active ?? defaultActive,
+        license: row.license ?? EMPTY_LICENSE,
+        provenance: row.provenance ?? EMPTY_PROVENANCE,
+        note: row.note ?? '',
       })
       patchRow(row.rowId, { state: 'done', savedEntryId: saved.entryId })
       return true
@@ -336,16 +372,113 @@ export function ImportQueuePanel({
   const selectedReady = rows.filter((r) => r.checked && r.state === 'ready').length
 
   const pickFiles = async () => {
-    // Native multi-select dialog via tauri-plugin-dialog.
-    const { open } = await import('@tauri-apps/plugin-dialog')
-    const selected = await open({
-      multiple: true,
-      title: '选择 PNG 或 .skin.json 文件',
-      filters: [{ name: '皮肤文件', extensions: ['png', 'json'] }],
-    })
-    if (!selected) return
-    const paths = Array.isArray(selected) ? selected : [selected]
-    addPaths(paths)
+    const picked = await platform.pickSkinFiles()
+    addPicked(picked)
+  }
+
+  const renderRowMeta = (r: QueueRow) => {
+    const isOpen = expandedRow === r.rowId
+    const license = r.license ?? EMPTY_LICENSE
+    const provenance = r.provenance ?? EMPTY_PROVENANCE
+    return (
+      <>
+        <button
+          type="button"
+          className={styles.linkBtn}
+          onClick={() => setExpandedRow(isOpen ? null : r.rowId)}
+        >
+          {isOpen ? '收起资料 ▴' : '资料… ▾'}
+        </button>
+        {isOpen && (
+          <div className={styles.rowMetaForm}>
+            <label>
+              启用
+              <input
+                type="checkbox"
+                checked={r.active ?? defaultActive}
+                onChange={(e) => patchRow(r.rowId, { active: e.target.checked })}
+              />
+            </label>
+            <label>
+              协议
+              <select
+                value={license.status}
+                onChange={(e) =>
+                  patchRow(r.rowId, {
+                    license: {
+                      status: e.target.value as 'unspecified' | 'declared',
+                      name: license.name,
+                      url: license.url,
+                      note: license.note,
+                    },
+                  })
+                }
+              >
+                <option value="unspecified">未声明</option>
+                <option value="declared">已声明</option>
+              </select>
+              {license.status === 'declared' && (
+                <input
+                  type="text"
+                  placeholder="协议名称,如 MIT"
+                  value={license.name ?? ''}
+                  onChange={(e) =>
+                    patchRow(r.rowId, {
+                      license: { ...license, name: e.target.value || null },
+                    })
+                  }
+                />
+              )}
+            </label>
+            <label>
+              作者
+              <input
+                type="text"
+                value={provenance.author ?? ''}
+                onChange={(e) =>
+                  patchRow(r.rowId, {
+                    provenance: { ...provenance, author: e.target.value || null },
+                  })
+                }
+              />
+            </label>
+            <label>
+              出处名称
+              <input
+                type="text"
+                value={provenance.sourceName ?? ''}
+                onChange={(e) =>
+                  patchRow(r.rowId, {
+                    provenance: { ...provenance, sourceName: e.target.value || null },
+                  })
+                }
+              />
+            </label>
+            <label>
+              出处链接
+              <input
+                type="text"
+                placeholder="https://…"
+                value={provenance.sourceUrl ?? ''}
+                onChange={(e) =>
+                  patchRow(r.rowId, {
+                    provenance: { ...provenance, sourceUrl: e.target.value || null },
+                  })
+                }
+              />
+            </label>
+            <label>
+              备注
+              <input
+                type="text"
+                value={r.note ?? ''}
+                onChange={(e) => patchRow(r.rowId, { note: e.target.value })}
+              />
+            </label>
+          </div>
+        )}
+      </>
+    )
   }
 
   return (
@@ -388,7 +521,11 @@ export function ImportQueuePanel({
             {activeTab === 'file' ? (
               <>
                 <button onClick={() => void pickFiles()}>添加文件…</button>
-                <span className={styles.hint}>可一次选择多个 PNG / .skin.json</span>
+                <span className={styles.hint}>
+                  {platform.mode === 'browser'
+                    ? '可一次选择多个 PNG / .skin.json,也可直接拖入'
+                    : '可一次选择多个 PNG / .skin.json'}
+                </span>
               </>
             ) : (
               <>
@@ -439,6 +576,14 @@ export function ImportQueuePanel({
                 <option value="slim">slim</option>
               </select>
             </label>
+            <label>
+              <input
+                type="checkbox"
+                checked={defaultActive}
+                onChange={(e) => setDefaultActive(e.target.checked)}
+              />
+              新导入默认启用
+            </label>
           </div>
 
           <details className={styles.importCommonTags}>
@@ -462,8 +607,7 @@ export function ImportQueuePanel({
           onDrop={(e) => {
             e.preventDefault()
             setDragOver(false)
-            // Path-based file drops arrive via the Tauri window drag-drop
-            // event; text drops (skin codes) go through the text tab.
+            addPicked(platform.fromDataTransfer(e.dataTransfer))
           }}
         >
           {rows.length === 0 ? (
@@ -477,6 +621,7 @@ export function ImportQueuePanel({
                   <th>名称</th>
                   <th>模型</th>
                   <th>状态</th>
+                  <th>资料</th>
                   <th>操作</th>
                 </tr>
               </thead>
@@ -545,8 +690,21 @@ export function ImportQueuePanel({
                       {r.state === 'checking' && '检查中…'}
                       {r.state === 'ready' && '可导入'}
                       {r.state === 'duplicate' && (
-                        <span title={r.duplicateOf?.folderPath}>
-                          重复(已在:{r.duplicateOf?.folderPath ?? '?'})
+                        <span title={`内容与已有条目相同:${r.duplicateOf?.name ?? ''}`}>
+                          重复
+                          {r.duplicateOf && (
+                            <button
+                              type="button"
+                              className={styles.locateLink}
+                              title={`跳转到「${r.duplicateOf.name}」所在位置(${r.duplicateOf.folderPath})`}
+                              onClick={() => {
+                                onLocateEntry(r.duplicateOf!.entryId, r.duplicateOf!.folderId)
+                                onClose()
+                              }}
+                            >
+                              已在:{r.duplicateOf.folderPath} · 定位
+                            </button>
+                          )}
                         </span>
                       )}
                       {r.state === 'queue-duplicate' && (
@@ -564,6 +722,9 @@ export function ImportQueuePanel({
                           保存失败
                         </span>
                       )}
+                    </td>
+                    <td>
+                      {(r.state === 'ready' || r.state === 'duplicate') && renderRowMeta(r)}
                     </td>
                     <td className={styles.colOps}>
                       {r.state === 'duplicate' && (

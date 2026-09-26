@@ -1,7 +1,8 @@
 //! On-disk storage: JSON index + content-addressed object files.
 //!
 //!   <root>/
-//!     library.json   (+ library.json.bak, library.json.v1-migration-backup)
+//!     library.json   (+ library.json.bak, library.json.v1-migration-backup,
+//!                     library.json.v3-migration-backup)
 //!     objects/<skinId[0..2]>/<skinId>.hskin
 //!     cache/png/<skinId>.png
 //!     tmp/
@@ -32,7 +33,8 @@ pub struct DataLayout {
     pub tmp: PathBuf,
     pub library_file: PathBuf,
     pub library_backup: PathBuf,
-    pub migration_backup: PathBuf,
+    pub migration_backup_v1: PathBuf,
+    pub migration_backup_v3: PathBuf,
 }
 
 pub fn data_layout(root: &Path) -> DataLayout {
@@ -43,7 +45,8 @@ pub fn data_layout(root: &Path) -> DataLayout {
         tmp: root.join("tmp"),
         library_file: root.join("library.json"),
         library_backup: root.join("library.json.bak"),
-        migration_backup: root.join("library.json.v1-migration-backup"),
+        migration_backup_v1: root.join("library.json.v1-migration-backup"),
+        migration_backup_v3: root.join("library.json.v3-migration-backup"),
     }
 }
 
@@ -113,6 +116,8 @@ fn atomic_write(path: &Path, data: &[u8]) -> std::io::Result<()> {
 
 pub struct MigrationReport {
     pub migrated: bool,
+    pub from_version: u32,
+    pub to_version: u32,
     pub tag_count: usize,
     pub entry_count: usize,
     pub merged_names: Vec<String>,
@@ -136,18 +141,57 @@ pub enum TagMatch {
     All,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum EntrySortBy {
+    Name,
+    #[serde(rename = "createdAt")]
+    CreatedAt,
+    #[serde(rename = "updatedAt")]
+    UpdatedAt,
+    Author,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SortDirection {
+    Asc,
+    Desc,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum EntryScope {
+    All,
+    Unfiled,
+    Folder,
+}
+
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct LibraryQuery {
     pub search: Option<String>,
     pub tag_ids: Vec<String>,
+    pub exclude_tag_ids: Vec<String>,
     pub tag_scope: Option<TagScope>,
     pub tag_match: Option<TagMatch>,
     pub untagged: bool,
     pub favorite: Option<bool>,
+    pub active: Option<bool>,
+    pub models: Vec<SkinModel>,
+    pub include_license_names: Vec<String>,
+    pub exclude_license_names: Vec<String>,
+    /// true → only entries whose license is unspecified; false → only declared.
+    pub license_unspecified: Option<bool>,
+    pub author: Option<String>,
+    pub created_from: Option<String>,
+    pub created_to: Option<String>,
+    pub scope: Option<EntryScope>,
     pub folder_id: Option<String>,
     /// Present + folder_id set → include descendant folders.
     pub include_subfolders: bool,
+    pub sort_by: Option<EntrySortBy>,
+    pub sort_direction: Option<SortDirection>,
     pub page: Option<u32>,
     pub page_size: Option<u32>,
 }
@@ -158,6 +202,7 @@ pub struct LibraryPage {
     pub total: usize,
     pub page: u32,
     pub page_size: u32,
+    pub revision: u64,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -234,6 +279,10 @@ pub struct PatchEntry {
     pub remove_tag_ids: Option<Vec<String>>,
     pub favorite: Option<bool>,
     pub folder_id: Option<PatchField<String>>,
+    pub active: Option<bool>,
+    pub license: Option<LicenseInfo>,
+    pub provenance: Option<Provenance>,
+    pub note: Option<String>,
 }
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -243,6 +292,8 @@ pub struct BatchPatch {
     pub add_tag_ids: Option<Vec<String>>,
     pub remove_tag_ids: Option<Vec<String>>,
     pub folder_id: Option<PatchField<String>>,
+    pub active: Option<bool>,
+    pub expected_revisions: Option<Vec<u64>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -256,7 +307,7 @@ pub struct Storage {
 }
 
 impl Storage {
-    /// Open (or create) a library at `root`. Migrates v1/v2 forward; refuses
+    /// Open (or create) a library at `root`. Migrates v1/v2/v3 forward; refuses
     /// to open unknown newer versions.
     pub fn open(root: &Path) -> SkinResult<Self> {
         let layout = data_layout(root);
@@ -317,32 +368,40 @@ impl Storage {
         };
         let version = parsed.get("schemaVersion").and_then(|v| v.as_u64());
         let snap = match version {
-            Some(3) => {
-                let v3: LibraryFileV3Owned = serde_json::from_value(parsed).map_err(|e| {
-                    SkinError::api(codes::INTERNAL, format!("library.json invalid: {e}"))
+            Some(4) => {
+                let v4: LibraryFileV4Owned = serde_json::from_value(parsed).map_err(|e| {
+                    SkinError::api(codes::INTERNAL, format!("library.json v4 invalid: {e}"))
                 })?;
                 Snapshot {
-                    tags: v3.tags,
-                    folders: v3.folders,
-                    entries: v3.entries,
-                    revision: v3.revision,
+                    tags: v4.tags,
+                    folders: v4.folders,
+                    entries: v4.entries,
+                    revision: v4.revision,
                 }
+            }
+            Some(3) => {
+                let v3: LibraryFileV3 = serde_json::from_value(parsed).map_err(|e| {
+                    SkinError::api(codes::INTERNAL, format!("library.json v3 invalid: {e}"))
+                })?;
+                self.migrate_from_v3(v3, &raw)?
             }
             Some(2) => {
                 let mut v2: LibraryFileV2 = serde_json::from_value(parsed).map_err(|e| {
                     SkinError::api(codes::INTERNAL, format!("library.json v2 invalid: {e}"))
                 })?;
-                // v2 → v3: entries become 未归档 (no folders exist in v2, so
+                // v2 → v4: entries become 未归档 (no folders exist in v2, so
                 // any stray folderId has no valid target and is dropped).
                 for e in &mut v2.entries {
                     e.folder_id = None;
                 }
-                Snapshot {
+                let v3 = LibraryFileV3 {
+                    schema_version: 3,
+                    revision: v2.revision,
                     tags: v2.tags,
                     folders: Vec::new(),
                     entries: v2.entries,
-                    revision: v2.revision,
-                }
+                };
+                self.migrate_from_v3(v3, &raw)?
             }
             Some(1) | None => {
                 // v1 (or a hand-written legacy file with the v1 shape).
@@ -355,7 +414,7 @@ impl Storage {
                 return Err(SkinError::api(
                     codes::INTERNAL,
                     format!(
-                        "library.json schemaVersion {v} is newer than supported (3); \
+                        "library.json schemaVersion {v} is newer than supported (4); \
                          restore the pre-migration backup"
                     ),
                 ));
@@ -417,11 +476,15 @@ impl Storage {
                     entry_id: e.entry_id.unwrap_or_else(new_id),
                     skin_id: e.skin_id,
                     name: e.name,
+                    active: true,
                     tag_ids: ids,
                     folder_id: None,
                     favorite: e.favorite,
                     model: e.model,
                     source: e.source,
+                    provenance: Provenance::default(),
+                    license: LicenseInfo::default(),
+                    note: String::new(),
                     created_at: e.created_at.unwrap_or_else(now_iso),
                     updated_at: e.updated_at.unwrap_or_else(now_iso),
                     revision: e.revision.unwrap_or(1),
@@ -429,15 +492,60 @@ impl Storage {
             })
             .collect();
         let snap = Snapshot { tags, folders: Vec::new(), entries, revision: 1 };
-        // Keep the untouched v1 file under a dedicated name before any v3 write.
-        if !self.layout.migration_backup.exists() {
-            atomic_write(&self.layout.migration_backup, raw.as_bytes())?;
+        // Keep the untouched v1 file under a dedicated name before any v4 write.
+        if !self.layout.migration_backup_v1.exists() {
+            atomic_write(&self.layout.migration_backup_v1, raw.as_bytes())?;
         }
         *self.migration_report.lock().unwrap() = Some(MigrationReport {
             migrated: true,
+            from_version: 1,
+            to_version: SCHEMA_VERSION,
             tag_count: snap.tags.len(),
             entry_count: snap.entries.len(),
             merged_names: merged,
+        });
+        Ok(snap)
+    }
+
+    /// Migrate v3 (or v2-upgraded-to-v3) entries into v4 with new metadata defaults.
+    fn migrate_from_v3(&self, v3: LibraryFileV3, raw: &str) -> SkinResult<Snapshot> {
+        let entries = v3
+            .entries
+            .into_iter()
+            .map(|e| LibraryEntry {
+                entry_id: e.entry_id,
+                skin_id: e.skin_id,
+                name: e.name,
+                active: true,
+                tag_ids: e.tag_ids,
+                folder_id: e.folder_id,
+                favorite: e.favorite,
+                model: e.model,
+                source: e.source,
+                provenance: Provenance::default(),
+                license: LicenseInfo::default(),
+                note: String::new(),
+                created_at: e.created_at,
+                updated_at: e.updated_at,
+                revision: e.revision,
+            })
+            .collect();
+        let snap = Snapshot {
+            tags: v3.tags,
+            folders: v3.folders,
+            entries,
+            revision: v3.revision,
+        };
+        if !self.layout.migration_backup_v3.exists() {
+            atomic_write(&self.layout.migration_backup_v3, raw.as_bytes())?;
+        }
+        *self.migration_report.lock().unwrap() = Some(MigrationReport {
+            migrated: true,
+            from_version: 3,
+            to_version: SCHEMA_VERSION,
+            tag_count: snap.tags.len(),
+            entry_count: snap.entries.len(),
+            merged_names: Vec::new(),
         });
         Ok(snap)
     }
@@ -465,7 +573,7 @@ impl Storage {
 
     /// Serialize the snapshot to disk (backup rotation + atomic replace).
     fn persist(&self, snap: &Snapshot) -> SkinResult<()> {
-        let payload = LibraryFileV3 {
+        let payload = LibraryFileV4 {
             schema_version: SCHEMA_VERSION,
             revision: snap.revision,
             tags: &snap.tags,
@@ -1100,21 +1208,94 @@ impl Storage {
         let maps = TagMaps::of(&snap.tags);
         let fmaps = FolderMaps::of(&snap.folders);
         let mut out: Vec<&LibraryEntry> = snap.entries.iter().collect();
+
+        // Scope filter
+        match q.scope {
+            Some(EntryScope::Unfiled) => {
+                out.retain(|e| e.folder_id.is_none());
+            }
+            Some(EntryScope::Folder) => {
+                if let Some(fid) = &q.folder_id {
+                    if q.include_subfolders {
+                        let ids = fmaps.subtree_ids(fid);
+                        out.retain(|e| {
+                            e.folder_id
+                                .as_ref()
+                                .map(|f| ids.contains(f.as_str()))
+                                .unwrap_or(false)
+                        });
+                    } else {
+                        out.retain(|e| e.folder_id.as_deref() == Some(fid.as_str()));
+                    }
+                }
+            }
+            _ => {
+                // All or legacy folderId behavior
+                if let Some(fid) = &q.folder_id {
+                    if q.include_subfolders {
+                        let ids = fmaps.subtree_ids(fid);
+                        out.retain(|e| {
+                            e.folder_id
+                                .as_ref()
+                                .map(|f| ids.contains(f.as_str()))
+                                .unwrap_or(false)
+                        });
+                    } else {
+                        out.retain(|e| e.folder_id.as_deref() == Some(fid.as_str()));
+                    }
+                }
+            }
+        }
+
         if let Some(fav) = q.favorite {
             out.retain(|e| e.favorite == fav);
         }
-        if let Some(fid) = &q.folder_id {
-            if q.include_subfolders {
-                let ids = fmaps.subtree_ids(fid);
-                out.retain(|e| {
-                    e.folder_id
-                        .as_ref()
-                        .map(|f| ids.contains(f.as_str()))
-                        .unwrap_or(false)
-                });
-            } else {
-                out.retain(|e| e.folder_id.as_deref() == Some(fid.as_str()));
-            }
+        if let Some(active) = q.active {
+            out.retain(|e| e.active == active);
+        }
+        if !q.models.is_empty() {
+            out.retain(|e| q.models.contains(&e.model));
+        }
+        if !q.include_license_names.is_empty() {
+            out.retain(|e| {
+                e.license
+                    .name
+                    .as_ref()
+                    .map(|n| q.include_license_names.contains(n))
+                    .unwrap_or(false)
+            });
+        }
+        if !q.exclude_license_names.is_empty() {
+            out.retain(|e| {
+                e.license
+                    .name
+                    .as_ref()
+                    .map(|n| !q.exclude_license_names.contains(n))
+                    .unwrap_or(true)
+            });
+        }
+        if let Some(unspec) = q.license_unspecified {
+            out.retain(|e| {
+                let is_unspec = e.license.status != LicenseStatus::Declared
+                    || e.license.name.is_none();
+                is_unspec == unspec
+            });
+        }
+        if let Some(author) = &q.author {
+            let needle = author.to_lowercase();
+            out.retain(|e| {
+                e.provenance
+                    .author
+                    .as_ref()
+                    .map(|a| a.to_lowercase().contains(&needle))
+                    .unwrap_or(false)
+            });
+        }
+        if let Some(from) = &q.created_from {
+            out.retain(|e| e.created_at.as_str() >= from.as_str());
+        }
+        if let Some(to) = &q.created_to {
+            out.retain(|e| e.created_at.as_str() <= to.as_str());
         }
         if q.untagged {
             out.retain(|e| e.tag_ids.is_empty());
@@ -1137,12 +1318,41 @@ impl Storage {
                 }
             });
         }
+        if !q.exclude_tag_ids.is_empty() {
+            let scope = q.tag_scope.unwrap_or(TagScope::Subtree);
+            let exclude_sets: Vec<HashSet<String>> = q
+                .exclude_tag_ids
+                .iter()
+                .map(|id| match scope {
+                    TagScope::Subtree => maps.subtree_ids(id),
+                    TagScope::Direct => HashSet::from([id.clone()]),
+                })
+                .collect();
+            out.retain(|e| {
+                !exclude_sets.iter().any(|set| e.tag_ids.iter().any(|t| set.contains(t)))
+            });
+        }
         if let Some(search) = &q.search {
             if !search.is_empty() {
                 let needle = search.to_lowercase();
                 let mut path_cache: HashMap<String, String> = HashMap::new();
                 out.retain(|e| {
                     if e.name.to_lowercase().contains(&needle) {
+                        return true;
+                    }
+                    if e.provenance.author.as_ref().map(|a| a.to_lowercase().contains(&needle)).unwrap_or(false) {
+                        return true;
+                    }
+                    if e.provenance.source_name.as_ref().map(|s| s.to_lowercase().contains(&needle)).unwrap_or(false) {
+                        return true;
+                    }
+                    if e.note.to_lowercase().contains(&needle) {
+                        return true;
+                    }
+                    if e.entry_id.to_lowercase().contains(&needle) {
+                        return true;
+                    }
+                    if e.skin_id.to_lowercase().contains(&needle) {
                         return true;
                     }
                     e.tag_ids.iter().any(|id| {
@@ -1154,6 +1364,28 @@ impl Storage {
                 });
             }
         }
+
+        // Stable sorting
+        let sort_by = q.sort_by.unwrap_or(EntrySortBy::CreatedAt);
+        let sort_dir = q.sort_direction.unwrap_or(SortDirection::Desc);
+        out.sort_by(|a, b| {
+            let ord = match sort_by {
+                EntrySortBy::Name => a.name.cmp(&b.name),
+                EntrySortBy::CreatedAt => a.created_at.cmp(&b.created_at),
+                EntrySortBy::UpdatedAt => a.updated_at.cmp(&b.updated_at),
+                EntrySortBy::Author => {
+                    let aa = a.provenance.author.as_deref().unwrap_or("");
+                    let bb = b.provenance.author.as_deref().unwrap_or("");
+                    aa.cmp(bb)
+                }
+            };
+            let ord = ord.then(a.entry_id.cmp(&b.entry_id));
+            match sort_dir {
+                SortDirection::Asc => ord,
+                SortDirection::Desc => ord.reverse(),
+            }
+        });
+
         let total = out.len();
         let page = q.page.unwrap_or(1).max(1);
         let page_size = q.page_size.unwrap_or(48).clamp(1, 200);
@@ -1164,6 +1396,7 @@ impl Storage {
             total,
             page,
             page_size: page_size as u32,
+            revision: snap.revision,
         }
     }
 
@@ -1184,6 +1417,16 @@ impl Storage {
             .collect()
     }
 
+    /// List entries that are active and ready for use (e.g. export manifest).
+    pub fn list_usable_entries(&self) -> Vec<LibraryEntry> {
+        self.snapshot()
+            .entries
+            .iter()
+            .filter(|e| e.active)
+            .cloned()
+            .collect()
+    }
+
     pub fn add_entry(&self, input: AddEntryInput) -> SkinResult<LibraryEntry> {
         self.mutate(|snap| {
             let now = now_iso();
@@ -1200,11 +1443,15 @@ impl Storage {
                 entry_id: new_id(),
                 skin_id: input.skin_id,
                 name: input.name,
+                active: input.active,
                 tag_ids,
                 folder_id,
                 favorite: input.favorite,
                 model: input.model,
                 source: input.source,
+                provenance: input.provenance,
+                license: input.license,
+                note: input.note,
                 created_at: now.clone(),
                 updated_at: now,
                 revision: 1,
@@ -1264,6 +1511,18 @@ impl Storage {
                 snap.entries[idx].folder_id =
                     pf.as_option().filter(|f| folder_ids_set.contains(*f)).cloned();
             }
+            if let Some(active) = patch.active {
+                snap.entries[idx].active = active;
+            }
+            if let Some(license) = &patch.license {
+                snap.entries[idx].license = license.clone();
+            }
+            if let Some(provenance) = &patch.provenance {
+                snap.entries[idx].provenance = provenance.clone();
+            }
+            if let Some(note) = &patch.note {
+                snap.entries[idx].note = note.clone();
+            }
             snap.entries[idx].revision += 1;
             snap.entries[idx].updated_at = now_iso();
             snap.revision += 1;
@@ -1275,7 +1534,7 @@ impl Storage {
     pub fn batch_patch_entries(&self, batch: BatchPatch) -> SkinResult<(usize, u64)> {
         self.mutate(|snap| {
             let mut targets = Vec::with_capacity(batch.entry_ids.len());
-            for id in &batch.entry_ids {
+            for (i, id) in batch.entry_ids.iter().enumerate() {
                 let idx = snap
                     .entries
                     .iter()
@@ -1283,6 +1542,16 @@ impl Storage {
                     .ok_or_else(|| {
                         SkinError::api(codes::NOT_FOUND, "one or more entries not found")
                     })?;
+                if let Some(expected) = &batch.expected_revisions {
+                    if let Some(exp) = expected.get(i) {
+                        if snap.entries[idx].revision != *exp {
+                            return Err(SkinError::api(
+                                codes::REVISION_MISMATCH,
+                                format!("entry {} was modified; reload and retry", id),
+                            ));
+                        }
+                    }
+                }
                 targets.push(idx);
             }
             let tag_ids_set = snap.tag_ids();
@@ -1319,6 +1588,9 @@ impl Storage {
                 if let Some(pf) = &batch.folder_id {
                     e.folder_id = pf.as_option().filter(|f| folder_ids_set.contains(*f)).cloned();
                 }
+                if let Some(active) = batch.active {
+                    e.active = active;
+                }
                 e.revision += 1;
                 e.updated_at = now.clone();
                 updated += 1;
@@ -1345,11 +1617,15 @@ impl Storage {
 pub struct AddEntryInput {
     pub skin_id: String,
     pub name: String,
+    pub active: bool,
     pub tag_ids: Vec<String>,
     pub folder_id: Option<String>,
     pub favorite: bool,
     pub model: SkinModel,
     pub source: EntrySource,
+    pub provenance: Provenance,
+    pub license: LicenseInfo,
+    pub note: String,
 }
 
 pub fn is_valid_skin_id(skin_id: &str) -> bool {
@@ -1365,7 +1641,8 @@ pub fn is_valid_skin_id(skin_id: &str) -> bool {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct LibraryFileV3Owned {    #[serde(default = "default_revision")]
+struct LibraryFileV4Owned {
+    #[serde(default = "default_revision")]
     revision: u64,
     #[serde(default)]
     tags: Vec<TagNode>,

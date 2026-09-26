@@ -11,6 +11,13 @@ import type {
   ScriptWorkspaceHandle,
 } from './workspaces/scriptTypes.ts'
 import type { AppWorkspaceId } from './workspaces/types.ts'
+import {
+  applyUiScale,
+  loadUiScale,
+  saveUiScale,
+  UI_SCALES,
+  type UiScale,
+} from './displayPrefs.ts'
 import './App.css'
 
 const MENUS = [
@@ -48,6 +55,12 @@ const MENUS = [
       '外观',
       '编辑器布局',
       '—',
+      '界面比例 100%',
+      '界面比例 110%',
+      '界面比例 125%',
+      '界面比例 150%',
+      '恢复推荐大小（125%）',
+      '—',
       '显示小地图',
       '自动换行',
     ],
@@ -81,8 +94,19 @@ function App() {
   const [scriptChrome, setScriptChrome] = useState<ScriptChromeInfo | null>(
     null,
   )
+  const [uiScale, setUiScale] = useState<UiScale>(() => loadUiScale())
   const menubarRef = useRef<HTMLElement>(null)
   const scriptRef = useRef<ScriptWorkspaceHandle>(null)
+
+  // Apply the persisted UI scale on mount (default 125% on first run).
+  useEffect(() => {
+    applyUiScale(uiScale)
+  }, [uiScale])
+
+  const changeUiScale = useCallback((scale: UiScale) => {
+    setUiScale(scale)
+    saveUiScale(scale)
+  }, [])
 
   const onChromeInfo = useCallback((info: ScriptChromeInfo) => {
     setScriptChrome(info)
@@ -109,6 +133,16 @@ function App() {
 
   const handleMenuAction = (item: string) => {
     setOpenMenu(null)
+    const scaleMatch = /^界面比例 (\d+)%$/.exec(item)
+    if (scaleMatch) {
+      const scale = Number.parseInt(scaleMatch[1], 10) as UiScale
+      if (UI_SCALES.includes(scale)) changeUiScale(scale)
+      return
+    }
+    if (item === '恢复推荐大小（125%）') {
+      changeUiScale(125)
+      return
+    }
     scriptRef.current?.handleMenuAction(item)
   }
 
@@ -163,6 +197,22 @@ function App() {
                           <button
                             type="button"
                             role="menuitem"
+                            aria-checked={
+                              menu.label === '查看' &&
+                              UI_SCALES.some(
+                                (s) => `界面比例 ${s}%` === menuItem && s === uiScale,
+                              )
+                                ? true
+                                : undefined
+                            }
+                            className={
+                              menu.label === '查看' &&
+                              UI_SCALES.some(
+                                (s) => `界面比例 ${s}%` === menuItem && s === uiScale,
+                              )
+                                ? 'checked'
+                                : ''
+                            }
                             onClick={() => handleMenuAction(menuItem)}
                           >
                             {menuItem}
