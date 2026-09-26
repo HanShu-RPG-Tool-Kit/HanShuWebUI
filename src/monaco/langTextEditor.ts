@@ -19,7 +19,7 @@ import {
 } from './langKeyRules'
 import {
   createLangSlotStyles,
-  longestLineCh,
+  createTextWidthMeter,
   SLOT_CLASS,
 } from './langSlotStyles'
 import { findSpanAt, parseLangSpans, type LangSpan } from './langTextSpans'
@@ -30,6 +30,8 @@ import { findSpanAt, parseLangSpans, type LangSpan } from './langTextSpans'
  * 渲染是「渲染级替换」：文档一个字都不改，只改动原文的占位宽度。
  * - 原文键名与紧随的 `//` 都被隐藏，并改造成「宽度 = 渲染长度」的槽位
  *   （见 langSlotStyles），因此同一行后面的标点会紧贴渲染文本
+ * - 那个宽度是**实测像素值**：按当前字体量显示文本，不是「全角 = 2ch」那种列数推算
+ *   （ch 是「0」的宽度，Consolas 0.5498em ≠ 0.5em，推算会让中文框越拉越长）
  * - 显示值画在覆盖层 `.hs-lang-layer` 的 `.hs-lang-line` 里：整个值（含真换行）
  *   是**一个连续框**，框高 = 行数 × 行高 − 缝隙；值多于一行时多出来的高度由
  *   **ViewZone** 真实占位（zone 本身是空元素），把后面的行往下推
@@ -152,6 +154,31 @@ export function bindLangText(
 
   /** 文档里原文的占位槽位（宽度 = 渲染长度），见 langSlotStyles */
   const slotStyles = createLangSlotStyles()
+  /** 编辑器字体指纹：字体 / 字号一变，量出来的宽度就得重算 */
+  const fontKey = (): string => {
+    const info = ed.getOption?.(monaco.editor.EditorOption.fontInfo)
+    if (!info) return 'default'
+    return [
+      info.fontFamily,
+      info.fontWeight,
+      info.fontSize,
+      info.fontFeatureSettings,
+      info.fontVariationSettings,
+      info.letterSpacing,
+      info.lineHeight,
+    ].join('|')
+  }
+  /** 文本宽度实测：槽位与框共用同一份宽度（覆盖层已经带了编辑器字体，量它最准） */
+  const meter = createTextWidthMeter({
+    host: () => layer,
+    fontKey,
+    fallbackFontSize: () => {
+      const size = Number(
+        ed.getOption?.(monaco.editor.EditorOption.fontInfo)?.fontSize,
+      )
+      return Number.isFinite(size) && size > 0 ? size : 18
+    },
+  })
   /** 光标落在片段内时接管原生光标，见 langCaretOverlay */
   const caretOverlay = createLangCaretOverlay({
     ed,
@@ -254,8 +281,12 @@ export function bindLangText(
 
   /**
    * 把覆盖框摆到对应片段位置（滚动 / 改尺寸时只做这一步）。
-   * 由于键名槽位宽度 != 键名列数，Monaco 的列坐标（charWidth × 列号）已经不等于画面位置，
-   * 所以优先量槽位的真实矩形；只有在槽位没渲染出来（行不在可视区）时才退回列坐标。
+   * 槽位宽度 != 键名列数，所以不能按列坐标推算位置。
+   *
+   * 注意：槽位上挂的是 `.hs-lang-slot-w<N>` 这类派生名，而下面按基础类
+   * `.hs-lang-slot` 查询，实际命中不了 —— 每次都会走 getScrolledVisiblePosition。
+   * 退回值同样准：inlineClassNameAffectsLetterSpacing 会把这些行从 Monaco 的
+   * Fast 路径（列数 × 字符宽）踢进 DOM 量测渲染器，读的是真实矩形。
    */
   const positionBoxes = () => {
     frame = null
@@ -320,14 +351,15 @@ export function bindLangText(
   const makeBox = (
     text: string,
     stateClass: string,
-    widthCh: number,
+    widthPx: number,
     heightPx: number,
     key: string,
   ): HTMLElement => {
     const box = document.createElement('div')
     box.className = `${BOX_CLASS} ${stateClass}`
     box.textContent = text
-    box.style.minWidth = `${widthCh}ch`
+    // 与槽位同一份实测宽度：框宽 == 槽位宽 == 渲染文本宽
+    box.style.minWidth = `${widthPx}px`
     box.style.height = `${heightPx}px`
     box.title = ctrlHeld
       ? `键名 ${key}`
@@ -362,7 +394,7 @@ export function bindLangText(
     const hide = (
       start: number,
       end: number,
-      widthCh: number,
+      widthPx: number,
     ): editor.IModelDeltaDecoration => ({
       range: monaco.Range.fromPositions(
         model.getPositionAt(start),
@@ -371,7 +403,7 @@ export function bindLangText(
       options: {
         stickiness:
           monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
-        inlineClassName: slotStyles.decorationClassFor(widthCh),
+        inlineClassName: slotStyles.decorationClassFor(widthPx),
         inlineClassNameAffectsLetterSpacing: true,
       },
     })
@@ -382,25 +414,50 @@ export function bindLangText(
       heightPx: number
     }> = []
 
+    // 先把这一批要渲染的片段收齐，再一次性量宽度：整批只触发一轮布局
+    type RenderItem = {
+      span: LangSpan
+      key: string
+      display: string
+      displayLines: string[]
+      /** Ctrl / 缺文本时显示的是键名，宽度按键名算 */
+      showKey: boolean
+      stateClass: string
+    }
+    const items: RenderItem[] = []
+    const texts: string[] = []
     for (const span of currentSpans()) {
       const key = normalizeLocaleKey(span.value)
       if (!key) continue
 
       const value = map.get(key)
-      const display = ctrlHeld ? key : (value ?? key)
+      // 键名和值各自按自己的长度渲染（取较长者会把短的一侧撑宽，跟同行后续内容错位）
+      const showKey = ctrlHeld || value == null
+      const display = showKey ? key : (value ?? key)
       const displayLines = display.split('\n')
-      const multi = displayLines.length > 1
       const stateClass = ctrlHeld
         ? 'hs-lang-ctrl'
         : value == null
           ? 'hs-lang-miss'
           : 'hs-lang-hit'
-      // 键名和值各自按自己的长度渲染（取较长者会把短的一侧撑宽，跟同行后续内容错位）
-      const widthCh =
-        ctrlHeld || value == null ? key.length : Math.max(longestLineCh(value), 1)
+
+      items.push({ span, key, display, displayLines, showKey, stateClass })
+      if (showKey) texts.push(key)
+      else texts.push(...displayLines)
+    }
+
+    // 槽位与框共用同一份实测宽度（px），见 langSlotStyles
+    const widths = meter.measure(texts)
+    const widthOf = (text: string): number => widths.get(text) ?? 0
+
+    for (const item of items) {
+      const { span, key, display, displayLines, showKey, stateClass } = item
+      const widthPx = showKey
+        ? widthOf(key)
+        : Math.max(...displayLines.map(widthOf), 1)
 
       // 原文键名 + 被挪走的 `//` 都改成等宽槽位（保留文档，但占位跟随渲染长度）
-      decorations.push(hide(span.start, span.end, widthCh))
+      decorations.push(hide(span.start, span.end, widthPx))
       if (span.terminator) {
         // `//` 的渲染替身是我的尾标，槽位宽度取 0
         decorations.push(hide(span.terminator.start, span.terminator.end, 0))
@@ -418,7 +475,7 @@ export function bindLangText(
       const row = document.createElement('div')
       row.className = ROW_CLASS
 
-      const box = makeBox(display, stateClass, widthCh, boxHeight, key)
+      const box = makeBox(display, stateClass, widthPx, boxHeight, key)
       box.addEventListener('mousedown', (event) => {
         event.preventDefault()
         event.stopPropagation()
@@ -436,7 +493,7 @@ export function bindLangText(
       // zone 里不放任何内容：zone 的 DOM 被 Monaco 插在 .view-lines 之下
       // （view.js 里 .view-zones 先 append），点击会被文本层吃掉，
       // 所以视觉一律走覆盖层，zone 只负责撑高度。
-      if (multi) {
+      if (displayLines.length > 1) {
         const zoneEl = document.createElement('div')
         zoneEl.className = ZONE_CLASS
         pendingZones.push({

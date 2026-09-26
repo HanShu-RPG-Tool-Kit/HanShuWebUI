@@ -380,8 +380,8 @@
 /* —— 本地化文本渲染：覆盖层 + 覆盖框 + view zone —— */
 
 /* 原文（键名 / 被挪走的 `//`）不可见，但保留占位。
-   占位宽度由 langSlotStyles 生成的 `.hs-lang-slot-<N>` 类决定（= 渲染长度），
-   因此同一行后面的标点会紧贴渲染文本。 */
+   占位宽度由 langSlotStyles 生成的 `.hs-lang-slot-w<N>` 类决定，
+   N 是按当前字体实测出来的渲染宽度（px），因此同一行后面的标点会紧贴渲染文本。 */
 .hs-lang-key-hidden {
   color: transparent !important;
 }
