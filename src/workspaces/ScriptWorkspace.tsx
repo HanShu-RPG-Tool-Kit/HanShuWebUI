@@ -66,6 +66,7 @@ import { normalizeAssetPath, normalizeFolderPath } from '../assets/paths'
 import {
   deleteAssetBlob,
   deletePackageAssetBlobs,
+  getAssetBlob,
   putAssetBlob,
 } from '../assets/idb'
 import type { AgentHost } from '../agent/tools'
@@ -86,6 +87,7 @@ import {
   saveProjectAsToPicker,
   saveProjectToDirectory,
   supportsDirectoryPicker,
+  loadLastDirectoryHandle,
   tryRestoreLastProject,
 } from '../project'
 
@@ -101,6 +103,16 @@ import {
   type LangTextSink,
 } from '../i18n/langTextMap'
 import { createLangTextSink } from '../i18n/langTextSink'
+import {
+  createVoiceLibrary,
+  type VoiceLibrary,
+} from '../i18n/voiceLibrary'
+import { runVoiceImport, type VoiceImportIo } from '../i18n/voiceImport'
+import { createVoiceProcessor } from '../i18n/voiceTranscode'
+import { createVoiceDiskSink } from '../project/voiceDiskSink'
+import { LangUnitMenu, type LangUnitMenuItem } from '../LangUnitMenu'
+import { VoicePickerModal } from '../VoicePickerModal'
+import { VoiceImportProgress } from '../VoiceImportProgress'
 import {
   bindLangText,
   type LangEditRequest,
@@ -135,6 +147,18 @@ export const ScriptWorkspace = forwardRef<
   )
   const activeAssetHit = useMemo(
     () => findAsset(workspace, workspace.activeAssetId),
+    [workspace],
+  )
+  /**
+   * 当前包资产清单的指纹（路径 + 大小 + 更新时间）。
+   * 配音按钮的状态只在对等文件存在性上，所以资产一变就得重画覆盖框 ——
+   * 否则导入完成后按钮还停在「缺失」（点击却能播，因为点击是实时求值的）。
+   */
+  const voiceAssetSignature = useMemo(
+    () =>
+      (findScript(workspace, workspace.activeScriptId)?.pkg.assets ?? [])
+        .map((asset) => `${asset.path}:${asset.size}:${asset.updatedAt}`)
+        .join('|'),
     [workspace],
   )
   const [value, setValue] = useState(() => active?.script.content ?? '')
@@ -200,9 +224,49 @@ export const ScriptWorkspace = forwardRef<
     key: string
     message: string
   } | null>(null)
+  /** 配音未能写入磁盘（绑定了工程才会发生）；只提示，IndexedDB 里的内容仍权威 */
+  const [voiceDiskError, setVoiceDiskError] = useState<{
+    path: string
+    message: string
+  } | null>(null)
   const langMapRef = useRef<LangTextMap | null>(null)
   const langBindingRef = useRef<LangTextBinding | null>(null)
   const langEditSeqRef = useRef(0)
+  const voiceLibraryRef = useRef<VoiceLibrary | null>(null)
+  /** 音频映射管理的渲染态镜像（ref 给编辑器用，state 给弹窗用） */
+  const [voiceRuntime, setVoiceRuntime] = useState<VoiceLibrary | null>(null)
+  /** 上级容器右键菜单（null = 没开） */
+  const [unitMenu, setUnitMenu] = useState<{
+    key: string
+    x: number
+    y: number
+  } | null>(null)
+  /** 音频选择器弹窗（null = 没开）。带上建它时的那个 library 实例：
+      换文件 / 换语言会重建库，身份一变弹窗自动失效，不用在 effect 里再 setState */
+  const [voicePicker, setVoicePicker] = useState<{
+    key: string
+    library: VoiceLibrary
+  } | null>(null)
+  /** 正在跑的音频导入（null = 没在导入）：驱动置顶进度条 */
+  const [voiceImport, setVoiceImport] = useState<{
+    sourcePath: string
+    targetPath: string
+    progress: number
+    phase: 'process' | 'write'
+  } | null>(null)
+  /** 导入结果（常量枚举消息 + 成败 + 一句补充说明），点一下清掉 */
+  const [voiceImportMessage, setVoiceImportMessage] = useState<{
+    message: string
+    ok: boolean
+    hint?: string
+  } | null>(null)
+  const voiceImportCancelRef = useRef<(() => void) | null>(null)
+  /**
+   * 上次的工程文件夹还在、但这次没能恢复（几乎都是权限没授：冷启动没有用户手势，
+   * `requestPermission` 会被静默拒绝）。此时给出一个可点的一键恢复入口，
+   * 否则「看起来有工程、其实没绑定」，导入只会写进应用内资源。
+   */
+  const [pendingProjectRestore, setPendingProjectRestore] = useState(false)
   /** 仅活动文件是 .hs 时才有语言文本映射 */
   const langScriptName = editingHanshu ? titleName : ''
   const handleLocaleChange = (tag: string) => {
@@ -290,6 +354,197 @@ export const ScriptWorkspace = forwardRef<
   // 工具卸载时解绑编辑器
   useEffect(() => () => langBindingRef.current?.dispose(), [])
 
+  /** 活动文件所在包（音频映射管理要读它的资产清单与包 id） */
+  const activePackage = () => {
+    const base = workspaceRef.current
+    return findScript(base, base.activeScriptId)?.pkg ?? null
+  }
+
+  // 音频映射管理：**没有映射文件** —— 每个键对应哪个音频，由「脚本路径 + 键名」
+  // 推导出的对等文件决定（见 i18n/voicePaths）。这里只负责按当前脚本/语言建出来，
+  // 并把「解码完成 / 播放态变化」转成覆盖层重画。
+  useEffect(() => {
+    const scriptName = langScriptName
+    if (!scriptName) {
+      voiceLibraryRef.current?.dispose()
+      voiceLibraryRef.current = null
+      langBindingRef.current?.refresh()
+      return
+    }
+
+    const library = createVoiceLibrary({
+      locale,
+      scriptName,
+      assets: () => activePackage()?.assets ?? [],
+      packageId: () => activePackage()?.id ?? '',
+    })
+    voiceLibraryRef.current = library
+    // 同步镜像到 state 只为让选择器能渲染。oxlint 的 react(set-state-in-effect)
+    // 按词法判定，会就此报一条告警；这里库是同步建的、不会引发级联渲染（同 langDiskError 那处）。
+    setVoiceRuntime(library)
+    const unsubscribe = library.subscribe(() =>
+      langBindingRef.current?.refreshVoice(),
+    )
+    langBindingRef.current?.refresh()
+
+    return () => {
+      unsubscribe()
+      if (voiceLibraryRef.current === library) {
+        library.dispose()
+        voiceLibraryRef.current = null
+      }
+    }
+  }, [langScriptName, locale, projectHandle])
+
+  // 资产清单一变（导入完成、拖入、删除…），配音按钮的状态就可能从缺失变可用：
+  // 让音频映射管理失效并发一次通知 —— 覆盖层按钮与已打开的选择器都会跟着刷新。
+  // （状态是渲染期求值的，不重画就一直停在旧状态：点击能播、按钮却还是红的。）
+  useEffect(() => {
+    voiceLibraryRef.current?.notifyAssetsChanged()
+  }, [voiceAssetSignature])
+
+  /** 打开音频选择器：内容全由音频映射管理推导，这里只记键与那个库实例 */
+  const openVoicePicker = (key: string) => {
+    const library = voiceLibraryRef.current
+    if (!library) return
+    setVoicePicker({ key, library })
+  }
+
+  /**
+   * 资产读写适配器（照 `.lang` 的 sink 思路）：
+   * - **IndexedDB + 工作区模型**：`put` 是事务原子的，直接覆盖，不需要临时文件；
+   * - **绑定工程时再磁盘写穿**：`voiceDiskSink` 内部走 `.new` → 删旧 → 改名
+   *   （同卷改名原子，防的是磁盘写被中断留下截断文件）。
+   * 磁盘失败只提示不回滚：IndexedDB 是权威，且「保存工程」还会整树重写磁盘。
+   */
+  const createVoiceImportIo = (packageId: string): VoiceImportIo => {
+    const findAsset = (path: string) => {
+      const pkg = workspaceRef.current.packages.find((item) => item.id === packageId)
+      const wanted = path.trim().replace(/\\/g, '/').toLowerCase()
+      return pkg?.assets.find((asset) => asset.path.toLowerCase() === wanted) ?? null
+    }
+
+    return {
+      read: async (path) => {
+        const asset = findAsset(path)
+        if (!asset) return null
+        const blob = await getAssetBlob(packageId, asset.path)
+        if (!blob) return null
+        return new Uint8Array(await blob.arrayBuffer())
+      },
+
+      async write(path, bytes, mime, onProgress) {
+        const blob = new Blob([bytes as BlobPart], { type: mime })
+        await putAssetBlob(packageId, path, blob)
+        onProgress?.(0.4)
+
+        const parent = path.includes('/')
+          ? path.slice(0, path.lastIndexOf('/'))
+          : 'assets'
+        const withFolder = ensureAssetFolder(
+          workspaceRef.current,
+          packageId,
+          parent,
+        )
+        const result = upsertAssetMeta(withFolder, packageId, path, mime, blob.size)
+        if (result) commitWorkspace(result.workspace)
+        onProgress?.(0.6)
+
+        const sink = createVoiceDiskSink(projectRef.current?.handle ?? null)
+        if (!sink.enabled) {
+          onProgress?.(1)
+          return
+        }
+        try {
+          await sink.write(path, bytes, mime, (ratio) =>
+            onProgress?.(0.6 + 0.4 * Math.max(0, Math.min(1, ratio))),
+          )
+          setVoiceDiskError(null)
+        } catch (error) {
+          console.warn('[hanshu] 配音写入磁盘失败', path, error)
+          setVoiceDiskError({
+            path,
+            message: error instanceof Error ? error.message : String(error),
+          })
+        }
+      },
+    }
+  }
+
+  /**
+   * 跑一次「音频导入」：源 = 资源管理器里选中的资产，目标 = 该键的对等文件。
+   * 进度条由 voiceImport 状态驱动；中断（点 ×）会让工作流返回 interrupted。
+   */
+  const runVoiceImportFor = (key: string, sourcePath: string) => {
+    const library = voiceLibraryRef.current
+    const packageId = activePackage()?.id
+    if (!library || !packageId) return
+    const targetPath = library.targetPathOf(key)
+    setVoiceImportMessage(null)
+    setVoiceImport({ sourcePath, targetPath, progress: 0, phase: 'process' })
+
+    const run = runVoiceImport(
+      { sourcePath, targetPath },
+      createVoiceImportIo(packageId),
+      createVoiceProcessor(),
+      {
+        onPhase: (phase) =>
+          setVoiceImport((current) => (current ? { ...current, phase } : current)),
+        onProgress: (progress) =>
+          setVoiceImport((current) =>
+            current ? { ...current, progress } : current,
+          ),
+      },
+    )
+    voiceImportCancelRef.current = run.cancel
+
+    void run.result.then((report) => {
+      voiceImportCancelRef.current = null
+      setVoiceImport(null)
+      // 常量枚举消息原样展示；技术细节只进控制台
+      setVoiceImportMessage({
+        message: report.message,
+        ok: report.ok,
+        // 没绑定工程文件夹时，导入只会写进应用内资源（IndexedDB）—— 说清楚，
+        // 免得看到"成功"却在磁盘上找不到文件
+        hint: projectRef.current?.handle
+          ? undefined
+          : '未绑定工程文件夹，只写入了应用内资源',
+      })
+      if (!report.ok && report.detail) {
+        console.warn('[hanshu] 音频导入失败：', report.detail)
+      }
+    })
+  }
+
+  /**
+   * 上级容器的右键菜单条目。**可扩展**：往这里加一条就多一个功能；
+   * 默认四条 = 改键名 / 改文本 / 改配音 / 删除（红）。
+   */
+  const unitMenuItems = (key: string): LangUnitMenuItem[] => [
+    {
+      id: 'edit-key',
+      label: 'Edit Key',
+      onSelect: () => langBindingRef.current?.editUnit(key, 'key'),
+    },
+    {
+      id: 'edit-text',
+      label: 'Edit Text',
+      onSelect: () => langBindingRef.current?.editUnit(key, 'value'),
+    },
+    {
+      id: 'edit-voice',
+      label: 'Edit Voice',
+      onSelect: () => openVoicePicker(key),
+    },
+    {
+      id: 'delete',
+      label: 'Delete',
+      danger: true,
+      onSelect: () => langBindingRef.current?.deleteUnit(key),
+    },
+  ]
+
   const syncRolesFromText = (text: string) => {
     setRoles((prev) =>
       fillRolesFromSpeakers(prev, extractSpeakersFromText(text)),
@@ -303,6 +558,7 @@ export const ScriptWorkspace = forwardRef<
     const { binding, workspace: next } = result
     projectRef.current = binding
     setProject(binding)
+    setPendingProjectRestore(false)
     commitWorkspace(next)
     const hit = findScript(next, next.activeScriptId)
     const text = hit?.script.content ?? ''
@@ -968,8 +1224,15 @@ export const ScriptWorkspace = forwardRef<
       if (!supportsDirectoryPicker()) return
       try {
         const result = await tryRestoreLastProject()
-        if (cancelled || !result) return
-        applyLoadedProject(result)
+        if (cancelled) return
+        if (result) {
+          applyLoadedProject(result)
+          return
+        }
+        // 恢复不了：句柄还在的话，多半是权限没授（冷启动没有用户手势，
+        // requestPermission 会被静默拒绝）→ 给出可点的一键恢复入口
+        const handle = await loadLastDirectoryHandle()
+        if (!cancelled && handle) setPendingProjectRestore(true)
       } catch {
         // 忽略：无句柄或用户拒绝权限
       }
@@ -978,6 +1241,26 @@ export const ScriptWorkspace = forwardRef<
       cancelled = true
     }
   }, [])
+
+  /** 用户点「上次工程待授权」：这时有手势，权限框能正常弹出 */
+  const handleRestoreProject = () => {
+    if (projectBusy) return
+    setProjectBusy(true)
+    void (async () => {
+      try {
+        const result = await tryRestoreLastProject()
+        if (result) applyLoadedProject(result)
+        else setPendingProjectRestore(false)
+      } catch (error) {
+        window.alert(
+          `恢复上次工程失败：${error instanceof Error ? error.message : String(error)}`,
+        )
+        setPendingProjectRestore(false)
+      } finally {
+        setProjectBusy(false)
+      }
+    })()
+  }
 
   useEffect(() => {
     const onMove = (event: PointerEvent) => {
@@ -1587,6 +1870,7 @@ export const ScriptWorkspace = forwardRef<
                       langBindingRef.current?.dispose()
                       langBindingRef.current = bindLangText(editor, monaco, {
                         getMap: () => langMapRef.current,
+                        getVoice: () => voiceLibraryRef.current,
                         onEditRequest: (request) => {
                           langEditSeqRef.current += 1
                           setLangEdit({
@@ -1594,6 +1878,7 @@ export const ScriptWorkspace = forwardRef<
                             request,
                           })
                         },
+                        onUnitMenu: (request) => setUnitMenu(request),
                       })
                     }}
                     onChange={(next) => {
@@ -1766,6 +2051,57 @@ export const ScriptWorkspace = forwardRef<
               语言文本未写入磁盘
             </span>
           )}
+          {pendingProjectRestore && (
+            <span
+              className="status-warn"
+              title="上次的工程文件夹还没授权（启动时无法自动弹出权限框）。点一下重新打开它，并同意读写权限。"
+              role="button"
+              tabIndex={0}
+              onClick={handleRestoreProject}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  handleRestoreProject()
+                }
+              }}
+            >
+              上次工程待授权
+            </span>
+          )}
+          {voiceDiskError && (
+            <span
+              className="status-warn"
+              title={`配音未能写入磁盘：${voiceDiskError.message}`}
+              role="button"
+              tabIndex={0}
+              onClick={() => setVoiceDiskError(null)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  setVoiceDiskError(null)
+                }
+              }}
+            >
+              配音未写入磁盘
+            </span>
+          )}
+          {voiceImportMessage && (
+            <span
+              className={voiceImportMessage.ok ? 'status-note' : 'status-warn'}
+              title="音频导入结果（点击清除）"
+              role="button"
+              tabIndex={0}
+              onClick={() => setVoiceImportMessage(null)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  setVoiceImportMessage(null)
+                }
+              }}
+            >
+              {voiceImportMessage.message}
+              {voiceImportMessage.hint && (
+                <span className="status-hint">（{voiceImportMessage.hint}）</span>
+              )}
+            </span>
+          )}
           <LanguageSelect value={locale} onChange={handleLocaleChange} />
         </div>
       </footer>
@@ -1784,6 +2120,39 @@ export const ScriptWorkspace = forwardRef<
             const edit = langEdit
             setLangEdit((current) => (current?.id === edit.id ? null : current))
           }}
+        />
+      )}
+      {unitMenu && (
+        <LangUnitMenu
+          x={unitMenu.x}
+          y={unitMenu.y}
+          items={unitMenuItems(unitMenu.key)}
+          onClose={() => setUnitMenu(null)}
+        />
+      )}
+      {voicePicker &&
+        voiceRuntime != null &&
+        voiceRuntime === voicePicker.library && (
+          <VoicePickerModal
+            unitKey={voicePicker.key}
+            targetPath={voicePicker.library.targetPathOf(voicePicker.key)}
+            currentPath={voicePicker.library.resolvedPathOf(voicePicker.key)}
+            library={voicePicker.library}
+            onImport={(sourcePath) => {
+              const key = voicePicker.key
+              setVoicePicker(null)
+              runVoiceImportFor(key, sourcePath)
+            }}
+            onClose={() => setVoicePicker(null)}
+          />
+        )}
+      {voiceImport && (
+        <VoiceImportProgress
+          progress={voiceImport.progress}
+          phase={voiceImport.phase}
+          sourcePath={voiceImport.sourcePath}
+          targetPath={voiceImport.targetPath}
+          onCancel={() => voiceImportCancelRef.current?.()}
         />
       )}
     </div>

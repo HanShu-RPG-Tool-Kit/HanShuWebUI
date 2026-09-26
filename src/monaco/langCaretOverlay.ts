@@ -13,6 +13,11 @@ export type CaretLine = {
   row: HTMLElement
   box: HTMLElement
   tail: HTMLElement | null
+  /**
+   * 尾标 `//` 相对所在行的左沿（px）。
+   * 容器里多了配音按钮之后，尾标不再紧贴文本框，不能再按 `框宽 + 间距` 推算。
+   */
+  tailLeft?: number | null
   span: LangSpan
 }
 
@@ -88,7 +93,7 @@ export function createLangCaretOverlay(options: {
     const offset = model.getOffsetAt(position)
     if (!Number.isFinite(offset)) return
 
-    for (const { span, row, box, tail } of getLines()) {
+    for (const { span, row, box, tail, tailLeft } of getLines()) {
       const tailEnd = span.terminator ? span.terminator.end : span.end
       // 片段 + 它自己那个 `//` 的整段文档占位，都在框/尾标覆盖的可视范围内
       if (offset < span.start || offset > tailEnd) continue
@@ -98,7 +103,11 @@ export function createLangCaretOverlay(options: {
         // 量出来的实际宽度：框宽 = max(渲染长度)，跟原文列数无关
         const boxWidth = box.getBoundingClientRect?.().width ?? 0
         const tailWidth = tail?.getBoundingClientRect?.().width ?? 0
-        const tailStart = boxWidth + TAIL_GAP_PX
+        // 尾标左沿优先用它自己的真实位置（配音按钮把它推开了，不能再推算）
+        const tailStart =
+          tail && typeof tailLeft === 'number'
+            ? tailLeft
+            : boxWidth + TAIL_GAP_PX
         const term = span.terminator
         if (term && offset >= term.end) {
           // `//` 之后

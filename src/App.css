@@ -407,6 +407,78 @@
   height: 100%;
 }
 
+/* 上级容器：包住「文本 + 配音按钮」。
+   原子化责任在这里 —— 右键菜单、拖拽拦截、左键打开编辑框都挂它上面，
+   文本框（.hs-lang-box）只负责显示，不再自己接交互。
+   align-items: center 让按钮落在**文本的垂直中央**（文本多行时也一样居中）。 */
+.hs-lang-unit {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  pointer-events: auto;
+  cursor: default;
+  user-select: none;
+}
+
+/* 配音按钮：固定边长的正方形（边长由 JS 给，与文本行数无关），
+   贴在文本框右侧、留一点点间距。
+   四态底色：缺失=红（同文本缺失）、无效=紫、可用=黄（同文本就绪）、播放中=蓝。 */
+.hs-lang-voice {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  padding: 2px;
+  margin-left: 4px;
+  border-radius: 3px;
+  pointer-events: auto;
+  cursor: pointer;
+  transition: background-color 0.12s ease;
+}
+
+.hs-lang-voice > svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.hs-lang-voice.hs-voice-missing {
+  background: rgba(206, 78, 74, 0.32);
+  color: #f6d3d1;
+}
+
+.hs-lang-voice.hs-voice-invalid {
+  background: rgba(158, 118, 224, 0.34);
+  color: #e7defb;
+}
+
+.hs-lang-voice.hs-voice-ready {
+  background: rgba(214, 186, 74, 0.3);
+  color: #f4e6b4;
+}
+
+.hs-lang-voice.hs-voice-playing {
+  background: rgba(79, 193, 255, 0.34);
+  color: #d8efff;
+}
+
+.hs-lang-voice.hs-voice-missing:hover {
+  background: rgba(206, 78, 74, 0.5);
+}
+
+.hs-lang-voice.hs-voice-invalid:hover {
+  background: rgba(158, 118, 224, 0.52);
+}
+
+.hs-lang-voice.hs-voice-ready:hover {
+  background: rgba(214, 186, 74, 0.52);
+}
+
+.hs-lang-voice.hs-voice-playing:hover {
+  background: rgba(79, 193, 255, 0.52);
+}
+
 /* 被挪到框外右侧的 `//`：行是 flex-start 对齐，所以它贴在**第一行** */
 .hs-lang-tail {
   margin-left: 2px;
@@ -537,6 +609,484 @@
 .hs-lang-edit-hint {
   color: #e08a8f;
   font-size: 12px;
+}
+
+/* —— 上级容器的右键菜单（可扩展：条目由上层给，见 LangUnitMenu） —— */
+.hs-unit-menu {
+  position: fixed;
+  z-index: 320;
+  min-width: 152px;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border: 1px solid #3c4149;
+  border-radius: 4px;
+  background: #22252a;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45);
+}
+
+.hs-unit-menu-item {
+  display: block;
+  width: 100%;
+  padding: 5px 10px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-bright);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.hs-unit-menu-item:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.hs-unit-menu-item:hover:not(:disabled) {
+  background: #2f343c;
+}
+
+.hs-unit-menu-item.is-danger {
+  color: #e8656d;
+}
+
+.hs-unit-menu-item.is-danger:hover:not(:disabled) {
+  background: rgba(206, 78, 74, 0.22);
+}
+
+/* —— 音频选择器弹窗 —— */
+.voice-picker-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 310;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.voice-picker {
+  display: flex;
+  flex-direction: column;
+  width: min(980px, 94vw);
+  height: min(760px, 90vh);
+  border: 1px solid #3c4149;
+  border-radius: 6px;
+  background: #22252a;
+  color: var(--text-bright);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
+}
+
+.voice-picker-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #34383f;
+}
+
+.voice-picker-title {
+  font-size: 14px;
+}
+
+.voice-picker-key {
+  margin-left: 8px;
+  color: var(--text);
+  font-family: Consolas, "Sarasa Mono New", monospace;
+  font-size: 13px;
+}
+
+.voice-picker-close {
+  padding: 4px 10px;
+  border: 1px solid #3c4149;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-bright);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.voice-picker-close:hover {
+  background: #2f343c;
+}
+
+/* 顶部预览：左 2/3 音频形状，右 1/3 元信息 */
+.voice-picker-preview {
+  display: flex;
+  gap: 12px;
+  height: 190px;
+  padding: 14px;
+  border-bottom: 1px solid #34383f;
+}
+
+.voice-picker-wave {
+  flex: 2 1 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  border: 1px solid #34383f;
+  border-radius: 4px;
+  background: #1d2025;
+  color: #7fc4f0;
+  overflow: hidden;
+}
+
+.voice-picker-wave svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.voice-picker-wave.is-empty {
+  color: #6a7078;
+}
+
+.voice-picker-wave.is-empty svg {
+  width: 84px;
+  height: 84px;
+}
+
+.voice-picker-info {
+  flex: 1 1 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid #34383f;
+  border-radius: 4px;
+  background: #1d2025;
+}
+
+.voice-picker-row {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.voice-picker-row-label {
+  flex: 0 0 64px;
+  color: var(--text);
+}
+
+.voice-picker-row-value {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voice-picker-play {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  align-self: flex-start;
+  margin-top: auto;
+  padding: 5px 12px;
+  border: 1px solid #3c4149;
+  border-radius: 3px;
+  background: #262a30;
+  color: var(--text-bright);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.voice-picker-play:hover {
+  background: #2f343c;
+}
+
+.voice-picker-play:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.voice-picker-play svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+}
+
+.voice-picker-hint {
+  font-size: 12px;
+  color: var(--text);
+}
+
+.voice-picker-hint.is-warn {
+  color: #d9a24a;
+}
+
+.voice-picker-hint.is-danger {
+  color: #e8656d;
+}
+
+.voice-picker-search {
+  padding: 10px 14px;
+  border-bottom: 1px solid #34383f;
+}
+
+.voice-picker-search input {
+  box-sizing: border-box;
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid #3c4149;
+  border-radius: 3px;
+  background: #1d2025;
+  color: var(--text-bright);
+  font-size: 13px;
+  outline: none;
+}
+
+.voice-picker-search input:focus {
+  border-color: var(--accent);
+}
+
+/* 底部资源管理器：可见根目录固定为 assets/<语言标签>/voice */
+.voice-picker-tree {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 8px 6px;
+  overflow: auto;
+}
+
+.voice-tree-root {
+  margin-bottom: 6px;
+  padding: 4px 8px;
+  color: var(--text);
+  font-family: Consolas, "Sarasa Mono New", monospace;
+  font-size: 12px;
+}
+
+.voice-tree-dir,
+.voice-tree-file {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-radius: 3px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.voice-tree-dir:hover,
+.voice-tree-file:hover {
+  background: #2a2e34;
+}
+
+.voice-tree-file.is-active {
+  background: #2f343c;
+}
+
+.voice-tree-file.is-disabled {
+  color: #6a7078;
+  cursor: not-allowed;
+}
+
+.voice-tree-twist {
+  width: 12px;
+  color: var(--text);
+}
+
+.voice-tree-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.voice-tree-badge {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.voice-tree-badge.is-warn {
+  color: #d9a24a;
+}
+
+.voice-tree-empty {
+  padding: 12px 10px;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.voice-picker-footer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-top: 1px solid #34383f;
+}
+
+.voice-picker-footer .spacer {
+  flex: 1 1 auto;
+}
+
+.voice-picker-btn {
+  padding: 5px 14px;
+  border: 1px solid #3c4149;
+  border-radius: 3px;
+  background: #262a30;
+  color: var(--text-bright);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.voice-picker-btn:hover {
+  background: #2f343c;
+}
+
+.voice-picker-btn.is-primary {
+  border-color: var(--accent);
+  background: #2b3a47;
+}
+
+.voice-picker-btn.is-danger {
+  color: #e8656d;
+}
+
+.voice-picker-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* 树里标出「这个文件就是对等目标」 */
+.voice-tree-tag {
+  margin-left: 6px;
+  padding: 0 4px;
+  border-radius: 2px;
+  background: rgba(214, 186, 74, 0.25);
+  color: #f4e6b4;
+  font-size: 10px;
+}
+
+/* —— 音频导入进度条（置顶：盖住编辑器、选择器与右键菜单） —— */
+.voice-import-backdrop {
+  position: fixed;
+  inset: 0;
+  /* 高于选择器(310) 与右键菜单(320) */
+  z-index: 400;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  /* 底下变暗 */
+  background: rgba(0, 0, 0, 0.58);
+  /* 吃掉一切指针事件：底下不可交互 */
+  pointer-events: auto;
+}
+
+.voice-import {
+  width: min(520px, 92vw);
+  border: 1px solid #3c4149;
+  border-radius: 6px;
+  background: #22252a;
+  color: var(--text-bright);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+}
+
+.voice-import-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid #34383f;
+}
+
+.voice-import-title {
+  font-size: 14px;
+}
+
+.voice-import-close {
+  width: 24px;
+  height: 24px;
+  border: 1px solid #3c4149;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-bright);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.voice-import-close:hover {
+  border-color: #6b3a3a;
+  background: #3a2020;
+  color: #e8656d;
+}
+
+.voice-import-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+}
+
+.voice-import-row {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.voice-import-label {
+  flex: 0 0 32px;
+  color: var(--text);
+}
+
+.voice-import-value {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: Consolas, "Sarasa Mono SC", monospace;
+}
+
+/* 前 2/3 处理、后 1/3 写入：两段不同颜色 */
+.voice-import-bar {
+  display: flex;
+  height: 10px;
+  border-radius: 5px;
+  background: #1d2025;
+  overflow: hidden;
+}
+
+.voice-import-bar-process {
+  background: #4a90d9;
+  transition: width 0.12s linear;
+}
+
+.voice-import-bar-write {
+  background: #d6ba4a;
+  transition: width 0.12s linear;
+}
+
+.voice-import-hint {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.voice-import-percent {
+  color: var(--text-bright);
+}
+
+/* 状态栏里的中性提示（例如音频导入成功） */
+.status-note {
+  color: var(--text);
+}
+
+/* 状态栏提示后面的补充说明（更暗一档） */
+.status-hint {
+  margin-left: 6px;
+  color: var(--text);
+  opacity: 0.85;
 }
 
 .win-btn {

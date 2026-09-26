@@ -17,3 +17,4 @@ export {
   type BoundProject,
   type LoadProjectResult,
 } from './projectFs'
+export { loadLastDirectoryHandle } from './handleStore'

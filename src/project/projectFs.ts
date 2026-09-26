@@ -115,6 +115,9 @@ async function loadAssetsFromDisk(
   for (const path of filePaths) {
     const norm = normalizeAssetPath(path)
     if (!norm) continue
+    // 配音导入的 `.new` 中间文件：万一崩溃残留，别把它当成资产收进 IndexedDB
+    // （下次「保存工程」会整树重写 assets/，残留自然被清掉）
+    if (norm.toLowerCase().endsWith('.new')) continue
     const parent = norm.includes('/')
       ? norm.slice(0, norm.lastIndexOf('/'))
       : 'assets'
@@ -186,6 +189,8 @@ async function readPackageFromDirectory(
   const children = await listChildren(root)
   for (const entry of children) {
     if (entry.kind !== 'file') continue
+    // 写盘层的 `.new` 中间文件：万一崩溃残留，别把它当成脚本收进工作区
+    if (entry.name.toLowerCase().endsWith('.new')) continue
     if (!isProjectLoadableFile(entry.name)) continue
     const text = await readTextFile(root, entry.name)
     if (text == null) continue

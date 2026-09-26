@@ -22,6 +22,13 @@ import {
   createTextWidthMeter,
   SLOT_CLASS,
 } from './langSlotStyles'
+import {
+  VOICE_STATE_LABEL,
+  voiceButtonSvg,
+  type VoiceButtonState,
+} from './voiceIcons'
+import type { VoiceLibrary, VoiceUnitStatus } from '../i18n/voiceLibrary'
+import { formatVoiceDuration } from '../i18n/voiceRuntime'
 import { findSpanAt, parseLangSpans, type LangSpan } from './langTextSpans'
 
 /**
@@ -72,16 +79,35 @@ export type LangEditRequest = {
   apply(next: string): void
 }
 
+/** 上级容器右键：请求弹出可扩展菜单 */
+export type LangUnitMenuRequest = {
+  /** 被右键的键名 */
+  key: string
+  /** 视口坐标（菜单按它摆位） */
+  x: number
+  y: number
+}
+
 export type LangTextHost = {
   /** 当前活动文件的语言文本映射；不适用（非 .hs、无活动文件、看资产）时返回 null */
   getMap(): LangTextMap | null
   /** 请求弹出等位置覆盖编辑框 */
   onEditRequest(request: LangEditRequest): void
+  /** 音频映射管理；非 .hs / 尚未就绪时返回 null（按钮一律渲染成"缺失"） */
+  getVoice?(): VoiceLibrary | null
+  /** 上级容器被右键 */
+  onUnitMenu?(request: LangUnitMenuRequest): void
 }
 
 export type LangTextBinding = {
   /** 外部状态变化（换语言 / 换文件 / 映射内容变）时重算 */
   refresh(): void
+  /** 只重画覆盖框、不动文档：配音播放态 / 解码结果变化时用 */
+  refreshVoice(): void
+  /** 右键菜单用：按键名打开「改键名 / 改文本」编辑框 */
+  editUnit(key: string, mode: LangEditMode): void
+  /** 右键菜单用：删除该键的原子范围（键名 + 它自己的那个 `//`） */
+  deleteUnit(key: string): void
   dispose(): void
 }
 
@@ -91,9 +117,28 @@ const ROW_CLASS = 'hs-lang-row'
 const BOX_CLASS = 'hs-lang-box'
 const TAIL_CLASS = 'hs-lang-tail'
 const ZONE_CLASS = 'hs-lang-zone'
+/**
+ * 上级容器：包住「文本 + 配音按钮」，原子化的责任在它身上 ——
+ * 右键菜单、拖拽拦截、左键打开编辑框都挂这里，文本框只负责显示。
+ */
+const UNIT_CLASS = 'hs-lang-unit'
+/** 配音按钮（正方形，和文本等高） */
+const VOICE_CLASS = 'hs-lang-voice'
+const VOICE_STATE_CLASS: Record<VoiceButtonState, string> = {
+  missing: 'hs-voice-missing',
+  invalid: 'hs-voice-invalid',
+  ready: 'hs-voice-ready',
+  playing: 'hs-voice-playing',
+}
 const MIGRATE_DEBOUNCE_MS = 220
 /** 框底留出的空隙，避免相邻行的框交叉 */
 const BOX_GAP_PX = 3
+/**
+ * 配音按钮的边长（固定正方形）。
+ * 不跟文本等高：文本可能有多行，按钮只需要在文本的**垂直中央**右侧，
+ * 所以尺寸固定、由 CSS 的 `align-items: center` 摆在中间。
+ */
+const VOICE_BUTTON_PX = 22
 
 /** 一行覆盖框：形状即 langCaretOverlay 需要的输入，另加一个用于移除的根节点 */
 /** 一次自动成键写进映射的条目（撤销时要能原样回收 / 重做时放回） */
@@ -235,14 +280,18 @@ export function bindLangText(
     return { left: 120, top: 120, width: 220, height: 24 }
   }
 
-  /** 弹出等位置覆盖编辑框 */
-  const openEditor = (span: LangSpan, element: HTMLElement | null) => {
+  /** 弹出等位置覆盖编辑框；`forced` 用于右键菜单直接指定模式 */
+  const openEditor = (
+    span: LangSpan,
+    element: HTMLElement | null,
+    forced?: LangEditMode,
+  ) => {
     const map = host.getMap()
     if (!map) return
     const key = normalizeLocaleKey(span.value)
     if (!key) return
 
-    const mode: LangEditMode = ctrlHeld ? 'key' : 'value'
+    const mode: LangEditMode = forced ?? (ctrlHeld ? 'key' : 'value')
     const rect = rectForSpan(span, element)
     if (mode === 'key') {
       // 改键名是单行框：只按首行高度覆盖（覆盖框可能是多行的）
@@ -367,6 +416,54 @@ export function bindLangText(
     return box
   }
 
+  /**
+   * 配音按钮：正方形，边长与文本等高。
+   * 四态只由 `state` 决定形状与底色（缺失红 / 无效紫 / 可用黄 / 播放中蓝）。
+   * 按下就吞掉事件，免得容器的「打开文本编辑框」也响应同一次点击。
+   */
+  const makeVoiceButton = (
+    state: VoiceButtonState,
+    sizePx: number,
+    title: string,
+    onToggle: () => void,
+  ): HTMLElement => {
+    const button = document.createElement('div')
+    button.className = `${VOICE_CLASS} ${VOICE_STATE_CLASS[state]}`
+    button.style.width = `${sizePx}px`
+    button.style.height = `${sizePx}px`
+    button.title = title
+    button.setAttribute('role', 'button')
+    button.setAttribute('aria-label', title)
+    button.innerHTML = voiceButtonSvg(state)
+    button.addEventListener('mousedown', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+    })
+    button.addEventListener('click', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      onToggle()
+    })
+    return button
+  }
+
+  /** 配音按钮的 tooltip：状态 + 原因 / 时长 */
+  const voiceButtonTitle = (
+    state: VoiceButtonState,
+    status: VoiceUnitStatus | null,
+  ): string => {
+    const label = VOICE_STATE_LABEL[state]
+    if (state === 'playing') return `${label} · 点击停止`
+    if (state === 'ready') {
+      const duration =
+        status?.info != null ? formatVoiceDuration(status.info.duration) : ''
+      return duration
+        ? `${label} · 点击播放 · ${duration}`
+        : `${label} · 点击播放`
+    }
+    return status?.reason ? `${label} · ${status.reason}` : label
+  }
+
   /** 重建覆盖框与 view zone（内容 / Ctrl / 映射变化） */
   const render = () => {
     if (disposed) return
@@ -450,6 +547,9 @@ export function bindLangText(
     const widths = meter.measure(texts)
     const widthOf = (text: string): number => widths.get(text) ?? 0
 
+    // 音频状态来自音频映射管理（每次 render 取一次句柄即可）
+    const voice = host.getVoice?.() ?? null
+
     for (const item of items) {
       const { span, key, display, displayLines, showKey, stateClass } = item
       const widthPx = showKey
@@ -475,19 +575,57 @@ export function bindLangText(
       const row = document.createElement('div')
       row.className = ROW_CLASS
 
+      // 上级容器：文本 + 配音按钮。原子化（右键 / 拖拽 / 打开编辑框）都归它
+      const unit = document.createElement('div')
+      unit.className = UNIT_CLASS
+      unit.draggable = false
+
       const box = makeBox(display, stateClass, widthPx, boxHeight, key)
-      box.addEventListener('mousedown', (event) => {
+      unit.appendChild(box)
+
+      // 文本右侧的配音按钮：固定正方形（垂直中央由 CSS 摆放）；四态由映射管理给
+      const status = voice?.statusOf(key) ?? null
+      const voiceState: VoiceButtonState = status?.state ?? 'missing'
+      const button = makeVoiceButton(
+        voiceState,
+        VOICE_BUTTON_PX,
+        voiceButtonTitle(voiceState, status),
+        () => voice?.togglePlay(key),
+      )
+      unit.appendChild(button)
+
+      // 左键：打开等位置编辑框（文本框只负责显示，交互一律走容器）
+      unit.addEventListener('mousedown', (event) => {
+        // 只认左键：右键交给下面的 contextmenu，否则右键会顺手弹出编辑框
+        if (event.button !== 0) return
         event.preventDefault()
         event.stopPropagation()
         openEditor(span, box)
       })
-      row.appendChild(box)
+      // 右键：交给上层弹可扩展菜单
+      unit.addEventListener('contextmenu', (event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        host.onUnitMenu?.({ key, x: event.clientX, y: event.clientY })
+      })
+      // 拖拽：只接管并阻止浏览器默认拖拽（拖图 / 拖选中文本）
+      unit.addEventListener('dragstart', (event) => event.preventDefault())
+
+      row.appendChild(unit)
       // `//` 渲染在第一行、框外右侧（行是 flex-start 对齐，所以贴在首行）
       const tail = span.terminator ? makeTail() : null
       if (tail) row.appendChild(tail)
       lineEl.appendChild(row)
       layer.appendChild(lineEl)
-      lineEntries.push({ el: lineEl, row, box, tail, span })
+      lineEntries.push({
+        el: lineEl,
+        row,
+        box,
+        tail,
+        span,
+        // 尾标现在排在按钮右边：光标定位要用它的真实左沿
+        tailLeft: tail ? tail.offsetLeft : null,
+      })
 
       // 多出来的行用 view zone 占位，把后面的行真实往下推。
       // zone 里不放任何内容：zone 的 DOM 被 Monaco 插在 .view-lines 之下
@@ -527,6 +665,71 @@ export function bindLangText(
 
   /** 已成键的框的原子范围（未成键的原文不设防） */
   const boxRegions = () => keyedRegions(currentSpans())
+
+  /** 按 key 找当前渲染出来的那条（菜单动作用；找不到返回 null） */
+  const entryFor = (key: string): LineEntry | null => {
+    const wanted = normalizeLocaleKey(key)
+    if (!wanted) return null
+    return (
+      lineEntries.find(
+        (item) => normalizeLocaleKey(item.span.value) === wanted,
+      ) ?? null
+    )
+  }
+
+  /** 按 key 找片段（覆盖层可能还没渲染，直接查文档片段表兜底） */
+  const spanFor = (key: string): LangSpan | null => {
+    const wanted = normalizeLocaleKey(key)
+    if (!wanted) return null
+    return (
+      currentSpans().find(
+        (span) => normalizeLocaleKey(span.value) === wanted,
+      ) ?? null
+    )
+  }
+
+  /** 右键菜单：改键名 / 改文本（复用等位置覆盖编辑框） */
+  const editUnit = (key: string, mode: LangEditMode) => {
+    const entry = entryFor(key)
+    const span = entry?.span ?? spanFor(key)
+    if (!span) return
+    openEditor(span, entry?.box ?? null, mode)
+  }
+
+  /**
+   * 右键菜单：删除该键的原子范围 —— 键名本身 + **它自己的**那个 `//`。
+   * 于是 `test:key//` → `test:`、`-key1:key2//` 删 key2 → `-key1:`；
+   * 而删选项文案（label 不持有终结符）时留着 `//`：`-key1:key2//` 删 key1 → `-:key2//`。
+   * 只动正文，映射条目（.lang / .voice）不动 —— 与手工删键的行为一致。
+   */
+  const deleteUnit = (key: string) => {
+    const model = ed.getModel()
+    const span = entryFor(key)?.span ?? spanFor(key)
+    if (!model || !span) return
+
+    const edits: editor.IIdentifiedSingleEditOperation[] = []
+    if (span.terminator) {
+      edits.push({
+        range: monaco.Range.fromPositions(
+          model.getPositionAt(span.terminator.start),
+          model.getPositionAt(span.terminator.end),
+        ),
+        text: '',
+      })
+    }
+    edits.push({
+      range: monaco.Range.fromPositions(
+        model.getPositionAt(span.start),
+        model.getPositionAt(span.end),
+      ),
+      text: '',
+    })
+
+    ed.pushUndoStop()
+    ed.executeEdits('hanshu-locale-delete', edits)
+    ed.pushUndoStop()
+    render()
+  }
 
   /**
    * 自动成键：把还不是键名的可本地化文本换成新键名。
@@ -806,6 +1009,12 @@ export function bindLangText(
       migrateNow()
       render()
     },
+    refreshVoice() {
+      // 配音状态是渲染期读出来的：只重画覆盖框，不动文档、不触发成键
+      render()
+    },
+    editUnit,
+    deleteUnit,
     dispose() {
       disposed = true
       if (timer != null) window.clearTimeout(timer)

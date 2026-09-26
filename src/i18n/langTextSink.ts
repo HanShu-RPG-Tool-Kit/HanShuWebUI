@@ -1,5 +1,6 @@
 import type { BoundProject } from '../project'
-import { readTextFile, writeTextFile } from '../project/directoryIo'
+import { readTextFile } from '../project/directoryIo'
+import { createFileSink } from '../project/fileSink'
 import type { LangTextSink } from './langTextMap'
 
 /**
@@ -8,8 +9,9 @@ import type { LangTextSink } from './langTextMap'
  * - 未绑定（浏览器虚拟工作区）→ 退回包内虚拟文件
  *
  * 磁盘**读**发生在建映射之前，所以 `LangTextSink` 仍是同步接口。
- * 磁盘**写**是异步的，但按调用顺序**串行**执行：`writeTextFile` 内部有三步 await，
- * 并发写会让落盘顺序变成「完成顺序」，把新内容覆盖成旧快照。
+ * 磁盘**写**交给通用写盘层 `fileSink`：串行队列 + 写前申请权限 + `.new` → 删旧 → 改名
+ * 的原子替换（改值改到一半崩了不会把语言文件截断）。
+ *
  * 工程模式下每次写还会**镜像进工作区模型**：否则资源管理器里看不到这个文件
  * （它结尾是语言标签、不在后缀白名单里，工程加载另有一处例外判断）。
  * 每次写入的结果通过 `onWriteResult` 上报（成功 null / 失败 error），
@@ -36,31 +38,21 @@ export async function createLangTextSink(
   const handle = project.handle
   const diskText = await readTextFile(handle, fileName)
 
-  const report = (error: unknown | null) => {
-    if (target.onWriteResult) target.onWriteResult(error)
-    else if (error) console.warn(`[hanshu] 写入语言文本文件失败：${fileName}`, error)
-  }
-
-  // 串行队列；每次写各自吞掉失败，避免一次失败毒化后续的写
-  let queued: Promise<void> = Promise.resolve()
-  const enqueue = (content: string) => {
-    queued = queued.then(() =>
-      writeTextFile(handle, fileName, content).then(
-        () => report(null),
-        (error: unknown) => report(error),
-      ),
-    )
-  }
+  const sink = createFileSink({
+    handle,
+    onWriteResult: (_path, error) => {
+      if (target.onWriteResult) target.onWriteResult(error)
+      else if (error) console.warn(`[hanshu] 写入语言文本文件失败：${fileName}`, error)
+    },
+  })
 
   return {
     // 磁盘上还没有这个文件时，退回虚拟工作区里可能已有的内容
     read: () => diskText ?? virtual.read(),
-    // 工程模式：先镜像进工作区模型，再写真实磁盘文件。
-    // 镜像让它立刻出现在资源管理器里、也让正常的保存路径认得它；
-    // 磁盘写异步串行执行，结果逐次上报。
+    // 工程模式：先镜像进工作区模型（同步、立刻生效），再交给写盘层落盘
     write: (content: string) => {
       virtual.write(content)
-      enqueue(content)
+      void sink.write(fileName, content)
     },
   }
 }
