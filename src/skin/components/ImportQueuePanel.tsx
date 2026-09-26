@@ -462,8 +462,9 @@ export function ImportQueuePanel({
           onDrop={(e) => {
             e.preventDefault()
             setDragOver(false)
-            // Path-based file drops arrive via the Tauri window drag-drop
-            // event; text drops (skin codes) go through the text tab.
+            // 本面板只做投放高亮：皮肤码走文本页签，文件请用"添加文件"。
+            // （窗口的 dragDropEnabled 已关闭，所以这里收到的是真正的 HTML5 拖放事件；
+            // 之前那句"文件路径由 Tauri 拖放事件送进来"已经不成立，也没有代码消费它。）
           }}
         >
           {rows.length === 0 ? (

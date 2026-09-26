@@ -106,11 +106,25 @@ export function voiceImportSourceLabel(source: VoiceImportSource): string {
   return source.kind === 'asset' ? source.path : source.name
 }
 
+/**
+ * 结果浮窗的内容：就是把要返回的那条消息（`ok` 决定配色：成功=默认，失败=红）。
+ * 由工作流**在结果落定之前**同步发出，界面据此先弹一下。
+ */
+export type VoiceImportNotice = {
+  message: string
+  ok: boolean
+}
+
 export type VoiceImportEvents = {
   /** 阶段切换：process（前 2/3）/ write（后 1/3） */
   onPhase?(phase: 'process' | 'write'): void
   /** 总进度 0..1 */
   onProgress?(ratio: number): void
+  /**
+   * 结果浮窗。成功与失败都会发，且发生在 `result` 落定**之前** ——
+   * 工作流本身不碰界面，弹窗交给调用方。
+   */
+  onNotice?(notice: VoiceImportNotice): void
 }
 
 export type VoiceImportRun = {
@@ -119,19 +133,6 @@ export type VoiceImportRun = {
   /** 用户关掉进度条：请求中断（处理阶段会尽早停止） */
   cancel(): void
 }
-
-const fail = (
-  outcome: Exclude<VoiceImportOutcome, 'success'>,
-  targetPath: string,
-  detail?: string,
-): VoiceImportReport => ({
-  ok: false,
-  outcome,
-  message: VOICE_IMPORT_RESULT[outcome],
-  targetPath,
-  bytes: 0,
-  detail,
-})
 
 /** 源与目标是同一个「对等基名」（扩展名无关） */
 export function isSameVoiceFile(sourcePath: string, targetPath: string): boolean {
@@ -157,6 +158,28 @@ export function runVoiceImport(
   const report = (ratio: number) => {
     const clamped = Math.max(0, Math.min(1, ratio))
     events.onProgress?.(clamped)
+  }
+
+  /** 先发浮窗、再落定报告（四种结果都从这里出去） */
+  const notice = (message: string, ok: boolean) => {
+    events.onNotice?.({ message, ok })
+  }
+
+  const fail = (
+    outcome: Exclude<VoiceImportOutcome, 'success'>,
+    failedTargetPath: string,
+    detail?: string,
+  ): VoiceImportReport => {
+    const message = VOICE_IMPORT_RESULT[outcome]
+    notice(message, false)
+    return {
+      ok: false,
+      outcome,
+      message,
+      targetPath: failedTargetPath,
+      bytes: 0,
+      detail,
+    }
   }
 
   const result = (async (): Promise<VoiceImportReport> => {
@@ -245,6 +268,7 @@ export function runVoiceImport(
     if (cancelled) return fail('interrupted', targetPath)
 
     report(1)
+    notice(VOICE_IMPORT_RESULT.success, true)
     return {
       ok: true,
       outcome: 'success',

@@ -1708,6 +1708,81 @@ body.is-resizing .monaco-editor {
   background: #3a3d41;
 }
 
+/* 导入结果浮窗：固定在**编辑器区域**的中央靠上（不是窗口底部、更不跟鼠标走）。
+   停留时长由组件用内联变量给（--toast-hold），避免 CSS/TS 两处各写一个数。 */
+.voice-toast {
+  position: absolute;
+  top: 18px;
+  left: 50%;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: min(560px, 80%);
+  padding: 9px 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--bg-dropdown);
+  color: var(--text);
+  font-size: 13px;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.45);
+  /* 别挡住下面的操作 */
+  pointer-events: none;
+  animation:
+    voice-toast-in 0.2s ease-out,
+    voice-toast-out 0.3s ease-in var(--toast-hold, 2200ms) forwards;
+}
+
+/* 失败：红色 */
+.voice-toast.is-error {
+  border-color: rgba(206, 78, 74, 0.65);
+  background: rgba(74, 30, 30, 0.96);
+  color: #f2d7d5;
+}
+
+.voice-toast-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.voice-toast.is-error .voice-toast-dot {
+  background: #ce4e4a;
+}
+
+.voice-toast-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@keyframes voice-toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+@keyframes voice-toast-out {
+  to {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-6px);
+  }
+}
+
+/* 减少动态效果：不做动画（组件里的兜底定时器仍会把它移除） */
+@media (prefers-reduced-motion: reduce) {
+  .voice-toast {
+    animation: none;
+  }
+}
+
 .explorer-context-menu {
   position: fixed;
   z-index: 200;
@@ -1847,6 +1922,8 @@ body.is-resizing .monaco-editor {
   flex: 1;
   min-width: 0;
   min-height: 0;
+  /* 浮窗（导入结果）相对编辑器区域定位 */
+  position: relative;
 }
 
 .editor-shell .monaco-editor,

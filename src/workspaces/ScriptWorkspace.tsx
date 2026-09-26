@@ -120,6 +120,7 @@ import type { DragSource } from '../drag/dragPayload'
 import { LangUnitMenu, type LangUnitMenuItem } from '../LangUnitMenu'
 import { VoicePickerModal } from '../VoicePickerModal'
 import { VoiceImportProgress } from '../VoiceImportProgress'
+import { VoiceToast } from '../VoiceToast'
 import {
   bindLangText,
   type LangEditRequest,
@@ -261,6 +262,16 @@ export const ScriptWorkspace = forwardRef<
     targetPath: string
     progress: number
     phase: 'process' | 'write'
+  } | null>(null)
+
+  /**
+   * 导入结果浮窗（自动消失）。内容就是工作流要返回的那条消息，
+   * 由工作流在结果落定前发出；状态栏那条记录仍然保留（可点掉、不自动消失）。
+   */
+  const [voiceToast, setVoiceToast] = useState<{
+    id: number
+    message: string
+    ok: boolean
   } | null>(null)
   /** 导入结果（常量枚举消息 + 成败 + 一句补充说明），点一下清掉 */
   const [voiceImportMessage, setVoiceImportMessage] = useState<{
@@ -507,6 +518,9 @@ export const ScriptWorkspace = forwardRef<
           setVoiceImport((current) =>
             current ? { ...current, progress } : current,
           ),
+        // 工作流在结果落定前发出这条：先弹浮窗，稍后状态栏再留一条可点掉的记录
+        onNotice: (notice) =>
+          setVoiceToast({ id: Date.now(), message: notice.message, ok: notice.ok }),
       },
     )
     voiceImportCancelRef.current = run.cancel
@@ -2333,6 +2347,19 @@ export const ScriptWorkspace = forwardRef<
           sourceLabel={voiceImport.sourceLabel}
           targetPath={voiceImport.targetPath}
           onCancel={() => voiceImportCancelRef.current?.()}
+        />
+      )}
+      {/* 换 key：每次通知都重新挂载 → 动画与倒计时重来 */}
+      {voiceToast && (
+        <VoiceToast
+          key={voiceToast.id}
+          message={voiceToast.message}
+          ok={voiceToast.ok}
+          onDone={() =>
+            setVoiceToast((current) =>
+              current && current.id === voiceToast.id ? null : current,
+            )
+          }
         />
       )}
     </div>
