@@ -16,6 +16,7 @@ import {
   findScript,
   getExtension,
   isAllowedExtension,
+  normalizeResourceName,
   type ScriptPackage,
   type Workspace,
 } from '../workspace'
@@ -67,6 +68,18 @@ function isScriptFileName(name: string): boolean {
   if (name === PROJECT_FILE) return false
   if (name.startsWith('.')) return false
   return isAllowedExtension(getExtension(name))
+}
+
+/**
+ * 加载时可以进工作区的文件：白名单后缀，或语言文本文件 `<名>.lang.<语言标签>`
+ * —— 后者结尾是语言标签、不在后缀白名单里，靠 `normalizeResourceName` 的例外放行。
+ * 只给加载用：保存时的"清理多余文件"仍走 `isScriptFileName`，
+ * 这样磁盘上的语言文件不会被当成多余脚本删掉。
+ */
+function isProjectLoadableFile(name: string): boolean {
+  if (name === PROJECT_FILE) return false
+  if (name.startsWith('.')) return false
+  return normalizeResourceName(name) !== null
 }
 
 async function directoryLooksInitialized(
@@ -173,7 +186,7 @@ async function readPackageFromDirectory(
   const children = await listChildren(root)
   for (const entry of children) {
     if (entry.kind !== 'file') continue
-    if (!isScriptFileName(entry.name)) continue
+    if (!isProjectLoadableFile(entry.name)) continue
     const text = await readTextFile(root, entry.name)
     if (text == null) continue
     scripts.push(createScript(entry.name, text))

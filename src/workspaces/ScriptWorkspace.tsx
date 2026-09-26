@@ -93,6 +93,20 @@ import type {
   ScriptChromeInfo,
   ScriptWorkspaceHandle,
 } from './scriptTypes'
+import { LanguageSelect } from '../LanguageSelect'
+import { LangTextEditBox } from '../LangTextEditBox'
+import {
+  LangTextMap,
+  langFileNameFor,
+  type LangTextSink,
+} from '../i18n/langTextMap'
+import { createLangTextSink } from '../i18n/langTextSink'
+import {
+  bindLangText,
+  type LangEditRequest,
+  type LangTextBinding,
+} from '../monaco/langTextEditor'
+import { loadLocale, saveLocale } from '../storage'
 
 
 function formatSavedAt(ts: number | null) {
@@ -171,6 +185,110 @@ export const ScriptWorkspace = forwardRef<
     setWorkspace(next)
     saveWorkspace(next)
   }
+
+  const [locale, setLocale] = useState(loadLocale)
+  const [langEdit, setLangEdit] = useState<{
+    id: number
+    request: LangEditRequest
+  } | null>(null)
+  /**
+   * 语言文本写盘失败：连同它属于哪个「文件 + 语言」一起记下来。
+   * 渲染时只认当前写入周期 —— 既避免切换语言/文件后还挂着旧提示，
+   * 也避免在 effect 里同步 setState。
+   */
+  const [langDiskError, setLangDiskError] = useState<{
+    key: string
+    message: string
+  } | null>(null)
+  const langMapRef = useRef<LangTextMap | null>(null)
+  const langBindingRef = useRef<LangTextBinding | null>(null)
+  const langEditSeqRef = useRef(0)
+  /** 仅活动文件是 .hs 时才有语言文本映射 */
+  const langScriptName = editingHanshu ? titleName : ''
+  const handleLocaleChange = (tag: string) => {
+    setLocale(tag)
+    saveLocale(tag)
+  }
+
+  const projectHandle = project?.handle ?? null
+  /** 当前写入周期：活动 .hs 文件 + 语言标签 */
+  const langWriteKey = `${langScriptName}|${locale}`
+  const activeLangDiskError =
+    langDiskError?.key === langWriteKey ? langDiskError.message : null
+
+  // 语言文本映射实例：活动 .hs 文件 + 当前语言标签 → `<文件名>.lang.<语言标签>`
+  // 绑定文件夹工程时读写真实磁盘同级文件，否则退回包内虚拟文件（见 langTextSink）。
+  useEffect(() => {
+    if (!langScriptName) {
+      langMapRef.current = null
+      langBindingRef.current?.refresh()
+      return
+    }
+
+    const fileName = langFileNameFor(langScriptName, locale)
+    // 虚拟工作区实现：同包内名为 `<剧本名>.lang.<语言标签>` 的文件
+    const virtualSink: LangTextSink = {
+      read: () => {
+        const base = workspaceRef.current
+        const hit = findScript(base, base.activeScriptId)
+        if (!hit) return null
+        const found = hit.pkg.scripts.find(
+          (item) => item.name.toLowerCase() === fileName.toLowerCase(),
+        )
+        return found?.content ?? null
+      },
+      write: (content: string) => {
+        const base = workspaceRef.current
+        const id = base.activeScriptId
+        if (!id) return
+        // 先把编辑器里的当前正文并回 workspace，避免覆盖未保存的输入
+        const merged = updateScriptContent(base, id, valueRef.current)
+        commitWorkspace(upsertPackageFile(merged, id, fileName, content))
+      },
+    }
+
+    let cancelled = false
+    let unsubscribe: (() => void) | null = null
+    let created: LangTextMap | null = null
+
+    // 磁盘读取是异步的：读完再建映射；磁盘写入在 sink 里按顺序串行执行
+    void (async () => {
+      const sink = await createLangTextSink({
+        project: projectRef.current,
+        fileName,
+        virtual: virtualSink,
+        // 只在磁盘写结束后异步触发。oxlint 的 react(set-state-in-effect) 按词法
+        // 判定，仍会就此报一条告警（规则过度近似：此处不会引发级联渲染）。
+        onWriteResult: (error) => {
+          if (!error) {
+            setLangDiskError(null)
+            return
+          }
+          console.warn('[hanshu] 语言文本写入磁盘失败', error)
+          setLangDiskError({
+            key: langWriteKey,
+            message: error instanceof Error ? error.message : String(error),
+          })
+        },
+      })
+      if (cancelled) return
+      const map = new LangTextMap({ fileName, locale, sink })
+      created = map
+      langMapRef.current = map
+      unsubscribe = map.subscribe(() => langBindingRef.current?.refresh())
+      map.load()
+      langBindingRef.current?.refresh()
+    })()
+
+    return () => {
+      cancelled = true
+      unsubscribe?.()
+      if (langMapRef.current === created) langMapRef.current = null
+    }
+  }, [langScriptName, langWriteKey, locale, projectHandle])
+
+  // 工具卸载时解绑编辑器
+  useEffect(() => () => langBindingRef.current?.dispose(), [])
 
   const syncRolesFromText = (text: string) => {
     setRoles((prev) =>
@@ -1466,6 +1584,17 @@ export const ScriptWorkspace = forwardRef<
                       bindChoiceInsertHotkeys(editor, monaco)
                       bindSpeakerHotkeys(editor, monaco, () => rolesRef.current)
                       bindCopyDialogueHotkey(editor, monaco)
+                      langBindingRef.current?.dispose()
+                      langBindingRef.current = bindLangText(editor, monaco, {
+                        getMap: () => langMapRef.current,
+                        onEditRequest: (request) => {
+                          langEditSeqRef.current += 1
+                          setLangEdit({
+                            id: langEditSeqRef.current,
+                            request,
+                          })
+                        },
+                      })
                     }}
                     onChange={(next) => {
                       setValue(next ?? '')
@@ -1621,8 +1750,42 @@ export const ScriptWorkspace = forwardRef<
           <span>空格: 2</span>
           <span>UTF-8</span>
           <span>汉书</span>
+          {activeLangDiskError && (
+            <span
+              className="status-warn"
+              title={`语言文本未能写入磁盘：${activeLangDiskError}`}
+              role="button"
+              tabIndex={0}
+              onClick={() => setLangDiskError(null)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  setLangDiskError(null)
+                }
+              }}
+            >
+              语言文本未写入磁盘
+            </span>
+          )}
+          <LanguageSelect value={locale} onChange={handleLocaleChange} />
         </div>
       </footer>
+      {langEdit && (
+        <LangTextEditBox
+          key={langEdit.id}
+          mode={langEdit.request.mode}
+          initial={langEdit.request.initial}
+          rect={langEdit.request.rect}
+          onCommit={(next) => {
+            const edit = langEdit
+            setLangEdit((current) => (current?.id === edit.id ? null : current))
+            edit.request.apply(next)
+          }}
+          onCancel={() => {
+            const edit = langEdit
+            setLangEdit((current) => (current?.id === edit.id ? null : current))
+          }}
+        />
+      )}
     </div>
   )
 })
