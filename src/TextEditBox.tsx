@@ -5,13 +5,13 @@ import {
   type ChangeEvent,
   type KeyboardEvent as ReactKeyboardEvent,
 } from 'react'
-import type { LangEditMode, LangTextRect } from './monaco/langTextEditor'
-import { normalizeLocaleKey } from './i18n/langTextMap'
+import type { TextEditMode, TextRect } from './monaco/textEditor'
+import { normalizeLocaleKey } from './i18n/textMap'
 
 type Props = {
-  mode: LangEditMode
+  mode: TextEditMode
   initial: string
-  rect: LangTextRect
+  rect: TextRect
   onCommit: (value: string) => void
   onCancel: () => void
 }
@@ -22,7 +22,7 @@ type Props = {
  * - 改映射值：多行输入，回车 / 点外部提交，Shift+回车换行
  * - Esc 取消
  */
-export function LangTextEditBox({
+export function TextEditBox({
   mode,
   initial,
   rect,

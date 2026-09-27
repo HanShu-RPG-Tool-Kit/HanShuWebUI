@@ -33,7 +33,7 @@ import {
   findScriptByName,
   isHanshuFile,
   isMarkdownFile,
-  languageForFile,
+  editorLanguageForFile,
   listWorkspaceFiles,
   loadWorkspace,
   normalizeResourceName,
@@ -51,11 +51,9 @@ import {
 } from '../workspace'
 import {
   createBlankOggBlob,
-  linesFileNameForVoice,
   listMissingVoiceOggs,
-  parseVoiceLocaleFile,
-  pullVoiceFromLines,
-} from '../hanshu/voice'
+  voiceRootDir,
+} from '../i18n/voiceMap'
 import {
   buildResourcePackZip,
   downloadBlob,
@@ -95,14 +93,14 @@ import type {
   ScriptChromeInfo,
   ScriptWorkspaceHandle,
 } from './scriptTypes'
-import { LanguageSelect } from '../LanguageSelect'
-import { LangTextEditBox } from '../LangTextEditBox'
+import { LocaleSelect } from '../LocaleSelect'
+import { TextEditBox } from '../TextEditBox'
 import {
-  LangTextMap,
-  langFileNameFor,
-  type LangTextSink,
-} from '../i18n/langTextMap'
-import { createLangTextSink } from '../i18n/langTextSink'
+  TextMap,
+  textAssetPathFor,
+  type TextSink,
+} from '../i18n/textMap'
+import { createTextSink } from '../i18n/textSink'
 import {
   createVoiceLibrary,
   type VoiceLibrary,
@@ -116,16 +114,16 @@ import {
 import { createVoiceProcessor } from '../i18n/voiceTranscode'
 import { createVoiceDiskSink } from '../project/voiceDiskSink'
 import type { DragSource } from '../drag/dragPayload'
-import { LangUnitMenu, type LangUnitMenuItem } from '../LangUnitMenu'
+import { TextUnitMenu, type TextUnitMenuItem } from '../TextUnitMenu'
 import { VoicePickerModal } from '../VoicePickerModal'
 import { VoiceImportProgress } from '../VoiceImportProgress'
 import { VoiceToast } from '../VoiceToast'
 import {
-  bindLangText,
+  bindText,
   type LangEditRequest,
-  type LangTextBinding,
+  type TextBinding,
   type LangUnitDropRequest,
-} from '../monaco/langTextEditor'
+} from '../monaco/textEditor'
 import { loadLocale, saveLocale } from '../storage'
 
 
@@ -228,7 +226,7 @@ export const ScriptWorkspace = forwardRef<
    * 渲染时只认当前写入周期 —— 既避免切换语言/文件后还挂着旧提示，
    * 也避免在 effect 里同步 setState。
    */
-  const [langDiskError, setLangDiskError] = useState<{
+  const [textDiskError, setLangDiskError] = useState<{
     key: string
     message: string
   } | null>(null)
@@ -237,8 +235,8 @@ export const ScriptWorkspace = forwardRef<
     path: string
     message: string
   } | null>(null)
-  const langMapRef = useRef<LangTextMap | null>(null)
-  const langBindingRef = useRef<LangTextBinding | null>(null)
+  const textMapRef = useRef<TextMap | null>(null)
+  const textBindingRef = useRef<TextBinding | null>(null)
   const langEditSeqRef = useRef(0)
   const voiceLibraryRef = useRef<VoiceLibrary | null>(null)
   /** 音频映射管理的渲染态镜像（ref 给编辑器用，state 给弹窗用） */
@@ -286,7 +284,7 @@ export const ScriptWorkspace = forwardRef<
    */
   const [pendingProjectRestore, setPendingProjectRestore] = useState(false)
   /** 仅活动文件是 .hs 时才有语言文本映射 */
-  const langScriptName = editingHanshu ? titleName : ''
+  const textSourceName = editingHanshu ? titleName : ''
   const handleLocaleChange = (tag: string) => {
     setLocale(tag)
     saveLocale(tag)
@@ -294,22 +292,22 @@ export const ScriptWorkspace = forwardRef<
 
   const projectHandle = project?.handle ?? null
   /** 当前写入周期：活动 .hs 文件 + 语言标签 */
-  const langWriteKey = `${langScriptName}|${locale}`
-  const activeLangDiskError =
-    langDiskError?.key === langWriteKey ? langDiskError.message : null
+  const textWriteKey = `${textSourceName}|${locale}`
+  const activeTextDiskError =
+    textDiskError?.key === textWriteKey ? textDiskError.message : null
 
-  // 语言文本映射实例：活动 .hs 文件 + 当前语言标签 → `<文件名>.lang.<语言标签>`
-  // 绑定文件夹工程时读写真实磁盘同级文件，否则退回包内虚拟文件（见 langTextSink）。
+  // 语言文本映射实例：活动源文件 + 当前语言标签 → `assets/<语言标签>/lang_<后缀>/…`
+  // 绑定文件夹工程时读写真实磁盘文件，否则退回包内虚拟文件（见 textSink）。
   useEffect(() => {
-    if (!langScriptName) {
-      langMapRef.current = null
-      langBindingRef.current?.refresh()
+    if (!textSourceName) {
+      textMapRef.current = null
+      textBindingRef.current?.refresh()
       return
     }
 
-    const fileName = langFileNameFor(langScriptName, locale)
+    const fileName = textAssetPathFor(textSourceName, locale)
     // 虚拟工作区实现：同包内名为 `<剧本名>.lang.<语言标签>` 的文件
-    const virtualSink: LangTextSink = {
+    const virtualSink: TextSink = {
       read: () => {
         const base = workspaceRef.current
         const hit = findScript(base, base.activeScriptId)
@@ -331,11 +329,11 @@ export const ScriptWorkspace = forwardRef<
 
     let cancelled = false
     let unsubscribe: (() => void) | null = null
-    let created: LangTextMap | null = null
+    let created: TextMap | null = null
 
     // 磁盘读取是异步的：读完再建映射；磁盘写入在 sink 里按顺序串行执行
     void (async () => {
-      const sink = await createLangTextSink({
+      const sink = await createTextSink({
         project: projectRef.current,
         fileName,
         virtual: virtualSink,
@@ -348,29 +346,29 @@ export const ScriptWorkspace = forwardRef<
           }
           console.warn('[hanshu] 语言文本写入磁盘失败', error)
           setLangDiskError({
-            key: langWriteKey,
+            key: textWriteKey,
             message: error instanceof Error ? error.message : String(error),
           })
         },
       })
       if (cancelled) return
-      const map = new LangTextMap({ fileName, locale, sink })
+      const map = new TextMap({ fileName, locale, sink })
       created = map
-      langMapRef.current = map
-      unsubscribe = map.subscribe(() => langBindingRef.current?.refresh())
+      textMapRef.current = map
+      unsubscribe = map.subscribe(() => textBindingRef.current?.refresh())
       map.load()
-      langBindingRef.current?.refresh()
+      textBindingRef.current?.refresh()
     })()
 
     return () => {
       cancelled = true
       unsubscribe?.()
-      if (langMapRef.current === created) langMapRef.current = null
+      if (textMapRef.current === created) textMapRef.current = null
     }
-  }, [langScriptName, langWriteKey, locale, projectHandle])
+  }, [textSourceName, textWriteKey, locale, projectHandle])
 
   // 工具卸载时解绑编辑器
-  useEffect(() => () => langBindingRef.current?.dispose(), [])
+  useEffect(() => () => textBindingRef.current?.dispose(), [])
 
   /** 活动文件所在包（音频映射管理要读它的资产清单与包 id） */
   const activePackage = () => {
@@ -379,14 +377,14 @@ export const ScriptWorkspace = forwardRef<
   }
 
   // 音频映射管理：**没有映射文件** —— 每个键对应哪个音频，由「脚本路径 + 键名」
-  // 推导出的对等文件决定（见 i18n/voicePaths）。这里只负责按当前脚本/语言建出来，
+  // 推导出的对等文件决定（见 i18n/voiceMap）。这里只负责按当前脚本/语言建出来，
   // 并把「解码完成 / 播放态变化」转成覆盖层重画。
   useEffect(() => {
-    const scriptName = langScriptName
+    const scriptName = textSourceName
     if (!scriptName) {
       voiceLibraryRef.current?.dispose()
       voiceLibraryRef.current = null
-      langBindingRef.current?.refresh()
+      textBindingRef.current?.refresh()
       return
     }
 
@@ -398,12 +396,12 @@ export const ScriptWorkspace = forwardRef<
     })
     voiceLibraryRef.current = library
     // 同步镜像到 state 只为让选择器能渲染。oxlint 的 react(set-state-in-effect)
-    // 按词法判定，会就此报一条告警；这里库是同步建的、不会引发级联渲染（同 langDiskError 那处）。
+    // 按词法判定，会就此报一条告警；这里库是同步建的、不会引发级联渲染（同 textDiskError 那处）。
     setVoiceRuntime(library)
     const unsubscribe = library.subscribe(() =>
-      langBindingRef.current?.refreshVoice(),
+      textBindingRef.current?.refreshVoice(),
     )
-    langBindingRef.current?.refresh()
+    textBindingRef.current?.refresh()
 
     return () => {
       unsubscribe()
@@ -412,7 +410,7 @@ export const ScriptWorkspace = forwardRef<
         voiceLibraryRef.current = null
       }
     }
-  }, [langScriptName, locale, projectHandle])
+  }, [textSourceName, locale, projectHandle])
 
   // 资产清单一变（导入完成、拖入、删除…），配音按钮的状态就可能从缺失变可用：
   // 让音频映射管理失效并发一次通知 —— 覆盖层按钮与已打开的选择器都会跟着刷新。
@@ -559,7 +557,7 @@ export const ScriptWorkspace = forwardRef<
 
     if (intent.action === 'replace-key') {
       if (source?.kind === 'key' && source.key !== key) {
-        langBindingRef.current?.replaceUnitKey(key, source.key)
+        textBindingRef.current?.replaceUnitKey(key, source.key)
       }
       return
     }
@@ -687,16 +685,16 @@ export const ScriptWorkspace = forwardRef<
    * 上级容器的右键菜单条目。**可扩展**：往这里加一条就多一个功能；
    * 默认五条 = 改键名 / 改文本 / 改配音 / 删配音 / 删除（红）。
    */
-  const unitMenuItems = (key: string): LangUnitMenuItem[] => [
+  const unitMenuItems = (key: string): TextUnitMenuItem[] => [
     {
       id: 'edit-key',
       label: 'Edit Key',
-      onSelect: () => langBindingRef.current?.editUnit(key, 'key'),
+      onSelect: () => textBindingRef.current?.editUnit(key, 'key'),
     },
     {
       id: 'edit-text',
       label: 'Edit Text',
-      onSelect: () => langBindingRef.current?.editUnit(key, 'value'),
+      onSelect: () => textBindingRef.current?.editUnit(key, 'value'),
     },
     {
       id: 'edit-voice',
@@ -714,7 +712,7 @@ export const ScriptWorkspace = forwardRef<
       id: 'delete',
       label: 'Delete',
       danger: true,
-      onSelect: () => langBindingRef.current?.deleteUnit(key),
+      onSelect: () => textBindingRef.current?.deleteUnit(key),
     },
   ]
 
@@ -1204,67 +1202,7 @@ export const ScriptWorkspace = forwardRef<
     }
   }
 
-  const handlePullVoice = (scriptId: string) => {
-    const hit = findScript(workspaceRef.current, scriptId)
-    if (!hit || !isVoiceMapFile(hit.script.name)) {
-      window.alert('请选择 .voice 文件')
-      return
-    }
-
-    // 先落盘当前打开的同文件编辑器内容
-    let base = workspaceRef.current
-    if (
-      activeIdRef.current === scriptId &&
-      !workspaceRef.current.activeAssetId
-    ) {
-      base = updateScriptContent(base, scriptId, valueRef.current)
-    }
-
-    const refreshed = findScript(base, scriptId)
-    if (!refreshed) return
-
-    const linesName = linesFileNameForVoice(refreshed.script.name)
-    if (!linesName) {
-      window.alert(
-        `文件名须为 *.lines.<locale>.voice\n当前：${refreshed.script.name}`,
-      )
-      return
-    }
-
-    const linesHit = refreshed.pkg.scripts.find(
-      (s) => s.name.toLowerCase() === linesName.toLowerCase(),
-    )
-    if (!linesHit) {
-      window.alert(`找不到对应台词表：${linesName}`)
-      return
-    }
-
-    const result = pullVoiceFromLines(
-      refreshed.script.content,
-      linesHit.content,
-    )
-    if (result.added === 0 && result.idified === 0) {
-      window.alert(`已对齐，无需更新（共 ${result.total} 条）`)
-      return
-    }
-
-    pushFileVersion(refreshed.script.name, refreshed.script.content, 'voice-pull', {
-      force: true,
-    })
-    const next = updateScriptContent(base, scriptId, result.content)
-    commitWorkspace(next)
-    if (activeIdRef.current === scriptId) {
-      setValue(result.content)
-      editorRef.current?.setValue(result.content)
-    }
-    window.alert(
-      result.added === 0
-        ? `已对齐，无需更新（共 ${result.total} 条）`
-        : `拉取完成：追加 ${result.added} 条（value 为原文），合计 ${result.total}`,
-    )
-  }
-
-  const handleGenerateBlankVoiceOggs = async (scriptId: string) => {
+  const handleGeneratePlaceholderVoice = async (scriptId: string) => {
     const hit = findScript(workspaceRef.current, scriptId)
     if (!hit || !isVoiceMapFile(hit.script.name)) {
       window.alert('请选择 .voice 文件')
@@ -1279,17 +1217,9 @@ export const ScriptWorkspace = forwardRef<
       voiceContent = valueRef.current
     }
 
-    const parsed = parseVoiceLocaleFile(hit.script.name)
-    if (!parsed) {
-      window.alert(
-        `文件名须为 *.lines.<locale>.voice\n当前：${hit.script.name}`,
-      )
-      return
-    }
-
     const missing = listMissingVoiceOggs(
       voiceContent,
-      parsed.locale,
+      locale,
       hit.pkg.assets.map((a) => a.path),
     )
     if (missing.length === 0) {
@@ -1299,7 +1229,7 @@ export const ScriptWorkspace = forwardRef<
 
     if (
       !window.confirm(
-        `将在 assets/${parsed.locale}/voice/ 生成 ${missing.length} 个空白 ogg，是否继续？`,
+        `将在 ${voiceRootDir(locale)}/ 生成 ${missing.length} 个空白 ogg，是否继续？`,
       )
     ) {
       return
@@ -1959,9 +1889,8 @@ export const ScriptWorkspace = forwardRef<
           onImportAssets={(packageId, files, targetDir) => {
             void handleImportAssets(packageId, files, targetDir)
           }}
-          onPullVoice={handlePullVoice}
-          onGenerateBlankVoiceOggs={(scriptId) => {
-            void handleGenerateBlankVoiceOggs(scriptId)
+          onGeneratePlaceholderVoice={(scriptId) => {
+            void handleGeneratePlaceholderVoice(scriptId)
           }}
           onDropIntoFolder={handleDropIntoFolder}
         />
@@ -2018,7 +1947,7 @@ export const ScriptWorkspace = forwardRef<
                 <div className="editor-pane">
                   <Editor
                     height="100%"
-                    language={languageForFile(titleName)}
+                    language={editorLanguageForFile(titleName)}
                     theme={HANSHU_THEME_ID}
                     value={value}
                     beforeMount={registerHanshuLanguage}
@@ -2028,9 +1957,9 @@ export const ScriptWorkspace = forwardRef<
                       bindChoiceInsertHotkeys(editor, monaco)
                       bindSpeakerHotkeys(editor, monaco, () => rolesRef.current)
                       bindCopyDialogueHotkey(editor, monaco)
-                      langBindingRef.current?.dispose()
-                      langBindingRef.current = bindLangText(editor, monaco, {
-                        getMap: () => langMapRef.current,
+                      textBindingRef.current?.dispose()
+                      textBindingRef.current = bindText(editor, monaco, {
+                        getMap: () => textMapRef.current,
                         getVoice: () => voiceLibraryRef.current,
                         onEditRequest: (request) => {
                           langEditSeqRef.current += 1
@@ -2207,10 +2136,10 @@ export const ScriptWorkspace = forwardRef<
           <span>空格: 2</span>
           <span>UTF-8</span>
           <span>汉书</span>
-          {activeLangDiskError && (
+          {activeTextDiskError && (
             <span
               className="status-warn"
-              title={`语言文本未能写入磁盘：${activeLangDiskError}`}
+              title={`语言文本未能写入磁盘：${activeTextDiskError}`}
               role="button"
               tabIndex={0}
               onClick={() => setLangDiskError(null)}
@@ -2274,11 +2203,11 @@ export const ScriptWorkspace = forwardRef<
               )}
             </span>
           )}
-          <LanguageSelect value={locale} onChange={handleLocaleChange} />
+          <LocaleSelect value={locale} onChange={handleLocaleChange} />
         </div>
       </footer>
       {langEdit && (
-        <LangTextEditBox
+        <TextEditBox
           key={langEdit.id}
           mode={langEdit.request.mode}
           initial={langEdit.request.initial}
@@ -2295,7 +2224,7 @@ export const ScriptWorkspace = forwardRef<
         />
       )}
       {unitMenu && (
-        <LangUnitMenu
+        <TextUnitMenu
           x={unitMenu.x}
           y={unitMenu.y}
           items={unitMenuItems(unitMenu.key)}

@@ -1,14 +1,15 @@
 import type { BoundProject } from '../project'
 import { readTextFile } from '../project/directoryIo'
 import { createFileSink } from '../project/fileSink'
-import type { LangTextSink } from './langTextMap'
+import type { TextSink } from './textMap'
 
 /**
  * 语言文本的落盘选择：
- * - 绑定了文件夹工程 → 读写**真实磁盘同级文件** `<剧本名>.lang.<语言标签>`（与剧本同目录）
- * - 未绑定（浏览器虚拟工作区）→ 退回包内虚拟文件
+ * - 绑定了文件夹工程 → 读写**真实磁盘文件** `assets/<语言标签>/lang_<后缀>/<脚本目录>/<剧本名>.lang`
+ *   （路径由 `localeLayout` 统一给出，不再与剧本同级）
+ * - 未绑定（浏览器虚拟工作区）→ 退回包内虚拟文件（同一个包内相对路径）
  *
- * 磁盘**读**发生在建映射之前，所以 `LangTextSink` 仍是同步接口。
+ * 磁盘**读**发生在建映射之前，所以 `TextSink` 仍是同步接口。
  * 磁盘**写**交给通用写盘层 `fileSink`：串行队列 + 写前申请权限 + `.new` → 删旧 → 改名
  * 的原子替换（改值改到一半崩了不会把语言文件截断）。
  *
@@ -18,20 +19,20 @@ import type { LangTextSink } from './langTextMap'
  * 失败不影响内存缓存（缓存始终权威），但必须能被界面看见。
  */
 
-export type LangTextSinkTarget = {
+export type TextSinkTarget = {
   /** 当前绑定的文件夹工程；null = 虚拟工作区 */
   project: BoundProject | null
-  /** 语言文本文件名，如 `cp1.lang.zh_cn` */
+  /** 语言文本的包内相对路径，如 `assets/zh_cn/lang_hs/folder/cp1.lang` */
   fileName: string
   /** 虚拟工作区实现（未绑定工程时使用） */
-  virtual: LangTextSink
+  virtual: TextSink
   /** 每次磁盘写入结束回调：成功传 null，失败传错误；未提供时失败只 console.warn */
   onWriteResult?: (error: unknown | null) => void
 }
 
-export async function createLangTextSink(
-  target: LangTextSinkTarget,
-): Promise<LangTextSink> {
+export async function createTextSink(
+  target: TextSinkTarget,
+): Promise<TextSink> {
   const { project, fileName, virtual } = target
   if (!project) return virtual
 

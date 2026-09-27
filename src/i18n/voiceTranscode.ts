@@ -10,7 +10,7 @@ import { describeVoiceFormat, inspectOggBytes, isMonoVorbisOgg } from './voiceBy
  *   都能解；它是运行环境（浏览器 / WebView2）自带的能力，不是本项目分发的组件。
  * - **编码**：`@audio/encode-ogg`（MIT 包装 + libvorbis(BSD-3) 的 WASM）→ Ogg Vorbis。
  *
- * 目标格式对齐项目既有约定：占位 ogg（`src/hanshu/blankVoiceOgg.ts`）解析出来是
+ * 目标格式对齐项目既有约定：占位 ogg（`src/i18n/voiceBytes.ts`）解析出来是
  * 「OggS + \x01vorbis + channels=1 + sampleRate=44100」，即**单声道 Vorbis @ 44.1kHz**。
  *
  * 平台解码能力的口径（Chromium `media/base/mime_util_internal.cc`）：

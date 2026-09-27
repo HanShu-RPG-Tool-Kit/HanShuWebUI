@@ -13,7 +13,7 @@ type Props = {
  * 因为状态栏在窗口底部，下拉向上弹出（见 App.css 里的 `.statusbar .lang-select`）。
  * 首行是「常用语言」文本标签 + 三个常用语言，其后按名字列出全部语言。
  */
-export function LanguageSelect({ value, onChange }: Props) {
+export function LocaleSelect({ value, onChange }: Props) {
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
   const current = resolveLocale(value)

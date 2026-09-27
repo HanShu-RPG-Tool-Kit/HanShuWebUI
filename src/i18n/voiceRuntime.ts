@@ -1,4 +1,4 @@
-import { isVoiceOggPath, voiceAssetExtension } from './voicePaths'
+import { isVoiceOggPath, voiceAssetExtension } from './voiceMap'
 import { inspectOggBytes, type VoiceOggInfo } from './voiceBytes'
 
 /**

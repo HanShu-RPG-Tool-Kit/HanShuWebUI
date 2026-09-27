@@ -1,5 +1,5 @@
-import { normalizeLocaleKey } from '../i18n/langTextMap'
-import type { DialogueBlock, LangSpan } from './langTextSpans'
+import { normalizeLocaleKey } from '../i18n/textMap'
+import type { DialogueBlock, LangSpan } from './textSpans'
 
 /**
  * 已成键文本（框）的纯规则：光标导航、删除保护、成键账目结算。

@@ -3,18 +3,10 @@ import { getAssetBlob } from '../assets/idb'
 import {
   compileHsToHsc,
   hscFileNameForHs,
-} from '../hanshu/lines'
-import {
-  isHanshuFile,
-  isLangFile,
-  isVoiceMapFile,
-  type ScriptPackage,
-  type Workspace,
-} from '../workspace'
+} from '../hanshu/compiler'
+import { isHanshuFile, type Workspace } from '../workspace'
 
 export const RPGTOOLKIT_NAMESPACE = 'rpgtoolkit'
-
-const LOCALE_FILE_RE = /\.lines\.([a-z][a-z0-9_]*)\.(lang|voice)$/i
 
 export type ExportWarning = string
 
@@ -63,12 +55,26 @@ function parseHashMap(raw: string, fileName: string, warnings: string[]): HashMa
   }
 }
 
-export function parseLinesLocaleFile(
-  fileName: string,
-): { locale: string; kind: 'lang' | 'voice' } | null {
-  const m = fileName.trim().match(LOCALE_FILE_RE)
-  if (!m) return null
-  return { locale: m[1].toLowerCase(), kind: m[2].toLowerCase() as 'lang' | 'voice' }
+/** `assets/<locale>/lang_<ext>/…/名.lang` → `<locale>`；不合布局返回 null */
+function localeOfLangAsset(name: string): string | null {
+  const parts = name.trim().replace(/\\/g, '/').split('/')
+  if (parts.length < 4) return null
+  if (parts[0]?.toLowerCase() !== 'assets') return null
+  if (!/^lang_[a-z0-9]+$/i.test(parts[2] ?? '')) return null
+  return parts[1]!.toLowerCase()
+}
+
+/** `assets/<locale>/voice_<ext>/…/<键名>.ogg` → `{ locale, key }`；不合布局返回 null */
+function localeOfVoiceAsset(
+  path: string,
+): { locale: string; key: string } | null {
+  const parts = path.trim().replace(/\\/g, '/').split('/')
+  if (parts.length < 4) return null
+  if (parts[0]?.toLowerCase() !== 'assets') return null
+  if (!/^voice_[a-z0-9]+$/i.test(parts[2] ?? '')) return null
+  const file = parts[parts.length - 1] ?? ''
+  if (!/\.ogg$/i.test(file)) return null
+  return { locale: parts[1]!.toLowerCase(), key: file.replace(/\.ogg$/i, '') }
 }
 
 function mergeLangMaps(
@@ -84,18 +90,6 @@ function mergeLangMaps(
     }
     into[hash] = text
   }
-}
-
-function findVoiceAssetPath(
-  pkg: ScriptPackage,
-  locale: string,
-  stem: string,
-): string | null {
-  const want = `assets/${locale}/voice/${stem}.ogg`.toLowerCase()
-  const hit = pkg.assets.find(
-    (a) => a.path.replace(/\\/g, '/').toLowerCase() === want,
-  )
-  return hit?.path ?? null
 }
 
 function writePackMeta(zip: JSZip, pkgName: string) {
@@ -153,21 +147,15 @@ export async function buildResourcePackZip(
       hasHanshu = true
     }
 
-    // —— .lang（按包合并 locale）——
+    // —— 语言文本 `assets/<locale>/lang_<ext>/…/名.lang`（按包合并 locale）——
     const langByLocale = new Map<string, HashMap>()
     for (const script of pkg.scripts) {
-      if (!isLangFile(script.name)) continue
-      const parsed = parseLinesLocaleFile(script.name)
-      if (!parsed || parsed.kind !== 'lang') {
-        warnings.push(
-          `[${pkg.name}] ${script.name}: 须为 *.lines.<locale>.lang`,
-        )
-        continue
-      }
+      const locale = localeOfLangAsset(script.name)
+      if (!locale) continue
       const map = parseHashMap(script.content, script.name, warnings)
-      const bucket = langByLocale.get(parsed.locale) ?? {}
+      const bucket = langByLocale.get(locale) ?? {}
       mergeLangMaps(bucket, map, script.name, warnings)
-      langByLocale.set(parsed.locale, bucket)
+      langByLocale.set(locale, bucket)
     }
     for (const [locale, map] of [...langByLocale.entries()].sort((a, b) =>
       a[0].localeCompare(b[0]),
@@ -186,54 +174,34 @@ export async function buildResourcePackZip(
       hasLang = true
     }
 
-    // —— .voice → lines/voice/<hash>.<locale>.ogg ——
+    // —— 音频 `assets/<locale>/voice_<ext>/…/<键名>.ogg` →
+    //      lines/voice/<键名>.<locale>.ogg（键名就是文件名，不再经过映射表）——
     const seenVoice = new Set<string>()
-    for (const script of pkg.scripts) {
-      if (!isVoiceMapFile(script.name)) continue
-      const parsed = parseLinesLocaleFile(script.name)
-      if (!parsed || parsed.kind !== 'voice') {
-        warnings.push(
-          `[${pkg.name}] ${script.name}: 须为 *.lines.<locale>.voice`,
-        )
+    for (const asset of pkg.assets) {
+      const parsed = localeOfVoiceAsset(asset.path)
+      if (!parsed) continue
+      const { locale, key } = parsed
+      const dedupe = `${key}.${locale}`
+      if (seenVoice.has(dedupe)) {
+        warnings.push(`[${pkg.name}] ${asset.path}: ${dedupe} 重复`)
         continue
       }
-      const { locale } = parsed
-      const map = parseHashMap(script.content, script.name, warnings)
+      seenVoice.add(dedupe)
 
-      for (const [hash, stem] of Object.entries(map)) {
-        const key = `${hash}.${locale}`
-        if (seenVoice.has(key)) {
-          warnings.push(`[${pkg.name}] ${script.name}: ${key} 重复`)
-          continue
-        }
-        const stemClean = stem.trim()
-        if (!stemClean) {
-          warnings.push(`[${pkg.name}] ${script.name}: hash ${hash} stem 为空`)
-          continue
-        }
-        const assetFilePath = findVoiceAssetPath(pkg, locale, stemClean)
-        if (!assetFilePath) {
-          warnings.push(
-            `[${pkg.name}] 缺少音频: assets/${locale}/voice/${stemClean}.ogg（#${hash}）`,
-          )
-          continue
-        }
-        const blob = await getAssetBlob(pkg.id, assetFilePath)
-        if (!blob) {
-          warnings.push(`[${pkg.name}] IndexedDB 无数据: ${assetFilePath}`)
-          continue
-        }
-        zip.file(
-          assetPath(
-            pkg.name,
-            `${RPGTOOLKIT_NAMESPACE}/lines/voice/${hash}.${locale}.ogg`,
-          ),
-          blob,
-        )
-        fileCount++
-        hasVoice = true
-        seenVoice.add(key)
+      const blob = await getAssetBlob(pkg.id, asset.path)
+      if (!blob) {
+        warnings.push(`[${pkg.name}] IndexedDB 无数据: ${asset.path}`)
+        continue
       }
+      zip.file(
+        assetPath(
+          pkg.name,
+          `${RPGTOOLKIT_NAMESPACE}/lines/voice/${key}.${locale}.ogg`,
+        ),
+        blob,
+      )
+      fileCount++
+      hasVoice = true
     }
 
     // 引擎侧的固定目录：lines 下放 .lang / .voice，hanshu 下放 .hsc

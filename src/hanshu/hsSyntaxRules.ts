@@ -1,5 +1,5 @@
 /**
- * `.hs` 语法规则的**唯一来源**：解析（`monaco/langTextSpans`）、诊断
+ * `.hs` 语法规则的**唯一来源**：解析（`monaco/textSpans`）、诊断
  * （`monaco/hsDiagnostics`）与语法着色（`monaco/hanshuLanguage`）都从这里取，
  * 避免同一套规则在多处各写一份、再慢慢漂移。
  *

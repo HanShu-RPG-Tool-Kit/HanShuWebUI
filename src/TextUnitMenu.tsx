@@ -10,7 +10,7 @@ import { useEffect, useLayoutEffect, useRef } from 'react'
  * `position: fixed` + window 的 click / scroll / Escape 关闭。
  */
 
-export type LangUnitMenuItem = {
+export type TextUnitMenuItem = {
   id: string
   label: string
   /** 危险操作：红色 */
@@ -20,18 +20,18 @@ export type LangUnitMenuItem = {
   onSelect(): void
 }
 
-export type LangUnitMenuProps = {
+export type TextUnitMenuProps = {
   /** 视口坐标（右键落点） */
   x: number
   y: number
-  items: LangUnitMenuItem[]
+  items: TextUnitMenuItem[]
   onClose(): void
 }
 
 /** 离视口边缘至少留这么宽，免得菜单被切掉 */
 const EDGE_GAP = 8
 
-export function LangUnitMenu({ x, y, items, onClose }: LangUnitMenuProps) {
+export function TextUnitMenu({ x, y, items, onClose }: TextUnitMenuProps) {
   const ref = useRef<HTMLUListElement | null>(null)
 
   // 贴边时把菜单收进视口：菜单尺寸挂载后才知道，所以直接改内联样式（不动 state）

@@ -6,7 +6,7 @@ import {
   voiceBaseName,
   voiceTargetPath,
   type VoiceResolved,
-} from './voicePaths'
+} from './voiceMap'
 import { canPlatformDecodeAudio } from './voiceTranscode'
 import {
   createVoiceRuntime,
@@ -22,7 +22,7 @@ import {
  * 音频映射管理（界面唯一入口）。
  *
  * **没有映射文件**：某个键该用哪个音频，完全由「脚本路径 + 键名」推导出的**对等文件**决定
- * （见 voicePaths）。所以这里不再持有键值表，只做三件事：
+ * （见 voiceMap）。所以这里不再持有键值表，只做三件事：
  * 1. 把键解析成对等文件（同目录同名去后缀优先，整根兜底）→ 四态
  * 2. 资产清单 + IndexedDB blob 的读取
  * 3. 单流播放 / 解码缓存（时长 / 声道 / 波形）

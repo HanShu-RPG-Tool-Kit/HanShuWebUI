@@ -1,5 +1,5 @@
 import type { editor } from 'monaco-editor'
-import type { LangSpan } from './langTextSpans'
+import type { LangSpan } from './textSpans'
 
 /** 覆盖层里自绘的光标 */
 export const CARET_CLASS = 'hs-lang-caret'
@@ -8,7 +8,7 @@ const CARET_HIDDEN_CLASS = 'hs-lang-caret-hidden'
 /** 尾标 `//` 与框之间的间距，必须与 .hs-lang-tail 的 margin-left 一致 */
 const TAIL_GAP_PX = 2
 
-/** 自绘光标需要的每行信息（结构上兼容 langTextEditor 的 LineEntry） */
+/** 自绘光标需要的每行信息（结构上兼容 textEditor 的 LineEntry） */
 export type CaretLine = {
   row: HTMLElement
   box: HTMLElement
@@ -26,7 +26,7 @@ export type CaretLine = {
   span: LangSpan
 }
 
-export type LangCaretOverlay = {
+export type CaretOverlay = {
   /** 光标位置 / 焦点 / 内容变化后重画 */
   update(): void
   dispose(): void
@@ -34,7 +34,7 @@ export type LangCaretOverlay = {
 
 /**
  * 原生光标由 Monaco 按「列号 × 字符宽」的算术位置绘制，而文档里的原文已经被
- * 改造成宽度等于渲染长度的槽位（见 langSlotStyles），两者不再一致，
+ * 改造成宽度等于渲染长度的槽位（见 textSlotStyles），两者不再一致，
  * 光标会停在看不见的原文列上、甚至落在框内部。
  *
  * 做法：这一段位置由我们自己负责 —— 藏掉原生光标层，在框所在的那一行自绘一个同款光标，
@@ -45,7 +45,7 @@ export type LangCaretOverlay = {
  *   `//` 之后       -> 尾标右边（语句真正结束的位置）
  * Ctrl 模式显示的就是键名本身，原生光标位置是对的，所以不接管。
  */
-export function createLangCaretOverlay(options: {
+export function createCaretOverlay(options: {
   ed: editor.IStandaloneCodeEditor
   domNode: HTMLElement | null
   /** 当前覆盖层里的行（每次 render 会重建） */
@@ -54,7 +54,7 @@ export function createLangCaretOverlay(options: {
   lineHeightPx(): number
   /** 尾标与容器之间的间距（与尾标槽位宽度同源，兜底推算时用） */
   tailGapPx?: number
-}): LangCaretOverlay {
+}): CaretOverlay {
   const { ed, domNode, getLines, isCtrlHeld, lineHeightPx } = options
   const tailGap = options.tailGapPx ?? TAIL_GAP_PX
   let caretEl: HTMLElement | null = null

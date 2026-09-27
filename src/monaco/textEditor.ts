@@ -4,9 +4,9 @@ import {
   createLocaleKey,
   isLocaleKey,
   normalizeLocaleKey,
-  type LangTextMap,
-} from '../i18n/langTextMap'
-import { createLangCaretOverlay, type CaretLine } from './langCaretOverlay'
+  type TextMap,
+} from '../i18n/textMap'
+import { createCaretOverlay, type CaretLine } from './textCaretOverlay'
 import {
   deletionHitsKey,
   deletionRange,
@@ -17,17 +17,17 @@ import {
   snapTarget,
   statementLineRange,
   type MigrationRecord,
-} from './langKeyRules'
+} from './textKeyRules'
 import {
-  createLangSlotStyles,
+  createSlotStyles,
   createTextWidthMeter,
   SLOT_CLASS,
-} from './langSlotStyles'
+} from './textSlotStyles'
 import {
   VOICE_STATE_LABEL,
   voiceButtonSvg,
   type VoiceButtonState,
-} from './voiceIcons'
+} from '../ui/voiceIcons'
 import type { VoiceLibrary, VoiceUnitStatus } from '../i18n/voiceLibrary'
 import { formatVoiceDuration } from '../i18n/voiceRuntime'
 import {
@@ -45,7 +45,7 @@ import {
   parseLangSpans,
   type DialogueBlock,
   type LangSpan,
-} from './langTextSpans'
+} from './textSpans'
 import { analyzeHsDiagnostics, type HsDiagnostic } from './hsDiagnostics'
 
 /**
@@ -53,7 +53,7 @@ import { analyzeHsDiagnostics, type HsDiagnostic } from './hsDiagnostics'
  *
  * 渲染是「渲染级替换」：文档一个字都不改，只改动原文的占位宽度。
  * - 原文键名与紧随的 `//` 都被隐藏，并改造成「宽度 = 渲染长度」的槽位
- *   （见 langSlotStyles），因此同一行后面的标点会紧贴渲染文本
+ *   （见 textSlotStyles），因此同一行后面的标点会紧贴渲染文本
  * - 那个宽度是**实测像素值**：按当前字体量显示文本，不是「全角 = 2ch」那种列数推算
  *   （ch 是「0」的宽度，Consolas 0.5498em ≠ 0.5em，推算会让中文框越拉越长）
  * - 显示值画在覆盖层 `.hs-lang-layer` 的 `.hs-lang-line` 里：整个值（含真换行）
@@ -63,11 +63,11 @@ import { analyzeHsDiagnostics, type HsDiagnostic } from './hsDiagnostics'
  * - 定位量的是槽位的真实矩形（Monaco 的列坐标是算术推导，与渲染宽度已不一致）
  * - 不按 Ctrl：命中=半透明黄底、缺失=半透明红底，鼠标悬停时底色加深
  * - 按住 Ctrl：显示原始键名 + 蓝色虚线框
- * - 光标落在片段内时由 langCaretOverlay 接管（原生光标会停在不可见的原文列上）
+ * - 光标落在片段内时由 textCaretOverlay 接管（原生光标会停在不可见的原文列上）
  *
  * 交互：点击框 = 覆盖弹出编辑框（Ctrl=改键名，否则=改映射值）。
  *
- * 自动成键（详见 langKeyRules）：
+ * 自动成键（详见 textKeyRules）：
  * - 只有带 `//` 终结的可本地化文本才成键；文本还不是 8 位键名时生成无冲突随机键名，
  *   写入映射并把原文替换成键名
  * - 打字触发的路径会跳过"光标还在里面"的语句，等光标离开整条语句再成键
@@ -75,29 +75,29 @@ import { analyzeHsDiagnostics, type HsDiagnostic } from './hsDiagnostics'
  * - 撤销 / 重做时按"键名是否还在正文里"回收 / 放回映射条目
  */
 
-export type LangTextRect = {
+export type TextRect = {
   left: number
   top: number
   width: number
   height: number
 }
 
-export type LangEditMode = 'key' | 'value'
+export type TextEditMode = 'key' | 'value'
 
 export type LangEditRequest = {
-  mode: LangEditMode
+  mode: TextEditMode
   /** 被编辑的键名 */
   key: string
   /** 编辑框初始值（改键名=键名本身；改值=映射值，缺失为空串） */
   initial: string
   /** 视口坐标（position: fixed 覆盖用） */
-  rect: LangTextRect
+  rect: TextRect
   /** 提交：改键名→替换正文里的键；改值→写入映射 */
   apply(next: string): void
 }
 
 /** 上级容器右键：请求弹出可扩展菜单 */
-export type LangUnitMenuRequest = {
+export type TextUnitMenuRequest = {
   /** 被右键的键名 */
   key: string
   /** 视口坐标（菜单按它摆位） */
@@ -115,28 +115,28 @@ export type LangUnitDropRequest = {
   source: DragSource | null
 }
 
-export type LangTextHost = {
+export type TextHost = {
   /** 当前活动文件的语言文本映射；不适用（非 .hs、无活动文件、看资产）时返回 null */
-  getMap(): LangTextMap | null
+  getMap(): TextMap | null
   /** 请求弹出等位置覆盖编辑框 */
   onEditRequest(request: LangEditRequest): void
   /** 音频映射管理；非 .hs / 尚未就绪时返回 null（按钮一律渲染成"缺失"） */
   getVoice?(): VoiceLibrary | null
   /** 上级容器被右键 */
-  onUnitMenu?(request: LangUnitMenuRequest): void
+  onUnitMenu?(request: TextUnitMenuRequest): void
   /** 上级容器被投放（拖拽） */
   onUnitDrop?(request: LangUnitDropRequest): void
   /** 点了配音按钮但当前是缺失 / 无效态：请求给这个键挑一个音频 */
   onVoicePick?(key: string): void
 }
 
-export type LangTextBinding = {
+export type TextBinding = {
   /** 外部状态变化（换语言 / 换文件 / 映射内容变）时重算 */
   refresh(): void
   /** 只重画覆盖框、不动文档：配音播放态 / 解码结果变化时用 */
   refreshVoice(): void
   /** 右键菜单用：按键名打开「改键名 / 改文本」编辑框 */
-  editUnit(key: string, mode: LangEditMode): void
+  editUnit(key: string, mode: TextEditMode): void
   /** 右键菜单用：删除该键的原子范围（键名 + 它自己的那个 `//`） */
   deleteUnit(key: string): void
   /** 拖拽"替换键名"用：把目标键的原文换成另一个键名 */
@@ -220,7 +220,7 @@ const TAIL_TEXT = '//'
  */
 const VOICE_SLOT_EXTRA_PX = VOICE_BUTTON_PX + VOICE_BUTTON_GAP_PX
 
-/** 一行覆盖框：形状即 langCaretOverlay 需要的输入，另加一个用于移除的根节点 */
+/** 一行覆盖框：形状即 textCaretOverlay 需要的输入，另加一个用于移除的根节点 */
 /** 一次自动成键写进映射的条目（撤销时要能原样回收 / 重做时放回） */
 type LineEntry = CaretLine & { el: HTMLElement }
 type ZoneEntry = {
@@ -231,11 +231,11 @@ type ZoneEntry = {
   id: string
 }
 
-export function bindLangText(
+export function bindText(
   ed: editor.IStandaloneCodeEditor,
   monaco: Monaco,
-  host: LangTextHost,
-): LangTextBinding {
+  host: TextHost,
+): TextBinding {
   const collection = ed.createDecorationsCollection([])
   const domNode = ed.getDomNode()
   const layer = document.createElement('div')
@@ -279,8 +279,8 @@ export function bindLangText(
     return Number.isFinite(value) && value > 0 ? value : 28
   }
 
-  /** 文档里原文的占位槽位（宽度 = 渲染长度），见 langSlotStyles */
-  const slotStyles = createLangSlotStyles()
+  /** 文档里原文的占位槽位（宽度 = 渲染长度），见 textSlotStyles */
+  const slotStyles = createSlotStyles()
   /** 编辑器字体指纹：字体 / 字号一变，量出来的宽度就得重算 */
   const fontKey = (): string => {
     const info = ed.getOption?.(monaco.editor.EditorOption.fontInfo)
@@ -306,8 +306,8 @@ export function bindLangText(
       return Number.isFinite(size) && size > 0 ? size : 18
     },
   })
-  /** 光标落在片段内时接管原生光标，见 langCaretOverlay */
-  const caretOverlay = createLangCaretOverlay({
+  /** 光标落在片段内时接管原生光标，见 textCaretOverlay */
+  const caretOverlay = createCaretOverlay({
     ed,
     domNode,
     // 被藏起来的条目（偏移越界的兜底）不参与：否则会按 0 尺寸在左上角画出光标
@@ -336,7 +336,7 @@ export function bindLangText(
   const rectForSpan = (
     span: LangSpan,
     element: HTMLElement | null,
-  ): LangTextRect => {
+  ): TextRect => {
     if (element && typeof element.getBoundingClientRect === 'function') {
       const rect = element.getBoundingClientRect()
       if (rect.width > 0 && rect.height > 0) {
@@ -369,14 +369,14 @@ export function bindLangText(
   const openEditor = (
     span: LangSpan,
     element: HTMLElement | null,
-    forced?: LangEditMode,
+    forced?: TextEditMode,
   ) => {
     const map = host.getMap()
     if (!map) return
     const key = normalizeLocaleKey(span.value)
     if (!key) return
 
-    const mode: LangEditMode = forced ?? (ctrlHeld ? 'key' : 'value')
+    const mode: TextEditMode = forced ?? (ctrlHeld ? 'key' : 'value')
     const rect = rectForSpan(span, element)
     if (mode === 'key') {
       // 改键名是单行框：只按首行高度覆盖（覆盖框可能是多行的）
@@ -816,7 +816,7 @@ export function bindLangText(
       if (span.terminator) texts.push(TAIL_TEXT)
     }
 
-    // 槽位与框共用同一份实测宽度（px），见 langSlotStyles
+    // 槽位与框共用同一份实测宽度（px），见 textSlotStyles
     const widths = meter.measure(texts)
     const widthOf = (text: string): number => widths.get(text) ?? 0
 
@@ -990,7 +990,7 @@ export function bindLangText(
   }
 
   /** 右键菜单：改键名 / 改文本（复用等位置覆盖编辑框） */
-  const editUnit = (key: string, mode: LangEditMode) => {    const entry = entryFor(key)
+  const editUnit = (key: string, mode: TextEditMode) => {    const entry = entryFor(key)
     const span = entry?.span ?? spanFor(key)
     if (!span) return
     openEditor(span, entry?.box ?? null, mode)
@@ -1286,7 +1286,7 @@ export function bindLangText(
    * 撤销 / 重做自动成键时，把映射一起收拾干净（E2）：
    * - 撤销：正文退回了原文 → 这次成键写入的条目已无人引用 → 删掉（否则 lang 文件里会残留孤儿条目）
    * - 重做：键名又回到正文 → 把条目放回去，避免变成"缺文本"的红框
-   * 判断依据是"键名是否还在正文里"（见 langKeyRules.pickUndone / pickRedone），
+   * 判断依据是"键名是否还在正文里"（见 textKeyRules.pickUndone / pickRedone），
    * 不依赖具体编辑批次，多级撤销也能逐条对上。
    */
   const reconcileMigrations = (event: editor.IModelContentChangedEvent) => {

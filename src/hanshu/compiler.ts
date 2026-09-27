@@ -1,8 +1,8 @@
 import {
   isLocaleKey,
   LOCALE_KEY_TEXT_RE,
-} from '../i18n/langTextMap'
-import { findSpanAt, parseLangSpans, type LangSpan } from '../monaco/langTextSpans'
+} from '../i18n/textMap'
+import { findSpanAt, parseLangSpans, type LangSpan } from '../monaco/textSpans'
 import {
   BLOCK_END,
   COMMENT_LINE,

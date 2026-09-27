@@ -1,4 +1,4 @@
-import { dropExtension, isVoiceOggPath } from './voicePaths'
+import { dropExtension, isVoiceOggPath } from './voiceMap'
 
 /**
  * 「音频导入」固定工作流。

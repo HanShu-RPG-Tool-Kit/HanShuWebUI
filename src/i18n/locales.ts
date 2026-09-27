@@ -2,8 +2,8 @@
  * 语言（locale）总表 + 语言标签格式化接口。
  *
  * 标签统一为「语言_地区」的小写下划线形式（如 `zh_cn`、`en_us`），
- * 与项目既有约定保持一致：`*.lines.<locale>.lang`、`*.lines.<locale>.voice`、
- * `assets/<locale>/voice/...`、`<ns>/lines/lang/<locale>.lang`。
+ * 本地化文件路径统一由 `localeLayout` 给出：
+ * `assets/<locale>/lang_<后缀>/…`（文本）、`assets/<locale>/voice_<后缀>/…`（音频）。
  *
  * 命名约定（三套名字都留着，用途不同）：
  * - `nativeName`  本国语言写法（English / Deutsch (Österreich) / 日本語），**界面显示用**

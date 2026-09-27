@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { VOICE_EXTRA_GLYPHS, type VoiceGlyphPart } from './monaco/voiceIcons'
+import { VOICE_EXTRA_GLYPHS, type VoiceGlyphPart } from './ui/voiceIcons'
 import {
   isCurrentTarget,
   type VoiceAssetEntry,

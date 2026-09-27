@@ -1,4 +1,4 @@
-import { DEFAULT_LOCALE_TAG, formatLocaleTag } from './locales'
+import { langAssetPath } from './localeLayout'
 
 /**
  * 语言文本映射（键名 → 本地化文本）。
@@ -6,8 +6,8 @@ import { DEFAULT_LOCALE_TAG, formatLocaleTag } from './locales'
  * 设计要点：
  * - 键名固定为 8 位小写十六进制
  * - `<文件名>.lang.<语言标签>`：`cp1.hs` + `zh_cn` → `cp1.lang.zh_cn`
- * - `LangTextMap` 是「抽象的语言文本映射实例」：内部持有内存缓存（权威），
- *   通过 `LangTextSink` 抽象出落盘方式（包内虚拟文件 / 真实磁盘 / 内存），
+ * - `TextMap` 是「抽象的语言文本映射实例」：内部持有内存缓存（权威），
+ *   通过 `TextSink` 抽象出落盘方式（包内虚拟文件 / 真实磁盘 / 内存），
  *   写键时先写缓存再写穿 sink。
  */
 
@@ -61,29 +61,31 @@ export function createLocaleKey(taken: (key: string) => boolean): string {
   return randomKey()
 }
 
-/** `cp1.hs` + `zh_cn` → `cp1.lang.zh_cn`（去掉最后一个后缀再加） */
-export function langFileNameFor(scriptName: string, locale: string): string {
-  const base = scriptName.trim().replace(/\.[^.\\/]+$/, '')
-  const tag = formatLocaleTag(locale) || DEFAULT_LOCALE_TAG
-  return `${base || '未命名'}.lang.${tag}`
+/**
+ * 语言文本产物路径（布局统一走 `localeLayout`）：
+ * `folder/cp1.hs` + `zh_cn` → `assets/zh_cn/lang_hs/folder/cp1.lang`。
+ * 后缀决定子目录：`main.char` → `assets/zh_cn/lang_char/main.lang`。
+ */
+export function textAssetPathFor(scriptName: string, locale: string): string {
+  return langAssetPath(locale, scriptName)
 }
 
-/** 是否形如 `*.lang.<locale>` */
-export const LANG_FILE_RE = /\.lang\.[a-z0-9_]+$/i
+/** 是否形如 `assets/<locale>/lang_<ext>/…/名.lang` */
+export const TEXT_FILE_RE = /^assets\/[^/]+\/lang_[a-z0-9]+\/.+\.lang$/i
 
-export function isLangTextFileName(name: string): boolean {
-  return LANG_FILE_RE.test(name.trim())
+export function isTextFileName(name: string): boolean {
+  return TEXT_FILE_RE.test(name.trim())
 }
 
-export type LangTextFile = Record<string, string>
+export type TextFile = Record<string, string>
 
 /** 解析 lang 文件；非法 JSON / 非对象返回空表，非字符串值丢弃 */
-export function parseLangFile(text: string | null | undefined): LangTextFile {
+export function parseTextFile(text: string | null | undefined): TextFile {
   if (!text) return {}
   try {
     const data = JSON.parse(text) as unknown
     if (!data || typeof data !== 'object' || Array.isArray(data)) return {}
-    const out: LangTextFile = {}
+    const out: TextFile = {}
     for (const [key, value] of Object.entries(data as Record<string, unknown>)) {
       if (typeof value === 'string') out[key] = value
     }
@@ -94,9 +96,9 @@ export function parseLangFile(text: string | null | undefined): LangTextFile {
 }
 
 /** 序列化：键名排序 + 两空格缩进 + 末尾换行 */
-export function stringifyLangFile(data: LangTextFile): string {
+export function stringifyLangFile(data: TextFile): string {
   const keys = Object.keys(data).sort((a, b) => a.localeCompare(b))
-  const ordered: LangTextFile = {}
+  const ordered: TextFile = {}
   for (const key of keys) ordered[key] = data[key]
   return `${JSON.stringify(ordered, null, 2)}\n`
 }
@@ -105,29 +107,29 @@ export function stringifyLangFile(data: LangTextFile): string {
  * 落盘抽象：读得到就返回文本，写穿整份文本。
  * 实现可以是包内虚拟文件、真实磁盘文件、或纯内存。
  */
-export type LangTextSink = {
+export type TextSink = {
   read(): string | null
   write(content: string): void
 }
 
-export type LangTextMapOptions = {
+export type TextMapOptions = {
   /** 对应的 `<文件名>.lang.<语言标签>` */
   fileName: string
   locale: string
-  sink: LangTextSink
+  sink: TextSink
 }
 
 /** 内存 + 写穿的抽象语言文本映射实例 */
-export class LangTextMap {
+export class TextMap {
   readonly fileName: string
   readonly locale: string
 
-  private readonly sink: LangTextSink
+  private readonly sink: TextSink
   private readonly cache = new Map<string, string>()
   private readonly listeners = new Set<() => void>()
   private loaded = false
 
-  constructor(options: LangTextMapOptions) {
+  constructor(options: TextMapOptions) {
     this.fileName = options.fileName
     this.locale = options.locale
     this.sink = options.sink
@@ -145,11 +147,11 @@ export class LangTextMap {
   /** 从 sink 读取并灌入缓存；文件不存在时缓存为空 Map */
   load(): void {
     this.loaded = true
-    this.replaceAll(parseLangFile(this.sink.read()))
+    this.replaceAll(parseTextFile(this.sink.read()))
   }
 
   /** 用已知内容替换缓存（例如已从磁盘读到） */
-  replaceAll(data: LangTextFile): void {
+  replaceAll(data: TextFile): void {
     this.cache.clear()
     for (const [key, value] of Object.entries(data)) this.cache.set(key, value)
     this.emit()
@@ -169,7 +171,7 @@ export class LangTextMap {
     return [...this.cache.entries()]
   }
 
-  snapshot(): LangTextFile {
+  snapshot(): TextFile {
     return Object.fromEntries(this.cache)
   }
 

@@ -1,7 +1,7 @@
 import { DiffEditor } from '@monaco-editor/react'
 import { useEffect, useState } from 'react'
 import { HANSHU_THEME_ID, registerHanshuLanguage } from './monaco/hanshuLanguage'
-import { languageForFile } from './workspace'
+import { editorLanguageForFile } from './workspace'
 
 export type AgentDiffSnapshot = {
   fileName: string
@@ -77,7 +77,7 @@ export function AgentDiffModal({
             height="100%"
             original={diff.before}
             modified={diff.after}
-            language={languageForFile(diff.fileName)}
+            language={editorLanguageForFile(diff.fileName)}
             theme={HANSHU_THEME_ID}
             beforeMount={registerHanshuLanguage}
             options={{

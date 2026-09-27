@@ -5,7 +5,7 @@ import {
   HANSHU_THEME_ID,
   registerHanshuLanguage,
 } from './monaco/hanshuLanguage'
-import { compileHsToHsc } from './hanshu/lines'
+import { compileHsToHsc } from './hanshu/compiler'
 
 type HscPreviewProps = {
   source: string

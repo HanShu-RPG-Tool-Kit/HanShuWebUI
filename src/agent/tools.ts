@@ -57,7 +57,7 @@ export const AGENT_TOOLS = [
         properties: {
           fileName: {
             type: 'string',
-            description: '文件名，含后缀 .hs / .md / .char / .lines / .lang / .voice',
+            description: '文件名，含后缀 .hs / .md / .char / .lang / .voice',
           },
         },
         required: ['fileName'],
@@ -89,7 +89,7 @@ export const AGENT_TOOLS = [
     function: {
       name: 'write_file',
       description:
-        '写入指定文件名的完整内容。若文件不存在，会在当前包新建（后缀必须是 .hs/.md/.char/.lines/.lang/.voice）。',
+        '写入指定文件名的完整内容。若文件不存在，会在当前包新建（后缀必须是 .hs/.md/.char/.lang/.voice）。',
       parameters: {
         type: 'object',
         properties: {

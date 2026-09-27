@@ -105,8 +105,7 @@ type ExplorerProps = {
     files: FileList | File[],
     targetDir?: string,
   ) => void
-  onPullVoice: (scriptId: string) => void
-  onGenerateBlankVoiceOggs: (scriptId: string) => void
+  onGeneratePlaceholderVoice: (scriptId: string) => void
   /** 内部拖拽落到目录行：把载荷里的脚本 / 资产移动到该包该目录 */
   onDropIntoFolder: (
     targetPackageId: string,
@@ -135,8 +134,7 @@ export function Explorer({
   onNewAssetFolder,
   onDeleteAssetFolder,
   onImportAssets,
-  onPullVoice,
-  onGenerateBlankVoiceOggs,
+  onGeneratePlaceholderVoice,
   onDropIntoFolder,
 }: ExplorerProps) {
   return (
@@ -194,8 +192,7 @@ export function Explorer({
             onNewAssetFolder={onNewAssetFolder}
             onDeleteAssetFolder={onDeleteAssetFolder}
             onImportAssets={onImportAssets}
-            onPullVoice={onPullVoice}
-            onGenerateBlankVoiceOggs={onGenerateBlankVoiceOggs}
+            onGeneratePlaceholderVoice={onGeneratePlaceholderVoice}
             onDropIntoFolder={onDropIntoFolder}
           />
         ))}
@@ -226,8 +223,7 @@ function PackageNode({
   onNewAssetFolder,
   onDeleteAssetFolder,
   onImportAssets,
-  onPullVoice,
-  onGenerateBlankVoiceOggs,
+  onGeneratePlaceholderVoice,
   onDropIntoFolder,
 }: {
   pkg: ScriptPackage
@@ -254,8 +250,7 @@ function PackageNode({
     files: FileList | File[],
     targetDir?: string,
   ) => void
-  onPullVoice: (scriptId: string) => void
-  onGenerateBlankVoiceOggs: (scriptId: string) => void
+  onGeneratePlaceholderVoice: (scriptId: string) => void
   /** 内部拖拽落到目录行 */
   onDropIntoFolder: (
     targetPackageId: string,
@@ -391,7 +386,7 @@ function PackageNode({
                     onDoubleClick={() => onRenameScript(script.id)}
                     title={
                       isVoiceMapFile(script.name)
-                        ? '右键：拉取新配音 / 生成空白 ogg'
+                        ? '右键：生成空白 ogg'
                         : '双击重命名'
                     }
                   >
@@ -430,20 +425,7 @@ function PackageNode({
                   onClick={() => {
                     const id = ctxMenu.scriptId
                     setCtxMenu(null)
-                    onPullVoice(id)
-                  }}
-                >
-                  拉取新配音
-                </button>
-              </li>
-              <li>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    const id = ctxMenu.scriptId
-                    setCtxMenu(null)
-                    onGenerateBlankVoiceOggs(id)
+                    onGeneratePlaceholderVoice(id)
                   }}
                 >
                   生成空白 ogg

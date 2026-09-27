@@ -140,7 +140,7 @@ export function createTextWidthMeter(options: {
   }
 }
 
-export type LangSlotStyles = {
+export type SlotStyles = {
   /** 该宽度的槽位类，返回可直接交给 `inlineClassName` 的完整类名 */
   decorationClassFor(widthPx: number): string
   dispose(): void
@@ -151,7 +151,7 @@ export type LangSlotStyles = {
  * 用 `clip-path` 而不是 `overflow: hidden`：后者会把 inline-block 的基线改成底边，
  * 把整行文字顶歪。`clip-path` 只影响绘制与命中，基线不受影响。
  */
-export function createLangSlotStyles(): LangSlotStyles {
+export function createSlotStyles(): SlotStyles {
   const styleEl =
     typeof document !== 'undefined' && document.head
       ? document.createElement('style')

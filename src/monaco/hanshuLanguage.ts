@@ -1,5 +1,5 @@
 import type { Monaco } from '@monaco-editor/react'
-import { LOCALE_KEY_TEXT_RE } from '../i18n/langTextMap'
+import { LOCALE_KEY_TEXT_RE } from '../i18n/textMap'
 import {
   BLOCK_END,
   TRAILING_TERMINATOR,
@@ -420,7 +420,7 @@ export function registerHanshuLanguage(monaco: Monaco) {
           ],
         ],
         // 只有行首（可含前导空白）才是注释，行内 `#` 属于正文：
-        // 与编译去噪 src/hanshu/lines.ts 的 `/^\s*#/` 保持一致
+        // 与编译去噪 src/hanshu/compiler.ts 的 `/^\s*#/` 保持一致
         [/^\s*#.*$/, 'comment'],
         [
           /''''/,
