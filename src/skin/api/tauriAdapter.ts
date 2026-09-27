@@ -78,6 +78,8 @@ export function createTauriSkinApi(deps: TauriDeps): SkinApi {
     createFolder: (body) => call('skin_create_folder', { body }),
     patchFolder: (folderId, body) => call('skin_patch_folder', { folderId, patch: body }),
     deleteFolder: (folderId) => call('skin_delete_folder', { folderId }),
+    deleteEntriesInFolder: (folderId) =>
+      call('skin_delete_entries_in_folder', { folderId }),
 
     saveEntry: (body) => call('skin_save_entry', { body }),
     patchEntry: (entryId, body) =>
@@ -109,19 +111,43 @@ export function createTauriSkinApi(deps: TauriDeps): SkinApi {
     exportEntry: (entryId, format) =>
       call('skin_export_entry', { entryId, format: format ?? 'v3' }),
     exportUsableManifest: () => call('skin_export_usable_manifest'),
+    gcOrphans: async (onProgress) => {
+      onProgress?.({
+        phase: 'scanning',
+        current: 0,
+        total: 0,
+        label: '正在扫描并清理黑户…',
+      })
+      const result = (await call('skin_gc_orphans')) as {
+        removedObjects: number
+        removedPreviews: number
+        protectedCount: number
+      }
+      onProgress?.({
+        phase: 'done',
+        current: 1,
+        total: 1,
+        label: '清理完成',
+      })
+      return result
+    },
     saveExportFile: async (skinId, format) => {
       const defaultName =
-        format === 'png' ? `${skinId.slice(0, 12)}.png` : `${skinId.slice(0, 12)}.hskin`
+        format === 'png' ? `${skinId.slice(0, 12)}.png` : `${skinId.slice(0, 12)}.skin`
       const path = await deps.saveDialog({
-        title: format === 'png' ? '导出 PNG' : '导出 .hskin',
+        title: format === 'png' ? '导出 PNG' : '导出 .skin',
         defaultName,
         filters:
           format === 'png'
             ? [{ name: 'PNG 图像', extensions: ['png'] }]
-            : [{ name: 'hskin 皮肤', extensions: ['hskin'] }],
+            : [{ name: 'skin 对象', extensions: ['skin'] }],
       })
       if (!path) return
-      await call('skin_write_export_file', { path, skinId, format })
+      await call('skin_write_export_file', {
+        path,
+        skinId,
+        format: format === 'hskin' ? 'skin' : format,
+      })
     },
 
     subscribe: async (listener) => {

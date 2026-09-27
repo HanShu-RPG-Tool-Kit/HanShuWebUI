@@ -4,7 +4,7 @@
 
 use super::events;
 use super::state::SkinState;
-use skin_core::codec::{decode_skin_code, SkinModel};
+use skin_core::codec::{encode_disk_file, encode_share_code, SkinModel};
 use skin_core::error::codes;
 use skin_core::imports::{ImportInput, ImportJob, JobState};
 use skin_core::normalize::rgba_to_png;
@@ -66,9 +66,18 @@ pub struct CapabilitiesFeatures {
 
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct CollectedTextureSizeDto {
+    pub width: u32,
+    pub height: u32,
+    pub count: usize,
+}
+
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TagListResponse {
     pub revision: u64,
     pub tags: Vec<CollectedTag>,
+    pub texture_sizes: Vec<CollectedTextureSizeDto>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -129,11 +138,11 @@ pub struct ImportAccepted {
 // helpers
 // ---------------------------------------------------------------------------
 
-fn parse_model(s: &Option<String>) -> SkinModel {
-    if s.as_deref() == Some("slim") {
-        SkinModel::Slim
-    } else {
-        SkinModel::Classic
+fn parse_model_opt(s: &Option<String>) -> Option<SkinModel> {
+    match s.as_deref() {
+        Some("slim") => Some(SkinModel::Slim),
+        Some("classic") => Some(SkinModel::Classic),
+        _ => None,
     }
 }
 
@@ -193,8 +202,19 @@ pub async fn skin_get_entry(
 #[tauri::command]
 pub async fn skin_list_tags(state: State<'_, SkinState>) -> CmdResult<TagListResponse> {
     with_library(&state, move |lib| {
-        let (revision, tags) = lib.list_tags();
-        Ok(TagListResponse { revision, tags })
+        let (revision, tags, sizes) = lib.list_tags_and_sizes();
+        Ok(TagListResponse {
+            revision,
+            tags,
+            texture_sizes: sizes
+                .into_iter()
+                .map(|s| CollectedTextureSizeDto {
+                    width: s.width,
+                    height: s.height,
+                    count: s.count,
+                })
+                .collect(),
+        })
     })
     .await
 }
@@ -293,6 +313,22 @@ pub async fn skin_delete_folder(
 }
 
 #[tauri::command]
+pub async fn skin_delete_entries_in_folder(
+    app: AppHandle,
+    state: State<'_, SkinState>,
+    folder_id: String,
+) -> CmdResult<serde_json::Value> {
+    let out = with_library(&state, move |lib| {
+        let deleted = lib.delete_entries_in_folder(&folder_id)?;
+        Ok(serde_json::json!({ "deleted": deleted }))
+    })
+    .await?;
+    events::emit_library_updated(&app, &state, "entries");
+    events::emit_library_updated(&app, &state, "folders");
+    Ok(out)
+}
+
+#[tauri::command]
 pub async fn skin_save_entry(
     app: AppHandle,
     state: State<'_, SkinState>,
@@ -385,6 +421,32 @@ pub async fn skin_delete_entry(
     Ok(out)
 }
 
+/// 清理无条目引用的 objects / preview（导入暂存仍受保护）。
+#[tauri::command]
+pub async fn skin_gc_orphans(
+    state: State<'_, SkinState>,
+) -> CmdResult<serde_json::Value> {
+    let protected = state.service.imports.staged_skin_ids();
+    let protected_count = with_library(&state, {
+        let protected = protected.clone();
+        move |lib| {
+            let page = lib.list_entries(&LibraryQuery {
+                page: Some(1),
+                page_size: Some(1),
+                ..Default::default()
+            });
+            Ok(protected.len() + page.total)
+        }
+    })
+    .await?;
+    let removed = with_library(&state, move |lib| lib.gc_objects(&protected)).await?;
+    Ok(serde_json::json!({
+        "removedObjects": removed.len(),
+        "removedPreviews": removed.len(),
+        "protectedCount": protected_count,
+    }))
+}
+
 /// Poll a job and emit `skin://job-updated` on every state change until
 /// terminal. The job registry stays the source of truth; events are hints.
 async fn watch_job(app: AppHandle, mgr: std::sync::Arc<skin_core::imports::ImportManager>, job_id: String) {
@@ -412,7 +474,7 @@ pub async fn skin_start_import(
     let input = match body.kind.as_str() {
         "png-url" => ImportInput::PngUrl {
             url: body.text.unwrap_or_default(),
-            model_override: parse_model(&body.model),
+            model_override: parse_model_opt(&body.model),
         },
         "player-name" => ImportInput::PlayerName {
             name: body.text.unwrap_or_default(),
@@ -477,7 +539,7 @@ pub async fn skin_import_file(
         ImportInput::PngFile {
             bytes,
             file_name: file_name.unwrap_or_else(|| "skin.png".into()),
-            model_override: parse_model(&model),
+            model_override: parse_model_opt(&model),
         }
     };
     let job = mgr.start(input);
@@ -528,11 +590,14 @@ pub async fn skin_get_preview_png(
         if let Some(png) = lib.get_preview_png(&skin_id)? {
             return Ok(png);
         }
-        let obj = lib
+        let decoded = lib
             .get_object(&skin_id)?
             .ok_or_else(|| SkinError::api(codes::NOT_FOUND, "skin not found"))?;
-        let (decoded, _) = decode_skin_code(&obj.0)?;
-        let png = rgba_to_png(&decoded.rgba)?;
+        let png = rgba_to_png(
+            &decoded.rgba,
+            decoded.width as u32,
+            decoded.height as u32,
+        )?;
         lib.put_preview_png(&skin_id, &png)?;
         Ok(png)
     })
@@ -540,7 +605,7 @@ pub async fn skin_get_preview_png(
     .map(Response::new)
 }
 
-/// Export a skin: png (base64), hskin (text) or skin-json (portable v2).
+/// Export a skin: png (base64), skin (binary base64), or skin-json (portable v3).
 #[tauri::command]
 pub async fn skin_export_skin(
     state: State<'_, SkinState>,
@@ -548,20 +613,27 @@ pub async fn skin_export_skin(
     format: String,
 ) -> CmdResult<serde_json::Value> {
     with_library(&state, move |lib| {
-        let obj = lib
+        let decoded = lib
             .get_object(&skin_id)?
             .ok_or_else(|| SkinError::api(codes::NOT_FOUND, "skin not found"))?;
         match format.as_str() {
-            "hskin" => Ok(serde_json::json!({ "text": obj.0 })),
+            "skin" | "hskin" => {
+                let disk = encode_disk_file(&decoded)?;
+                Ok(serde_json::json!({
+                    "skinBase64": b64_encode(&disk),
+                }))
+            }
             "png" => {
-                let (decoded, _) = decode_skin_code(&obj.0)?;
-                let png = rgba_to_png(&decoded.rgba)?;
+                let png = rgba_to_png(
+                    &decoded.rgba,
+                    decoded.width as u32,
+                    decoded.height as u32,
+                )?;
                 Ok(serde_json::json!({
                     "pngBase64": b64_encode(&png),
                 }))
             }
             "skin-json" => {
-                // Metadata only when exactly one entry references the skin.
                 let candidates = lib.entries_using(&skin_id);
                 let entry =
                     if candidates.len() == 1 { candidates.into_iter().next() } else { None };
@@ -587,11 +659,12 @@ pub async fn skin_export_skin(
                         Default::default(),
                     ),
                 };
+                let skin_code = encode_share_code(model, &decoded)?;
                 let portable = PortableSkinFileV3 {
                     schema_version: 3,
                     name,
                     skin_id: skin_id.clone(),
-                    skin_code: obj.0,
+                    skin_code,
                     model,
                     tag_paths,
                     active,
@@ -603,7 +676,7 @@ pub async fn skin_export_skin(
             }
             other => Err(SkinError::api(
                 codes::BAD_REQUEST,
-                format!("format must be png|hskin|skin-json, got {other}"),
+                format!("format must be png|skin|skin-json, got {other}"),
             )),
         }
     })
@@ -621,9 +694,10 @@ pub async fn skin_export_entry(
         let entry = lib
             .get_entry(&entry_id)
             .ok_or_else(|| SkinError::api(codes::NOT_FOUND, "entry not found"))?;
-        let obj = lib
+        let decoded = lib
             .get_object(&entry.skin_id)?
             .ok_or_else(|| SkinError::api(codes::NOT_FOUND, "skin object missing"))?;
+        let skin_code = encode_share_code(entry.model, &decoded)?;
         let tag_paths: Vec<Vec<String>> = entry
             .tags
             .iter()
@@ -636,7 +710,7 @@ pub async fn skin_export_entry(
                     name: entry.name.clone(),
                     tag_paths,
                     skin_id: entry.skin_id.clone(),
-                    skin_code: obj.0,
+                    skin_code,
                 };
                 Ok(serde_json::to_value(portable)?)
             }
@@ -645,7 +719,7 @@ pub async fn skin_export_entry(
                     schema_version: 3,
                     name: entry.name,
                     skin_id: entry.skin_id,
-                    skin_code: obj.0,
+                    skin_code,
                     model: entry.model,
                     tag_paths,
                     active: entry.active,
@@ -686,16 +760,23 @@ pub async fn skin_export_usable_manifest(
     .await
 }
 
-/// Copy the hskin text for clipboard use.
+/// Copy the share string for clipboard use (model from first referencing entry).
 #[tauri::command]
 pub async fn skin_get_skin_code(
     state: State<'_, SkinState>,
     skin_id: String,
 ) -> CmdResult<String> {
     with_library(&state, move |lib| {
-        lib.get_object(&skin_id)?
-            .map(|(code, _)| code)
-            .ok_or_else(|| SkinError::api(codes::NOT_FOUND, "skin not found"))
+        let decoded = lib
+            .get_object(&skin_id)?
+            .ok_or_else(|| SkinError::api(codes::NOT_FOUND, "skin not found"))?;
+        let model = lib
+            .entries_using(&skin_id)
+            .into_iter()
+            .next()
+            .map(|e| e.model)
+            .unwrap_or(SkinModel::Classic);
+        encode_share_code(model, &decoded).map_err(SkinError::from)
     })
     .await
 }
@@ -710,19 +791,20 @@ pub async fn skin_write_export_file(
     format: String,
 ) -> CmdResult<()> {
     with_library(&state, move |lib| {
-        let obj = lib
+        let decoded = lib
             .get_object(&skin_id)?
             .ok_or_else(|| SkinError::api(codes::NOT_FOUND, "skin not found"))?;
         let bytes: Vec<u8> = match format.as_str() {
-            "hskin" => format!("{}\n", obj.0).into_bytes(),
-            "png" => {
-                let (decoded, _) = decode_skin_code(&obj.0)?;
-                rgba_to_png(&decoded.rgba)?
-            }
+            "skin" | "hskin" => encode_disk_file(&decoded)?,
+            "png" => rgba_to_png(
+                &decoded.rgba,
+                decoded.width as u32,
+                decoded.height as u32,
+            )?,
             other => {
                 return Err(SkinError::api(
                     codes::BAD_REQUEST,
-                    format!("format must be png|hskin, got {other}"),
+                    format!("format must be png|skin, got {other}"),
                 ));
             }
         };

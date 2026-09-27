@@ -1,11 +1,18 @@
 /**
- * PNG → 64x64 RGBA 规范化（对照 skin-core normalize.rs，用 Canvas 解码）
+ * PNG → 规范化 RGBA（对照 skin-core normalize.rs，用 Canvas 解码）
+ *
+ * 支持输入（宽高为整数，64…1024）：
+ *   - 正方形：宽 = 高
+ *   - 半高：宽 = 2×高（64×32、128×64、任意偶数宽…），展开成正方形后入库
+ * 不再要求宽为 64 倍数；UV 区按 width/64 比例映射。
+ * SEMI_TRANSPARENT=0：原版 base 强制不透明；=1：保留任意 alpha。
  */
 
 import type { SkinModel } from '../contracts/types'
 import {
+  FLAG_SEMI_TRANSPARENT,
   FormatError,
-  RGBA_LENGTH,
+  MAX_TEXTURE_SIZE,
   SKIN_HEIGHT,
   SKIN_WIDTH,
   limits,
@@ -13,7 +20,8 @@ import {
 
 const PNG_SIG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
 
-const BASE_REGIONS: [number, number, number, number][] = [
+/** Base UV regions forced opaque (non–semi-transparent mode). */
+const BASE_REGIONS_64: [number, number, number, number][] = [
   [0, 8, 32, 16],
   [16, 20, 40, 32],
   [40, 20, 56, 32],
@@ -22,7 +30,12 @@ const BASE_REGIONS: [number, number, number, number][] = [
   [16, 52, 32, 64],
 ]
 
-const HAT_REGION_32: [number, number, number, number] = [32, 0, 64, 16]
+/** After Notch clear, restore these strips (PrismLauncher opaqueParts). */
+const NOTCH_RESTORE_64: [number, number, number, number][] = [
+  [0, 0, 32, 16],
+  [0, 16, 64, 32],
+  [16, 48, 48, 64],
+]
 
 function inRegion(
   x: number,
@@ -75,22 +88,56 @@ function inspectPng(buf: Uint8Array): {
   return { width, height, isApng }
 }
 
-function expandLegacy32(src: Uint8Array): Uint8Array {
-  const w = SKIN_WIDTH
-  const out = new Uint8Array(RGBA_LENGTH)
-  out.set(src.subarray(0, w * 32 * 4))
-  const copyMirrored = (
+/** 输入尺寸是否接受（入库前；半高会再展开成正方形）。 */
+export function isSupportedSkinSize(width: number, height: number): boolean {
+  if (
+    !Number.isInteger(width) ||
+    !Number.isInteger(height) ||
+    width < 64 ||
+    width > MAX_TEXTURE_SIZE ||
+    height <= 0
+  ) {
+    return false
+  }
+  if (height === width) return true
+  // 半高：宽 = 2×高
+  if (height * 2 === width) return true
+  return false
+}
+
+/** 64 空间坐标 → 实际像素（整数比例，兼容非 64 倍数宽）。 */
+function map64(coord: number, width: number): number {
+  return Math.floor((coord * width) / 64)
+}
+
+/**
+ * 半高贴图展开为正方形（64×32→64×64；128×64→128×128 …）。
+ * 对齐 skinview-utils `convertSkinTo1_8`：逐面水平翻转，而非整块 16×12 翻转。
+ * 右腿/右臂各面 → 左腿/左臂 UV；内外侧对调。
+ */
+function expandHalfHeight(src: Uint8Array, width: number): Uint8Array {
+  const w = width
+  const halfH = w / 2
+  const out = new Uint8Array(w * w * 4)
+  out.set(src.subarray(0, w * halfH * 4))
+  const copyFace = (
     sx0: number,
     sy0: number,
+    fw: number,
+    fh: number,
     dx0: number,
     dy0: number,
-    cw: number,
-    ch: number,
   ) => {
-    for (let y = 0; y < ch; y++) {
-      for (let x = 0; x < cw; x++) {
-        const si = ((sy0 + y) * w + (sx0 + x)) * 4
-        const di = ((dy0 + y) * w + (dx0 + (cw - 1 - x))) * 4
+    const sx = map64(sx0, w)
+    const sy = map64(sy0, w)
+    const dx = map64(dx0, w)
+    const dy = map64(dy0, w)
+    const fwS = map64(fw, w)
+    const fhS = map64(fh, w)
+    for (let y = 0; y < fhS; y++) {
+      for (let x = 0; x < fwS; x++) {
+        const si = ((sy + y) * w + (sx + x)) * 4
+        const di = ((dy + y) * w + (dx + (fwS - 1 - x))) * 4
         out[di] = src[si]!
         out[di + 1] = src[si + 1]!
         out[di + 2] = src[si + 2]!
@@ -98,20 +145,80 @@ function expandLegacy32(src: Uint8Array): Uint8Array {
       }
     }
   }
-  copyMirrored(40, 20, 32, 52, 16, 12)
-  copyMirrored(0, 16, 16, 52, 16, 12)
+  // Right leg → left leg
+  copyFace(4, 16, 4, 4, 20, 48) // top
+  copyFace(8, 16, 4, 4, 24, 48) // bottom
+  copyFace(0, 20, 4, 12, 24, 52) // outer → left
+  copyFace(4, 20, 4, 12, 20, 52) // front
+  copyFace(8, 20, 4, 12, 16, 52) // inner → right
+  copyFace(12, 20, 4, 12, 28, 52) // back
+  // Right arm → left arm
+  copyFace(44, 16, 4, 4, 36, 48) // top
+  copyFace(48, 16, 4, 4, 40, 48) // bottom
+  copyFace(40, 20, 4, 12, 40, 52) // outer → left
+  copyFace(44, 20, 4, 12, 36, 52) // front
+  copyFace(48, 20, 4, 12, 32, 52) // inner → right
+  copyFace(52, 20, 4, 12, 44, 52) // back
   return out
 }
 
-function applyAlphaRules(rgba: Uint8Array, isLegacy: boolean): void {
-  const w = SKIN_WIDTH
-  for (let y = 0; y < SKIN_HEIGHT; y++) {
-    for (let x = 0; x < w; x++) {
-      const i = (y * w + x) * 4
-      const base = BASE_REGIONS.some((r) => inRegion(x, y, r))
-      const hat32 = isLegacy && inRegion(x, y, HAT_REGION_32)
-      if (base && !hat32) {
-        rgba[i + 3] = 255
+function scaleRegion(
+  r: [number, number, number, number],
+  width: number,
+): [number, number, number, number] {
+  return [
+    map64(r[0], width),
+    map64(r[1], width),
+    map64(r[2], width),
+    map64(r[3], width),
+  ]
+}
+
+/**
+ * Legacy 64×32 skins (e.g. Notch) fill unused/hat areas with opaque black.
+ * Minecraft clears the top-right 32×32 when that zone has no real transparency.
+ * Must run after half-height expand; opaque base restore follows in applyAlphaRules.
+ */
+function applyNotchTransparencyHack(rgba: Uint8Array, width: number): void {
+  const x0 = map64(32, width)
+  const y0 = 0
+  const x1 = map64(64, width)
+  const y1 = map64(32, width)
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      if (rgba[(y * width + x) * 4 + 3]! < 128) return
+    }
+  }
+  // Only clear alpha — RGB must stay so restore can keep arm/body colors.
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      rgba[(y * width + x) * 4 + 3] = 0
+    }
+  }
+  for (const r of NOTCH_RESTORE_64) {
+    const [rx0, ry0, rx1, ry1] = scaleRegion(r, width)
+    for (let y = ry0; y < ry1; y++) {
+      for (let x = rx0; x < rx1; x++) {
+        rgba[(y * width + x) * 4 + 3] = 255
+      }
+    }
+  }
+}
+
+function applyAlphaRules(
+  rgba: Uint8Array,
+  width: number,
+  height: number,
+  semiTransparent: boolean,
+): void {
+  const baseRegions = BASE_REGIONS_64.map((r) => scaleRegion(r, width))
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4
+      if (!semiTransparent) {
+        if (baseRegions.some((r) => inRegion(x, y, r))) {
+          rgba[i + 3] = 255
+        }
       }
       if (rgba[i + 3] === 0) {
         rgba[i] = 0
@@ -120,6 +227,33 @@ function applyAlphaRules(rgba: Uint8Array, isLegacy: boolean): void {
       }
     }
   }
+}
+
+export function detectSkinModel(
+  rgba: Uint8Array,
+  width: number,
+  height: number,
+): SkinModel {
+  if (width !== height || width < 64) {
+    return 'classic'
+  }
+  const x0 = map64(46, width)
+  const x1 = map64(48, width)
+  const y0 = map64(20, width)
+  const y1 = map64(32, width)
+  let opaque = 0
+  let total = 0
+  for (let y = y0; y < y1; y++) {
+    for (let x = x0; x < x1; x++) {
+      const i = (y * width + x) * 4
+      if (i + 3 >= rgba.length) continue
+      total++
+      if (rgba[i + 3]! > 0) opaque++
+    }
+  }
+  if (total === 0) return 'classic'
+  const threshold = Math.max(1, Math.floor(total / 4))
+  return opaque < threshold ? 'slim' : 'classic'
 }
 
 async function decodePngToRgba(buf: Uint8Array): Promise<{
@@ -144,10 +278,20 @@ async function decodePngToRgba(buf: Uint8Array): Promise<{
   }
 }
 
+export type NormalizedSkin = {
+  rgba: Uint8Array
+  model: SkinModel
+  textureWidth: number
+  textureHeight: number
+  flags: number
+  wasLegacy: boolean
+}
+
 export async function normalizePngBytes(
   buf: Uint8Array,
-  _preferredModel?: SkinModel,
-): Promise<{ rgba: Uint8Array; model: SkinModel }> {
+  preferredModel?: SkinModel,
+  opts?: { semiTransparent?: boolean },
+): Promise<NormalizedSkin> {
   if (buf.length > limits.PNG_BYTES) {
     throw new FormatError(
       'PAYLOAD_TOO_LARGE',
@@ -158,52 +302,85 @@ export async function normalizePngBytes(
   if (header.isApng) {
     throw new FormatError('BAD_PNG', 'APNG is not supported')
   }
-  const okSize =
-    (header.width === 64 && header.height === 64) ||
-    (header.width === 64 && header.height === 32)
-  if (!okSize) {
+  if (!isSupportedSkinSize(header.width, header.height)) {
     throw new FormatError(
       'BAD_DIMENSIONS',
-      `unsupported PNG size ${header.width}x${header.height}`,
+      `unsupported PNG size ${header.width}x${header.height}; need square (N×N) or half-height (2N×N) with N∈[64…${MAX_TEXTURE_SIZE}]`,
     )
   }
   const decoded = await decodePngToRgba(buf)
-  const isLegacy = decoded.height === 32
-  let rgba = decoded.rgba
-  if (isLegacy) {
-    if (rgba.length !== 64 * 32 * 4) {
-      throw new FormatError('BAD_PNG', 'unexpected legacy pixel buffer size')
-    }
-    rgba = expandLegacy32(rgba)
-  } else if (rgba.length !== RGBA_LENGTH) {
-    throw new FormatError('BAD_PNG', 'unexpected pixel buffer size')
-  } else {
-    rgba = new Uint8Array(rgba)
+  if (decoded.width !== header.width || decoded.height !== header.height) {
+    throw new FormatError('BAD_PNG', 'decoded size mismatch with IHDR')
   }
-  applyAlphaRules(rgba, isLegacy)
-  // 模型默认 classic；slim 由调用方指定
-  return { rgba, model: _preferredModel ?? 'classic' }
+  const isHalfHeight = decoded.height === decoded.width / 2
+  const expectedRaw = decoded.width * decoded.height * 4
+  if (decoded.rgba.length !== expectedRaw) {
+    throw new FormatError('BAD_PNG', 'unexpected pixel buffer size')
+  }
+
+  const semi = Boolean(opts?.semiTransparent)
+  const flags = semi ? FLAG_SEMI_TRANSPARENT : 0
+
+  let rgba: Uint8Array
+  let textureWidth: number
+  let textureHeight: number
+  if (isHalfHeight) {
+    rgba = expandHalfHeight(decoded.rgba, decoded.width)
+    textureWidth = decoded.width
+    textureHeight = decoded.width
+    // Notch / opaque-legacy: clear unused hat zone before forcing base opaque.
+    applyNotchTransparencyHack(rgba, textureWidth)
+    applyAlphaRules(rgba, textureWidth, textureHeight, semi)
+  } else {
+    rgba = new Uint8Array(decoded.rgba)
+    textureWidth = decoded.width
+    textureHeight = decoded.height
+    applyAlphaRules(rgba, textureWidth, textureHeight, semi)
+  }
+
+  const detected = isHalfHeight && textureWidth === 64
+    ? 'classic'
+    : detectSkinModel(rgba, textureWidth, textureHeight)
+  const model = preferredModel ?? detected
+
+  return {
+    rgba,
+    model,
+    textureWidth,
+    textureHeight,
+    flags,
+    wasLegacy: isHalfHeight,
+  }
 }
 
-/** RGBA → PNG Blob（预览用） */
-export async function rgbaToPngBlob(rgba: Uint8Array): Promise<Blob> {
-  if (rgba.length !== RGBA_LENGTH) {
-    throw new FormatError('BAD_RGBA_LENGTH', 'rgba must be 16384 bytes')
+/** RGBA → PNG Blob（任意尺寸预览） */
+export async function rgbaToPngBlob(
+  rgba: Uint8Array,
+  width = SKIN_WIDTH,
+  height = SKIN_HEIGHT,
+): Promise<Blob> {
+  const expected = width * height * 4
+  if (rgba.length !== expected) {
+    throw new FormatError(
+      'BAD_RGBA_LENGTH',
+      `rgba must be ${expected} bytes`,
+    )
   }
   const canvas = document.createElement('canvas')
-  canvas.width = SKIN_WIDTH
-  canvas.height = SKIN_HEIGHT
+  canvas.width = width
+  canvas.height = height
   const ctx = canvas.getContext('2d')
   if (!ctx) throw new FormatError('BAD_PNG', 'canvas unavailable')
   const imageData = new ImageData(
     new Uint8ClampedArray(rgba),
-    SKIN_WIDTH,
-    SKIN_HEIGHT,
+    width,
+    height,
   )
   ctx.putImageData(imageData, 0, 0)
   return await new Promise<Blob>((resolve, reject) => {
     canvas.toBlob(
-      (b) => (b ? resolve(b) : reject(new FormatError('BAD_PNG', 'toBlob failed'))),
+      (b) =>
+        b ? resolve(b) : reject(new FormatError('BAD_PNG', 'toBlob failed')),
       'image/png',
     )
   })

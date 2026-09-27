@@ -5,6 +5,7 @@
 
 import type {
   CollectedTag,
+  CollectedTextureSize,
   FolderNode,
   FolderWithStats,
   LibraryEntry,
@@ -140,6 +141,8 @@ export function parseLibraryJson(raw: string): LibraryFile {
       folderId: e.folderId ?? null,
       favorite: Boolean(e.favorite),
       model: e.model ?? 'classic',
+      textureWidth: Number(e.textureWidth) > 0 ? Number(e.textureWidth) : 64,
+      textureHeight: Number(e.textureHeight) > 0 ? Number(e.textureHeight) : 64,
       source: e.source ?? { kind: 'png-file' },
       provenance: e.provenance ?? emptyProvenance(),
       license: e.license ?? emptyLicense(),
@@ -226,7 +229,8 @@ export function repairDuplicateSiblingFolders(lib: LibraryFile): boolean {
   return changed
 }
 
-function folderDescendants(
+/** Root folder id + all descendant folder ids. */
+export function folderDescendants(
   folders: FolderNode[],
   rootId: string,
 ): Set<string> {
@@ -277,6 +281,10 @@ export function queryEntries(
   if (query.models?.length) {
     const set = new Set(query.models)
     list = list.filter((e) => set.has(e.model))
+  }
+  if (query.textureWidths?.length) {
+    const set = new Set(query.textureWidths)
+    list = list.filter((e) => set.has(e.textureWidth || 64))
   }
   if (query.untagged) list = list.filter((e) => e.tags.length === 0)
   if (query.tags?.length) {
@@ -366,6 +374,21 @@ export function collectTags(lib: LibraryFile): CollectedTag[] {
   return [...counts.values()].sort((a, b) =>
     a.name.localeCompare(b.name, 'zh-Hans-CN'),
   )
+}
+
+/** Collect distinct texture sizes from all entries (auto inventory). */
+export function collectTextureSizes(lib: LibraryFile): CollectedTextureSize[] {
+  const counts = new Map<number, { height: number; count: number }>()
+  for (const e of lib.entries) {
+    const w = e.textureWidth > 0 ? e.textureWidth : 64
+    const h = e.textureHeight > 0 ? e.textureHeight : w
+    const cur = counts.get(w)
+    if (cur) cur.count += 1
+    else counts.set(w, { height: h, count: 1 })
+  }
+  return [...counts.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([width, v]) => ({ width, height: v.height, count: v.count }))
 }
 
 export function renameTagInLibrary(

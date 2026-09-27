@@ -5,6 +5,7 @@ import {
 } from './workspaces/activeWorkspace.ts'
 import { APP_WORKSPACES } from './workspaces/registry.ts'
 import { McSkinWorkspace } from './workspaces/McSkinWorkspace.tsx'
+import { McStreamWorkspace } from './workspaces/McStreamWorkspace.tsx'
 import { ScriptWorkspace } from './workspaces/ScriptWorkspace.tsx'
 import type {
   ScriptChromeInfo,
@@ -81,6 +82,8 @@ function renderToolWorkspace(id: AppWorkspaceId, active: boolean) {
   switch (id) {
     case 'mc-skin':
       return <McSkinWorkspace active={active} />
+    case 'mc-stream':
+      return <McStreamWorkspace active={active} />
     default:
       return null
   }

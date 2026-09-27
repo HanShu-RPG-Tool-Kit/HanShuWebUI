@@ -373,6 +373,18 @@ export function EntryDetails({
           </div>
 
           <div className={styles.detailsField}>
+            <span>分辨率</span>
+            <span className={styles.readonlyValue}>
+              {entry.textureWidth}×{entry.textureHeight}
+              {entry.textureWidth === 64 && entry.textureHeight === 32
+                ? '（旧版）'
+                : entry.textureWidth > 64
+                  ? '（高清）'
+                  : ''}
+            </span>
+          </div>
+
+          <div className={styles.detailsField}>
             <span>标签</span>
             <TagPicker
               tags={tags}
@@ -524,7 +536,7 @@ export function EntryDetails({
             导出 PNG
           </button>
           <button type="button" onClick={onExportHskin}>
-            导出 .hskin
+            导出 .skin
           </button>
           <button type="button" onClick={onExportPortable}>
             导出 .skin.json

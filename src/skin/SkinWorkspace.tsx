@@ -19,7 +19,7 @@ import {
   type BoundProject,
 } from '../project'
 import { getSkinApi, resetSkinApiCache } from './api/index.ts'
-import type { SkinApi } from './api/SkinApi.ts'
+import type { GcOrphansProgress, SkinApi } from './api/SkinApi.ts'
 import { FSA_SKIN_ROOT_LABEL } from './api/fsaAdapter.ts'
 import { FolderTree } from './components/FolderTree.tsx'
 import { ImportQueuePanel } from './components/ImportQueuePanel.tsx'
@@ -37,8 +37,8 @@ import type {
   SkinEvent,
   SkinModel,
   SortDirection,
-  TagMatch,
   CollectedTag,
+  CollectedTextureSize,
 } from './contracts/types.ts'
 import './styles/workspace-shell.css'
 import styles from './styles/workspace.module.css'
@@ -69,6 +69,7 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
   )
 
   const [tags, setTags] = useState<CollectedTag[]>([])
+  const [textureSizes, setTextureSizes] = useState<CollectedTextureSize[]>([])
   const [folders, setFolders] = useState<FolderWithStats[]>([])
 
   const [entries, setEntries] = useState<LibraryEntry[]>([])
@@ -80,11 +81,10 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null)
 
   // Filters
-  const [includeTags, setIncludeTags] = useState<string[]>([])
-  const [excludeTags, setExcludeTags] = useState<string[]>([])
-  const [tagMatch, setTagMatch] = useState<TagMatch>('all')
+  const [selectedTags, setSelectedTags] = useState<string[]>([])
   const [activeFilter, setActiveFilter] = useState<'all' | 'active' | 'inactive'>('all')
   const [modelFilter, setModelFilter] = useState<SkinModel | 'all'>('all')
+  const [textureWidthFilter, setTextureWidthFilter] = useState<number[]>([])
   const [licenseFilter, setLicenseFilter] = useState('')
   const [authorFilter, setAuthorFilter] = useState('')
   const [sortBy, setSortBy] = useState<EntrySortBy>('createdAt')
@@ -108,6 +108,24 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
   const [newFolderUnder, setNewFolderUnder] = useState<string | null | 'root' | undefined>(undefined)
   const [newFolderName, setNewFolderName] = useState('')
   const [moveFolderTarget, setMoveFolderTarget] = useState<FolderWithStats | null>(null)
+  /** 删除文件夹内全部皮肤：三次确认 */
+  const [wipeFolderDialog, setWipeFolderDialog] = useState<
+    | null
+    | { folder: FolderWithStats; step: 1 | 2 | 3; busy?: boolean; error?: string }
+  >(null)
+  /** 清理黑户：确认 → 运行中锁定 → 结果 */
+  const [gcDialog, setGcDialog] = useState<
+    | null
+    | { stage: 'confirm' }
+    | { stage: 'running'; progress: GcOrphansProgress }
+    | {
+        stage: 'done'
+        removedObjects: number
+        removedPreviews: number
+        protectedCount: number
+      }
+    | { stage: 'error'; message: string }
+  >(null)
 
   const hoverLeaveTimer = useRef<number | null>(null)
   const hoverEnterTimer = useRef<number | null>(null)
@@ -150,6 +168,7 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
     if (!api) return
     const tree = await api.listTags()
     setTags(tree.tags)
+    setTextureSizes(tree.textureSizes ?? [])
     lastRevisionRef.current = tree.revision
   }, [api])
 
@@ -203,11 +222,11 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
     try {
       result = await api.listEntries({
         search: debouncedSearch || undefined,
-        tags: includeTags.length ? includeTags : undefined,
-        excludeTags: excludeTags.length ? excludeTags : undefined,
-        tagMatch: includeTags.length > 1 ? tagMatch : undefined,
+        tags: selectedTags.length ? selectedTags : undefined,
+        tagMatch: selectedTags.length > 1 ? 'any' : undefined,
         active: activeParam,
         models: modelsParam,
+        textureWidths: textureWidthFilter.length ? textureWidthFilter : undefined,
         author: authorFilter.trim() || undefined,
         includeLicenseNames,
         licenseUnspecified,
@@ -235,7 +254,7 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
     setListError(null)
     setEntries(result.entries)
     setTotal(result.total)
-  }, [api, debouncedSearch, scope, currentFolderId, includeTags, excludeTags, tagMatch, activeFilter, modelFilter, licenseFilter, authorFilter, sortBy, sortDirection, page])
+  }, [api, debouncedSearch, scope, currentFolderId, selectedTags, activeFilter, modelFilter, textureWidthFilter, licenseFilter, authorFilter, sortBy, sortDirection, page])
 
   // Boot folders/tags once per API; entry list tracks `refresh` identity (filters).
   useEffect(() => {
@@ -324,7 +343,7 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
   useEffect(() => {
     setPage(1)
     setChecked(new Set())
-  }, [debouncedSearch, scope, currentFolderId, includeTags, excludeTags, activeFilter, modelFilter, licenseFilter, authorFilter])
+  }, [debouncedSearch, scope, currentFolderId, selectedTags, activeFilter, modelFilter, textureWidthFilter, licenseFilter, authorFilter])
 
   /* ---------- hover / pinned ---------- */
 
@@ -423,22 +442,37 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
 
   /* ---------- render guards (after hooks) ---------- */
 
-  if (initError) {
+  if (!project) {
     return (
-      <div className={`skinWorkspace ${styles.workspace}`}>
-        <main className={styles.centered}>
-          <h1>无法使用皮肤管理</h1>
-          <p>{initError}</p>
-        </main>
+      <div className={`skinWorkspace ${styles.workspace}`} data-active={active ? '1' : '0'}>
+        <div className={styles.empty} style={{ padding: 48, maxWidth: 480 }}>
+          <h2 style={{ marginTop: 0 }}>需要先打开剧本工程</h2>
+          <p>
+            皮肤库现在保存在工程目录的{' '}
+            <code>{FSA_SKIN_ROOT_LABEL}</code>，与剧本共用同一文件夹。
+          </p>
+          <p>请切换到「剧本」工作区：文件 → 打开工程… / 新建工程…</p>
+        </div>
       </div>
     )
   }
+
+  if (initError) {
+    return (
+      <div className={`skinWorkspace ${styles.workspace}`} data-active={active ? '1' : '0'}>
+        <p className={styles.error} style={{ padding: 24 }}>
+          皮肤库初始化失败：{initError}
+        </p>
+      </div>
+    )
+  }
+
   if (!api) {
     return (
-      <div className={`skinWorkspace ${styles.workspace}`}>
-        <main className={styles.centered}>
-          <p>正在初始化皮肤库…</p>
-        </main>
+      <div className={`skinWorkspace ${styles.workspace}`} data-active={active ? '1' : '0'}>
+        <p className={styles.empty} style={{ padding: 24 }}>
+          正在打开皮肤库（{project.folderName}/{FSA_SKIN_ROOT_LABEL}）…
+        </p>
       </div>
     )
   }
@@ -661,15 +695,77 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
     }
   }
 
+  /** 启用/禁用某文件夹及其子文件夹内的全部皮肤条目。 */
+  const batchSetFolderActive = async (
+    folder: FolderWithStats,
+    active: boolean,
+  ) => {
+    if (!api) return
+    const scope = new Set<string>([folder.folderId])
+    let grew = true
+    while (grew) {
+      grew = false
+      for (const f of folders) {
+        if (f.parentId && scope.has(f.parentId) && !scope.has(f.folderId)) {
+          scope.add(f.folderId)
+          grew = true
+        }
+      }
+    }
+    try {
+      const targets: { entryId: string; revision: number }[] = []
+      let page = 1
+      for (;;) {
+        const res = await api.listEntries({
+          scope: 'all',
+          page,
+          pageSize: 200,
+        })
+        for (const e of res.entries) {
+          if (e.folderId && scope.has(e.folderId)) {
+            targets.push({ entryId: e.entryId, revision: e.revision })
+          }
+        }
+        if (res.entries.length < 200 || page * 200 >= res.total) break
+        page += 1
+        if (page > 500) break
+      }
+      if (targets.length === 0) {
+        showNotice(`「${folder.name}」内没有皮肤`)
+        return
+      }
+      const CHUNK = 200
+      let updated = 0
+      for (let i = 0; i < targets.length; i += CHUNK) {
+        const chunk = targets.slice(i, i + CHUNK)
+        const r = await api.batchPatchEntries({
+          entryIds: chunk.map((t) => t.entryId),
+          active,
+          expectedRevisions: chunk.map((t) => t.revision),
+        })
+        updated += r.updated
+      }
+      await refresh()
+      await refreshFolders()
+      showNotice(
+        active
+          ? `已启用「${folder.name}」及子夹内 ${updated} 个皮肤`
+          : `已禁用「${folder.name}」及子夹内 ${updated} 个皮肤`,
+      )
+    } catch (e) {
+      showNotice(`操作失败:${asError(e)}`)
+    }
+  }
+
   /* ---------- 从导入面板定位已存在条目 ---------- */
   const locateEntry = async (entryId: string, folderId: string | null) => {
     // Clear every filter so the target entry is guaranteed to be visible,
     // navigate to its folder, then fetch and pin it directly.
     setSearch('')
-    setIncludeTags([])
-    setExcludeTags([])
+    setSelectedTags([])
     setActiveFilter('all')
     setModelFilter('all')
+    setTextureWidthFilter([])
     setLicenseFilter('')
     setAuthorFilter('')
     setPage(1)
@@ -769,6 +865,44 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
   }
 
   /* ---------- 右键菜单项 ---------- */
+  const startGcOrphans = () => {
+    if (!api) return
+    setGcDialog({ stage: 'confirm' })
+  }
+
+  const runGcOrphans = async () => {
+    if (!api) return
+    setGcDialog({
+      stage: 'running',
+      progress: {
+        phase: 'scanning',
+        current: 0,
+        total: 0,
+        label: '正在扫描引用与对象…',
+      },
+    })
+    try {
+      const r = await api.gcOrphans((p) => {
+        setGcDialog({
+          stage: 'running',
+          progress: {
+            ...p,
+            label: gcProgressLabel(p),
+          },
+        })
+      })
+      setGcDialog({
+        stage: 'done',
+        removedObjects: r.removedObjects,
+        removedPreviews: r.removedPreviews,
+        protectedCount: r.protectedCount,
+      })
+      void refresh()
+    } catch (e) {
+      setGcDialog({ stage: 'error', message: asError(e) })
+    }
+  }
+
   const blankContextMenuItems: ContextMenuItem[] = [
     { label: '导入到这里', onClick: () => setShowImport(true) },
     {
@@ -787,6 +921,7 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
     { label: '小图标', onClick: () => setLayoutMode('small') },
     { label: '列表', onClick: () => setLayoutMode('list') },
     { separator: true, label: '', onClick: () => {} },
+    { label: '清理黑户对象/缓存…', onClick: () => startGcOrphans() },
     { label: '刷新', onClick: () => void refresh() },
   ]
 
@@ -814,6 +949,20 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
     },
     { label: '同级按名称排序', onClick: () => void sortFolderSiblings(f.folderId) },
     { separator: true, label: '', onClick: () => {} },
+    {
+      label: '全部启用',
+      onClick: () => void batchSetFolderActive(f, true),
+    },
+    {
+      label: '全部禁用',
+      onClick: () => void batchSetFolderActive(f, false),
+    },
+    { separator: true, label: '', onClick: () => {} },
+    {
+      label: '清空皮肤…',
+      onClick: () => setWipeFolderDialog({ folder: f, step: 1 }),
+      danger: true,
+    },
     { label: '删除空文件夹', onClick: () => void deleteFolder(f.folderId), danger: true },
   ]
 
@@ -837,7 +986,7 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
       { label: '复制皮肤码', onClick: () => void copySkinCode(e.skinId) },
       { separator: true, label: '', onClick: () => {} },
       { label: '导出 PNG', onClick: () => void api.saveExportFile(e.skinId, 'png') },
-      { label: '导出 .hskin', onClick: () => void api.saveExportFile(e.skinId, 'hskin') },
+      { label: '导出 .skin', onClick: () => void api.saveExportFile(e.skinId, 'skin') },
       { label: '导出 .skin.json', onClick: () => void exportPortable(e) },
       { label: '查看展开图', onClick: () => { setPinned(e); setTextureViewerFor(e) } },
       { separator: true, label: '', onClick: () => {} },
@@ -902,42 +1051,7 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
     }
   }
 
-  /* ---------- 渲染 ---------- */
-  if (!project) {
-    return (
-      <div className={`skinWorkspace ${styles.workspace}`} data-active={active ? '1' : '0'}>
-        <div className={styles.empty} style={{ padding: 48, maxWidth: 480 }}>
-          <h2 style={{ marginTop: 0 }}>需要先打开剧本工程</h2>
-          <p>
-            皮肤库现在保存在工程目录的{' '}
-            <code>{FSA_SKIN_ROOT_LABEL}</code>，与剧本共用同一文件夹。
-          </p>
-          <p>请切换到「剧本」工作区：文件 → 打开工程… / 新建工程…</p>
-        </div>
-      </div>
-    )
-  }
-
-  if (initError) {
-    return (
-      <div className={`skinWorkspace ${styles.workspace}`} data-active={active ? '1' : '0'}>
-        <p className={styles.error} style={{ padding: 24 }}>
-          皮肤库初始化失败：{initError}
-        </p>
-      </div>
-    )
-  }
-
-  if (!api) {
-    return (
-      <div className={`skinWorkspace ${styles.workspace}`} data-active={active ? '1' : '0'}>
-        <p className={styles.empty} style={{ padding: 24 }}>
-          正在打开皮肤库（{project.folderName}/{FSA_SKIN_ROOT_LABEL}）…
-        </p>
-      </div>
-    )
-  }
-
+  /* ---------- 主界面 ---------- */
   return (
     <div className={`skinWorkspace ${styles.workspace}`}>
       <main className={`skinWorkspaceLayout ${styles.layout}`}>
@@ -1050,16 +1164,15 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
               <LibraryFilters
                 layout="sidebar"
                 tags={tags}
-                includeTags={includeTags}
-                excludeTags={excludeTags}
-                onIncludeTagsChange={setIncludeTags}
-                onExcludeTagsChange={setExcludeTags}
-                tagMatch={tagMatch}
-                onTagMatchChange={setTagMatch}
+                textureSizes={textureSizes}
+                selectedTags={selectedTags}
+                onSelectedTagsChange={setSelectedTags}
                 activeFilter={activeFilter}
                 onActiveFilterChange={setActiveFilter}
                 modelFilter={modelFilter}
                 onModelFilterChange={setModelFilter}
+                textureWidthFilter={textureWidthFilter}
+                onTextureWidthFilterChange={setTextureWidthFilter}
                 licenseFilter={licenseFilter}
                 onLicenseFilterChange={setLicenseFilter}
                 authorFilter={authorFilter}
@@ -1069,10 +1182,10 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
                 sortDirection={sortDirection}
                 onSortDirectionChange={setSortDirection}
                 onClearAll={() => {
-                  setIncludeTags([])
-                  setExcludeTags([])
+                  setSelectedTags([])
                   setActiveFilter('all')
                   setModelFilter('all')
+                  setTextureWidthFilter([])
                   setLicenseFilter('')
                   setAuthorFilter('')
                 }}
@@ -1221,22 +1334,23 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
           )}
           {entries.length === 0 && directChildFolders.length === 0 && !listError && (
             <p className={styles.empty}>
-              {total === 0 && (search || includeTags.length > 0 || excludeTags.length > 0)
+              {total === 0 &&
+              (search || selectedTags.length > 0 || textureWidthFilter.length > 0)
                 ? '没有匹配的皮肤。'
                 : scope === 'folder'
                   ? currentFolderId === null
                     ? '皮肤库为空。右键空白处可新建文件夹或导入皮肤。'
                     : '此文件夹为空。右键空白处可新建子文件夹或导入皮肤。'
                   : '还没有皮肤,导入文件开始整理。'}
-              {(search || includeTags.length > 0 || excludeTags.length > 0) && (
+              {(search || selectedTags.length > 0 || textureWidthFilter.length > 0) && (
                 <>
                   {' '}
                   <button
                     className={styles.linkBtn}
                     onClick={() => {
                       setSearch('')
-                      setIncludeTags([])
-                      setExcludeTags([])
+                      setSelectedTags([])
+                      setTextureWidthFilter([])
                     }}
                   >
                     清空筛选
@@ -1296,7 +1410,7 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
               onCopyId={() => void copyContentId(displayed.skinId)}
               onCopyCode={() => void copySkinCode(displayed.skinId)}
               onExportPng={() => void api.saveExportFile(displayed.skinId, 'png')}
-              onExportHskin={() => void api.saveExportFile(displayed.skinId, 'hskin')}
+              onExportHskin={() => void api.saveExportFile(displayed.skinId, 'skin')}
               onExportPortable={() => void exportPortable(displayed)}
               onViewTexture={() => setTextureViewerFor(displayed)}
               onDelete={() => void deleteEntry(displayed)}
@@ -1351,6 +1465,86 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
               texturePreviewUrl ?? ''
             }
             onClose={() => setTextureViewerFor(null)}
+          />
+        )}
+
+        {gcDialog && (
+          <GcOrphansDialog
+            state={gcDialog}
+            onConfirm={() => void runGcOrphans()}
+            onClose={() => {
+              if (gcDialog.stage === 'running') return
+              if (gcDialog.stage === 'done') {
+                showNotice(
+                  `已清理黑户：对象 ${gcDialog.removedObjects} · 预览 ${gcDialog.removedPreviews}（保留引用 ${gcDialog.protectedCount}）`,
+                )
+              }
+              setGcDialog(null)
+            }}
+          />
+        )}
+
+        {wipeFolderDialog && (
+          <WipeFolderEntriesDialog
+            state={wipeFolderDialog}
+            onCancel={() => {
+              if (wipeFolderDialog.busy) return
+              setWipeFolderDialog(null)
+            }}
+            onAdvance={() => {
+              if (!wipeFolderDialog || wipeFolderDialog.busy) return
+              if (wipeFolderDialog.step < 3) {
+                setWipeFolderDialog({
+                  ...wipeFolderDialog,
+                  step: (wipeFolderDialog.step + 1) as 1 | 2 | 3,
+                })
+                return
+              }
+              void (async () => {
+                if (!api) return
+                setWipeFolderDialog({ ...wipeFolderDialog, busy: true, error: undefined })
+                try {
+                  const r = await api.deleteEntriesInFolder(
+                    wipeFolderDialog.folder.folderId,
+                  )
+                  showNotice(
+                    `已删除「${wipeFolderDialog.folder.name}」及子夹内 ${r.deleted} 个皮肤条目`,
+                  )
+                  setWipeFolderDialog(null)
+                  const rootId = wipeFolderDialog.folder.folderId
+                  const wiped = new Set<string>([rootId])
+                  let grew = true
+                  while (grew) {
+                    grew = false
+                    for (const f of folders) {
+                      if (
+                        f.parentId &&
+                        wiped.has(f.parentId) &&
+                        !wiped.has(f.folderId)
+                      ) {
+                        wiped.add(f.folderId)
+                        grew = true
+                      }
+                    }
+                  }
+                  if (pinned?.folderId && wiped.has(pinned.folderId)) {
+                    setPinned(null)
+                  }
+                  if (hovered?.folderId && wiped.has(hovered.folderId)) {
+                    setHovered(null)
+                  }
+                  void refresh()
+                  void refreshFolders()
+                  void refreshTags()
+                } catch (e) {
+                  setWipeFolderDialog({
+                    ...wipeFolderDialog,
+                    busy: false,
+                    error: asError(e),
+                  })
+                }
+              })()
+            }}
           />
         )}
 
@@ -1590,6 +1784,227 @@ function MoveToFolderDialog({
             </button>
           ))}
         </div>
+      </div>
+    </div>
+  )
+}
+
+/* ========================================================================== */
+/* 删除文件夹内全部皮肤（三次确认）                                             */
+/* ========================================================================== */
+
+function WipeFolderEntriesDialog({
+  state,
+  onCancel,
+  onAdvance,
+}: {
+  state: {
+    folder: FolderWithStats
+    step: 1 | 2 | 3
+    busy?: boolean
+    error?: string
+  }
+  onCancel: () => void
+  onAdvance: () => void
+}) {
+  const count = state.folder.subtreeCount
+  const path = state.folder.path.join(' / ')
+  const titles = ['确认删除', '再次确认', '最后确认'] as const
+  const bodies = [
+    `将删除文件夹「${path}」及其所有子文件夹内的全部皮肤条目（当前约 ${count} 个）。文件夹结构本身不会删除。`,
+    `再次确认：即将删除「${path}」整棵子树内的全部皮肤条目。对象文件会保留（可供其他条目共用），但条目本身不可恢复。`,
+    `最后确认：确定删除「${path}」及子文件夹内全部皮肤？此操作不可撤销。`,
+  ] as const
+  const btnLabels = ['继续', '仍要删除', '确认删除全部'] as const
+
+  return (
+    <div
+      className={styles.blockingBackdrop}
+      style={state.busy ? { cursor: 'wait' } : undefined}
+      role="presentation"
+    >
+      <div
+        className={`${styles.modal} ${styles.gcModal}`}
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label={titles[state.step - 1]}
+      >
+        <header className={styles.modalHead}>
+          <h3>
+            {titles[state.step - 1]}（{state.step}/3）
+          </h3>
+          {!state.busy && (
+            <button className={styles.iconBtn} onClick={onCancel} aria-label="关闭">
+              ✕
+            </button>
+          )}
+        </header>
+        <div className={styles.modalBody}>
+          <p>{bodies[state.step - 1]}</p>
+          {state.error && <p className={styles.errorText}>{state.error}</p>}
+        </div>
+        <footer className={styles.modalFoot}>
+          <button type="button" disabled={state.busy} onClick={onCancel}>
+            取消
+          </button>
+          <button
+            type="button"
+            className={styles.primary}
+            disabled={state.busy || (state.step === 1 && count === 0)}
+            onClick={onAdvance}
+          >
+            {state.busy ? '删除中…' : btnLabels[state.step - 1]}
+          </button>
+        </footer>
+      </div>
+    </div>
+  )
+}
+
+/* ========================================================================== */
+/* 清理黑户（确认 + 锁定进度）                                                 */
+/* ========================================================================== */
+
+function gcProgressLabel(p: GcOrphansProgress): string {
+  switch (p.phase) {
+    case 'scanning':
+      return '正在扫描引用与对象…'
+    case 'objects':
+      return p.total > 0
+        ? `正在清理对象 ${p.current} / ${p.total}…`
+        : '无黑户对象'
+    case 'previews':
+      return p.total > 0
+        ? `正在清理预览 ${p.current} / ${p.total}…`
+        : '无孤立预览'
+    case 'done':
+      return '清理完成'
+    default:
+      return p.label || '处理中…'
+  }
+}
+
+function GcOrphansDialog({
+  state,
+  onConfirm,
+  onClose,
+}: {
+  state:
+    | { stage: 'confirm' }
+    | { stage: 'running'; progress: GcOrphansProgress }
+    | {
+        stage: 'done'
+        removedObjects: number
+        removedPreviews: number
+        protectedCount: number
+      }
+    | { stage: 'error'; message: string }
+  onConfirm: () => void
+  onClose: () => void
+}) {
+  const locked = state.stage === 'running'
+  const pct =
+    state.stage === 'running' && state.progress.total > 0
+      ? Math.min(
+          100,
+          Math.round((state.progress.current / state.progress.total) * 100),
+        )
+      : state.stage === 'running'
+        ? null
+        : state.stage === 'done'
+          ? 100
+          : null
+
+  return (
+    <div
+      className={styles.blockingBackdrop}
+      style={locked ? { cursor: 'wait' } : undefined}
+      onClick={locked ? undefined : onClose}
+      role="presentation"
+    >
+      <div
+        className={`${styles.modal} ${styles.gcModal}`}
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-busy={locked || undefined}
+        aria-label="清理黑户"
+      >
+        <header className={styles.modalHead}>
+          <h3>清理黑户对象 / 缓存</h3>
+          {!locked && (
+            <button className={styles.iconBtn} onClick={onClose} aria-label="关闭">
+              ✕
+            </button>
+          )}
+        </header>
+        <div className={styles.modalBody}>
+          {state.stage === 'confirm' && (
+            <>
+              <p>
+                将删除<strong>无条目引用</strong>的皮肤对象与孤立预览缓存。
+              </p>
+              <p className={styles.hint}>
+                未保存的导入校验结果会保留。清理期间界面将锁定，请勿关闭页面。
+              </p>
+            </>
+          )}
+          {state.stage === 'running' && (
+            <>
+              <p className={styles.gcStatus}>{gcProgressLabel(state.progress)}</p>
+              <div
+                className={styles.gcProgressTrack}
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={pct ?? undefined}
+                aria-valuetext={gcProgressLabel(state.progress)}
+              >
+                <div
+                  className={
+                    pct == null
+                      ? `${styles.gcProgressFill} ${styles.gcProgressIndeterminate}`
+                      : styles.gcProgressFill
+                  }
+                  style={pct == null ? undefined : { width: `${pct}%` }}
+                />
+              </div>
+              <p className={styles.hint}>清理进行中，请稍候…</p>
+            </>
+          )}
+          {state.stage === 'done' && (
+            <p>
+              已清理：对象 {state.removedObjects} · 预览 {state.removedPreviews}
+              （保留引用 {state.protectedCount}）
+            </p>
+          )}
+          {state.stage === 'error' && (
+            <p className={styles.errorText}>清理失败：{state.message}</p>
+          )}
+        </div>
+        <footer className={styles.modalFoot}>
+          {state.stage === 'confirm' && (
+            <>
+              <button type="button" onClick={onClose}>
+                取消
+              </button>
+              <button type="button" className={styles.primary} onClick={onConfirm}>
+                开始清理
+              </button>
+            </>
+          )}
+          {(state.stage === 'done' || state.stage === 'error') && (
+            <button type="button" className={styles.primary} onClick={onClose}>
+              完成
+            </button>
+          )}
+          {state.stage === 'running' && (
+            <button type="button" disabled>
+              清理中…
+            </button>
+          )}
+        </footer>
       </div>
     </div>
   )

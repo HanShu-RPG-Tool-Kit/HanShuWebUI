@@ -97,12 +97,12 @@ import type {
 
 
 function formatSavedAt(ts: number | null) {
-  if (!ts) return '???'
+  if (!ts) return '未记忆'
   const d = new Date(ts)
   const hh = String(d.getHours()).padStart(2, '0')
   const mm = String(d.getMinutes()).padStart(2, '0')
   const ss = String(d.getSeconds()).padStart(2, '0')
-  return `??? ${hh}:${mm}:${ss}`
+  return `已记忆 ${hh}:${mm}:${ss}`
 }
 
 type ScriptWorkspaceProps = {
@@ -159,10 +159,10 @@ export const ScriptWorkspace = forwardRef<
   const viewingAsset = Boolean(activeAssetHit)
   const titleName = viewingAsset
     ? activeAssetHit!.asset.path
-    : (active?.script.name ?? '?????.hs')
+    : (active?.script.name ?? '未命名剧本.hs')
   const packageName = viewingAsset
     ? activeAssetHit!.pkg.name
-    : (active?.pkg.name ?? '??')
+    : (active?.pkg.name ?? '汉书')
   const editingMarkdown = !viewingAsset && isMarkdownFile(titleName)
   const editingHanshu = !viewingAsset && isHanshuFile(titleName)
 
@@ -206,7 +206,7 @@ export const ScriptWorkspace = forwardRef<
 
   const isProjectCancel = (err: unknown) =>
     (err instanceof DOMException && err.name === 'AbortError') ||
-    (err instanceof Error && err.message.includes('??'))
+    (err instanceof Error && /取消/.test(err.message))
 
   const flushProjectToDisk = async () => {
     const bound = projectRef.current
@@ -247,14 +247,14 @@ export const ScriptWorkspace = forwardRef<
       findScript(workspaceRef.current, id)?.script.name ?? ''
     if (isHanshuFile(name)) syncRolesFromText(text)
 
-    // ???????????.hs ?????
+    // 手动保存前记一版历史（.hs 尤其重要）
     if (name) {
       pushFileVersion(name, text, 'manual-save', { force: true })
     }
 
     let next = updateScriptContent(workspaceRef.current, id, text)
 
-    // .hs ??????????? .lines?? hash?source????????
+    // .hs 显式保存时全量编译同名 .lines（仅 hash↔source；删句即删条目）
     if (isHanshuFile(name)) {
       const linesName = linesFileNameForHs(name)
       next = upsertPackageFile(next, id, linesName, buildLinesContent(text))
@@ -266,7 +266,7 @@ export const ScriptWorkspace = forwardRef<
     if (projectRef.current) {
       void flushProjectToDisk().catch((err) => {
         window.alert(
-          `??????????${err instanceof Error ? err.message : String(err)}`,
+          `写入工程文件夹失败：${err instanceof Error ? err.message : String(err)}`,
         )
       })
     }
@@ -275,7 +275,7 @@ export const ScriptWorkspace = forwardRef<
   const handleOpenProject = async () => {
     if (!supportsDirectoryPicker()) {
       window.alert(
-        '??????????? API?\n?? Chrome / Edge ???????localhost??',
+        '当前浏览器不支持文件夹 API。\n请用 Chrome / Edge 打开本开发页（localhost）。',
       )
       return
     }
@@ -286,7 +286,7 @@ export const ScriptWorkspace = forwardRef<
     } catch (err) {
       if (!isProjectCancel(err)) {
         window.alert(
-          `???????${err instanceof Error ? err.message : String(err)}`,
+          `打开工程失败：${err instanceof Error ? err.message : String(err)}`,
         )
       }
     } finally {
@@ -297,7 +297,7 @@ export const ScriptWorkspace = forwardRef<
   const handleCreateProject = async () => {
     if (!supportsDirectoryPicker()) {
       window.alert(
-        '??????????? API?\n?? Chrome / Edge ???????localhost??',
+        '当前浏览器不支持文件夹 API。\n请用 Chrome / Edge 打开本开发页（localhost）。',
       )
       return
     }
@@ -308,7 +308,7 @@ export const ScriptWorkspace = forwardRef<
     } catch (err) {
       if (!isProjectCancel(err)) {
         window.alert(
-          `???????${err instanceof Error ? err.message : String(err)}`,
+          `新建工程失败：${err instanceof Error ? err.message : String(err)}`,
         )
       }
     } finally {
@@ -319,11 +319,11 @@ export const ScriptWorkspace = forwardRef<
   const handleSaveProjectAs = async () => {
     if (!supportsDirectoryPicker()) {
       window.alert(
-        '??????????? API?\n?? Chrome / Edge ???????localhost??',
+        '当前浏览器不支持文件夹 API。\n请用 Chrome / Edge 打开本开发页（localhost）。',
       )
       return
     }
-    // ??????? .lines????
+    // 先落本地缓存与 .lines，再写盘
     const text = valueRef.current
     const id = activeIdRef.current
     if (id) {
@@ -354,7 +354,7 @@ export const ScriptWorkspace = forwardRef<
     } catch (err) {
       if (!isProjectCancel(err)) {
         window.alert(
-          `??????${err instanceof Error ? err.message : String(err)}`,
+          `另存为失败：${err instanceof Error ? err.message : String(err)}`,
         )
       }
     } finally {
@@ -392,7 +392,7 @@ export const ScriptWorkspace = forwardRef<
   const openAsset = (assetId: string) => {
     const hit = findAsset(workspaceRef.current, assetId)
     if (!hit) return
-    // ???????
+    // 先落盘当前剧本
     let base = workspaceRef.current
     if (activeIdRef.current) {
       base = updateScriptContent(base, activeIdRef.current, valueRef.current)
@@ -404,7 +404,7 @@ export const ScriptWorkspace = forwardRef<
   }
 
   const handleNewPackage = () => {
-    const name = window.prompt('????', '??')
+    const name = window.prompt('新包名称', '新包')
     if (!name?.trim()) return
     const pkg = createPackage(name.trim())
     commitWorkspace({
@@ -415,13 +415,13 @@ export const ScriptWorkspace = forwardRef<
 
   const handleNewScript = (packageId: string) => {
     const name = window.prompt(
-      `???????? ${ALLOWED_EXTENSIONS_LABEL}?`,
-      '???.hs',
+      `文件名（后缀须为 ${ALLOWED_EXTENSIONS_LABEL}）`,
+      '新剧本.hs',
     )
     if (name == null) return
     const normalized = normalizeResourceName(name)
     if (!normalized) {
-      window.alert(`????????????${ALLOWED_EXTENSIONS_LABEL}`)
+      window.alert(`文件名无效。后缀只允许：${ALLOWED_EXTENSIONS_LABEL}`)
       return
     }
     persistActiveContent(valueRef.current)
@@ -460,7 +460,7 @@ export const ScriptWorkspace = forwardRef<
   const handleRenamePackage = (packageId: string) => {
     const pkg = workspaceRef.current.packages.find((item) => item.id === packageId)
     if (!pkg) return
-    const name = window.prompt('????', pkg.name)
+    const name = window.prompt('重命名包', pkg.name)
     if (!name?.trim() || name.trim() === pkg.name) return
     commitWorkspace({
       ...workspaceRef.current,
@@ -474,13 +474,13 @@ export const ScriptWorkspace = forwardRef<
     const hit = findScript(workspaceRef.current, scriptId)
     if (!hit) return
     const name = window.prompt(
-      `???????? ${ALLOWED_EXTENSIONS_LABEL}?`,
+      `重命名（后缀须为 ${ALLOWED_EXTENSIONS_LABEL}）`,
       hit.script.name,
     )
     if (name == null) return
     const normalized = normalizeResourceName(name)
     if (!normalized) {
-      window.alert(`????????????${ALLOWED_EXTENSIONS_LABEL}`)
+      window.alert(`文件名无效。后缀只允许：${ALLOWED_EXTENSIONS_LABEL}`)
       return
     }
     if (normalized === hit.script.name) return
@@ -499,11 +499,11 @@ export const ScriptWorkspace = forwardRef<
     const pkg = workspaceRef.current.packages.find((item) => item.id === packageId)
     if (!pkg) return
     if (workspaceRef.current.packages.length <= 1) {
-      window.alert('???????')
+      window.alert('至少保留一个包')
       return
     }
     if (
-      !window.confirm(`????${pkg.name}???????? assets?`)
+      !window.confirm(`删除包「${pkg.name}」及其全部剧本与 assets？`)
     ) {
       return
     }
@@ -543,7 +543,7 @@ export const ScriptWorkspace = forwardRef<
   const handleDeleteScript = (scriptId: string) => {
     const hit = findScript(workspaceRef.current, scriptId)
     if (!hit) return
-    if (!window.confirm(`?????${hit.script.name}??`)) return
+    if (!window.confirm(`删除剧本「${hit.script.name}」？`)) return
 
     const nextPackages = workspaceRef.current.packages.map((pkg) => ({
       ...pkg,
@@ -575,22 +575,22 @@ export const ScriptWorkspace = forwardRef<
   const handleDeleteAsset = (assetId: string) => {
     const hit = findAsset(workspaceRef.current, assetId)
     if (!hit) return
-    if (!window.confirm(`?????${hit.asset.path}??`)) return
+    if (!window.confirm(`删除资产「${hit.asset.path}」？`)) return
     const next = removeAssetMeta(workspaceRef.current, assetId)
     commitWorkspace(next)
     void deleteAssetBlob(hit.pkg.id, hit.asset.path)
   }
 
   const handleNewAssetFolder = (packageId: string, parentPath: string) => {
-    const name = window.prompt('???????', 'voice')
+    const name = window.prompt('新建文件夹名称', 'voice')
     if (!name?.trim()) return
     if (/[\\/:*?"<>|]/.test(name.trim())) {
-      window.alert('???????? \\ / : * ? " < > |')
+      window.alert('文件夹名不能包含 \\ / : * ? " < > |')
       return
     }
     const folder = normalizeFolderPath(`${parentPath}/${name.trim()}`)
     if (!folder || folder === 'assets') {
-      window.alert('???????')
+      window.alert('文件夹路径无效')
       return
     }
     commitWorkspace(ensureAssetFolder(workspaceRef.current, packageId, folder))
@@ -600,7 +600,7 @@ export const ScriptWorkspace = forwardRef<
     if (folderPath === 'assets') return
     if (
       !window.confirm(
-        `??????${folderPath}?????????`,
+        `删除文件夹「${folderPath}」及其下全部资产？`,
       )
     ) {
       return
@@ -642,7 +642,7 @@ export const ScriptWorkspace = forwardRef<
       }
       try {
         await putAssetBlob(packageId, path, file)
-        // ???????????
+        // 确保父文件夹存在于树中
         const parent = path.includes('/')
           ? path.slice(0, path.lastIndexOf('/'))
           : 'assets'
@@ -671,18 +671,18 @@ export const ScriptWorkspace = forwardRef<
     })
 
     if (failed.length > 0) {
-      window.alert(`?????????\n${failed.join('\n')}`)
+      window.alert(`部分文件导入失败：\n${failed.join('\n')}`)
     }
   }
 
   const handlePullVoice = (scriptId: string) => {
     const hit = findScript(workspaceRef.current, scriptId)
     if (!hit || !isVoiceMapFile(hit.script.name)) {
-      window.alert('??? .voice ??')
+      window.alert('请选择 .voice 文件')
       return
     }
 
-    // ????????????????
+    // 先落盘当前打开的同文件编辑器内容
     let base = workspaceRef.current
     if (
       activeIdRef.current === scriptId &&
@@ -697,7 +697,7 @@ export const ScriptWorkspace = forwardRef<
     const linesName = linesFileNameForVoice(refreshed.script.name)
     if (!linesName) {
       window.alert(
-        `????? *.lines.<locale>.voice\n???${refreshed.script.name}`,
+        `文件名须为 *.lines.<locale>.voice\n当前：${refreshed.script.name}`,
       )
       return
     }
@@ -706,7 +706,7 @@ export const ScriptWorkspace = forwardRef<
       (s) => s.name.toLowerCase() === linesName.toLowerCase(),
     )
     if (!linesHit) {
-      window.alert(`?????????${linesName}`)
+      window.alert(`找不到对应台词表：${linesName}`)
       return
     }
 
@@ -715,7 +715,7 @@ export const ScriptWorkspace = forwardRef<
       linesHit.content,
     )
     if (result.added === 0 && result.idified === 0) {
-      window.alert(`?????????? ${result.total} ??`)
+      window.alert(`已对齐，无需更新（共 ${result.total} 条）`)
       return
     }
 
@@ -730,15 +730,15 @@ export const ScriptWorkspace = forwardRef<
     }
     window.alert(
       result.added === 0
-        ? `?????????? ${result.total} ??`
-        : `??????? ${result.added} ??value ??????? ${result.total}`,
+        ? `已对齐，无需更新（共 ${result.total} 条）`
+        : `拉取完成：追加 ${result.added} 条（value 为原文），合计 ${result.total}`,
     )
   }
 
   const handleGenerateBlankVoiceOggs = async (scriptId: string) => {
     const hit = findScript(workspaceRef.current, scriptId)
     if (!hit || !isVoiceMapFile(hit.script.name)) {
-      window.alert('??? .voice ??')
+      window.alert('请选择 .voice 文件')
       return
     }
 
@@ -753,7 +753,7 @@ export const ScriptWorkspace = forwardRef<
     const parsed = parseVoiceLocaleFile(hit.script.name)
     if (!parsed) {
       window.alert(
-        `????? *.lines.<locale>.voice\n???${hit.script.name}`,
+        `文件名须为 *.lines.<locale>.voice\n当前：${hit.script.name}`,
       )
       return
     }
@@ -764,13 +764,13 @@ export const ScriptWorkspace = forwardRef<
       hit.pkg.assets.map((a) => a.path),
     )
     if (missing.length === 0) {
-      window.alert('????? ogg?????? id?')
+      window.alert('没有缺失的 ogg（或尚无有效 id）')
       return
     }
 
     if (
       !window.confirm(
-        `?? assets/${parsed.locale}/voice/ ?? ${missing.length} ??? ogg??????`,
+        `将在 assets/${parsed.locale}/voice/ 生成 ${missing.length} 个空白 ogg，是否继续？`,
       )
     ) {
       return
@@ -809,12 +809,12 @@ export const ScriptWorkspace = forwardRef<
     commitWorkspace(next)
     window.alert(
       failed.length > 0
-        ? `??? ${created} ???? ${failed.length}?\n${failed.join('\n')}`
-        : `??? ${created} ??? ogg`,
+        ? `已生成 ${created} 个；失败 ${failed.length}：\n${failed.join('\n')}`
+        : `已生成 ${created} 个空白 ogg`,
     )
   }
 
-  // ???????????????????
+  // 自动记忆当前剧本正文（看资产时不写回）
   useEffect(() => {
     if (workspace.activeAssetId) return
     const timer = window.setTimeout(() => {
@@ -823,7 +823,7 @@ export const ScriptWorkspace = forwardRef<
     return () => window.clearTimeout(timer)
   }, [value, workspace.activeAssetId])
 
-  // .hs ?????????????/Agent ?????
+  // .hs 自动历史快照（防抖，与手动/Agent 备份互补）
   useEffect(() => {
     if (workspace.activeAssetId) return
     const name =
@@ -846,7 +846,7 @@ export const ScriptWorkspace = forwardRef<
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
 
-  // ???????????????Chrome ????????
+  // 尝试恢复上次授权的工程文件夹（Chrome 会再弹一次权限）
   useEffect(() => {
     let cancelled = false
     void (async () => {
@@ -856,7 +856,7 @@ export const ScriptWorkspace = forwardRef<
         if (cancelled || !result) return
         applyLoadedProject(result)
       } catch {
-        // ?????????????
+        // 忽略：无句柄或用户拒绝权限
       }
     })()
     return () => {
@@ -906,57 +906,57 @@ export const ScriptWorkspace = forwardRef<
   }
 
   const handleMenuAction = (item: string) => {
-    if (item === '?????') {
+    if (item === '打开工程…') {
       void handleOpenProject()
       return
     }
-    if (item === '?????') {
+    if (item === '新建工程…') {
       void handleCreateProject()
       return
     }
-    if (item === '??????') {
+    if (item === '另存为工程…') {
       void handleSaveProjectAs()
       return
     }
-    if (item === '??') {
+    if (item === '保存') {
       persistNow()
       return
     }
-    if (item === '????') {
+    if (item === '历史版本') {
       setHistoryOpen(true)
       return
     }
-    if (item === '?????') {
+    if (item === '导出资源包') {
       void handleExportResourcePack()
       return
     }
-    if (item === '?????') {
+    if (item === '导出资产包') {
       void handleExportAssetsPack()
       return
     }
-    if (item === '???') {
+    if (item === '新建包') {
       if (projectRef.current) {
         window.alert(
-          '????????????????????????\n??????????????????????????',
+          '当前已绑定文件夹工程：磁盘上只保存当前这一个包。\n新建包仅留在浏览器缓存；多工程请用「另存为工程…」。',
         )
       }
       handleNewPackage()
       return
     }
-    if (item === '????') {
+    if (item === '新建剧本') {
       const pkgId =
         active?.pkg.id ?? workspaceRef.current.packages[0]?.id ?? null
       if (pkgId) handleNewScript(pkgId)
       return
     }
-    if (item === 'Agent ??') {
+    if (item === 'Agent 窗口') {
       setAgentOpen((open) => !open)
       return
     }
   }
 
   const handleRestoreHistory = (fileName: string, content: string) => {
-    // ???????????
+    // 恢复前再拍一版当前内容
     const currentName =
       findScript(workspaceRef.current, activeIdRef.current)?.script.name ?? ''
     if (currentName) {
@@ -967,12 +967,12 @@ export const ScriptWorkspace = forwardRef<
 
     const hit = findScriptByName(workspaceRef.current, fileName)
     if (!hit) {
-      // ???????????
+      // 文件已删：在当前包重建
       const pkgId =
         findScript(workspaceRef.current, activeIdRef.current)?.pkg.id ??
         workspaceRef.current.packages[0]?.id
       if (!pkgId) {
-        window.alert('???????????')
+        window.alert('没有可用的包，无法恢复')
         return
       }
       let base = workspaceRef.current
@@ -1019,7 +1019,7 @@ export const ScriptWorkspace = forwardRef<
   }
 
   const handleExportResourcePack = async () => {
-    // ???????? .hs ? .lines ?????
+    // 先保存，确保当前 .hs 的 .lines 已全量编译
     persistNow()
     try {
       const { blob, fileCount, warnings } = await buildResourcePackZip(
@@ -1034,14 +1034,14 @@ export const ScriptWorkspace = forwardRef<
       if (warnings.length > 0) {
         const shown = warnings.slice(0, 20).join('\n')
         const more =
-          warnings.length > 20 ? `\n??? ${warnings.length - 20} ?` : ''
+          warnings.length > 20 ? `\n…另有 ${warnings.length - 20} 条` : ''
         window.alert(
-          `???????${fileCount} ??????????\n\n${shown}${more}`,
+          `已导出资源包（${fileCount} 个文件），但有警告：\n\n${shown}${more}`,
         )
       }
     } catch (err) {
       window.alert(
-        `?????${err instanceof Error ? err.message : String(err)}`,
+        `导出失败：${err instanceof Error ? err.message : String(err)}`,
       )
     }
   }
@@ -1061,16 +1061,16 @@ export const ScriptWorkspace = forwardRef<
       if (warnings.length > 0) {
         const shown = warnings.slice(0, 20).join('\n')
         const more =
-          warnings.length > 20 ? `\n??? ${warnings.length - 20} ?` : ''
+          warnings.length > 20 ? `\n…另有 ${warnings.length - 20} 条` : ''
         window.alert(
-          `???????${fileCount} ??????????\n\n${shown}${more}`,
+          `已导出资产包（${fileCount} 个文件），但有警告：\n\n${shown}${more}`,
         )
       } else if (fileCount === 0) {
-        window.alert('???????????????')
+        window.alert('资产包为空（没有可导出的文件）')
       }
     } catch (err) {
       window.alert(
-        `????????${err instanceof Error ? err.message : String(err)}`,
+        `导出资产包失败：${err instanceof Error ? err.message : String(err)}`,
       )
     }
   }
@@ -1079,7 +1079,7 @@ export const ScriptWorkspace = forwardRef<
     setAgentDiffs((prev) => {
       const idx = prev.findIndex((item) => item.fileName === snap.fileName)
       if (idx < 0) return [...prev, snap]
-      // ????????????? before???? after
+      // 同一文件多次写入：保留最初 before，只更新 after
       const next = [...prev]
       const old = next[idx]
       next[idx] = {
@@ -1112,7 +1112,7 @@ export const ScriptWorkspace = forwardRef<
     setSavedAt(updatedAt ?? Date.now())
   }
 
-  /** ??????????? Agent ????? confirm? */
+  /** 静默删除剧本（用于撤销 Agent 新建，不弹 confirm） */
   const removeScriptSilent = (scriptId: string) => {
     const nextPackages = workspaceRef.current.packages.map((pkg) => ({
       ...pkg,
@@ -1169,7 +1169,7 @@ export const ScriptWorkspace = forwardRef<
       current !== snap.after &&
       current !== snap.before &&
       !window.confirm(
-        `?${snap.fileName}?? Agent ?????????????????`,
+        `「${snap.fileName}」在 Agent 写入后又有改动，仍要撤销到修改前？`,
       )
     ) {
       return
@@ -1191,11 +1191,11 @@ export const ScriptWorkspace = forwardRef<
   const undoAllAgentDiffs = () => {
     if (agentDiffs.length === 0) return
     if (
-      !window.confirm(`???? ${agentDiffs.length} ? Agent ???`)
+      !window.confirm(`撤销全部 ${agentDiffs.length} 处 Agent 修改？`)
     ) {
       return
     }
-    // ???????????????????????????
+    // 从后往前，避免索引错位；新建删除与内容恢复互不依赖顺序
     for (let i = agentDiffs.length - 1; i >= 0; i -= 1) {
       const snap = agentDiffs[i]
       if (snap.created) {
@@ -1226,8 +1226,8 @@ export const ScriptWorkspace = forwardRef<
       findScript(workspaceRef.current, activeIdRef.current)?.script.name ?? '',
     readFile: (fileName) => {
       const hit = findScriptByName(workspaceRef.current, fileName)
-      if (!hit) return { ok: false, error: `??????${fileName}` }
-      // ????????????????????
+      if (!hit) return { ok: false, error: `未找到文件：${fileName}` }
+      // 若读的是当前文件，以编辑器里最新内容为准
       if (hit.script.id === activeIdRef.current) {
         return {
           ok: true,
@@ -1244,7 +1244,7 @@ export const ScriptWorkspace = forwardRef<
     writeCurrentFile: (content) => {
       const id = activeIdRef.current
       const hit = findScript(workspaceRef.current, id)
-      if (!id || !hit) return { ok: false, error: '?????????' }
+      if (!id || !hit) return { ok: false, error: '当前没有打开的文件' }
       const before =
         hit.script.id === activeIdRef.current
           ? valueRef.current
@@ -1268,7 +1268,7 @@ export const ScriptWorkspace = forwardRef<
       if (!normalized) {
         return {
           ok: false,
-          error: `?????????? ${ALLOWED_EXTENSIONS_LABEL}`,
+          error: `文件名无效，后缀须为 ${ALLOWED_EXTENSIONS_LABEL}`,
         }
       }
       const existing = findScriptByName(workspaceRef.current, normalized)
@@ -1301,9 +1301,9 @@ export const ScriptWorkspace = forwardRef<
       const pkgId =
         findScript(workspaceRef.current, activeIdRef.current)?.pkg.id ??
         workspaceRef.current.packages[0]?.id
-      if (!pkgId) return { ok: false, error: '??????' }
+      if (!pkgId) return { ok: false, error: '没有可用的包' }
 
-      // ????????????????????????
+      // 先落盘当前打开文件，避免内容丢在未保存的编辑器里
       let base = workspaceRef.current
       if (activeIdRef.current) {
         base = updateScriptContent(base, activeIdRef.current, valueRef.current)
@@ -1315,7 +1315,7 @@ export const ScriptWorkspace = forwardRef<
           ? { ...pkg, collapsed: false, scripts: [...pkg.scripts, script] }
           : pkg,
       )
-      // ???????????? write_current_file ????? .hs
+      // 切换到新建文件，避免后续 write_current_file 误盖原来的 .hs
       commitWorkspace({
         packages: nextPackages,
         activeScriptId: script.id,
@@ -1355,7 +1355,7 @@ export const ScriptWorkspace = forwardRef<
         <div className="tab active">
           <span>{titleName}</span>
           <span className="tab-close" aria-hidden>
-            ?
+            ×
           </span>
         </div>
         {editingMarkdown && (
@@ -1363,7 +1363,7 @@ export const ScriptWorkspace = forwardRef<
             type="button"
             className={`tab-action${mdPreviewOn ? ' on' : ''}`}
             onClick={() => setMdPreviewOn((on) => !on)}
-            title="?? Markdown ??"
+            title="切换 Markdown 预览"
           >
             Preview
           </button>
@@ -1373,9 +1373,9 @@ export const ScriptWorkspace = forwardRef<
             type="button"
             className={`tab-action${hscPreviewOn ? ' on' : ''}`}
             onClick={() => setHscPreviewOn((on) => !on)}
-            title="????? .hsc ??"
+            title="切换编译后 .hsc 视角"
           >
-            ??
+            编译
           </button>
         )}
       </div>
@@ -1428,7 +1428,7 @@ export const ScriptWorkspace = forwardRef<
           {agentOpen && (
             <div
               className="split-handle"
-              title="???? Agent / ??? ??"
+              title="拖动调整 Agent / 编辑器 宽度"
               onPointerDown={(event) => {
                 event.preventDefault()
                 draggingRef.current = true
@@ -1506,9 +1506,9 @@ export const ScriptWorkspace = forwardRef<
         </div>
 
         {editingHanshu && (
-          <aside className="role-panel" aria-label="?????">
+          <aside className="role-panel" aria-label="备选角色栏">
             <div className="role-panel-header">
-              <span>????</span>
+              <span>备选角色</span>
             </div>
             <ul className="role-list">
               {Array.from({ length: SPEAKER_SLOT_COUNT }, (_, index) => (
@@ -1518,7 +1518,7 @@ export const ScriptWorkspace = forwardRef<
                     className="role-index"
                     title={
                       roles[index].trim()
-                        ? `${numpadHint(index)} ? ??`
+                        ? `${numpadHint(index)} · 插入`
                         : numpadHint(index)
                     }
                     disabled={!roles[index].trim()}
@@ -1529,7 +1529,7 @@ export const ScriptWorkspace = forwardRef<
                   <input
                     className="role-input"
                     value={roles[index]}
-                    placeholder="?"
+                    placeholder="空"
                     spellCheck={false}
                     onChange={(event) =>
                       updateRole(index, event.target.value)
@@ -1575,24 +1575,24 @@ export const ScriptWorkspace = forwardRef<
 
       <footer className="statusbar">
         <div className="statusbar-left">
-          <span title={project ? project.folderName : '????????'}>
-            {project ? `?? ? ${project.folderName}` : '??????'}
+          <span title={project ? project.folderName : '未绑定文件夹工程'}>
+            {project ? `工程 · ${project.folderName}` : '仅浏览器缓存'}
           </span>
           <span>{packageName}</span>
-          <span>{charCount} ??</span>
+          <span>{charCount} 字符</span>
           <span>{formatSavedAt(savedAt)}</span>
           {project && (
-            <span title="?????????">
+            <span title="最近写入工程文件夹">
               {diskSavedAt
-                ? `??? ${new Date(diskSavedAt).toLocaleTimeString()}`
-                : '?????'}
+                ? `已落盘 ${new Date(diskSavedAt).toLocaleTimeString()}`
+                : '工程未写入'}
             </span>
           )}
           {agentDiffs.length > 0 && (
             <span
               className="status-on"
               onClick={() => setDiffOpen(true)}
-              title="?? Agent ????"
+              title="查看 Agent 修改对比"
               role="button"
               tabIndex={0}
               onKeyDown={(event) => {
@@ -1601,7 +1601,7 @@ export const ScriptWorkspace = forwardRef<
                 }
               }}
             >
-              Diff?{agentDiffs.length}
+              Diff×{agentDiffs.length}
             </span>
           )}
         </div>
@@ -1609,7 +1609,7 @@ export const ScriptWorkspace = forwardRef<
           <span
             className={agentOpen ? 'status-on' : ''}
             onClick={() => setAgentOpen((open) => !open)}
-            title="?? Agent ??"
+            title="开关 Agent 窗口"
             role="button"
             tabIndex={0}
             onKeyDown={(event) => {
@@ -1620,10 +1620,10 @@ export const ScriptWorkspace = forwardRef<
           >
             Agent
           </span>
-          <span>? {lineCount}</span>
-          <span>??: 2</span>
+          <span>行 {lineCount}</span>
+          <span>空格: 2</span>
           <span>UTF-8</span>
-          <span>??</span>
+          <span>汉书</span>
         </div>
       </footer>
     </div>

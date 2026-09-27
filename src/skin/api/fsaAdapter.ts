@@ -105,6 +105,8 @@ export function createFsaSkinApi(): SkinApi {
       (await getSession()).patchFolder(folderId, body),
     deleteFolder: async (folderId) =>
       (await getSession()).deleteFolder(folderId),
+    deleteEntriesInFolder: async (folderId) =>
+      (await getSession()).deleteEntriesInFolder(folderId),
 
     saveEntry: async (body: SaveEntryRequest) =>
       (await getSession()).saveEntry(body),
@@ -122,7 +124,7 @@ export function createFsaSkinApi(): SkinApi {
       if (kind === 'skin-file') {
         throw new SkinApiError({
           code: 'BAD_REQUEST',
-          message: '请使用文件选择导入 .hskin / PNG',
+          message: '请使用文件选择导入 .skin / PNG / 皮肤码',
         })
       }
       throw new SkinApiError({
@@ -142,11 +144,18 @@ export function createFsaSkinApi(): SkinApi {
       const s = await getSession()
       const buf = new Uint8Array(await file.arrayBuffer())
       const name = file.name.toLowerCase()
-      if (name.endsWith('.hskin') || name.endsWith('.txt')) {
+      if (name.endsWith('.txt') || name.endsWith('.skincode')) {
         const text = new TextDecoder().decode(buf)
-        if (text.trim().startsWith('hskin1:')) {
+        if (text.trim().startsWith('hanshu-skin:')) {
           return s.startImportSkinCode(text)
         }
+      }
+      if (name.endsWith('.skin')) {
+        // Binary object — decode and import as share with classic default model
+        const { decodeDiskFile, encodeShareCode } = await import('../local/codec')
+        const { decoded } = await decodeDiskFile(buf)
+        const { skinCode } = await encodeShareCode(model ?? 'classic', decoded)
+        return s.startImportSkinCode(skinCode)
       }
       return s.startImportFromPng(buf, file.name, model)
     },
@@ -164,6 +173,9 @@ export function createFsaSkinApi(): SkinApi {
     exportUsableManifest: async () =>
       (await getSession()).exportUsableManifest(),
 
+    gcOrphans: async (onProgress) =>
+      (await getSession()).gcOrphans(onProgress),
+
     saveExportFile: async (skinId, format) => {
       const s = await getSession()
       if (format === 'png') {
@@ -176,11 +188,14 @@ export function createFsaSkinApi(): SkinApi {
         triggerDownload(blob, `${skinId.slice(0, 8)}.png`)
         return
       }
-      const { text } = await s.exportSkin(skinId, 'hskin')
-      if (!text) return
+      const { skinBase64 } = await s.exportSkin(skinId, 'skin')
+      if (!skinBase64) return
+      const bin = atob(skinBase64)
+      const bytes = new Uint8Array(bin.length)
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
       triggerDownload(
-        new Blob([text], { type: 'text/plain' }),
-        `${skinId.slice(0, 8)}.hskin`,
+        new Blob([bytes], { type: 'application/octet-stream' }),
+        `${skinId.slice(0, 8)}.skin`,
       )
     },
 

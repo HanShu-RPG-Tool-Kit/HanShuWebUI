@@ -11,7 +11,7 @@
 //! are staged in memory until the client saves; staged objects are protected
 //! from GC. Cancellation uses a CancellationToken checked at await points.
 
-use crate::codec::{decode_skin_code, encode_skin_code, limits, SkinModel};
+use crate::codec::{decode_share_code, limits, DecodedSkin, SkinModel};
 use crate::error::{codes, SkinError, SkinResult};
 use crate::network::player::resolve_player_skin;
 use crate::network::safe_fetch;
@@ -58,6 +58,8 @@ pub struct ImportResult {
     pub model: SkinModel,
     pub suggested_name: String,
     pub skin_code: String,
+    pub texture_width: u32,
+    pub texture_height: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub suggested_tag_paths: Option<Vec<Vec<String>>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -92,6 +94,8 @@ pub struct Staged {
     pub model: SkinModel,
     pub skin_code: String,
     pub suggested_name: String,
+    pub texture_width: u32,
+    pub texture_height: u32,
     pub suggested_tag_paths: Option<Vec<Vec<String>>>,
     pub suggested_active: Option<bool>,
     pub suggested_license: Option<LicenseInfo>,
@@ -108,8 +112,8 @@ struct JobEntry {
 
 #[derive(Debug, Clone)]
 pub enum ImportInput {
-    PngFile { bytes: Vec<u8>, file_name: String, model_override: SkinModel },
-    PngUrl { url: String, model_override: SkinModel },
+    PngFile { bytes: Vec<u8>, file_name: String, model_override: Option<SkinModel> },
+    PngUrl { url: String, model_override: Option<SkinModel> },
     PlayerName { name: String },
     SkinCode { code: String },
     SkinFile { bytes: Vec<u8>, file_name: Option<String> },
@@ -133,7 +137,7 @@ impl ImportManager {
             storage,
             jobs: Mutex::new(Vec::new()),
             net_sem: tokio::sync::Semaphore::new(4),
-            cpu_sem: tokio::sync::Semaphore::new(2),
+            cpu_sem: tokio::sync::Semaphore::new(6),
         }
     }
 
@@ -227,17 +231,17 @@ impl ImportManager {
 
     async fn run(&self, entry: Arc<Mutex<JobEntry>>, input: ImportInput) -> SkinResult<()> {
         let token = entry.lock().unwrap().cancel.clone();
-        // Wait for a network slot (bounded concurrency).
-        let _net = self.net_sem.acquire().await;
-        if token.is_cancelled() {
-            return Err(SkinError::api(codes::JOB_CANCELLED, "cancelled"));
-        }
         match input {
+            // Local file: skip net semaphore — only CPU-bound work.
             ImportInput::PngFile { bytes, file_name, model_override } => {
                 let source = EntrySource::PngFile { file_name: Some(file_name.clone()) };
                 self.run_png(entry, &token, &bytes, file_name, model_override, source).await
             }
             ImportInput::PngUrl { url, model_override } => {
+                let _net = self.net_sem.acquire().await;
+                if token.is_cancelled() {
+                    return Err(SkinError::api(codes::JOB_CANCELLED, "cancelled"));
+                }
                 set_state_arc(&entry, JobState::Fetching, None);
                 let res = safe_fetch(&url).await?;
                 if token.is_cancelled() {
@@ -253,6 +257,10 @@ impl ImportManager {
                 self.run_png(entry, &token, &res.body, file_name, model_override, source).await
             }
             ImportInput::PlayerName { name } => {
+                let _net = self.net_sem.acquire().await;
+                if token.is_cancelled() {
+                    return Err(SkinError::api(codes::JOB_CANCELLED, "cancelled"));
+                }
                 set_state_arc(&entry, JobState::Fetching, None);
                 let name = name.trim().to_string();
                 let resolved = resolve_player_skin(&name).await?;
@@ -269,7 +277,7 @@ impl ImportManager {
                     &token,
                     &res.body,
                     resolved.player_name.clone(),
-                    resolved.model,
+                    Some(resolved.model),
                     source,
                 )
                 .await
@@ -278,9 +286,13 @@ impl ImportManager {
                 set_state_arc(&entry, JobState::Validating, None);
                 let code = code.trim().to_string();
                 let _cpu = self.cpu_sem.acquire().await;
-                let (decoded, _) = decode_skin_code(&code)?;
-                let (skin_id, model) = self.storage.put_object(&code)?;
-                let png = rgba_to_png(&decoded.rgba)?;
+                let (decoded, model, skin_id) = decode_share_code(&code)?;
+                self.storage.put_decoded(&decoded)?;
+                let png = rgba_to_png(
+                    &decoded.rgba,
+                    decoded.width as u32,
+                    decoded.height as u32,
+                )?;
                 self.storage.put_preview_png(&skin_id, &png)?;
                 let suggested_name = format!("skin-{}", &skin_id[..8]);
                 self.stage(
@@ -290,6 +302,8 @@ impl ImportManager {
                         model,
                         skin_code: code,
                         suggested_name,
+                        texture_width: decoded.width as u32,
+                        texture_height: decoded.height as u32,
                         suggested_tag_paths: None,
                         suggested_active: None,
                         suggested_license: None,
@@ -327,7 +341,7 @@ impl ImportManager {
                     })?
                     .to_string();
                 // Re-validate the embedded code; never trust the file's own skinId.
-                let (decoded, verified_id) = decode_skin_code(&skin_code)?;
+                let (decoded, model_from_code, verified_id) = decode_share_code(&skin_code)?;
                 if let Some(claimed) = parsed.get("skinId").and_then(|v| v.as_str()) {
                     if claimed != verified_id {
                         return Err(SkinError::api(
@@ -377,8 +391,17 @@ impl ImportManager {
                     serde_json::from_value::<Provenance>(v.clone()).ok()
                 });
                 let suggested_note = parsed.get("note").and_then(|v| v.as_str()).map(|s| s.to_string());
-                let (skin_id, model) = self.storage.put_object(&skin_code)?;
-                let png = rgba_to_png(&decoded.rgba)?;
+                let model = parsed
+                    .get("model")
+                    .and_then(|v| v.as_str())
+                    .and_then(SkinModel::parse)
+                    .unwrap_or(model_from_code);
+                let skin_id = self.storage.put_decoded(&decoded)?;
+                let png = rgba_to_png(
+                    &decoded.rgba,
+                    decoded.width as u32,
+                    decoded.height as u32,
+                )?;
                 self.storage.put_preview_png(&skin_id, &png)?;
                 self.stage(
                     entry,
@@ -387,6 +410,8 @@ impl ImportManager {
                         model,
                         skin_code,
                         suggested_name,
+                        texture_width: decoded.width as u32,
+                        texture_height: decoded.height as u32,
                         suggested_tag_paths,
                         suggested_active,
                         suggested_license,
@@ -405,7 +430,7 @@ impl ImportManager {
         token: &CancellationToken,
         bytes: &[u8],
         file_name: String,
-        model: SkinModel,
+        model_override: Option<SkinModel>,
         source: EntrySource,
     ) -> SkinResult<()> {
         set_state_arc(&entry, JobState::Validating, None);
@@ -414,9 +439,20 @@ impl ImportManager {
             return Err(SkinError::api(codes::JOB_CANCELLED, "cancelled"));
         }
         let normalized = normalize_png(bytes)?;
-        let skin_code = encode_skin_code(model, &normalized.rgba)?;
-        let (skin_id, model) = self.storage.put_object(&skin_code)?;
-        let png = rgba_to_png(&normalized.rgba)?;
+        let model = model_override.unwrap_or(normalized.detected_model);
+        let decoded = DecodedSkin {
+            rgba: normalized.rgba.clone(),
+            width: normalized.texture_width as u16,
+            height: normalized.texture_height as u16,
+            flags: normalized.flags,
+        };
+        let skin_id = self.storage.put_decoded(&decoded)?;
+        // Defer share-code encoding — validate path only needs skinId + preview.
+        let png = rgba_to_png(
+            &normalized.rgba,
+            normalized.texture_width,
+            normalized.texture_height,
+        )?;
         self.storage.put_preview_png(&skin_id, &png)?;
         let suggested_name = strip_ext(&file_name);
         self.stage(
@@ -424,8 +460,10 @@ impl ImportManager {
             Staged {
                 skin_id,
                 model,
-                skin_code,
+                skin_code: String::new(),
                 suggested_name,
+                texture_width: normalized.texture_width,
+                texture_height: normalized.texture_height,
                 suggested_tag_paths: None,
                 suggested_active: None,
                 suggested_license: None,
@@ -446,6 +484,8 @@ impl ImportManager {
             model: staged.model,
             suggested_name: staged.suggested_name.clone(),
             skin_code: staged.skin_code.clone(),
+            texture_width: staged.texture_width,
+            texture_height: staged.texture_height,
             suggested_tag_paths: staged.suggested_tag_paths.clone(),
             suggested_active: staged.suggested_active,
             suggested_license: staged.suggested_license.clone(),
@@ -509,6 +549,8 @@ impl ImportManager {
             folder_id,
             favorite,
             model: staged.model,
+            texture_width: staged.texture_width,
+            texture_height: staged.texture_height,
             source: staged.source,
             provenance: provenance.or(staged.suggested_provenance).unwrap_or_default(),
             license: license.or(staged.suggested_license).unwrap_or_default(),
@@ -541,7 +583,7 @@ fn set_state_arc(entry: &Arc<Mutex<JobEntry>>, state: JobState, error: Option<Jo
 
 fn strip_ext(name: &str) -> String {
     let lower = name.to_lowercase();
-    for ext in [".skin.json", ".png", ".hskin", ".json"] {
+    for ext in [".skin.json", ".png", ".skin", ".json"] {
         if lower.ends_with(ext) {
             return name[..name.len() - ext.len()].to_string();
         }

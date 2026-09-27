@@ -3,7 +3,7 @@
 //!   <root>/
 //!     library.json   (+ library.json.bak, library.json.v1-migration-backup,
 //!                     library.json.v3-migration-backup)
-//!     objects/<skinId[0..2]>/<skinId>.hskin
+//!     objects/<skinId[0..2]>/<skinId>.skin
 //!     cache/png/<skinId>.png
 //!     tmp/
 //!
@@ -14,7 +14,9 @@
 
 pub mod schema;
 
-use crate::codec::{decode_skin_code, SkinModel};
+use crate::codec::{
+    decode_disk_file, encode_disk_file, encode_share_code, DecodedSkin, SkinModel,
+};
 use crate::error::{codes, SkinError, SkinResult};
 use schema::*;
 use serde::Deserialize;
@@ -239,6 +241,9 @@ pub struct LibraryQuery {
     pub favorite: Option<bool>,
     pub active: Option<bool>,
     pub models: Vec<SkinModel>,
+    /// Multi-select texture widths (square side after normalize).
+    #[serde(default)]
+    pub texture_widths: Vec<u32>,
     pub include_license_names: Vec<String>,
     pub exclude_license_names: Vec<String>,
     /// true → only entries whose license is unspecified; false → only declared.
@@ -269,6 +274,14 @@ pub struct LibraryPage {
 #[serde(rename_all = "camelCase")]
 pub struct CollectedTag {
     pub name: String,
+    pub count: usize,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CollectedTextureSize {
+    pub width: u32,
+    pub height: u32,
     pub count: usize,
 }
 
@@ -508,6 +521,8 @@ impl Storage {
                 folder_id: None,
                 favorite: e.favorite,
                 model: e.model,
+                texture_width: 64,
+                texture_height: 64,
                 source: e.source,
                 provenance: Provenance::default(),
                 license: LicenseInfo::default(),
@@ -578,6 +593,8 @@ impl Storage {
                     folder_id: e.folder_id,
                     favorite: e.favorite,
                     model: e.model,
+                    texture_width: 64,
+                    texture_height: 64,
                     source: e.source,
                     provenance: Provenance::default(),
                     license: LicenseInfo::default(),
@@ -669,21 +686,33 @@ impl Storage {
     // objects
     // ------------------------------------------------------------------
 
-    /// Validate a skin code and store it as objects/<ab>/<skinId>.hskin.
-    pub fn put_object(&self, skin_code: &str) -> SkinResult<(String, SkinModel)> {
-        let (decoded, skin_id) = decode_skin_code(skin_code)?;
+    /// Store a decoded object as `objects/<ab>/<skinId>.skin` (binary).
+    pub fn put_decoded(&self, decoded: &DecodedSkin) -> SkinResult<String> {
+        let disk = encode_disk_file(decoded).map_err(SkinError::from)?;
+        let (_, skin_id) = decode_disk_file(&disk).map_err(SkinError::from)?;
         let sub = &skin_id[..2];
         let dir = self.layout.objects.join(sub);
         fs::create_dir_all(&dir)?;
-        let file = dir.join(format!("{skin_id}.hskin"));
+        let file = dir.join(format!("{skin_id}.skin"));
         if !file.exists() {
-            atomic_write(&file, format!("{skin_code}\n").as_bytes())?;
+            atomic_write(&file, &disk)?;
         }
-        Ok((skin_id, decoded.model))
+        Ok(skin_id)
     }
 
-    /// Load and fully re-validate an object by skinId (64-hex, lowercase).
-    pub fn get_object(&self, skin_id: &str) -> SkinResult<Option<(String, SkinModel)>> {
+    /// Validate a share code, store the binary object, return (skinId, decoded, model).
+    pub fn put_share_code(
+        &self,
+        skin_code: &str,
+    ) -> SkinResult<(String, DecodedSkin, SkinModel)> {
+        let (decoded, model, skin_id) =
+            crate::codec::decode_share_code(skin_code).map_err(SkinError::from)?;
+        self.put_decoded(&decoded)?;
+        Ok((skin_id, decoded, model))
+    }
+
+    /// Load and re-validate a binary object by skinId.
+    pub fn get_object(&self, skin_id: &str) -> SkinResult<Option<DecodedSkin>> {
         if !is_valid_skin_id(skin_id) {
             return Err(SkinError::api(codes::BAD_REQUEST, "bad skinId"));
         }
@@ -691,17 +720,35 @@ impl Storage {
             .layout
             .objects
             .join(&skin_id[..2])
-            .join(format!("{skin_id}.hskin"));
-        let raw = match fs::read_to_string(&file) {
+            .join(format!("{skin_id}.skin"));
+        let raw = match fs::read(&file) {
             Ok(raw) => raw,
             Err(_) => return Ok(None),
         };
-        let code = raw.trim();
-        let (decoded, verified_id) = decode_skin_code(code)?;
+        let (decoded, verified_id) = decode_disk_file(&raw).map_err(SkinError::from)?;
         if verified_id != skin_id {
             return Ok(None);
         }
-        Ok(Some((code.to_string(), decoded.model)))
+        Ok(Some(decoded))
+    }
+
+    /// Build a share string for an object using the given model (from the entry).
+    pub fn get_share_code(
+        &self,
+        skin_id: &str,
+        model: SkinModel,
+    ) -> SkinResult<Option<String>> {
+        let Some(decoded) = self.get_object(skin_id)? else {
+            return Ok(None);
+        };
+        let code = encode_share_code(model, &decoded).map_err(SkinError::from)?;
+        Ok(Some(code))
+    }
+
+    /// Convenience for tests: store from share code, return (skinId, model).
+    pub fn put_object(&self, skin_code: &str) -> SkinResult<(String, SkinModel)> {
+        let (skin_id, _, model) = self.put_share_code(skin_code)?;
+        Ok((skin_id, model))
     }
 
     pub fn put_preview_png(&self, skin_id: &str, png: &[u8]) -> SkinResult<()> {
@@ -743,14 +790,14 @@ impl Storage {
         for sub in subdirs {
             for file in fs::read_dir(sub.path())?.flatten() {
                 let name = file.file_name().to_string_lossy().to_string();
-                let Some(skin_id) = name.strip_suffix(".hskin") else { continue };
+                let Some(skin_id) = name.strip_suffix(".skin") else {
+                    continue;
+                };
                 if !referenced.contains(skin_id) {
                     if fs::remove_file(file.path()).is_ok() {
                         removed.push(skin_id.to_string());
                     }
-                    let _ = fs::remove_file(
-                        self.layout.cache_png.join(format!("{skin_id}.png")),
-                    );
+                    let _ = fs::remove_file(self.layout.cache_png.join(format!("{skin_id}.png")));
                 }
             }
         }
@@ -767,8 +814,15 @@ impl Storage {
 
     /// Collect unique tag names from all entries (auto inventory).
     pub fn list_tags(&self) -> (u64, Vec<CollectedTag>) {
+        let (revision, tags, _) = self.list_tags_and_sizes();
+        (revision, tags)
+    }
+
+    /// Tags + distinct texture sizes (auto inventory).
+    pub fn list_tags_and_sizes(&self) -> (u64, Vec<CollectedTag>, Vec<CollectedTextureSize>) {
         let snap = self.snapshot();
         let mut counts: HashMap<String, (String, usize)> = HashMap::new();
+        let mut size_counts: HashMap<u32, (u32, usize)> = HashMap::new();
         for e in &snap.entries {
             for raw in &e.tags {
                 let Some(n) = normalize_tag_name(raw) else {
@@ -780,13 +834,36 @@ impl Storage {
                     .and_modify(|(_, c)| *c += 1)
                     .or_insert((n, 1));
             }
+            let w = if e.texture_width > 0 {
+                e.texture_width
+            } else {
+                64
+            };
+            let h = if e.texture_height > 0 {
+                e.texture_height
+            } else {
+                w
+            };
+            size_counts
+                .entry(w)
+                .and_modify(|(_, c)| *c += 1)
+                .or_insert((h, 1));
         }
         let mut out: Vec<CollectedTag> = counts
             .into_values()
             .map(|(name, count)| CollectedTag { name, count })
             .collect();
         out.sort_by(|a, b| a.name.cmp(&b.name));
-        (snap.revision, out)
+        let mut sizes: Vec<CollectedTextureSize> = size_counts
+            .into_iter()
+            .map(|(width, (height, count))| CollectedTextureSize {
+                width,
+                height,
+                count,
+            })
+            .collect();
+        sizes.sort_by_key(|s| s.width);
+        (snap.revision, out, sizes)
     }
 
     /// Portable import: flatten tag paths to freeform leaf names (no registry).
@@ -1114,6 +1191,16 @@ impl Storage {
         if !q.models.is_empty() {
             out.retain(|e| q.models.contains(&e.model));
         }
+        if !q.texture_widths.is_empty() {
+            out.retain(|e| {
+                let w = if e.texture_width > 0 {
+                    e.texture_width
+                } else {
+                    64
+                };
+                q.texture_widths.contains(&w)
+            });
+        }
         if !q.include_license_names.is_empty() {
             out.retain(|e| {
                 e.license
@@ -1279,6 +1366,8 @@ impl Storage {
                 folder_id,
                 favorite: input.favorite,
                 model: input.model,
+                texture_width: input.texture_width,
+                texture_height: input.texture_height,
                 source: input.source,
                 provenance: input.provenance,
                 license: input.license,
@@ -1442,6 +1531,26 @@ impl Storage {
             Ok(true)
         })
     }
+
+    /// Delete all entries in a folder and its descendant folders (nodes kept).
+    pub fn delete_entries_in_folder(&self, folder_id: &str) -> SkinResult<usize> {
+        self.mutate(|snap| {
+            let maps = FolderMaps::of(&snap.folders);
+            let scope = maps.subtree_ids(folder_id);
+            let before = snap.entries.len();
+            snap.entries.retain(|e| {
+                e.folder_id
+                    .as_ref()
+                    .map(|f| !scope.contains(f.as_str()))
+                    .unwrap_or(true)
+            });
+            let deleted = before - snap.entries.len();
+            if deleted > 0 {
+                snap.revision += 1;
+            }
+            Ok(deleted)
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -1453,6 +1562,8 @@ pub struct AddEntryInput {
     pub folder_id: Option<String>,
     pub favorite: bool,
     pub model: SkinModel,
+    pub texture_width: u32,
+    pub texture_height: u32,
     pub source: EntrySource,
     pub provenance: Provenance,
     pub license: LicenseInfo,
@@ -1541,6 +1652,8 @@ fn legacy_entry_to_v5(e: LibraryEntryLegacy, registry: &HashMap<String, String>)
         folder_id: e.folder_id,
         favorite: e.favorite,
         model: e.model,
+        texture_width: 64,
+        texture_height: 64,
         source: e.source,
         provenance: e.provenance,
         license: e.license,

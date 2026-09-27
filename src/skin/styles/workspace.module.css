@@ -283,7 +283,9 @@
 .leftBottomScroll {
   flex: 1;
   min-height: 0;
-  overflow-y: auto;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   padding: 6px 8px 8px;
   background: transparent;
   border: 0;
@@ -860,6 +862,112 @@
   margin: 0;
   font-size: var(--sk-font-sm);
   gap: 8px;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+.filterFacetSection {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-height: 96px;
+  min-width: 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--skin-border);
+}
+.filterFacetHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: none;
+}
+.filterSectionTitle {
+  font-size: var(--sk-font-sm);
+  color: var(--skin-text);
+  font-weight: 600;
+}
+.filterChipScroll {
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  padding: 2px 2px 4px 0;
+  margin-right: -2px;
+  scrollbar-gutter: stable;
+}
+.filterPanelSidebar > .filterRow {
+  flex: none;
+}
+.filterChipGroup + .filterChipGroup {
+  margin-top: 8px;
+}
+.filterChipGroupLabel {
+  font-size: var(--sk-font-xs);
+  color: var(--skin-text-dim);
+  margin-bottom: 4px;
+  letter-spacing: 0.02em;
+}
+.filterChipCloud {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  align-content: flex-start;
+}
+.filterChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  margin: 0;
+  padding: 4px 10px;
+  border: 1px solid var(--skin-edge);
+  border-radius: 999px;
+  background: var(--skin-panel-2);
+  color: var(--skin-text-dim);
+  font-size: var(--sk-font-sm);
+  line-height: 1.35;
+  cursor: pointer;
+  text-align: left;
+  transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+.filterChip > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.filterChip:hover {
+  color: var(--skin-text);
+  background: var(--skin-hover);
+  border-color: #555;
+}
+.filterChip.active {
+  color: var(--skin-text);
+  background: var(--skin-accent-soft);
+  border-color: var(--skin-accent);
+}
+.filterChipRes {
+  font-variant-numeric: tabular-nums;
+}
+.filterChipCount {
+  flex: none;
+  font-size: var(--sk-font-xs);
+  color: var(--skin-text-dim);
+  opacity: 0.85;
+}
+.filterChip.active .filterChipCount {
+  color: var(--skin-text);
+  opacity: 0.75;
+}
+.filterChipEmpty {
+  margin: 0;
+  padding: 8px 2px;
+  color: var(--skin-text-dim);
+  font-size: var(--sk-font-sm);
+  line-height: 1.45;
 }
 .filterPanelSidebar .filterRow {
   flex-direction: column;
@@ -1526,6 +1634,16 @@
   outline: none;
   border-color: var(--skin-accent);
 }
+.readonlyValue {
+  color: var(--skin-text);
+  font-variant-numeric: tabular-nums;
+}
+.mutedHint {
+  margin-top: 2px;
+  font-size: calc(11px * var(--sk-scale, 1.25));
+  color: var(--skin-text-faint);
+  line-height: 1.2;
+}
 .detailsReadonly {
   display: grid;
   grid-template-columns: var(--skin-prop-label) minmax(0, 1fr);
@@ -1579,9 +1697,12 @@
   inset: 0;
   background: rgba(0, 0, 0, 0.55);
   z-index: 100;
-  display: grid;
-  place-items: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: 24px;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 .modal {
   background: var(--skin-panel);
@@ -1614,8 +1735,10 @@
   font-size: var(--sk-font);
 }
 .modalFoot {
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   padding: 10px 16px;
   border-top: 1px solid var(--skin-border);
@@ -1649,6 +1772,57 @@
 .modalFoot button:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* 清理黑户：全屏锁定，高于普通 modal / texture viewer */
+.blockingBackdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.72);
+  z-index: 3000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+.gcModal {
+  min-width: 420px;
+  max-width: 520px;
+  cursor: default;
+}
+.gcStatus {
+  margin: 0;
+  font-size: var(--sk-font);
+  line-height: 1.45;
+}
+.gcProgressTrack {
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--skin-panel-2);
+  border: 1px solid var(--skin-border);
+  overflow: hidden;
+}
+.gcProgressFill {
+  height: 100%;
+  width: 0;
+  background: var(--skin-accent);
+  border-radius: 999px;
+  transition: width 0.15s ease;
+}
+.gcProgressIndeterminate {
+  width: 40%;
+  animation: gcProgressSlide 1.1s ease-in-out infinite;
+}
+@keyframes gcProgressSlide {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
 }
 
 .formRow {
@@ -1745,14 +1919,72 @@
   background: var(--skin-panel);
   border-radius: var(--skin-radius);
   border: 1px solid var(--skin-border);
-  width: 960px;
-  max-width: 96%;
-  height: 84%;
+  /* 固定视口盒，避免内容变多后被重新居中导致整窗跳动 */
+  width: min(960px, calc(100% - 48px));
+  height: min(720px, calc(100% - 48px));
+  max-width: calc(100% - 48px);
+  max-height: calc(100% - 48px);
+  flex: 0 0 auto;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+  box-sizing: border-box;
   box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
 }
+.importScanStatus {
+  flex: 0 0 auto;
+  min-height: 36px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--skin-border);
+  color: var(--skin-text-dim);
+  font-size: var(--sk-font-sm);
+  line-height: 1.4;
+  background: var(--skin-panel-2);
+}
+.importScanStatus:empty {
+  display: none;
+}
+.importQueueHint {
+  flex: 0 0 auto;
+  padding: 6px 16px;
+  color: var(--skin-text-faint);
+  font-size: var(--sk-font-sm);
+  border-top: 1px solid var(--skin-border);
+}
+.importFilterBar {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+  padding: 0 16px 8px;
+  border-top: 1px solid var(--skin-border);
+}
+.importFilterBar .tab {
+  background: var(--skin-panel-2);
+  border: 1px solid var(--skin-border);
+  border-right-width: 0;
+  color: var(--skin-text-dim);
+  font-size: var(--sk-font-sm);
+  padding: 4px 10px;
+  cursor: pointer;
+}
+.importFilterBar .tab:first-child {
+  border-radius: var(--skin-radius) 0 0 var(--skin-radius);
+}
+.importFilterBar .tab:last-child {
+  border-right-width: 1px;
+  border-radius: 0 var(--skin-radius) var(--skin-radius) 0;
+}
+.importFilterBar .tab:hover {
+  background: var(--skin-hover);
+  color: var(--skin-text);
+}
+.importFilterBar .tab.active {
+  background: rgba(74, 108, 247, 0.16);
+  color: #9db4f0;
+}
 .importToolbar {
+  flex: 0 0 auto;
   padding: 10px 16px;
   border-bottom: 1px solid var(--skin-border);
   display: flex;
@@ -1850,10 +2082,12 @@
   font-size: var(--sk-font-sm);
 }
 .importQueue {
-  flex: 1;
+  flex: 1 1 auto;
+  overflow-x: hidden;
   overflow-y: auto;
   padding: 8px 16px;
   min-height: 0;
+  scrollbar-gutter: stable;
 }
 .importQueue.dragover {
   outline: 2px dashed var(--skin-accent);
@@ -1876,6 +2110,18 @@
   color: var(--skin-text-dim);
   font-weight: 500;
   font-size: var(--sk-font-sm);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--skin-panel);
+}
+.importTable tbody tr {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 44px;
+}
+.importVirtPad td {
+  border: 0 !important;
+  line-height: 0;
 }
 .colSource {
   max-width: 220px;

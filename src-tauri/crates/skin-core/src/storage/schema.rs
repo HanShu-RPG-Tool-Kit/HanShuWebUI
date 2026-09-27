@@ -82,6 +82,12 @@ pub struct LibraryEntry {
     pub folder_id: Option<String>,
     pub favorite: bool,
     pub model: SkinModel,
+    /// Original texture width at import time (defaults to 64 for older entries).
+    #[serde(default = "default_texture_dim")]
+    pub texture_width: u32,
+    /// Original texture height at import time (32 for legacy, else usually == width).
+    #[serde(default = "default_texture_dim")]
+    pub texture_height: u32,
     pub source: EntrySource,
     #[serde(default)]
     pub provenance: Provenance,
@@ -97,6 +103,10 @@ pub struct LibraryEntry {
 
 fn default_active() -> bool {
     true
+}
+
+fn default_texture_dim() -> u32 {
+    64
 }
 
 #[derive(Debug, Serialize)]

@@ -16,18 +16,32 @@ import type {
   SkinModel,
 } from '../contracts/types'
 import {
-  decodeSkinCode,
-  encodeSkinCode,
+  buildC,
+  decodeDiskFile,
+  decodeShareCode,
+  encodeDiskFile,
+  encodeShareCode,
   isValidSkinId,
+  skinIdOf,
   type DecodedSkin,
 } from './codec'
-import { ensureDir, readTextAt, writeBytesAt, writeTextAt } from './fsIo'
+import {
+  ensureDir,
+  listChildNames,
+  readBytesAt,
+  readTextAt,
+  removeAt,
+  writeBytesAt,
+  writeTextAt,
+} from './fsIo'
 import {
   collectTags,
+  collectTextureSizes,
   deleteTagInLibrary,
   emptyLibrary,
   emptyLicense,
   emptyProvenance,
+  folderDescendants,
   foldersWithStats,
   normalizeFolderName,
   normalizeTagList,
@@ -55,11 +69,7 @@ import {
 const IMPORT_JOBS_FILE = `${SKIN_ROOT}/${TMP_DIR}/import-jobs.json`
 
 function objectPath(skinId: string): string {
-  return `${SKIN_ROOT}/${OBJECTS_DIR}/${skinId.slice(0, 2)}/${skinId}.hskin`
-}
-
-function previewPath(skinId: string): string {
-  return `${SKIN_ROOT}/${CACHE_PNG_DIR}/${skinId}.png`
+  return `${SKIN_ROOT}/${OBJECTS_DIR}/${skinId.slice(0, 2)}/${skinId}.skin`
 }
 
 function emitJob(job: ImportJob): SkinEvent {
@@ -76,10 +86,13 @@ export class SkinLibrarySession {
   private lib: LibraryFile = emptyLibrary()
   private jobs = new Map<string, ImportJob>()
   private jobSources = new Map<string, EntrySource>()
+  /** ?????????????? encode ??? */
+  private jobDecoded = new Map<string, DecodedSkin>()
   private jobSeq = 0
   private listeners = new Set<(e: SkinEvent) => void>()
   private previewUrls = new Map<string, string>()
   private ready = false
+  private persistJobsTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(root: FileSystemDirectoryHandle) {
     this.root = root
@@ -139,10 +152,23 @@ export class SkinLibrarySession {
     }
   }
 
-  private async persistJobs(): Promise<void> {
+  private schedulePersistJobs(): void {
+    if (this.persistJobsTimer != null) return
+    this.persistJobsTimer = setTimeout(() => {
+      this.persistJobsTimer = null
+      void this.persistJobsNow()
+    }, 400)
+  }
+
+  private async persistJobsNow(): Promise<void> {
     const jobs = [...this.jobs.values()].sort((a, b) => b.seq - a.seq).slice(0, 50)
-    const json = `${JSON.stringify({ seq: this.jobSeq, jobs }, null, 2)}\n`
+    const json = `${JSON.stringify({ seq: this.jobSeq, jobs })}\n`
     await writeTextAt(this.root, IMPORT_JOBS_FILE, json)
+  }
+
+  /** @deprecated use schedulePersistJobs; kept name for call sites */
+  private async persistJobs(): Promise<void> {
+    this.schedulePersistJobs()
   }
 
   private ensureReady() {
@@ -169,47 +195,86 @@ export class SkinLibrarySession {
     }
   }
 
+  private persistDirtyDomain: 'entries' | 'tags' | 'folders' | null = null
+  private persistWaiter: Promise<void> | null = null
+
+  /** Coalesce rapid library.json writes (batch import). */
   private async persistLibrary(
     domain: 'entries' | 'tags' | 'folders' = 'entries',
   ): Promise<void> {
-    const json = `${JSON.stringify(
-      {
-        schemaVersion: this.lib.schemaVersion,
-        revision: this.lib.revision,
-        folders: this.lib.folders,
-        entries: this.lib.entries,
-      },
-      null,
-      2,
-    )}\n`
-    await writeTextAt(this.root, `${SKIN_ROOT}/${LIBRARY_FILE}`, json)
-    this.emit({
-      type: 'library-updated',
-      revision: this.lib.revision,
-      domain,
-    })
-  }
-
-  private async putObject(
-    skinCode: string,
-  ): Promise<{ skinId: string; model: SkinModel; decoded: DecodedSkin }> {
-    const { decoded, skinId, skinCode: code } = await decodeSkinCode(
-      skinCode.trim(),
-    )
-    await writeTextAt(this.root, objectPath(skinId), `${code}\n`)
-    try {
-      const png = await rgbaToPngBlob(decoded.rgba)
-      await writeBytesAt(this.root, previewPath(skinId), png)
-    } catch {
-      // preview cache best-effort
+    this.persistDirtyDomain = domain
+    if (!this.persistWaiter) {
+      this.persistWaiter = (async () => {
+        await Promise.resolve()
+        while (this.persistDirtyDomain) {
+          const d = this.persistDirtyDomain
+          this.persistDirtyDomain = null
+          const json = `${JSON.stringify(
+            {
+              schemaVersion: this.lib.schemaVersion,
+              revision: this.lib.revision,
+              folders: this.lib.folders,
+              entries: this.lib.entries,
+            },
+            null,
+            2,
+          )}\n`
+          await writeTextAt(this.root, `${SKIN_ROOT}/${LIBRARY_FILE}`, json)
+          this.emit({
+            type: 'library-updated',
+            revision: this.lib.revision,
+            domain: d,
+          })
+        }
+      })().finally(() => {
+        this.persistWaiter = null
+      })
     }
-    return { skinId, model: decoded.model, decoded }
+    await this.persistWaiter
   }
 
-  private async readObjectCode(skinId: string): Promise<string | null> {
+  private previewCachePath(skinId: string): string {
+    return `${SKIN_ROOT}/${CACHE_PNG_DIR}/${skinId}.png`
+  }
+
+  private async writePreviewCache(
+    skinId: string,
+    decoded: DecodedSkin,
+  ): Promise<void> {
+    const png = await rgbaToPngBlob(decoded.rgba, decoded.width, decoded.height)
+    const buf = new Uint8Array(await png.arrayBuffer())
+    await writeBytesAt(this.root, this.previewCachePath(skinId), buf)
+  }
+
+  private async putDecoded(
+    decoded: DecodedSkin,
+  ): Promise<{ skinId: string; decoded: DecodedSkin }> {
+    const c = buildC(decoded.flags, decoded.width, decoded.height, decoded.rgba)
+    const skinId = await skinIdOf(c)
+    const path = objectPath(skinId)
+    const existing = await readBytesAt(this.root, path)
+    if (existing) {
+      // Ensure preview cache exists for faster right-panel loads.
+      const cached = await readBytesAt(this.root, this.previewCachePath(skinId))
+      if (!cached) {
+        void this.writePreviewCache(skinId, decoded).catch(() => {})
+      }
+      return { skinId, decoded }
+    }
+    const disk = encodeDiskFile(decoded)
+    await writeBytesAt(this.root, path, disk)
+    // Preview PNG in background ? don't block validate path.
+    void this.writePreviewCache(skinId, decoded).catch(() => {})
+    return { skinId, decoded }
+  }
+
+  private async readObject(skinId: string): Promise<DecodedSkin | null> {
     if (!isValidSkinId(skinId)) return null
-    const raw = await readTextAt(this.root, objectPath(skinId))
-    return raw?.trim() ?? null
+    const raw = await readBytesAt(this.root, objectPath(skinId))
+    if (!raw) return null
+    const { decoded, skinId: verified } = await decodeDiskFile(raw)
+    if (verified !== skinId) return null
+    return decoded
   }
 
   subscribe(listener: (e: SkinEvent) => void): () => void {
@@ -257,7 +322,11 @@ export class SkinLibrarySession {
 
   listTags() {
     this.ensureReady()
-    return { revision: this.lib.revision, tags: collectTags(this.lib) }
+    return {
+      revision: this.lib.revision,
+      tags: collectTags(this.lib),
+      textureSizes: collectTextureSizes(this.lib),
+    }
   }
 
   async renameTag(from: string, to: string) {
@@ -421,23 +490,32 @@ export class SkinLibrarySession {
   ): Promise<void> {
     job.state = 'validating'
     job.updatedAt = nowIso()
-    this.emit(emitJob(job))
-    void this.persistJobs()
-    const { rgba, model: resolved } = await normalizePngBytes(bytes, model)
-    const { skinCode, skinId } = await encodeSkinCode(resolved, rgba)
+    this.jobs.set(job.jobId, job)
+    const { rgba, model: resolved, textureWidth, textureHeight, flags } =
+      await normalizePngBytes(bytes, model)
+    const decoded: DecodedSkin = {
+      rgba,
+      width: textureWidth,
+      height: textureHeight,
+      flags,
+    }
+    const { skinId } = await this.putDecoded(decoded)
+    this.jobDecoded.set(job.jobId, decoded)
     job.state = 'ready'
     job.result = {
       skinId,
       model: resolved,
       suggestedName: suggestedName.replace(/\.[^.]+$/, '') || 'skin',
-      skinCode,
-      suggestedActive: true,
+      // ?????????????? save ????
+      skinCode: '',
+      textureWidth,
+      textureHeight,
     }
     job.updatedAt = nowIso()
     this.jobs.set(job.jobId, job)
     this.jobSources.set(job.jobId, source)
     this.emit(emitJob(job))
-    void this.persistJobs()
+    this.schedulePersistJobs()
   }
 
   async startImportFromPng(
@@ -457,8 +535,6 @@ export class SkinLibrarySession {
       seq: ++this.jobSeq,
     }
     this.jobs.set(jobId, job)
-    this.emit(emitJob(job))
-    void this.persistJobs()
     try {
       await this.finishPngImport(job, bytes, fileName, model, {
         kind: 'png-file',
@@ -544,14 +620,18 @@ export class SkinLibrarySession {
     this.emit(emitJob(job))
     void this.persistJobs()
     try {
-      const { decoded, skinId, skinCode } = await decodeSkinCode(text.trim())
+      const { decoded, model, skinId, skinCode } = await decodeShareCode(
+        text.trim(),
+      )
+      await this.putDecoded(decoded)
       job.state = 'ready'
       job.result = {
         skinId,
-        model: decoded.model,
+        model,
         suggestedName: `skin-${skinId.slice(0, 8)}`,
         skinCode,
-        suggestedActive: true,
+        textureWidth: decoded.width,
+        textureHeight: decoded.height,
       }
       job.updatedAt = nowIso()
       this.jobs.set(jobId, job)
@@ -604,8 +684,27 @@ export class SkinLibrarySession {
         message: 'import job not ready',
       })
     }
-    const { skinId, model, skinCode } = job.result
-    await this.putObject(skinCode)
+    let { skinId, model } = job.result
+    const textureWidth = job.result.textureWidth || 64
+    const textureHeight = job.result.textureHeight || 64
+    if (body.model) model = body.model
+    // Ensure object exists on disk (share-code imports already wrote it).
+    if (!(await this.readObject(skinId))) {
+      const cached = this.jobDecoded.get(body.jobId)
+      if (cached) {
+        const put = await this.putDecoded(cached)
+        skinId = put.skinId
+      } else if (job.result.skinCode) {
+        const { decoded } = await decodeShareCode(job.result.skinCode)
+        const put = await this.putDecoded(decoded)
+        skinId = put.skinId
+      } else {
+        throw new SkinApiError({
+          code: 'BAD_REQUEST',
+          message: 'skin object missing for import job',
+        })
+      }
+    }
     const source =
       this.jobSources.get(body.jobId) ??
       (job.kind === 'skin-code'
@@ -622,16 +721,19 @@ export class SkinLibrarySession {
                 fileName: job.result.suggestedName,
               })
     this.jobSources.delete(body.jobId)
+    this.jobDecoded.delete(body.jobId)
     const now = nowIso()
     const entry: LibraryEntry = {
       entryId: uid('entry'),
       skinId,
       name: body.name.trim() || job.result.suggestedName,
-      active: body.active ?? job.result.suggestedActive ?? true,
+      active: body.active ?? job.result.suggestedActive ?? false,
       tags: resolveEntryTags({ tags: body.tags, tagPaths: body.tagPaths }),
       folderId: body.folderId ?? null,
       favorite: body.favorite ?? false,
       model,
+      textureWidth,
+      textureHeight,
       source,
       provenance: body.provenance ?? emptyProvenance(),
       license: body.license ?? emptyLicense(),
@@ -751,19 +853,49 @@ export class SkinLibrarySession {
     return { deleted: true }
   }
 
+  async deleteEntriesInFolder(folderId: string): Promise<{ deleted: number }> {
+    this.ensureReady()
+    const scope = folderDescendants(this.lib.folders, folderId)
+    const before = this.lib.entries.length
+    this.lib.entries = this.lib.entries.filter(
+      (e) => e.folderId == null || !scope.has(e.folderId),
+    )
+    const deleted = before - this.lib.entries.length
+    if (deleted === 0) return { deleted: 0 }
+    this.bump()
+    await this.persistLibrary('entries')
+    return { deleted }
+  }
+
   async getPreviewUrl(skinId: string): Promise<string> {
     this.ensureReady()
     const cached = this.previewUrls.get(skinId)
     if (cached) return cached
-    const code = await this.readObjectCode(skinId)
-    if (!code) {
+    const diskPng = await readBytesAt(this.root, this.previewCachePath(skinId))
+    if (diskPng) {
+      const url = URL.createObjectURL(
+        new Blob([diskPng], { type: 'image/png' }),
+      )
+      this.previewUrls.set(skinId, url)
+      return url
+    }
+    const decoded = await this.readObject(skinId)
+    if (!decoded) {
       throw new SkinApiError({
         code: 'NOT_FOUND',
         message: 'skin object missing',
       })
     }
-    const { decoded } = await decodeSkinCode(code)
-    const png = await rgbaToPngBlob(decoded.rgba)
+    const png = await rgbaToPngBlob(
+      decoded.rgba,
+      decoded.width,
+      decoded.height,
+    )
+    void writeBytesAt(
+      this.root,
+      this.previewCachePath(skinId),
+      new Uint8Array(await png.arrayBuffer()),
+    ).catch(() => {})
     const url = URL.createObjectURL(png)
     this.previewUrls.set(skinId, url)
     return url
@@ -771,30 +903,43 @@ export class SkinLibrarySession {
 
   async getSkinCode(skinId: string): Promise<string> {
     this.ensureReady()
-    const code = await this.readObjectCode(skinId)
-    if (!code) {
+    const decoded = await this.readObject(skinId)
+    if (!decoded) {
       throw new SkinApiError({
         code: 'NOT_FOUND',
         message: 'skin object missing',
       })
     }
-    return code
+    const model =
+      this.lib.entries.find((e) => e.skinId === skinId)?.model ?? 'classic'
+    const { skinCode } = await encodeShareCode(model, decoded)
+    return skinCode
   }
 
-  async exportSkin(skinId: string, format: 'png' | 'hskin' | 'skin-json') {
+  async exportSkin(skinId: string, format: 'png' | 'skin' | 'hskin' | 'skin-json') {
     this.ensureReady()
-    const code = await this.readObjectCode(skinId)
-    if (!code) {
+    const decoded = await this.readObject(skinId)
+    if (!decoded) {
       throw new SkinApiError({
         code: 'NOT_FOUND',
         message: 'skin object missing',
       })
     }
-    if (format === 'hskin' || format === 'skin-json') {
-      return { text: code }
+    if (format === 'skin' || format === 'hskin') {
+      const disk = encodeDiskFile(decoded)
+      let binary = ''
+      for (const b of disk) binary += String.fromCharCode(b)
+      return { skinBase64: btoa(binary) }
     }
-    const { decoded } = await decodeSkinCode(code)
-    const png = await rgbaToPngBlob(decoded.rgba)
+    if (format === 'skin-json') {
+      const skinCode = await this.getSkinCode(skinId)
+      return { text: skinCode }
+    }
+    const png = await rgbaToPngBlob(
+      decoded.rgba,
+      decoded.width,
+      decoded.height,
+    )
     const buf = new Uint8Array(await png.arrayBuffer())
     let binary = ''
     for (const b of buf) binary += String.fromCharCode(b)
@@ -804,7 +949,14 @@ export class SkinLibrarySession {
   async exportEntry(entryId: string, format: 'v3' | 'v2' = 'v3') {
     this.ensureReady()
     const entry = this.getEntry(entryId)
-    const skinCode = await this.getSkinCode(entry.skinId)
+    const decoded = await this.readObject(entry.skinId)
+    if (!decoded) {
+      throw new SkinApiError({
+        code: 'NOT_FOUND',
+        message: 'skin object missing',
+      })
+    }
+    const { skinCode } = await encodeShareCode(entry.model, decoded)
     const tagPaths = entry.tags.map((name) => [name])
     if (format === 'v2') {
       return {
@@ -843,6 +995,142 @@ export class SkinLibrarySession {
         provenance: e.provenance,
       }))
     return { entries, count: entries.length }
+  }
+
+  /**
+   * Remove unreferenced objects (orphans) and leftover preview cache.
+   * `onProgress` drives the blocking GC dialog.
+   */
+  async gcOrphans(
+    onProgress?: (p: {
+      phase: 'scanning' | 'objects' | 'previews' | 'done'
+      current: number
+      total: number
+      label: string
+    }) => void,
+  ): Promise<{
+    removedObjects: number
+    removedPreviews: number
+    protectedCount: number
+  }> {
+    this.ensureReady()
+    const report = (
+      phase: 'scanning' | 'objects' | 'previews' | 'done',
+      current: number,
+      total: number,
+      label: string,
+    ) => {
+      onProgress?.({ phase, current, total, label })
+    }
+
+    report('scanning', 0, 0, 'Scanning references and objects\u2026')
+
+    const protectedIds = new Set<string>()
+    for (const e of this.lib.entries) protectedIds.add(e.skinId)
+    for (const job of this.jobs.values()) {
+      if (job.result?.skinId) protectedIds.add(job.result.skinId)
+    }
+
+    type ObjVictim = { shard: string; name: string; skinId: string }
+    const objectVictims: ObjVictim[] = []
+    const objectShards = await listChildNames(
+      this.root,
+      `${SKIN_ROOT}/${OBJECTS_DIR}`,
+    )
+    for (const shard of objectShards) {
+      if (shard.kind !== 'directory') continue
+      const files = await listChildNames(
+        this.root,
+        `${SKIN_ROOT}/${OBJECTS_DIR}/${shard.name}`,
+      )
+      for (const f of files) {
+        if (f.kind !== 'file' || !f.name.endsWith('.skin')) continue
+        const skinId = f.name.slice(0, -'.skin'.length)
+        if (!skinId || protectedIds.has(skinId)) continue
+        objectVictims.push({ shard: shard.name, name: f.name, skinId })
+      }
+    }
+
+    let removedObjects = 0
+    const objTotal = objectVictims.length
+    report(
+      'objects',
+      0,
+      objTotal,
+      objTotal
+        ? `Cleaning objects 0 / ${objTotal}\u2026`
+        : 'No orphan objects',
+    )
+    for (let i = 0; i < objectVictims.length; i++) {
+      const v = objectVictims[i]!
+      await removeAt(
+        this.root,
+        `${SKIN_ROOT}/${OBJECTS_DIR}/${v.shard}/${v.name}`,
+      )
+      removedObjects += 1
+      await removeAt(this.root, `${SKIN_ROOT}/${CACHE_PNG_DIR}/${v.skinId}.png`)
+      const url = this.previewUrls.get(v.skinId)
+      if (url) {
+        URL.revokeObjectURL(url)
+        this.previewUrls.delete(v.skinId)
+      }
+      report(
+        'objects',
+        i + 1,
+        objTotal,
+        `Cleaning objects ${i + 1} / ${objTotal}\u2026`,
+      )
+      // Yield so the progress bar can paint.
+      if ((i + 1) % 4 === 0) await new Promise((r) => setTimeout(r, 0))
+    }
+
+    const previewVictims: { name: string; skinId: string }[] = []
+    const previews = await listChildNames(
+      this.root,
+      `${SKIN_ROOT}/${CACHE_PNG_DIR}`,
+    )
+    for (const f of previews) {
+      if (f.kind !== 'file' || !f.name.endsWith('.png')) continue
+      const skinId = f.name.slice(0, -'.png'.length)
+      if (!skinId || protectedIds.has(skinId)) continue
+      previewVictims.push({ name: f.name, skinId })
+    }
+
+    let removedPreviews = 0
+    const prevTotal = previewVictims.length
+    report(
+      'previews',
+      0,
+      prevTotal,
+      prevTotal
+        ? `Cleaning previews 0 / ${prevTotal}\u2026`
+        : 'No orphan previews',
+    )
+    for (let i = 0; i < previewVictims.length; i++) {
+      const v = previewVictims[i]!
+      await removeAt(this.root, `${SKIN_ROOT}/${CACHE_PNG_DIR}/${v.name}`)
+      removedPreviews += 1
+      const url = this.previewUrls.get(v.skinId)
+      if (url) {
+        URL.revokeObjectURL(url)
+        this.previewUrls.delete(v.skinId)
+      }
+      report(
+        'previews',
+        i + 1,
+        prevTotal,
+        `Cleaning previews ${i + 1} / ${prevTotal}\u2026`,
+      )
+      if ((i + 1) % 8 === 0) await new Promise((r) => setTimeout(r, 0))
+    }
+
+    report('done', 1, 1, 'Done')
+
+    return {
+      removedObjects,
+      removedPreviews,
+      protectedCount: protectedIds.size,
+    }
   }
 
   dispose() {

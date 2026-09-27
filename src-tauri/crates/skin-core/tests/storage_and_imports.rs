@@ -1,7 +1,7 @@
 //! Storage + import pipeline integration tests, mirroring the old Node
 //! routes/normalize test suite against temporary libraries.
 
-use skin_core::codec::{decode_skin_code, encode_skin_code, SkinModel};
+use skin_core::codec::{decode_share_code, encode_share_code, DecodedSkin, SkinModel};
 use skin_core::imports::{ImportInput, ImportManager, JobState};
 use skin_core::normalize::rgba_to_png;
 use skin_core::storage::{BatchPatch, LibraryQuery, PatchEntry, Storage};
@@ -17,18 +17,17 @@ fn temp_root(tag: &str) -> std::path::PathBuf {
     tempfile::TempDir::new().unwrap().keep().join(tag)
 }
 
+fn sample_decoded(name: &str) -> DecodedSkin {
+    let rgba = std::fs::read(fixture(&format!("{name}.rgba"))).unwrap();
+    DecodedSkin { rgba, width: 64, height: 64, flags: 0 }
+}
+
 fn sample_code() -> String {
-    std::fs::read_to_string(fixture("modern-classic.skincode"))
-        .unwrap()
-        .trim()
-        .to_string()
+    encode_share_code(SkinModel::Classic, &sample_decoded("modern-classic")).unwrap()
 }
 
 fn sample_code_2() -> String {
-    std::fs::read_to_string(fixture("modern-slim.skincode"))
-        .unwrap()
-        .trim()
-        .to_string()
+    encode_share_code(SkinModel::Slim, &sample_decoded("modern-slim")).unwrap()
 }
 
 // ---------------------------------------------------------------------------
@@ -133,15 +132,16 @@ fn objects_round_trip_and_gc() {
     let storage = Storage::open(&root).unwrap();
     let (skin_id, model) = storage.put_object(&sample_code()).unwrap();
     assert_eq!(model, SkinModel::Classic);
-    assert!(root.join("objects").join(&skin_id[..2]).join(format!("{skin_id}.hskin")).exists());
+    assert!(root.join("objects").join(&skin_id[..2]).join(format!("{skin_id}.skin")).exists());
 
     let obj = storage.get_object(&skin_id).unwrap().unwrap();
-    assert_eq!(obj.0.trim(), sample_code());
+    assert_eq!(obj.width, 64);
+    assert_eq!(obj.rgba.len(), 16384);
 
     // GC with no references removes it; with a staged ref it is protected.
     let removed = storage.gc_objects(&HashSet::new()).unwrap();
     assert!(removed.contains(&skin_id));
-    assert!(!root.join("objects").join(&skin_id[..2]).join(format!("{skin_id}.hskin")).exists());
+    assert!(!root.join("objects").join(&skin_id[..2]).join(format!("{skin_id}.skin")).exists());
 
     let (skin_id2, _) = storage.put_object(&sample_code()).unwrap();
     let mut protected = HashSet::new();
@@ -176,6 +176,8 @@ fn storage_with_entry() -> (std::path::PathBuf, Storage, String) {
             folder_id: None,
             favorite: false,
             model,
+            texture_width: 64,
+            texture_height: 64,
             source: skin_core::storage::schema::EntrySource::SkinCode,
             provenance: Default::default(),
             license: Default::default(),
@@ -220,6 +222,8 @@ fn same_skin_id_multiple_entries() {
             folder_id: None,
             favorite: false,
             model: SkinModel::Classic,
+            texture_width: 64,
+            texture_height: 64,
             source: skin_core::storage::schema::EntrySource::SkinCode,
             provenance: Default::default(),
             license: Default::default(),
@@ -249,6 +253,8 @@ fn freeform_tags_and_three_state_folder() {
             folder_id: Some(folder.folder_id.clone()),
             favorite: false,
             model,
+            texture_width: 64,
+            texture_height: 64,
             source: skin_core::storage::schema::EntrySource::SkinCode,
             provenance: Default::default(),
             license: Default::default(),
@@ -358,6 +364,8 @@ fn restart_persistence() {
                 folder_id: None,
                 favorite: true,
                 model,
+                texture_width: 64,
+                texture_height: 64,
                 source: skin_core::storage::schema::EntrySource::SkinCode,
                 provenance: Default::default(),
                 license: Default::default(),
@@ -409,19 +417,17 @@ fn skin_code_import_save_preview_restart() {
     let mgr = Arc::new(ImportManager::new(storage.clone()));
     install_test_spawner();
 
-    let job = drive(&mgr, ImportInput::SkinCode { code: sample_code() });
+    let code = sample_code();
+    let (_, _, expected_id) = decode_share_code(&code).unwrap();
+    let job = drive(&mgr, ImportInput::SkinCode { code });
     assert_eq!(job.state, JobState::Ready);
     let result = job.result.unwrap();
-    let expected_id = std::fs::read_to_string(fixture("modern-classic.skinid"))
-        .unwrap()
-        .trim()
-        .to_string();
     assert_eq!(result.skin_id, expected_id);
 
     // preview PNG was generated and decodes back to the same rgba
     let png = storage.get_preview_png(&result.skin_id).unwrap().unwrap();
     let back = skin_core::normalize::normalize_png(&png).unwrap();
-    let (decoded, _) = decode_skin_code(&sample_code()).unwrap();
+    let (decoded, _, _) = decode_share_code(&sample_code()).unwrap();
     assert_eq!(back.rgba, decoded.rgba);
 
     // save → entry exists; restart keeps it
@@ -448,15 +454,20 @@ fn png_file_import_full_chain() {
         ImportInput::PngFile {
             bytes: png_bytes,
             file_name: "legacy.png".into(),
-            model_override: SkinModel::Classic,
+            model_override: Some(SkinModel::Classic),
         },
     );
     assert_eq!(job.state, JobState::Ready, "{:?}", job.error);
     let result = job.result.unwrap();
-    let expected_id = std::fs::read_to_string(fixture("legacy32-classic.skinid"))
-        .unwrap()
-        .trim()
-        .to_string();
+    let rgba = std::fs::read(fixture("legacy32-classic.rgba")).unwrap();
+    let expected = DecodedSkin {
+        rgba,
+        width: 64,
+        height: 64,
+        flags: 0,
+    };
+    let (_, _, expected_id) =
+        decode_share_code(&encode_share_code(SkinModel::Classic, &expected).unwrap()).unwrap();
     assert_eq!(result.skin_id, expected_id);
     assert_eq!(result.suggested_name, "legacy");
 
@@ -476,9 +487,24 @@ fn portable_v2_and_v1_import() {
     let mgr = Arc::new(ImportManager::new(storage.clone()));
     install_test_spawner();
 
+    let code = sample_code();
+    let (_, _, skin_id) = decode_share_code(&code).unwrap();
+
     // v2 with tagPaths
-    let v2 = std::fs::read(fixture("portable-v2.json")).unwrap();
-    let job = drive(&mgr, ImportInput::SkinFile { bytes: v2, file_name: Some("便携.skin.json".into()) });
+    let v2 = serde_json::json!({
+        "schemaVersion": 2,
+        "name": "便携皮肤",
+        "tagPaths": [["精灵", "森林精灵"]],
+        "skinId": skin_id,
+        "skinCode": code,
+    });
+    let job = drive(
+        &mgr,
+        ImportInput::SkinFile {
+            bytes: serde_json::to_vec(&v2).unwrap(),
+            file_name: Some("便携.skin.json".into()),
+        },
+    );
     assert_eq!(job.state, JobState::Ready, "{:?}", job.error);
     let result = job.result.clone().unwrap();
     assert_eq!(result.suggested_name, "便携皮肤");
@@ -486,15 +512,26 @@ fn portable_v2_and_v1_import() {
         result.suggested_tag_paths.unwrap(),
         vec![vec!["精灵".to_string(), "森林精灵".to_string()]]
     );
-    // save materializes the tag paths
     let entry = mgr
         .save_entry(&job.job_id, "便携皮肤", vec![], vec![], None, false, None, None, None, None)
         .unwrap();
     assert_eq!(entry.tags, vec!["森林精灵".to_string()]);
 
     // v1 flat tags become entry tags
-    let v1 = std::fs::read(fixture("portable-v1.json")).unwrap();
-    let job1 = drive(&mgr, ImportInput::SkinFile { bytes: v1, file_name: None });
+    let v1 = serde_json::json!({
+        "schemaVersion": 1,
+        "name": "旧便携",
+        "tags": ["精灵", "战士"],
+        "skinId": skin_id,
+        "skinCode": sample_code(),
+    });
+    let job1 = drive(
+        &mgr,
+        ImportInput::SkinFile {
+            bytes: serde_json::to_vec(&v1).unwrap(),
+            file_name: None,
+        },
+    );
     assert_eq!(job1.state, JobState::Ready, "{:?}", job1.error);
     let entry1 = mgr
         .save_entry(&job1.job_id, "旧便携", vec![], vec![], None, false, None, None, None, None)
@@ -508,16 +545,24 @@ fn portable_with_mismatched_skin_id_rejected() {
     let storage = Arc::new(Storage::open(&root).unwrap());
     let mgr = Arc::new(ImportManager::new(storage.clone()));
     install_test_spawner();
-    let mut v: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(fixture("portable-v2.json")).unwrap())
-            .unwrap();
-    v["skinId"] = serde_json::json!("0".repeat(64));
+    let code = sample_code();
+    let mut v = serde_json::json!({
+        "schemaVersion": 2,
+        "name": "便携皮肤",
+        "tagPaths": [["精灵"]],
+        "skinId": "0".repeat(64),
+        "skinCode": code,
+    });
     let job = drive(
         &mgr,
-        ImportInput::SkinFile { bytes: serde_json::to_vec(&v).unwrap(), file_name: None },
+        ImportInput::SkinFile {
+            bytes: serde_json::to_vec(&v).unwrap(),
+            file_name: None,
+        },
     );
     assert_eq!(job.state, JobState::Failed);
     assert_eq!(job.error.unwrap().code, "FORMAT_ERROR");
+    let _ = v;
 }
 
 #[test]
@@ -537,7 +582,7 @@ fn malformed_skin_code_fails_with_stable_code() {
     let storage = Arc::new(Storage::open(&root).unwrap());
     let mgr = Arc::new(ImportManager::new(storage.clone()));
     install_test_spawner();
-    let job = drive(&mgr, ImportInput::SkinCode { code: "hskin1:!!!!".into() });
+    let job = drive(&mgr, ImportInput::SkinCode { code: "hanshu-skin:1:classic:!!!!".into() });
     assert_eq!(job.state, JobState::Failed);
     assert_eq!(job.error.unwrap().code, "BAD_BASE64");
 }
@@ -546,21 +591,21 @@ fn malformed_skin_code_fails_with_stable_code() {
 fn encode_decode_roundtrip_via_storage() {
     let root = temp_root("roundtrip");
     let storage = Storage::open(&root).unwrap();
-    // Two different skins → different ids; same skin + different model → different ids.
+    // Two different skins → different ids; model alone does not change id.
     let (id1, m1) = storage.put_object(&sample_code()).unwrap();
     let (id2, m2) = storage.put_object(&sample_code_2()).unwrap();
-    assert_ne!(id1, id2);
     assert_eq!(m1, SkinModel::Classic);
     assert_eq!(m2, SkinModel::Slim);
+    assert_ne!(id1, id2);
     // re-put same code is idempotent
     let (id1b, _) = storage.put_object(&sample_code()).unwrap();
     assert_eq!(id1, id1b);
     // encode from rgba produces a decodable code with the same id
-    let (decoded, _) = decode_skin_code(&sample_code()).unwrap();
-    let re_encoded = encode_skin_code(SkinModel::Classic, &decoded.rgba).unwrap();
-    let (_, re_id) = decode_skin_code(&re_encoded).unwrap();
+    let (decoded, _, _) = decode_share_code(&sample_code()).unwrap();
+    let re_encoded = encode_share_code(SkinModel::Classic, &decoded).unwrap();
+    let (_, _, re_id) = decode_share_code(&re_encoded).unwrap();
     assert_eq!(re_id, id1);
-    let _ = rgba_to_png(&decoded.rgba).unwrap();
+    let _ = rgba_to_png(&decoded.rgba, decoded.width as u32, decoded.height as u32).unwrap();
 }
 
 // ---------------------------------------------------------------------------
@@ -586,6 +631,8 @@ fn add_meta_entry(
             folder_id: None,
             favorite: false,
             model,
+            texture_width: 64,
+            texture_height: 64,
             source: skin_core::storage::schema::EntrySource::SkinCode,
             provenance: skin_core::storage::schema::Provenance {
                 author: author.map(|s| s.to_string()),
@@ -779,11 +826,12 @@ fn portable_v3_export_import_round_trip() {
     // Serialize the v3 portable shape (as the export commands do).
     let entry = storage.get_entry(&entry.entry_id).unwrap();
     let obj = storage.get_object(&entry.skin_id).unwrap().unwrap();
+    let skin_code = encode_share_code(entry.model, &obj).unwrap();
     let portable = skin_core::storage::schema::PortableSkinFileV3 {
         schema_version: 3,
         name: entry.name.clone(),
         skin_id: entry.skin_id.clone(),
-        skin_code: obj.0.clone(),
+        skin_code,
         model: entry.model,
         tag_paths: vec![vec!["守卫".into()]],
         active: entry.active,

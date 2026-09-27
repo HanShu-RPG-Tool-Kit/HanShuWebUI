@@ -12,11 +12,12 @@ File System Access 读写，**不再依赖** `skin-http` 或 Vite `/api` 代理�
   assets/
   .hanshu/skinmanager/          # 皮肤库
     library.json                # schema v5（条目 tags 为自由字符串，无独立标签注册表）
-    objects/<ab>/<skinId>.hskin
+    objects/<ab>/<skinId>.skin
     cache/png/<skinId>.png
     tmp/import-jobs.json        # 导入任务快照
 ```
 
+对象文件为二进制 `.skin`（像素 + 半透明 flag，不含 model）。分享串为 `hanshu-skin:1:<model>:<payload>`。
 前端仍走 `SkinApi`（[`src/skin/api/SkinApi.ts`](../src/skin/api/SkinApi.ts)）：
 
 | 适配器 | 何时使用 |
@@ -34,7 +35,7 @@ File System Access 读写，**不再依赖** `skin-http` 或 Vite `/api` 代理�
 
 1. Chrome / Edge 打开开发页，或运行桌面壳。
 2. **剧本**工作区：文件 → 打开工程… / 新建工程…
-3. 切到**皮肤**工作区：导入本地 PNG（64×64 或 64×32）、管理文件夹；标签写在皮肤上，系统自动收集。
+3. 切到**皮肤**工作区：导入本地 PNG（正方形 N×N 或半高 N×N/2，N∈[64…1024]，不要求 64 倍数）、管理文件夹；标签写在皮肤上，系统自动收集。
 4. 未打开工程时皮肤页会提示先打开工程（不再出现 Bad Gateway）。
 
 联网导入（玩家名 / URL）已支持：

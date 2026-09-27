@@ -10,8 +10,8 @@ import type { SkinModel } from '../contracts/types.ts'
 
 export type ThumbType = 'avatar' | 'bust' | 'full' | 'flat'
 
-const MAX_CONCURRENT = 1
-const CACHE_LIMIT = 128
+const MAX_CONCURRENT = 3
+const CACHE_LIMIT = 256
 const RENDERER_VERSION = 'v4-bust-ortho'
 
 const AVATAR_SIZE = 192

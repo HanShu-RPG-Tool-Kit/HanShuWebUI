@@ -1,24 +1,28 @@
 /**
- * 筛选面板：支持正反标签、状态、模型、协议、作者、排序。
- * sidebar 布局用于左侧下半区（可滚动）。
+ * 左侧筛选：可枚举标签/分辨率做成按钮云；状态、模型、协议、作者、排序。
  */
 
-import type { CollectedTag, EntrySortBy, SkinModel, SortDirection } from '../contracts/types.ts'
-import { TagPicker } from './TagPicker.tsx'
+import type {
+  CollectedTag,
+  CollectedTextureSize,
+  EntrySortBy,
+  SkinModel,
+  SortDirection,
+} from '../contracts/types.ts'
 import styles from '../styles/workspace.module.css'
 
 export interface LibraryFiltersProps {
   tags: CollectedTag[]
-  includeTags: string[]
-  excludeTags: string[]
-  onIncludeTagsChange: (names: string[]) => void
-  onExcludeTagsChange: (names: string[]) => void
-  tagMatch: 'any' | 'all'
-  onTagMatchChange: (m: 'any' | 'all') => void
+  textureSizes: CollectedTextureSize[]
+  /** Selected freeform tag names (multi, OR). */
+  selectedTags: string[]
+  onSelectedTagsChange: (names: string[]) => void
   activeFilter: 'all' | 'active' | 'inactive'
   onActiveFilterChange: (v: 'all' | 'active' | 'inactive') => void
   modelFilter: SkinModel | 'all'
   onModelFilterChange: (m: SkinModel | 'all') => void
+  textureWidthFilter: number[]
+  onTextureWidthFilterChange: (widths: number[]) => void
   licenseFilter: string
   onLicenseFilterChange: (v: string) => void
   authorFilter: string
@@ -28,22 +32,26 @@ export interface LibraryFiltersProps {
   sortDirection: SortDirection
   onSortDirectionChange: (d: SortDirection) => void
   onClearAll: () => void
-  /** Vertical stacked layout for the left sidebar. */
   layout?: 'bar' | 'sidebar'
+}
+
+function toggleInList<T>(list: T[], value: T, eq: (a: T, b: T) => boolean = (a, b) => a === b): T[] {
+  const i = list.findIndex((x) => eq(x, value))
+  if (i >= 0) return list.filter((_, idx) => idx !== i)
+  return [...list, value]
 }
 
 export function LibraryFilters({
   tags,
-  includeTags,
-  excludeTags,
-  onIncludeTagsChange,
-  onExcludeTagsChange,
-  tagMatch,
-  onTagMatchChange,
+  textureSizes,
+  selectedTags,
+  onSelectedTagsChange,
   activeFilter,
   onActiveFilterChange,
   modelFilter,
   onModelFilterChange,
+  textureWidthFilter,
+  onTextureWidthFilterChange,
   licenseFilter,
   onLicenseFilterChange,
   authorFilter,
@@ -57,52 +65,111 @@ export function LibraryFilters({
 }: LibraryFiltersProps) {
   const sidebar = layout === 'sidebar'
 
+  const hasFacetSelection =
+    selectedTags.length > 0 || textureWidthFilter.length > 0
   const hasFilters =
-    includeTags.length > 0 ||
-    excludeTags.length > 0 ||
+    hasFacetSelection ||
     activeFilter !== 'all' ||
     modelFilter !== 'all' ||
     licenseFilter.trim() !== '' ||
     authorFilter.trim() !== ''
 
+  const emptyFacets = tags.length === 0 && textureSizes.length === 0
+
   return (
     <div
       className={`${styles.filterPanel}${sidebar ? ` ${styles.filterPanelSidebar}` : ''}`}
     >
-      <div className={styles.filterRow}>
-        <div className={styles.filterField}>
-          <span className={styles.filterLabel}>正标签</span>
-          <div className={styles.filterControlStack}>
-            <TagPicker
-              tags={tags}
-              selected={includeTags}
-              onChange={onIncludeTagsChange}
-              placeholder="输入后回车"
-            />
-            {includeTags.length > 1 && (
-              <select
-                value={tagMatch}
-                onChange={(e) => onTagMatchChange(e.target.value as 'any' | 'all')}
-              >
-                <option value="all">全部满足</option>
-                <option value="any">任一满足</option>
-              </select>
-            )}
-          </div>
+      <section className={styles.filterFacetSection} aria-label="标签与分辨率">
+        <div className={styles.filterFacetHead}>
+          <span className={styles.filterSectionTitle}>标签</span>
+          {hasFacetSelection && (
+            <button
+              type="button"
+              className={styles.linkBtn}
+              onClick={() => {
+                onSelectedTagsChange([])
+                onTextureWidthFilterChange([])
+              }}
+            >
+              清除选中
+            </button>
+          )}
         </div>
-      </div>
-
-      <div className={styles.filterRow}>
-        <div className={styles.filterField}>
-          <span className={styles.filterLabel}>负标签</span>
-          <TagPicker
-            tags={tags}
-            selected={excludeTags}
-            onChange={onExcludeTagsChange}
-            placeholder="输入后回车"
-          />
+        <div className={styles.filterChipScroll}>
+          {emptyFacets ? (
+            <p className={styles.filterChipEmpty}>导入皮肤后，标签与分辨率会出现在这里</p>
+          ) : (
+            <>
+              {textureSizes.length > 0 && (
+                <div className={styles.filterChipGroup}>
+                  <div className={styles.filterChipGroupLabel}>分辨率</div>
+                  <div className={styles.filterChipCloud} role="group" aria-label="分辨率">
+                    {textureSizes.map((s) => {
+                      const on = textureWidthFilter.includes(s.width)
+                      return (
+                        <button
+                          key={`res-${s.width}`}
+                          type="button"
+                          className={`${styles.filterChip}${on ? ` ${styles.active}` : ''} ${styles.filterChipRes}`}
+                          aria-pressed={on}
+                          title={`${s.count} 个`}
+                          onClick={() =>
+                            onTextureWidthFilterChange(
+                              toggleInList(textureWidthFilter, s.width).sort(
+                                (a, b) => a - b,
+                              ),
+                            )
+                          }
+                        >
+                          <span>
+                            {s.width}×{s.height}
+                          </span>
+                          <span className={styles.filterChipCount}>{s.count}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+              {tags.length > 0 && (
+                <div className={styles.filterChipGroup}>
+                  {textureSizes.length > 0 && (
+                    <div className={styles.filterChipGroupLabel}>自由标签</div>
+                  )}
+                  <div className={styles.filterChipCloud} role="group" aria-label="标签">
+                    {tags.map((t) => {
+                      const on = selectedTags.some(
+                        (x) => x.toLowerCase() === t.name.toLowerCase(),
+                      )
+                      return (
+                        <button
+                          key={t.name}
+                          type="button"
+                          className={`${styles.filterChip}${on ? ` ${styles.active}` : ''}`}
+                          aria-pressed={on}
+                          title={`${t.count} 个`}
+                          onClick={() => {
+                            const next = on
+                              ? selectedTags.filter(
+                                  (x) => x.toLowerCase() !== t.name.toLowerCase(),
+                                )
+                              : [...selectedTags, t.name]
+                            onSelectedTagsChange(next)
+                          }}
+                        >
+                          <span>{t.name}</span>
+                          <span className={styles.filterChipCount}>{t.count}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
         </div>
-      </div>
+      </section>
 
       <div className={styles.filterRow}>
         <div className={styles.filterField}>

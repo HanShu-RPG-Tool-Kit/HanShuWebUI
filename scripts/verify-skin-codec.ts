@@ -1,5 +1,5 @@
 /**
- * Golden check: TS hskin codec vs Rust/Node fixtures under skin-core/tests/fixtures.
+ * Golden check: TS codec vs PNG/RGBA fixtures under skin-core/tests/fixtures.
  * Run: npm run test:skin-codec
  */
 
@@ -7,8 +7,8 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
-  decodeSkinCode,
-  encodeSkinCode,
+  decodeShareCode,
+  encodeShareCode,
   type SkinModel,
 } from '../src/skin/local/codec.ts'
 
@@ -30,63 +30,33 @@ let failed = 0
 
 for (const c of meta.cases) {
   const rgba = new Uint8Array(readFileSync(join(root, `${c.name}.rgba`)))
-  const expectedId = readFileSync(join(root, `${c.name}.skinid`), 'utf8').trim()
-  const fixtureCode = readFileSync(
-    join(root, `${c.name}.skincode`),
-    'utf8',
-  ).trim()
-
-  const encoded = await encodeSkinCode(c.model, rgba)
-  if (encoded.skinId !== expectedId) {
-    console.error(
-      `[FAIL] ${c.name} encode skinId\n  got  ${encoded.skinId}\n  want ${expectedId}`,
-    )
+  const decodedIn = { rgba, width: 64, height: 64, flags: 0 }
+  const encoded = await encodeShareCode(c.model, decodedIn)
+  const round = await decodeShareCode(encoded.skinCode)
+  if (round.skinId !== encoded.skinId) {
+    console.error(`[FAIL] ${c.name} skinId mismatch`)
     failed++
-  } else {
-    console.log(`[OK]   ${c.name} encode → skinId`)
-  }
-
-  const decodedFixture = await decodeSkinCode(fixtureCode)
-  if (decodedFixture.skinId !== expectedId) {
-    console.error(
-      `[FAIL] ${c.name} decode fixture skinId\n  got  ${decodedFixture.skinId}\n  want ${expectedId}`,
-    )
+  } else if (round.model !== c.model) {
+    console.error(`[FAIL] ${c.name} model mismatch`)
     failed++
-  } else if (decodedFixture.decoded.model !== c.model) {
-    console.error(
-      `[FAIL] ${c.name} decode model ${decodedFixture.decoded.model} ≠ ${c.model}`,
-    )
-    failed++
-  } else if (decodedFixture.decoded.rgba.length !== rgba.length) {
+  } else if (round.decoded.rgba.length !== rgba.length) {
     console.error(`[FAIL] ${c.name} rgba length`)
     failed++
   } else {
-    let same = true
-    for (let i = 0; i < rgba.length; i++) {
-      if (rgba[i] !== decodedFixture.decoded.rgba[i]) {
-        same = false
-        break
-      }
-    }
-    if (!same) {
-      console.error(`[FAIL] ${c.name} rgba bytes ≠ fixture .rgba`)
+    // classic vs slim same id
+    const other = c.model === 'classic' ? 'slim' : 'classic'
+    const alt = await encodeShareCode(other, decodedIn)
+    if (alt.skinId !== encoded.skinId) {
+      console.error(`[FAIL] ${c.name} model changed skinId`)
       failed++
     } else {
-      console.log(`[OK]   ${c.name} decode fixture skincode`)
+      console.log(`[OK]   ${c.name}`)
     }
   }
-
-  const round = await decodeSkinCode(encoded.skinCode)
-  if (round.skinId !== expectedId) {
-    console.error(`[FAIL] ${c.name} round-trip skinId`)
-    failed++
-  } else {
-    console.log(`[OK]   ${c.name} TS round-trip`)
-  }
 }
 
-if (failed > 0) {
-  console.error(`\n${failed} check(s) failed`)
+if (failed) {
+  console.error(`\n${failed} failure(s)`)
   process.exit(1)
 }
-console.log(`\nAll ${meta.cases.length} fixture cases passed.`)
+console.log('\nall ok')

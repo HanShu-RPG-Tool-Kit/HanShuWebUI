@@ -28,9 +28,18 @@ export interface CollectedTag {
   count: number
 }
 
+/** Auto-collected texture size from entries (post-normalize square side). */
+export interface CollectedTextureSize {
+  width: number
+  height: number
+  count: number
+}
+
 export interface TagListResponse {
   revision: number
   tags: CollectedTag[]
+  /** Distinct texture sizes present in the library (auto inventory). */
+  textureSizes: CollectedTextureSize[]
 }
 
 export interface RenameTagRequest {
@@ -105,6 +114,10 @@ export interface LibraryEntry {
   folderId: string | null
   favorite: boolean
   model: SkinModel
+  /** Original texture width at import (64, 128, … or 64 for legacy height 32). */
+  textureWidth: number
+  /** Original texture height at import (32 legacy / 64 / HD square). */
+  textureHeight: number
   source: EntrySource
   provenance: Provenance
   license: LicenseInfo
@@ -129,6 +142,8 @@ export interface LibraryQuery {
   favorite?: boolean
   active?: boolean
   models?: SkinModel[]
+  /** Multi-select texture widths (square side after normalize), e.g. [64, 128]. */
+  textureWidths?: number[]
   includeLicenseNames?: string[]
   excludeLicenseNames?: string[]
   /** true → only unspecified licenses; false → only declared. */
@@ -175,6 +190,8 @@ export interface ImportJob {
     model: SkinModel
     suggestedName: string
     skinCode: string
+    textureWidth: number
+    textureHeight: number
     suggestedTagPaths?: string[][]
     suggestedActive?: boolean
     suggestedLicense?: LicenseInfo
@@ -195,6 +212,8 @@ export interface SaveEntryRequest {
   folderId?: string | null
   favorite?: boolean
   active?: boolean
+  /** Override detected/job model; re-encodes skin code when different. */
+  model?: SkinModel
   license?: LicenseInfo
   provenance?: Provenance
   note?: string
