@@ -108,7 +108,6 @@ export function parseLibraryJson(raw: string): LibraryFile {
     folders?: FolderNode[]
     entries?: LegacyEntry[]
   }
-  const schemaVersion = Number(data.schemaVersion ?? 5)
   const registry = new Map<string, string>()
   for (const t of Array.isArray(data.tags) ? data.tags : []) {
     if (t.tagId && typeof t.name === 'string') {

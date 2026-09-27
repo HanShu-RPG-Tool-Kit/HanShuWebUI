@@ -874,7 +874,7 @@ export class SkinLibrarySession {
     const diskPng = await readBytesAt(this.root, this.previewCachePath(skinId))
     if (diskPng) {
       const url = URL.createObjectURL(
-        new Blob([diskPng], { type: 'image/png' }),
+        new Blob([new Uint8Array(diskPng)], { type: 'image/png' }),
       )
       this.previewUrls.set(skinId, url)
       return url

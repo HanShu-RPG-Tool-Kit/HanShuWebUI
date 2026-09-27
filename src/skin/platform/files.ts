@@ -34,8 +34,6 @@ export function isTauriRuntime(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 }
 
-const SKIN_FILE_RE = /\.(png|skin|skin\.json|json)$/i
-
 function classify(name: string): 'png' | 'skin-bin' | 'skin-json' | null {
   const lower = name.toLowerCase()
   if (lower.endsWith('.png')) return 'png'

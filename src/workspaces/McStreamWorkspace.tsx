@@ -591,7 +591,7 @@ export function McStreamWorkspace({ active }: McStreamWorkspaceProps) {
                 disabled={busy}
                 onClick={() => void handleStop()}
               >
-                {conn === 'stopping' ? '停止中…' : '停止'}
+                停止
               </button>
             </>
           )}

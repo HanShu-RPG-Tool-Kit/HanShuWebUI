@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type Ref } from 'react'
 import {
   loadActiveWorkspaceId,
   saveActiveWorkspaceId,
 } from './workspaces/activeWorkspace.ts'
 import { APP_WORKSPACES } from './workspaces/registry.ts'
 import { McSkinWorkspace } from './workspaces/McSkinWorkspace.tsx'
+import { ProgressFlowWorkspace, type ProgressWorkspaceHandle } from './workspaces/ProgressFlowWorkspace.tsx'
 import { McStreamWorkspace } from './workspaces/McStreamWorkspace.tsx'
 import { ScriptWorkspace } from './workspaces/ScriptWorkspace.tsx'
 import type {
@@ -78,8 +79,10 @@ const MENUS = [
 
 const WORKSPACE_IDS = APP_WORKSPACES.map((w) => w.id)
 
-function renderToolWorkspace(id: AppWorkspaceId, active: boolean) {
+function renderToolWorkspace(id: AppWorkspaceId, active: boolean, progressRef: Ref<ProgressWorkspaceHandle>) {
   switch (id) {
+    case 'progress-flow':
+      return <ProgressFlowWorkspace active={active} workspaceRef={progressRef} />
     case 'mc-skin':
       return <McSkinWorkspace active={active} />
     case 'mc-stream':
@@ -100,6 +103,7 @@ function App() {
   const [uiScale, setUiScale] = useState<UiScale>(() => loadUiScale())
   const menubarRef = useRef<HTMLElement>(null)
   const scriptRef = useRef<ScriptWorkspaceHandle>(null)
+  const progressRef = useRef<ProgressWorkspaceHandle>(null)
 
   // Apply the persisted UI scale on mount (default 125% on first run).
   useEffect(() => {
@@ -146,7 +150,8 @@ function App() {
       changeUiScale(125)
       return
     }
-    scriptRef.current?.handleMenuAction(item)
+    if (activeWorkspaceId === 'progress-flow') progressRef.current?.handleMenuAction(item)
+    else if (activeWorkspaceId === 'script') scriptRef.current?.handleMenuAction(item)
   }
 
   const titleCenter = useMemo(() => {
@@ -200,6 +205,9 @@ function App() {
                           <button
                             type="button"
                             role="menuitem"
+                            disabled={activeWorkspaceId === 'progress-flow' &&
+                              !['保存', '撤销', '重做', '恢复推荐大小（125%）'].includes(menuItem) &&
+                              !menuItem.startsWith('界面比例 ')}
                             aria-checked={
                               menu.label === '查看' &&
                               UI_SCALES.some(
@@ -259,7 +267,7 @@ function App() {
             activeWorkspaceId === 'script' ? ' active' : ''
           }`}
         >
-          <ScriptWorkspace ref={scriptRef} onChromeInfo={onChromeInfo} />
+          <ScriptWorkspace ref={scriptRef} onChromeInfo={onChromeInfo} isActive={activeWorkspaceId === 'script'} />
         </div>
         {APP_WORKSPACES.filter((w) => w.id !== 'script').map((ws) => (
           <div
@@ -268,7 +276,7 @@ function App() {
               activeWorkspaceId === ws.id ? ' active' : ''
             }`}
           >
-            {renderToolWorkspace(ws.id, activeWorkspaceId === ws.id)}
+            {renderToolWorkspace(ws.id, activeWorkspaceId === ws.id, progressRef)}
           </div>
         ))}
       </div>

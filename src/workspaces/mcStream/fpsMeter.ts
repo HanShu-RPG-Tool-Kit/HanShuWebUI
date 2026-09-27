@@ -24,8 +24,10 @@ export class MonitorFpsMeter {
   private lastTs = 0
   private head = 0
   private count = 0
+  private readonly capacity: number
 
-  constructor(private readonly capacity = MAX_SAMPLES) {
+  constructor(capacity = MAX_SAMPLES) {
+    this.capacity = capacity
     this.times = new Array(capacity)
   }
 

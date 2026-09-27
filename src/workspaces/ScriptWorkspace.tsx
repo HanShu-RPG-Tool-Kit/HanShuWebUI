@@ -107,12 +107,13 @@ function formatSavedAt(ts: number | null) {
 
 type ScriptWorkspaceProps = {
   onChromeInfo?: (info: ScriptChromeInfo) => void
+  isActive?: boolean
 }
 
 export const ScriptWorkspace = forwardRef<
   ScriptWorkspaceHandle,
   ScriptWorkspaceProps
->(function ScriptWorkspace({ onChromeInfo }, ref) {
+>(function ScriptWorkspace({ onChromeInfo, isActive = true }, ref) {
   const [workspace, setWorkspace] = useState<Workspace>(() => loadWorkspace())
   const [project, setProject] = useState<BoundProject | null>(null)
   const [projectBusy, setProjectBusy] = useState(false)
@@ -837,14 +838,14 @@ export const ScriptWorkspace = forwardRef<
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+      if (isActive && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
         event.preventDefault()
         persistNow()
       }
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [])
+  }, [isActive])
 
   // 尝试恢复上次授权的工程文件夹（Chrome 会再弹一次权限）
   useEffect(() => {

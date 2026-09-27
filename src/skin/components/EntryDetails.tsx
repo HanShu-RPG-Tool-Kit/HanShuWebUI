@@ -102,7 +102,7 @@ export function EntryDetails({
   const [viewMode, setViewMode] = useState<'model' | 'flat'>('model')
   const [editingName, setEditingName] = useState(false)
   const [draft, setDraft] = useState<Draft>(() => draftFromEntry(entry))
-  const [revision, setRevision] = useState(entry.revision)
+  const [, setRevision] = useState(entry.revision)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const entryIdRef = useRef(entry.entryId)

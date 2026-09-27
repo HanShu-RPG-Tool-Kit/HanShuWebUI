@@ -32,16 +32,16 @@ export class StreamGlPainter {
         premultipliedAlpha: false,
         preserveDrawingBuffer: true,
       }) ||
-      this.canvas.getContext('experimental-webgl', {
+      (this.canvas.getContext('experimental-webgl', {
         alpha: false,
         antialias: false,
         depth: false,
         stencil: false,
         premultipliedAlpha: false,
         preserveDrawingBuffer: true,
-      })
+      }) as WebGLRenderingContext | null)
     if (!gl) return false
-    this.gl = gl as WebGLRenderingContext
+    this.gl = gl
 
     const vsSrc = `
       attribute vec2 aPos;

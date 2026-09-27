@@ -31,17 +31,17 @@ function isTauri(): boolean {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
 }
 
-function useMojangProxy(): boolean {
+function shouldUseMojangProxy(): boolean {
   // Proxied only when served from Vite (dev / preview with proxy).
   return Boolean(import.meta.env.DEV) || location.hostname === 'localhost'
 }
 
 function nameLookupBase(): string {
-  return useMojangProxy() ? NAME_LOOKUP_PROXY : NAME_LOOKUP_DIRECT
+  return shouldUseMojangProxy() ? NAME_LOOKUP_PROXY : NAME_LOOKUP_DIRECT
 }
 
 function sessionBase(): string {
-  return useMojangProxy() ? SESSION_PROXY : SESSION_DIRECT
+  return shouldUseMojangProxy() ? SESSION_PROXY : SESSION_DIRECT
 }
 
 function isForbiddenIpv4(host: string): boolean {

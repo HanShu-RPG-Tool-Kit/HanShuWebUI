@@ -12,7 +12,8 @@
     "tauri": "tauri",
     "desktop:dev": "tauri dev",
     "desktop:build": "tauri build",
-    "test:skin-codec": "tsx scripts/verify-skin-codec.ts"
+    "test:skin-codec": "tsx scripts/verify-skin-codec.ts",
+    "test:progress": "tsx scripts/verify-progress-model.ts"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
