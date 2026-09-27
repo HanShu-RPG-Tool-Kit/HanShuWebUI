@@ -11,6 +11,7 @@ import {
   deletionHitsKey,
   deletionRange,
   keyedRegions,
+  canonicalDialogueLine,
   pickRedone,
   pickUndone,
   snapTarget,
@@ -39,7 +40,13 @@ import {
   type DragSource,
   type DropIntent,
 } from '../drag/dragPayload'
-import { findSpanAt, parseLangSpans, type LangSpan } from './langTextSpans'
+import {
+  findSpanAt,
+  parseLangSpans,
+  type DialogueBlock,
+  type LangSpan,
+} from './langTextSpans'
+import { analyzeHsDiagnostics, type HsDiagnostic } from './hsDiagnostics'
 
 /**
  * 编辑器内的本地化文本渲染 / 交互 / 自动成键。
@@ -697,6 +704,34 @@ export function bindLangText(
     return status?.reason ? `${label} · ${status.reason} · ${hint}` : `${label} · ${hint}`
   }
 
+  /**
+   * 诊断 → after-content 叠加的虚线符号类名（样式在 App.css 的 `.hs-diag-*`）：
+   * 单行缺 `//` 只叠闭合符；多行缺 `//` 叠"回车 + 闭合符"；
+   * 闭合符没独占一行 / `speaker:` 后不该有文本只叠回车。
+   */
+  const diagnosticSymbol = (diag: HsDiagnostic): string =>
+    diag.kind === 'missing-terminator'
+      ? diag.multiline
+        ? 'hs-diag-enter-close'
+        : 'hs-diag-close'
+      : 'hs-diag-enter'
+
+  /**
+   * 语法诊断 → Monaco 装饰：波浪线画在锚点之后（"离文本一个空格"的留白由 CSS 负责），
+   * 半透明虚线符号走 after-content。
+   */
+  const diagnosticDecorations = (
+    model: editor.ITextModel,
+  ): editor.IModelDeltaDecoration[] =>
+    analyzeHsDiagnostics(model.getValue()).map((diag) => ({
+      range: monaco.Range.fromPositions(model.getPositionAt(diag.offset)),
+      options: {
+        stickiness:
+          monaco.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+        afterContentClassName: diagnosticSymbol(diag),
+      },
+    }))
+
   /** 重建覆盖框与 view zone（内容 / Ctrl / 映射变化） */
   const render = () => {
     if (disposed) return
@@ -904,6 +939,9 @@ export function bindLangText(
       }
     }
 
+    // —— 诊断装饰：缺闭合符 / 闭合符没独占一行 / `speaker:` 后不该有文本 ——
+    decorations.push(...diagnosticDecorations(model))
+
     collection.set(decorations)
 
     if (pendingZones.length > 0) {
@@ -1109,8 +1147,29 @@ export function bindLangText(
       : null
 
     const plan: Array<{ span: LangSpan; key: string }> = []
+    /**
+     * 需要**收缩**的多行对白：成键时整段换成规范单行 `name:<键>//`。
+     * 同一条语句的多个片段共享同一个 `dialogueBlock` 对象，按对象聚合。
+     */
+    const dialogueBlocks = new Map<
+      DialogueBlock,
+      { key: string; newKeys: number }
+    >()
+    const noteDialogueBlock = (span: LangSpan, key: string, isNew: boolean) => {
+      const block = span.dialogueBlock
+      if (!block) return
+      const entry = dialogueBlocks.get(block) ?? { key: '', newKeys: 0 }
+      entry.key = key || entry.key
+      if (isNew) entry.newKeys += 1
+      dialogueBlocks.set(block, entry)
+    }
+
     for (const span of currentSpans()) {
-      if (isLocaleKey(span.value)) continue
+      if (isLocaleKey(span.value)) {
+        // 已经是键：收缩时也要用上它（不能只认这次新建的键）
+        noteDialogueBlock(span, normalizeLocaleKey(span.value), false)
+        continue
+      }
       if (caretLine != null) {
         const next =
           span.endLine < model.getLineCount()
@@ -1122,6 +1181,7 @@ export function bindLangText(
       const key = createLocaleKey((candidate) => used.has(candidate))
       used.add(key)
       plan.push({ span, key })
+      noteDialogueBlock(span, key, true)
     }
     if (plan.length === 0) return
 
@@ -1136,21 +1196,59 @@ export function bindLangText(
       migrationLog.push({ entries })
       map.setMany(entries)
 
-      const edits: editor.IIdentifiedSingleEditOperation[] = plan.map(
-        ({ span, key }) => ({
-          range: monaco.Range.fromPositions(
-            model.getPositionAt(span.start),
-            model.getPositionAt(span.end),
-          ),
-          text: key,
-        }),
+      // 需要收缩的多行对白：整段换成规范单行，同一条语句的片段合成一条编辑。
+      // 这次没有新建键就不动原文 —— 避免一打开文件就重写用户排版。
+      const contractions: Array<{ block: DialogueBlock; text: string }> = []
+      for (const [block, entry] of dialogueBlocks) {
+        if (entry.newKeys > 0 && entry.key) {
+          contractions.push({
+            block,
+            text: canonicalDialogueLine(block, entry.key),
+          })
+        }
+      }
+      const contractedBlocks = new Set(contractions.map(({ block }) => block))
+      const contractedSpans = new Set(
+        plan
+          .filter(
+            ({ span }) =>
+              span.dialogueBlock != null &&
+              contractedBlocks.has(span.dialogueBlock),
+          )
+          .map(({ span }) => span),
       )
+
+      const edits: editor.IIdentifiedSingleEditOperation[] = [
+        ...plan
+          .filter(({ span }) => !contractedSpans.has(span))
+          .map(({ span, key }) => ({
+            range: monaco.Range.fromPositions(
+              model.getPositionAt(span.start),
+              model.getPositionAt(span.end),
+            ),
+            text: key,
+          })),
+        ...contractions.map(({ block, text }) => ({
+          range: monaco.Range.fromPositions(
+            model.getPositionAt(block.start),
+            model.getPositionAt(block.end),
+          ),
+          text,
+        })),
+      ]
 
       let shift = 0
       if (cursorOffset != null) {
         for (const { span, key } of plan) {
+          if (contractedSpans.has(span)) continue
           if (span.end <= cursorOffset) {
             shift += key.length - (span.end - span.start)
+          }
+        }
+        // 收缩是"整段换整段"：按语句整体长度变化补偏移
+        for (const { block, text } of contractions) {
+          if (block.end <= cursorOffset) {
+            shift += text.length - (block.end - block.start)
           }
         }
       }

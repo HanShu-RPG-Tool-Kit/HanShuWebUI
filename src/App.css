@@ -1783,6 +1783,53 @@ body.is-resizing .monaco-editor {
   }
 }
 
+/* 语法诊断：红色波浪线 + 半透明虚线符号。
+   波浪线画在锚点之后，`margin-left: 1ch` 就是"离文本一个空格"。
+   三种叠加：只闭合符 / 只回车 / 回车 + 闭合符。 */
+.hs-diag-close,
+.hs-diag-enter,
+.hs-diag-enter-close {
+  display: inline-block;
+  margin-left: 1ch;
+  padding-bottom: 2px;
+  font-size: 0.85em;
+  line-height: 1;
+  color: rgba(224, 82, 82, 0.6);
+  /* 红色波浪：一张 6×3 的小 tile 横向重复，贴在底部 */
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='6' height='3'><path d='M0 2 Q1.5 0 3 2 T6 2' fill='none' stroke='%23e05252' stroke-width='1'/></svg>");
+  background-repeat: repeat-x;
+  background-position: left bottom;
+}
+
+/* 半透明虚线符号（虚线描边的小方框） */
+.hs-diag-close::before,
+.hs-diag-enter::before,
+.hs-diag-enter-close::before,
+.hs-diag-enter-close::after {
+  display: inline-block;
+  margin: 0 1px;
+  padding: 0 2px;
+  border: 1px dashed rgba(224, 82, 82, 0.45);
+  border-radius: 3px;
+  font-size: 0.9em;
+}
+
+.hs-diag-close::before {
+  content: '//';
+}
+
+.hs-diag-enter::before {
+  content: '↵';
+}
+
+.hs-diag-enter-close::before {
+  content: '↵';
+}
+
+.hs-diag-enter-close::after {
+  content: '//';
+}
+
 .explorer-context-menu {
   position: fixed;
   z-index: 200;

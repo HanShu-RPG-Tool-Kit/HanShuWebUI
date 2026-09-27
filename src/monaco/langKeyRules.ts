@@ -1,5 +1,5 @@
 import { normalizeLocaleKey } from '../i18n/langTextMap'
-import type { LangSpan } from './langTextSpans'
+import type { DialogueBlock, LangSpan } from './langTextSpans'
 
 /**
  * 已成键文本（框）的纯规则：光标导航、删除保护、成键账目结算。
@@ -90,6 +90,17 @@ export function deletionHitsKey(
     }
   }
   return false
+}
+
+/**
+ * 多行对白（`name:` + 正文若干行 + 独占一行 `//`）成键后的**规范单行**形态：
+ * `name:<键>//`。选项树只有单行写法（多行糖已按决定删除），所以这里只有对白一种。
+ */
+export function canonicalDialogueLine(
+  block: Pick<DialogueBlock, 'speaker'>,
+  key: string,
+): string {
+  return `${block.speaker}:${key}//`
 }
 
 /** 撤销：键名已不在正文里 → 这次成键被撤销，条目该回收 */

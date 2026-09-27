@@ -11,8 +11,17 @@ import { DEFAULT_LOCALE_TAG, formatLocaleTag } from './locales'
  *   写键时先写缓存再写穿 sink。
  */
 
-/** 键名：8 位十六进制 */
-export const LOCALE_KEY_RE = /^[0-9a-f]{8}$/
+/** 键名本体：8 位十六进制。下面两处正则共用它 —— 「是不是键」只有一个定义 */
+const KEY_BODY = '[0-9a-f]{8}'
+
+/** 键名（整串匹配） */
+export const LOCALE_KEY_RE = new RegExp(`^${KEY_BODY}$`)
+
+/**
+ * 行内版本的键名形态：**不做锚定**，给语法着色用（Monarch 在行内逐个匹配）。
+ * 与 `LOCALE_KEY_RE` 同一份 `KEY_BODY`，大小写不敏感。
+ */
+export const LOCALE_KEY_TEXT_RE = new RegExp(KEY_BODY, 'i')
 
 /** 文本是否是键名（大小写不敏感，前后空白忽略） */
 export function isLocaleKey(text: string): boolean {

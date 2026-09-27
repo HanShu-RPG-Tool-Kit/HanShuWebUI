@@ -12,6 +12,19 @@
  * 挪到覆盖框外的右下角，避免它落进多行框里面。
  */
 
+import {
+  BLOCK_END,
+  CHOICE_LINE,
+  SPEAKER_LINE,
+  STATEMENT_BREAK_RE,
+  TRAILING_TERMINATOR,
+  countEmbedDelimiters,
+  isSkippedHsLine,
+  splitHsLines,
+  unescapeHsText,
+  type HsLine,
+} from '../hanshu/hsSyntaxRules'
+
 export type LangSpanKind = 'dialogue' | 'choice-label' | 'choice-reply'
 
 /** `//` 终结符的绝对范围 */
@@ -40,45 +53,20 @@ export type LangSpan = {
    * 拥有终结符时，渲染会把 `//` 挪到框外右下角。
    */
   terminator: LangTerminator | null
+  /** 只对"多行对白"设置：整条语句信息（同一语句的多个片段共享同一个对象） */
+  dialogueBlock?: DialogueBlock
 }
 
-const SPEAKER_LINE = /^([a-zA-Z_][a-zA-Z0-9_]*):(.*)$/
-
 /**
- * 注释行：行首（可含前导空白）才是注释，行内 `#` 属于正文。
- * 必须与编译去噪 `src/hanshu/lines.ts` 的 `/^\s*#/` 一致 —— 否则缩进写的注释
- * 会被编译丢掉，却被这里算进框的正文。
+ * 多行对白（`name:` + 正文若干行 + 独占一行 `//`）的整条语句信息。
+ * 成键时编辑器据此把它**收缩**成规范单行 `name:<键>//`（编译侧不做这件事）。
  */
-const COMMENT_LINE = /^\s*#/
-const CHOICE_LINE = /^(-+)([\s\S]*?)\/\/\s*$/
-const BLOCK_END = /^\/\/\s*$/
-/**
- * 块正文里出现这些行的行首，说明这个块没闭合（docs §1：选项行不能出现在对白块内部）：
- * 行首 `-`（选项）、`speaker:` 形（新对白）、`>` / `>>`（跳转 / 函数调用）。
- */
-const STARTS_NEW_STATEMENT = /^(-|[a-zA-Z_][a-zA-Z0-9_]*:|>>?)/
-const TRAILING_TERMINATOR = /\/\/\s*$/
-
-/** HS 转义还原（与 .lines 编译一致） */
-export function unescapeHsText(text: string): string {
-  return text
-    .replace(/\\>>/g, '>>')
-    .replace(/\\<</g, '<<')
-    .replace(/\\-/g, '-')
-}
-
-function countEmbedDelimiters(line: string): number {
-  let n = 0
-  let i = 0
-  while (i < line.length) {
-    if (line.startsWith("''''", i)) {
-      n++
-      i += 4
-    } else {
-      i++
-    }
-  }
-  return n
+export type DialogueBlock = {
+  /** 整条语句的范围：从行首到收尾 `//` 结束 */
+  start: number
+  end: number
+  /** 角色名 */
+  speaker: string
 }
 
 /** 第一个未转义的 `:` */
@@ -93,22 +81,6 @@ function findChoiceColon(body: string): number {
   return -1
 }
 
-type Line = { text: string; start: number }
-
-function splitLines(source: string): Line[] {
-  const out: Line[] = []
-  let start = 0
-  for (let i = 0; i <= source.length; i++) {
-    if (i === source.length || source[i] === '\n') {
-      let text = source.slice(start, i)
-      if (text.endsWith('\r')) text = text.slice(0, -1)
-      out.push({ text, start })
-      start = i + 1
-    }
-  }
-  return out
-}
-
 type SpanInput = {
   kind: LangSpanKind
   start: number
@@ -116,15 +88,23 @@ type SpanInput = {
   fromLine: number
   toLine: number
   terminator?: LangTerminator | null
+  /**
+   * 允许"空值片段"：`test://` 这种**已终结但正文为空**的语句也要成键，
+   * 否则它永远拿不到键。选项的空回复仍然不算（"空回复"明确排除）。
+   */
+  allowEmpty?: boolean
+  /** 多行对白的整条语句信息（同一语句的多个片段共享同一个对象） */
+  dialogueBlock?: DialogueBlock
 }
 
 function makeSpan(source: string, input: SpanInput): LangSpan | null {
   const { start, end } = input
-  if (end <= start) return null
   const raw = source.slice(start, end)
-  if (!raw.trim()) return null
   const value = unescapeHsText(raw.replace(/\r\n/g, '\n'))
-  if (!value.trim()) return null
+  // 空片段只在 allowEmpty（已终结的空体，如 `test:` + 独占一行的 `//`）时合法
+  if (!input.allowEmpty && (end <= start || !raw.trim() || !value.trim())) {
+    return null
+  }
   return {
     kind: input.kind,
     start,
@@ -134,6 +114,7 @@ function makeSpan(source: string, input: SpanInput): LangSpan | null {
     line: input.fromLine,
     endLine: input.toLine,
     terminator: input.terminator ?? null,
+    ...(input.dialogueBlock ? { dialogueBlock: input.dialogueBlock } : {}),
   }
 }
 
@@ -152,7 +133,7 @@ function trimmedRange(
  * 渲染与自动成键都走这里，保证「识别」与「替换」用的是同一套规则。
  */
 export function parseLangSpans(source: string): LangSpan[] {
-  const lines = splitLines(source)
+  const lines = splitHsLines(source)
   const spans: LangSpan[] = []
   let inPython = false
   let i = 0
@@ -172,7 +153,7 @@ export function parseLangSpans(source: string): LangSpan[] {
       continue
     }
 
-    if (COMMENT_LINE.test(line.text) || line.text.startsWith('@')) {
+    if (isSkippedHsLine(line.text)) {
       i++
       continue
     }
@@ -184,38 +165,35 @@ export function parseLangSpans(source: string): LangSpan[] {
       const restStart = line.start + speaker[1].length + 1
 
       if (/^\s*$/.test(rest)) {
-        // 多行块：正文若干行，由 `//` 收尾（docs/hanshu-syntax.md §1）。
-        // 成键的唯一依据是 `//`：单独一行的 `//`，或正文某行行尾的 `//`。
-        // 没有 `//`（读到结构行或文件末尾）→ 这段文本永久不成键，原文原样保留。
-        // 结构行（选项 / 新对白 / 跳转调用）只是"这个块到此为止"的边界：`//` 会向前
-        // 绑定到离它最近的结构标识，所以 `test:` 后面直接跟 `-msg:<<msg//` 时，
-        // 那个 `//` 属于选项行，属于 `test:` 的正文根本不存在。
+        // 多行块：`name:` 独占一行，正文若干行，由**独占一行**的 `//` 收尾
+        // （docs/hanshu-syntax.md §1）。正文行尾缀 `//` 不算收尾 → 这样的块不成键，
+        // 由诊断在同一行给出"这里该换行"的提示。
+        // 结构行（选项 / 新对白）只是"这个块到此为止"的边界：`//` 会向前绑定到离它
+        // 最近的结构标识，所以 `test:` 后面直接跟 `-msg:<<msg//` 时，那个 `//` 属于
+        // 选项行，属于 `test:` 的正文根本不存在。
+        // 注：`>` / `>>` 不算边界（跳转 / 调用行属于正文）。
+        const speakerLine = i + 1
         i++
-        const bodyLines: Line[] = []
+        const bodyLines: HsLine[] = []
         const bodyIndexes: number[] = []
-        /** 行尾 `//` 的绝对偏移：正文到它之前为止，`//` 归这个片段 */
-        let inlineTerminator: number | null = null
-        let inlineTerminatorLine: number | null = null
-        /** 是否见到 `//` —— 没有它就不成键 */
+        /** 是否见到**单独一行**的 `//` —— 没有它就不成键 */
         let ended = false
+        /** 收尾 `//` 的结束偏移（整条语句的 end，收缩时用） */
+        let closerEnd: number | null = null
         while (i < lines.length) {
           const bodyLine = lines[i]
           if (BLOCK_END.test(bodyLine.text)) {
             ended = true
+            closerEnd = bodyLine.start + bodyLine.text.length
             i++
             break
           }
-          // 结构行：`//` 属于它自己那条语句，本块没有 `//`，到此为止（不成键）
-          if (!inPython && STARTS_NEW_STATEMENT.test(bodyLine.text)) break
-          const inline = inPython ? null : TRAILING_TERMINATOR.exec(bodyLine.text)
-          if (inline) {
-            // 行尾 `//`：同属一个语句，正文包含这一行 `//` 之前的部分
-            bodyLines.push(bodyLine)
-            bodyIndexes.push(i)
-            inlineTerminator = bodyLine.start + inline.index
-            inlineTerminatorLine = i
-            ended = true
-            i++
+          // `@` 注入点是**行级语句**，不属于任何块的正文 → 同样结束这个块
+          if (
+            !inPython &&
+            (STATEMENT_BREAK_RE.test(bodyLine.text) ||
+              bodyLine.text.startsWith('@'))
+          ) {
             break
           }
           if (countEmbedDelimiters(bodyLine.text) % 2 === 1) {
@@ -242,13 +220,14 @@ export function parseLangSpans(source: string): LangSpan[] {
         const runs: Array<{ from: number; to: number }> = []
         let current: { from: number; to: number } | null = null
         let broken = false
+        let hasNonContentLine = false
         bodyLines.forEach((bodyLine, idx) => {
           if (!bodyLine.text.trim()) return
           if (
-            COMMENT_LINE.test(bodyLine.text) ||
-            bodyLine.text.startsWith('@') ||
+            isSkippedHsLine(bodyLine.text) ||
             countEmbedDelimiters(bodyLine.text) % 2 === 1
           ) {
+            hasNonContentLine = true
             broken = true
             return
           }
@@ -264,29 +243,53 @@ export function parseLangSpans(source: string): LangSpan[] {
         })
         if (current) runs.push(current)
 
+        /**
+         * 多行对白（`name:` + 正文 + 独占一行 `//`）成键时应**收缩**成单行 `name:<键>//`。
+         *
+         * 只在"整块就是这一段正文"时才挂收缩信息：收缩是整段替换，块里若有注释 / `@` /
+         * Python 围栏 / 空行（它们不进正文），替换会把那些行一起吞掉。所以要求
+         * 只有一段正文、且这段正文覆盖了全部正文行。
+         */
+        const coversWholeBody =
+          runs.length === 0 ||
+          (runs.length === 1 &&
+            !hasNonContentLine &&
+            runs[0]!.from === 0 &&
+            runs[0]!.to === bodyLines.length - 1)
+        const dialogueBlock: DialogueBlock | null =
+          ended && closerEnd != null && coversWholeBody
+            ? { start: line.start, end: closerEnd, speaker: speaker[1] }
+            : null
+
         for (const run of runs) {
           const first = bodyLines[run.from]
           const last = bodyLines[run.to]
-          let end = last.start + last.text.trimEnd().length
-          // 行尾 `//` 归它所在的那一段：正文到 `//` 之前（去掉尾部空白）为止
-          let terminator: { start: number; end: number } | null = null
-          if (
-            inlineTerminator != null &&
-            bodyIndexes[run.to] === inlineTerminatorLine
-          ) {
-            end =
-              last.start +
-              source.slice(last.start, inlineTerminator).trimEnd().length
-            terminator = { start: inlineTerminator, end: inlineTerminator + 2 }
-          }
+          // 正文到该段最后一行的行尾（去掉尾部空白）为止。
+          // 多行块的收尾 `//` 独占一行、不属于任何片段，所以这里没有终结符。
+          const end = last.start + last.text.trimEnd().length
           const span = makeSpan(source, {
             kind: 'dialogue',
             start: first.start + (first.text.length - first.text.trimStart().length),
             end,
             fromLine: bodyIndexes[run.from] + 1,
             toLine: bodyIndexes[run.to] + 1,
-            // 单独一行的 `//` 不属于这个片段；行尾 `//` 属于（渲染成尾标）
-            terminator,
+            terminator: null,
+            ...(dialogueBlock ? { dialogueBlock } : {}),
+          })
+          if (span) spans.push(span)
+        }
+
+        // 空体但已终结（`test:` + 独占一行的 `//`）：也要产出一个空片段，
+        // 否则它永远成不了键；片段是零长度区间，成键时键名插在冒号之后。
+        if (ended && runs.length === 0) {
+          const span = makeSpan(source, {
+            kind: 'dialogue',
+            start: restStart,
+            end: restStart,
+            fromLine: speakerLine,
+            toLine: speakerLine,
+            allowEmpty: true,
+            ...(dialogueBlock ? { dialogueBlock } : {}),
           })
           if (span) spans.push(span)
         }
@@ -308,6 +311,8 @@ export function parseLangSpans(source: string): LangSpan[] {
           fromLine: i + 1,
           toLine: i + 1,
           terminator: { start: terminatorStart, end: terminatorStart + 2 },
+          // `test://`：已终结但正文为空 → 也要成键
+          allowEmpty: true,
         })
         if (span) spans.push(span)
       }
@@ -316,6 +321,8 @@ export function parseLangSpans(source: string): LangSpan[] {
     }
 
     // —— 选项 ——
+    // 只认文档里的单行写法（`-文案:回复//` / `---只有文案//`）。
+    // 多行选项树属于"未文档化的宽容"，已按决定删除：不再解析，也不再收缩。
     const choice = CHOICE_LINE.exec(line.text)
     if (choice) {
       const dashes = choice[1]
