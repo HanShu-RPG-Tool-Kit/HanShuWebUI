@@ -49,7 +49,6 @@ import {
   isVoiceMapFile,
   type Workspace,
 } from '../workspace'
-import { buildLinesContent, linesFileNameForHs } from '../hanshu/lines'
 import {
   createBlankOggBlob,
   linesFileNameForVoice,
@@ -799,12 +798,6 @@ export const ScriptWorkspace = forwardRef<
 
     let next = updateScriptContent(workspaceRef.current, id, text)
 
-    // .hs 显式保存时全量编译同名 .lines（仅 hash↔source；删句即删条目）
-    if (isHanshuFile(name)) {
-      const linesName = linesFileNameForHs(name)
-      next = upsertPackageFile(next, id, linesName, buildLinesContent(text))
-    }
-
     commitWorkspace(next)
     setSavedAt(Date.now())
 
@@ -868,20 +861,11 @@ export const ScriptWorkspace = forwardRef<
       )
       return
     }
-    // 先落本地缓存与 .lines，再写盘
+    // 先落本地缓存，再写盘
     const text = valueRef.current
     const id = activeIdRef.current
     if (id) {
-      const name = findScript(workspaceRef.current, id)?.script.name ?? ''
-      let next = updateScriptContent(workspaceRef.current, id, text)
-      if (isHanshuFile(name)) {
-        next = upsertPackageFile(
-          next,
-          id,
-          linesFileNameForHs(name),
-          buildLinesContent(text),
-        )
-      }
+      const next = updateScriptContent(workspaceRef.current, id, text)
       commitWorkspace(next)
       setSavedAt(Date.now())
     }
@@ -1591,7 +1575,7 @@ export const ScriptWorkspace = forwardRef<
   }
 
   const handleExportResourcePack = async () => {
-    // 先保存，确保当前 .hs 的 .lines 已全量编译
+    // 先保存，确保导出用到的是最新的 .hs 正文
     persistNow()
     try {
       const { blob, fileCount, warnings } = await buildResourcePackZip(

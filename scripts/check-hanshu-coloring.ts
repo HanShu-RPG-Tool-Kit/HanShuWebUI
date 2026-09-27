@@ -1,0 +1,168 @@
+/**
+ * 汉书着色不变量检查（常驻）。
+ *
+ * 跑法：`npm run check:hs`
+ *
+ * 这些规则是**实测**踩出来的，改 tokenizer 时务必让它保持绿色：
+ * 1. 选项规则必须 ≥3 段分组，且对象只放最后一段（两段写法整行不上色）；
+ * 2. 分组内不得用 `@pop`（会让整行不上色），只能写状态名；
+ * 3. 单行语句状态必须以行为界：`-` / `-text` / `-text//` / `-text:` / `-text:text`
+ *    五种写法都要"短横线 + 文案上色，且行末状态回到 root"；
+ * 4. `.hs` 与 `.hsc` 两套 tokenizer 都要满足上面几条（它们共用规则工厂）。
+ */
+import assert from 'node:assert/strict'
+import {
+  HANSHU_HSC_LANGUAGE_ID,
+  HANSHU_LANGUAGE_ID,
+  registerHanshuLanguage,
+} from '../src/monaco/hanshuLanguage'
+
+const NL = String.fromCharCode(10)
+
+type Piece = string | { token: string; next?: string; switchTo?: string }
+type Rule = [RegExp, Piece | Piece[], string?]
+type Provider = { tokenizer: Record<string, Rule[]> }
+type Token = { text: string; type: string }
+
+const providers: Record<string, Provider> = {}
+registerHanshuLanguage({
+  languages: {
+    getLanguages: () => [],
+    register: () => undefined,
+    setLanguageConfiguration: () => undefined,
+    setMonarchTokensProvider: (id: string, p: unknown) => {
+      providers[id] = p as Provider
+    },
+  },
+  editor: { defineTheme: () => undefined, setTheme: () => undefined },
+} as never)
+
+/** 极简 Monarch 行词法：只实现本仓库用到的 token / 分组 / next / switchTo */
+function lex(
+  provider: Provider,
+  text: string,
+): Array<{ tokens: Token[]; endState: string }> {
+  const states = provider.tokenizer
+  let state = 'root'
+  const out: Array<{ tokens: Token[]; endState: string }> = []
+  for (const line of text.split(NL)) {
+    let rest = line
+    const tokens: Token[] = []
+    let guard = 0
+    while (rest.length > 0 && guard++ < 100) {
+      let advanced = false
+      for (const [re, action, third] of states[state] ?? []) {
+        const m = re.exec(rest)
+        if (!m || m.index !== 0 || m[0].length === 0) continue
+        let next = Array.isArray(action)
+          ? undefined
+          : typeof third === 'string'
+            ? third
+            : undefined
+        if (Array.isArray(action)) {
+          action.forEach((piece, index) => {
+            if (typeof piece === 'object' && (piece.next ?? piece.switchTo)) {
+              next = piece.next ?? piece.switchTo
+            }
+            tokens.push({
+              text: m[index + 1] ?? '',
+              type: typeof piece === 'string' ? piece : piece.token,
+            })
+          })
+        } else if (typeof action === 'string') {
+          tokens.push({ text: m[0], type: action })
+        } else {
+          if (action.next) next = action.next
+          tokens.push({ text: m[0], type: action.token })
+        }
+        rest = rest.slice(m[0].length)
+        if (next) state = next === '@pop' ? 'root' : next.replace('@', '')
+        advanced = true
+        break
+      }
+      if (!advanced) {
+        tokens.push({ text: rest, type: '' })
+        rest = ''
+      }
+    }
+    out.push({ tokens, endState: state })
+  }
+  return out
+}
+
+const HS_CASES = [
+  '-',
+  '-text',
+  '-text//',
+  '-text:',
+  '-text:text',
+  '--text:msg//',
+  '-c945411d',
+  '-c945411d:',
+]
+/** `.hsc` 里没有 `//`（编译时已去掉），所以少了两种形态 */
+const HSC_CASES = [
+  '-',
+  '-text',
+  '-text:',
+  '-text:text',
+  '-c945411d',
+  '-c945411d:',
+  '-c945411d:msg',
+]
+
+console.log('== 选项行着色 ==')
+for (const [label, id, cases] of [
+  ['.hs', HANSHU_LANGUAGE_ID, HS_CASES],
+  ['.hsc', HANSHU_HSC_LANGUAGE_ID, HSC_CASES],
+] as const) {
+  const provider = providers[id]
+  assert.ok(provider, `${label} 未注册 Monarch provider`)
+  for (const line of cases) {
+    const [result] = lex(provider, line)
+    const types = result!.tokens.map((t) => t.type).join(' ')
+    assert.ok(
+      result!.tokens[0]!.type.includes('choice.mark'),
+      `${label} ${line}：短横线要点亮，实际 ${types}`,
+    )
+    const bareDashes = line.replace(/^-+/, '') === ''
+    const label_ = result!.tokens.find(
+      (t, i) => i > 0 && t.text.length > 0 && !t.type.includes('punct'),
+    )
+    assert.ok(
+      bareDashes ||
+        label_?.type.includes('choice.label') ||
+        label_?.type.includes('key'),
+      `${label} ${line}：文案要上色，实际 ${types}`,
+    )
+    assert.equal(result!.endState, 'root', `${label} ${line}：行末状态应为 root`)
+  }
+  console.log(`  ok - ${label}：${cases.length} 种选项写法都上色且行末退出`)
+}
+
+console.log('== 选项规则形态 ==')
+for (const [id, provider] of Object.entries(providers)) {
+  for (const [state, rules] of Object.entries(provider.tokenizer)) {
+    for (const [re, action] of rules) {
+      if (!re.source.includes('(-+)')) continue
+      assert.ok(Array.isArray(action), `${id}/${state} ${re.source}：必须用分组`)
+      const pieces = action as Piece[]
+      assert.ok(
+        pieces.length >= 3,
+        `${id}/${state} ${re.source}：只有 ${pieces.length} 段，两段写法实测不上色`,
+      )
+      for (const piece of pieces) {
+        if (typeof piece !== 'object') continue
+        assert.notEqual(piece.next, '@pop', `${id}/${state} ${re.source}：分组内禁用 @pop`)
+        assert.notEqual(
+          piece.switchTo,
+          '@pop',
+          `${id}/${state} ${re.source}：分组内禁用 @pop`,
+        )
+      }
+    }
+  }
+}
+console.log('  ok - 所有选项规则 ≥3 段分组，且分组内无 @pop')
+
+console.log(NL + '汉书着色不变量检查通过')

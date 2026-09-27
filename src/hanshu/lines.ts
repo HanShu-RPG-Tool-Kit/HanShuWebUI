@@ -1,77 +1,36 @@
 import {
-  extractChoiceSources,
-  extractDialogueBlocks,
-} from '../monaco/copyDialogue'
+  isLocaleKey,
+  LOCALE_KEY_TEXT_RE,
+} from '../i18n/langTextMap'
+import { findSpanAt, parseLangSpans, type LangSpan } from '../monaco/langTextSpans'
+import {
+  BLOCK_END,
+  COMMENT_LINE,
+  DEFINE_LINE,
+  TRAILING_TERMINATOR,
+  countEmbedDelimiters,
+  isStructuralLine,
+  splitHsLines,
+} from './hsSyntaxRules'
 
-/** hash → source（仅对应关系，全量由 .hs 编译） */
-export type LinesFile = Record<string, string>
+/**
+ * `.hs` → `.hsc` 编译。
+ *
+ * 规则（与解析器共用 `hsSyntaxRules`，docs/hanshu-syntax.md 是权威）：
+ * - **编译前强制全文解析**：用 `parseLangSpans` 的结果判断哪些是本地化文本，
+ *   不依赖任何"正在编辑中"的增量状态；**不再二次成键**，正文里的键名原样保留。
+ * - 含键名的语句必须在**一行内闭合**（`speaker:abcd1234//`、`-msg:msg//`，闭合符在
+ *   行末）；不满足就抛 `HsCompileError` —— 键名还摊在块里时不允许出包。
+ * - 键名前后的空格 / 制表符在编译时删掉。
+ * - 不再生成 `.lines`：hash → 原文的映射已经被正文里的键名取代。
+ */
 
-/** 把 `name.hs` 换成 `name.lines` */
-export function linesFileNameForHs(hsName: string): string {
-  return hsName.replace(/\.hs$/i, '.lines')
-}
-
-/** FNV-1a 32-bit → 8 位 hex */
-export function hashLineSource(source: string): string {
-  let h = 0x811c9dc5
-  for (let i = 0; i < source.length; i++) {
-    h ^= source.charCodeAt(i)
-    h = Math.imul(h, 0x01000193)
+/** 编译错误：含键名内容没写成"单行 + 行末闭合" */
+export class HsCompileError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'HsCompileError'
   }
-  return (h >>> 0).toString(16).padStart(8, '0')
-}
-
-function countEmbedDelimiters(line: string): number {
-  let n = 0
-  let i = 0
-  while (i < line.length) {
-    if (line.startsWith("''''", i)) {
-      n++
-      i += 4
-    } else {
-      i++
-    }
-  }
-  return n
-}
-
-const SPEAKER_LINE = /^([a-zA-Z_][a-zA-Z0-9_]*):(.*)$/
-
-function uniqueSourcesFromHs(hsText: string): string[] {
-  const seen = new Set<string>()
-  const list: string[] = []
-  const add = (source: string) => {
-    const s = source.replace(/^\s+|\s+$/g, '')
-    if (!s || seen.has(s)) return
-    seen.add(s)
-    list.push(s)
-  }
-
-  for (const { content } of extractDialogueBlocks(hsText)) add(content)
-  for (const s of extractChoiceSources(hsText)) add(s)
-
-  return list
-}
-
-/** 从当前 .hs 全量编译（删句即删条目，不合并旧文件） */
-export function compileLinesFromHs(hsText: string): LinesFile {
-  const out: LinesFile = {}
-  for (const source of uniqueSourcesFromHs(hsText)) {
-    out[hashLineSource(source)] = source
-  }
-  return out
-}
-
-export function stringifyLinesFile(data: LinesFile): string {
-  const keys = Object.keys(data).sort((a, b) => a.localeCompare(b))
-  const ordered: LinesFile = {}
-  for (const key of keys) ordered[key] = data[key]
-  return `${JSON.stringify(ordered, null, 2)}\n`
-}
-
-/** Ctrl+S 时写入的 .lines 正文 */
-export function buildLinesContent(hsText: string): string {
-  return stringifyLinesFile(compileLinesFromHs(hsText))
 }
 
 /** `name.hs` → `name.hsc` */
@@ -82,7 +41,7 @@ export function hscFileNameForHs(hsName: string): string {
 /**
  * 为 .hsc 去掉噪音：注释行、空行。
  * 保留顶格 `#define`；不碰 `''''…''''` 内 Python（含其中空行）。
- * 不移动 `@` 注入点——它们是后续内容的位置标记。
+ * 不移动 `@` 注入点 —— 它们是后续内容的位置标记。
  */
 export function stripHsComments(hsText: string): string {
   const nl = hsText.includes('\r\n') ? '\r\n' : '\n'
@@ -104,12 +63,12 @@ export function stripHsComments(hsText: string): string {
     }
 
     // 顶格 #define 留给引擎展开；其余 # 行为注释
-    if (line.startsWith('#define')) {
+    if (DEFINE_LINE.test(line)) {
       out.push(line)
       continue
     }
-    if (/^\s*#/.test(line)) continue
-    if (/^\s*$/.test(line)) continue
+    if (COMMENT_LINE.test(line)) continue
+    if (!line.trim()) continue
 
     out.push(line)
   }
@@ -117,22 +76,10 @@ export function stripHsComments(hsText: string): string {
   return out.join(nl)
 }
 
-const HSC_SPEAKER_OPEN = /^([a-zA-Z_][a-zA-Z0-9_]*):\s*$/
-
-function isHscStructuralLine(line: string): boolean {
-  return (
-    line.startsWith('#') ||
-    line.startsWith('@') ||
-    line.startsWith('-') ||
-    line.startsWith("''''") ||
-    SPEAKER_LINE.test(line)
-  )
-}
-
 /**
- * hash 替换后的紧凑化（仅 .hsc）：
+ * 紧凑化（仅 .hsc）：
  * - 去掉块结束符 `//`（含独占一行的）
- * - 把 `speaker:\\nhash` 收成 `speaker:hash`
+ * - 把 `speaker:\nbody` 收成 `speaker:body`
  * 语句之间的换行保留（行首 `-` / `@` / `@@` / speaker 仍靠换行分界）。
  */
 export function minifyHsForHsc(hsText: string): string {
@@ -154,14 +101,14 @@ export function minifyHsForHsc(hsText: string): string {
       continue
     }
 
-    if (/^\/\/\s*$/.test(line)) continue
-    flat.push(line.replace(/\/\/\s*$/, ''))
+    if (BLOCK_END.test(line)) continue
+    flat.push(line.replace(TRAILING_TERMINATOR, ''))
   }
 
   const out: string[] = []
   inPython = false
   for (let i = 0; i < flat.length; i++) {
-    const line = flat[i]
+    const line = flat[i]!
     const toggles = countEmbedDelimiters(line)
 
     if (inPython) {
@@ -175,12 +122,12 @@ export function minifyHsForHsc(hsText: string): string {
       continue
     }
 
-    const open = line.match(HSC_SPEAKER_OPEN)
+    const open = /^([a-zA-Z_][a-zA-Z0-9_]*):\s*$/.exec(line)
     if (open) {
       const next = flat[i + 1]
       if (
         next !== undefined &&
-        !isHscStructuralLine(next) &&
+        !isStructuralLine(next) &&
         countEmbedDelimiters(next) % 2 === 0
       ) {
         out.push(`${open[1]}:${next}`)
@@ -195,23 +142,96 @@ export function minifyHsForHsc(hsText: string): string {
   return out.join(nl)
 }
 
-/**
- * 按 .lines 映射把源文替换为 hash（长串优先，避免短句误伤）。
- * 未传入 lines 时从 hs 现场编译。注释、空行、`//` 不进入 .hsc。
- */
-export function compileHsToHsc(
-  hsText: string,
-  lines?: LinesFile,
-): string {
-  const map = lines ?? compileLinesFromHs(hsText)
-  const pairs = Object.entries(map)
-    .filter(([, source]) => Boolean(source))
-    .sort((a, b) => b[1].length - a[1].length)
+/** 该片段是不是"已经成键"的本地化文本 */
+function isKeyedSpan(span: LangSpan): boolean {
+  return isLocaleKey(span.value)
+}
 
-  let out = stripHsComments(hsText)
-  for (const [hash, source] of pairs) {
-    if (!source || !out.includes(source)) continue
-    out = out.split(source).join(hash)
+/**
+ * 校验含键名内容，并把键名前后的空格 / 制表符删掉。
+ *
+ * 两条硬性要求（对应"每行完整且闭合"）：
+ * 1. 键名所在的独白必须是**单行写法**（`speaker:<键>//`，`//` 在同一行行末）；
+ *    多行块里摊着一个键名 → 抛错。
+ * 2. 正文行里出现的键名必须落在某个已闭合的片段内 → 否则说明它是"没闭合的含键名内容"。
+ *
+ * 注释行、`#define`、`@` 行与 Python 块内不算正文，不参与校验。
+ */
+function normalizeKeyedContent(hsText: string): string {
+  const spans = parseLangSpans(hsText)
+  const keyed = spans.filter(isKeyedSpan)
+
+  // 1) 键名必须收进单行
+  for (const span of keyed) {
+    // 选项行由 `CHOICE_LINE` 保证单行且行末闭合，不用额外检查
+    if (span.kind !== 'dialogue') continue
+    if (span.terminator == null) {
+      throw new HsCompileError(
+        `第 ${span.line} 行：含键名的独白必须写成单行的 \`speaker:<键>//\`（闭合符在行末）`,
+      )
+    }
   }
-  return minifyHsForHsc(out)
+
+  // 2) 正文里的键名必须都在片段内
+  const scan = new RegExp(LOCALE_KEY_TEXT_RE.source, 'gi')
+  const lines = splitHsLines(hsText)
+  let inPython = false
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!
+    const toggles = countEmbedDelimiters(line.text)
+    if (inPython) {
+      if (toggles % 2 === 1) inPython = false
+      continue
+    }
+    if (toggles % 2 === 1) {
+      inPython = true
+      continue
+    }
+    if (COMMENT_LINE.test(line.text) || line.text.startsWith('@')) continue
+    if (!line.text.trim()) continue
+
+    scan.lastIndex = 0
+    for (let m = scan.exec(line.text); m; m = scan.exec(line.text)) {
+      const span = findSpanAt(spans, line.start + m.index)
+      if (!span || !isKeyedSpan(span)) {
+        throw new HsCompileError(
+          `第 ${i + 1} 行：键名必须写在闭合的语句里（\`speaker:<键>//\` 或 \`-文案:回复//\`）`,
+        )
+      }
+    }
+  }
+
+  // 3) 键名前后的空格 / 制表符：删掉（不会跨行）
+  const drops: Array<{ start: number; end: number }> = []
+  for (const span of keyed) {
+    let start = span.start
+    while (start > 0 && (hsText[start - 1] === ' ' || hsText[start - 1] === '\t')) {
+      start--
+    }
+    let end = span.end
+    while (end < hsText.length && (hsText[end] === ' ' || hsText[end] === '\t')) {
+      end++
+    }
+    if (start < span.start) drops.push({ start, end: span.start })
+    if (end > span.end) drops.push({ start: span.end, end })
+  }
+  if (drops.length === 0) return hsText
+
+  drops.sort((a, b) => a.start - b.start)
+  let out = ''
+  let cursor = 0
+  for (const drop of drops) {
+    if (drop.start < cursor) continue
+    out += hsText.slice(cursor, drop.start)
+    cursor = drop.end
+  }
+  return out + hsText.slice(cursor)
+}
+
+/**
+ * 编译入口：`.hs` → `.hsc`。
+ * 先全文解析并校验含键名内容（不满足抛 `HsCompileError`），再去噪、去 `//`、收紧。
+ */
+export function compileHsToHsc(hsText: string): string {
+  return minifyHsForHsc(stripHsComments(normalizeKeyedContent(hsText)))
 }

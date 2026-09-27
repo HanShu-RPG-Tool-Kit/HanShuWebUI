@@ -8,7 +8,6 @@ export const ALLOWED_EXTENSIONS = [
   '.hs',
   '.md',
   '.char',
-  '.lines',
   '.lang',
   '.voice',
 ] as const
@@ -83,7 +82,7 @@ export function languageForFile(name: string): string {
   const ext = getExtension(name)
   if (ext === '.md') return 'markdown'
   if (ext === '.char') return 'python'
-  if (ext === '.lines' || ext === '.lang' || ext === '.voice') return 'json'
+  if (ext === '.lang' || ext === '.voice') return 'json'
   return 'hanshu' // .hs 汉书剧本
 }
 
@@ -93,10 +92,6 @@ export function isMarkdownFile(name: string): boolean {
 
 export function isHanshuFile(name: string): boolean {
   return getExtension(name) === '.hs'
-}
-
-export function isLinesFile(name: string): boolean {
-  return getExtension(name) === '.lines'
 }
 
 export function isLangFile(name: string): boolean {

@@ -2009,6 +2009,19 @@ body.is-resizing .monaco-editor {
   min-height: 0;
 }
 
+/* 编译不通过（含键名内容没写成单行闭合）时，预览位显示错误而不是空白 */
+.hsc-preview-error {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 12px 14px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #e05252;
+  background: rgba(224, 82, 82, 0.08);
+}
+
 .md-preview-body {
   padding: 22px 28px 40px;
   color: var(--text);

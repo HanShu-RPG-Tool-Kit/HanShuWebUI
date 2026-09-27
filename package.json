@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
+    "check:hs": "esbuild scripts/check-hanshu-coloring.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/check-hanshu-coloring.cjs --log-level=warning && node node_modules/.cache/check-hanshu-coloring.cjs",
     "preview": "vite preview",
     "tauri": "tauri",
     "desktop:dev": "tauri dev",

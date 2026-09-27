@@ -1,4 +1,3 @@
-import { type LinesFile } from './lines'
 import { BLANK_OGG_BYTES } from './blankVoiceOgg'
 
 export type VoiceMap = Record<string, string>
@@ -39,12 +38,13 @@ export function stringifyVoiceMap(map: VoiceMap): string {
   return `${JSON.stringify(map, null, 2)}\n`
 }
 
-export function parseLinesMap(raw: string): LinesFile {
+/** 读旧版 `.lines` 映射（hash → 原文）：只服务 `pullVoiceFromLines`，随旧布局一并清除 */
+function parseLinesMap(raw: string): Record<string, string> {
   if (!raw.trim()) return {}
   try {
     const data = JSON.parse(raw) as unknown
     if (!data || typeof data !== 'object' || Array.isArray(data)) return {}
-    const out: LinesFile = {}
+    const out: Record<string, string> = {}
     for (const [k, v] of Object.entries(data)) {
       if (typeof v === 'string') out[k] = v
     }

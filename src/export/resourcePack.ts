@@ -2,15 +2,11 @@ import JSZip from 'jszip'
 import { getAssetBlob } from '../assets/idb'
 import {
   compileHsToHsc,
-  compileLinesFromHs,
   hscFileNameForHs,
-  linesFileNameForHs,
-  stringifyLinesFile,
 } from '../hanshu/lines'
 import {
   isHanshuFile,
   isLangFile,
-  isLinesFile,
   isVoiceMapFile,
   type ScriptPackage,
   type Workspace,
@@ -133,43 +129,28 @@ export async function buildResourcePackZip(
     let hasLang = false
     let hasVoice = false
     let hasHanshu = false
-    let hasLines = false
 
-    // —— .hs → .lines + .hsc ——
+    // —— .hs → .hsc（不再生成 .lines：键名就在正文里）——
     for (const script of pkg.scripts) {
       if (!isHanshuFile(script.name)) continue
-      const lines = compileLinesFromHs(script.content)
-      const linesName = linesFileNameForHs(script.name)
       const hscName = hscFileNameForHs(script.name)
-      const hsc = compileHsToHsc(script.content, lines)
-
-      zip.file(
-        assetPath(pkg.name, `${RPGTOOLKIT_NAMESPACE}/lines/${linesName}`),
-        stringifyLinesFile(lines),
-      )
+      let hsc: string
+      try {
+        hsc = compileHsToHsc(script.content)
+      } catch (err) {
+        warnings.push(
+          `[${pkg.name}] ${script.name}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        )
+        continue
+      }
       zip.file(
         assetPath(pkg.name, `${RPGTOOLKIT_NAMESPACE}/hanshu/${hscName}`),
         hsc,
       )
-      fileCount += 2
-      hasLines = true
-      hasHanshu = true
-    }
-
-    // 工作区里额外的 .lines（无对应 .hs 时仍导出）
-    for (const script of pkg.scripts) {
-      if (!isLinesFile(script.name)) continue
-      const hsName = script.name.replace(/\.lines$/i, '.hs')
-      const hasHs = pkg.scripts.some(
-        (s) => s.name.toLowerCase() === hsName.toLowerCase(),
-      )
-      if (hasHs) continue
-      zip.file(
-        assetPath(pkg.name, `${RPGTOOLKIT_NAMESPACE}/lines/${script.name}`),
-        script.content,
-      )
       fileCount++
-      hasLines = true
+      hasHanshu = true
     }
 
     // —— .lang（按包合并 locale）——
@@ -255,9 +236,8 @@ export async function buildResourcePackZip(
       }
     }
 
-    if (!hasLines) {
-      zip.folder(assetPath(pkg.name, `${RPGTOOLKIT_NAMESPACE}/lines`))
-    }
+    // 引擎侧的固定目录：lines 下放 .lang / .voice，hanshu 下放 .hsc
+    zip.folder(assetPath(pkg.name, `${RPGTOOLKIT_NAMESPACE}/lines`))
     if (!hasLang) {
       zip.folder(assetPath(pkg.name, `${RPGTOOLKIT_NAMESPACE}/lines/lang`))
     }

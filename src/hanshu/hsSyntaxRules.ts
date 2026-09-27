@@ -26,8 +26,22 @@ export const BLOCK_END = /^\/\/\s*$/
 /** 行尾的块结束符 `//`（只用于单行写法；多行块不认它） */
 export const TRAILING_TERMINATOR = /\/\/\s*$/
 
+/** 顶格 `#define`（编译保留给引擎展开） */
+export const DEFINE_LINE = /^#define/
+
 /** 「这个块到此为止」：选项行 / 新对白行 */
 export const STATEMENT_BREAK_RE = /^(-|[a-zA-Z_][a-zA-Z0-9_]*:)/
+
+/**
+ * 结构行（编译紧凑化用）：`#` / `@` / `-` / `''''` / `speaker:` 形。
+ * 与 `STATEMENT_BREAK_RE` 的差别只在"`#` / `@` / `''''` 归谁处理"：解析器把它们
+ * 当注释跳过 / 注入跳过 / 围栏切段，编译则要在这里认出它们，避免把下一行折上来。
+ */
+export const STRUCTURAL_LINE_RE = /^(#|@|-|''''|[a-zA-Z_][a-zA-Z0-9_]*:)/
+
+export function isStructuralLine(line: string): boolean {
+  return STRUCTURAL_LINE_RE.test(line)
+}
 
 /** `.hs` 源文件的一行：`start` 是它在原文里的绝对偏移 */
 export type HsLine = { text: string; start: number }
