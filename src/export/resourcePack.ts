@@ -1,12 +1,11 @@
 import JSZip from 'jszip'
 import { getAssetBlob } from '../assets/idb'
+import { LOCALE_KEY_TEXT_RE } from '../i18n/textMap'
 import {
   compileHsToHsc,
   hscAssetName,
 } from '../hanshu/compiler'
-import { isHanshuFile, type Workspace } from '../workspace'
-
-export const RPGTOOLKIT_NAMESPACE = 'rpgtoolkit'
+import { isHanshuFile, sourceRelativePath, type Workspace } from '../workspace'
 
 export type ExportWarning = string
 
@@ -17,20 +16,6 @@ export type ExportResult = {
 }
 
 type HashMap = Record<string, string>
-
-function safePackageDir(name: string): string {
-  const s = name.trim().replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, '_')
-  return s || 'package'
-}
-
-function packRoot(pkgName: string): string {
-  return safePackageDir(pkgName)
-}
-
-function assetPath(pkgName: string, relativeUnderAssets: string): string {
-  // 包名/assets/rpgtoolkit/...
-  return `${packRoot(pkgName)}/assets/${relativeUnderAssets.replace(/^\/+/, '')}`
-}
 
 function parseHashMap(raw: string, fileName: string, warnings: string[]): HashMap {
   if (!raw.trim()) return {}
@@ -77,38 +62,6 @@ function parseVoiceAssetKey(
   return { locale: parts[1]!.toLowerCase(), key: file.replace(/\.ogg$/i, '') }
 }
 
-function mergeLangMaps(
-  into: HashMap,
-  from: HashMap,
-  fileName: string,
-  warnings: string[],
-) {
-  for (const [hash, text] of Object.entries(from)) {
-    if (hash in into && into[hash] !== text) {
-      warnings.push(`${fileName}: hash ${hash} 译文冲突，保留先写入的版本`)
-      continue
-    }
-    into[hash] = text
-  }
-}
-
-function writePackMeta(zip: JSZip, pkgName: string) {
-  zip.file(
-    `${packRoot(pkgName)}/pack.mcmeta`,
-    `${JSON.stringify(
-      {
-        pack: {
-          min_format: [84, 0],
-          max_format: [84, 0],
-          description: `rpgtoolkit / ${pkgName}`,
-        },
-      },
-      null,
-      2,
-    )}\n`,
-  )
-}
-
 export async function buildResourcePackZip(
   workspace: Workspace,
 ): Promise<ExportResult> {
@@ -117,14 +70,13 @@ export async function buildResourcePackZip(
   let fileCount = 0
 
   for (const pkg of workspace.packages) {
-    writePackMeta(zip, pkg.name)
-    fileCount++
-
     let hasLang = false
     let hasVoice = false
-    let hasHanshu = false
+    // 这个包的 `.hsc` 真正引用到的键名：lang / voice 只导出被引用到的资源
+    const markedKeys = new Set<string>()
+    const keyPattern = new RegExp(LOCALE_KEY_TEXT_RE.source, 'gi')
 
-    // —— .hs → .hsc（不再生成 .lines：键名就在正文里）——
+    // —— .hs → .hsc（只导出 .hsc，不带 .hs；不再生成 .lines：键名就在正文里）——
     for (const script of pkg.scripts) {
       if (!isHanshuFile(script.name)) continue
       const hscName = hscAssetName(script.name)
@@ -139,54 +91,58 @@ export async function buildResourcePackZip(
         )
         continue
       }
-      zip.file(
-        assetPath(pkg.name, `${RPGTOOLKIT_NAMESPACE}/hanshu/${hscName}`),
-        hsc,
-      )
-      fileCount++
-      hasHanshu = true
-    }
-
-    // —— 语言文本 `assets/<locale>/lang_<ext>/…/名.lang`（按包合并 locale）——
-    // 语言文本是**资产**（IndexedDB blob），不是包内文件
-    const langByLocale = new Map<string, HashMap>()
-    for (const asset of pkg.assets) {
-      const locale = parseTextAssetLocale(asset.path)
-      if (!locale) continue
-      const blob = await getAssetBlob(pkg.id, asset.path)
-      if (!blob) {
-        warnings.push(`[${pkg.name}] IndexedDB 无数据: ${asset.path}`)
-        continue
+      zip.file(`hanshu/${hscName}`, hsc)
+      for (const match of hsc.matchAll(keyPattern)) {
+        markedKeys.add(match[0].toLowerCase())
       }
-      const map = parseHashMap(await blob.text(), asset.path, warnings)
-      const bucket = langByLocale.get(locale) ?? {}
-      mergeLangMaps(bucket, map, asset.path, warnings)
-      langByLocale.set(locale, bucket)
-    }
-    for (const [locale, map] of [...langByLocale.entries()].sort((a, b) =>
-      a[0].localeCompare(b[0]),
-    )) {
-      const keys = Object.keys(map).sort((a, b) => a.localeCompare(b))
-      const ordered: HashMap = {}
-      for (const k of keys) ordered[k] = map[k]
-      zip.file(
-        assetPath(
-          pkg.name,
-          `${RPGTOOLKIT_NAMESPACE}/lines/lang/${locale}.lang`,
-        ),
-        `${JSON.stringify(ordered, null, 2)}\n`,
-      )
       fileCount++
-      hasLang = true
     }
 
-    // —— 音频 `assets/<locale>/voice_<ext>/…/<键名>.ogg` →
-    //      lines/voice/<键名>.<locale>.ogg（键名就是文件名，不再经过映射表）——
+    // —— 其余源文件原样带上：`.char` → character/、`.py` → scripts/ ——
+    for (const script of pkg.scripts) {
+      const rel = sourceRelativePath(script.name)
+      if (!rel.startsWith('src/')) continue
+      const kind = rel.split('/')[1] ?? ''
+      if (kind === 'hanshu') continue // `.hs` 已经编译成 `.hsc`
+      const fileName = rel.slice(`src/${kind}/`.length)
+      zip.file(`${kind}/${fileName}`, script.content)
+      fileCount++
+    }
+
+    // —— 本地化资产：保持 `assets/<locale>/lang_<ext>|voice_<ext>/…` 原布局，
+    //      但只导出被 `.hsc` 引用到的键（语言文本按条裁剪，一条不剩就不导出）——
     const seenVoice = new Set<string>()
     for (const asset of pkg.assets) {
+      const assetPathInPack = asset.path.replace(/\\/g, '/')
+
+      if (parseTextAssetLocale(asset.path)) {
+        const blob = await getAssetBlob(pkg.id, asset.path)
+        if (!blob) {
+          warnings.push(`[${pkg.name}] IndexedDB 无数据: ${asset.path}`)
+          continue
+        }
+        const map = parseHashMap(await blob.text(), asset.path, warnings)
+        const ordered: HashMap = {}
+        for (const k of Object.keys(map).sort((a, b) => a.localeCompare(b))) {
+          // 只保留被 `.hsc` 引用到的键：未引用的（含写错的无效键）不导出
+          if (!markedKeys.has(k.toLowerCase())) continue
+          ordered[k] = map[k]
+        }
+        if (Object.keys(ordered).length === 0) continue
+        zip.file(
+          assetPathInPack,
+          `${JSON.stringify(ordered, null, 2)}\n`,
+        )
+        fileCount++
+        hasLang = true
+        continue
+      }
+
       const parsed = parseVoiceAssetKey(asset.path)
       if (!parsed) continue
       const { locale, key } = parsed
+      // 只保留被 `.hsc` 引用到的键（键名就是文件名）
+      if (!markedKeys.has(key.toLowerCase())) continue
       const dedupe = `${key}.${locale}`
       if (seenVoice.has(dedupe)) {
         warnings.push(`[${pkg.name}] ${asset.path}: ${dedupe} 重复`)
@@ -199,27 +155,17 @@ export async function buildResourcePackZip(
         warnings.push(`[${pkg.name}] IndexedDB 无数据: ${asset.path}`)
         continue
       }
-      zip.file(
-        assetPath(
-          pkg.name,
-          `${RPGTOOLKIT_NAMESPACE}/lines/voice/${key}.${locale}.ogg`,
-        ),
-        blob,
-      )
+      zip.file(assetPathInPack, blob)
       fileCount++
       hasVoice = true
     }
 
-    // 引擎侧的固定目录：lines 下放 .lang / .voice，hanshu 下放 .hsc
-    zip.folder(assetPath(pkg.name, `${RPGTOOLKIT_NAMESPACE}/lines`))
-    if (!hasLang) {
-      zip.folder(assetPath(pkg.name, `${RPGTOOLKIT_NAMESPACE}/lines/lang`))
+    // 目录骨架：三类源目录空也占位
+    for (const dir of ['hanshu', 'character', 'scripts']) {
+      zip.folder(dir)
     }
-    if (!hasVoice) {
-      zip.folder(assetPath(pkg.name, `${RPGTOOLKIT_NAMESPACE}/lines/voice`))
-    }
-    if (!hasHanshu) {
-      zip.folder(assetPath(pkg.name, `${RPGTOOLKIT_NAMESPACE}/hanshu`))
+    if (!hasLang && !hasVoice) {
+      zip.folder('assets')
     }
   }
 

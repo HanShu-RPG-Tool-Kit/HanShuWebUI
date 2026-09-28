@@ -59,7 +59,7 @@ import {
   buildResourcePackZip,
   downloadBlob,
 } from '../export/resourcePack'
-import { buildAssetsPackZip } from '../export/assetsPack'
+import { buildProjectPackZip } from '../export/projectPack'
 import { normalizeAssetPath, normalizeFolderPath } from '../assets/paths'
 import {
   moveAssetToDir,
@@ -1542,12 +1542,12 @@ export const ScriptWorkspace = forwardRef<
       setHistoryOpen(true)
       return
     }
-    if (item === '导出资源包') {
+    if (item === '导出PAK') {
       void handleExportResourcePack()
       return
     }
-    if (item === '导出资产包') {
-      void handleExportAssetsPack()
+    if (item === '导出工程包') {
+      void handleExportProjectPack()
       return
     }
     if (item === '新建包') {
@@ -1634,6 +1634,7 @@ export const ScriptWorkspace = forwardRef<
     setHistoryOpen(false)
   }
 
+  /** 导出 PAK：编译 hsc + 只保留被引用到的 lang / voice */
   const handleExportResourcePack = async () => {
     // 先保存，确保导出用到的是最新的 .hs 正文
     persistNow()
@@ -1645,48 +1646,49 @@ export const ScriptWorkspace = forwardRef<
         .toISOString()
         .slice(0, 19)
         .replace(/[:T]/g, '-')
-      downloadBlob(blob, `rpgtoolkit-resourcepack-${stamp}.zip`)
+      downloadBlob(blob, `hanshu-${stamp}.pak`)
 
       if (warnings.length > 0) {
         const shown = warnings.slice(0, 20).join('\n')
         const more =
           warnings.length > 20 ? `\n…另有 ${warnings.length - 20} 条` : ''
         window.alert(
-          `已导出资源包（${fileCount} 个文件），但有警告：\n\n${shown}${more}`,
+          `已导出 PAK（${fileCount} 个文件），但有警告：\n\n${shown}${more}`,
         )
       }
     } catch (err) {
       window.alert(
-        `导出失败：${err instanceof Error ? err.message : String(err)}`,
+        `导出 PAK 失败：${err instanceof Error ? err.message : String(err)}`,
       )
     }
   }
 
-  const handleExportAssetsPack = async () => {
+  /** 导出工程包：原样完整打包（脚本正文 + assets 二进制） */
+  const handleExportProjectPack = async () => {
     persistNow()
     try {
-      const { blob, fileCount, warnings } = await buildAssetsPackZip(
+      const { blob, fileCount, warnings } = await buildProjectPackZip(
         workspaceRef.current,
       )
       const stamp = new Date()
         .toISOString()
         .slice(0, 19)
         .replace(/[:T]/g, '-')
-      downloadBlob(blob, `hanshu-assets-${stamp}.zip`)
+      downloadBlob(blob, `hanshu-project-${stamp}.zip`)
 
       if (warnings.length > 0) {
         const shown = warnings.slice(0, 20).join('\n')
         const more =
           warnings.length > 20 ? `\n…另有 ${warnings.length - 20} 条` : ''
         window.alert(
-          `已导出资产包（${fileCount} 个文件），但有警告：\n\n${shown}${more}`,
+          `已导出工程包（${fileCount} 个文件），但有警告：\n\n${shown}${more}`,
         )
       } else if (fileCount === 0) {
-        window.alert('资产包为空（没有可导出的文件）')
+        window.alert('工程包为空（没有可导出的文件）')
       }
     } catch (err) {
       window.alert(
-        `导出资产包失败：${err instanceof Error ? err.message : String(err)}`,
+        `导出工程包失败：${err instanceof Error ? err.message : String(err)}`,
       )
     }
   }

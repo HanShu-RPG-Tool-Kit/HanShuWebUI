@@ -190,7 +190,7 @@ export function AssetPreview({
         )}
         {url && !audio && !image && !texty && (
           <p className="asset-preview-hint">
-            已存入包内资产。此类型暂无预览，导出资源包时会一并打包。
+            已存入包内资产。此类型暂无预览，导出工程包时会原样带上。
           </p>
         )}
       </div>

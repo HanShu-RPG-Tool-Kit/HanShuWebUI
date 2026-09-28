@@ -1965,6 +1965,14 @@ body.is-resizing .monaco-editor {
   cursor: default;
 }
 
+/* 资源管理器里的 `src/<kind>/` 分组标题 */
+.explorer-kind-row {
+  padding: 2px 8px 2px 18px;
+  color: var(--text-dim);
+  font-size: 12px;
+  user-select: none;
+}
+
 .asset-preview-error {
   color: #f48771;
 }

@@ -1,6 +1,6 @@
 import JSZip from 'jszip'
 import { getAssetBlob } from '../assets/idb'
-import type { Workspace } from '../workspace'
+import { sourceRelativePath, type Workspace } from '../workspace'
 import type { ExportResult, ExportWarning } from './resourcePack'
 
 function safePackageDir(name: string): string {
@@ -9,10 +9,13 @@ function safePackageDir(name: string): string {
 }
 
 /**
- * 导出工作区各包的原始 assets/（IndexedDB 二进制），不做 rpgtoolkit 编译。
- * 结构：`包名/assets/...`
+ * 导出**工程包**：原样完整打包，不改写、不编译、不裁剪。
+ * - 包内文件（`.hs` / `.md` / `.char` / `*.voice` …）按原文写入
+ * - `assets/` 下的资产按 IndexedDB 里的二进制写入
+ *
+ * 结构：`包名/...`。与导出 PAK 不同，这里不做 `.hsc` 编译，也不按键名裁剪语言资源。
  */
-export async function buildAssetsPackZip(
+export async function buildProjectPackZip(
   workspace: Workspace,
 ): Promise<ExportResult> {
   const warnings: ExportWarning[] = []
@@ -26,6 +29,12 @@ export async function buildAssetsPackZip(
     for (const folder of pkg.assetFolders ?? []) {
       const norm = folder.replace(/\\/g, '/').replace(/\/+$/, '')
       if (norm) folders.add(norm)
+    }
+
+    for (const script of pkg.scripts) {
+      // 工程结构：源文件进 `src/<kind>/`（`xx.hs` → `src/hanshu/xx.hs`）
+      zip.file(`${root}/${sourceRelativePath(script.name)}`, script.content)
+      fileCount++
     }
 
     for (const asset of pkg.assets) {
@@ -52,7 +61,7 @@ export async function buildAssetsPackZip(
   if (workspace.packages.length === 0) {
     warnings.push('工作区没有包，导出为空')
   } else if (fileCount === 0) {
-    warnings.push('没有可导出的资产文件')
+    warnings.push('没有可导出的文件')
   }
 
   const blob = await zip.generateAsync({

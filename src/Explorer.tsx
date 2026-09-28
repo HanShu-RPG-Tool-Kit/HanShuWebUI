@@ -17,6 +17,11 @@ import {
   type AssetTreeDir,
   type AssetTreeNode,
 } from './assets/paths'
+import {
+  SOURCE_KIND_DIRS,
+  SOURCE_KIND_ORDER,
+  getExtension,
+} from './workspace'
 
 /**
  * 目录行的投放接线（包行 / assets 目录行共用）：
@@ -300,6 +305,76 @@ function PackageNode({
     onPayload: (source) => onDropIntoFolder(pkg.id, 'assets', source),
   })
 
+  // 源文件按 `src/<kind>/` 分组展示；其余（`.md`、旧 `*.voice`）留在包根
+  const grouped = useMemo(() => {
+    const byKind = new Map<string, Array<(typeof pkg.scripts)[number]>>(
+      SOURCE_KIND_ORDER.map((kind) => [kind, []]),
+    )
+    const root: Array<(typeof pkg.scripts)[number]> = []
+    for (const script of pkg.scripts) {
+      const kind = SOURCE_KIND_DIRS[getExtension(script.name)]
+      const bucket = kind ? byKind.get(kind) : null
+      if (bucket) bucket.push(script)
+      else root.push(script)
+    }
+    return { byKind, root }
+  }, [pkg.scripts])
+
+  const renderScriptRow = (script: (typeof pkg.scripts)[number]) => (
+    <li key={script.id}>
+      <div
+        className={`explorer-row explorer-file-row${
+          script.id === activeScriptId ? ' active' : ''
+        }`}
+        draggable
+        onDragStart={(e) => {
+          writeDragPayload(e.dataTransfer, {
+            kind: 'script',
+            packageId: pkg.id,
+            scriptId: script.id,
+            name: script.name,
+          })
+        }}
+        onDragEnd={() => endDrag()}
+        onContextMenu={
+          isVoiceMapFile(script.name)
+            ? (e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                setCtxMenu({
+                  x: e.clientX,
+                  y: e.clientY,
+                  scriptId: script.id,
+                })
+              }
+            : undefined
+        }
+      >
+        <button
+          type="button"
+          className="explorer-label"
+          onClick={() => onOpenScript(script.id)}
+          onDoubleClick={() => onRenameScript(script.id)}
+          title={
+            isVoiceMapFile(script.name) ? '右键：生成空白 ogg' : '双击重命名'
+          }
+        >
+          <span className="explorer-icon file" aria-hidden />
+          {script.name}
+        </button>
+        <div className="explorer-row-actions">
+          <button
+            type="button"
+            title="删除剧本"
+            onClick={() => onDeleteScript(script.id)}
+          >
+            ×
+          </button>
+        </div>
+      </div>
+    </li>
+  )
+
   return (
     <div
       className={`explorer-pkg${pkgDrop.active ? ' is-drop-target' : ''}`}
@@ -349,62 +424,19 @@ function PackageNode({
       {!pkg.collapsed && (
         <>
           <ul className="explorer-files">
-            {pkg.scripts.map((script) => (
-              <li key={script.id}>
-                <div
-                  className={`explorer-row explorer-file-row${
-                    script.id === activeScriptId ? ' active' : ''
-                  }`}
-                  draggable
-                  onDragStart={(e) => {
-                    writeDragPayload(e.dataTransfer, {
-                      kind: 'script',
-                      packageId: pkg.id,
-                      scriptId: script.id,
-                      name: script.name,
-                    })
-                  }}
-                  onDragEnd={() => endDrag()}
-                  onContextMenu={
-                    isVoiceMapFile(script.name)
-                      ? (e) => {
-                          e.preventDefault()
-                          e.stopPropagation()
-                          setCtxMenu({
-                            x: e.clientX,
-                            y: e.clientY,
-                            scriptId: script.id,
-                          })
-                        }
-                      : undefined
-                  }
-                >
-                  <button
-                    type="button"
-                    className="explorer-label"
-                    onClick={() => onOpenScript(script.id)}
-                    onDoubleClick={() => onRenameScript(script.id)}
-                    title={
-                      isVoiceMapFile(script.name)
-                        ? '右键：生成空白 ogg'
-                        : '双击重命名'
-                    }
-                  >
-                    <span className="explorer-icon file" aria-hidden />
-                    {script.name}
-                  </button>
-                  <div className="explorer-row-actions">
-                    <button
-                      type="button"
-                      title="删除剧本"
-                      onClick={() => onDeleteScript(script.id)}
-                    >
-                      ×
-                    </button>
-                  </div>
-                </div>
-              </li>
-            ))}
+            {SOURCE_KIND_ORDER.map((kind) => {
+              const items = grouped.byKind.get(kind) ?? []
+              if (items.length === 0) return null
+              return (
+                <li key={`kind-${kind}`} className="explorer-kind">
+                  <div className="explorer-kind-row">src/{kind}</div>
+                  <ul className="explorer-files nested">
+                    {items.map(renderScriptRow)}
+                  </ul>
+                </li>
+              )
+            })}
+            {grouped.root.map(renderScriptRow)}
             {pkg.scripts.length === 0 && (
               <li className="explorer-empty nested">空包</li>
             )}

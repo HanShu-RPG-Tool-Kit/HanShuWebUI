@@ -8,10 +8,31 @@ export const ALLOWED_EXTENSIONS = [
   '.hs',
   '.md',
   '.char',
+  '.py',
   '.lang',
   '.voice',
 ] as const
 export type AllowedExtension = (typeof ALLOWED_EXTENSIONS)[number]
+
+/**
+ * 源文件按后缀归入的工作目录（工程结构 `src/<kind>/`）：
+ * `.hs` → `src/hanshu/`、`.char` → `src/character/`、`.py` → `src/scripts/`。
+ * 未列出的后缀（`.md` 文档、旧 `*.voice` 映射）不参与该结构，留在包根。
+ */
+export const SOURCE_KIND_DIRS: Record<string, string> = {
+  '.hs': 'hanshu',
+  '.char': 'character',
+  '.py': 'scripts',
+}
+
+/** `src/<kind>/` 的固定顺序：展示与导出都按它排 */
+export const SOURCE_KIND_ORDER = ['hanshu', 'character', 'scripts'] as const
+
+/** 源文件在工程结构里的相对路径：`xx.hs` → `src/hanshu/xx.hs`；非源文件原样返回 */
+export function sourceRelativePath(name: string): string {
+  const kind = SOURCE_KIND_DIRS[getExtension(name)]
+  return kind ? `src/${kind}/${name}` : name
+}
 
 /** 给人看的后缀列表文案 */
 export const ALLOWED_EXTENSIONS_LABEL = ALLOWED_EXTENSIONS.join('  ')
@@ -98,7 +119,7 @@ export function editorLanguageForFile(name: string): string {
   if (isTextAssetName(name)) return 'json'
   const ext = getExtension(name)
   if (ext === '.md') return 'markdown'
-  if (ext === '.char') return 'python'
+  if (ext === '.char' || ext === '.py') return 'python'
   if (ext === '.lang' || ext === '.voice') return 'json'
   return 'hanshu' // .hs 汉书剧本
 }

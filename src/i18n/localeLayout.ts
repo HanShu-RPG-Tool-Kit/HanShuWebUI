@@ -52,9 +52,19 @@ export function normalizeSourcePath(path: string): string {
     .replace(/\/+$/, '')
 }
 
+/**
+ * 去掉工程结构前缀，取「逻辑名」：`src/hanshu/xx.hs` → `xx.hs`。
+ *
+ * 本地化身份只看逻辑名 —— 源文件写在 `src/hanshu/` 还是裸写 `xx.hs` 都一样，于是
+ * `hanshu/xx.hs` 与 `xx.hs` 都映射到 `assets/<locale>/lang_hs/xx.lang`。
+ */
+export function sourceLogicalPath(sourcePath: string): string {
+  return normalizeSourcePath(sourcePath).replace(/^src\/(?:[^/]+\/)*/i, '')
+}
+
 /** 逐段清洗源路径：去掉空段、`.` 与 `..`（去后缀后按 `/` 切分） */
 function sanitizedSourceParts(sourcePath: string): string[] {
-  return dropExtension(normalizeSourcePath(sourcePath))
+  return dropExtension(sourceLogicalPath(sourcePath))
     .split('/')
     .map((part) => part.trim())
     .filter((part) => part && part !== '.' && part !== '..')
