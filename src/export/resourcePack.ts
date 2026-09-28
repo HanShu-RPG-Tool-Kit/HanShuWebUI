@@ -5,7 +5,12 @@ import {
   compileHsToHsc,
   hscAssetName,
 } from '../hanshu/compiler'
-import { isHanshuFile, sourceRelativePath, type Workspace } from '../workspace'
+import {
+  isHanshuFile,
+  sourceRelativePath,
+  SOURCE_KIND_ORDER,
+  type Workspace,
+} from '../workspace'
 
 export type ExportWarning = string
 
@@ -160,8 +165,8 @@ export async function buildResourcePackZip(
       hasVoice = true
     }
 
-    // 目录骨架：三类源目录空也占位
-    for (const dir of ['hanshu', 'character', 'scripts']) {
+    // 目录骨架：三类源目录空也占位（顺序来自 SOURCE_KIND_ORDER）
+    for (const dir of SOURCE_KIND_ORDER) {
       zip.folder(dir)
     }
     if (!hasLang && !hasVoice) {

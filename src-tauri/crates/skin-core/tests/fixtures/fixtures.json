@@ -23,8 +23,8 @@
       "name": "legacy32-classic",
       "model": "classic",
       "wasLegacy": true,
-      "skinId": "6b80080b7c1e3a4bbd2918a2cd1b7638f943f4a18d26070226d8aaa1a3548256",
-      "note": "legacy 64x32 mirrored expansion",
+      "skinId": "b186e747344a34f5cc821b986fdcedbc9cd205cd2d5cfc4a2a311a2f75f9dc22",
+      "note": "legacy 64x32 per-face mirrored expansion (skinview-utils convertSkinTo1_8)",
       "pngBytes": 8292,
       "skinCodeChars": 11903
     },

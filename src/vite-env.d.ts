@@ -1,5 +1,14 @@
 /// <reference types="vite/client" />
 
+interface ImportMetaEnv {
+  readonly VITE_DEEPSEEK_API_KEY?: string
+  readonly VITE_DEEPSEEK_BASE_URL?: string
+  readonly VITE_DEEPSEEK_MODEL?: string
+  readonly VITE_DEEPSEEK_TEMPERATURE?: string
+  /** Set to "1" to force Tauri skin IPC instead of FSA */
+  readonly VITE_SKIN_USE_TAURI?: string
+}
+
 declare module '*.md?raw' {
   const content: string
   export default content

@@ -18,3 +18,10 @@ export {
   type LoadProjectResult,
 } from './projectFs'
 export { loadLastDirectoryHandle } from './handleStore'
+export {
+  getBoundProject,
+  getBoundProjectHandle,
+  setBoundProject,
+  subscribeProjectBinding,
+  type ProjectBindingListener,
+} from './bindingBus'

@@ -1,0 +1,194 @@
+.mc-stream-workspace {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+}
+
+.mc-stream-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 8px 12px;
+  background: var(--bg-sidebar);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.mc-stream-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+
+.mc-stream-field input {
+  width: 72px;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--text-bright);
+  font: inherit;
+  font-size: 13px;
+}
+
+.mc-stream-field input.wide {
+  width: 110px;
+}
+
+.mc-stream-field input[type='checkbox'] {
+  width: auto;
+  height: auto;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.mc-stream-field input[type='range'] {
+  width: 96px;
+  height: 4px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  accent-color: var(--accent);
+}
+
+.mc-stream-field select {
+  height: 26px;
+  max-width: 200px;
+  padding: 0 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--text-bright);
+  font: inherit;
+  font-size: 13px;
+}
+
+.mc-stream-gamma-val {
+  min-width: 2.4em;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.mc-stream-actions {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.mc-stream-btn {
+  appearance: none;
+  height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: 3px;
+  background: var(--bg-tab);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  cursor: default;
+}
+
+.mc-stream-btn:hover:not(:disabled) {
+  background: var(--bg-menu-hover);
+  color: var(--text-bright);
+}
+
+.mc-stream-btn.primary {
+  background: var(--accent);
+  border-color: #4a8ab8;
+  color: #f0ebe3;
+}
+
+.mc-stream-btn.primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.mc-stream-btn:disabled {
+  opacity: 0.45;
+}
+
+.mc-stream-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-title);
+  font-size: 12px;
+  color: var(--text-dim);
+  flex-shrink: 0;
+}
+
+.mc-stream-status strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.mc-stream-status .err {
+  color: #e08888;
+}
+
+.mc-stream-status .mc-stream-fps {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.mc-stream-status .mc-stream-fps:empty {
+  display: none;
+}
+
+.mc-stream-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow: auto;
+  background: #1a1c20;
+  padding: 12px;
+}
+
+.mc-stream-stage canvas {
+  /* 默认按缓冲像素 1:1 画，避免 CSS 缩放双线性变糊 */
+  width: auto;
+  height: auto;
+  max-width: none;
+  max-height: none;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  background: #000;
+  box-shadow: 0 0 0 1px var(--border-soft);
+  flex-shrink: 0;
+}
+
+.mc-stream-stage.fit {
+  align-items: center;
+}
+
+.mc-stream-stage.fit canvas {
+  max-width: none;
+  max-height: none;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+/* 自适应：分数倍缩放用平滑插值（HD 缩进窗口更自然） */
+.mc-stream-stage.adapt canvas {
+  image-rendering: auto;
+}
+
+.mc-stream-hint {
+  color: var(--text-dim);
+  font-size: 13px;
+  text-align: center;
+  line-height: 1.5;
+  max-width: 36em;
+}

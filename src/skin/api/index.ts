@@ -1,29 +1,49 @@
 /**
- * SkinApi 工厂:桌面(Tauri runtime)用真实 adapter;普通浏览器页面
- * 明确抛错,不静默退回 localStorage 另存一份库。
+ * SkinApi 工厂：优先工程内 FSA（与剧本同构）。
+ * 可选 VITE_SKIN_USE_TAURI=1 回退到 Tauri IPC（对照用）。
  */
 
+import { subscribeProjectBinding } from '../../project'
 import type { SkinApi } from './SkinApi.ts'
+import { createFsaSkinApi, resetFsaSkinSession } from './fsaAdapter.ts'
 import { createTauriSkinApi, type TauriDeps } from './tauriAdapter.ts'
 
 let cached: SkinApi | null = null
 
+subscribeProjectBinding(() => {
+  resetFsaSkinSession()
+  cached = null
+})
+
+export function resetSkinApiCache(): void {
+  resetFsaSkinSession()
+  cached = null
+}
+
 export async function getSkinApi(): Promise<SkinApi> {
   if (cached) return cached
-  const hasTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
-  if (!hasTauri) {
-    throw new Error('MC 皮肤管理需要桌面版(Tauri runtime);浏览器预览暂不支持。')
+
+  const forceTauri =
+    import.meta.env.VITE_SKIN_USE_TAURI === '1' ||
+    import.meta.env.VITE_SKIN_USE_TAURI === 'true'
+  const hasTauri =
+    typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
+
+  if (forceTauri && hasTauri) {
+    const [{ invoke }, { listen }, dialog] = await Promise.all([
+      import('@tauri-apps/api/core'),
+      import('@tauri-apps/api/event'),
+      import('@tauri-apps/plugin-dialog'),
+    ])
+    const deps: TauriDeps = {
+      invoke: invoke as TauriDeps['invoke'],
+      listen: listen as unknown as TauriDeps['listen'],
+      saveDialog: (options) => dialog.save(options),
+    }
+    cached = createTauriSkinApi(deps)
+    return cached
   }
-  const [{ invoke }, { listen }, dialog] = await Promise.all([
-    import('@tauri-apps/api/core'),
-    import('@tauri-apps/api/event'),
-    import('@tauri-apps/plugin-dialog'),
-  ])
-  const deps: TauriDeps = {
-    invoke: invoke as TauriDeps['invoke'],
-    listen: listen as unknown as TauriDeps['listen'],
-    saveDialog: (options) => dialog.save(options),
-  }
-  cached = createTauriSkinApi(deps)
+
+  cached = createFsaSkinApi()
   return cached
 }

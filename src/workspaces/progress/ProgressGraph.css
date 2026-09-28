@@ -1,0 +1,346 @@
+.flow-graph {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 280px;
+  height: 100%;
+  color: var(--text);
+  overflow: hidden;
+}
+
+.flow-graph button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.flow-graph button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.flow-graph button:focus-visible,
+.flow-graph-viewport:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.flow-graph-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border-soft);
+  font-size: 12px;
+}
+
+.flow-graph-toolbar button,
+.flow-graph-extra button {
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  background: var(--bg);
+  padding: 5px 9px;
+}
+
+.flow-graph-toolbar button:hover:not(:disabled),
+.flow-graph-extra button:hover:not(:disabled) {
+  background: var(--bg-menu-hover);
+}
+
+.flow-graph-toolbar button.is-selected,
+.flow-graph-extra button.is-selected {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.flow-graph-count {
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.flow-graph-zoom {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.flow-graph-zoom output {
+  width: 40px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+}
+
+.flow-graph-zoom button {
+  min-width: 27px;
+}
+
+.flow-graph-viewport {
+  flex: 1;
+  min-height: 150px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  background-color: var(--bg);
+  background-image: radial-gradient(var(--border-soft) 0.65px, transparent 0.65px);
+  background-size: 18px 18px;
+}
+
+.flow-graph-size,
+.flow-graph-canvas {
+  position: relative;
+}
+
+.flow-graph-canvas {
+  transform-origin: top left;
+}
+
+.flow-graph-lines {
+  position: absolute;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.flow-graph-link {
+  fill: none;
+  stroke: #667384;
+  stroke-width: 1.5px;
+}
+
+.flow-graph-link.is-extra {
+  stroke: #b69870;
+  stroke-dasharray: 5 5;
+  opacity: 0.7;
+}
+
+.flow-graph-link.is-selected {
+  stroke: var(--accent);
+  stroke-width: 2.5px;
+  opacity: 1;
+}
+
+.flow-graph-link .flow-graph-link-hit {
+  stroke: transparent;
+  stroke-width: 16px;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
+.flow-graph-node {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  text-align: left;
+  border: 1px solid var(--border-soft);
+  border-radius: 8px;
+  background: var(--bg-sidebar, var(--bg));
+  box-shadow: 0 3px 10px #0002;
+}
+
+.flow-graph-node:hover:not(:disabled) {
+  border-color: #7a8797;
+}
+
+.flow-graph-node.is-terminal {
+  border-left: 3px solid #76b79b;
+}
+
+.flow-graph-node.is-unreachable {
+  border-style: dashed;
+}
+
+.flow-graph-node.is-selected,
+.flow-graph-edge.is-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px #5b9fd42b;
+}
+
+.flow-graph-node-top {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: 100%;
+  min-height: 16px;
+}
+
+.flow-graph-node-id {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font: 11px ui-monospace, Consolas, monospace;
+}
+
+.flow-graph-badge {
+  flex-shrink: 0;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 10px;
+}
+
+.flow-graph-badge.is-root {
+  color: #92c6ef;
+  background: #5b9fd421;
+}
+
+.flow-graph-badge.is-terminal {
+  color: #9cd4b9;
+  background: #76b79b20;
+}
+
+.flow-graph-node-title {
+  width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 19px;
+}
+
+.flow-graph-node-meta {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 15px;
+}
+
+.flow-graph .flow-graph-edge {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 3px;
+  width: 146px;
+  height: 46px;
+  padding: 4px 7px;
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  background: var(--bg);
+  color: var(--text-dim);
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.flow-graph-edge:hover:not(:disabled) {
+  border-color: #7a8797;
+}
+
+.flow-graph-edge-title {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text);
+  font-size: 11px;
+}
+
+.flow-graph-extra {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  max-height: 118px;
+  overflow: auto;
+  padding: 9px 12px;
+  border-top: 1px solid var(--border-soft);
+  font-size: 11px;
+}
+
+.flow-graph-extra-heading {
+  width: 100%;
+  color: #d0b18a;
+}
+
+.flow-graph-extra button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.flow-graph-extra button span,
+.flow-graph-extra button strong {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.flow-graph-extra button span {
+  color: var(--text-dim);
+}
+
+.flow-graph-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--border-soft);
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.flow-graph-legend span {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.flow-graph-legend span:last-child {
+  margin-left: auto;
+}
+
+.flow-graph-legend i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.flow-graph-legend i.is-root {
+  background: var(--accent);
+}
+
+.flow-graph-legend i.is-terminal {
+  background: #76b79b;
+}
+
+.flow-graph-empty {
+  margin: 60px 24px;
+  color: var(--text-dim);
+  text-align: center;
+  font-size: 13px;
+}
+
+.flow-node-menu {
+  position: fixed;
+  z-index: 1000;
+  min-width: 190px;
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  padding: 5px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: var(--bg-sidebar);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  box-shadow: 0 7px 24px #0006;
+}
+.flow-node-menu-title { max-width: 250px; padding: 5px 9px 7px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 11px; color: var(--text-dim); border-bottom: 1px solid var(--border-soft); margin-bottom: 4px; }
+.flow-node-menu button { display: block; width: 100%; padding: 7px 10px; border: 0; border-radius: 3px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.flow-node-menu button:hover:not(:disabled), .flow-node-menu button:focus-visible { background: var(--bg-menu-hover); color: var(--text-bright); outline: none; }
+.flow-node-menu button:disabled { opacity: .4; cursor: default; }

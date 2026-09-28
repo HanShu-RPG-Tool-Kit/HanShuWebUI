@@ -207,6 +207,11 @@
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
 }
 
+.menu-dropdown button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .menu-dropdown li button {
   appearance: none;
   display: block;

@@ -1,145 +1,59 @@
 /**
- * 网格缩略图:离屏 skinview3d 渲染 3D 静帧,失败时回退 2D 预览图。
- * 迁移调整:离屏渲染并发从 4 降到 1,缓存加 LRU 上限(评审 §3.4)。
+ * 网格缩略图(方案 §9):四种静态构图,全部走缓存。
+ *   avatar — 2D 面部合成(不建 WebGL 上下文)
+ *   bust   — 离屏 skinview3d 正交正视半身
+ *   full   — 离屏 skinview3d 全身,偏航约 20°
+ *   flat   — 直接使用 64×64 预览 PNG,不渲染
  */
 
 import { useEffect, useState } from 'react'
-import * as skinview3d from 'skinview3d'
 import type { SkinModel } from '../contracts/types.ts'
 import styles from '../styles/workspace.module.css'
+import {
+  getThumb,
+  onThumbUpdate,
+  peekThumb,
+  type ThumbType,
+} from './thumbCache.ts'
 
-const MAX_CONCURRENT = 1
-const CACHE_LIMIT = 128
-
-const cache = new Map<string, string>()
-const inflight = new Map<string, Promise<string | null>>()
-const listeners = new Set<() => void>()
-let active = 0
-const queue: Array<() => void> = []
-
-function key(skinId: string, model: SkinModel): string {
-  return `${skinId}:${model}`
-}
-
-function emit(): void {
-  for (const fn of listeners) fn()
-}
-
-export function onThumbUpdate(fn: () => void): () => void {
-  listeners.add(fn)
-  return () => {
-    listeners.delete(fn)
-  }
-}
-
-export function peekThumb(skinId: string, model: SkinModel): string | null {
-  const k = key(skinId, model)
-  const hit = cache.get(k) ?? null
-  if (hit) {
-    // LRU touch
-    cache.delete(k)
-    cache.set(k, hit)
-  }
-  return hit
-}
-
-export function getThumb(
-  skinId: string,
-  model: SkinModel,
-  previewUrl: string,
-): Promise<string | null> {
-  const k = key(skinId, model)
-  const hit = cache.get(k)
-  if (hit) return Promise.resolve(hit)
-  const pending = inflight.get(k)
-  if (pending) return pending
-
-  const task = new Promise<string | null>((resolve) => {
-    const run = async () => {
-      active++
-      try {
-        const url = await renderOffscreen(previewUrl, model)
-        if (url) {
-          cache.set(k, url)
-          while (cache.size > CACHE_LIMIT) {
-            const oldest = cache.keys().next().value
-            if (oldest === undefined) break
-            cache.delete(oldest)
-          }
-        }
-        resolve(url)
-      } finally {
-        active--
-        inflight.delete(k)
-        const next = queue.shift()
-        if (next) next()
-      }
-    }
-    if (active < MAX_CONCURRENT) {
-      void run()
-    } else {
-      queue.push(() => void run())
-    }
-  })
-  inflight.set(k, task)
-  void task.then(emit)
-  return task
-}
-
-async function renderOffscreen(previewUrl: string, model: SkinModel): Promise<string | null> {
-  const canvas = document.createElement('canvas')
-  canvas.width = 120
-  canvas.height = 160
-  const viewer = new skinview3d.SkinViewer({
-    canvas,
-    width: 120,
-    height: 160,
-    pixelRatio: 1,
-    // zoom=1.0 puts the head's top edge flush with the canvas top; 0.95 leaves
-    // a small margin so head and feet don't touch the frame.
-    zoom: 0.95,
-  })
-  try {
-    const skinviewModel = model === 'classic' ? 'default' : 'slim'
-    await viewer.loadSkin(previewUrl, { model: skinviewModel })
-    viewer.adjustCameraDistance()
-    viewer.render()
-    return canvas.toDataURL('image/png')
-  } catch {
-    return null // caller falls back to the 2D preview
-  } finally {
-    viewer.dispose()
-  }
-}
+export type { ThumbType } from './thumbCache.ts'
 
 interface Props {
   skinId: string
   model: SkinModel
   previewUrl: string
   alt: string
+  thumbType: ThumbType
+  outerLayer?: boolean
 }
 
-export function SkinThumb({ skinId, model, previewUrl, alt }: Props) {
-  const [thumb, setThumb] = useState<string | null>(() => peekThumb(skinId, model))
+export function SkinThumb({ skinId, model, previewUrl, alt, thumbType, outerLayer = true }: Props) {
+  const [thumb, setThumb] = useState<string | null>(() =>
+    peekThumb(skinId, model, thumbType, outerLayer),
+  )
 
   useEffect(() => {
     let cancelled = false
-    const hit = peekThumb(skinId, model)
+    const hit = peekThumb(skinId, model, thumbType, outerLayer)
     if (hit) {
       setThumb(hit)
       return
     }
-    void getThumb(skinId, model, previewUrl)
+    if (thumbType === 'flat') {
+      setThumb(previewUrl)
+      return
+    }
+    void getThumb(skinId, model, thumbType, outerLayer, previewUrl)
     const off = onThumbUpdate(() => {
       if (cancelled) return
-      const url = peekThumb(skinId, model)
+      const url = peekThumb(skinId, model, thumbType, outerLayer)
       if (url) setThumb(url)
     })
     return () => {
       cancelled = true
       off()
     }
-  }, [skinId, model, previewUrl])
+  }, [skinId, model, thumbType, outerLayer, previewUrl])
 
   return (
     <img

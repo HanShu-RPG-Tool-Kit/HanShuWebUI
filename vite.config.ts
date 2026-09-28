@@ -13,6 +13,27 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     host: host || false,
+    // Mojang JSON APIs lack CORS; same-origin proxy for browser player-name import.
+    proxy: {
+      '/__skin_net/name': {
+        target: 'https://api.minecraftservices.com',
+        changeOrigin: true,
+        rewrite: (path) =>
+          path.replace(
+            /^\/__skin_net\/name/,
+            '/minecraft/profile/lookup/name',
+          ),
+      },
+      '/__skin_net/session': {
+        target: 'https://sessionserver.mojang.com',
+        changeOrigin: true,
+        rewrite: (path) =>
+          path.replace(
+            /^\/__skin_net\/session/,
+            '/session/minecraft/profile',
+          ),
+      },
+    },
     hmr: host
       ? {
           protocol: 'ws',
@@ -22,6 +43,28 @@ export default defineConfig({
       : undefined,
     watch: {
       ignored: ['**/src-tauri/**'],
+    },
+  },
+  preview: {
+    proxy: {
+      '/__skin_net/name': {
+        target: 'https://api.minecraftservices.com',
+        changeOrigin: true,
+        rewrite: (path) =>
+          path.replace(
+            /^\/__skin_net\/name/,
+            '/minecraft/profile/lookup/name',
+          ),
+      },
+      '/__skin_net/session': {
+        target: 'https://sessionserver.mojang.com',
+        changeOrigin: true,
+        rewrite: (path) =>
+          path.replace(
+            /^\/__skin_net\/session/,
+            '/session/minecraft/profile',
+          ),
+      },
     },
   },
   envPrefix: ['VITE_', 'TAURI_ENV_*'],

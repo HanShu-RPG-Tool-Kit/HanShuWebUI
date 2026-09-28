@@ -70,15 +70,16 @@ export function createTauriSkinApi(deps: TauriDeps): SkinApi {
     capabilities: () => call('skin_get_capabilities'),
 
     listEntries: (query) => call('skin_list_entries', { query }),
+    getEntry: (entryId) => call('skin_get_entry', { entryId }),
     listTags: () => call('skin_list_tags'),
-    createTag: (body) => call('skin_create_tag', { body }),
-    patchTag: (tagId, body) => call('skin_patch_tag', { tagId, patch: body }),
-    deleteTag: (tagId, mode, expectedRevision) =>
-      call('skin_delete_tag', { tagId, branch: mode === 'branch', expectedRevision }),
+    renameTag: (from, to) => call('skin_rename_tag', { from, to }),
+    deleteTag: (name) => call('skin_delete_tag', { name }),
     listFolders: () => call('skin_list_folders'),
     createFolder: (body) => call('skin_create_folder', { body }),
     patchFolder: (folderId, body) => call('skin_patch_folder', { folderId, patch: body }),
     deleteFolder: (folderId) => call('skin_delete_folder', { folderId }),
+    deleteEntriesInFolder: (folderId) =>
+      call('skin_delete_entries_in_folder', { folderId }),
 
     saveEntry: (body) => call('skin_save_entry', { body }),
     patchEntry: (entryId, body) =>
@@ -89,6 +90,13 @@ export function createTauriSkinApi(deps: TauriDeps): SkinApi {
     startImport: (kind, text, model) =>
       call('skin_start_import', { body: { kind, text, model } }),
     importFile: (path, model) => call('skin_import_file', { path, model }),
+    importFileBlob: () =>
+      Promise.reject(
+        new SkinApiError({
+          code: 'UNSUPPORTED',
+          message: '浏览器文件上传仅在 Web 模式可用;桌面请使用文件对话框。',
+        }),
+      ),
     getImport: (jobId) => call('skin_get_import', { jobId }),
     listImports: () => call('skin_list_imports'),
     cancelImport: (jobId) => call('skin_cancel_import', { jobId }),
@@ -100,20 +108,46 @@ export function createTauriSkinApi(deps: TauriDeps): SkinApi {
       }),
     getSkinCode: (skinId) => call('skin_get_skin_code', { skinId }),
     exportSkin: (skinId, format) => call('skin_export_skin', { skinId, format }),
-    exportEntry: (entryId) => call('skin_export_entry', { entryId }),
+    exportEntry: (entryId, format) =>
+      call('skin_export_entry', { entryId, format: format ?? 'v3' }),
+    exportUsableManifest: () => call('skin_export_usable_manifest'),
+    gcOrphans: async (onProgress) => {
+      onProgress?.({
+        phase: 'scanning',
+        current: 0,
+        total: 0,
+        label: '正在扫描并清理黑户…',
+      })
+      const result = (await call('skin_gc_orphans')) as {
+        removedObjects: number
+        removedPreviews: number
+        protectedCount: number
+      }
+      onProgress?.({
+        phase: 'done',
+        current: 1,
+        total: 1,
+        label: '清理完成',
+      })
+      return result
+    },
     saveExportFile: async (skinId, format) => {
       const defaultName =
-        format === 'png' ? `${skinId.slice(0, 12)}.png` : `${skinId.slice(0, 12)}.hskin`
+        format === 'png' ? `${skinId.slice(0, 12)}.png` : `${skinId.slice(0, 12)}.skin`
       const path = await deps.saveDialog({
-        title: format === 'png' ? '导出 PNG' : '导出 .hskin',
+        title: format === 'png' ? '导出 PNG' : '导出 .skin',
         defaultName,
         filters:
           format === 'png'
             ? [{ name: 'PNG 图像', extensions: ['png'] }]
-            : [{ name: 'hskin 皮肤', extensions: ['hskin'] }],
+            : [{ name: 'skin 对象', extensions: ['skin'] }],
       })
       if (!path) return
-      await call('skin_write_export_file', { path, skinId, format })
+      await call('skin_write_export_file', {
+        path,
+        skinId,
+        format: format === 'hskin' ? 'skin' : format,
+      })
     },
 
     subscribe: async (listener) => {
