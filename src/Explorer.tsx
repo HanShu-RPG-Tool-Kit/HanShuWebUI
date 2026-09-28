@@ -1,17 +1,97 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { AssetFile, ScriptPackage, Workspace } from './workspace'
 import { isVoiceMapFile } from './workspace'
+import { packageLocationLabel, packageLocationTitle } from './project/projectLabel'
+import {
+  currentDrag,
+  endDrag,
+  hasExternalFiles,
+  readDragPayload,
+  resolveDropIntent,
+  writeDragPayload,
+  type DragSource,
+} from './drag/dragPayload'
 import {
   assetFileName,
   buildAssetTree,
   type AssetTreeDir,
   type AssetTreeNode,
 } from './assets/paths'
+import {
+  SOURCE_KIND_DIRS,
+  SOURCE_KIND_ORDER,
+  getExtension,
+} from './workspace'
+
+/**
+ * 目录行的投放接线（包行 / assets 目录行共用）：
+ * - 外部文件 → 等价于复制粘贴导入
+ * - 内部的脚本 / 资产 → 等价于剪切移动
+ * 只有**支持**的载荷才 `preventDefault` 并加 `.is-drop-target`（框式高亮），
+ * 其余一律不接管，保持浏览器默认。
+ */
+function useFolderDropTarget(options: {
+  onFiles(files: File[]): void
+  onPayload(source: DragSource): void
+}) {
+  const [active, setActive] = useState(false)
+  const resolve = (event: React.DragEvent) =>
+    resolveDropIntent({
+      target: 'explorer-folder',
+      source: currentDrag(),
+      hasFiles: hasExternalFiles(event.dataTransfer),
+    })
+
+  return {
+    active,
+    handlers: {
+      onDragOver: (event: React.DragEvent) => {
+        const intent = resolve(event)
+        if (!intent) {
+          setActive(false)
+          return
+        }
+        event.preventDefault()
+        event.stopPropagation()
+        if (event.dataTransfer) {
+          event.dataTransfer.dropEffect =
+            intent.action === 'move-into-folder' ? 'move' : 'copy'
+        }
+        setActive(true)
+      },
+      onDragLeave: (event: React.DragEvent) => {
+        const next = event.relatedTarget as Node | null
+        if (!next || !event.currentTarget.contains(next)) setActive(false)
+      },
+      onDrop: (event: React.DragEvent) => {
+        const intent = resolve(event)
+        setActive(false)
+        if (!intent) return
+        event.preventDefault()
+        event.stopPropagation()
+        const files = Array.from(event.dataTransfer?.files ?? [])
+        const source = readDragPayload(event.dataTransfer)
+        endDrag()
+        if (intent.action === 'import-files') {
+          options.onFiles(files)
+          return
+        }
+        if (intent.action === 'move-into-folder' && source) {
+          options.onPayload(source)
+        }
+      },
+    },
+  }
+}
 
 type ExplorerProps = {
   workspace: Workspace
   activeScriptId: string | null
   activeAssetId: string | null
+  /** 绑定到本地工程文件夹的那个包 id（null = 没有绑定工程） */
+  boundPackageId: string | null
+  /** 该工程的本地位置（浏览器 API 只给得到文件夹名） */
+  boundFolderName: string | null
   onOpenScript: (scriptId: string) => void
   onOpenAsset: (assetId: string) => void
   onTogglePackage: (packageId: string) => void
@@ -30,14 +110,21 @@ type ExplorerProps = {
     files: FileList | File[],
     targetDir?: string,
   ) => void
-  onPullVoice: (scriptId: string) => void
-  onGenerateBlankVoiceOggs: (scriptId: string) => void
+  onGeneratePlaceholderVoice: (scriptId: string) => void
+  /** 内部拖拽落到目录行：把载荷里的脚本 / 资产移动到该包该目录 */
+  onDropIntoFolder: (
+    targetPackageId: string,
+    targetDir: string,
+    source: DragSource,
+  ) => void
 }
 
 export function Explorer({
   workspace,
   activeScriptId,
   activeAssetId,
+  boundPackageId,
+  boundFolderName,
   onOpenScript,
   onOpenAsset,
   onTogglePackage,
@@ -52,8 +139,8 @@ export function Explorer({
   onNewAssetFolder,
   onDeleteAssetFolder,
   onImportAssets,
-  onPullVoice,
-  onGenerateBlankVoiceOggs,
+  onGeneratePlaceholderVoice,
+  onDropIntoFolder,
 }: ExplorerProps) {
   return (
     <aside className="explorer" aria-label="资源管理器">
@@ -88,6 +175,15 @@ export function Explorer({
             pkg={pkg}
             activeScriptId={activeScriptId}
             activeAssetId={activeAssetId}
+            locationLabel={packageLocationLabel({
+              packageId: pkg.id,
+              boundPackageId,
+            })}
+            locationTitle={packageLocationTitle({
+              packageId: pkg.id,
+              boundPackageId,
+              boundFolderName,
+            })}
             onOpenScript={onOpenScript}
             onOpenAsset={onOpenAsset}
             onTogglePackage={onTogglePackage}
@@ -101,8 +197,8 @@ export function Explorer({
             onNewAssetFolder={onNewAssetFolder}
             onDeleteAssetFolder={onDeleteAssetFolder}
             onImportAssets={onImportAssets}
-            onPullVoice={onPullVoice}
-            onGenerateBlankVoiceOggs={onGenerateBlankVoiceOggs}
+            onGeneratePlaceholderVoice={onGeneratePlaceholderVoice}
+            onDropIntoFolder={onDropIntoFolder}
           />
         ))}
         {workspace.packages.length === 0 && (
@@ -117,6 +213,8 @@ function PackageNode({
   pkg,
   activeScriptId,
   activeAssetId,
+  locationLabel,
+  locationTitle,
   onOpenScript,
   onOpenAsset,
   onTogglePackage,
@@ -130,12 +228,16 @@ function PackageNode({
   onNewAssetFolder,
   onDeleteAssetFolder,
   onImportAssets,
-  onPullVoice,
-  onGenerateBlankVoiceOggs,
+  onGeneratePlaceholderVoice,
+  onDropIntoFolder,
 }: {
   pkg: ScriptPackage
   activeScriptId: string | null
   activeAssetId: string | null
+  /** 这个包的本地位置标签（小灰字：Local Mirror / Virtual Cache） */
+  locationLabel: string
+  /** 标签的说明（tooltip） */
+  locationTitle: string
   onOpenScript: (scriptId: string) => void
   onOpenAsset: (assetId: string) => void
   onTogglePackage: (packageId: string) => void
@@ -153,10 +255,14 @@ function PackageNode({
     files: FileList | File[],
     targetDir?: string,
   ) => void
-  onPullVoice: (scriptId: string) => void
-  onGenerateBlankVoiceOggs: (scriptId: string) => void
+  onGeneratePlaceholderVoice: (scriptId: string) => void
+  /** 内部拖拽落到目录行 */
+  onDropIntoFolder: (
+    targetPackageId: string,
+    targetDir: string,
+    source: DragSource,
+  ) => void
 }) {
-  const [dragOver, setDragOver] = useState(false)
   const [collapsedDirs, setCollapsedDirs] = useState<Record<string, boolean>>(
     {},
   )
@@ -193,33 +299,86 @@ function PackageNode({
 
   const isDirCollapsed = (path: string) => Boolean(collapsedDirs[path])
 
+  // 包行本身也是投放目标：外部文件进 `assets/`，内部脚本 / 资产移进本包
+  const pkgDrop = useFolderDropTarget({
+    onFiles: (files) => onImportAssets(pkg.id, files, 'assets'),
+    onPayload: (source) => onDropIntoFolder(pkg.id, 'assets', source),
+  })
+
+  // 源文件按 `src/<kind>/` 分组展示；其余（`.md`、旧 `*.voice`）留在包根
+  const grouped = useMemo(() => {
+    const byKind = new Map<string, Array<(typeof pkg.scripts)[number]>>(
+      SOURCE_KIND_ORDER.map((kind) => [kind, []]),
+    )
+    const root: Array<(typeof pkg.scripts)[number]> = []
+    for (const script of pkg.scripts) {
+      const kind = SOURCE_KIND_DIRS[getExtension(script.name)]
+      const bucket = kind ? byKind.get(kind) : null
+      if (bucket) bucket.push(script)
+      else root.push(script)
+    }
+    return { byKind, root }
+  }, [pkg.scripts])
+
+  const renderScriptRow = (script: (typeof pkg.scripts)[number]) => (
+    <li key={script.id}>
+      <div
+        className={`explorer-row explorer-file-row${
+          script.id === activeScriptId ? ' active' : ''
+        }`}
+        draggable
+        onDragStart={(e) => {
+          writeDragPayload(e.dataTransfer, {
+            kind: 'script',
+            packageId: pkg.id,
+            scriptId: script.id,
+            name: script.name,
+          })
+        }}
+        onDragEnd={() => endDrag()}
+        onContextMenu={
+          isVoiceMapFile(script.name)
+            ? (e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                setCtxMenu({
+                  x: e.clientX,
+                  y: e.clientY,
+                  scriptId: script.id,
+                })
+              }
+            : undefined
+        }
+      >
+        <button
+          type="button"
+          className="explorer-label"
+          onClick={() => onOpenScript(script.id)}
+          onDoubleClick={() => onRenameScript(script.id)}
+          title={
+            isVoiceMapFile(script.name) ? '右键：生成空白 ogg' : '双击重命名'
+          }
+        >
+          <span className="explorer-icon file" aria-hidden />
+          {script.name}
+        </button>
+        <div className="explorer-row-actions">
+          <button
+            type="button"
+            title="删除剧本"
+            onClick={() => onDeleteScript(script.id)}
+          >
+            ×
+          </button>
+        </div>
+      </div>
+    </li>
+  )
+
   return (
     <div
-      className={`explorer-pkg${dragOver ? ' drag-over' : ''}`}
-      onDragEnter={(e) => {
-        e.preventDefault()
-        e.stopPropagation()
-        setDragOver(true)
-      }}
-      onDragOver={(e) => {
-        e.preventDefault()
-        e.stopPropagation()
-        setDragOver(true)
-      }}
-      onDragLeave={(e) => {
-        e.preventDefault()
-        if (!e.currentTarget.contains(e.relatedTarget as Node)) {
-          setDragOver(false)
-        }
-      }}
-      onDrop={(e) => {
-        e.preventDefault()
-        e.stopPropagation()
-        setDragOver(false)
-        if (e.dataTransfer.files?.length) {
-          onImportAssets(pkg.id, e.dataTransfer.files, 'assets')
-        }
-      }}
+      className={`explorer-pkg${pkgDrop.active ? ' is-drop-target' : ''}`}
+      {...pkgDrop.handlers}
     >
       <div className="explorer-row explorer-pkg-row">
         <button
@@ -238,7 +397,11 @@ function PackageNode({
           title="双击重命名；可拖入文件到包内 assets/"
         >
           <span className="explorer-icon pkg" aria-hidden />
-          {pkg.name}
+          <span className="explorer-pkg-name">{pkg.name}</span>
+          {/* 本地位置：小灰字。Local Mirror = 绑定了磁盘上的工程文件夹 */}
+          <span className="explorer-pkg-path" title={locationTitle}>
+            {locationLabel}
+          </span>
         </button>
         <div className="explorer-row-actions">
           <button
@@ -261,52 +424,19 @@ function PackageNode({
       {!pkg.collapsed && (
         <>
           <ul className="explorer-files">
-            {pkg.scripts.map((script) => (
-              <li key={script.id}>
-                <div
-                  className={`explorer-row explorer-file-row${
-                    script.id === activeScriptId ? ' active' : ''
-                  }`}
-                  onContextMenu={
-                    isVoiceMapFile(script.name)
-                      ? (e) => {
-                          e.preventDefault()
-                          e.stopPropagation()
-                          setCtxMenu({
-                            x: e.clientX,
-                            y: e.clientY,
-                            scriptId: script.id,
-                          })
-                        }
-                      : undefined
-                  }
-                >
-                  <button
-                    type="button"
-                    className="explorer-label"
-                    onClick={() => onOpenScript(script.id)}
-                    onDoubleClick={() => onRenameScript(script.id)}
-                    title={
-                      isVoiceMapFile(script.name)
-                        ? '右键：拉取新配音 / 生成空白 ogg'
-                        : '双击重命名'
-                    }
-                  >
-                    <span className="explorer-icon file" aria-hidden />
-                    {script.name}
-                  </button>
-                  <div className="explorer-row-actions">
-                    <button
-                      type="button"
-                      title="删除剧本"
-                      onClick={() => onDeleteScript(script.id)}
-                    >
-                      ×
-                    </button>
-                  </div>
-                </div>
-              </li>
-            ))}
+            {SOURCE_KIND_ORDER.map((kind) => {
+              const items = grouped.byKind.get(kind) ?? []
+              if (items.length === 0) return null
+              return (
+                <li key={`kind-${kind}`} className="explorer-kind">
+                  <div className="explorer-kind-row">src/{kind}</div>
+                  <ul className="explorer-files nested">
+                    {items.map(renderScriptRow)}
+                  </ul>
+                </li>
+              )
+            })}
+            {grouped.root.map(renderScriptRow)}
             {pkg.scripts.length === 0 && (
               <li className="explorer-empty nested">空包</li>
             )}
@@ -327,20 +457,7 @@ function PackageNode({
                   onClick={() => {
                     const id = ctxMenu.scriptId
                     setCtxMenu(null)
-                    onPullVoice(id)
-                  }}
-                >
-                  拉取新配音
-                </button>
-              </li>
-              <li>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    const id = ctxMenu.scriptId
-                    setCtxMenu(null)
-                    onGenerateBlankVoiceOggs(id)
+                    onGeneratePlaceholderVoice(id)
                   }}
                 >
                   生成空白 ogg
@@ -363,6 +480,7 @@ function PackageNode({
             onNewAssetFolder={onNewAssetFolder}
             onDeleteAssetFolder={onDeleteAssetFolder}
             onImportAssets={onImportAssets}
+            onDropIntoFolder={onDropIntoFolder}
           />
         </>
       )}
@@ -384,6 +502,7 @@ function AssetFolderBlock({
   onNewAssetFolder,
   onDeleteAssetFolder,
   onImportAssets,
+  onDropIntoFolder,
 }: {
   pkgId: string
   dir: AssetTreeDir
@@ -402,39 +521,25 @@ function AssetFolderBlock({
     files: FileList | File[],
     targetDir?: string,
   ) => void
+  onDropIntoFolder: (
+    targetPackageId: string,
+    targetDir: string,
+    source: DragSource,
+  ) => void
 }) {
   const isRoot = dir.path === 'assets'
   const collapsed = isRoot ? rootCollapsed : isDirCollapsed(dir.path)
-  const [dragOver, setDragOver] = useState(false)
+  // 目录行就是"拖到哪个文件夹"的判定框：外部文件导入、内部载荷移动
+  const dirDrop = useFolderDropTarget({
+    onFiles: (files) => onImportAssets(pkgId, files, dir.path),
+    onPayload: (source) => onDropIntoFolder(pkgId, dir.path, source),
+  })
 
   return (
     <div
-      className={`explorer-assets${dragOver ? ' drag-over' : ''}`}
+      className={`explorer-assets${dirDrop.active ? ' is-drop-target' : ''}`}
       style={{ paddingLeft: depth === 0 ? undefined : 8 }}
-      onDragEnter={(e) => {
-        e.preventDefault()
-        e.stopPropagation()
-        setDragOver(true)
-      }}
-      onDragOver={(e) => {
-        e.preventDefault()
-        e.stopPropagation()
-        setDragOver(true)
-      }}
-      onDragLeave={(e) => {
-        e.preventDefault()
-        if (!e.currentTarget.contains(e.relatedTarget as Node)) {
-          setDragOver(false)
-        }
-      }}
-      onDrop={(e) => {
-        e.preventDefault()
-        e.stopPropagation()
-        setDragOver(false)
-        if (e.dataTransfer.files?.length) {
-          onImportAssets(pkgId, e.dataTransfer.files, dir.path)
-        }
-      }}
+      {...dirDrop.handlers}
     >
       <div
         className={`explorer-row explorer-assets-row${
@@ -516,11 +621,13 @@ function AssetFolderBlock({
                   onNewAssetFolder={onNewAssetFolder}
                   onDeleteAssetFolder={onDeleteAssetFolder}
                   onImportAssets={onImportAssets}
+                  onDropIntoFolder={onDropIntoFolder}
                 />
               </li>
             ) : (
               <AssetRow
                 key={node.asset.id}
+                packageId={pkgId}
                 asset={node.asset as AssetFile}
                 active={node.asset.id === activeAssetId}
                 onOpen={() => onOpenAsset(node.asset.id)}
@@ -543,11 +650,13 @@ function countFiles(node: AssetTreeNode): number {
 }
 
 function AssetRow({
+  packageId,
   asset,
   active,
   onOpen,
   onDelete,
 }: {
+  packageId: string
   asset: AssetFile
   active: boolean
   onOpen: () => void
@@ -559,6 +668,16 @@ function AssetRow({
         className={`explorer-row explorer-file-row explorer-asset-row${
           active ? ' active' : ''
         }`}
+        draggable
+        onDragStart={(e) => {
+          writeDragPayload(e.dataTransfer, {
+            kind: 'asset',
+            packageId,
+            assetId: asset.id,
+            path: asset.path,
+          })
+        }}
+        onDragEnd={() => endDrag()}
       >
         <button
           type="button"

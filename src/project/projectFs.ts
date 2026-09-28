@@ -16,6 +16,8 @@ import {
   findScript,
   getExtension,
   isAllowedExtension,
+  normalizeResourceName,
+  sourceRelativePath,
   type ScriptPackage,
   type Workspace,
 } from '../workspace'
@@ -25,6 +27,7 @@ import {
   listChildren,
   listFilesRecursive,
   pickProjectDirectory,
+  readFileAtPath,
   readTextFile,
   removeEntryIfExists,
   supportsDirectoryPicker,
@@ -69,6 +72,18 @@ function isScriptFileName(name: string): boolean {
   return isAllowedExtension(getExtension(name))
 }
 
+/**
+ * 加载时可以进工作区的文件：白名单后缀，或语言文本文件 `<名>.lang.<语言标签>`
+ * —— 后者结尾是语言标签、不在后缀白名单里，靠 `normalizeResourceName` 的例外放行。
+ * 只给加载用：保存时的"清理多余文件"仍走 `isScriptFileName`，
+ * 这样磁盘上的语言文件不会被当成多余脚本删掉。
+ */
+function isProjectLoadableFile(name: string): boolean {
+  if (name === PROJECT_FILE) return false
+  if (name.startsWith('.')) return false
+  return normalizeResourceName(name) !== null
+}
+
 async function directoryLooksInitialized(
   dir: FileSystemDirectoryHandle,
 ): Promise<{ hasManifest: boolean; hasOtherFiles: boolean }> {
@@ -102,6 +117,9 @@ async function loadAssetsFromDisk(
   for (const path of filePaths) {
     const norm = normalizeAssetPath(path)
     if (!norm) continue
+    // 配音导入的 `.new` 中间文件：万一崩溃残留，别把它当成资产收进 IndexedDB
+    // （下次「保存工程」会整树重写 assets/，残留自然被清掉）
+    if (norm.toLowerCase().endsWith('.new')) continue
     const parent = norm.includes('/')
       ? norm.slice(0, norm.lastIndexOf('/'))
       : 'assets'
@@ -169,14 +187,35 @@ async function readPackageFromDirectory(
   // 换工程前清掉同 id 的旧 blob，避免脏数据（id 稳定时是覆盖写入）
   await deletePackageAssetBlobs(manifest.id)
 
+  // 源文件在 `src/<kind>/` 下；`.md` 与旧 `*.voice` 仍留在根目录
   const scripts = []
+  const seen = new Set<string>()
+  const addScript = async (name: string, path: string) => {
+    if (seen.has(name.toLowerCase())) return
+    const file = await readFileAtPath(root, path)
+    if (!file) return
+    seen.add(name.toLowerCase())
+    scripts.push(createScript(name, await file.text()))
+  }
+
   const children = await listChildren(root)
   for (const entry of children) {
     if (entry.kind !== 'file') continue
-    if (!isScriptFileName(entry.name)) continue
-    const text = await readTextFile(root, entry.name)
-    if (text == null) continue
-    scripts.push(createScript(entry.name, text))
+    // 写盘层的 `.new` 中间文件：万一崩溃残留，别把它当成脚本收进工作区
+    if (entry.name.toLowerCase().endsWith('.new')) continue
+    if (!isProjectLoadableFile(entry.name)) continue
+    await addScript(entry.name, entry.name)
+  }
+  try {
+    const srcDir = await root.getDirectoryHandle('src')
+    for (const path of await listFilesRecursive(srcDir, '')) {
+      const name = path.split('/').pop() ?? ''
+      if (name.toLowerCase().endsWith('.new')) continue
+      if (!isProjectLoadableFile(name)) continue
+      await addScript(name, `src/${path}`)
+    }
+  } catch {
+    // 没有 src/：旧平铺工程，根目录那份上面已经读过了
   }
 
   if (scripts.length === 0) {
@@ -244,7 +283,11 @@ export async function openProjectFromPicker(): Promise<LoadProjectResult> {
   if (!hasManifest) {
     await writeTextFile(handle, PROJECT_FILE, serializeManifest(manifest))
     for (const script of pkg.scripts) {
-      await writeTextFile(handle, script.name, script.content)
+      await writeFileAtPath(
+        handle,
+        sourceRelativePath(script.name),
+        script.content,
+      )
     }
   }
 
@@ -377,22 +420,31 @@ export async function saveProjectToDirectory(
   // 1) project.json
   await writeTextFile(root, PROJECT_FILE, serializeManifest(manifest))
 
-  // 2) 脚本：写入内存中的；删除磁盘上多余的允许后缀文件
-  const wantedScripts = new Set(pkg.scripts.map((s) => s.name))
+  // 2) 脚本：按 `src/<kind>/` 写入；清掉多余的源文件与旧平铺副本
+  const wanted = new Set(pkg.scripts.map((s) => s.name.toLowerCase()))
   for (const script of pkg.scripts) {
-    await writeTextFile(root, script.name, script.content)
+    await writeFileAtPath(root, sourceRelativePath(script.name), script.content)
   }
-  const rootChildren = await listChildren(root)
-  for (const entry of rootChildren) {
+  // 旧布局把脚本平铺在根目录：同名副本已搬到 src/ 下，删掉免得重复
+  for (const entry of await listChildren(root)) {
     if (entry.kind !== 'file') continue
     if (!isScriptFileName(entry.name)) continue
-    if (!wantedScripts.has(entry.name)) {
-      // 大小写不敏感匹配：若内存里有同名不同大小写则保留
-      const still = pkg.scripts.some(
-        (s) => s.name.toLowerCase() === entry.name.toLowerCase(),
-      )
-      if (!still) await removeEntryIfExists(root, entry.name)
+    if (wanted.has(entry.name.toLowerCase())) {
+      await removeEntryIfExists(root, entry.name)
     }
+  }
+  try {
+    const srcDir = await root.getDirectoryHandle('src')
+    for (const path of await listFilesRecursive(srcDir, '')) {
+      if (path.toLowerCase().endsWith('.new')) continue
+      const name = path.split('/').pop() ?? ''
+      if (!isScriptFileName(name)) continue
+      if (!wanted.has(name.toLowerCase())) {
+        await removeEntryIfExists(srcDir, path)
+      }
+    }
+  } catch {
+    // 尚未创建 src/
   }
 
   // 3) assets：整树重写（先删再写，逻辑简单可靠）

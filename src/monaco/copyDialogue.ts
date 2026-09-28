@@ -221,11 +221,6 @@ export function extractChoiceParts(text: string): ChoicePart[] {
   return parts
 }
 
-/** 给 .lines：选项文案 + 答复扁平列表（顺序与出现一致） */
-export function extractChoiceSources(text: string): string[] {
-  return extractChoiceParts(text).map((p) => p.content)
-}
-
 /**
  * 纯文本导出：
  * - 角色对白 + 选项答复 → 按 speaker 分组

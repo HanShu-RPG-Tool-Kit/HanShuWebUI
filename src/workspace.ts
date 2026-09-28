@@ -1,3 +1,5 @@
+import { isTextAssetName } from './i18n/textMap'
+
 const WORKSPACE_KEY = 'hanshu.workspace.v2'
 const LEGACY_DRAFT_KEY = 'hanshu.draft.v1'
 
@@ -6,14 +8,56 @@ export const ALLOWED_EXTENSIONS = [
   '.hs',
   '.md',
   '.char',
-  '.lines',
+  '.py',
   '.lang',
   '.voice',
 ] as const
 export type AllowedExtension = (typeof ALLOWED_EXTENSIONS)[number]
 
+/**
+ * 源文件按后缀归入的工作目录（工程结构 `src/<kind>/`）：
+ * `.hs` → `src/hanshu/`、`.char` → `src/character/`、`.py` → `src/scripts/`。
+ * 未列出的后缀（`.md` 文档、旧 `*.voice` 映射）不参与该结构，留在包根。
+ */
+export const SOURCE_KIND_DIRS: Record<string, string> = {
+  '.hs': 'hanshu',
+  '.char': 'character',
+  '.py': 'scripts',
+}
+
+/** `src/<kind>/` 的固定顺序：展示与导出都按它排 */
+export const SOURCE_KIND_ORDER = ['hanshu', 'character', 'scripts'] as const
+
+/** 源文件在工程结构里的相对路径：`xx.hs` → `src/hanshu/xx.hs`；非源文件原样返回 */
+export function sourceRelativePath(name: string): string {
+  const kind = SOURCE_KIND_DIRS[getExtension(name)]
+  return kind ? `src/${kind}/${name}` : name
+}
+
 /** 给人看的后缀列表文案 */
 export const ALLOWED_EXTENSIONS_LABEL = ALLOWED_EXTENSIONS.join('  ')
+
+/**
+ * 手动新建 / 改名的后缀：语言文本（`.lang`）与配音映射（`.voice`）的名字都由剧本名派生
+ * （见 `localeLayout`：改名 `.hs` 会连带搬走它们），手工造这两个名字会切断派生关系，
+ * 所以界面上的「新建」与「改名」都不接受它们。
+ *
+ * 注意：两者仍是合法的包内文件格式（`ALLOWED_EXTENSIONS`），**Agent 的写入能力不受限** ——
+ * `write_source` 走的是 `normalizeResourceName`，照样能建、能改 `.lang` / `.voice`。
+ */
+export const MANUAL_FILE_EXTENSIONS = ALLOWED_EXTENSIONS.filter(
+  (ext) => ext !== '.lang' && ext !== '.voice',
+)
+
+/** 给人看的手动新建 / 改名后缀文案 */
+export const MANUAL_FILE_EXTENSIONS_LABEL = MANUAL_FILE_EXTENSIONS.join('  ')
+
+/** 该文件名是否可手动新建 / 改名（语言文本与配音映射不可） */
+export function isManualFileName(name: string): boolean {
+  return (MANUAL_FILE_EXTENSIONS as readonly string[]).includes(
+    getExtension(name).toLowerCase(),
+  )
+}
 
 export type ScriptFile = {
   id: string
@@ -74,11 +118,12 @@ export function normalizeResourceName(raw: string): string | null {
   return name
 }
 
-export function languageForFile(name: string): string {
+export function editorLanguageForFile(name: string): string {
+  if (isTextAssetName(name)) return 'json'
   const ext = getExtension(name)
   if (ext === '.md') return 'markdown'
-  if (ext === '.char') return 'python'
-  if (ext === '.lines' || ext === '.lang' || ext === '.voice') return 'json'
+  if (ext === '.char' || ext === '.py') return 'python'
+  if (ext === '.lang' || ext === '.voice') return 'json'
   return 'hanshu' // .hs 汉书剧本
 }
 
@@ -88,14 +133,6 @@ export function isMarkdownFile(name: string): boolean {
 
 export function isHanshuFile(name: string): boolean {
   return getExtension(name) === '.hs'
-}
-
-export function isLinesFile(name: string): boolean {
-  return getExtension(name) === '.lines'
-}
-
-export function isLangFile(name: string): boolean {
-  return getExtension(name) === '.lang'
 }
 
 export function isVoiceMapFile(name: string): boolean {
@@ -235,17 +272,6 @@ export function findScriptByName(
   return null
 }
 
-export function listWorkspaceFiles(workspace: Workspace) {
-  return workspace.packages.flatMap((pkg) =>
-    pkg.scripts.map((script) => ({
-      packageName: pkg.name,
-      fileName: script.name,
-      id: script.id,
-      updatedAt: script.updatedAt,
-    })),
-  )
-}
-
 export function updateScriptContent(
   workspace: Workspace,
   scriptId: string,
@@ -261,37 +287,6 @@ export function updateScriptContent(
           : script,
       ),
     })),
-  }
-}
-
-/**
- * 在与 sourceScriptId 同一包内写入/更新名为 fileName 的文件。
- * 若已存在则更新内容；否则新建（不切换当前活动文件）。
- */
-export function upsertPackageFile(
-  workspace: Workspace,
-  sourceScriptId: string,
-  fileName: string,
-  content: string,
-): Workspace {
-  const hit = findScript(workspace, sourceScriptId)
-  if (!hit) return workspace
-
-  const existing = hit.pkg.scripts.find(
-    (script) => script.name.toLowerCase() === fileName.toLowerCase(),
-  )
-  if (existing) {
-    return updateScriptContent(workspace, existing.id, content)
-  }
-
-  const script = createScript(fileName, content)
-  return {
-    ...workspace,
-    packages: workspace.packages.map((pkg) =>
-      pkg.id === hit.pkg.id
-        ? { ...pkg, scripts: [...pkg.scripts, script] }
-        : pkg,
-    ),
   }
 }
 

@@ -8,7 +8,7 @@ import {
   type FileVersion,
 } from './history/fileHistory'
 import { HANSHU_THEME_ID, registerHanshuLanguage } from './monaco/hanshuLanguage'
-import { languageForFile } from './workspace'
+import { editorLanguageForFile } from './workspace'
 
 type HistoryModalProps = {
   open: boolean
@@ -148,7 +148,7 @@ export function HistoryModal({
                     height="100%"
                     original={currentContent}
                     modified={selected.content}
-                    language={languageForFile(fileName)}
+                    language={editorLanguageForFile(fileName)}
                     theme={HANSHU_THEME_ID}
                     beforeMount={registerHanshuLanguage}
                     options={{

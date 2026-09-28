@@ -33,42 +33,67 @@ import {
   findScriptByName,
   isHanshuFile,
   isMarkdownFile,
-  languageForFile,
-  listWorkspaceFiles,
+  editorLanguageForFile,
   loadWorkspace,
   normalizeResourceName,
   ALLOWED_EXTENSIONS_LABEL,
+  MANUAL_FILE_EXTENSIONS_LABEL,
+  isManualFileName,
   removeAssetMeta,
   saveWorkspace,
   toggleAssetsCollapsed,
   updateScriptContent,
   upsertAssetMeta,
-  upsertPackageFile,
   ensureAssetFolder,
   removeAssetFolder,
   isVoiceMapFile,
   type Workspace,
 } from '../workspace'
-import { buildLinesContent, linesFileNameForHs } from '../hanshu/lines'
 import {
   createBlankOggBlob,
-  linesFileNameForVoice,
   listMissingVoiceOggs,
-  parseVoiceLocaleFile,
-  pullVoiceFromLines,
-} from '../hanshu/voice'
+} from '../i18n/voiceMap'
+import { voiceRootDir } from '../i18n/localeLayout'
 import {
   buildResourcePackZip,
   downloadBlob,
 } from '../export/resourcePack'
-import { buildAssetsPackZip } from '../export/assetsPack'
+import { buildProjectPackZip } from '../export/projectPack'
 import { normalizeAssetPath, normalizeFolderPath } from '../assets/paths'
+import {
+  moveAssetToDir,
+  moveScriptToPackage,
+  renameScriptAssets,
+} from '../workspaceMove'
 import {
   deleteAssetBlob,
   deletePackageAssetBlobs,
+  getAssetBlob,
   putAssetBlob,
 } from '../assets/idb'
-import type { AgentHost } from '../agent/tools'
+import type { AgentHost, AgentOpResult, LangEntry } from '../agent/tools'
+import {
+  COMMON_LOCALES,
+  findLocale,
+  resolveLocale,
+  resolveLocaleTag,
+} from '../i18n/locales'
+import {
+  activeFilePathOf,
+  applyTextEdit,
+  collectSourceKeys,
+  deleteSourceAssets,
+  langAssetPathFor,
+  listLocalesOf,
+  paginateSource,
+  parseSourceText,
+  readLangAsset,
+  sourceKindOf,
+  unparseSourceText,
+  validateSourceContent,
+  voiceStatusOf,
+  writeLangAsset,
+} from '../agent/agentOps'
 import { MarkdownPreview } from '../MarkdownPreview'
 import { HscPreview } from '../HscPreview'
 import { AssetPreview } from '../AssetPreview'
@@ -87,6 +112,7 @@ import {
   saveProjectToDirectory,
   setBoundProject,
   supportsDirectoryPicker,
+  loadLastDirectoryHandle,
   tryRestoreLastProject,
 } from '../project'
 
@@ -94,6 +120,40 @@ import type {
   ScriptChromeInfo,
   ScriptWorkspaceHandle,
 } from './scriptTypes'
+import { LocaleSelect } from '../LocaleSelect'
+import { TextEditBox } from '../TextEditBox'
+import {
+  TextMap,
+  TEXT_ASSET_MIME,
+  stringifyTextFile,
+  textAssetPath,
+  type TextSink,
+} from '../i18n/textMap'
+import { createTextSink } from '../i18n/textSink'
+import {
+  createVoiceLibrary,
+  type VoiceLibrary,
+} from '../i18n/voiceLibrary'
+import {
+  runVoiceImport,
+  formatVoiceImportSourceLabel,
+  type VoiceImportIo,
+  type VoiceImportSource,
+} from '../i18n/voiceImport'
+import { createVoiceProcessor } from '../i18n/voiceTranscode'
+import { createVoiceDiskSink } from '../project/voiceDiskSink'
+import type { DragSource } from '../drag/dragPayload'
+import { TextUnitMenu, type TextUnitMenuItem } from '../TextUnitMenu'
+import { VoicePickerModal } from '../VoicePickerModal'
+import { VoiceImportProgress } from '../VoiceImportProgress'
+import { VoiceToast } from '../VoiceToast'
+import {
+  bindText,
+  type TextEditRequest,
+  type TextBinding,
+  type TextUnitDropRequest,
+} from '../monaco/textEditor'
+import { loadLocale, saveLocale } from '../storage'
 
 
 function formatSavedAt(ts: number | null) {
@@ -123,6 +183,18 @@ export const ScriptWorkspace = forwardRef<
   )
   const activeAssetHit = useMemo(
     () => findAsset(workspace, workspace.activeAssetId),
+    [workspace],
+  )
+  /**
+   * 当前包资产清单的指纹（路径 + 大小 + 更新时间）。
+   * 配音按钮的状态只在对等文件存在性上，所以资产一变就得重画覆盖框 ——
+   * 否则导入完成后按钮还停在「缺失」（点击却能播，因为点击是实时求值的）。
+   */
+  const voiceAssetSignature = useMemo(
+    () =>
+      (findScript(workspace, workspace.activeScriptId)?.pkg.assets ?? [])
+        .map((asset) => `${asset.path}:${asset.size}:${asset.updatedAt}`)
+        .join('|'),
     [workspace],
   )
   const [value, setValue] = useState(() => active?.script.content ?? '')
@@ -174,6 +246,603 @@ export const ScriptWorkspace = forwardRef<
     saveWorkspace(next)
   }
 
+  const [locale, setLocale] = useState(loadLocale)
+  const [langEdit, setLangEdit] = useState<{
+    id: number
+    request: TextEditRequest
+  } | null>(null)
+  /**
+   * 语言文本写盘失败：连同它属于哪个「文件 + 语言」一起记下来。
+   * 渲染时只认当前写入周期 —— 既避免切换语言/文件后还挂着旧提示，
+   * 也避免在 effect 里同步 setState。
+   */
+  const [textDiskError, setLangDiskError] = useState<{
+    key: string
+    message: string
+  } | null>(null)
+  /** 配音未能写入磁盘（绑定了工程才会发生）；只提示，IndexedDB 里的内容仍权威 */
+  const [voiceDiskError, setVoiceDiskError] = useState<{
+    path: string
+    message: string
+  } | null>(null)
+  const textMapRef = useRef<TextMap | null>(null)
+  /** 当前语言文本资产的原始内容（TextSink.read 是同步接口，所以要用缓存兜住） */
+  const textCacheRef = useRef<string | null>(null)
+  const textBindingRef = useRef<TextBinding | null>(null)
+  const langEditSeqRef = useRef(0)
+  const voiceLibraryRef = useRef<VoiceLibrary | null>(null)
+  /** 音频映射管理的渲染态镜像（ref 给编辑器用，state 给弹窗用） */
+  const [voiceRuntime, setVoiceRuntime] = useState<VoiceLibrary | null>(null)
+  /** 上级容器右键菜单（null = 没开） */
+  const [unitMenu, setUnitMenu] = useState<{
+    key: string
+    x: number
+    y: number
+  } | null>(null)
+  /** 音频选择器弹窗（null = 没开）。带上建它时的那个 library 实例：
+      换文件 / 换语言会重建库，身份一变弹窗自动失效，不用在 effect 里再 setState */
+  const [voicePicker, setVoicePicker] = useState<{
+    key: string
+    library: VoiceLibrary
+  } | null>(null)
+  /** 正在跑的音频导入（null = 没在导入）：驱动置顶进度条 */
+  const [voiceImport, setVoiceImport] = useState<{
+    sourceLabel: string
+    targetPath: string
+    progress: number
+    phase: 'process' | 'write'
+  } | null>(null)
+
+  /**
+   * 导入结果浮窗（自动消失）。内容就是工作流要返回的那条消息，
+   * 由工作流在结果落定前发出；状态栏那条记录仍然保留（可点掉、不自动消失）。
+   */
+  const [voiceToast, setVoiceToast] = useState<{
+    id: number
+    message: string
+    ok: boolean
+  } | null>(null)
+  /** 导入结果（常量枚举消息 + 成败 + 一句补充说明），点一下清掉 */
+  const [voiceImportMessage, setVoiceImportMessage] = useState<{
+    message: string
+    ok: boolean
+    hint?: string
+  } | null>(null)
+  const voiceImportCancelRef = useRef<(() => void) | null>(null)
+  /**
+   * 上次的工程文件夹还在、但这次没能恢复（几乎都是权限没授：冷启动没有用户手势，
+   * `requestPermission` 会被静默拒绝）。此时给出一个可点的一键恢复入口，
+   * 否则「看起来有工程、其实没绑定」，导入只会写进应用内资源。
+   */
+  const [pendingProjectRestore, setPendingProjectRestore] = useState(false)
+  /** 仅活动文件是 .hs 时才有语言文本映射 */
+  const textSourceName = editingHanshu ? titleName : ''
+  const handleLocaleChange = (tag: string) => {
+    setLocale(tag)
+    saveLocale(tag)
+  }
+
+  const projectHandle = project?.handle ?? null
+  /** 当前写入周期：活动 .hs 文件 + 语言标签 */
+  const textWriteKey = `${textSourceName}|${locale}`
+  const activeTextDiskError =
+    textDiskError?.key === textWriteKey ? textDiskError.message : null
+
+  /**
+   * 资产编辑器保存文本资产（`.lang`）：写回 IndexedDB + 更新元数据。
+   * 若保存的正是当前语言文本文件，还要同步内存映射 —— 否则下一次写键会用旧缓存
+   * 覆盖掉这次手工编辑。
+   */
+  const handleSaveTextAsset = async (content: string) => {
+    const hit = activeAssetHit
+    if (!hit) return
+    const { pkg, asset } = hit
+    const mime = asset.mime || TEXT_ASSET_MIME
+    const blob = new Blob([content], { type: mime })
+    await putAssetBlob(pkg.id, asset.path, blob)
+    const result = upsertAssetMeta(
+      workspaceRef.current,
+      pkg.id,
+      asset.path,
+      mime,
+      blob.size,
+    )
+    if (result) commitWorkspace(result.workspace)
+
+    if (textMapRef.current?.fileName.toLowerCase() === asset.path.toLowerCase()) {
+      textCacheRef.current = content
+      textMapRef.current.load()
+    }
+  }
+
+  // 语言文本映射实例：活动源文件 + 当前语言标签 → `assets/<语言标签>/lang_<后缀>/…`
+  // 绑定文件夹工程时读写真实磁盘文件，否则退回包内虚拟文件（见 textSink）。
+  useEffect(() => {
+    if (!textSourceName) {
+      textMapRef.current = null
+      textBindingRef.current?.refresh()
+      return
+    }
+
+    const fileName = textAssetPath(locale, textSourceName)
+    // 语言文本按**资产**存放（`assets/<locale>/lang_<ext>/…`）：与音频一样进 IndexedDB，
+    // 资源管理器因此把它画在 assets 树下。此前当包内文件写，会在包根下多出一条名字
+    // 带整条路径的记录（旧状态在读到时顺手迁移掉，见 loadTextAsset）。
+    // 文本缓存在组件作用域的 textCacheRef 上：资产编辑器保存后也要用它收敛
+    // （见 handleSaveTextAsset）。
+
+    /** 资产路径的父目录；顶层返回 `assets` */
+    const parentDirOf = (path: string): string =>
+      path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : 'assets'
+
+    /** 旧状态清理：把误写成包内文件的那条记录移出 scripts */
+    const dropLegacyTextFile = (base: Workspace, scriptId: string): Workspace => ({
+      ...base,
+      activeScriptId:
+        base.activeScriptId === scriptId
+          ? base.packages
+              .flatMap((pkg) => pkg.scripts)
+              .find((script) => script.id !== scriptId)?.id ?? null
+          : base.activeScriptId,
+      packages: base.packages.map((pkg) => ({
+        ...pkg,
+        scripts: pkg.scripts.filter((script) => script.id !== scriptId),
+      })),
+    })
+
+    /** TextSink.read 是同步接口：先异步取回（资产优先，其次旧包内文件并迁移） */
+    const loadTextAsset = async (): Promise<string | null> => {
+      const base = workspaceRef.current
+      const hit = findScript(base, base.activeScriptId)
+      if (!hit) return null
+
+      const blob = await getAssetBlob(hit.pkg.id, fileName)
+      if (blob) return blob.text()
+
+      const legacy = hit.pkg.scripts.find(
+        (item) => item.name.toLowerCase() === fileName.toLowerCase(),
+      )
+      if (!legacy) return null
+
+      const migrated = new Blob([legacy.content], { type: TEXT_ASSET_MIME })
+      await putAssetBlob(hit.pkg.id, fileName, migrated)
+      const withFolder = ensureAssetFolder(
+        base,
+        hit.pkg.id,
+        parentDirOf(fileName),
+      )
+      const withAsset = upsertAssetMeta(
+        withFolder,
+        hit.pkg.id,
+        fileName,
+        TEXT_ASSET_MIME,
+        migrated.size,
+      )
+      commitWorkspace(dropLegacyTextFile(withAsset?.workspace ?? base, legacy.id))
+      return legacy.content
+    }
+
+    const virtualSink: TextSink = {
+      read: () => textCacheRef.current,
+      write: (content: string) => {
+        const base = workspaceRef.current
+        const id = base.activeScriptId
+        if (!id) return
+        textCacheRef.current = content
+        // 先把编辑器里的当前正文并回 workspace，避免覆盖未保存的输入
+        const merged = updateScriptContent(base, id, valueRef.current)
+        const hit = findScript(merged, id)
+        if (!hit) return
+        const blob = new Blob([content], { type: TEXT_ASSET_MIME })
+        void putAssetBlob(hit.pkg.id, fileName, blob).then(() => {
+          const withFolder = ensureAssetFolder(
+            workspaceRef.current,
+            hit.pkg.id,
+            parentDirOf(fileName),
+          )
+          const result = upsertAssetMeta(
+            withFolder,
+            hit.pkg.id,
+            fileName,
+            TEXT_ASSET_MIME,
+            blob.size,
+          )
+          if (result) commitWorkspace(result.workspace)
+        })
+      },
+    }
+
+    let cancelled = false
+    let unsubscribe: (() => void) | null = null
+    let created: TextMap | null = null
+
+    // 磁盘读取是异步的：读完再建映射；磁盘写入在 sink 里按顺序串行执行
+    void (async () => {
+      // TextSink.read 是同步接口：先把资产文本读进缓存再建映射
+      textCacheRef.current = await loadTextAsset()
+      const sink = await createTextSink({
+        project: projectRef.current,
+        fileName,
+        virtual: virtualSink,
+        // 只在磁盘写结束后异步触发。oxlint 的 react(set-state-in-effect) 按词法
+        // 判定，仍会就此报一条告警（规则过度近似：此处不会引发级联渲染）。
+        onWriteResult: (error) => {
+          if (!error) {
+            setLangDiskError(null)
+            return
+          }
+          console.warn('[hanshu] 语言文本写入磁盘失败', error)
+          setLangDiskError({
+            key: textWriteKey,
+            message: error instanceof Error ? error.message : String(error),
+          })
+        },
+      })
+      if (cancelled) return
+      const map = new TextMap({ fileName, locale, sink })
+      created = map
+      textMapRef.current = map
+      unsubscribe = map.subscribe(() => textBindingRef.current?.refresh())
+      map.load()
+      textBindingRef.current?.refresh()
+    })()
+
+    return () => {
+      cancelled = true
+      unsubscribe?.()
+      if (textMapRef.current === created) textMapRef.current = null
+    }
+  }, [textSourceName, textWriteKey, locale, projectHandle])
+
+  // 工具卸载时解绑编辑器
+  useEffect(() => () => textBindingRef.current?.dispose(), [])
+
+  /** 活动文件所在包（音频映射管理要读它的资产清单与包 id） */
+  const activePackage = () => {
+    const base = workspaceRef.current
+    return findScript(base, base.activeScriptId)?.pkg ?? null
+  }
+
+  // 音频映射管理：**没有映射文件** —— 每个键对应哪个音频，由「脚本路径 + 键名」
+  // 推导出的对等文件决定（见 i18n/voiceMap）。这里只负责按当前脚本/语言建出来，
+  // 并把「解码完成 / 播放态变化」转成覆盖层重画。
+  useEffect(() => {
+    const scriptName = textSourceName
+    if (!scriptName) {
+      voiceLibraryRef.current?.dispose()
+      voiceLibraryRef.current = null
+      textBindingRef.current?.refresh()
+      return
+    }
+
+    const library = createVoiceLibrary({
+      locale,
+      scriptName,
+      assets: () => activePackage()?.assets ?? [],
+      packageId: () => activePackage()?.id ?? '',
+    })
+    voiceLibraryRef.current = library
+    // 同步镜像到 state 只为让选择器能渲染。oxlint 的 react(set-state-in-effect)
+    // 按词法判定，会就此报一条告警；这里库是同步建的、不会引发级联渲染（同 textDiskError 那处）。
+    setVoiceRuntime(library)
+    const unsubscribe = library.subscribe(() =>
+      textBindingRef.current?.refreshVoice(),
+    )
+    textBindingRef.current?.refresh()
+
+    return () => {
+      unsubscribe()
+      if (voiceLibraryRef.current === library) {
+        library.dispose()
+        voiceLibraryRef.current = null
+      }
+    }
+  }, [textSourceName, locale, projectHandle])
+
+  // 资产清单一变（导入完成、拖入、删除…），配音按钮的状态就可能从缺失变可用：
+  // 让音频映射管理失效并发一次通知 —— 覆盖层按钮与已打开的选择器都会跟着刷新。
+  // （状态是渲染期求值的，不重画就一直停在旧状态：点击能播、按钮却还是红的。）
+  useEffect(() => {
+    voiceLibraryRef.current?.notifyAssetsChanged()
+  }, [voiceAssetSignature])
+
+  /** 打开音频选择器：内容全由音频映射管理推导，这里只记键与那个库实例 */
+  const openVoicePicker = (key: string) => {
+    const library = voiceLibraryRef.current
+    if (!library) return
+    setVoicePicker({ key, library })
+  }
+
+  /**
+   * 资产读写适配器（照 `.lang` 的 sink 思路）：
+   * - **IndexedDB + 工作区模型**：`put` 是事务原子的，直接覆盖，不需要临时文件；
+   * - **绑定工程时再磁盘写穿**：`voiceDiskSink` 内部走 `.new` → 删旧 → 改名
+   *   （同卷改名原子，防的是磁盘写被中断留下截断文件）。
+   * 磁盘失败只提示不回滚：IndexedDB 是权威，且「保存工程」还会整树重写磁盘。
+   */
+  const createVoiceImportIo = (packageId: string): VoiceImportIo => {
+    const findAsset = (path: string) => {
+      const pkg = workspaceRef.current.packages.find((item) => item.id === packageId)
+      const wanted = path.trim().replace(/\\/g, '/').toLowerCase()
+      return pkg?.assets.find((asset) => asset.path.toLowerCase() === wanted) ?? null
+    }
+
+    return {
+      read: async (path) => {
+        const asset = findAsset(path)
+        if (!asset) return null
+        const blob = await getAssetBlob(packageId, asset.path)
+        if (!blob) return null
+        return new Uint8Array(await blob.arrayBuffer())
+      },
+
+      async write(path, bytes, mime, onProgress) {
+        const blob = new Blob([bytes as BlobPart], { type: mime })
+        await putAssetBlob(packageId, path, blob)
+        onProgress?.(0.4)
+
+        const parent = path.includes('/')
+          ? path.slice(0, path.lastIndexOf('/'))
+          : 'assets'
+        const withFolder = ensureAssetFolder(
+          workspaceRef.current,
+          packageId,
+          parent,
+        )
+        const result = upsertAssetMeta(withFolder, packageId, path, mime, blob.size)
+        if (result) commitWorkspace(result.workspace)
+        onProgress?.(0.6)
+
+        const sink = createVoiceDiskSink(projectRef.current?.handle ?? null)
+        if (!sink.enabled) {
+          onProgress?.(1)
+          return
+        }
+        try {
+          await sink.write(path, bytes, mime, (ratio) =>
+            onProgress?.(0.6 + 0.4 * Math.max(0, Math.min(1, ratio))),
+          )
+          setVoiceDiskError(null)
+        } catch (error) {
+          console.warn('[hanshu] 配音写入磁盘失败', path, error)
+          setVoiceDiskError({
+            path,
+            message: error instanceof Error ? error.message : String(error),
+          })
+        }
+      },
+    }
+  }
+
+  /**
+   * 跑一次「音频导入」：源 = 资源管理器里选中的资产，或拖进来的外部文件；
+   * 目标 = 该键的对等文件。进度条由 voiceImport 状态驱动；中断（点 ×）返回 interrupted。
+   */
+  const runVoiceImportFor = (key: string, source: VoiceImportSource) => {
+    const library = voiceLibraryRef.current
+    const packageId = activePackage()?.id
+    if (!library || !packageId) return
+    const targetPath = library.targetPathOf(key)
+    setVoiceImportMessage(null)
+    setVoiceImport({
+      sourceLabel: formatVoiceImportSourceLabel(source),
+      targetPath,
+      progress: 0,
+      phase: 'process',
+    })
+
+    const run = runVoiceImport(
+      { source, targetPath },
+      createVoiceImportIo(packageId),
+      createVoiceProcessor(),
+      {
+        onPhase: (phase) =>
+          setVoiceImport((current) => (current ? { ...current, phase } : current)),
+        onProgress: (progress) =>
+          setVoiceImport((current) =>
+            current ? { ...current, progress } : current,
+          ),
+        // 工作流在结果落定前发出这条：先弹浮窗，稍后状态栏再留一条可点掉的记录
+        onNotice: (notice) =>
+          setVoiceToast({ id: Date.now(), message: notice.message, ok: notice.ok }),
+      },
+    )
+    voiceImportCancelRef.current = run.cancel
+
+    void run.result.then((report) => {
+      voiceImportCancelRef.current = null
+      setVoiceImport(null)
+      // 常量枚举消息原样展示；技术细节只进控制台
+      setVoiceImportMessage({
+        message: report.message,
+        ok: report.ok,
+        // 没绑定工程文件夹时，导入只会写进应用内资源（IndexedDB）—— 说清楚，
+        // 免得看到"成功"却在磁盘上找不到文件
+        hint: projectRef.current?.handle
+          ? undefined          : '未绑定工程文件夹，只写入了应用内资源',
+      })
+      if (!report.ok && report.detail) {
+        console.warn('[hanshu] 音频导入失败：', report.detail)
+      }
+    })
+  }
+
+  /** 把一个外部文件读成「文件源」（拖到键名上导入音频用；外部文件拿不到路径） */
+  const readDroppedFile = async (file: File): Promise<VoiceImportSource> => ({
+    kind: 'file',
+    name: file.name,
+    bytes: new Uint8Array(await file.arrayBuffer()),
+  })
+
+  /**
+   * 键名上的投放（见 dragPayload 的语义表）：
+   * - 外部文件 / 资产 → 尝试导入音频（多文件只取第一个：目标只有一个对等文件）
+   * - 另一个键名 → 替换键名（只改正文，与 deleteUnit 口径一致）
+   */
+  const handleUnitDrop = (request: TextUnitDropRequest) => {
+    const { key, intent, files, source } = request
+
+    if (intent.action === 'replace-key') {
+      if (source?.kind === 'key' && source.key !== key) {
+        textBindingRef.current?.replaceUnitKey(key, source.key)
+      }
+      return
+    }
+
+    if (intent.action === 'import-audio-asset' && source?.kind === 'asset') {
+      runVoiceImportFor(key, { kind: 'asset', path: source.path })
+      return
+    }
+
+    if (intent.action === 'import-audio-file') {
+      const file = files[0]
+      if (!file) return
+      void readDroppedFile(file)
+        .then((next) => runVoiceImportFor(key, next))
+        .catch((error: unknown) => {
+          console.warn('[hanshu] 读取拖入的音频失败', error)
+        })
+    }
+  }
+
+  /**
+   * 资源管理器内部拖拽落到目录行 = **剪切**：
+   * - 脚本：换包（模型里脚本是包内扁平的，没有子目录概念）
+   * - 资产：换目录（同包换文件夹或跨包），blob 与元数据一起搬，保留原 id
+   * 目标已有同名文件时不覆盖，直接忽略（避免出现两条同路径资产）。
+   */
+  /** 剧本换包（模型变换走 workspaceMove 的纯函数） */
+  const applyScriptMove = (
+    scriptId: string,
+    targetPackageId: string,
+  ) => {
+    const base = workspaceRef.current
+    const next = moveScriptToPackage(base, scriptId, targetPackageId)
+    if (next === base) return
+    commitWorkspace(next)
+  }
+
+  /** 资产换目录（blob 与元数据一起搬；模型变换走 workspaceMove 的纯函数） */
+  const applyAssetMove = (
+    assetId: string,
+    targetPackageId: string,
+    targetDir: string,
+  ) => {
+    const result = moveAssetToDir(
+      workspaceRef.current,
+      assetId,
+      targetPackageId,
+      targetDir,
+    )
+    if (!result) return
+
+    void (async () => {
+      const blob = await getAssetBlob(result.fromPackageId, result.fromPath)
+      if (!blob) return
+      await putAssetBlob(result.toPackageId, result.toPath, blob)
+      await deleteAssetBlob(result.fromPackageId, result.fromPath)
+      commitWorkspace(result.workspace)
+    })()
+  }
+
+  const handleDropIntoFolder = (
+    targetPackageId: string,
+    targetDir: string,
+    source: DragSource,
+  ) => {
+    if (source.kind === 'script') {
+      applyScriptMove(source.scriptId, targetPackageId)
+      return
+    }
+    if (source.kind !== 'asset') return
+    applyAssetMove(source.assetId, targetPackageId, targetDir)
+  }
+
+  /**
+   * 删除某个键的配音（右键菜单 Delete Voice）。
+   *
+   * 动作与删除资产一致（元数据 + blob），但**必须连磁盘那一份一起删**：
+   * 配音是写穿到工程目录的，只删应用内的话，下次打开工程又会被读回来。
+   *
+   * 两种确认文案：正常情况就是删这个文件；若它是靠"同名回落"从别的目录解析到的，
+   * 说明可能有其它脚本的键也在用它，得说清楚影响面。
+   */
+  const handleDeleteVoice = (key: string) => {
+    const library = voiceLibraryRef.current
+    const pkg = activePackage()
+    if (!library || !pkg) return
+    const status = library.statusOf(key)
+    const path = status.path
+    if (!path) return
+
+    const targetPath = library.targetPathOf(key)
+    if (path.toLowerCase() === targetPath.toLowerCase()) {
+      if (!window.confirm(`删除配音「${path}」？`)) return
+    } else if (
+      !window.confirm(
+        `该配音来自其它目录：${path}\n删除会影响所有引用它的键，确定删除？`,
+      )
+    ) {
+      return
+    }
+
+    // 正在播就先停掉，否则播的是已经被删掉的音频
+    if (status.state === 'playing') library.togglePlay(key)
+
+    const asset = pkg.assets.find(
+      (item) => item.path.toLowerCase() === path.toLowerCase(),
+    )
+    if (asset) {
+      commitWorkspace(removeAssetMeta(workspaceRef.current, asset.id))
+      void deleteAssetBlob(pkg.id, asset.path)
+    }
+    // 磁盘副本（含可能残留的 .new）：删掉才算真的删了
+    const sink = createVoiceDiskSink(
+      projectRef.current?.handle ?? null,
+      (failedPath, error) => {
+        if (error) {
+          console.warn('[hanshu] 没能删掉磁盘上的配音文件：', failedPath, error)
+        }
+      },
+    )
+    void sink.remove(path)
+  }
+
+  /**
+   * 上级容器的右键菜单条目。**可扩展**：往这里加一条就多一个功能；
+   * 默认五条 = 改键名 / 改文本 / 改配音 / 删配音 / 删除（红）。
+   */
+  const unitMenuItems = (key: string): TextUnitMenuItem[] => [
+    {
+      id: 'edit-key',
+      label: 'Edit Key',
+      onSelect: () => textBindingRef.current?.editUnit(key, 'key'),
+    },
+    {
+      id: 'edit-text',
+      label: 'Edit Text',
+      onSelect: () => textBindingRef.current?.editUnit(key, 'value'),
+    },
+    {
+      id: 'edit-voice',
+      label: 'Edit Voice',
+      onSelect: () => openVoicePicker(key),
+    },
+    {
+      id: 'delete-voice',
+      label: 'Delete Voice',
+      // 没有配音文件（缺失态）就没什么可删的
+      disabled: (voiceRuntime?.statusOf(key).path ?? null) == null,
+      onSelect: () => handleDeleteVoice(key),
+    },
+    {
+      id: 'delete',
+      label: 'Delete',
+      danger: true,
+      onSelect: () => textBindingRef.current?.deleteUnit(key),
+    },
+  ]
+
   const syncRolesFromText = (text: string) => {
     setRoles((prev) =>
       fillRolesFromSpeakers(prev, extractSpeakersFromText(text)),
@@ -187,6 +856,7 @@ export const ScriptWorkspace = forwardRef<
     const { binding, workspace: next } = result
     projectRef.current = binding
     setProject(binding)
+    setPendingProjectRestore(false)
     setBoundProject(binding)
     commitWorkspace(next)
     const hit = findScript(next, next.activeScriptId)
@@ -255,12 +925,6 @@ export const ScriptWorkspace = forwardRef<
 
     let next = updateScriptContent(workspaceRef.current, id, text)
 
-    // .hs 显式保存时全量编译同名 .lines（仅 hash↔source；删句即删条目）
-    if (isHanshuFile(name)) {
-      const linesName = linesFileNameForHs(name)
-      next = upsertPackageFile(next, id, linesName, buildLinesContent(text))
-    }
-
     commitWorkspace(next)
     setSavedAt(Date.now())
 
@@ -324,20 +988,11 @@ export const ScriptWorkspace = forwardRef<
       )
       return
     }
-    // 先落本地缓存与 .lines，再写盘
+    // 先落本地缓存，再写盘
     const text = valueRef.current
     const id = activeIdRef.current
     if (id) {
-      const name = findScript(workspaceRef.current, id)?.script.name ?? ''
-      let next = updateScriptContent(workspaceRef.current, id, text)
-      if (isHanshuFile(name)) {
-        next = upsertPackageFile(
-          next,
-          id,
-          linesFileNameForHs(name),
-          buildLinesContent(text),
-        )
-      }
+      const next = updateScriptContent(workspaceRef.current, id, text)
       commitWorkspace(next)
       setSavedAt(Date.now())
     }
@@ -416,13 +1071,14 @@ export const ScriptWorkspace = forwardRef<
 
   const handleNewScript = (packageId: string) => {
     const name = window.prompt(
-      `文件名（后缀须为 ${ALLOWED_EXTENSIONS_LABEL}）`,
+      `文件名（后缀须为 ${MANUAL_FILE_EXTENSIONS_LABEL}）`,
       '新剧本.hs',
     )
     if (name == null) return
     const normalized = normalizeResourceName(name)
-    if (!normalized) {
-      window.alert(`文件名无效。后缀只允许：${ALLOWED_EXTENSIONS_LABEL}`)
+    // `.lang` / `.voice` 的名字由剧本名派生（改名剧本时会一起搬），不手工新建
+    if (!normalized || !isManualFileName(normalized)) {
+      window.alert(`文件名无效。新建允许的后缀：${MANUAL_FILE_EXTENSIONS_LABEL}`)
       return
     }
     persistActiveContent(valueRef.current)
@@ -471,29 +1127,72 @@ export const ScriptWorkspace = forwardRef<
     })
   }
 
-  const handleRenameScript = (scriptId: string) => {
+  /**
+   * 改名并连带搬迁每种语言的文本 / 音频（见 `renameScriptAssets`）。
+   * 界面里的改名与 Agent 的 `rename_source` 共用这一条路径。
+   */
+  const applyScriptRename = async (
+    scriptId: string,
+    newName: string,
+  ): Promise<{ ok: true; moves: number } | { ok: false; error: string }> => {
+    const hit = findScript(workspaceRef.current, scriptId)
+    if (!hit) return { ok: false, error: '文件不存在' }
+    if (newName === hit.script.name) return { ok: true, moves: 0 }
+
+    // 连带改名：每种语言的文本资产与音频目录都跟着走（见 renameScriptAssets）
+    const renamed = renameScriptAssets(workspaceRef.current, scriptId, newName)
+    if (renamed.kind === 'blocked') {
+      return { ok: false, error: `${renamed.path} 已存在` }
+    }
+
+    // 先搬 blob 再提交模型：否则语言文本映射会先按新路径去读，读到空文件
+    if (renamed.kind === 'moved') {
+      const packageId = hit.pkg.id
+      for (const move of renamed.moves) {
+        const blob = await getAssetBlob(packageId, move.fromPath)
+        if (!blob) continue
+        await putAssetBlob(packageId, move.toPath, blob)
+        await deleteAssetBlob(packageId, move.fromPath)
+      }
+    }
+
+    const base =
+      renamed.kind === 'moved' ? renamed.workspace : workspaceRef.current
+    commitWorkspace({
+      ...base,
+      packages: base.packages.map((pkg) => ({
+        ...pkg,
+        scripts: pkg.scripts.map((script) =>
+          script.id === scriptId ? { ...script, name: newName } : script,
+        ),
+      })),
+    })
+    return {
+      ok: true,
+      moves: renamed.kind === 'moved' ? renamed.moves.length : 0,
+    }
+  }
+
+  const handleRenameScript = async (scriptId: string) => {
     const hit = findScript(workspaceRef.current, scriptId)
     if (!hit) return
     const name = window.prompt(
-      `重命名（后缀须为 ${ALLOWED_EXTENSIONS_LABEL}）`,
+      `重命名（后缀须为 ${MANUAL_FILE_EXTENSIONS_LABEL}）`,
       hit.script.name,
     )
     if (name == null) return
     const normalized = normalizeResourceName(name)
-    if (!normalized) {
-      window.alert(`文件名无效。后缀只允许：${ALLOWED_EXTENSIONS_LABEL}`)
+    // `.lang` / `.voice` 的名字由剧本名派生，不接受单独改名
+    if (!normalized || !isManualFileName(normalized)) {
+      window.alert(
+        `文件名无效。改名允许的后缀：${MANUAL_FILE_EXTENSIONS_LABEL}`,
+      )
       return
     }
     if (normalized === hit.script.name) return
-    commitWorkspace({
-      ...workspaceRef.current,
-      packages: workspaceRef.current.packages.map((pkg) => ({
-        ...pkg,
-        scripts: pkg.scripts.map((script) =>
-          script.id === scriptId ? { ...script, name: normalized } : script,
-        ),
-      })),
-    })
+
+    const result = await applyScriptRename(scriptId, normalized)
+    if (!result.ok) window.alert(`改名未执行：${result.error}`)
   }
 
   const handleDeletePackage = (packageId: string) => {
@@ -541,16 +1240,25 @@ export const ScriptWorkspace = forwardRef<
     }
   }
 
-  const handleDeleteScript = (scriptId: string) => {
+  /**
+   * 删除剧本，并连带删除它在**所有语言**下的语言文本与配音资产。
+   * 只从 `pkg.scripts` 里摘掉会留下 `assets/<locale>/lang_<ext>/xx.lang` 孤儿（旧行为就漏在这里）。
+   */
+  const deleteScriptWithAssets = async (
+    scriptId: string,
+  ): Promise<{ removedAssets: number } | null> => {
     const hit = findScript(workspaceRef.current, scriptId)
-    if (!hit) return
-    if (!window.confirm(`删除剧本「${hit.script.name}」？`)) return
+    if (!hit) return null
+    const cleaned = await deleteSourceAssets(
+      workspaceRef.current,
+      hit.script.name,
+    )
 
-    const nextPackages = workspaceRef.current.packages.map((pkg) => ({
+    const nextPackages = cleaned.workspace.packages.map((pkg) => ({
       ...pkg,
       scripts: pkg.scripts.filter((script) => script.id !== scriptId),
     }))
-    let activeScriptId = workspaceRef.current.activeScriptId
+    let activeScriptId = cleaned.workspace.activeScriptId
     if (activeScriptId === scriptId) {
       const fallback =
         nextPackages.flatMap((pkg) => pkg.scripts).find(Boolean) ?? null
@@ -559,7 +1267,7 @@ export const ScriptWorkspace = forwardRef<
     const next: Workspace = {
       packages: nextPackages,
       activeScriptId,
-      activeAssetId: workspaceRef.current.activeAssetId,
+      activeAssetId: cleaned.workspace.activeAssetId,
     }
     commitWorkspace(next)
     if (scriptId === activeIdRef.current) {
@@ -571,6 +1279,18 @@ export const ScriptWorkspace = forwardRef<
       setSavedAt(opened?.script.updatedAt ?? null)
       setRoles(createDefaultRoles())
     }
+    return { removedAssets: cleaned.removed.length }
+  }
+
+  const handleDeleteScript = async (scriptId: string) => {
+    const hit = findScript(workspaceRef.current, scriptId)
+    if (!hit) return
+    if (
+      !window.confirm(`删除剧本「${hit.script.name}」及其各语言的译文 / 配音？`)
+    ) {
+      return
+    }
+    await deleteScriptWithAssets(scriptId)
   }
 
   const handleDeleteAsset = (assetId: string) => {
@@ -676,67 +1396,7 @@ export const ScriptWorkspace = forwardRef<
     }
   }
 
-  const handlePullVoice = (scriptId: string) => {
-    const hit = findScript(workspaceRef.current, scriptId)
-    if (!hit || !isVoiceMapFile(hit.script.name)) {
-      window.alert('请选择 .voice 文件')
-      return
-    }
-
-    // 先落盘当前打开的同文件编辑器内容
-    let base = workspaceRef.current
-    if (
-      activeIdRef.current === scriptId &&
-      !workspaceRef.current.activeAssetId
-    ) {
-      base = updateScriptContent(base, scriptId, valueRef.current)
-    }
-
-    const refreshed = findScript(base, scriptId)
-    if (!refreshed) return
-
-    const linesName = linesFileNameForVoice(refreshed.script.name)
-    if (!linesName) {
-      window.alert(
-        `文件名须为 *.lines.<locale>.voice\n当前：${refreshed.script.name}`,
-      )
-      return
-    }
-
-    const linesHit = refreshed.pkg.scripts.find(
-      (s) => s.name.toLowerCase() === linesName.toLowerCase(),
-    )
-    if (!linesHit) {
-      window.alert(`找不到对应台词表：${linesName}`)
-      return
-    }
-
-    const result = pullVoiceFromLines(
-      refreshed.script.content,
-      linesHit.content,
-    )
-    if (result.added === 0 && result.idified === 0) {
-      window.alert(`已对齐，无需更新（共 ${result.total} 条）`)
-      return
-    }
-
-    pushFileVersion(refreshed.script.name, refreshed.script.content, 'voice-pull', {
-      force: true,
-    })
-    const next = updateScriptContent(base, scriptId, result.content)
-    commitWorkspace(next)
-    if (activeIdRef.current === scriptId) {
-      setValue(result.content)
-      editorRef.current?.setValue(result.content)
-    }
-    window.alert(
-      result.added === 0
-        ? `已对齐，无需更新（共 ${result.total} 条）`
-        : `拉取完成：追加 ${result.added} 条（value 为原文），合计 ${result.total}`,
-    )
-  }
-
-  const handleGenerateBlankVoiceOggs = async (scriptId: string) => {
+  const handleGeneratePlaceholderVoice = async (scriptId: string) => {
     const hit = findScript(workspaceRef.current, scriptId)
     if (!hit || !isVoiceMapFile(hit.script.name)) {
       window.alert('请选择 .voice 文件')
@@ -751,17 +1411,9 @@ export const ScriptWorkspace = forwardRef<
       voiceContent = valueRef.current
     }
 
-    const parsed = parseVoiceLocaleFile(hit.script.name)
-    if (!parsed) {
-      window.alert(
-        `文件名须为 *.lines.<locale>.voice\n当前：${hit.script.name}`,
-      )
-      return
-    }
-
     const missing = listMissingVoiceOggs(
       voiceContent,
-      parsed.locale,
+      locale,
       hit.pkg.assets.map((a) => a.path),
     )
     if (missing.length === 0) {
@@ -771,7 +1423,7 @@ export const ScriptWorkspace = forwardRef<
 
     if (
       !window.confirm(
-        `将在 assets/${parsed.locale}/voice/ 生成 ${missing.length} 个空白 ogg，是否继续？`,
+        `将在 ${voiceRootDir(locale)}/ 生成 ${missing.length} 个空白 ogg，是否继续？`,
       )
     ) {
       return
@@ -854,8 +1506,15 @@ export const ScriptWorkspace = forwardRef<
       if (!supportsDirectoryPicker()) return
       try {
         const result = await tryRestoreLastProject()
-        if (cancelled || !result) return
-        applyLoadedProject(result)
+        if (cancelled) return
+        if (result) {
+          applyLoadedProject(result)
+          return
+        }
+        // 恢复不了：句柄还在的话，多半是权限没授（冷启动没有用户手势，
+        // requestPermission 会被静默拒绝）→ 给出可点的一键恢复入口
+        const handle = await loadLastDirectoryHandle()
+        if (!cancelled && handle) setPendingProjectRestore(true)
       } catch {
         // 忽略：无句柄或用户拒绝权限
       }
@@ -864,6 +1523,26 @@ export const ScriptWorkspace = forwardRef<
       cancelled = true
     }
   }, [])
+
+  /** 用户点「上次工程待授权」：这时有手势，权限框能正常弹出 */
+  const handleRestoreProject = () => {
+    if (projectBusy) return
+    setProjectBusy(true)
+    void (async () => {
+      try {
+        const result = await tryRestoreLastProject()
+        if (result) applyLoadedProject(result)
+        else setPendingProjectRestore(false)
+      } catch (error) {
+        window.alert(
+          `恢复上次工程失败：${error instanceof Error ? error.message : String(error)}`,
+        )
+        setPendingProjectRestore(false)
+      } finally {
+        setProjectBusy(false)
+      }
+    })()
+  }
 
   useEffect(() => {
     const onMove = (event: PointerEvent) => {
@@ -927,12 +1606,12 @@ export const ScriptWorkspace = forwardRef<
       setHistoryOpen(true)
       return
     }
-    if (item === '导出资源包') {
+    if (item === '导出PAK') {
       void handleExportResourcePack()
       return
     }
-    if (item === '导出资产包') {
-      void handleExportAssetsPack()
+    if (item === '导出工程包') {
+      void handleExportProjectPack()
       return
     }
     if (item === '新建包') {
@@ -1019,8 +1698,9 @@ export const ScriptWorkspace = forwardRef<
     setHistoryOpen(false)
   }
 
+  /** 导出 PAK：编译 hsc + 只保留被引用到的 lang / voice */
   const handleExportResourcePack = async () => {
-    // 先保存，确保当前 .hs 的 .lines 已全量编译
+    // 先保存，确保导出用到的是最新的 .hs 正文
     persistNow()
     try {
       const { blob, fileCount, warnings } = await buildResourcePackZip(
@@ -1030,48 +1710,49 @@ export const ScriptWorkspace = forwardRef<
         .toISOString()
         .slice(0, 19)
         .replace(/[:T]/g, '-')
-      downloadBlob(blob, `rpgtoolkit-resourcepack-${stamp}.zip`)
+      downloadBlob(blob, `hanshu-${stamp}.pak`)
 
       if (warnings.length > 0) {
         const shown = warnings.slice(0, 20).join('\n')
         const more =
           warnings.length > 20 ? `\n…另有 ${warnings.length - 20} 条` : ''
         window.alert(
-          `已导出资源包（${fileCount} 个文件），但有警告：\n\n${shown}${more}`,
+          `已导出 PAK（${fileCount} 个文件），但有警告：\n\n${shown}${more}`,
         )
       }
     } catch (err) {
       window.alert(
-        `导出失败：${err instanceof Error ? err.message : String(err)}`,
+        `导出 PAK 失败：${err instanceof Error ? err.message : String(err)}`,
       )
     }
   }
 
-  const handleExportAssetsPack = async () => {
+  /** 导出工程包：原样完整打包（脚本正文 + assets 二进制） */
+  const handleExportProjectPack = async () => {
     persistNow()
     try {
-      const { blob, fileCount, warnings } = await buildAssetsPackZip(
+      const { blob, fileCount, warnings } = await buildProjectPackZip(
         workspaceRef.current,
       )
       const stamp = new Date()
         .toISOString()
         .slice(0, 19)
         .replace(/[:T]/g, '-')
-      downloadBlob(blob, `hanshu-assets-${stamp}.zip`)
+      downloadBlob(blob, `hanshu-project-${stamp}.zip`)
 
       if (warnings.length > 0) {
         const shown = warnings.slice(0, 20).join('\n')
         const more =
           warnings.length > 20 ? `\n…另有 ${warnings.length - 20} 条` : ''
         window.alert(
-          `已导出资产包（${fileCount} 个文件），但有警告：\n\n${shown}${more}`,
+          `已导出工程包（${fileCount} 个文件），但有警告：\n\n${shown}${more}`,
         )
       } else if (fileCount === 0) {
-        window.alert('资产包为空（没有可导出的文件）')
+        window.alert('工程包为空（没有可导出的文件）')
       }
     } catch (err) {
       window.alert(
-        `导出资产包失败：${err instanceof Error ? err.message : String(err)}`,
+        `导出工程包失败：${err instanceof Error ? err.message : String(err)}`,
       )
     }
   }
@@ -1221,119 +1902,569 @@ export const ScriptWorkspace = forwardRef<
     return model.getValueInRange(sel)
   }
 
-  const agentHost: AgentHost = {
-    listFiles: () => listWorkspaceFiles(workspaceRef.current),
-    getCurrentFileName: () =>
-      findScript(workspaceRef.current, activeIdRef.current)?.script.name ?? '',
-    readFile: (fileName) => {
-      const hit = findScriptByName(workspaceRef.current, fileName)
-      if (!hit) return { ok: false, error: `未找到文件：${fileName}` }
-      // 若读的是当前文件，以编辑器里最新内容为准
-      if (hit.script.id === activeIdRef.current) {
-        return {
-          ok: true,
-          fileName: hit.script.name,
-          content: valueRef.current,
-        }
-      }
-      return {
-        ok: true,
-        fileName: hit.script.name,
-        content: hit.script.content,
-      }
-    },
-    writeCurrentFile: (content) => {
-      const id = activeIdRef.current
-      const hit = findScript(workspaceRef.current, id)
-      if (!id || !hit) return { ok: false, error: '当前没有打开的文件' }
-      const before =
-        hit.script.id === activeIdRef.current
-          ? valueRef.current
-          : hit.script.content
-      pushFileBackup(hit.script.name, before, 'agent.write_current_file')
-      const next = updateScriptContent(workspaceRef.current, id, content)
-      commitWorkspace(next)
+  /** Agent 写入已有文件：留历史、并回编辑器、记 diff */
+  const applyAgentFileWrite = (
+    scriptId: string,
+    content: string,
+    tool: string,
+  ): { file: string } | null => {
+    const hit = findScript(workspaceRef.current, scriptId)
+    if (!hit) return null
+    const isActive = hit.script.id === activeIdRef.current
+    const before = isActive ? valueRef.current : hit.script.content
+    pushFileBackup(hit.script.name, before, tool)
+    commitWorkspace(updateScriptContent(workspaceRef.current, scriptId, content))
+    if (isActive) {
       setValue(content)
       valueRef.current = content
       editorRef.current?.setValue(content)
       setSavedAt(Date.now())
-      pushAgentDiff({
-        fileName: hit.script.name,
-        before,
-        after: content,
-      })
-      return { ok: true, fileName: hit.script.name }
-    },
-    writeFile: (fileName, content) => {
-      const normalized = normalizeResourceName(fileName)
-      if (!normalized) {
-        return {
+    }
+    pushAgentDiff({ fileName: hit.script.name, before, after: content })
+    return { file: hit.script.name }
+  }
+
+  /** 源文件的最新正文：当前打开的文件以编辑器内容为准 */
+  const agentSourceContent = (scriptId: string): string | null => {
+    const hit = findScript(workspaceRef.current, scriptId)
+    if (!hit) return null
+    return hit.script.id === activeIdRef.current
+      ? valueRef.current
+      : hit.script.content
+  }
+
+  /** 语言工具的目标：源文件 + 语言 → 所属包、资产路径与当前译文表 */
+  const langTargetOf = async (sourceName: string, localeArg?: string) => {
+    const hit = findScriptByName(workspaceRef.current, sourceName)
+    if (!hit) return null
+    const lang = localeArg?.trim() || locale
+    const path = langAssetPathFor(hit.script.name, lang)
+    const map = await readLangAsset(hit.pkg.id, path)
+    return { hit, lang, path, map }
+  }
+
+  /** Agent 写源文件名前的校验：`.lang` 不当普通文件写（走 write_lang） */
+  const normalizeAgentSource = (
+    raw: string,
+  ): { name: string } | { error: AgentOpResult } => {
+    const normalized = normalizeResourceName(raw)
+    if (!normalized) {
+      return {
+        error: {
           ok: false,
           error: `文件名无效，后缀须为 ${ALLOWED_EXTENSIONS_LABEL}`,
-        }
+        },
       }
-      const existing = findScriptByName(workspaceRef.current, normalized)
-      if (existing) {
-        const before =
-          existing.script.id === activeIdRef.current
-            ? valueRef.current
-            : existing.script.content
-        pushFileBackup(normalized, before, 'agent.write_file')
-        const next = updateScriptContent(
-          workspaceRef.current,
-          existing.script.id,
-          content,
-        )
-        commitWorkspace(next)
-        if (existing.script.id === activeIdRef.current) {
-          setValue(content)
-          valueRef.current = content
-          editorRef.current?.setValue(content)
-          setSavedAt(Date.now())
-        }
-        pushAgentDiff({
-          fileName: normalized,
-          before,
-          after: content,
-        })
-        return { ok: true, fileName: normalized, created: false }
+    }
+    if (normalized.toLowerCase().endsWith('.lang')) {
+      return {
+        error: {
+          ok: false,
+          error: '语言文本不能当普通文件写',
+          hint: '用 list_lang_keys 看键、用 write_lang 写译文（键来自正文）',
+        },
       }
+    }
+    return { name: normalized }
+  }
 
+  /**
+   * 解析 agent 传来的 locale —— **工程优先**：工程里已有就沿用，其次按语言表规范化
+   * （`en` → `en_us`、`ja` → `ja_jp`），最后才落地为自定义标签。
+   * 裸语言码对应多个地区且都不常用（`de` → `de_de` / `de_at`）时不猜，回报候选。
+   */
+  const resolveAgentLocale = (
+    raw?: string,
+  ): { locale: string; note?: string } | { error: AgentOpResult } => {
+    const requested = (raw ?? '').trim() || locale
+    const projectLocales = listLocalesOf(workspaceRef.current).map(
+      (item) => item.locale,
+    )
+    const exact = projectLocales.find(
+      (item) => item.toLowerCase() === requested.toLowerCase(),
+    )
+    if (exact) return { locale: exact }
+
+    const resolved = resolveLocaleTag(requested)
+    if (!resolved.tag) {
+      return {
+        error: {
+          ok: false,
+          error: `语言标签无效：${requested}`,
+          hint: '用「语言_地区」的小写下划线形式，如 zh_cn / en_us / ja_jp',
+        },
+      }
+    }
+
+    if (resolved.ambiguous) {
+      return {
+        error: {
+          ok: false,
+          error: `语言标签不够明确：${requested}`,
+          candidates: resolved.ambiguous,
+          hint: '请从候选中挑一个明确的标签重试',
+        },
+      }
+    }
+
+    // 工程里已有等价标签（工程是 en_us、请求是 en）→ 一律以工程为准
+    const equivalent = projectLocales.find(
+      (item) => item.toLowerCase() === resolved.tag.toLowerCase(),
+    )
+    if (equivalent) {
+      return { locale: equivalent, note: `${requested} → ${equivalent}（工程已有）` }
+    }
+    return { locale: resolved.tag, note: resolved.note }
+  }
+
+  const agentHost: AgentHost = {
+    listSources: (packageName) => {
+      const filter = packageName?.trim().toLowerCase()
+      const files = workspaceRef.current.packages
+        .filter((pkg) => !filter || pkg.name.toLowerCase() === filter)
+        .flatMap((pkg) =>
+          pkg.scripts.map((script) => ({
+            package: pkg.name,
+            source: script.name,
+            kind: sourceKindOf(script.name),
+            bytes: script.content.length,
+            updatedAt: script.updatedAt,
+          })),
+        )
+      return { ok: true, files, count: files.length }
+    },
+    readSource: (source, offset, limit) => {
+      const hit = findScriptByName(workspaceRef.current, source)
+      if (!hit) return { ok: false, error: `未找到文件：${source}` }
+      const content = agentSourceContent(hit.script.id) ?? hit.script.content
+      const page = paginateSource(content, offset, limit)
+      return {
+        ok: true,
+        source: hit.script.name,
+        kind: sourceKindOf(hit.script.name),
+        version: hit.script.updatedAt,
+        ...page,
+      }
+    },
+    createSource: (source, content) => {
+      const checked = normalizeAgentSource(source)
+      if ('error' in checked) return checked.error
+      if (findScriptByName(workspaceRef.current, checked.name)) {
+        return {
+          ok: false,
+          error: `文件已存在：${checked.name}`,
+          hint: '覆盖用 write_source，局部修改用 edit_source；不要靠改名字新建来"试一下"',
+        }
+      }
       const pkgId =
         findScript(workspaceRef.current, activeIdRef.current)?.pkg.id ??
         workspaceRef.current.packages[0]?.id
       if (!pkgId) return { ok: false, error: '没有可用的包' }
 
-      // 先落盘当前打开文件，避免内容丢在未保存的编辑器里
       let base = workspaceRef.current
       if (activeIdRef.current) {
         base = updateScriptContent(base, activeIdRef.current, valueRef.current)
       }
-
-      const script = createScript(normalized, content)
-      const nextPackages = base.packages.map((pkg) =>
-        pkg.id === pkgId
-          ? { ...pkg, collapsed: false, scripts: [...pkg.scripts, script] }
-          : pkg,
-      )
-      // 切换到新建文件，避免后续 write_current_file 误盖原来的 .hs
+      const script = createScript(checked.name, content)
+      // 新建**不切换**当前打开的文件：agent 造文件不该动用户正在看的东西
       commitWorkspace({
-        packages: nextPackages,
-        activeScriptId: script.id,
-        activeAssetId: null,
+        packages: base.packages.map((pkg) =>
+          pkg.id === pkgId
+            ? { ...pkg, collapsed: false, scripts: [...pkg.scripts, script] }
+            : pkg,
+        ),
+        activeScriptId: base.activeScriptId,
+        activeAssetId: base.activeAssetId,
       })
-      setValue(content)
-      valueRef.current = content
-      editorRef.current?.setValue(content)
-      setSavedAt(script.updatedAt)
-      setRoles(createDefaultRoles())
       pushAgentDiff({
-        fileName: normalized,
+        fileName: checked.name,
         before: '',
         after: content,
         created: true,
       })
-      return { ok: true, fileName: normalized, created: true }
+      return { ok: true, source: checked.name, created: true, activeUnchanged: true }
+    },
+    writeSource: (source, content, expectedVersion) => {
+      const checked = normalizeAgentSource(source)
+      if ('error' in checked) return checked.error
+
+      const existing = findScriptByName(workspaceRef.current, checked.name)
+      if (!existing) {
+        return {
+          ok: false,
+          error: `文件不存在：${checked.name}`,
+          hint: '新建请用 create_source；write_source 只覆盖已有文件',
+        }
+      }
+      if (
+        expectedVersion != null &&
+        existing.script.updatedAt !== expectedVersion
+      ) {
+        return {
+          ok: false,
+          error: '文件已被改动，写入被拒绝',
+          hint: '重新 read_source 拿到新的 version 再写',
+        }
+      }
+      const written = applyAgentFileWrite(
+        existing.script.id,
+        content,
+        'agent.write_source',
+      )
+      if (!written) return { ok: false, error: '写入失败' }
+      return { ok: true, source: written.file, created: false, changed: true }
+    },
+    editSource: (source, oldText, newText, replaceAll) => {
+      const hit = findScriptByName(workspaceRef.current, source)
+      if (!hit) return { ok: false, error: `未找到文件：${source}` }
+      const content = agentSourceContent(hit.script.id) ?? hit.script.content
+      const edited = applyTextEdit(content, oldText, newText, replaceAll)
+      if (!edited.ok) return { ok: false, error: edited.error }
+      const written = applyAgentFileWrite(
+        hit.script.id,
+        edited.content,
+        'agent.edit_source',
+      )
+      if (!written) return { ok: false, error: '写入失败' }
+      return { ok: true, source: written.file, changed: true, replaced: edited.count }
+    },
+    renameSource: async (source, newSource) => {
+      const hit = findScriptByName(workspaceRef.current, source)
+      if (!hit) return { ok: false, error: `未找到文件：${source}` }
+      const normalized = normalizeResourceName(newSource)
+      if (!normalized || !isManualFileName(normalized)) {
+        return {
+          ok: false,
+          error: `新文件名无效，后缀须为 ${MANUAL_FILE_EXTENSIONS_LABEL}`,
+        }
+      }
+      const result = await applyScriptRename(hit.script.id, normalized)
+      if (!result.ok) return { ok: false, error: result.error }
+      return {
+        ok: true,
+        source: normalized,
+        previous: hit.script.name,
+        movedFiles: result.moves,
+      }
+    },
+    deleteSource: async (source) => {
+      const hit = findScriptByName(workspaceRef.current, source)
+      if (!hit) return { ok: false, error: `文件不存在：${source}` }
+      const deleted = await deleteScriptWithAssets(hit.script.id)
+      if (!deleted) return { ok: false, error: '删除失败' }
+      return {
+        ok: true,
+        source: hit.script.name,
+        removedAssets: deleted.removedAssets,
+      }
+    },
+    validateSource: (source) => {
+      const hit = findScriptByName(workspaceRef.current, source)
+      if (!hit) return { ok: false, error: `未找到文件：${source}` }
+      const content = agentSourceContent(hit.script.id) ?? hit.script.content
+      const result = validateSourceContent(hit.script.name, content)
+      return {
+        ok: result.diagnostics.length === 0 && !result.compileError,
+        source: hit.script.name,
+        diagnostics: result.diagnostics,
+        compileError: result.compileError,
+      }
+    },
+    getActiveFilePath: () => {
+      const active = activeFilePathOf(workspaceRef.current, activeIdRef.current)
+      if (!active) return { ok: false, error: '当前没有打开的文件' }
+      return {
+        ok: true,
+        source: active.name,
+        kind: active.kind,
+        path: active.path,
+        hint: 'path 只用于理解结构；工具参数仍只写逻辑名 source',
+      }
+    },
+    listLocales: () => ({
+      ok: true,
+      active: locale,
+      locales: listLocalesOf(workspaceRef.current).map((item) => {
+        const entry = resolveLocale(item.locale)
+        return {
+          ...item,
+          label: entry.nativeName,
+          chineseName: entry.chineseName,
+          inTable: Boolean(findLocale(item.locale)),
+        }
+      }),
+      /** 新语言请从这些规范标签里挑，别再自己拼 */
+      suggestions: COMMON_LOCALES.map((entry) => ({
+        locale: entry.tag,
+        label: entry.nativeName,
+      })),
+    }),
+    listLangKeys: async (source, localeArg, offset, limit) => {
+      const resolved = resolveAgentLocale(localeArg)
+      if ('error' in resolved) return resolved.error
+      const target = await langTargetOf(source, resolved.locale)
+      if (!target) return { ok: false, error: `未找到文件：${source}` }
+      const content =
+        agentSourceContent(target.hit.script.id) ?? target.hit.script.content
+      const keys = collectSourceKeys(content)
+      const start = Math.max(1, Math.floor(offset ?? 1) || 1)
+      const count = Math.min(Math.max(1, Math.floor(limit ?? 200) || 200), 1000)
+      const page = keys.slice(start - 1, start - 1 + count)
+      const entries = page.map((item) => ({
+        key: item.key,
+        line: item.line,
+        text: target.map[item.key] ?? '',
+        translated: item.key in target.map,
+      }))
+      return {
+        ok: true,
+        source: target.hit.script.name,
+        locale: target.lang,
+        path: target.path,
+        total: keys.length,
+        missing: keys.filter((item) => !(item.key in target.map)).length,
+        offset: start,
+        truncated: start - 1 + page.length < keys.length,
+        entries,
+      }
+    },
+    writeLang: async (source, translations) => {
+      const hit = findScriptByName(workspaceRef.current, source)
+      if (!hit) return { ok: false, error: `未找到文件：${source}` }
+      const plan: Array<{ locale: string; entries: LangEntry[] }> = []
+      const notes: string[] = []
+      for (const requested of Object.keys(translations)) {
+        const entries = translations[requested] ?? []
+        if (entries.length === 0) continue
+        const resolved = resolveAgentLocale(requested)
+        if ('error' in resolved) return resolved.error
+        if (resolved.note) notes.push(resolved.note)
+        const hit = plan.find((item) => item.locale === resolved.locale)
+        if (hit) hit.entries.push(...entries)
+        else plan.push({ locale: resolved.locale, entries: [...entries] })
+      }
+      if (plan.length === 0) return { ok: false, error: 'translations 为空' }
+
+      const content = agentSourceContent(hit.script.id) ?? hit.script.content
+      const known = new Set(collectSourceKeys(content).map((item) => item.key))
+      let workspace = workspaceRef.current
+      const results: Array<Record<string, unknown>> = []
+      let writtenTotal = 0
+
+      for (const step of plan) {
+        const locale = step.locale
+        const path = langAssetPathFor(hit.script.name, locale)
+        const map = await readLangAsset(hit.pkg.id, path)
+        const next = { ...map }
+        const written: string[] = []
+        const skipped: string[] = []
+        for (const entry of step.entries) {
+          const key = entry.key.trim().toLowerCase()
+          if (!known.has(key)) {
+            skipped.push(entry.key)
+            continue
+          }
+          next[key] = entry.text
+          written.push(key)
+        }
+        if (written.length === 0) {
+          results.push({
+            locale,
+            path,
+            written,
+            skipped,
+            writtenCount: 0,
+            total: Object.keys(next).length,
+          })
+          continue
+        }
+        workspace = await writeLangAsset(workspace, hit.pkg.id, path, next)
+        writtenTotal += written.length
+        if (textMapRef.current?.fileName.toLowerCase() === path.toLowerCase()) {
+          textCacheRef.current = stringifyTextFile(next)
+          textMapRef.current.load()
+        }
+        results.push({
+          locale,
+          path,
+          written,
+          skipped,
+          writtenCount: written.length,
+          total: Object.keys(next).length,
+        })
+      }
+
+      if (writtenTotal > 0) commitWorkspace(workspace)
+      if (writtenTotal === 0) {
+        return {
+          ok: false,
+          error: '没有任何键存在于正文里',
+          locales: results,
+          notes,
+          hint: '键写在正文行末（`//` + 8 位十六进制，形如 `narrator:7f3a91c2//`）；用 list_lang_keys 查，或先 parse_hs 成键',
+        }
+      }
+      return { ok: true, source: hit.script.name, locales: results, notes }
+    },
+    deleteLangKeys: async (source, keys, localeArg) => {
+      const resolved = resolveAgentLocale(localeArg)
+      if ('error' in resolved) return resolved.error
+      const target = await langTargetOf(source, resolved.locale)
+      if (!target) return { ok: false, error: `未找到文件：${source}` }
+      const next = { ...target.map }
+      const removed: string[] = []
+      for (const raw of keys) {
+        const key = raw.trim().toLowerCase()
+        if (!(key in next)) continue
+        delete next[key]
+        removed.push(key)
+      }
+      if (removed.length === 0) return { ok: true, removed: [], total: Object.keys(next).length }
+
+      const workspace = await writeLangAsset(
+        workspaceRef.current,
+        target.hit.pkg.id,
+        target.path,
+        next,
+      )
+      commitWorkspace(workspace)
+      if (
+        textMapRef.current?.fileName.toLowerCase() === target.path.toLowerCase()
+      ) {
+        textCacheRef.current = stringifyTextFile(next)
+        textMapRef.current.load()
+      }
+      return {
+        ok: true,
+        source: target.hit.script.name,
+        locale: target.lang,
+        removed,
+        total: Object.keys(next).length,
+      }
+    },
+    listVoiceStatus: async (source, localeArg) => {
+      const hit = findScriptByName(workspaceRef.current, source)
+      if (!hit) return { ok: false, error: `未找到文件：${source}` }
+      const content = agentSourceContent(hit.script.id) ?? hit.script.content
+      const keys = collectSourceKeys(content).map((item) => item.key)
+      const resolved = resolveAgentLocale(localeArg)
+      if ('error' in resolved) return resolved.error
+      const lang = resolved.locale
+      const entries = await voiceStatusOf(
+        hit.pkg.id,
+        hit.pkg.assets,
+        hit.script.name,
+        lang,
+        keys,
+      )
+      const missing = entries.filter((item) => item.state === 'missing')
+      return {
+        ok: true,
+        source: hit.script.name,
+        locale: lang,
+        total: entries.length,
+        missing: missing.map((item) => item.key),
+        entries,
+      }
+    },
+    parseHs: async (source, localeArg) => {
+      const hit = findScriptByName(workspaceRef.current, source)
+      if (!hit) return { ok: false, error: `未找到文件：${source}` }
+      const resolved = resolveAgentLocale(localeArg)
+      if ('error' in resolved) return resolved.error
+      const lang = resolved.locale
+      const path = langAssetPathFor(hit.script.name, lang)
+      const map = await readLangAsset(hit.pkg.id, path)
+      const before = agentSourceContent(hit.script.id) ?? hit.script.content
+      const parsed = parseSourceText(before, map)
+
+      if (parsed.entries.length === 0) {
+        return {
+          ok: true,
+          source: hit.script.name,
+          locale: lang,
+          created: 0,
+          skipped: parsed.skipped,
+          hint: '已经没有可成键的文本（要么都已成键，要么在 #stopparse 之后）',
+        }
+      }
+
+      // 先写映射再改正文：万一正文写入失败，只是多出几条孤儿译文，不会出现"有键无译文"
+      const next = { ...map }
+      for (const [key, text] of parsed.entries) next[key] = text
+      const workspace = await writeLangAsset(
+        workspaceRef.current,
+        hit.pkg.id,
+        path,
+        next,
+      )
+      commitWorkspace(workspace)
+      if (textMapRef.current?.fileName.toLowerCase() === path.toLowerCase()) {
+        textCacheRef.current = stringifyTextFile(next)
+        textMapRef.current.load()
+      }
+
+      const written = applyAgentFileWrite(
+        hit.script.id,
+        parsed.content,
+        'agent.parse_hs',
+      )
+      if (!written) return { ok: false, error: '写入失败' }
+      return {
+        ok: true,
+        source: written.file,
+        locale: lang,
+        created: parsed.entries.length,
+        skipped: parsed.skipped,
+        keys: parsed.entries.map(([key]) => key),
+      }
+    },
+    unparseHs: async (source, localeArg) => {
+      const hit = findScriptByName(workspaceRef.current, source)
+      if (!hit) return { ok: false, error: `未找到文件：${source}` }
+      const resolved = resolveAgentLocale(localeArg)
+      if ('error' in resolved) return resolved.error
+      const lang = resolved.locale
+      const path = langAssetPathFor(hit.script.name, lang)
+      const map = await readLangAsset(hit.pkg.id, path)
+      const before = agentSourceContent(hit.script.id) ?? hit.script.content
+      const unparsed = unparseSourceText(before, map)
+
+      if (unparsed.replaced === 0) {
+        return {
+          ok: false,
+          error: '没有可逆解析的键',
+          source: hit.script.name,
+          locale: lang,
+          missing: unparsed.missing,
+          multiline: unparsed.multiline,
+          hint: '先用 list_lang_keys 确认该语言有译文；多行译文目前不支持逆解析',
+        }
+      }
+
+      const written = applyAgentFileWrite(
+        hit.script.id,
+        unparsed.content,
+        'agent.unparse_hs',
+      )
+      if (!written) return { ok: false, error: '写入失败' }
+      return {
+        ok: true,
+        source: written.file,
+        locale: lang,
+        replaced: unparsed.replaced,
+        missing: unparsed.missing,
+        multiline: unparsed.multiline,
+      }
+    },
+    checkExport: async () => {
+      const pak = await buildResourcePackZip(workspaceRef.current)
+      const project = await buildProjectPackZip(workspaceRef.current)
+      return {
+        ok: true,
+        pak: { files: pak.fileCount, warnings: pak.warnings },
+        project: { files: project.fileCount, warnings: project.warnings },
+      }
     },
   }
 
@@ -1386,6 +2517,8 @@ export const ScriptWorkspace = forwardRef<
           workspace={workspace}
           activeScriptId={workspace.activeScriptId}
           activeAssetId={workspace.activeAssetId}
+          boundPackageId={project?.manifest.id ?? null}
+          boundFolderName={project?.folderName ?? null}
           onOpenScript={openScript}
           onOpenAsset={openAsset}
           onTogglePackage={handleTogglePackage}
@@ -1402,10 +2535,10 @@ export const ScriptWorkspace = forwardRef<
           onImportAssets={(packageId, files, targetDir) => {
             void handleImportAssets(packageId, files, targetDir)
           }}
-          onPullVoice={handlePullVoice}
-          onGenerateBlankVoiceOggs={(scriptId) => {
-            void handleGenerateBlankVoiceOggs(scriptId)
+          onGeneratePlaceholderVoice={(scriptId) => {
+            void handleGeneratePlaceholderVoice(scriptId)
           }}
+          onDropIntoFolder={handleDropIntoFolder}
         />
 
         <div className="main-split" ref={splitRef}>
@@ -1454,13 +2587,14 @@ export const ScriptWorkspace = forwardRef<
               <AssetPreview
                 packageId={activeAssetHit.pkg.id}
                 asset={activeAssetHit.asset}
+                onSaveText={handleSaveTextAsset}
               />
             ) : (
               <>
                 <div className="editor-pane">
                   <Editor
                     height="100%"
-                    language={languageForFile(titleName)}
+                    language={editorLanguageForFile(titleName)}
                     theme={HANSHU_THEME_ID}
                     value={value}
                     beforeMount={registerHanshuLanguage}
@@ -1470,6 +2604,22 @@ export const ScriptWorkspace = forwardRef<
                       bindChoiceInsertHotkeys(editor, monaco)
                       bindSpeakerHotkeys(editor, monaco, () => rolesRef.current)
                       bindCopyDialogueHotkey(editor, monaco)
+                      textBindingRef.current?.dispose()
+                      textBindingRef.current = bindText(editor, monaco, {
+                        getMap: () => textMapRef.current,
+                        getVoice: () => voiceLibraryRef.current,
+                        onEditRequest: (request) => {
+                          langEditSeqRef.current += 1
+                          setLangEdit({
+                            id: langEditSeqRef.current,
+                            request,
+                          })
+                        },
+                        onUnitMenu: (request) => setUnitMenu(request),
+                        onUnitDrop: (request) => handleUnitDrop(request),
+                        // 缺失 / 无效态点按钮 = 挑一个音频
+                        onVoicePick: (key) => openVoicePicker(key),
+                      })
                     }}
                     onChange={(next) => {
                       setValue(next ?? '')
@@ -1488,6 +2638,14 @@ export const ScriptWorkspace = forwardRef<
                       cursorBlinking: 'smooth',
                       overviewRulerBorder: false,
                       stickyScroll: { enabled: false },
+                      /**
+                       * 拖放由覆盖层自己处理（键名容器 / 文本区），所以关掉 Monaco 这一套。
+                       * 否则它在编辑器根节点上监听 dragover/drop，画一个 `dnd-target` 装饰当
+                       * 落点指示器（那个"虚线光标"），而清除只发生在她自己的
+                       * drop / dragleave / dragend 里 —— 我们在容器上 stopPropagation 之后
+                       * 根节点收不到 drop，外部文件（没有页面内 dragend）拖完就会一直挂着。
+                       */
+                      dropIntoEditor: { enabled: false },
                       scrollbar: {
                         verticalScrollbarSize: 14,
                         horizontalScrollbarSize: 14,
@@ -1625,8 +2783,149 @@ export const ScriptWorkspace = forwardRef<
           <span>空格: 2</span>
           <span>UTF-8</span>
           <span>汉书</span>
+          {activeTextDiskError && (
+            <span
+              className="status-warn"
+              title={`语言文本未能写入磁盘：${activeTextDiskError}`}
+              role="button"
+              tabIndex={0}
+              onClick={() => setLangDiskError(null)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  setLangDiskError(null)
+                }
+              }}
+            >
+              语言文本未写入磁盘
+            </span>
+          )}
+          {pendingProjectRestore && (
+            <span
+              className="status-warn"
+              title="上次的工程文件夹还没授权（启动时无法自动弹出权限框）。点一下重新打开它，并同意读写权限。"
+              role="button"
+              tabIndex={0}
+              onClick={handleRestoreProject}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  handleRestoreProject()
+                }
+              }}
+            >
+              上次工程待授权
+            </span>
+          )}
+          {voiceDiskError && (
+            <span
+              className="status-warn"
+              title={`配音未能写入磁盘：${voiceDiskError.message}`}
+              role="button"
+              tabIndex={0}
+              onClick={() => setVoiceDiskError(null)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  setVoiceDiskError(null)
+                }
+              }}
+            >
+              配音未写入磁盘
+            </span>
+          )}
+          {voiceImportMessage && (
+            <span
+              className={voiceImportMessage.ok ? 'status-note' : 'status-warn'}
+              title="音频导入结果（点击清除）"
+              role="button"
+              tabIndex={0}
+              onClick={() => setVoiceImportMessage(null)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  setVoiceImportMessage(null)
+                }
+              }}
+            >
+              {voiceImportMessage.message}
+              {voiceImportMessage.hint && (
+                <span className="status-hint">（{voiceImportMessage.hint}）</span>
+              )}
+            </span>
+          )}
+          <LocaleSelect
+            value={locale}
+            onChange={handleLocaleChange}
+            projectLocales={listLocalesOf(workspace).map((item) => item.locale)}
+          />
         </div>
       </footer>
+      {langEdit && (
+        <TextEditBox
+          key={langEdit.id}
+          mode={langEdit.request.mode}
+          initial={langEdit.request.initial}
+          rect={langEdit.request.rect}
+          onCommit={(next) => {
+            const edit = langEdit
+            setLangEdit((current) => (current?.id === edit.id ? null : current))
+            edit.request.apply(next)
+          }}
+          onCancel={() => {
+            const edit = langEdit
+            setLangEdit((current) => (current?.id === edit.id ? null : current))
+          }}
+        />
+      )}
+      {unitMenu && (
+        <TextUnitMenu
+          x={unitMenu.x}
+          y={unitMenu.y}
+          items={unitMenuItems(unitMenu.key)}
+          onClose={() => setUnitMenu(null)}
+        />
+      )}
+      {voicePicker &&
+        voiceRuntime != null &&
+        voiceRuntime === voicePicker.library && (
+          <VoicePickerModal
+            unitKey={voicePicker.key}
+            targetPath={voicePicker.library.targetPathOf(voicePicker.key)}
+            currentPath={voicePicker.library.resolvedPathOf(voicePicker.key)}
+            library={voicePicker.library}
+            onImport={(sourcePath) => {
+              const key = voicePicker.key
+              setVoicePicker(null)
+              runVoiceImportFor(key, { kind: 'asset', path: sourcePath })
+            }}
+            onImportFile={(source) => {
+              // 选择器里已经把这文件缓存在内存里了（拖入 ≠ 导入），这里只负责跑工作流
+              const key = voicePicker.key
+              setVoicePicker(null)
+              runVoiceImportFor(key, { kind: 'file', name: source.name, bytes: source.bytes })
+            }}
+            onClose={() => setVoicePicker(null)}
+          />
+        )}
+      {voiceImport && (
+        <VoiceImportProgress
+          progress={voiceImport.progress}
+          phase={voiceImport.phase}
+          sourceLabel={voiceImport.sourceLabel}
+          targetPath={voiceImport.targetPath}
+          onCancel={() => voiceImportCancelRef.current?.()}
+        />
+      )}
+      {/* 换 key：每次通知都重新挂载 → 动画与倒计时重来 */}
+      {voiceToast && (
+        <VoiceToast
+          key={voiceToast.id}
+          message={voiceToast.message}
+          ok={voiceToast.ok}
+          onDone={() =>
+            setVoiceToast((current) =>
+              current && current.id === voiceToast.id ? null : current,
+            )
+          }
+        />
+      )}
     </div>
   )
 })

@@ -1,28 +1,43 @@
 import { useDeferredValue, useMemo } from 'react'
 import Editor from '@monaco-editor/react'
 import {
-  HANSHU_LANGUAGE_ID,
+  HANSHU_HSC_LANGUAGE_ID,
   HANSHU_THEME_ID,
   registerHanshuLanguage,
 } from './monaco/hanshuLanguage'
-import { compileHsToHsc } from './hanshu/lines'
+import { compileHsToHsc } from './hanshu/compiler'
 
 type HscPreviewProps = {
   source: string
 }
 
-/** .hs → .hsc 只读视角（去注释/空行、hash 替换、去掉 //） */
+/** .hs → .hsc 只读视角（全文解析校验、去注释/空行、去掉 //） */
 export function HscPreview({ source }: HscPreviewProps) {
   const deferred = useDeferredValue(source)
-  const hsc = useMemo(() => compileHsToHsc(deferred), [deferred])
+  // 编译会做"含键名内容必须单行闭合"的校验：不通过时把错误显示出来，而不是空预览
+  const { hsc, error } = useMemo(() => {
+    try {
+      return { hsc: compileHsToHsc(deferred), error: '' }
+    } catch (err) {
+      return {
+        hsc: '',
+        error: err instanceof Error ? err.message : String(err),
+      }
+    }
+  }, [deferred])
 
   return (
     <div className="hsc-preview" aria-label="编译后 .hsc 预览">
       <div className="hsc-preview-label">.hsc</div>
-      <div className="hsc-preview-editor">
+      {error ? (
+        <div className="hsc-preview-error" role="alert">
+          {error}
+        </div>
+      ) : (
+        <div className="hsc-preview-editor">
         <Editor
           height="100%"
-          language={HANSHU_LANGUAGE_ID}
+          language={HANSHU_HSC_LANGUAGE_ID}
           theme={HANSHU_THEME_ID}
           value={hsc}
           beforeMount={registerHanshuLanguage}
@@ -48,7 +63,8 @@ export function HscPreview({ source }: HscPreviewProps) {
             },
           }}
         />
-      </div>
+        </div>
+      )}
     </div>
   )
 }
