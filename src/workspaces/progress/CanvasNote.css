@@ -1,0 +1,32 @@
+.flow-graph-note {
+  --note-bg: #30383e; --note-line: #59656e; --note-ink: #c4cdd3;
+  position: absolute; z-index: 2; box-sizing: border-box; pointer-events: auto;
+  border: 1px solid var(--note-line); border-radius: 3px; background: var(--note-bg);
+  color: var(--note-ink); touch-action: none; user-select: none;
+}
+.flow-graph-note.is-sand { --note-bg: #3b3830; --note-line: #6e6552; --note-ink: #d4cbbb; }
+.flow-graph-note.is-sage { --note-bg: #303b34; --note-line: #536d5d; --note-ink: #bfcec3; }
+.flow-graph-note.is-mauve { --note-bg: #3b333e; --note-line: #6c5973; --note-ink: #cfc1d4; }
+.flow-graph-note.is-selected, .flow-graph-note:focus-within { border-color: var(--node-accent); box-shadow: 0 0 0 1px var(--node-accent); }
+.flow-graph-note.is-dragging { z-index: 3; }
+.flow-workspace .flow-graph .flow-note-body {
+  display: flex; flex-direction: column; gap: 0; width: 100%; height: 100%;
+  padding: 0; border: 0; border-radius: 2px; background: transparent; color: inherit;
+  text-align: left; white-space: normal; cursor: grab; touch-action: none;
+}
+.flow-workspace .flow-graph .flow-note-body:hover { background: transparent; }
+.flow-workspace .flow-graph .is-dragging .flow-note-body { cursor: grabbing; }
+.flow-note-title { display: block; flex-shrink: 0; width: 100%; box-sizing: border-box; padding: 7px 11px; border-bottom: 1px solid var(--note-line); font-size: 11px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.flow-note-text { display: block; padding: 9px 11px 18px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.6; }
+.flow-note-text.is-empty { opacity: .45; }
+.flow-note-editor { display: flex; flex-direction: column; height: 100%; }
+.flow-workspace .flow-note-editor input, .flow-workspace .flow-note-editor textarea {
+  min-width: 0; width: 100%; margin: 0; border: 0; border-radius: 0; box-sizing: border-box;
+  outline: none; background: transparent; color: var(--note-ink); font: inherit;
+}
+.flow-workspace .flow-note-editor input { flex-shrink: 0; padding: 7px 11px; border-bottom: 1px solid var(--note-line); font-size: 11px; }
+.flow-workspace .flow-note-editor textarea { flex: 1; min-height: 0; resize: none; padding: 9px 11px; font-size: 12px; line-height: 1.6; }
+.flow-note-edit-hint { padding: 3px 11px 6px; font-size: 10px; opacity: .5; }
+.flow-workspace .flow-graph .flow-note-resize { position: absolute; bottom: 0; right: 0; width: 19px; height: 19px; padding: 2px; border: 0; background: transparent; color: var(--note-ink); opacity: .6; cursor: nwse-resize; touch-action: none; }
+.flow-workspace .flow-graph .flow-note-resize:hover { background: transparent; opacity: 1; }
+.flow-note-resize svg { display: block; width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 1; }

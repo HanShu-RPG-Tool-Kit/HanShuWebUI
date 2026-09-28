@@ -1,0 +1,19 @@
+.flow-editor-dialog { width: min(600px, calc(100vw - 32px)); max-height: calc(100dvh - 40px); padding: 0; border: 1px solid var(--border-soft); border-radius: 8px; background: var(--bg-sidebar); color: var(--text); box-shadow: 0 20px 80px #0008; font: 13px/1.5 var(--ui-font-family, 'Microsoft YaHei', sans-serif); overflow: hidden; }
+.flow-editor-dialog[open] { display: flex; flex-direction: column; }
+.flow-editor-dialog::backdrop { background: #10151bb3; }
+.flow-editor-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; padding: 20px 24px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.flow-editor-header > div { min-width: 0; }
+.flow-editor-header h2 { margin: 0; font-size: 18px; font-weight: 500; color: var(--text-bright); }
+.flow-editor-header p { margin: 5px 0 0; color: var(--text-dim); font-size: 12px; overflow-wrap: anywhere; }
+.flow-editor-dialog .flow-editor-close { border: 0; padding: 0 3px; background: transparent; color: var(--text-dim); font-size: 23px; line-height: 1; }
+.flow-editor-body { min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 4px 24px 24px; }
+.flow-editor-fields details { border-top: 1px solid var(--border-soft); padding: 13px 0 0; margin-top: 18px; }
+.flow-editor-fields summary { cursor: pointer; color: #c2d0da; }
+.flow-editor-fields summary:hover { color: var(--text-bright); }
+.flow-editor-fields .flow-localization { border-top: 0; padding-top: 0; margin-top: -4px; font-size: 11px; }
+.flow-editor-fields .flow-localization summary { color: var(--text-dim); }
+.flow-editor-footer { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 14px 24px; border-top: 1px solid var(--border); background: var(--bg); flex-shrink: 0; }
+.flow-editor-footer > div { min-width: 0; flex: 1; font-size: 11px; color: var(--text-dim); }
+.flow-editor-footer p { margin: 0; overflow-wrap: anywhere; }
+.flow-editor-footer > button { min-width: 68px; }
+@media (max-width: 600px) { .flow-editor-header { padding: 16px; } .flow-editor-body { padding: 4px 16px 20px; } .flow-editor-footer { padding: 12px 16px; } }
