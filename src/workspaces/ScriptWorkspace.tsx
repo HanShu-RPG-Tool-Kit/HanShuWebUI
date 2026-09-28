@@ -38,12 +38,13 @@ import {
   loadWorkspace,
   normalizeResourceName,
   ALLOWED_EXTENSIONS_LABEL,
+  RENAMABLE_EXTENSIONS_LABEL,
+  isRenamableFileName,
   removeAssetMeta,
   saveWorkspace,
   toggleAssetsCollapsed,
   updateScriptContent,
   upsertAssetMeta,
-  upsertPackageFile,
   ensureAssetFolder,
   removeAssetFolder,
   isVoiceMapFile,
@@ -60,7 +61,11 @@ import {
 } from '../export/resourcePack'
 import { buildAssetsPackZip } from '../export/assetsPack'
 import { normalizeAssetPath, normalizeFolderPath } from '../assets/paths'
-import { moveAssetToDir, moveScriptToPackage } from '../workspaceMove'
+import {
+  moveAssetToDir,
+  moveScriptToPackage,
+  renameScriptAssets,
+} from '../workspaceMove'
 import {
   deleteAssetBlob,
   deletePackageAssetBlobs,
@@ -97,6 +102,7 @@ import { LocaleSelect } from '../LocaleSelect'
 import { TextEditBox } from '../TextEditBox'
 import {
   TextMap,
+  TEXT_ASSET_MIME,
   textAssetPath,
   type TextSink,
 } from '../i18n/textMap'
@@ -236,6 +242,8 @@ export const ScriptWorkspace = forwardRef<
     message: string
   } | null>(null)
   const textMapRef = useRef<TextMap | null>(null)
+  /** 当前语言文本资产的原始内容（TextSink.read 是同步接口，所以要用缓存兜住） */
+  const textCacheRef = useRef<string | null>(null)
   const textBindingRef = useRef<TextBinding | null>(null)
   const langEditSeqRef = useRef(0)
   const voiceLibraryRef = useRef<VoiceLibrary | null>(null)
@@ -296,6 +304,33 @@ export const ScriptWorkspace = forwardRef<
   const activeTextDiskError =
     textDiskError?.key === textWriteKey ? textDiskError.message : null
 
+  /**
+   * 资产编辑器保存文本资产（`.lang`）：写回 IndexedDB + 更新元数据。
+   * 若保存的正是当前语言文本文件，还要同步内存映射 —— 否则下一次写键会用旧缓存
+   * 覆盖掉这次手工编辑。
+   */
+  const handleSaveTextAsset = async (content: string) => {
+    const hit = activeAssetHit
+    if (!hit) return
+    const { pkg, asset } = hit
+    const mime = asset.mime || TEXT_ASSET_MIME
+    const blob = new Blob([content], { type: mime })
+    await putAssetBlob(pkg.id, asset.path, blob)
+    const result = upsertAssetMeta(
+      workspaceRef.current,
+      pkg.id,
+      asset.path,
+      mime,
+      blob.size,
+    )
+    if (result) commitWorkspace(result.workspace)
+
+    if (textMapRef.current?.fileName.toLowerCase() === asset.path.toLowerCase()) {
+      textCacheRef.current = content
+      textMapRef.current.load()
+    }
+  }
+
   // 语言文本映射实例：活动源文件 + 当前语言标签 → `assets/<语言标签>/lang_<后缀>/…`
   // 绑定文件夹工程时读写真实磁盘文件，否则退回包内虚拟文件（见 textSink）。
   useEffect(() => {
@@ -306,24 +341,90 @@ export const ScriptWorkspace = forwardRef<
     }
 
     const fileName = textAssetPath(locale, textSourceName)
-    // 虚拟工作区实现：同包内名为 `<剧本名>.lang.<语言标签>` 的文件
+    // 语言文本按**资产**存放（`assets/<locale>/lang_<ext>/…`）：与音频一样进 IndexedDB，
+    // 资源管理器因此把它画在 assets 树下。此前当包内文件写，会在包根下多出一条名字
+    // 带整条路径的记录（旧状态在读到时顺手迁移掉，见 loadTextAsset）。
+    // 文本缓存在组件作用域的 textCacheRef 上：资产编辑器保存后也要用它收敛
+    // （见 handleSaveTextAsset）。
+
+    /** 资产路径的父目录；顶层返回 `assets` */
+    const parentDirOf = (path: string): string =>
+      path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : 'assets'
+
+    /** 旧状态清理：把误写成包内文件的那条记录移出 scripts */
+    const dropLegacyTextFile = (base: Workspace, scriptId: string): Workspace => ({
+      ...base,
+      activeScriptId:
+        base.activeScriptId === scriptId
+          ? base.packages
+              .flatMap((pkg) => pkg.scripts)
+              .find((script) => script.id !== scriptId)?.id ?? null
+          : base.activeScriptId,
+      packages: base.packages.map((pkg) => ({
+        ...pkg,
+        scripts: pkg.scripts.filter((script) => script.id !== scriptId),
+      })),
+    })
+
+    /** TextSink.read 是同步接口：先异步取回（资产优先，其次旧包内文件并迁移） */
+    const loadTextAsset = async (): Promise<string | null> => {
+      const base = workspaceRef.current
+      const hit = findScript(base, base.activeScriptId)
+      if (!hit) return null
+
+      const blob = await getAssetBlob(hit.pkg.id, fileName)
+      if (blob) return blob.text()
+
+      const legacy = hit.pkg.scripts.find(
+        (item) => item.name.toLowerCase() === fileName.toLowerCase(),
+      )
+      if (!legacy) return null
+
+      const migrated = new Blob([legacy.content], { type: TEXT_ASSET_MIME })
+      await putAssetBlob(hit.pkg.id, fileName, migrated)
+      const withFolder = ensureAssetFolder(
+        base,
+        hit.pkg.id,
+        parentDirOf(fileName),
+      )
+      const withAsset = upsertAssetMeta(
+        withFolder,
+        hit.pkg.id,
+        fileName,
+        TEXT_ASSET_MIME,
+        migrated.size,
+      )
+      commitWorkspace(dropLegacyTextFile(withAsset?.workspace ?? base, legacy.id))
+      return legacy.content
+    }
+
     const virtualSink: TextSink = {
-      read: () => {
-        const base = workspaceRef.current
-        const hit = findScript(base, base.activeScriptId)
-        if (!hit) return null
-        const found = hit.pkg.scripts.find(
-          (item) => item.name.toLowerCase() === fileName.toLowerCase(),
-        )
-        return found?.content ?? null
-      },
+      read: () => textCacheRef.current,
       write: (content: string) => {
         const base = workspaceRef.current
         const id = base.activeScriptId
         if (!id) return
+        textCacheRef.current = content
         // 先把编辑器里的当前正文并回 workspace，避免覆盖未保存的输入
         const merged = updateScriptContent(base, id, valueRef.current)
-        commitWorkspace(upsertPackageFile(merged, id, fileName, content))
+        const hit = findScript(merged, id)
+        if (!hit) return
+        const blob = new Blob([content], { type: TEXT_ASSET_MIME })
+        void putAssetBlob(hit.pkg.id, fileName, blob).then(() => {
+          const withFolder = ensureAssetFolder(
+            workspaceRef.current,
+            hit.pkg.id,
+            parentDirOf(fileName),
+          )
+          const result = upsertAssetMeta(
+            withFolder,
+            hit.pkg.id,
+            fileName,
+            TEXT_ASSET_MIME,
+            blob.size,
+          )
+          if (result) commitWorkspace(result.workspace)
+        })
       },
     }
 
@@ -333,6 +434,8 @@ export const ScriptWorkspace = forwardRef<
 
     // 磁盘读取是异步的：读完再建映射；磁盘写入在 sink 里按顺序串行执行
     void (async () => {
+      // TextSink.read 是同步接口：先把资产文本读进缓存再建映射
+      textCacheRef.current = await loadTextAsset()
       const sink = await createTextSink({
         project: projectRef.current,
         fileName,
@@ -997,23 +1100,50 @@ export const ScriptWorkspace = forwardRef<
     })
   }
 
-  const handleRenameScript = (scriptId: string) => {
+  const handleRenameScript = async (scriptId: string) => {
     const hit = findScript(workspaceRef.current, scriptId)
     if (!hit) return
     const name = window.prompt(
-      `重命名（后缀须为 ${ALLOWED_EXTENSIONS_LABEL}）`,
+      `重命名（后缀须为 ${RENAMABLE_EXTENSIONS_LABEL}）`,
       hit.script.name,
     )
     if (name == null) return
     const normalized = normalizeResourceName(name)
-    if (!normalized) {
-      window.alert(`文件名无效。后缀只允许：${ALLOWED_EXTENSIONS_LABEL}`)
+    // `.lang` / `.voice` 的名字由剧本名派生，不接受单独改名
+    if (!normalized || !isRenamableFileName(normalized)) {
+      window.alert(
+        `文件名无效。改名允许的后缀：${RENAMABLE_EXTENSIONS_LABEL}`,
+      )
       return
     }
     if (normalized === hit.script.name) return
+
+    // 连带改名：每种语言的文本资产与音频目录都跟着走（见 renameScriptAssets）
+    const renamed = renameScriptAssets(
+      workspaceRef.current,
+      scriptId,
+      normalized,
+    )
+    if (renamed.kind === 'blocked') {
+      window.alert(`改名未执行：${renamed.path} 已存在`)
+      return
+    }
+
+    // 先搬 blob 再提交模型：否则语言文本映射会先按新路径去读，读到空文件
+    if (renamed.kind === 'moved') {
+      const packageId = hit.pkg.id
+      for (const move of renamed.moves) {
+        const blob = await getAssetBlob(packageId, move.fromPath)
+        if (!blob) continue
+        await putAssetBlob(packageId, move.toPath, blob)
+        await deleteAssetBlob(packageId, move.fromPath)
+      }
+    }
+
+    const base = renamed.kind === 'moved' ? renamed.workspace : workspaceRef.current
     commitWorkspace({
-      ...workspaceRef.current,
-      packages: workspaceRef.current.packages.map((pkg) => ({
+      ...base,
+      packages: base.packages.map((pkg) => ({
         ...pkg,
         scripts: pkg.scripts.map((script) =>
           script.id === scriptId ? { ...script, name: normalized } : script,
@@ -1941,6 +2071,7 @@ export const ScriptWorkspace = forwardRef<
               <AssetPreview
                 packageId={activeAssetHit.pkg.id}
                 asset={activeAssetHit.asset}
+                onSaveText={handleSaveTextAsset}
               />
             ) : (
               <>

@@ -1927,6 +1927,44 @@ body.is-resizing .monaco-editor {
   border: 1px solid var(--border);
 }
 
+/* 文本/JSON 资产（`.lang`、`.voice` …）：等宽只读呈现 */
+.asset-preview-text {
+  margin: 0;
+  padding: 12px 14px;
+  max-width: 100%;
+  max-height: 60vh;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: 12px/1.6 ui-monospace, SFMono-Regular, Consolas, monospace;
+  white-space: pre;
+  tab-size: 2;
+}
+
+/* 可写的 JSON 编辑器（`.lang` / `.voice`） */
+.asset-preview-editor {
+  height: 60vh;
+  min-height: 320px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.asset-preview-save {
+  padding: 2px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.asset-preview-save:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .asset-preview-error {
   color: #f48771;
 }

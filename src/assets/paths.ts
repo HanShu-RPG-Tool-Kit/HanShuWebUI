@@ -50,6 +50,19 @@ export function isImageAsset(path: string, mime?: string): boolean {
   return /\.(png|jpe?g|gif|webp|bmp)$/i.test(path)
 }
 
+/** JSON 文本资产：`.lang` / `.voice` 都是 JSON，mime 也由写入方标成 application/json */
+export function isJsonAsset(path: string, mime?: string): boolean {
+  if (mime === 'application/json') return true
+  return /\.(json|lang|voice)$/i.test(path)
+}
+
+/** 可当文本预览的资产（JSON 之外还认常见纯文本后缀） */
+export function isTextAsset(path: string, mime?: string): boolean {
+  if (isJsonAsset(path, mime)) return true
+  if (mime?.startsWith('text/')) return true
+  return /\.(txt|md|csv|tsv)$/i.test(path)
+}
+
 export function formatBytes(size: number): string {
   if (size < 1024) return `${size} B`
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`

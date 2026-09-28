@@ -16,6 +16,25 @@ export type AllowedExtension = (typeof ALLOWED_EXTENSIONS)[number]
 /** 给人看的后缀列表文案 */
 export const ALLOWED_EXTENSIONS_LABEL = ALLOWED_EXTENSIONS.join('  ')
 
+/**
+ * 可改名的后缀：语言文本（`.lang`）与配音映射（`.voice`）的名字都由剧本名派生
+ * （见 `localeLayout`：改名 `.hs` 会连带搬走它们），单独改名会切断这层派生关系，
+ * 所以改名不接受这两种格式。它们仍是合法的包内文件格式（新建 / 写入不受影响）。
+ */
+export const RENAMABLE_EXTENSIONS = ALLOWED_EXTENSIONS.filter(
+  (ext) => ext !== '.lang' && ext !== '.voice',
+)
+
+/** 给人看的可改名后缀文案 */
+export const RENAMABLE_EXTENSIONS_LABEL = RENAMABLE_EXTENSIONS.join('  ')
+
+/** 该文件名是否可改名（语言文本与配音映射不可） */
+export function isRenamableFileName(name: string): boolean {
+  return (RENAMABLE_EXTENSIONS as readonly string[]).includes(
+    getExtension(name).toLowerCase(),
+  )
+}
+
 export type ScriptFile = {
   id: string
   name: string

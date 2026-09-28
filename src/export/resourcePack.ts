@@ -148,13 +148,19 @@ export async function buildResourcePackZip(
     }
 
     // —— 语言文本 `assets/<locale>/lang_<ext>/…/名.lang`（按包合并 locale）——
+    // 语言文本是**资产**（IndexedDB blob），不是包内文件
     const langByLocale = new Map<string, HashMap>()
-    for (const script of pkg.scripts) {
-      const locale = parseTextAssetLocale(script.name)
+    for (const asset of pkg.assets) {
+      const locale = parseTextAssetLocale(asset.path)
       if (!locale) continue
-      const map = parseHashMap(script.content, script.name, warnings)
+      const blob = await getAssetBlob(pkg.id, asset.path)
+      if (!blob) {
+        warnings.push(`[${pkg.name}] IndexedDB 无数据: ${asset.path}`)
+        continue
+      }
+      const map = parseHashMap(await blob.text(), asset.path, warnings)
       const bucket = langByLocale.get(locale) ?? {}
-      mergeLangMaps(bucket, map, script.name, warnings)
+      mergeLangMaps(bucket, map, asset.path, warnings)
       langByLocale.set(locale, bucket)
     }
     for (const [locale, map] of [...langByLocale.entries()].sort((a, b) =>

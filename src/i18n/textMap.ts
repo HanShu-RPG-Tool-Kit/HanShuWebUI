@@ -75,6 +75,9 @@ export function isTextAssetName(name: string): boolean {
 
 export type TextFile = Record<string, string>
 
+/** 语言文本资产在 IndexedDB 里的 MIME（内容固定是 JSON） */
+export const TEXT_ASSET_MIME = 'application/json'
+
 /** 解析 lang 文件；非法 JSON / 非对象返回空表，非字符串值丢弃 */
 export function parseTextFile(text: string | null | undefined): TextFile {
   if (!text) return {}
