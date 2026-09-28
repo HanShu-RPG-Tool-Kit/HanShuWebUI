@@ -34,31 +34,40 @@ export function normalizeLocaleKey(text: string): string {
   return LOCALE_KEY_RE.test(key) ? key : ''
 }
 
-/** 随机 8 位十六进制（crypto 优先，退化到 Math.random） */
-function randomKey(): string {
-  const c = globalThis.crypto
-  if (c && typeof c.getRandomValues === 'function') {
-    const buf = new Uint32Array(1)
-    c.getRandomValues(buf)
-    return buf[0].toString(16).padStart(8, '0')
+/**
+ * 文本哈希：FNV-1a 32 位 → 8 位小写十六进制（正好是键名长度）。
+ * `round` 是冲突后的重试轮次（0 = 原文，1 = 原文 + 盐，……），因此**可复现**：
+ * 同一段文本永远得到同一个键，冲突时也只按固定次序换下一个候选。
+ */
+export function hashLocaleKey(text: string, round = 0): string {
+  const seed = round === 0 ? text : `${text}\u0000${round}`
+  let hash = 0x811c9dc5
+  for (let i = 0; i < seed.length; i++) {
+    hash ^= seed.charCodeAt(i)
+    hash = Math.imul(hash, 0x01000193) >>> 0
   }
-  return Math.floor(Math.random() * 0x100000000)
-    .toString(16)
-    .padStart(8, '0')
+  return (hash >>> 0).toString(16).padStart(8, '0')
 }
 
-/** 生成不与 `taken` 冲突的键名 */
-export function createLocaleKey(taken: (key: string) => boolean): string {
-  for (let i = 0; i < 4096; i++) {
-    const key = randomKey()
+/**
+ * 由**文本**生成键名：先取文本哈希；若已占用则二次哈希、三次哈希……直到不冲突。
+ * 与随机键的区别是确定性 —— 删掉键再解析一次，还会得到同一个键，
+ * 因此「逆解析 → 再解析」不会把已有译文丢掉。
+ */
+export function createLocaleKeyFromText(
+  text: string,
+  taken: (key: string) => boolean,
+): string {
+  for (let round = 0; round < 4096; round++) {
+    const key = hashLocaleKey(text, round)
     if (!taken(key)) return key
   }
-  // 极端情况下线性兜底
+  // 极端情况下线性兜底（同一个文本撞满 4096 轮基本不可能）
   for (let n = 0; n < 0x100000000; n++) {
     const key = (n >>> 0).toString(16).padStart(8, '0')
     if (!taken(key)) return key
   }
-  return randomKey()
+  return hashLocaleKey(text, 4096)
 }
 
 /**

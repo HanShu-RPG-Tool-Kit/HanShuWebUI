@@ -260,3 +260,46 @@ export function getLocaleGroups(): LocaleGroup[] {
     { label: null, items: ALL_LOCALES },
   ]
 }
+
+/** 是否是"只有语言、没有地区"的裸标签（`en`、`ja`、`zh`） */
+export function isBareLanguageTag(tag: string): boolean {
+  return /^[a-z]{2,3}$/.test(tag)
+}
+
+export type LocaleResolution = {
+  /** 最终采用的标签（已规范化）；无法识别时为空串 */
+  tag: string
+  /** 被改写时的说明（没改写则没有） */
+  note?: string
+  /** 裸语言码对应多个地区且都不常用：**不猜**，回报候选给调用方去选 */
+  ambiguous?: string[]
+}
+
+/**
+ * 把请求的标签解析成规范标签 —— **只看语言表**，工程里已有什么由调用方优先判断：
+ * - 表里直接有 → 原样；
+ * - 裸语言码（`en`）→ 收敛到地区；唯一地区直接用，多个地区时优先**常用语言**
+ *   （`en` → `en_us`、`zh` → `zh_cn`、`ja` → `ja_jp`）；
+ * - 多个地区且都**不**常用（`de` → `de_de` / `de_at`）→ 不猜，回报候选；
+ * - 表里没有但形式合法（自定义语言）→ 原样收下，绝不因为"表里没有"就拒绝。
+ */
+export function resolveLocaleTag(raw: string): LocaleResolution {
+  const tag = formatLocaleTag(raw)
+  if (!tag) return { tag: '' }
+  if (LOCALE_INDEX.has(tag)) return { tag }
+  if (isBareLanguageTag(tag)) {
+    const candidates = ALL_LOCALES.filter((entry) =>
+      entry.tag.startsWith(`${tag}_`),
+    ).map((entry) => entry.tag)
+    if (candidates.length === 1) {
+      return {
+        tag: candidates[0]!,
+        note: `${tag} → ${candidates[0]}（语言表里唯一的地区）`,
+      }
+    }
+    const common = candidates.find((item) => COMMON_LOCALE_TAGS.includes(item))
+    if (common) return { tag: common, note: `${tag} → ${common}（常用语言）` }
+    if (candidates.length > 1) return { tag, ambiguous: candidates }
+  }
+  return { tag }
+}

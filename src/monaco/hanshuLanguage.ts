@@ -419,6 +419,8 @@ export function registerHanshuLanguage(monaco: Monaco) {
             'hanshu.define.body',
           ],
         ],
+        // `#stopparse`：指令行 —— 从这行往后不再自动成键（与 `#define` 同色）
+        [/^(#stopparse)([ \t]*)$/, ['hanshu.define.kw', 'white']],
         // 只有行首（可含前导空白）才是注释，行内 `#` 属于正文：
         // 与编译去噪 src/hanshu/compiler.ts 的 `/^\s*#/` 保持一致
         [/^\s*#.*$/, 'comment'],

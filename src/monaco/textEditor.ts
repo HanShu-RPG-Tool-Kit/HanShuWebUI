@@ -1,11 +1,12 @@
 import type { Monaco } from '@monaco-editor/react'
 import type { editor } from 'monaco-editor'
 import {
-  createLocaleKey,
+  createLocaleKeyFromText,
   isLocaleKey,
   normalizeLocaleKey,
   type TextMap,
 } from '../i18n/textMap'
+import { stopParseLineOf } from '../hanshu/directives'
 import { createCaretOverlay, type CaretLine } from './textCaretOverlay'
 import {
   isDeletionHittingKey,
@@ -1139,6 +1140,9 @@ export function bindText(
     const map = host.getMap()
     if (!model || !map) return
 
+    // `#stopparse` 之后不再自动成键：用户显式关闭这段文本的本地化
+    const stopLine = stopParseLineOf(model.getValue())
+
     const used = new Set<string>()
     for (const [key] of map.entries()) used.add(key)
 
@@ -1165,6 +1169,8 @@ export function bindText(
     }
 
     for (const span of currentSpans()) {
+      // 指令行之后的文本（含跨过指令行的多行块）不参与自动成键
+      if (stopLine != null && span.endLine >= stopLine) continue
       if (isLocaleKey(span.value)) {
         // 已经是键：收缩时也要用上它（不能只认这次新建的键）
         noteDialogueBlock(span, normalizeLocaleKey(span.value), false)
@@ -1178,7 +1184,9 @@ export function bindText(
         const range = statementLineRange(span, next)
         if (caretLine >= range.from && caretLine <= range.to) continue
       }
-      const key = createLocaleKey((candidate) => used.has(candidate))
+      const key = createLocaleKeyFromText(span.value, (candidate) =>
+        used.has(candidate),
+      )
       used.add(key)
       plan.push({ span, key })
       noteDialogueBlock(span, key, true)

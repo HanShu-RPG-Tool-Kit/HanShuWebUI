@@ -34,12 +34,11 @@ import {
   isHanshuFile,
   isMarkdownFile,
   editorLanguageForFile,
-  listWorkspaceFiles,
   loadWorkspace,
   normalizeResourceName,
   ALLOWED_EXTENSIONS_LABEL,
-  RENAMABLE_EXTENSIONS_LABEL,
-  isRenamableFileName,
+  MANUAL_FILE_EXTENSIONS_LABEL,
+  isManualFileName,
   removeAssetMeta,
   saveWorkspace,
   toggleAssetsCollapsed,
@@ -72,7 +71,29 @@ import {
   getAssetBlob,
   putAssetBlob,
 } from '../assets/idb'
-import type { AgentHost } from '../agent/tools'
+import type { AgentHost, AgentOpResult, LangEntry } from '../agent/tools'
+import {
+  COMMON_LOCALES,
+  findLocale,
+  resolveLocale,
+  resolveLocaleTag,
+} from '../i18n/locales'
+import {
+  activeFilePathOf,
+  applyTextEdit,
+  collectSourceKeys,
+  deleteSourceAssets,
+  langAssetPathFor,
+  listLocalesOf,
+  paginateSource,
+  parseSourceText,
+  readLangAsset,
+  sourceKindOf,
+  unparseSourceText,
+  validateSourceContent,
+  voiceStatusOf,
+  writeLangAsset,
+} from '../agent/agentOps'
 import { MarkdownPreview } from '../MarkdownPreview'
 import { HscPreview } from '../HscPreview'
 import { AssetPreview } from '../AssetPreview'
@@ -104,6 +125,7 @@ import { TextEditBox } from '../TextEditBox'
 import {
   TextMap,
   TEXT_ASSET_MIME,
+  stringifyTextFile,
   textAssetPath,
   type TextSink,
 } from '../i18n/textMap'
@@ -1049,13 +1071,14 @@ export const ScriptWorkspace = forwardRef<
 
   const handleNewScript = (packageId: string) => {
     const name = window.prompt(
-      `文件名（后缀须为 ${ALLOWED_EXTENSIONS_LABEL}）`,
+      `文件名（后缀须为 ${MANUAL_FILE_EXTENSIONS_LABEL}）`,
       '新剧本.hs',
     )
     if (name == null) return
     const normalized = normalizeResourceName(name)
-    if (!normalized) {
-      window.alert(`文件名无效。后缀只允许：${ALLOWED_EXTENSIONS_LABEL}`)
+    // `.lang` / `.voice` 的名字由剧本名派生（改名剧本时会一起搬），不手工新建
+    if (!normalized || !isManualFileName(normalized)) {
+      window.alert(`文件名无效。新建允许的后缀：${MANUAL_FILE_EXTENSIONS_LABEL}`)
       return
     }
     persistActiveContent(valueRef.current)
@@ -1104,33 +1127,22 @@ export const ScriptWorkspace = forwardRef<
     })
   }
 
-  const handleRenameScript = async (scriptId: string) => {
+  /**
+   * 改名并连带搬迁每种语言的文本 / 音频（见 `renameScriptAssets`）。
+   * 界面里的改名与 Agent 的 `rename_source` 共用这一条路径。
+   */
+  const applyScriptRename = async (
+    scriptId: string,
+    newName: string,
+  ): Promise<{ ok: true; moves: number } | { ok: false; error: string }> => {
     const hit = findScript(workspaceRef.current, scriptId)
-    if (!hit) return
-    const name = window.prompt(
-      `重命名（后缀须为 ${RENAMABLE_EXTENSIONS_LABEL}）`,
-      hit.script.name,
-    )
-    if (name == null) return
-    const normalized = normalizeResourceName(name)
-    // `.lang` / `.voice` 的名字由剧本名派生，不接受单独改名
-    if (!normalized || !isRenamableFileName(normalized)) {
-      window.alert(
-        `文件名无效。改名允许的后缀：${RENAMABLE_EXTENSIONS_LABEL}`,
-      )
-      return
-    }
-    if (normalized === hit.script.name) return
+    if (!hit) return { ok: false, error: '文件不存在' }
+    if (newName === hit.script.name) return { ok: true, moves: 0 }
 
     // 连带改名：每种语言的文本资产与音频目录都跟着走（见 renameScriptAssets）
-    const renamed = renameScriptAssets(
-      workspaceRef.current,
-      scriptId,
-      normalized,
-    )
+    const renamed = renameScriptAssets(workspaceRef.current, scriptId, newName)
     if (renamed.kind === 'blocked') {
-      window.alert(`改名未执行：${renamed.path} 已存在`)
-      return
+      return { ok: false, error: `${renamed.path} 已存在` }
     }
 
     // 先搬 blob 再提交模型：否则语言文本映射会先按新路径去读，读到空文件
@@ -1144,16 +1156,43 @@ export const ScriptWorkspace = forwardRef<
       }
     }
 
-    const base = renamed.kind === 'moved' ? renamed.workspace : workspaceRef.current
+    const base =
+      renamed.kind === 'moved' ? renamed.workspace : workspaceRef.current
     commitWorkspace({
       ...base,
       packages: base.packages.map((pkg) => ({
         ...pkg,
         scripts: pkg.scripts.map((script) =>
-          script.id === scriptId ? { ...script, name: normalized } : script,
+          script.id === scriptId ? { ...script, name: newName } : script,
         ),
       })),
     })
+    return {
+      ok: true,
+      moves: renamed.kind === 'moved' ? renamed.moves.length : 0,
+    }
+  }
+
+  const handleRenameScript = async (scriptId: string) => {
+    const hit = findScript(workspaceRef.current, scriptId)
+    if (!hit) return
+    const name = window.prompt(
+      `重命名（后缀须为 ${MANUAL_FILE_EXTENSIONS_LABEL}）`,
+      hit.script.name,
+    )
+    if (name == null) return
+    const normalized = normalizeResourceName(name)
+    // `.lang` / `.voice` 的名字由剧本名派生，不接受单独改名
+    if (!normalized || !isManualFileName(normalized)) {
+      window.alert(
+        `文件名无效。改名允许的后缀：${MANUAL_FILE_EXTENSIONS_LABEL}`,
+      )
+      return
+    }
+    if (normalized === hit.script.name) return
+
+    const result = await applyScriptRename(scriptId, normalized)
+    if (!result.ok) window.alert(`改名未执行：${result.error}`)
   }
 
   const handleDeletePackage = (packageId: string) => {
@@ -1201,16 +1240,25 @@ export const ScriptWorkspace = forwardRef<
     }
   }
 
-  const handleDeleteScript = (scriptId: string) => {
+  /**
+   * 删除剧本，并连带删除它在**所有语言**下的语言文本与配音资产。
+   * 只从 `pkg.scripts` 里摘掉会留下 `assets/<locale>/lang_<ext>/xx.lang` 孤儿（旧行为就漏在这里）。
+   */
+  const deleteScriptWithAssets = async (
+    scriptId: string,
+  ): Promise<{ removedAssets: number } | null> => {
     const hit = findScript(workspaceRef.current, scriptId)
-    if (!hit) return
-    if (!window.confirm(`删除剧本「${hit.script.name}」？`)) return
+    if (!hit) return null
+    const cleaned = await deleteSourceAssets(
+      workspaceRef.current,
+      hit.script.name,
+    )
 
-    const nextPackages = workspaceRef.current.packages.map((pkg) => ({
+    const nextPackages = cleaned.workspace.packages.map((pkg) => ({
       ...pkg,
       scripts: pkg.scripts.filter((script) => script.id !== scriptId),
     }))
-    let activeScriptId = workspaceRef.current.activeScriptId
+    let activeScriptId = cleaned.workspace.activeScriptId
     if (activeScriptId === scriptId) {
       const fallback =
         nextPackages.flatMap((pkg) => pkg.scripts).find(Boolean) ?? null
@@ -1219,7 +1267,7 @@ export const ScriptWorkspace = forwardRef<
     const next: Workspace = {
       packages: nextPackages,
       activeScriptId,
-      activeAssetId: workspaceRef.current.activeAssetId,
+      activeAssetId: cleaned.workspace.activeAssetId,
     }
     commitWorkspace(next)
     if (scriptId === activeIdRef.current) {
@@ -1231,6 +1279,18 @@ export const ScriptWorkspace = forwardRef<
       setSavedAt(opened?.script.updatedAt ?? null)
       setRoles(createDefaultRoles())
     }
+    return { removedAssets: cleaned.removed.length }
+  }
+
+  const handleDeleteScript = async (scriptId: string) => {
+    const hit = findScript(workspaceRef.current, scriptId)
+    if (!hit) return
+    if (
+      !window.confirm(`删除剧本「${hit.script.name}」及其各语言的译文 / 配音？`)
+    ) {
+      return
+    }
+    await deleteScriptWithAssets(scriptId)
   }
 
   const handleDeleteAsset = (assetId: string) => {
@@ -1842,119 +1902,569 @@ export const ScriptWorkspace = forwardRef<
     return model.getValueInRange(sel)
   }
 
-  const agentHost: AgentHost = {
-    listFiles: () => listWorkspaceFiles(workspaceRef.current),
-    getCurrentFileName: () =>
-      findScript(workspaceRef.current, activeIdRef.current)?.script.name ?? '',
-    readFile: (fileName) => {
-      const hit = findScriptByName(workspaceRef.current, fileName)
-      if (!hit) return { ok: false, error: `未找到文件：${fileName}` }
-      // 若读的是当前文件，以编辑器里最新内容为准
-      if (hit.script.id === activeIdRef.current) {
-        return {
-          ok: true,
-          fileName: hit.script.name,
-          content: valueRef.current,
-        }
-      }
-      return {
-        ok: true,
-        fileName: hit.script.name,
-        content: hit.script.content,
-      }
-    },
-    writeCurrentFile: (content) => {
-      const id = activeIdRef.current
-      const hit = findScript(workspaceRef.current, id)
-      if (!id || !hit) return { ok: false, error: '当前没有打开的文件' }
-      const before =
-        hit.script.id === activeIdRef.current
-          ? valueRef.current
-          : hit.script.content
-      pushFileBackup(hit.script.name, before, 'agent.write_current_file')
-      const next = updateScriptContent(workspaceRef.current, id, content)
-      commitWorkspace(next)
+  /** Agent 写入已有文件：留历史、并回编辑器、记 diff */
+  const applyAgentFileWrite = (
+    scriptId: string,
+    content: string,
+    tool: string,
+  ): { file: string } | null => {
+    const hit = findScript(workspaceRef.current, scriptId)
+    if (!hit) return null
+    const isActive = hit.script.id === activeIdRef.current
+    const before = isActive ? valueRef.current : hit.script.content
+    pushFileBackup(hit.script.name, before, tool)
+    commitWorkspace(updateScriptContent(workspaceRef.current, scriptId, content))
+    if (isActive) {
       setValue(content)
       valueRef.current = content
       editorRef.current?.setValue(content)
       setSavedAt(Date.now())
-      pushAgentDiff({
-        fileName: hit.script.name,
-        before,
-        after: content,
-      })
-      return { ok: true, fileName: hit.script.name }
-    },
-    writeFile: (fileName, content) => {
-      const normalized = normalizeResourceName(fileName)
-      if (!normalized) {
-        return {
+    }
+    pushAgentDiff({ fileName: hit.script.name, before, after: content })
+    return { file: hit.script.name }
+  }
+
+  /** 源文件的最新正文：当前打开的文件以编辑器内容为准 */
+  const agentSourceContent = (scriptId: string): string | null => {
+    const hit = findScript(workspaceRef.current, scriptId)
+    if (!hit) return null
+    return hit.script.id === activeIdRef.current
+      ? valueRef.current
+      : hit.script.content
+  }
+
+  /** 语言工具的目标：源文件 + 语言 → 所属包、资产路径与当前译文表 */
+  const langTargetOf = async (sourceName: string, localeArg?: string) => {
+    const hit = findScriptByName(workspaceRef.current, sourceName)
+    if (!hit) return null
+    const lang = localeArg?.trim() || locale
+    const path = langAssetPathFor(hit.script.name, lang)
+    const map = await readLangAsset(hit.pkg.id, path)
+    return { hit, lang, path, map }
+  }
+
+  /** Agent 写源文件名前的校验：`.lang` 不当普通文件写（走 write_lang） */
+  const normalizeAgentSource = (
+    raw: string,
+  ): { name: string } | { error: AgentOpResult } => {
+    const normalized = normalizeResourceName(raw)
+    if (!normalized) {
+      return {
+        error: {
           ok: false,
           error: `文件名无效，后缀须为 ${ALLOWED_EXTENSIONS_LABEL}`,
-        }
+        },
       }
-      const existing = findScriptByName(workspaceRef.current, normalized)
-      if (existing) {
-        const before =
-          existing.script.id === activeIdRef.current
-            ? valueRef.current
-            : existing.script.content
-        pushFileBackup(normalized, before, 'agent.write_file')
-        const next = updateScriptContent(
-          workspaceRef.current,
-          existing.script.id,
-          content,
-        )
-        commitWorkspace(next)
-        if (existing.script.id === activeIdRef.current) {
-          setValue(content)
-          valueRef.current = content
-          editorRef.current?.setValue(content)
-          setSavedAt(Date.now())
-        }
-        pushAgentDiff({
-          fileName: normalized,
-          before,
-          after: content,
-        })
-        return { ok: true, fileName: normalized, created: false }
+    }
+    if (normalized.toLowerCase().endsWith('.lang')) {
+      return {
+        error: {
+          ok: false,
+          error: '语言文本不能当普通文件写',
+          hint: '用 list_lang_keys 看键、用 write_lang 写译文（键来自正文）',
+        },
       }
+    }
+    return { name: normalized }
+  }
 
+  /**
+   * 解析 agent 传来的 locale —— **工程优先**：工程里已有就沿用，其次按语言表规范化
+   * （`en` → `en_us`、`ja` → `ja_jp`），最后才落地为自定义标签。
+   * 裸语言码对应多个地区且都不常用（`de` → `de_de` / `de_at`）时不猜，回报候选。
+   */
+  const resolveAgentLocale = (
+    raw?: string,
+  ): { locale: string; note?: string } | { error: AgentOpResult } => {
+    const requested = (raw ?? '').trim() || locale
+    const projectLocales = listLocalesOf(workspaceRef.current).map(
+      (item) => item.locale,
+    )
+    const exact = projectLocales.find(
+      (item) => item.toLowerCase() === requested.toLowerCase(),
+    )
+    if (exact) return { locale: exact }
+
+    const resolved = resolveLocaleTag(requested)
+    if (!resolved.tag) {
+      return {
+        error: {
+          ok: false,
+          error: `语言标签无效：${requested}`,
+          hint: '用「语言_地区」的小写下划线形式，如 zh_cn / en_us / ja_jp',
+        },
+      }
+    }
+
+    if (resolved.ambiguous) {
+      return {
+        error: {
+          ok: false,
+          error: `语言标签不够明确：${requested}`,
+          candidates: resolved.ambiguous,
+          hint: '请从候选中挑一个明确的标签重试',
+        },
+      }
+    }
+
+    // 工程里已有等价标签（工程是 en_us、请求是 en）→ 一律以工程为准
+    const equivalent = projectLocales.find(
+      (item) => item.toLowerCase() === resolved.tag.toLowerCase(),
+    )
+    if (equivalent) {
+      return { locale: equivalent, note: `${requested} → ${equivalent}（工程已有）` }
+    }
+    return { locale: resolved.tag, note: resolved.note }
+  }
+
+  const agentHost: AgentHost = {
+    listSources: (packageName) => {
+      const filter = packageName?.trim().toLowerCase()
+      const files = workspaceRef.current.packages
+        .filter((pkg) => !filter || pkg.name.toLowerCase() === filter)
+        .flatMap((pkg) =>
+          pkg.scripts.map((script) => ({
+            package: pkg.name,
+            source: script.name,
+            kind: sourceKindOf(script.name),
+            bytes: script.content.length,
+            updatedAt: script.updatedAt,
+          })),
+        )
+      return { ok: true, files, count: files.length }
+    },
+    readSource: (source, offset, limit) => {
+      const hit = findScriptByName(workspaceRef.current, source)
+      if (!hit) return { ok: false, error: `未找到文件：${source}` }
+      const content = agentSourceContent(hit.script.id) ?? hit.script.content
+      const page = paginateSource(content, offset, limit)
+      return {
+        ok: true,
+        source: hit.script.name,
+        kind: sourceKindOf(hit.script.name),
+        version: hit.script.updatedAt,
+        ...page,
+      }
+    },
+    createSource: (source, content) => {
+      const checked = normalizeAgentSource(source)
+      if ('error' in checked) return checked.error
+      if (findScriptByName(workspaceRef.current, checked.name)) {
+        return {
+          ok: false,
+          error: `文件已存在：${checked.name}`,
+          hint: '覆盖用 write_source，局部修改用 edit_source；不要靠改名字新建来"试一下"',
+        }
+      }
       const pkgId =
         findScript(workspaceRef.current, activeIdRef.current)?.pkg.id ??
         workspaceRef.current.packages[0]?.id
       if (!pkgId) return { ok: false, error: '没有可用的包' }
 
-      // 先落盘当前打开文件，避免内容丢在未保存的编辑器里
       let base = workspaceRef.current
       if (activeIdRef.current) {
         base = updateScriptContent(base, activeIdRef.current, valueRef.current)
       }
-
-      const script = createScript(normalized, content)
-      const nextPackages = base.packages.map((pkg) =>
-        pkg.id === pkgId
-          ? { ...pkg, collapsed: false, scripts: [...pkg.scripts, script] }
-          : pkg,
-      )
-      // 切换到新建文件，避免后续 write_current_file 误盖原来的 .hs
+      const script = createScript(checked.name, content)
+      // 新建**不切换**当前打开的文件：agent 造文件不该动用户正在看的东西
       commitWorkspace({
-        packages: nextPackages,
-        activeScriptId: script.id,
-        activeAssetId: null,
+        packages: base.packages.map((pkg) =>
+          pkg.id === pkgId
+            ? { ...pkg, collapsed: false, scripts: [...pkg.scripts, script] }
+            : pkg,
+        ),
+        activeScriptId: base.activeScriptId,
+        activeAssetId: base.activeAssetId,
       })
-      setValue(content)
-      valueRef.current = content
-      editorRef.current?.setValue(content)
-      setSavedAt(script.updatedAt)
-      setRoles(createDefaultRoles())
       pushAgentDiff({
-        fileName: normalized,
+        fileName: checked.name,
         before: '',
         after: content,
         created: true,
       })
-      return { ok: true, fileName: normalized, created: true }
+      return { ok: true, source: checked.name, created: true, activeUnchanged: true }
+    },
+    writeSource: (source, content, expectedVersion) => {
+      const checked = normalizeAgentSource(source)
+      if ('error' in checked) return checked.error
+
+      const existing = findScriptByName(workspaceRef.current, checked.name)
+      if (!existing) {
+        return {
+          ok: false,
+          error: `文件不存在：${checked.name}`,
+          hint: '新建请用 create_source；write_source 只覆盖已有文件',
+        }
+      }
+      if (
+        expectedVersion != null &&
+        existing.script.updatedAt !== expectedVersion
+      ) {
+        return {
+          ok: false,
+          error: '文件已被改动，写入被拒绝',
+          hint: '重新 read_source 拿到新的 version 再写',
+        }
+      }
+      const written = applyAgentFileWrite(
+        existing.script.id,
+        content,
+        'agent.write_source',
+      )
+      if (!written) return { ok: false, error: '写入失败' }
+      return { ok: true, source: written.file, created: false, changed: true }
+    },
+    editSource: (source, oldText, newText, replaceAll) => {
+      const hit = findScriptByName(workspaceRef.current, source)
+      if (!hit) return { ok: false, error: `未找到文件：${source}` }
+      const content = agentSourceContent(hit.script.id) ?? hit.script.content
+      const edited = applyTextEdit(content, oldText, newText, replaceAll)
+      if (!edited.ok) return { ok: false, error: edited.error }
+      const written = applyAgentFileWrite(
+        hit.script.id,
+        edited.content,
+        'agent.edit_source',
+      )
+      if (!written) return { ok: false, error: '写入失败' }
+      return { ok: true, source: written.file, changed: true, replaced: edited.count }
+    },
+    renameSource: async (source, newSource) => {
+      const hit = findScriptByName(workspaceRef.current, source)
+      if (!hit) return { ok: false, error: `未找到文件：${source}` }
+      const normalized = normalizeResourceName(newSource)
+      if (!normalized || !isManualFileName(normalized)) {
+        return {
+          ok: false,
+          error: `新文件名无效，后缀须为 ${MANUAL_FILE_EXTENSIONS_LABEL}`,
+        }
+      }
+      const result = await applyScriptRename(hit.script.id, normalized)
+      if (!result.ok) return { ok: false, error: result.error }
+      return {
+        ok: true,
+        source: normalized,
+        previous: hit.script.name,
+        movedFiles: result.moves,
+      }
+    },
+    deleteSource: async (source) => {
+      const hit = findScriptByName(workspaceRef.current, source)
+      if (!hit) return { ok: false, error: `文件不存在：${source}` }
+      const deleted = await deleteScriptWithAssets(hit.script.id)
+      if (!deleted) return { ok: false, error: '删除失败' }
+      return {
+        ok: true,
+        source: hit.script.name,
+        removedAssets: deleted.removedAssets,
+      }
+    },
+    validateSource: (source) => {
+      const hit = findScriptByName(workspaceRef.current, source)
+      if (!hit) return { ok: false, error: `未找到文件：${source}` }
+      const content = agentSourceContent(hit.script.id) ?? hit.script.content
+      const result = validateSourceContent(hit.script.name, content)
+      return {
+        ok: result.diagnostics.length === 0 && !result.compileError,
+        source: hit.script.name,
+        diagnostics: result.diagnostics,
+        compileError: result.compileError,
+      }
+    },
+    getActiveFilePath: () => {
+      const active = activeFilePathOf(workspaceRef.current, activeIdRef.current)
+      if (!active) return { ok: false, error: '当前没有打开的文件' }
+      return {
+        ok: true,
+        source: active.name,
+        kind: active.kind,
+        path: active.path,
+        hint: 'path 只用于理解结构；工具参数仍只写逻辑名 source',
+      }
+    },
+    listLocales: () => ({
+      ok: true,
+      active: locale,
+      locales: listLocalesOf(workspaceRef.current).map((item) => {
+        const entry = resolveLocale(item.locale)
+        return {
+          ...item,
+          label: entry.nativeName,
+          chineseName: entry.chineseName,
+          inTable: Boolean(findLocale(item.locale)),
+        }
+      }),
+      /** 新语言请从这些规范标签里挑，别再自己拼 */
+      suggestions: COMMON_LOCALES.map((entry) => ({
+        locale: entry.tag,
+        label: entry.nativeName,
+      })),
+    }),
+    listLangKeys: async (source, localeArg, offset, limit) => {
+      const resolved = resolveAgentLocale(localeArg)
+      if ('error' in resolved) return resolved.error
+      const target = await langTargetOf(source, resolved.locale)
+      if (!target) return { ok: false, error: `未找到文件：${source}` }
+      const content =
+        agentSourceContent(target.hit.script.id) ?? target.hit.script.content
+      const keys = collectSourceKeys(content)
+      const start = Math.max(1, Math.floor(offset ?? 1) || 1)
+      const count = Math.min(Math.max(1, Math.floor(limit ?? 200) || 200), 1000)
+      const page = keys.slice(start - 1, start - 1 + count)
+      const entries = page.map((item) => ({
+        key: item.key,
+        line: item.line,
+        text: target.map[item.key] ?? '',
+        translated: item.key in target.map,
+      }))
+      return {
+        ok: true,
+        source: target.hit.script.name,
+        locale: target.lang,
+        path: target.path,
+        total: keys.length,
+        missing: keys.filter((item) => !(item.key in target.map)).length,
+        offset: start,
+        truncated: start - 1 + page.length < keys.length,
+        entries,
+      }
+    },
+    writeLang: async (source, translations) => {
+      const hit = findScriptByName(workspaceRef.current, source)
+      if (!hit) return { ok: false, error: `未找到文件：${source}` }
+      const plan: Array<{ locale: string; entries: LangEntry[] }> = []
+      const notes: string[] = []
+      for (const requested of Object.keys(translations)) {
+        const entries = translations[requested] ?? []
+        if (entries.length === 0) continue
+        const resolved = resolveAgentLocale(requested)
+        if ('error' in resolved) return resolved.error
+        if (resolved.note) notes.push(resolved.note)
+        const hit = plan.find((item) => item.locale === resolved.locale)
+        if (hit) hit.entries.push(...entries)
+        else plan.push({ locale: resolved.locale, entries: [...entries] })
+      }
+      if (plan.length === 0) return { ok: false, error: 'translations 为空' }
+
+      const content = agentSourceContent(hit.script.id) ?? hit.script.content
+      const known = new Set(collectSourceKeys(content).map((item) => item.key))
+      let workspace = workspaceRef.current
+      const results: Array<Record<string, unknown>> = []
+      let writtenTotal = 0
+
+      for (const step of plan) {
+        const locale = step.locale
+        const path = langAssetPathFor(hit.script.name, locale)
+        const map = await readLangAsset(hit.pkg.id, path)
+        const next = { ...map }
+        const written: string[] = []
+        const skipped: string[] = []
+        for (const entry of step.entries) {
+          const key = entry.key.trim().toLowerCase()
+          if (!known.has(key)) {
+            skipped.push(entry.key)
+            continue
+          }
+          next[key] = entry.text
+          written.push(key)
+        }
+        if (written.length === 0) {
+          results.push({
+            locale,
+            path,
+            written,
+            skipped,
+            writtenCount: 0,
+            total: Object.keys(next).length,
+          })
+          continue
+        }
+        workspace = await writeLangAsset(workspace, hit.pkg.id, path, next)
+        writtenTotal += written.length
+        if (textMapRef.current?.fileName.toLowerCase() === path.toLowerCase()) {
+          textCacheRef.current = stringifyTextFile(next)
+          textMapRef.current.load()
+        }
+        results.push({
+          locale,
+          path,
+          written,
+          skipped,
+          writtenCount: written.length,
+          total: Object.keys(next).length,
+        })
+      }
+
+      if (writtenTotal > 0) commitWorkspace(workspace)
+      if (writtenTotal === 0) {
+        return {
+          ok: false,
+          error: '没有任何键存在于正文里',
+          locales: results,
+          notes,
+          hint: '键写在正文行末（`//` + 8 位十六进制，形如 `narrator:7f3a91c2//`）；用 list_lang_keys 查，或先 parse_hs 成键',
+        }
+      }
+      return { ok: true, source: hit.script.name, locales: results, notes }
+    },
+    deleteLangKeys: async (source, keys, localeArg) => {
+      const resolved = resolveAgentLocale(localeArg)
+      if ('error' in resolved) return resolved.error
+      const target = await langTargetOf(source, resolved.locale)
+      if (!target) return { ok: false, error: `未找到文件：${source}` }
+      const next = { ...target.map }
+      const removed: string[] = []
+      for (const raw of keys) {
+        const key = raw.trim().toLowerCase()
+        if (!(key in next)) continue
+        delete next[key]
+        removed.push(key)
+      }
+      if (removed.length === 0) return { ok: true, removed: [], total: Object.keys(next).length }
+
+      const workspace = await writeLangAsset(
+        workspaceRef.current,
+        target.hit.pkg.id,
+        target.path,
+        next,
+      )
+      commitWorkspace(workspace)
+      if (
+        textMapRef.current?.fileName.toLowerCase() === target.path.toLowerCase()
+      ) {
+        textCacheRef.current = stringifyTextFile(next)
+        textMapRef.current.load()
+      }
+      return {
+        ok: true,
+        source: target.hit.script.name,
+        locale: target.lang,
+        removed,
+        total: Object.keys(next).length,
+      }
+    },
+    listVoiceStatus: async (source, localeArg) => {
+      const hit = findScriptByName(workspaceRef.current, source)
+      if (!hit) return { ok: false, error: `未找到文件：${source}` }
+      const content = agentSourceContent(hit.script.id) ?? hit.script.content
+      const keys = collectSourceKeys(content).map((item) => item.key)
+      const resolved = resolveAgentLocale(localeArg)
+      if ('error' in resolved) return resolved.error
+      const lang = resolved.locale
+      const entries = await voiceStatusOf(
+        hit.pkg.id,
+        hit.pkg.assets,
+        hit.script.name,
+        lang,
+        keys,
+      )
+      const missing = entries.filter((item) => item.state === 'missing')
+      return {
+        ok: true,
+        source: hit.script.name,
+        locale: lang,
+        total: entries.length,
+        missing: missing.map((item) => item.key),
+        entries,
+      }
+    },
+    parseHs: async (source, localeArg) => {
+      const hit = findScriptByName(workspaceRef.current, source)
+      if (!hit) return { ok: false, error: `未找到文件：${source}` }
+      const resolved = resolveAgentLocale(localeArg)
+      if ('error' in resolved) return resolved.error
+      const lang = resolved.locale
+      const path = langAssetPathFor(hit.script.name, lang)
+      const map = await readLangAsset(hit.pkg.id, path)
+      const before = agentSourceContent(hit.script.id) ?? hit.script.content
+      const parsed = parseSourceText(before, map)
+
+      if (parsed.entries.length === 0) {
+        return {
+          ok: true,
+          source: hit.script.name,
+          locale: lang,
+          created: 0,
+          skipped: parsed.skipped,
+          hint: '已经没有可成键的文本（要么都已成键，要么在 #stopparse 之后）',
+        }
+      }
+
+      // 先写映射再改正文：万一正文写入失败，只是多出几条孤儿译文，不会出现"有键无译文"
+      const next = { ...map }
+      for (const [key, text] of parsed.entries) next[key] = text
+      const workspace = await writeLangAsset(
+        workspaceRef.current,
+        hit.pkg.id,
+        path,
+        next,
+      )
+      commitWorkspace(workspace)
+      if (textMapRef.current?.fileName.toLowerCase() === path.toLowerCase()) {
+        textCacheRef.current = stringifyTextFile(next)
+        textMapRef.current.load()
+      }
+
+      const written = applyAgentFileWrite(
+        hit.script.id,
+        parsed.content,
+        'agent.parse_hs',
+      )
+      if (!written) return { ok: false, error: '写入失败' }
+      return {
+        ok: true,
+        source: written.file,
+        locale: lang,
+        created: parsed.entries.length,
+        skipped: parsed.skipped,
+        keys: parsed.entries.map(([key]) => key),
+      }
+    },
+    unparseHs: async (source, localeArg) => {
+      const hit = findScriptByName(workspaceRef.current, source)
+      if (!hit) return { ok: false, error: `未找到文件：${source}` }
+      const resolved = resolveAgentLocale(localeArg)
+      if ('error' in resolved) return resolved.error
+      const lang = resolved.locale
+      const path = langAssetPathFor(hit.script.name, lang)
+      const map = await readLangAsset(hit.pkg.id, path)
+      const before = agentSourceContent(hit.script.id) ?? hit.script.content
+      const unparsed = unparseSourceText(before, map)
+
+      if (unparsed.replaced === 0) {
+        return {
+          ok: false,
+          error: '没有可逆解析的键',
+          source: hit.script.name,
+          locale: lang,
+          missing: unparsed.missing,
+          multiline: unparsed.multiline,
+          hint: '先用 list_lang_keys 确认该语言有译文；多行译文目前不支持逆解析',
+        }
+      }
+
+      const written = applyAgentFileWrite(
+        hit.script.id,
+        unparsed.content,
+        'agent.unparse_hs',
+      )
+      if (!written) return { ok: false, error: '写入失败' }
+      return {
+        ok: true,
+        source: written.file,
+        locale: lang,
+        replaced: unparsed.replaced,
+        missing: unparsed.missing,
+        multiline: unparsed.multiline,
+      }
+    },
+    checkExport: async () => {
+      const pak = await buildResourcePackZip(workspaceRef.current)
+      const project = await buildProjectPackZip(workspaceRef.current)
+      return {
+        ok: true,
+        pak: { files: pak.fileCount, warnings: pak.warnings },
+        project: { files: project.fileCount, warnings: project.warnings },
+      }
     },
   }
 
@@ -2340,7 +2850,11 @@ export const ScriptWorkspace = forwardRef<
               )}
             </span>
           )}
-          <LocaleSelect value={locale} onChange={handleLocaleChange} />
+          <LocaleSelect
+            value={locale}
+            onChange={handleLocaleChange}
+            projectLocales={listLocalesOf(workspace).map((item) => item.locale)}
+          />
         </div>
       </footer>
       {langEdit && (

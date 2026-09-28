@@ -11,6 +11,8 @@
  * 4. `.hs` 与 `.hsc` 两套 tokenizer 都要满足上面几条（它们共用规则工厂）。
  */
 import assert from 'node:assert/strict'
+import { collectSourceKeys } from '../src/hanshu/sourceKeys'
+import { createLocaleKeyFromText } from '../src/i18n/textMap'
 import {
   HANSHU_HSC_LANGUAGE_ID,
   HANSHU_LANGUAGE_ID,
@@ -164,5 +166,80 @@ for (const [id, provider] of Object.entries(providers)) {
   }
 }
 console.log('  ok - 所有选项规则 ≥3 段分组，且分组内无 @pop')
+
+console.log('== #stopparse 指令着色 ==')
+{
+  const provider = providers[HANSHU_LANGUAGE_ID]
+  assert.ok(provider, '.hs 未注册 Monarch provider')
+  const [directive] = lex(provider, '#stopparse')
+  assert.ok(
+    directive!.tokens[0]!.type.includes('define.kw'),
+    `.hs #stopparse：应作为指令上色（与 #define 同色），实际 ${directive!.tokens.map((t) => t.type).join(' ')}`,
+  )
+  const [indented] = lex(provider, '  #stopparse')
+  assert.ok(
+    !indented!.tokens[0]!.type.includes('define.kw'),
+    '.hs 缩进的 #stopparse 不是指令（与 #define 的顶格要求一致）',
+  )
+  const [comment] = lex(provider, '# 普通注释')
+  assert.ok(
+    comment!.tokens[0]!.type.includes('comment'),
+    `.hs 行首 # 注释：应仍是注释，实际 ${comment!.tokens.map((t) => t.type).join(' ')}`,
+  )
+  console.log('  ok - .hs：指令 / 缩进 / 注释 三者区分正确')
+}
+
+console.log('== 文本哈希键 ==')
+{
+  const keyOf = (text: string, taken: (key: string) => boolean = () => false) =>
+    createLocaleKeyFromText(text, taken)
+  const a = keyOf('夜色压在城墙上。')
+  const b = keyOf('夜色压在城墙上。')
+  assert.equal(a, b, '同一段文本必须得到同一个键（可复现）')
+  assert.match(a, /^[0-9a-f]{8}$/, `键名必须是 8 位小写十六进制，实际 ${a}`)
+  assert.notEqual(
+    a,
+    keyOf('某个犯人醒来了。'),
+    '不同文本的键不应相同',
+  )
+  const conflict = keyOf('夜色压在城墙上。', (key) => key === a)
+  assert.notEqual(conflict, a, '冲突时必须换下一个候选（二次哈希）')
+  assert.match(conflict, /^[0-9a-f]{8}$/, `二次哈希也必须是 8 位十六进制，实际 ${conflict}`)
+  assert.equal(
+    conflict,
+    keyOf('夜色压在城墙上。', (key) => key === a),
+    '二次哈希也必须可复现',
+  )
+  console.log('  ok - 键 = 文本哈希，可复现、冲突有确定次序')
+}
+
+console.log('== 键位扫描 ==')
+{
+  const doc = [
+    'narrator:7f3a91c2//',
+    '',
+    '-0b41d5ee:a7c3e812//',
+    '--c1d2e3f4//',
+    '',
+    '#stopparse',
+    '',
+    'guard_a:deadbeef//',
+  ].join(NL)
+  const keys = collectSourceKeys(doc).map((item) => item.key)
+  assert.deepEqual(
+    keys,
+    ['7f3a91c2', '0b41d5ee', 'a7c3e812', 'c1d2e3f4'],
+    `正文里的键必须都被认出来（#stopparse 之后的除外），实际 ${keys.join(', ')}`,
+  )
+  const lines = collectSourceKeys(doc).map((item) => item.line)
+  assert.deepEqual(lines, [1, 3, 3, 4], `键的行号应来自 span，实际 ${lines.join(', ')}`)
+  const multiline = collectSourceKeys(`narrator:${NL}faw613da${NL}7f3a91c2${NL}//`)
+  assert.equal(
+    multiline.length,
+    0,
+    '多行块里的"键"是普通文本，不该被当成键（与文档反例一致）',
+  )
+  console.log('  ok - speaker:键// 、选项键、#stopparse 截断都正确')
+}
 
 console.log(NL + '汉书着色不变量检查通过')

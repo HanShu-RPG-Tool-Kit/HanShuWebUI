@@ -3,6 +3,7 @@ import { AGENT_RULES } from './rules'
 import syntaxDocs from '../../docs/hanshu-syntax.md?raw'
 import {
   AGENT_TOOLS,
+  AGENT_TOOL_NAMES,
   executeAgentTool,
   type AgentHost,
   type AgentToolCall,
@@ -40,11 +41,20 @@ ${syntaxDocs}
 
 ## 工具使用
 你可以使用工具读写资源管理器中的文件（浏览器本地工作区，不需要 git）。
-- 修改当前打开文件：优先 \`write_current_file\`
-- 改其他文件或新建：只用 \`write_file\`（不要先 write_current_file 再新建）
-- 新建文件请 \`write_file\`；不要对「当前打开的别的文件」误用 write_current_file
-- 先看目录：\`list_files\`；读全文：\`read_file\`
-- 写入必须是**完整文件内容**；成功写入后简短确认即可，不要再整篇重复贴出。
+可用工具：${AGENT_TOOL_NAMES.join('、')}
+- 先看有什么：\`list_sources\`（参数一律写逻辑文件名，如 序章.hs，不要带 src/ 前缀）
+- 读文件：\`read_source\`（大文件用 offset / limit 分页）
+- 新建文件：\`create_source\`（重名会失败）；覆盖已有文件：\`write_source\`（不存在会失败）；
+  删除：\`delete_source\`（连带各语言译文与配音，删前先问用户）
+- 不要靠"换个名字再新建"来试探工具；不确定就先读、先问
+- 改「用户当前打开的文件」：先 \`get_active_file_path\` 拿到 source，再用 \`edit_source\` / \`write_source\`
+- 改完 .hs 调一次 \`validate_source\`（语法诊断 + .hsc 编译校验）
+- 语言标签用「语言_地区」小写下划线形式（zh_cn / en_us / ja_jp）；**写译文前先 list_locales**，沿用工程里已有的标签
+- 译文：\`list_lang_keys\` 看缺哪些键 → \`write_lang\` 写（键来自正文行末，形如 \`narrator:7f3a91c2//\`）；
+  也可以让编辑器自动成键：\`parse_hs(source)\`；反向还原正文用 \`unparse_hs(source, locale)\`（会改写正文，先问用户）
+- 配音：\`list_voice_status\` 查状态（你不能合成语音；缺了就如实说，不要假装已生成）
+- 导出前用 \`check_export\` 预演文件数与警告
+- 成功写入后简短确认即可，不要再整篇重复贴出。
 - 写入前按文档末尾「自检清单」检查。
 - 一次只改你需要的文件；新建 md/文档时绝不要覆盖用户当前的 .hs。
 
@@ -138,12 +148,30 @@ export async function runAgentTurn(options: {
     { role: 'user', content: options.userText },
   ]
 
-  const maxRounds = 8
+  const maxRounds = 32
+  /** 单轮对话里允许 agent 新建的源文件数：越界要求它解释，避免 probe 式乱造 */
+  const CREATE_LIMIT = 3
+  const callCounts = new Map<string, number>()
+  let createdCount = 0
+  let hintIndex = -1
+
   for (let round = 0; round < maxRounds; round++) {
     if (options.signal?.aborted) {
       throw new DOMException('Aborted', 'AbortError')
     }
     options.onStatus?.(`思考中… (${round + 1}/${maxRounds})`)
+
+    // 让模型知道还剩几轮：进入最后四分之一就提醒收尾
+    const remaining = maxRounds - round
+    if (remaining <= Math.ceil(maxRounds / 4)) {
+      const hint = `【系统提醒】本轮只剩 ${remaining} 次工具调用机会。请尽快收尾：不要再试探性新建文件，先给用户一个明确结论。`
+      if (hintIndex < 0) {
+        messages.push({ role: 'system', content: hint })
+        hintIndex = messages.length - 1
+      } else {
+        messages[hintIndex] = { role: 'system', content: hint }
+      }
+    }
 
     const { message, finishReason } = await chatOnce({
       messages,
@@ -160,7 +188,35 @@ export async function runAgentTurn(options: {
 
       for (const call of toolCalls) {
         options.onStatus?.(`工具：${call.function.name}`)
-        const result = executeAgentTool(options.host, call)
+        const signature = `${call.function.name}::${call.function.arguments}`
+        const repeats = (callCounts.get(signature) ?? 0) + 1
+        callCounts.set(signature, repeats)
+
+        let result: string
+        if (repeats > 1) {
+          result = JSON.stringify({
+            ok: false,
+            error: `重复调用：${call.function.name} 的参数与上一次完全相同`,
+            hint: '同样的调用不会得到新结果。请换做法（改参数 / 换工具），或直接把结论告诉用户。',
+          })
+        } else if (
+          call.function.name === 'create_source' &&
+          createdCount >= CREATE_LIMIT
+        ) {
+          result = JSON.stringify({
+            ok: false,
+            error: `本轮新建文件已达上限 ${CREATE_LIMIT} 个`,
+            hint: '不要为了试探工具而继续新建。请先说明为什么还需要更多文件，或改用 edit_source / write_source 修改已有文件。',
+          })
+        } else {
+          result = await executeAgentTool(options.host, call)
+          if (call.function.name === 'create_source' && toolSucceeded(result)) {
+            createdCount++
+          } else if (call.function.name === 'delete_source') {
+            createdCount = Math.max(0, createdCount - 1)
+          }
+        }
+
         messages.push({
           role: 'tool',
           tool_call_id: call.id,
@@ -178,6 +234,16 @@ export async function runAgentTurn(options: {
   }
 
   throw new Error('工具调用轮次过多，已中止')
+}
+
+/** 工具返回是否成功（用于新建计数） */
+function toolSucceeded(raw: string): boolean {
+  try {
+    const parsed = JSON.parse(raw) as { ok?: boolean; created?: boolean }
+    return parsed.ok === true && parsed.created === true
+  } catch {
+    return false
+  }
 }
 
 /** @deprecated 使用 runAgentTurn；保留别名以免旧引用报错 */

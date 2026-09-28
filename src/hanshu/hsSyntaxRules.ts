@@ -88,3 +88,14 @@ export function unescapeHsText(text: string): string {
     .replace(/\\<</g, '<<')
     .replace(/\\-/g, '-')
 }
+
+/**
+ * HS 转义（**逆解析**把映射文本写回正文时用）：把会被语法吃掉的首字符转义。
+ * 与 `unescapeHsText` 互为逆操作，顺序也必须一致（先 `>>`/`<<`，再 `-`）。
+ */
+export function escapeHsText(text: string): string {
+  return text
+    .replace(/>>/g, '\\>>')
+    .replace(/<</g, '\\<<')
+    .replace(/-/g, '\\-')
+}

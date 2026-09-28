@@ -38,20 +38,23 @@ export function sourceRelativePath(name: string): string {
 export const ALLOWED_EXTENSIONS_LABEL = ALLOWED_EXTENSIONS.join('  ')
 
 /**
- * 可改名的后缀：语言文本（`.lang`）与配音映射（`.voice`）的名字都由剧本名派生
- * （见 `localeLayout`：改名 `.hs` 会连带搬走它们），单独改名会切断这层派生关系，
- * 所以改名不接受这两种格式。它们仍是合法的包内文件格式（新建 / 写入不受影响）。
+ * 手动新建 / 改名的后缀：语言文本（`.lang`）与配音映射（`.voice`）的名字都由剧本名派生
+ * （见 `localeLayout`：改名 `.hs` 会连带搬走它们），手工造这两个名字会切断派生关系，
+ * 所以界面上的「新建」与「改名」都不接受它们。
+ *
+ * 注意：两者仍是合法的包内文件格式（`ALLOWED_EXTENSIONS`），**Agent 的写入能力不受限** ——
+ * `write_source` 走的是 `normalizeResourceName`，照样能建、能改 `.lang` / `.voice`。
  */
-export const RENAMABLE_EXTENSIONS = ALLOWED_EXTENSIONS.filter(
+export const MANUAL_FILE_EXTENSIONS = ALLOWED_EXTENSIONS.filter(
   (ext) => ext !== '.lang' && ext !== '.voice',
 )
 
-/** 给人看的可改名后缀文案 */
-export const RENAMABLE_EXTENSIONS_LABEL = RENAMABLE_EXTENSIONS.join('  ')
+/** 给人看的手动新建 / 改名后缀文案 */
+export const MANUAL_FILE_EXTENSIONS_LABEL = MANUAL_FILE_EXTENSIONS.join('  ')
 
-/** 该文件名是否可改名（语言文本与配音映射不可） */
-export function isRenamableFileName(name: string): boolean {
-  return (RENAMABLE_EXTENSIONS as readonly string[]).includes(
+/** 该文件名是否可手动新建 / 改名（语言文本与配音映射不可） */
+export function isManualFileName(name: string): boolean {
+  return (MANUAL_FILE_EXTENSIONS as readonly string[]).includes(
     getExtension(name).toLowerCase(),
   )
 }
@@ -269,17 +272,6 @@ export function findScriptByName(
   return null
 }
 
-export function listWorkspaceFiles(workspace: Workspace) {
-  return workspace.packages.flatMap((pkg) =>
-    pkg.scripts.map((script) => ({
-      packageName: pkg.name,
-      fileName: script.name,
-      id: script.id,
-      updatedAt: script.updatedAt,
-    })),
-  )
-}
-
 export function updateScriptContent(
   workspace: Workspace,
   scriptId: string,
@@ -295,37 +287,6 @@ export function updateScriptContent(
           : script,
       ),
     })),
-  }
-}
-
-/**
- * 在与 sourceScriptId 同一包内写入/更新名为 fileName 的文件。
- * 若已存在则更新内容；否则新建（不切换当前活动文件）。
- */
-export function upsertPackageFile(
-  workspace: Workspace,
-  sourceScriptId: string,
-  fileName: string,
-  content: string,
-): Workspace {
-  const hit = findScript(workspace, sourceScriptId)
-  if (!hit) return workspace
-
-  const existing = hit.pkg.scripts.find(
-    (script) => script.name.toLowerCase() === fileName.toLowerCase(),
-  )
-  if (existing) {
-    return updateScriptContent(workspace, existing.id, content)
-  }
-
-  const script = createScript(fileName, content)
-  return {
-    ...workspace,
-    packages: workspace.packages.map((pkg) =>
-      pkg.id === hit.pkg.id
-        ? { ...pkg, scripts: [...pkg.scripts, script] }
-        : pkg,
-    ),
   }
 }
 
