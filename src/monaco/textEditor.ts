@@ -8,9 +8,9 @@ import {
 } from '../i18n/textMap'
 import { createCaretOverlay, type CaretLine } from './textCaretOverlay'
 import {
-  deletionHitsKey,
+  isDeletionHittingKey,
   deletionRange,
-  keyedRegions,
+  collectKeyedRegions,
   canonicalDialogueLine,
   pickRedone,
   pickUndone,
@@ -25,7 +25,7 @@ import {
 } from './textSlotStyles'
 import {
   VOICE_STATE_LABEL,
-  voiceButtonSvg,
+  formatVoiceButtonSvg,
   type VoiceButtonState,
 } from '../ui/voiceIcons'
 import type { VoiceLibrary, VoiceUnitStatus } from '../i18n/voiceLibrary'
@@ -42,9 +42,9 @@ import {
 } from '../drag/dragPayload'
 import {
   findSpanAt,
-  parseLangSpans,
+  parseTextSpans,
   type DialogueBlock,
-  type LangSpan,
+  type TextSpan,
 } from './textSpans'
 import { analyzeHsDiagnostics, type HsDiagnostic } from './hsDiagnostics'
 
@@ -84,7 +84,7 @@ export type TextRect = {
 
 export type TextEditMode = 'key' | 'value'
 
-export type LangEditRequest = {
+export type TextEditRequest = {
   mode: TextEditMode
   /** 被编辑的键名 */
   key: string
@@ -106,7 +106,7 @@ export type TextUnitMenuRequest = {
 }
 
 /** 上级容器被投放：意图已经解析好（外部文件导入音频 / 资产导入音频 / 另一个键名替换） */
-export type LangUnitDropRequest = {
+export type TextUnitDropRequest = {
   key: string
   intent: DropIntent
   /** 外部文件（intent.action === 'import-audio-file' 时有） */
@@ -119,13 +119,13 @@ export type TextHost = {
   /** 当前活动文件的语言文本映射；不适用（非 .hs、无活动文件、看资产）时返回 null */
   getMap(): TextMap | null
   /** 请求弹出等位置覆盖编辑框 */
-  onEditRequest(request: LangEditRequest): void
+  onEditRequest(request: TextEditRequest): void
   /** 音频映射管理；非 .hs / 尚未就绪时返回 null（按钮一律渲染成"缺失"） */
   getVoice?(): VoiceLibrary | null
   /** 上级容器被右键 */
   onUnitMenu?(request: TextUnitMenuRequest): void
   /** 上级容器被投放（拖拽） */
-  onUnitDrop?(request: LangUnitDropRequest): void
+  onUnitDrop?(request: TextUnitDropRequest): void
   /** 点了配音按钮但当前是缺失 / 无效态：请求给这个键挑一个音频 */
   onVoicePick?(key: string): void
 }
@@ -182,7 +182,7 @@ const UNFOCUSED_CLASS = 'is-unfocused'
  * 于是幽灵框会闪现在最后一行最左侧。指纹一变就重建，`positionBoxes` 就永远
  * 拿不到过期片段。
  */
-export function spanFingerprint(
+export function computeSpanFingerprint(
   spans: ReadonlyArray<{ start: number; end: number; value: string }>,
 ): string {
   return spans.map((span) => `${span.start}:${span.end}:${span.value}`).join('|')
@@ -226,7 +226,7 @@ type LineEntry = CaretLine & { el: HTMLElement }
 type ZoneEntry = {
   /** 纯占位元素：视觉一律走覆盖层，见 render() 里的注释 */
   el: HTMLElement
-  span: LangSpan
+  span: TextSpan
   heightPx: number
   id: string
 }
@@ -265,7 +265,7 @@ export function bindText(
   let lastArrowDir: 'left' | 'right' | null = null
   let lastCaretOffset: number | null = null
   /** 按 model 版本缓存解析结果（光标移动也要查片段表） */
-  let spanCache: { version: number; spans: LangSpan[] } | null = null
+  let spanCache: { version: number; spans: TextSpan[] } | null = null
   let ctrlHeld = false
   let migrating = false
   let disposed = false
@@ -318,7 +318,7 @@ export function bindText(
     tailGapPx: TAIL_GAP_PX,
   })
 
-  const currentSpans = (): LangSpan[] => {
+  const currentSpans = (): TextSpan[] => {
     const model = ed.getModel()
     if (!model) return []
     // 光标移动也要查片段表，按 model 版本缓存，避免每次按键都重解析全篇
@@ -327,14 +327,14 @@ export function bindText(
     if (version >= 0 && spanCache && spanCache.version === version) {
       return spanCache.spans
     }
-    const spans = parseLangSpans(model.getValue())
+    const spans = parseTextSpans(model.getValue())
     if (version >= 0) spanCache = { version, spans }
     return spans
   }
 
   /** 按 offset 换算覆盖框的视口矩形（需要时取元素本身的矩形） */
   const rectForSpan = (
-    span: LangSpan,
+    span: TextSpan,
     element: HTMLElement | null,
   ): TextRect => {
     if (element && typeof element.getBoundingClientRect === 'function') {
@@ -367,7 +367,7 @@ export function bindText(
 
   /** 弹出等位置覆盖编辑框；`forced` 用于右键菜单直接指定模式 */
   const openEditor = (
-    span: LangSpan,
+    span: TextSpan,
     element: HTMLElement | null,
     forced?: TextEditMode,
   ) => {
@@ -560,7 +560,7 @@ export function bindText(
    */
   const syncOverlayAfterEdit = () => {
     ed.render()
-    if (spanFingerprint(currentSpans()) !== renderedFingerprint) {
+    if (computeSpanFingerprint(currentSpans()) !== renderedFingerprint) {
       render()
       return
     }
@@ -616,7 +616,7 @@ export function bindText(
     button.title = title
     button.setAttribute('role', 'button')
     button.setAttribute('aria-label', title)
-    button.innerHTML = voiceButtonSvg(state)
+    button.innerHTML = formatVoiceButtonSvg(state)
     button.addEventListener('mousedown', (event) => {
       // 只拦冒泡：**不能 preventDefault**，否则从按钮上起手就拖不动整个单位
       event.stopPropagation()
@@ -776,13 +776,13 @@ export function bindText(
 
     const pendingZones: Array<{
       el: HTMLElement
-      span: LangSpan
+      span: TextSpan
       heightPx: number
     }> = []
 
     // 先把这一批要渲染的片段收齐，再一次性量宽度：整批只触发一轮布局
     type RenderItem = {
-      span: LangSpan
+      span: TextSpan
       key: string
       display: string
       displayLines: string[]
@@ -793,7 +793,7 @@ export function bindText(
     const items: RenderItem[] = []
     const texts: string[] = []
     const spans = currentSpans()
-    renderedFingerprint = spanFingerprint(spans)
+    renderedFingerprint = computeSpanFingerprint(spans)
     for (const span of spans) {
       const key = normalizeLocaleKey(span.value)
       if (!key) continue
@@ -965,7 +965,7 @@ export function bindText(
   }
 
   /** 已成键的框的原子范围（未成键的原文不设防） */
-  const boxRegions = () => keyedRegions(currentSpans())
+  const boxRegions = () => collectKeyedRegions(currentSpans())
 
   /** 按 key 找当前渲染出来的那条（菜单动作用；找不到返回 null） */
   const entryFor = (key: string): LineEntry | null => {
@@ -979,7 +979,7 @@ export function bindText(
   }
 
   /** 按 key 找片段（覆盖层可能还没渲染，直接查文档片段表兜底） */
-  const spanFor = (key: string): LangSpan | null => {
+  const spanFor = (key: string): TextSpan | null => {
     const wanted = normalizeLocaleKey(key)
     if (!wanted) return null
     return (
@@ -1146,7 +1146,7 @@ export function bindText(
       ? (ed.getPosition()?.lineNumber ?? null)
       : null
 
-    const plan: Array<{ span: LangSpan; key: string }> = []
+    const plan: Array<{ span: TextSpan; key: string }> = []
     /**
      * 需要**收缩**的多行对白：成键时整段换成规范单行 `name:<键>//`。
      * 同一条语句的多个片段共享同一个 `dialogueBlock` 对象，按对象聚合。
@@ -1155,7 +1155,7 @@ export function bindText(
       DialogueBlock,
       { key: string; newKeys: number }
     >()
-    const noteDialogueBlock = (span: LangSpan, key: string, isNew: boolean) => {
+    const noteDialogueBlock = (span: TextSpan, key: string, isNew: boolean) => {
       const block = span.dialogueBlock
       if (!block) return
       const entry = dialogueBlocks.get(block) ?? { key: '', newKeys: 0 }
@@ -1385,7 +1385,7 @@ export function bindText(
         forward,
       ),
     )
-    return deletionHitsKey(regions, ranges)
+    return isDeletionHittingKey(regions, ranges)
   }
 
   const onKeyDown = (event: KeyboardEvent) => {

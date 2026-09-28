@@ -1,5 +1,5 @@
 import type { editor } from 'monaco-editor'
-import type { LangSpan } from './textSpans'
+import type { TextSpan } from './textSpans'
 
 /** 覆盖层里自绘的光标 */
 export const CARET_CLASS = 'hs-lang-caret'
@@ -23,7 +23,7 @@ export type CaretLine = {
    * 容器里多了配音按钮之后，尾标不再紧贴文本框，不能再按 `框宽 + 间距` 推算。
    */
   tailLeft?: number | null
-  span: LangSpan
+  span: TextSpan
 }
 
 export type CaretOverlay = {

@@ -1,5 +1,5 @@
 import { normalizeLocaleKey } from '../i18n/textMap'
-import type { DialogueBlock, LangSpan } from './textSpans'
+import type { DialogueBlock, TextSpan } from './textSpans'
 
 /**
  * 已成键文本（框）的纯规则：光标导航、删除保护、成键账目结算。
@@ -25,12 +25,12 @@ export type MigrationRecord = { entries: Array<[string, string]> }
  * `//` 是作者自己敲的语句记号、渲染上也在框外做尾标，不属于框，
  * 光标可以停在它与键名之间，也可以从它外侧删掉它。
  */
-export function atomicRegion(span: Pick<LangSpan, 'start' | 'end'>): TextRange {
+export function atomicRegion(span: Pick<TextSpan, 'start' | 'end'>): TextRange {
   return { start: span.start, end: span.end }
 }
 
 /** 已成键的框；未成键的原文不设防，用户照样能自由编辑 */
-export function keyedRegions(spans: LangSpan[]): TextRange[] {
+export function collectKeyedRegions(spans: TextSpan[]): TextRange[] {
   const out: TextRange[] = []
   for (const span of spans) {
     if (!normalizeLocaleKey(span.value)) continue
@@ -45,7 +45,7 @@ export function keyedRegions(spans: LangSpan[]): TextRange[] {
  * `nextLineText` 传正文末行的下一行内容；没有下一行时传 null。
  */
 export function statementLineRange(
-  span: Pick<LangSpan, 'line' | 'endLine' | 'terminator'>,
+  span: Pick<TextSpan, 'line' | 'endLine' | 'terminator'>,
   nextLineText: string | null,
 ): { from: number; to: number } {
   if (span.terminator) return { from: span.line, to: span.endLine }
@@ -78,7 +78,7 @@ export function deletionRange(range: TextRange, forward: boolean): TextRange {
  * 删除是否"蹭到"某个框：与框重叠、但没有完整包含它。
  * 完整包含（例如选中整行）算明确的删除意图，放行。
  */
-export function deletionHitsKey(
+export function isDeletionHittingKey(
   regions: TextRange[],
   ranges: TextRange[],
 ): boolean {

@@ -25,16 +25,16 @@ import {
   type HsLine,
 } from '../hanshu/hsSyntaxRules'
 
-export type LangSpanKind = 'dialogue' | 'choice-label' | 'choice-reply'
+export type TextSpanKind = 'dialogue' | 'choice-label' | 'choice-reply'
 
 /** `//` 终结符的绝对范围 */
-export type LangTerminator = {
+export type TextTerminator = {
   start: number
   end: number
 }
 
-export type LangSpan = {
-  kind: LangSpanKind
+export type TextSpan = {
+  kind: TextSpanKind
   /** 绝对 offset（含） */
   start: number
   /** 绝对 offset（不含） */
@@ -52,7 +52,7 @@ export type LangSpan = {
    * 多行块的 `//` 独占一行、选项文案后面的 `//` 不属于自己 → null。
    * 拥有终结符时，渲染会把 `//` 挪到框外右下角。
    */
-  terminator: LangTerminator | null
+  terminator: TextTerminator | null
   /** 只对"多行对白"设置：整条语句信息（同一语句的多个片段共享同一个对象） */
   dialogueBlock?: DialogueBlock
 }
@@ -82,12 +82,12 @@ function findChoiceColon(body: string): number {
 }
 
 type SpanInput = {
-  kind: LangSpanKind
+  kind: TextSpanKind
   start: number
   end: number
   fromLine: number
   toLine: number
-  terminator?: LangTerminator | null
+  terminator?: TextTerminator | null
   /**
    * 允许"空值片段"：`test://` 这种**已终结但正文为空**的语句也要成键，
    * 否则它永远拿不到键。选项的空回复仍然不算（"空回复"明确排除）。
@@ -97,7 +97,7 @@ type SpanInput = {
   dialogueBlock?: DialogueBlock
 }
 
-function makeSpan(source: string, input: SpanInput): LangSpan | null {
+function makeSpan(source: string, input: SpanInput): TextSpan | null {
   const { start, end } = input
   const raw = source.slice(start, end)
   const value = unescapeHsText(raw.replace(/\r\n/g, '\n'))
@@ -132,9 +132,9 @@ function trimmedRange(
  * 解析整份文本里的可本地化片段（按出现顺序）。
  * 渲染与自动成键都走这里，保证「识别」与「替换」用的是同一套规则。
  */
-export function parseLangSpans(source: string): LangSpan[] {
+export function parseTextSpans(source: string): TextSpan[] {
   const lines = splitHsLines(source)
-  const spans: LangSpan[] = []
+  const spans: TextSpan[] = []
   let inPython = false
   let i = 0
 
@@ -393,7 +393,7 @@ export function parseLangSpans(source: string): LangSpan[] {
 }
 
 /** 找出覆盖该 offset 的片段（含起点、不含终点）；没有返回 null */
-export function findSpanAt(spans: LangSpan[], offset: number): LangSpan | null {
+export function findSpanAt(spans: TextSpan[], offset: number): TextSpan | null {
   for (const span of spans) {
     if (offset >= span.start && offset < span.end) return span
   }

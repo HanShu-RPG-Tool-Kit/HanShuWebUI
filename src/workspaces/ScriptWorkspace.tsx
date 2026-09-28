@@ -52,8 +52,8 @@ import {
 import {
   createBlankOggBlob,
   listMissingVoiceOggs,
-  voiceRootDir,
 } from '../i18n/voiceMap'
+import { voiceRootDir } from '../i18n/localeLayout'
 import {
   buildResourcePackZip,
   downloadBlob,
@@ -97,7 +97,7 @@ import { LocaleSelect } from '../LocaleSelect'
 import { TextEditBox } from '../TextEditBox'
 import {
   TextMap,
-  textAssetPathFor,
+  textAssetPath,
   type TextSink,
 } from '../i18n/textMap'
 import { createTextSink } from '../i18n/textSink'
@@ -107,7 +107,7 @@ import {
 } from '../i18n/voiceLibrary'
 import {
   runVoiceImport,
-  voiceImportSourceLabel,
+  formatVoiceImportSourceLabel,
   type VoiceImportIo,
   type VoiceImportSource,
 } from '../i18n/voiceImport'
@@ -120,9 +120,9 @@ import { VoiceImportProgress } from '../VoiceImportProgress'
 import { VoiceToast } from '../VoiceToast'
 import {
   bindText,
-  type LangEditRequest,
+  type TextEditRequest,
   type TextBinding,
-  type LangUnitDropRequest,
+  type TextUnitDropRequest,
 } from '../monaco/textEditor'
 import { loadLocale, saveLocale } from '../storage'
 
@@ -219,7 +219,7 @@ export const ScriptWorkspace = forwardRef<
   const [locale, setLocale] = useState(loadLocale)
   const [langEdit, setLangEdit] = useState<{
     id: number
-    request: LangEditRequest
+    request: TextEditRequest
   } | null>(null)
   /**
    * 语言文本写盘失败：连同它属于哪个「文件 + 语言」一起记下来。
@@ -305,7 +305,7 @@ export const ScriptWorkspace = forwardRef<
       return
     }
 
-    const fileName = textAssetPathFor(textSourceName, locale)
+    const fileName = textAssetPath(locale, textSourceName)
     // 虚拟工作区实现：同包内名为 `<剧本名>.lang.<语言标签>` 的文件
     const virtualSink: TextSink = {
       read: () => {
@@ -498,7 +498,7 @@ export const ScriptWorkspace = forwardRef<
     const targetPath = library.targetPathOf(key)
     setVoiceImportMessage(null)
     setVoiceImport({
-      sourceLabel: voiceImportSourceLabel(source),
+      sourceLabel: formatVoiceImportSourceLabel(source),
       targetPath,
       progress: 0,
       phase: 'process',
@@ -552,7 +552,7 @@ export const ScriptWorkspace = forwardRef<
    * - 外部文件 / 资产 → 尝试导入音频（多文件只取第一个：目标只有一个对等文件）
    * - 另一个键名 → 替换键名（只改正文，与 deleteUnit 口径一致）
    */
-  const handleUnitDrop = (request: LangUnitDropRequest) => {
+  const handleUnitDrop = (request: TextUnitDropRequest) => {
     const { key, intent, files, source } = request
 
     if (intent.action === 'replace-key') {

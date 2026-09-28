@@ -1,4 +1,4 @@
-import { isTextFileName } from './i18n/textMap'
+import { isTextAssetName } from './i18n/textMap'
 
 const WORKSPACE_KEY = 'hanshu.workspace.v2'
 const LEGACY_DRAFT_KEY = 'hanshu.draft.v1'
@@ -76,7 +76,7 @@ export function normalizeResourceName(raw: string): string | null {
 }
 
 export function editorLanguageForFile(name: string): string {
-  if (isTextFileName(name)) return 'json'
+  if (isTextAssetName(name)) return 'json'
   const ext = getExtension(name)
   if (ext === '.md') return 'markdown'
   if (ext === '.char') return 'python'
@@ -90,10 +90,6 @@ export function isMarkdownFile(name: string): boolean {
 
 export function isHanshuFile(name: string): boolean {
   return getExtension(name) === '.hs'
-}
-
-export function isLangFile(name: string): boolean {
-  return getExtension(name) === '.lang'
 }
 
 export function isVoiceMapFile(name: string): boolean {

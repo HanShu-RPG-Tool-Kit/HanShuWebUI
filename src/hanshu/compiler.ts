@@ -2,7 +2,7 @@ import {
   isLocaleKey,
   LOCALE_KEY_TEXT_RE,
 } from '../i18n/textMap'
-import { findSpanAt, parseLangSpans, type LangSpan } from '../monaco/textSpans'
+import { findSpanAt, parseTextSpans, type TextSpan } from '../monaco/textSpans'
 import {
   BLOCK_END,
   COMMENT_LINE,
@@ -17,7 +17,7 @@ import {
  * `.hs` → `.hsc` 编译。
  *
  * 规则（与解析器共用 `hsSyntaxRules`，docs/hanshu-syntax.md 是权威）：
- * - **编译前强制全文解析**：用 `parseLangSpans` 的结果判断哪些是本地化文本，
+ * - **编译前强制全文解析**：用 `parseTextSpans` 的结果判断哪些是本地化文本，
  *   不依赖任何"正在编辑中"的增量状态；**不再二次成键**，正文里的键名原样保留。
  * - 含键名的语句必须在**一行内闭合**（`speaker:abcd1234//`、`-msg:msg//`，闭合符在
  *   行末）；不满足就抛 `HsCompileError` —— 键名还摊在块里时不允许出包。
@@ -34,7 +34,7 @@ export class HsCompileError extends Error {
 }
 
 /** `name.hs` → `name.hsc` */
-export function hscFileNameForHs(hsName: string): string {
+export function hscAssetName(hsName: string): string {
   return hsName.replace(/\.hs$/i, '.hsc')
 }
 
@@ -143,7 +143,7 @@ export function minifyHsForHsc(hsText: string): string {
 }
 
 /** 该片段是不是"已经成键"的本地化文本 */
-function isKeyedSpan(span: LangSpan): boolean {
+function isKeyedSpan(span: TextSpan): boolean {
   return isLocaleKey(span.value)
 }
 
@@ -158,7 +158,7 @@ function isKeyedSpan(span: LangSpan): boolean {
  * 注释行、`#define`、`@` 行与 Python 块内不算正文，不参与校验。
  */
 function normalizeKeyedContent(hsText: string): string {
-  const spans = parseLangSpans(hsText)
+  const spans = parseTextSpans(hsText)
   const keyed = spans.filter(isKeyedSpan)
 
   // 1) 键名必须收进单行

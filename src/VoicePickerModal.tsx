@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { VOICE_EXTRA_GLYPHS, type VoiceGlyphPart } from './ui/voiceIcons'
 import {
-  isCurrentTarget,
+  isCurrentVoiceAsset,
   type VoiceAssetEntry,
   type VoiceLibrary,
 } from './i18n/voiceLibrary'
@@ -264,7 +264,7 @@ export function VoicePickerModal({
 
       const entry = node.entry
       const info = library.peek(entry.path)
-      const isTarget = isCurrentTarget(
+      const isTarget = isCurrentVoiceAsset(
         entry.path,
         library.locale,
         library.scriptName,

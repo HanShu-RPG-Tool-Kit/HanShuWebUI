@@ -21,7 +21,7 @@ import { DEFAULT_LOCALE_TAG, formatLocaleTag } from './locales'
 export const DEFAULT_SOURCE_EXT = 'hs'
 
 /** 文本产物的后缀 */
-export const LANG_ASSET_EXTENSION = 'lang'
+export const TEXT_ASSET_EXTENSION = 'lang'
 
 /** 音频产物的后缀（是否单通道要解码后才知道） */
 export const VOICE_ASSET_EXTENSION = 'ogg'
@@ -52,21 +52,26 @@ export function normalizeSourcePath(path: string): string {
     .replace(/\/+$/, '')
 }
 
-/**
- * 源文件在本地化目录下的相对基名（去后缀，逐段清洗）：
- * `hello/cp1.hs` → `hello/cp1`；`cp1.hs` → `cp1`。
- */
-export function sourceStem(sourcePath: string): string {
-  const stem = dropExtension(normalizeSourcePath(sourcePath))
-  return stem
+/** 逐段清洗源路径：去掉空段、`.` 与 `..`（去后缀后按 `/` 切分） */
+function sanitizedSourceParts(sourcePath: string): string[] {
+  return dropExtension(normalizeSourcePath(sourcePath))
     .split('/')
     .map((part) => part.trim())
     .filter((part) => part && part !== '.' && part !== '..')
-    .join('/')
+}
+
+/** 源文件的文件名（去后缀）：`folder/a/cp1.hs` → `cp1` */
+export function sourceFileStemName(sourcePath: string): string {
+  return sanitizedSourceParts(sourcePath).pop() ?? ''
+}
+
+/** 源文件所在目录（无首尾斜杠）：`folder/a/cp1.hs` → `folder/a`；`cp1.hs` → `''` */
+export function sourceDir(sourcePath: string): string {
+  return sanitizedSourceParts(sourcePath).slice(0, -1).join('/')
 }
 
 /** 源文件所属的语言文本根目录：`assets/<tag>/lang_<ext>` */
-export function langRootDir(
+export function textRootDir(
   locale: string,
   ext: string = DEFAULT_SOURCE_EXT,
 ): string {
@@ -86,18 +91,13 @@ export function voiceRootDir(
  * `folder/cp1.hs` → `assets/<tag>/lang_hs/folder/cp1.lang`。
  * `ext` 默认取源文件自己的后缀。
  */
-export function langAssetPath(locale: string, sourcePath: string): string {
-  const stem = sourceStem(sourcePath)
+export function textAssetPath(locale: string, sourcePath: string): string {
+  const dir = sourceDir(sourcePath)
+  const stem = sourceFileStemName(sourcePath) || '未命名'
   const ext = sourceExtension(sourcePath) || DEFAULT_SOURCE_EXT
-  const name = `${stem.split('/').pop() || '未命名'}.${LANG_ASSET_EXTENSION}`
-  const dir = stem.split('/').slice(0, -1).join('/')
-  const root = langRootDir(locale, ext)
+  const root = textRootDir(locale, ext)
+  const name = `${stem}.${TEXT_ASSET_EXTENSION}`
   return dir ? `${root}/${dir}/${name}` : `${root}/${name}`
-}
-
-/** 音频根下某段相对目录（脚本目录）：`folder/cp1.hs` → `folder/cp1` */
-export function voiceStemForSource(sourcePath: string): string {
-  return sourceStem(sourcePath)
 }
 
 /** 某个键的音频产物路径：`assets/<tag>/voice_hs/<脚本目录>/<键名>.ogg` */

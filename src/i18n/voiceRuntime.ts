@@ -112,7 +112,7 @@ const AUDIO_MIME_BY_EXTENSION: Record<string, string> = {
 }
 
 /** 给 blob 补上按后缀推断的类型（认不出后缀就原样返回；slice 不复制字节） */
-export function withAudioMime(blob: Blob, path: string): Blob {
+export function applyAudioMime(blob: Blob, path: string): Blob {
   const dot = path.lastIndexOf('.')
   const ext = dot >= 0 ? path.slice(dot + 1).toLowerCase() : ''
   const type = AUDIO_MIME_BY_EXTENSION[ext]
@@ -389,7 +389,7 @@ export function createVoiceRuntime(source: VoiceSource): VoiceRuntime {
       return false
     }
     // 补类型：blob 的 type 可能是空的或 octet-stream，那样 <audio> 会拒播
-    objectUrl = URL.createObjectURL(withAudioMime(blob, name))
+    objectUrl = URL.createObjectURL(applyAudioMime(blob, name))
     el.src = objectUrl
     playback = { path: id, key }
     emit()

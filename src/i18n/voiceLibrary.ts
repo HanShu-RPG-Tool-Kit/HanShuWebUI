@@ -1,11 +1,10 @@
 import { getAssetBlob } from '../assets/idb'
 import {
-  isSameVoiceTarget,
+  isSameVoiceAsset,
   resolveVoiceAssetFor,
   voiceAssetExtension,
-  voiceBaseName,
-  voiceTargetPath,
-  type VoiceResolved,
+  voiceFileName,
+  voiceKeyAssetPath,
 } from './voiceMap'
 import { canPlatformDecodeAudio } from './voiceTranscode'
 import {
@@ -136,9 +135,9 @@ export function createVoiceLibrary(options: {
 
   // 解析结果按「键」缓存；资产清单数组换了引用（工作区改动）就整表作废
   let cachedAssets: readonly VoiceAssetLike[] | null = null
-  let resolveCache = new Map<string, VoiceResolved<VoiceAssetLike> | null>()
+  let resolveCache = new Map<string, VoiceAssetLike | null>()
 
-  const resolve = (key: string): VoiceResolved<VoiceAssetLike> | null => {
+  const resolve = (key: string): VoiceAssetLike | null => {
     const list = options.assets()
     if (list !== cachedAssets) {
       cachedAssets = list
@@ -179,11 +178,11 @@ export function createVoiceLibrary(options: {
       return {
         state: 'missing',
         path: null,
-        reason: `没有对等配音文件（期望 ${voiceTargetPath(locale, scriptName, normalized)}）`,
+        reason: `没有对等配音文件（期望 ${voiceKeyAssetPath(locale, scriptName, normalized)}）`,
         info: null,
       }
     }
-    const path = hit.asset.path
+    const path = hit.path
 
     if (runtime.isPlaying(path)) {
       const decoded = runtime.peek(path)
@@ -246,9 +245,9 @@ export function createVoiceLibrary(options: {
     locale,
     scriptName,
 
-    targetPathOf: (key) => voiceTargetPath(locale, scriptName, key),
+    targetPathOf: (key) => voiceKeyAssetPath(locale, scriptName, key),
 
-    resolvedPathOf: (key) => resolve(key)?.asset.path ?? null,
+    resolvedPathOf: (key) => resolve(key)?.path ?? null,
 
     statusOf,
 
@@ -273,7 +272,7 @@ export function createVoiceLibrary(options: {
         out.push({
           path,
           relative: path.slice('assets/'.length),
-          name: voiceBaseName(path),
+          name: voiceFileName(path),
           ext: voiceAssetExtension(path),
           size: asset.size,
           mime: asset.mime,
@@ -334,13 +333,13 @@ export function createVoiceLibrary(options: {
 }
 
 /** 某个已解析资产是否就是该键的对等文件（选择器用来标「当前目标」） */
-export function isCurrentTarget(
+export function isCurrentVoiceAsset(
   path: string,
   locale: string,
   scriptName: string,
   key: string,
 ): boolean {
-  return isSameVoiceTarget(path, locale, scriptName, key)
+  return isSameVoiceAsset(path, locale, scriptName, key)
 }
 
 /** 供界面显示：时长 · 声道 */

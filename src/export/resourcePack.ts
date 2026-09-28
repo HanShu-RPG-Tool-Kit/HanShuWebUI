@@ -2,7 +2,7 @@ import JSZip from 'jszip'
 import { getAssetBlob } from '../assets/idb'
 import {
   compileHsToHsc,
-  hscFileNameForHs,
+  hscAssetName,
 } from '../hanshu/compiler'
 import { isHanshuFile, type Workspace } from '../workspace'
 
@@ -56,7 +56,7 @@ function parseHashMap(raw: string, fileName: string, warnings: string[]): HashMa
 }
 
 /** `assets/<locale>/lang_<ext>/…/名.lang` → `<locale>`；不合布局返回 null */
-function localeOfLangAsset(name: string): string | null {
+function parseTextAssetLocale(name: string): string | null {
   const parts = name.trim().replace(/\\/g, '/').split('/')
   if (parts.length < 4) return null
   if (parts[0]?.toLowerCase() !== 'assets') return null
@@ -65,7 +65,7 @@ function localeOfLangAsset(name: string): string | null {
 }
 
 /** `assets/<locale>/voice_<ext>/…/<键名>.ogg` → `{ locale, key }`；不合布局返回 null */
-function localeOfVoiceAsset(
+function parseVoiceAssetKey(
   path: string,
 ): { locale: string; key: string } | null {
   const parts = path.trim().replace(/\\/g, '/').split('/')
@@ -127,7 +127,7 @@ export async function buildResourcePackZip(
     // —— .hs → .hsc（不再生成 .lines：键名就在正文里）——
     for (const script of pkg.scripts) {
       if (!isHanshuFile(script.name)) continue
-      const hscName = hscFileNameForHs(script.name)
+      const hscName = hscAssetName(script.name)
       let hsc: string
       try {
         hsc = compileHsToHsc(script.content)
@@ -150,7 +150,7 @@ export async function buildResourcePackZip(
     // —— 语言文本 `assets/<locale>/lang_<ext>/…/名.lang`（按包合并 locale）——
     const langByLocale = new Map<string, HashMap>()
     for (const script of pkg.scripts) {
-      const locale = localeOfLangAsset(script.name)
+      const locale = parseTextAssetLocale(script.name)
       if (!locale) continue
       const map = parseHashMap(script.content, script.name, warnings)
       const bucket = langByLocale.get(locale) ?? {}
@@ -178,7 +178,7 @@ export async function buildResourcePackZip(
     //      lines/voice/<键名>.<locale>.ogg（键名就是文件名，不再经过映射表）——
     const seenVoice = new Set<string>()
     for (const asset of pkg.assets) {
-      const parsed = localeOfVoiceAsset(asset.path)
+      const parsed = parseVoiceAssetKey(asset.path)
       if (!parsed) continue
       const { locale, key } = parsed
       const dedupe = `${key}.${locale}`

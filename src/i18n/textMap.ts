@@ -1,11 +1,11 @@
-import { langAssetPath } from './localeLayout'
+export { textAssetPath } from './localeLayout'
 
 /**
  * 语言文本映射（键名 → 本地化文本）。
  *
  * 设计要点：
  * - 键名固定为 8 位小写十六进制
- * - `<文件名>.lang.<语言标签>`：`cp1.hs` + `zh_cn` → `cp1.lang.zh_cn`
+ * - 产物路径由 `localeLayout` 统一给出：`assets/<语言标签>/lang_<后缀>/…`
  * - `TextMap` 是「抽象的语言文本映射实例」：内部持有内存缓存（权威），
  *   通过 `TextSink` 抽象出落盘方式（包内虚拟文件 / 真实磁盘 / 内存），
  *   写键时先写缓存再写穿 sink。
@@ -66,14 +66,10 @@ export function createLocaleKey(taken: (key: string) => boolean): string {
  * `folder/cp1.hs` + `zh_cn` → `assets/zh_cn/lang_hs/folder/cp1.lang`。
  * 后缀决定子目录：`main.char` → `assets/zh_cn/lang_char/main.lang`。
  */
-export function textAssetPathFor(scriptName: string, locale: string): string {
-  return langAssetPath(locale, scriptName)
-}
-
 /** 是否形如 `assets/<locale>/lang_<ext>/…/名.lang` */
 export const TEXT_FILE_RE = /^assets\/[^/]+\/lang_[a-z0-9]+\/.+\.lang$/i
 
-export function isTextFileName(name: string): boolean {
+export function isTextAssetName(name: string): boolean {
   return TEXT_FILE_RE.test(name.trim())
 }
 
@@ -96,7 +92,7 @@ export function parseTextFile(text: string | null | undefined): TextFile {
 }
 
 /** 序列化：键名排序 + 两空格缩进 + 末尾换行 */
-export function stringifyLangFile(data: TextFile): string {
+export function stringifyTextFile(data: TextFile): string {
   const keys = Object.keys(data).sort((a, b) => a.localeCompare(b))
   const ordered: TextFile = {}
   for (const key of keys) ordered[key] = data[key]
@@ -176,7 +172,7 @@ export class TextMap {
   }
 
   toFileContent(): string {
-    return stringifyLangFile(this.snapshot())
+    return stringifyTextFile(this.snapshot())
   }
 
   /** 写一个键：先写缓存，再写穿 sink */

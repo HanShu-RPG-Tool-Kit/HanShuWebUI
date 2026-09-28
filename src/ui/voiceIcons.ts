@@ -77,7 +77,7 @@ export const VOICE_STATE_LABEL: Record<VoiceButtonState, string> = {
 }
 
 /** 把一段几何拼成 svg 片段（坐标一律 24×24） */
-export function voiceGlyphSvg(parts: VoiceGlyphPart[]): string {
+export function formatVoiceGlyphSvg(parts: VoiceGlyphPart[]): string {
   const body = parts
     .map((part) => {
       const opacity = part.opacity != null ? ` opacity="${part.opacity}"` : ''
@@ -91,6 +91,6 @@ export function voiceGlyphSvg(parts: VoiceGlyphPart[]): string {
 }
 
 /** 配音按钮用的完整 svg 字符串 */
-export function voiceButtonSvg(state: VoiceButtonState): string {
-  return voiceGlyphSvg(VOICE_GLYPHS[state])
+export function formatVoiceButtonSvg(state: VoiceButtonState): string {
+  return formatVoiceGlyphSvg(VOICE_GLYPHS[state])
 }

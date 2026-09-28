@@ -1,4 +1,5 @@
-import { dropExtension, isVoiceOggPath } from './voiceMap'
+import { dropExtension } from './localeLayout'
+import { isVoiceOggPath } from './voiceMap'
 
 /**
  * 「音频导入」固定工作流。
@@ -102,7 +103,7 @@ export type VoiceImportRequest = {
 }
 
 /** 源的展示名（进度条上显示） */
-export function voiceImportSourceLabel(source: VoiceImportSource): string {
+export function formatVoiceImportSourceLabel(source: VoiceImportSource): string {
   return source.kind === 'asset' ? source.path : source.name
 }
 
@@ -151,7 +152,7 @@ export function runVoiceImport(
   events: VoiceImportEvents = {},
 ): VoiceImportRun {
   const { source, targetPath } = request
-  const sourceLabel = voiceImportSourceLabel(source)
+  const sourceLabel = formatVoiceImportSourceLabel(source)
   const signal = { aborted: false }
   let cancelled = false
 
@@ -288,7 +289,7 @@ export function runVoiceImport(
 }
 
 /** 给界面用：目标必须是 .ogg，源可以在随便哪儿（资源管理器根目录是 assets） */
-export function voiceImportTargetProblem(targetPath: string): string | null {
+export function describeVoiceImportTargetProblem(targetPath: string): string | null {
   if (!isVoiceOggPath(targetPath)) return '对等文件必须是 .ogg'
   if (!targetPath.toLowerCase().startsWith('assets/')) {
     return '对等文件必须在 assets/ 下'
