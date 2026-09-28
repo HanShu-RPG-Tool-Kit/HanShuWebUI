@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
-import { addNode, canConnectNodes, clone, connectEntry, connectNodes, createFlow, descendants, disconnectLink, getCanvasNote, hasContentNode, inputPorts, makeNode, moveNode, parseFlow, removeNode, renameNode, reorderBranch, text, validateFlow, type ProgressFlow } from '../src/workspaces/progress/model.ts'
+import { addNode, canConnectNodes, clone, connectEntry, connectNodes, createFlow, descendants, disconnectLink, getCanvasNote, getHubNode, getGatewayNode, hasContentNode, inputPorts, linkSourcePort, makeNode, moveNode, outgoingCount, outputPorts, parseFlow, portKind, removeNode, renameNode, reorderBranch, text, validateFlow, type ProgressFlow } from '../src/workspaces/progress/model.ts'
 import { FLOW_STORAGE_KEY, createFlowDocument, importFlowDocument, loadFlowWorkspace, saveFlowWorkspace } from '../src/workspaces/progress/storage.ts'
 import { addFlowFolder, moveFlowEntry, renameFlowEntry, uniqueDocumentName } from '../src/workspaces/progress/library.ts'
-import { addNextCheckpoint, createCanvasNote, removeCanvasItems, updateCanvasNote, removeCanvasNote, groupCanvasNodes, moveCanvasNodes, nodeMetrics, createCheckpoint, createLogicNode, createGoalNode, createTransitionNode, layoutCanvas, moveCheckpoint, socketOffset, withCanvasPositions } from '../src/workspaces/progress/canvas.ts'
+import { addNextCheckpoint, createCanvasNote, removeCanvasItems, updateCanvasNote, removeCanvasNote, groupCanvasNodes, moveCanvasNodes, nodeMetrics, createCheckpoint, createLogicNode, createGoalNode, createTransitionNode, createHubNode, createGatewayNode, layoutCanvas, moveCheckpoint, socketOffset, withCanvasPositions } from '../src/workspaces/progress/canvas.ts'
 import { smartArrangeCanvas } from '../src/workspaces/progress/arrange.ts'
 import { MAX_CANVAS_ZOOM, MIN_CANVAS_ZOOM, worldPoint, zoomCamera } from '../src/workspaces/progress/camera.ts'
 
@@ -10,22 +10,30 @@ let passed = 0
 function test(name: string, check: () => void) { check(); passed++; console.log(`[OK] ${name}`) }
 const errors = (f: ProgressFlow) => validateFlow(f).filter((i) => i.severity === 'error')
 function fixture() {
-  let flow = createFlow('story-progress', '驿站的约定')
+  const flow = createFlow('story-progress', '驿站的约定')
   flow.nodes.start = makeNode('收到委托'); flow.entry.target = 'start'
-  flow = addNode(flow, 'start').flow
-  flow = addNode(flow, 'start').flow
-  flow = addNode(flow, 'node_1').flow
-  flow.nodes.start.branching = 'choice'
-  flow.nodes.node_2.completion = 'finish'
-  flow.nodes.node_3.completion = 'finish'
-  flow.nodes.start.children[0].conditions.items.push({ id: 'ready', kind: 'nodes', title: text('等待准备'), params: {}, nodeRefs: ['start'] })
+  flow.nodes.node_1 = makeNode('阶段 1')
+  flow.nodes.node_2 = makeNode('阶段 2'); flow.nodes.node_2.completion = 'finish'
+  flow.nodes.node_3 = makeNode('阶段 3'); flow.nodes.node_3.completion = 'finish'
   return flow
 }
+function linkViaTransition(flow: ProgressFlow, fromCkpt: string, toCkpt: string) {
+  const added = createTransitionNode(flow, { x: 0, y: 0 })
+  let next = connectNodes(added.flow, fromCkpt, added.id, 'input2').flow
+  next = connectNodes(next, added.id, toCkpt).flow
+  return { flow: next, id: added.id }
+}
+const strayBranch = (id: string, target: string, items: ProgressFlow['nodes'][string]['children'][number]['conditions']['items'] = []) => ({
+  id, target, title: text(), trigger: 'automatic' as const, conditions: { mode: 'all' as const, items },
+})
 
-test('A portable flow has ordered child references and no game fields', () => {
+test('A portable flow has empty children and no game fields; routing uses transitions', () => {
   const flow = fixture()
   assert.equal(errors(flow).length, 0)
-  assert.deepEqual(flow.nodes.start.children.map((b) => b.target), ['node_1', 'node_2'])
+  for (const node of Object.values(flow.nodes)) assert.deepEqual(node.children, [])
+  const linked = linkViaTransition(flow, 'start', 'node_1')
+  assert.equal(linked.flow.logic!.links.length, 2)
+  assert.equal(errors(linked.flow).length, 0)
   assert.equal(Object.hasOwn(flow, 'edges'), false)
   assert.equal(Object.hasOwn(flow, 'format_version'), false)
   assert.equal(Object.hasOwn(flow, 'checkpoints'), false)
@@ -46,15 +54,16 @@ test('Malformed branch containers are rejected before a view uses them', () => {
   v.nodes.start.children = null
   assert.throws(() => parseFlow(JSON.stringify(v)), /结构/)
 })
-test('Dangling references are reported; shared targets and cycles remain editable', () => {
-  const missing = fixture(); missing.nodes.start.children[0].target = 'missing'
+test('Direct children fail validation; shared targets and cycles via transitions remain editable', () => {
+  const missing = fixture(); missing.nodes.start.children = [strayBranch('branch_1', 'missing')]
+  assert(errors(missing).some((i) => i.message.includes('直连')))
   assert(errors(missing).some((i) => i.message.includes('不存在')))
-  const repeated = fixture(); repeated.nodes.start.children[1].target = 'node_1'
-  assert.equal(errors(repeated).length, 0)
-  const cycle = fixture(); cycle.nodes.node_3.completion = 'continue'
-  cycle.nodes.node_3.children.push({ ...clone(cycle.nodes.start.children[0]), id: 'loop', target: 'start' })
-  assert.equal(errors(cycle).length, 0)
-  assert.equal(layoutCanvas(cycle).positions.size, Object.keys(cycle.nodes).length + 1)
+  const shared = linkViaTransition(linkViaTransition(fixture(), 'start', 'node_1').flow, 'start', 'node_1')
+  assert.equal(errors(shared.flow).length, 0)
+  assert.equal(shared.flow.logic!.links.filter(link => link.to === 'node_1').length, 2)
+  const cycle = linkViaTransition(fixture(), 'start', 'start')
+  assert.equal(errors(cycle.flow).length, 0)
+  assert.equal(layoutCanvas(cycle.flow).positions.size, Object.keys(cycle.flow.nodes).length + Object.keys(cycle.flow.transitions!).length + 1)
 })
 test('An independent checkpoint is a valid draft without a finish marker', () => {
   const flow = createFlow('draft')
@@ -62,55 +71,64 @@ test('An independent checkpoint is a valid draft without a finish marker', () =>
   assert.equal(validateFlow(flow).length, 0)
 })
 test('Renaming the first checkpoint updates the independent entry connection and references', () => {
-  const before = fixture(), after = renameNode(before, 'start', 'invitation')
+  const before = fixture()
+  before.goals = { wait: { kind: 'nodes', title: text('等待准备'), description: text(), params: {}, nodeRefs: ['start'] } }
+  const after = renameNode(before, 'start', 'invitation')
   assert.equal(before.entry.target, 'start')
   assert.equal(after.entry.target, 'invitation')
   assert.equal(after.entry.id, before.entry.id)
-  assert.deepEqual(after.nodes.invitation.children[0].conditions.items[0].nodeRefs, ['invitation'])
+  assert.deepEqual(after.goals!.wait.nodeRefs, ['invitation'])
   assert.equal(errors(after).length, 0)
 })
-test('Renaming a node updates its parent child reference and preserves resources', () => {
+test('Renaming a node updates transition endpoints and preserves resources', () => {
   const flow = fixture(); flow.nodes.node_1.onEnter = [{ id: 'intro', reference: 'dialogue.intro', params: { speaker: 'guide' } }]
-  const next = renameNode(flow, 'node_1', 'prepare')
-  assert.equal(next.nodes.start.children[0].target, 'prepare')
+  const linked = linkViaTransition(flow, 'start', 'node_1')
+  const next = renameNode(linked.flow, 'node_1', 'prepare')
+  assert.equal(next.logic!.links.find(link => link.to === 'prepare')!.to, 'prepare')
   assert.deepEqual(next.nodes.prepare.onEnter, flow.nodes.node_1.onEnter)
   assert.throws(() => renameNode(next, 'prepare', 'constructor'))
   assert.throws(() => renameNode(next, 'prepare', 'node_2'))
 })
-test('Moving a subtree keeps branch IDs, conditions and descendants', () => {
+test('Direct checkpoint children fail validation while moveNode can still mutate them', () => {
   const flow = fixture(); flow.nodes.node_2.completion = 'continue'
-  const branch = clone(flow.nodes.start.children[0])
+  const branch = strayBranch('branch_1', 'node_1')
+  flow.nodes.start.children = [clone(branch)]
+  assert(errors(flow).some((i) => i.message.includes('直连')))
   const moved = moveNode(flow, 'node_1', 'node_2')
   assert.deepEqual(moved.nodes.node_2.children[0], branch)
-  assert.deepEqual([...descendants(moved, 'node_1')], ['node_1', 'node_3'])
-  assert.equal(errors(moved).length, 0)
-  assert.equal(flow.nodes.start.children.length, 2)
+  assert.deepEqual([...descendants(moved, 'node_1')], ['node_1'])
+  assert(errors(moved).some((i) => i.message.includes('直连')))
+  assert.equal(flow.nodes.start.children.length, 1)
 })
 test('The entry is not a checkpoint; moves cannot create cycles or use finish parents', () => {
   const flow = fixture()
+  flow.nodes.start.children = [strayBranch('b1', 'node_1')]
+  flow.nodes.node_1.children = [strayBranch('b2', 'node_3')]
   assert.throws(() => moveNode(flow, flow.entry.id, 'node_1'))
   assert.throws(() => moveNode(flow, 'node_1', 'node_3'))
   assert.throws(() => moveNode(flow, 'node_1', 'node_2'))
 })
-test('Reordering changes only the ordered children, not stable identities', () => {
-  const flow = fixture(), next = reorderBranch(flow, 'start', 'branch_1', 1)
-  assert.deepEqual(next.nodes.start.children, [...flow.nodes.start.children].reverse())
+test('Reordering mutates children even though direct links are invalid', () => {
+  const flow = fixture()
+  flow.nodes.start.children = [strayBranch('branch_1', 'node_1'), strayBranch('branch_2', 'node_2')]
+  const next = reorderBranch(flow, 'start', 'branch_1', 1)
+  assert.deepEqual(next.nodes.start.children.map((b) => b.id), ['branch_2', 'branch_1'])
   assert.deepEqual(flow.nodes.start.children.map((b) => b.id), ['branch_1', 'branch_2'])
+  assert(errors(next).some((i) => i.message.includes('直连')))
 })
-test('Canvas connections preserve existing branch conditions, resources and positions', () => {
+test('Canvas connections via transition preserve checkpoint content and reject 直连', () => {
   const before = withCanvasPositions(fixture()), original = clone(before)
-  const result = connectNodes(before, 'node_1', 'node_2')
+  assert.throws(() => connectNodes(before, 'node_1', 'node_2'), /直连/)
   assert.deepEqual(before, original)
-  assert.deepEqual(result.flow.layout, before.layout)
+  const result = linkViaTransition(before, 'start', 'node_1')
   assert.deepEqual(result.flow.nodes.start, before.nodes.start)
-  assert.deepEqual(result.flow.nodes.node_1.children[0], before.nodes.node_1.children[0])
-  assert.equal(result.flow.nodes.node_1.children[1].target, 'node_2')
-  assert.equal(new Set(Object.values(result.flow.nodes).flatMap(node => node.children.map(branch => branch.id))).size, 4)
+  assert.deepEqual(result.flow.nodes.node_1, before.nodes.node_1)
+  assert.equal(result.flow.logic!.links.length, 2)
   assert.equal(errors(result.flow).length, 0)
   assert.deepEqual(parseFlow(JSON.stringify(result.flow)), result.flow)
-  const duplicate = connectNodes(result.flow, 'node_1', 'node_2')
+  const duplicate = connectNodes(result.flow, 'start', result.id, 'input2')
   assert.equal(duplicate.flow, result.flow)
-  assert.deepEqual(duplicate.selection, result.selection)
+  assert.deepEqual(duplicate.selection, { kind: 'logic-link', id: result.flow.logic!.links.find(link => link.port === 'input2')!.id })
 })
 test('Replacing and disconnecting the entry retain every checkpoint and position', () => {
   const before = withCanvasPositions(fixture()), result = connectNodes(before, before.entry.id, 'node_2')
@@ -124,38 +142,42 @@ test('Replacing and disconnecting the entry retain every checkpoint and position
   assert.deepEqual(disconnected.layout, before.layout)
   assert.equal(disconnectLink(before, { kind: 'entry' }), before)
 })
-test('Disconnecting a branch removes only that connection, preserving endpoint content and other branches', () => {
-  const before = withCanvasPositions(fixture()), result = disconnectLink(before, { kind: 'branch', parent: 'start', id: 'branch_1' })
-  assert.deepEqual(result.nodes.node_1, before.nodes.node_1)
-  assert.deepEqual(result.nodes.start.children, [before.nodes.start.children[1]])
-  assert.deepEqual(result.entry, before.entry)
-  assert.deepEqual(result.layout, before.layout)
-  assert.equal(before.nodes.start.children.length, 2)
-  assert.equal(disconnectLink(result, { kind: 'branch', parent: 'start', id: 'branch_1' }), result)
+test('Disconnecting a transition link removes only that connection', () => {
+  const before = withCanvasPositions(fixture()), linked = linkViaTransition(before, 'start', 'node_1')
+  const parentLink = linked.flow.logic!.links.find(link => link.port === 'input2')!
+  const result = disconnectLink(linked.flow, { kind: 'logic-link', id: parentLink.id })
+  assert.equal(result.logic!.links.filter(link => link.id === parentLink.id).length, 0)
+  assert.equal(result.logic!.links.filter(link => link.from === linked.id).length, 1)
+  assert.deepEqual(result.nodes, linked.flow.nodes)
+  assert.deepEqual(result.entry, linked.flow.entry)
+  assert.equal(disconnectLink(result, { kind: 'logic-link', id: parentLink.id }), result)
 })
-test('Connections reject missing endpoints, entry inputs and finish outputs; cycles stay editable', () => {
+test('Connections reject missing endpoints, entry inputs, finish outputs and checkpoint直连', () => {
   const flow = fixture()
-  assert.throws(() => connectNodes(flow, 'missing', 'start'), /输出端口/)
+  assert.throws(() => connectNodes(flow, 'missing', 'start'), /端口/)
   assert.throws(() => connectNodes(flow, 'start', 'missing'), /连接目标/)
   assert.throws(() => connectNodes(flow, 'start', flow.entry.id), /连接目标/)
-  assert.throws(() => connectNodes(flow, 'node_2', 'start'), /输出端口/)
-  const loop = connectNodes(flow, 'node_1', 'node_1')
+  assert.throws(() => connectNodes(flow, 'node_2', 'start'), /直连/)
+  assert.throws(() => connectNodes(flow, 'node_1', 'node_1'), /直连/)
+  const loop = linkViaTransition(flow, 'start', 'start')
   assert.equal(errors(loop.flow).length, 0)
-  assert.equal(layoutCanvas(loop.flow).positions.size, 5)
+  assert.equal(layoutCanvas(loop.flow).positions.size, Object.keys(loop.flow.nodes).length + Object.keys(loop.flow.transitions!).length + 1)
 })
-test('Deleting one checkpoint preserves descendants, clearing only its references', () => {
+test('Deleting one checkpoint clears its references without removing unrelated nodes', () => {
   const flow = fixture()
-  flow.nodes.start.children[1].conditions.items.push({ id: 'wait', kind: 'nodes', title: text(), params: {}, nodeRefs: ['node_1', 'node_3'] })
-  const next = removeNode(flow, 'node_1')
-  assert.deepEqual(Object.keys(next.nodes), ['start', 'node_2', 'node_3'])
-  assert.deepEqual(next.nodes.start.children[0].conditions.items[0].nodeRefs, ['node_3'])
+  flow.goals = { wait: { kind: 'nodes', title: text(), description: text(), params: {}, nodeRefs: ['node_1', 'node_3'] } }
+  const linked = linkViaTransition(flow, 'start', 'node_1')
+  const next = removeNode(linked.flow, 'node_1')
+  assert.deepEqual(Object.keys(next.nodes).sort(), ['node_2', 'node_3', 'start'])
+  assert.deepEqual(next.goals!.wait.nodeRefs, ['node_3'])
   assert.deepEqual(next.nodes.node_3, flow.nodes.node_3)
+  assert.equal(next.logic!.links.filter(link => link.from === 'node_1' || link.to === 'node_1').length, 0)
   assert.equal(errors(next).length, 0)
   assert.equal(Object.keys(flow.nodes).length, 4)
 })
 test('Deleting a referenced checkpoint surfaces an emptied wait condition', () => {
   const flow = fixture()
-  flow.nodes.start.children[1].conditions.items.push({ id: 'wait', kind: 'nodes', title: text(), params: {}, nodeRefs: ['node_1'] })
+  flow.nodes.start.children = [strayBranch('branch_1', 'node_2', [{ id: 'wait', kind: 'nodes', title: text(), params: {}, nodeRefs: ['node_1'] }])]
   assert(errors(removeNode(flow, 'node_1')).some((i) => i.message.includes('至少一个')))
 })
 test('A new canvas has one immutable entry and freely created checkpoints', () => {
@@ -198,6 +220,15 @@ test('A disconnected entry can create and connect its first checkpoint', () => {
   const disconnected = connectEntry(added.flow, null)
   assert.deepEqual(disconnected.nodes, added.flow.nodes)
   assert.equal(disconnected.entry.target, null)
+})
+test('addNode only works from entry; addNextCheckpoint wires transition from checkpoint', () => {
+  const flow = fixture()
+  assert.throws(() => addNode(flow, 'start'), /直连/)
+  const added = addNextCheckpoint(flow, 'start')
+  assert.ok(Object.keys(added.flow.transitions!).length >= 1)
+  assert.equal(added.flow.logic!.links.filter(link => link.from === 'start' && link.port === 'input2').length, 1)
+  assert.equal(added.flow.logic!.links.filter(link => link.to === added.id).length, 1)
+  assert.equal(errors(added.flow).length, 0)
 })
 test('Missing entries and duplicate canvas identities cannot silently erase an entry', () => {
   const flow = createFlow('shape')
@@ -301,8 +332,9 @@ test('Renaming and removing nodes maintain logic endpoints without removing unre
   const moved = moveCheckpoint(renamed, first.id, { x: 20, y: 600 })
   assert.deepEqual(moved.logic, renamed.logic)
   assert.deepEqual(moved.layout!.positions[second.id], renamed.layout!.positions[second.id])
-  const removed = removeNode(connectEntry(moved, first.id), first.id)
-  assert.equal(removed.entry.target, null)
+  assert.throws(() => connectEntry(moved, first.id), /输入端口/)
+  const removed = removeNode(moved, first.id)
+  assert.equal(removed.entry.target, 'invitation')
   assert.equal(removed.logic!.nodes[first.id], undefined)
   assert.deepEqual(removed.logic!.nodes[second.id], flow.logic!.nodes[second.id])
   assert.deepEqual(removed.logic!.links, [flow.logic!.links[2]])
@@ -313,14 +345,16 @@ test('Renaming and removing nodes maintain logic endpoints without removing unre
   assert.deepEqual(checkpointRemoved.logic!.links, [])
   assert.equal(errors(checkpointRemoved).length, 0)
 })
-test('The entry can target logic and draft cycles or unused ports remain editable', () => {
+test('The entry only targets checkpoints; logic drafts and unused ports remain editable', () => {
   const added = createLogicNode(createFlow('logic-draft'), 'or', { x: 400, y: 100 })
-  const connected = connectNodes(added.flow, added.flow.entry.id, added.id)
-  assert.equal(connected.flow.entry.target, added.id)
-  assert.equal(canConnectNodes(added.flow, added.flow.entry.id, added.id, 'input'), true)
+  assert.equal(canConnectNodes(added.flow, added.flow.entry.id, added.id, 'input'), false)
+  assert.throws(() => connectNodes(added.flow, added.flow.entry.id, added.id), /端口/)
+  const ckpt = createCheckpoint(added.flow, { x: 200, y: 100 })
+  const connected = connectNodes(ckpt.flow, ckpt.flow.entry.id, ckpt.id)
+  assert.equal(connected.flow.entry.target, ckpt.id)
   const loop = connectNodes(connected.flow, added.id, added.id)
   assert.equal(errors(loop.flow).length, 0)
-  assert.equal(layoutCanvas(loop.flow).positions.size, 2)
+  assert.equal(layoutCanvas(loop.flow).positions.size, 3)
   assert.equal(errors(disconnectLink(loop.flow, connected.selection)).length, 0)
 })
 test('Malformed logic operators, identities and ports cannot be silently accepted', () => {
@@ -342,15 +376,23 @@ test('Malformed logic operators, identities and ports cannot be silently accepte
 
 test('Bad condition declarations and resource references are reported', () => {
   const flow = fixture()
-  flow.nodes.start.children[0].conditions.items = [{ id: 'count', kind: 'counter', title: text(), params: { event: '', target: 0 }, nodeRefs: [] }]
+  flow.nodes.start.children = [strayBranch('branch_1', 'node_1', [{ id: 'count', kind: 'counter', title: text(), params: { event: '', target: 0 }, nodeRefs: [] }])]
   flow.nodes.node_1.onEnter = [{ id: 'action', reference: '', params: {} }]
+  assert(errors(flow).some((i) => i.message.includes('直连')))
   assert(errors(flow).some((i) => i.message.includes('目标值')))
   assert(errors(flow).some((i) => i.message.includes('事件引用')))
   assert(errors(flow).some((i) => i.message.includes('资源引用')))
 })
-test('Flat storage supports deep trees without deeply nested document JSON', () => {
-  let flow = createFlow('deep'), parent = flow.entry.id
-  for (let n = 0; n < 600; n++) { const added = addNode(flow, parent); flow = added.flow; parent = added.id }
+test('Flat storage supports long transition chains without deeply nested document JSON', () => {
+  let flow = createFlow('deep')
+  const first = addNode(flow, flow.entry.id)
+  flow = first.flow
+  let parent = first.id
+  for (let n = 0; n < 599; n++) {
+    const added = addNextCheckpoint(flow, parent)
+    flow = added.flow
+    parent = added.id
+  }
   assert.equal(Object.keys(parseFlow(JSON.stringify(flow)).nodes).length, 600)
   assert.equal(errors(flow).length, 0)
 })
@@ -550,44 +592,91 @@ test('Transition nodes expose two independent inputs and one centered output', (
   assert.equal(errors(moved).length, 0)
 })
 
-test('Transition connections preserve both input identities and reject extra inputs on other nodes', () => {
+test('Transition connections match Goals / Parent / Next types and replace exclusive ports', () => {
   const added = createTransitionNode(fixture(), { x: 400, y: 100 })
   const goal = createGoalNode(added.flow, { x: 100, y: 240 })
-  let flow = connectNodes(goal.flow, 'start', added.id, 'input').flow
-  flow = connectNodes(flow, goal.id, added.id, 'input2').flow
+  const secondGoal = createGoalNode(goal.flow, { x: 100, y: 360 })
+  assert.deepEqual(inputPorts(goal.flow, goal.id), [])
+  assert.equal(portKind(goal.flow, goal.id, 'output'), 'goal')
+  assert.equal(portKind(goal.flow, added.id, 'input'), 'goal')
+  assert.equal(portKind(goal.flow, added.id, 'input2'), 'checkpoint')
+  assert.equal(portKind(goal.flow, added.id, 'output'), 'checkpoint')
+  assert.equal(portKind(goal.flow, 'start', 'output'), 'checkpoint')
+  assert.equal(portKind(goal.flow, goal.flow.entry.id, 'output'), 'checkpoint')
+  assert.equal(canConnectNodes(goal.flow, 'start', goal.id, 'input'), false)
+  assert.throws(() => connectNodes(goal.flow, 'start', goal.id), /端口/)
+  assert.throws(() => connectNodes(goal.flow, 'start', added.id, 'input'), /端口/)
+  assert.throws(() => connectNodes(goal.flow, goal.id, added.id, 'input2'), /端口/)
+  assert.throws(() => connectNodes(goal.flow, goal.flow.entry.id, added.id, 'input'), /端口/)
+  assert.throws(() => connectNodes(goal.flow, goal.flow.entry.id, added.id, 'input2'), /端口/)
+  let flow = connectNodes(secondGoal.flow, goal.id, added.id, 'input').flow
+  flow = connectNodes(flow, secondGoal.id, added.id, 'input').flow
+  flow = connectNodes(flow, 'start', added.id, 'input2').flow
+  const replacedParent = connectNodes(flow, 'node_1', added.id, 'input2').flow
+  assert.equal(replacedParent.logic!.links.filter(link => link.to === added.id && link.port === 'input2').length, 1)
+  assert.equal(replacedParent.logic!.links.find(link => link.to === added.id && link.port === 'input2')!.from, 'node_1')
+  flow = connectNodes(replacedParent, replacedParent.entry.id, 'node_2').flow
+  assert.equal(flow.entry.target, 'node_2')
+  assert.equal(flow.logic!.links.find(link => link.to === added.id && link.port === 'input2')!.from, 'node_1')
   flow = connectNodes(flow, added.id, 'node_2').flow
-  const secondFromSameSource = connectNodes(flow, 'start', added.id, 'input2')
-  assert.equal(secondFromSameSource.flow.logic!.links.length, 4)
-  assert.equal(connectNodes(flow, goal.id, added.id, 'input2').flow, flow)
-  assert.deepEqual(flow.logic!.links.map(link => link.port), ['input', 'input2', 'input'])
+  const replacedNext = connectNodes(flow, added.id, 'start').flow
+  assert.equal(replacedNext.logic!.links.filter(link => link.from === added.id).length, 1)
+  assert.equal(replacedNext.logic!.links.find(link => link.from === added.id)!.to, 'start')
+  assert.equal(connectNodes(flow, goal.id, added.id, 'input').flow, flow)
+  assert.deepEqual(flow.logic!.links.map(link => link.port).sort(), ['input', 'input', 'input', 'input2'])
   assert.deepEqual(flow.nodes, added.flow.nodes)
   assert.equal(errors(flow).length, 0)
   assert.deepEqual(parseFlow(JSON.stringify(flow)), flow)
+  assert.throws(() => connectNodes(flow, added.id, goal.id), /端口/)
   assert.throws(() => connectNodes(flow, added.id, 'node_1', 'input2'), /端口/)
-  const cut = disconnectLink(flow, { kind: 'logic-link', id: flow.logic!.links[1].id })
-  assert.equal(cut.logic!.links.length, 2)
-  assert.equal(cut.logic!.links[0].port, 'input')
+  const cut = disconnectLink(flow, { kind: 'logic-link', id: flow.logic!.links.find(link => link.port === 'input2')!.id })
+  assert.equal(cut.logic!.links.filter(link => link.port === 'input2').length, 0)
+  assert.equal(cut.logic!.links.filter(link => link.to === added.id && link.port === 'input').length, 2)
+  assert.equal(cut.logic!.links.filter(link => link.from === added.id).length, 1)
   const removed = removeCanvasItems(flow, [added.id])
   assert.equal(removed.transitions![added.id], undefined)
   assert.equal(removed.logic!.links.length, 0)
   assert.deepEqual(removed.nodes, added.flow.nodes)
 })
 
-test('Entry links retain the chosen transition input through reload, replacement and deletion', () => {
+test('Entry out ≡ Transition Next: entry only connects to checkpoints; Parent only from checkpoint', () => {
   const added = createTransitionNode(fixture(), { x: 400, y: 100 })
-  const second = connectNodes(added.flow, added.flow.entry.id, added.id, 'input2').flow
-  assert.equal(second.entry.port, 'input2')
-  assert.deepEqual(parseFlow(JSON.stringify(second)), second)
-  assert.equal(errors(second).length, 0)
-  const first = connectNodes(second, second.entry.id, added.id, 'input').flow
-  assert.equal(first.entry.target, added.id)
-  assert.equal(first.entry.port, undefined)
-  assert.equal(connectEntry(first, added.id), first)
-  assert.equal(connectEntry(second, 'start').entry.port, undefined)
-  assert.equal(disconnectLink(second, { kind: 'entry-link' }).entry.port, undefined)
-  assert.equal(removeNode(second, added.id).entry.port, undefined)
-  assert.equal(removeNode(second, added.id).entry.target, null)
-  assert.throws(() => connectEntry(second, 'start', 'input2'), /输入端口/)
+  assert.throws(() => connectNodes(added.flow, added.flow.entry.id, added.id, 'input'), /端口/)
+  assert.throws(() => connectNodes(added.flow, added.flow.entry.id, added.id, 'input2'), /端口/)
+  assert.equal(canConnectNodes(added.flow, added.flow.entry.id, 'start', 'input'), true)
+  const toStart = connectNodes(added.flow, added.flow.entry.id, 'start').flow
+  assert.equal(toStart.entry.target, 'start')
+  assert.equal(outgoingCount(toStart, toStart.entry.id), 1)
+  assert.deepEqual(parseFlow(JSON.stringify(toStart)), toStart)
+  assert.equal(errors(toStart).length, 0)
+  assert.throws(() => connectEntry(toStart, added.id, 'input2'), /输入端口/)
+  let flow = connectNodes(toStart, 'start', added.id, 'input2').flow
+  flow = connectNodes(flow, added.id, 'node_1').flow
+  assert.equal(errors(flow).length, 0)
+  assert.equal(disconnectLink(flow, { kind: 'entry-link' }).entry.target, null)
+  assert.equal(removeNode(flow, added.id).entry.target, 'start')
+})
+
+test('Checkpoints keep multi in/out while entry and transition Parent/Next stay single', () => {
+  const first = createTransitionNode(fixture(), { x: 400, y: 100 })
+  const second = createTransitionNode(first.flow, { x: 400, y: 280 })
+  const logic = createLogicNode(second.flow, 'or', { x: 100, y: 400 })
+  let flow = connectNodes(logic.flow, 'start', first.id, 'input2').flow
+  flow = connectNodes(flow, 'start', second.id, 'input2').flow
+  assert.equal(flow.logic!.links.filter(link => link.from === 'start' && link.port === 'input2').length, 2)
+  assert.ok(outgoingCount(flow, 'start') >= 2)
+  flow = connectNodes(flow, first.id, 'node_1').flow
+  flow = connectNodes(flow, second.id, 'node_1').flow
+  flow = connectNodes(flow, logic.id, 'node_1').flow
+  assert.equal(flow.logic!.links.filter(link => link.to === 'node_1').length, 3)
+  assert.equal(flow.nodes.start.children.length, 0)
+  assert.equal(errors(flow).length, 0)
+  const replaced = connectNodes(flow, flow.entry.id, 'node_2').flow
+  assert.equal(replaced.entry.target, 'node_2')
+  assert.equal(outgoingCount(replaced, replaced.entry.id), 1)
+  const nextSwap = connectNodes(flow, first.id, 'node_2').flow
+  assert.equal(nextSwap.logic!.links.filter(link => link.from === first.id).length, 1)
+  assert.equal(nextSwap.logic!.links.find(link => link.from === first.id)!.to, 'node_2')
 })
 
 test('Malformed transition content and colliding canvas identities are rejected', () => {
@@ -601,6 +690,109 @@ test('Malformed transition content and colliding canvas identities are rejected'
   const invalidEntry = clone(added.flow)
   Reflect.set(invalidEntry.entry, 'port', 'unknown')
   assert.throws(() => parseFlow(JSON.stringify(invalidEntry)), /entry/)
+})
+
+test('Hub and gateway create, roundtrip, and metrics', () => {
+  const hub = createHubNode(fixture(), { x: 120, y: 80 })
+  const gateway = createGatewayNode(hub.flow, { x: 320, y: 80 })
+  assert.ok(getHubNode(gateway.flow, hub.id))
+  assert.ok(getGatewayNode(gateway.flow, gateway.id))
+  assert.deepEqual(inputPorts(gateway.flow, hub.id), ['input'])
+  assert.deepEqual(inputPorts(gateway.flow, gateway.id), ['input', 'input2'])
+  assert.deepEqual(outputPorts(gateway.flow, hub.id), ['output', 'output2'])
+  assert.deepEqual(outputPorts(gateway.flow, gateway.id), ['output'])
+  assert.equal(portKind(gateway.flow, hub.id, 'input'), 'checkpoint')
+  assert.equal(portKind(gateway.flow, hub.id, 'output'), 'checkpoint')
+  assert.equal(portKind(gateway.flow, hub.id, 'output2'), 'bridge')
+  assert.equal(portKind(gateway.flow, gateway.id, 'input'), 'checkpoint')
+  assert.equal(portKind(gateway.flow, gateway.id, 'input2'), 'bridge')
+  assert.equal(portKind(gateway.flow, gateway.id, 'output'), 'checkpoint')
+  assert.equal(nodeMetrics(gateway.flow, hub.id).width, 180)
+  assert.equal(nodeMetrics(gateway.flow, gateway.id).height, 108)
+  assert.deepEqual(socketOffset(gateway.flow, hub.id, 'output'), { x: 180, y: 58 })
+  assert.deepEqual(socketOffset(gateway.flow, hub.id, 'output2'), { x: 180, y: 86 })
+  assert.deepEqual(socketOffset(gateway.flow, gateway.id, 'input'), { x: 0, y: 58 })
+  assert.deepEqual(socketOffset(gateway.flow, gateway.id, 'input2'), { x: 0, y: 86 })
+  const restored = parseFlow(JSON.stringify(gateway.flow))
+  assert.deepEqual(restored.hubs, gateway.flow.hubs)
+  assert.deepEqual(restored.gateways, gateway.flow.gateways)
+  assert.equal(errors(restored).length, 0)
+  assert.ok(layoutCanvas(restored).positions.has(hub.id))
+  assert.ok(layoutCanvas(restored).positions.has(gateway.id))
+})
+
+test('Hub and gateway connection rules and cardinalities', () => {
+  const hub = createHubNode(fixture(), { x: 200, y: 100 })
+  const gateway = createGatewayNode(hub.flow, { x: 420, y: 100 })
+  const t1 = createTransitionNode(gateway.flow, { x: 300, y: 40 })
+  const t2 = createTransitionNode(t1.flow, { x: 300, y: 180 })
+  let flow = t2.flow
+  assert.equal(canConnectNodes(flow, flow.entry.id, hub.id, 'input'), true)
+  assert.equal(canConnectNodes(flow, 'start', hub.id, 'input'), true)
+  assert.equal(canConnectNodes(flow, hub.id, t1.id, 'input2', 'output'), true)
+  assert.equal(canConnectNodes(flow, hub.id, gateway.id, 'input', 'output'), false)
+  assert.equal(canConnectNodes(flow, hub.id, gateway.id, 'input2', 'output'), false)
+  assert.equal(canConnectNodes(flow, hub.id, gateway.id, 'input2', 'output2'), true)
+  assert.equal(canConnectNodes(flow, t1.id, gateway.id, 'input'), true)
+  assert.equal(canConnectNodes(flow, t1.id, gateway.id, 'input2'), false)
+  assert.equal(canConnectNodes(flow, gateway.id, 'node_1', 'input'), true)
+  assert.equal(canConnectNodes(flow, gateway.id, hub.id, 'input'), false)
+  assert.equal(canConnectNodes(flow, hub.id, 'node_1', 'input'), false)
+  assert.equal(canConnectNodes(flow, 'start', gateway.id, 'input'), false)
+  assert.equal(canConnectNodes(flow, flow.entry.id, gateway.id, 'input'), false)
+
+  flow = connectNodes(flow, 'start', hub.id, 'input').flow
+  assert.equal(flow.logic!.links.filter(link => link.to === hub.id).length, 1)
+  flow = connectNodes(flow, flow.entry.id, hub.id, 'input').flow
+  assert.equal(flow.entry.target, hub.id)
+  assert.equal(flow.logic!.links.filter(link => link.to === hub.id).length, 0)
+
+  flow = connectNodes(flow, hub.id, t1.id, 'input2', 'output').flow
+  flow = connectNodes(flow, hub.id, t2.id, 'input2', 'output').flow
+  assert.equal(flow.logic!.links.filter(link => link.from === hub.id && link.port === 'input2' && getGatewayNode(flow, link.to) === undefined).length, 2)
+
+  flow = connectNodes(flow, t1.id, gateway.id).flow
+  flow = connectNodes(flow, t2.id, gateway.id).flow
+  assert.equal(flow.logic!.links.filter(link => link.to === gateway.id && link.port === 'input' && (link.from === t1.id || link.from === t2.id)).length, 2)
+
+  assert.throws(() => connectNodes(flow, hub.id, gateway.id), /端口/)
+  assert.throws(() => connectNodes(flow, hub.id, gateway.id, 'input', 'output2'), /端口/)
+  flow = connectNodes(flow, hub.id, gateway.id, 'input2', 'output2').flow
+  assert.equal(flow.logic!.links.filter(link => link.from === hub.id && link.to === gateway.id && link.port === 'input2').length, 1)
+  assert.equal(linkSourcePort(flow, hub.id, gateway.id, 'input2'), 'output2')
+  assert.equal(flow.logic!.links.filter(link => link.from === hub.id && link.port === 'input2').length, 3)
+  const otherHub = createHubNode(flow, { x: 200, y: 260 })
+  const otherGateway = createGatewayNode(otherHub.flow, { x: 420, y: 260 })
+  flow = connectNodes(otherGateway.flow, otherHub.id, gateway.id, 'input2', 'output2').flow
+  assert.equal(flow.logic!.links.filter(link => link.from === hub.id && link.to === gateway.id).length, 0)
+  assert.equal(flow.logic!.links.filter(link => link.from === otherHub.id && link.to === gateway.id && link.port === 'input2').length, 1)
+  flow = connectNodes(flow, otherHub.id, otherGateway.id, 'input2', 'output2').flow
+  assert.equal(flow.logic!.links.filter(link => link.from === otherHub.id && link.to === gateway.id).length, 0)
+  assert.equal(flow.logic!.links.filter(link => link.from === otherHub.id && link.to === otherGateway.id && link.port === 'input2').length, 1)
+
+  flow = connectNodes(flow, gateway.id, 'node_1').flow
+  assert.equal(flow.logic!.links.find(link => link.from === gateway.id)!.to, 'node_1')
+  flow = connectNodes(flow, gateway.id, 'node_2').flow
+  assert.equal(flow.logic!.links.filter(link => link.from === gateway.id).length, 1)
+  assert.equal(flow.logic!.links.find(link => link.from === gateway.id)!.to, 'node_2')
+  assert.equal(errors(flow).length, 0)
+
+  assert.throws(() => connectNodes(flow, gateway.id, otherHub.id), /端口/)
+  assert.throws(() => connectNodes(flow, otherHub.id, 'node_1'), /端口/)
+  const removed = removeNode(flow, otherHub.id)
+  assert.equal(removed.hubs![otherHub.id], undefined)
+  assert.ok(!removed.logic!.links.some(link => link.from === otherHub.id || link.to === otherHub.id))
+})
+
+test('Hub/gateway identity collisions and malformed content are rejected', () => {
+  const hub = createHubNode(fixture(), { x: 0, y: 0 })
+  const collision = clone(hub.flow)
+  collision.hubs!.start = collision.hubs![hub.id]
+  assert.throws(() => parseFlow(JSON.stringify(collision)), /hubs/)
+  const gateway = createGatewayNode(hub.flow, { x: 40, y: 40 })
+  const bad = clone(gateway.flow)
+  Reflect.set(bad.gateways![gateway.id], 'description', 1)
+  assert.throws(() => parseFlow(JSON.stringify(bad)), /gateways/)
 })
 
 console.log(`Progress model: ${passed} checks passed.`)

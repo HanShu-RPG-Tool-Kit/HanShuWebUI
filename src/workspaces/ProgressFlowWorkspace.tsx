@@ -1,6 +1,6 @@
 import { useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from 'react'
-import { branches, clone, connectEntry, connectNodes, createFlow, disconnectLink, displayText, getNode, hasContentNode, parseFlow, validateFlow, type CanvasNodeType, type FlowCanvasNote, type FlowInputPort, type FlowPosition, type FlowSelection, type ProgressFlow } from './progress/model'
-import { addNextCheckpoint, createCanvasNote, updateCanvasNote, removeCanvasItems, createCheckpoint, createGoalNode, createLogicNode, createTransitionNode, groupCanvasNodes, moveCanvasNodes, renameCanvasGroup, ungroupCanvasNodes, withCanvasPositions } from './progress/canvas'
+import { branches, clone, connectEntry, connectNodes, createFlow, disconnectLink, displayText, getNode, hasContentNode, parseFlow, validateFlow, type CanvasNodeType, type FlowCanvasNote, type FlowInputPort, type FlowPort, type FlowPosition, type FlowSelection, type ProgressFlow } from './progress/model'
+import { addNextCheckpoint, createCanvasNote, updateCanvasNote, removeCanvasItems, createCheckpoint, createGoalNode, createLogicNode, createTransitionNode, createHubNode, createGatewayNode, groupCanvasNodes, moveCanvasNodes, renameCanvasGroup, ungroupCanvasNodes, withCanvasPositions } from './progress/canvas'
 import { smartArrangeCanvas } from './progress/arrange'
 import { ProgressGraph } from './progress/ProgressGraph'
 import { FlowEditorDialog } from './progress/FlowEditorDialog'
@@ -74,8 +74,8 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
   }
   function createNode(position: FlowPosition, operator?: CanvasNodeType) {
     if (!parsed.flow || locked || busy) return
-    const result = operator === 'transition' ? createTransitionNode(parsed.flow, position) : operator === 'note' ? createCanvasNote(parsed.flow, position) : operator === 'goal' ? createGoalNode(parsed.flow, position) : operator ? createLogicNode(parsed.flow, operator, position) : createCheckpoint(parsed.flow, position)
-    changeFlow(result.flow); setSelection({ kind: operator === 'transition' ? 'transition' : operator === 'note' ? 'note' : operator === 'goal' ? 'goal' : operator ? 'logic' : 'node', id: result.id })
+    const result = operator === 'transition' ? createTransitionNode(parsed.flow, position) : operator === 'hub' ? createHubNode(parsed.flow, position) : operator === 'gateway' ? createGatewayNode(parsed.flow, position) : operator === 'note' ? createCanvasNote(parsed.flow, position) : operator === 'goal' ? createGoalNode(parsed.flow, position) : operator ? createLogicNode(parsed.flow, operator, position) : createCheckpoint(parsed.flow, position)
+    changeFlow(result.flow); setSelection({ kind: operator === 'transition' ? 'transition' : operator === 'hub' ? 'hub' : operator === 'gateway' ? 'gateway' : operator === 'note' ? 'note' : operator === 'goal' ? 'goal' : operator ? 'logic' : 'node', id: result.id })
   }
   function moveCanvasSelection(positions: Record<string, FlowPosition>) {
     if (!parsed.flow || locked || busy) return
@@ -91,9 +91,14 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     if (!parsed.flow || locked || busy) return
     changeFlow(ungroupCanvasNodes(parsed.flow, id)); setSelection({ kind: 'flow' })
   }
-  function deleteNodes(ids: string[]) {
+  function deleteNodes(ids: string[], disconnect: FlowSelection[] = []) {
     if (!parsed.flow || locked || busy) return
-    const next = removeCanvasItems(parsed.flow, ids)
+    let next = parsed.flow
+    if (disconnect.length) {
+      const fixed = withCanvasPositions(next)
+      next = disconnect.reduce(disconnectLink, fixed)
+    }
+    next = removeCanvasItems(next, ids)
     if (next !== parsed.flow) { changeFlow(next); setSelection({ kind: 'flow' }) }
   }
   function deleteNode(id: string) { deleteNodes([id]) }
@@ -110,10 +115,10 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     if (!parsed.flow || locked || busy || (id !== null && !hasContentNode(parsed.flow, id))) return
     changeFlow(connectEntry(withCanvasPositions(parsed.flow), id))
   }
-  function connectCanvasNodes(from: string, to: string, port: FlowInputPort) {
+  function connectCanvasNodes(from: string, to: string, port: FlowInputPort, fromPort?: FlowPort) {
     if (!parsed.flow || locked || busy) return
     try {
-      const fixed = withCanvasPositions(parsed.flow), result = connectNodes(fixed, from, to, port)
+      const fixed = withCanvasPositions(parsed.flow), result = connectNodes(fixed, from, to, port, fromPort ?? 'output')
       if (result.flow !== fixed) changeFlow(result.flow)
       setSelection(result.selection)
     } catch (error) { setNotice(String(error)) }
@@ -247,7 +252,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
             <div className="flow-source-heading"><code>{doc.name}</code><button type="button" disabled={!parsed.flow} onClick={() => parsed.flow && changeFlow(parsed.flow)}>格式化</button></div>
             <textarea className="flow-source flow-code" aria-label="树图文档结构" value={doc.source} onChange={(event) => changeSource(event.target.value, true)} spellCheck={false} />
           </div> : parsed.flow ? <>
-            <div className="flow-canvas-heading"><div><strong>{displayText(parsed.flow.title) || '未命名流程'}</strong><small>{Object.keys(parsed.flow.nodes).length} 个阶段{Object.keys(parsed.flow.logic?.nodes ?? {}).length > 0 && ` · ${Object.keys(parsed.flow.logic!.nodes).length} 个逻辑节点`}{Object.keys(parsed.flow.goals ?? {}).length > 0 && ` · ${Object.keys(parsed.flow.goals!).length} 个目标`}{Object.keys(parsed.flow.transitions ?? {}).length > 0 && ` · ${Object.keys(parsed.flow.transitions!).length} 个转移节点`} · {branches(parsed.flow).length} 条分支</small></div><button type="button" disabled={locked} onClick={() => openEditor({ kind: 'flow' })}>流程信息</button></div>
+            <div className="flow-canvas-heading"><div><strong>{displayText(parsed.flow.title) || '未命名流程'}</strong><small>{Object.keys(parsed.flow.nodes).length} 个阶段{Object.keys(parsed.flow.logic?.nodes ?? {}).length > 0 && ` · ${Object.keys(parsed.flow.logic!.nodes).length} 个逻辑节点`}{Object.keys(parsed.flow.goals ?? {}).length > 0 && ` · ${Object.keys(parsed.flow.goals!).length} 个目标`}{Object.keys(parsed.flow.transitions ?? {}).length > 0 && ` · ${Object.keys(parsed.flow.transitions!).length} 个转移节点`}{Object.keys(parsed.flow.hubs ?? {}).length > 0 && ` · ${Object.keys(parsed.flow.hubs!).length} 个集线器`}{Object.keys(parsed.flow.gateways ?? {}).length > 0 && ` · ${Object.keys(parsed.flow.gateways!).length} 个网关`} · {branches(parsed.flow).length} 条分支</small></div><button type="button" disabled={locked} onClick={() => openEditor({ kind: 'flow' })}>流程信息</button></div>
             <ProgressGraph key={doc.key} flow={parsed.flow} selection={selection} onSelect={setSelection} onEdit={openEditor} onAddNext={addNextNode} onCreate={createNode} onMove={moveCanvasSelection} onGroup={groupCanvasSelection} onUngroup={ungroupCanvasSelection} onRenameGroup={renameGroup} onDelete={deleteNode} onDeleteMany={deleteNodes} onArrange={arrangeSelection} onUpdateNote={updateNote} onConnectEntry={setEntryTarget} onConnect={connectCanvasNodes} onDisconnect={disconnectCanvasLink} onCut={disconnectCanvasLinks} onSetCompletion={setNodeCompletion} active={active} disabled={locked || busy} />
           </> : <div className="flow-empty"><h3>草稿暂时无法显示为树图</h3><p>{parsed.error}</p><button type="button" onClick={() => setView('source')}>修复文档结构</button></div>}
           <div className="flow-validation">
