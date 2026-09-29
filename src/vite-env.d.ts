@@ -14,6 +14,11 @@ declare module '*.md?raw' {
   export default content
 }
 
+declare module '*.ogg' {
+  const src: string
+  export default src
+}
+
 /** Chromium File System Access — 部分 DOM lib 版本声明不全 */
 interface Window {
   showDirectoryPicker?: (options?: {
