@@ -1,14 +1,15 @@
-import { useEffect, useState, type ReactNode } from 'react'
-import { VOICE_EXTRA_GLYPHS, type VoiceGlyphPart } from './ui/voiceIcons'
-import {
-  isCurrentVoiceAsset,
-  type VoiceAssetEntry,
-  type VoiceLibrary,
-} from './i18n/voiceLibrary'
+import { useEffect, useState } from 'react'
+import { VOICE_EXTRA_GLYPHS } from './ui/voiceIcons'
+import { VoiceGlyph, VoiceWaveform } from './ui/VoiceVisuals'
+import { isCurrentVoiceAsset } from './i18n/voiceLibrary'
+import type { VoiceLibrary } from './i18n/voiceLibrary'
 import { formatVoiceChannels, formatVoiceDuration } from './i18n/voiceRuntime'
-import type { VoiceDecodeResult } from './i18n/voiceRuntime'
 import { hasExternalFiles } from './drag/dragPayload'
 import { formatBytes } from './assets/paths'
+import {
+  VoiceAssetBrowser,
+  voiceFormatLabel,
+} from './studio/VoiceAssetBrowser'
 
 /**
  * 音频选择器弹窗（Edit Voice）。
@@ -21,6 +22,9 @@ import { formatBytes } from './assets/paths'
  * 与旧版的区别：**不再编辑映射表**。选中的文件是「源」，点导入即把它按对等路径
  * 写进该键的位置（`assets/<语言标签>/voice/<脚本目录>/<键名>.ogg`），
  * 处理与写入由导入工作流负责（进度条见 VoiceImportProgress）。
+ *
+ * 搜索框 + 资源树与**录音棚共用同一实现**（见 studio/VoiceAssetBrowser），
+ * 图标与波形同理（见 ui/VoiceVisuals）—— 两边不许各写一份。
  */
 
 /** 拖进来的外部文件：先缓存在内存里当候选源，点"导入"才真正写入 */
@@ -46,111 +50,6 @@ export type VoicePickerModalProps = {
   onClose(): void
 }
 
-type VoiceTreeNode =
-  | { kind: 'dir'; name: string; path: string; children: VoiceTreeNode[] }
-  | { kind: 'file'; entry: VoiceAssetEntry }
-
-/** 由扁平资产列表（相对 assets）建树 */
-function buildTree(entries: VoiceAssetEntry[]): VoiceTreeNode[] {
-  const root: VoiceTreeNode[] = []
-  const dirs = new Map<string, VoiceTreeNode[]>([['assets', root]])
-
-  const ensureDir = (
-    path: string,
-    name: string,
-    parent: VoiceTreeNode[],
-  ): VoiceTreeNode[] => {
-    const existing = dirs.get(path)
-    if (existing) return existing
-    const children: VoiceTreeNode[] = []
-    parent.push({ kind: 'dir', name, path, children })
-    dirs.set(path, children)
-    return children
-  }
-
-  for (const entry of [...entries].sort((a, b) => a.path.localeCompare(b.path))) {
-    const parts = entry.relative.split('/')
-    let parent = root
-    let acc = 'assets'
-    for (let i = 0; i < parts.length - 1; i++) {
-      acc = `${acc}/${parts[i]}`
-      parent = ensureDir(acc, parts[i], parent)
-    }
-    parent.push({ kind: 'file', entry })
-  }
-
-  const sortNodes = (nodes: VoiceTreeNode[]): VoiceTreeNode[] => {
-    nodes.sort((a, b) => {
-      if (a.kind !== b.kind) return a.kind === 'dir' ? -1 : 1
-      const an = a.kind === 'dir' ? a.name : a.entry.name
-      const bn = b.kind === 'dir' ? b.name : b.entry.name
-      return an.localeCompare(bn, 'zh-CN')
-    })
-    for (const node of nodes) if (node.kind === 'dir') sortNodes(node.children)
-    return nodes
-  }
-  return sortNodes(root)
-}
-
-function VoiceGlyph({ parts }: { parts: VoiceGlyphPart[] }) {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      {parts.map((part, index) =>
-        part.mode === 'fill' ? (
-          <path key={index} d={part.d} fill="currentColor" opacity={part.opacity} />
-        ) : (
-          <path
-            key={index}
-            d={part.d}
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={part.width ?? 2}
-            strokeLinecap="round"
-            opacity={part.opacity}
-          />
-        ),
-      )}
-    </svg>
-  )
-}
-
-/** 音频形状：对称柱状波形（由解码后的峰值画） */
-function VoiceWaveform({ peaks }: { peaks: number[] }) {
-  const count = peaks.length || 1
-  const slot = 100 / count
-  return (
-    <svg viewBox="0 0 100 100" preserveAspectRatio="none" role="img" aria-label="音频形状">
-      {peaks.map((peak, index) => {
-        const height = Math.max(peak * 94, 1)
-        return (
-          <rect
-            key={index}
-            x={index * slot + slot * 0.18}
-            y={50 - height / 2}
-            width={slot * 0.64}
-            height={height}
-            fill="currentColor"
-            opacity={0.9}
-          />
-        )
-      })}
-    </svg>
-  )
-}
-
-/** 格式文案：`WAV` / `OGG · Vorbis` / `OGG · Opus`（解出来才知道容器里装的是什么） */
-function formatLabel(
-  entry: VoiceAssetEntry,
-  decoded: VoiceDecodeResult | null,
-): string {
-  const base = entry.ext ? entry.ext.toUpperCase() : '无后缀'
-  if (!decoded?.ok || entry.ext.toLowerCase() !== 'ogg') return base
-  const codec = decoded.info.codec
-  const name =
-    codec === 'vorbis' ? 'Vorbis' : codec === 'opus' ? 'Opus' : '未知编码'
-  return `${base} · ${name}`
-}
-
 export function VoicePickerModal({
   unitKey,
   targetPath,
@@ -163,7 +62,6 @@ export function VoicePickerModal({
   const [query, setQuery] = useState('')
   // 默认选中「当前对等文件」（如果有），否则什么都不选
   const [selected, setSelected] = useState<string | null>(currentPath)
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   /** 有外部文件拖到预览框上（框式高亮） */
   const [dropActive, setDropActive] = useState(false)
   /**
@@ -187,9 +85,7 @@ export function VoicePickerModal({
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  const rootDir = library.rootDir()
   const entries = library.listAssets(query)
-  const tree = buildTree(entries)
 
   const selectedEntry = selected
     ? (entries.find((entry) => entry.path === selected) ?? null)
@@ -210,7 +106,7 @@ export function VoicePickerModal({
       ? pending.ext.toUpperCase()
       : '无后缀'
     : selectedEntry
-      ? formatLabel(selectedEntry, decoded)
+      ? voiceFormatLabel(selectedEntry, decoded)
       : null
   const canImport = pending != null || (selectedEntry != null && selectedEntry.decodable)
   /**
@@ -239,73 +135,6 @@ export function VoicePickerModal({
         console.warn('[hanshu] 读取拖入的音频失败', error)
       })
   }
-
-  const renderNodes = (nodes: VoiceTreeNode[], depth: number): ReactNode[] =>
-    nodes.map((node) => {
-      if (node.kind === 'dir') {
-        // 有搜索词时全部展开，否则按折叠状态
-        const isCollapsed = !query && Boolean(collapsed[node.path])
-        return (
-          <div key={node.path}>
-            <div
-              className="voice-tree-dir"
-              style={{ paddingLeft: 8 + depth * 14 }}
-              onClick={() =>
-                setCollapsed((prev) => ({ ...prev, [node.path]: !prev[node.path] }))
-              }
-            >
-              <span className="voice-tree-twist">{isCollapsed ? '▸' : '▾'}</span>
-              <span className="voice-tree-name">{node.name}</span>
-            </div>
-            {!isCollapsed && renderNodes(node.children, depth + 1)}
-          </div>
-        )
-      }
-
-      const entry = node.entry
-      const info = library.peek(entry.path)
-      const isTarget = isCurrentVoiceAsset(
-        entry.path,
-        library.locale,
-        library.scriptName,
-        unitKey,
-      )
-      // 后缀可解码，但还不是目标格式（wav / 立体声 ogg / Opus…）属于正常情况：
-      // 导入时会转成单通道 Vorbis，所以这里**中性显示**，不报警也不提示规则。
-      // 只有"平台根本解不了"的后缀才值得标红（那种导入也不会成功）。
-      const badge = !entry.decodable
-        ? { text: entry.ext ? `不可解 .${entry.ext}` : '不可解', warn: true }
-        : info && info.ok
-          ? {
-              text: `${formatVoiceDuration(info.info.duration)} · ${formatVoiceChannels(info.info.channels)}`,
-              warn: false,
-            }
-          : { text: formatBytes(entry.size), warn: false }
-
-      return (
-        <div
-          key={entry.path}
-          className={`voice-tree-file${entry.path === selected ? ' is-active' : ''}${entry.decodable ? '' : ' is-disabled'}`}
-          style={{ paddingLeft: 8 + depth * 14 }}
-          title={entry.path}
-          onClick={() => {
-            if (!entry.decodable) return
-            // 改选资产 = 放弃内存里那个拖入文件
-            setPending(null)
-            setSelected(entry.path)
-          }}
-        >
-          <span className="voice-tree-twist" />
-          <span className="voice-tree-name">
-            {entry.name}
-            {isTarget && <span className="voice-tree-tag">目标</span>}
-          </span>
-          <span className={`voice-tree-badge${badge.warn ? ' is-warn' : ''}`}>
-            {badge.text}
-          </span>
-        </div>
-      )
-    })
 
   return (
     <div
@@ -454,24 +283,20 @@ export function VoicePickerModal({
           </div>
         </div>
 
-        <div className="voice-picker-search">
-          <input
-            value={query}
-            placeholder={`在 ${rootDir} 下搜索（按路径匹配）`}
-            onChange={(event) => setQuery(event.target.value)}
-          />
-        </div>
-
-        <div className="voice-picker-tree">
-          <div className="voice-tree-root">{rootDir}</div>
-          {tree.length > 0 ? (
-            renderNodes(tree, 0)
-          ) : (
-            <div className="voice-tree-empty">
-              {query ? '没有匹配的资产' : 'assets 下还没有资源'}
-            </div>
-          )}
-        </div>
+        <VoiceAssetBrowser
+          library={library}
+          query={query}
+          onQueryChange={setQuery}
+          selected={pending ? null : selected}
+          onSelect={(entry) => {
+            // 改选资产 = 放弃内存里那个拖入文件
+            setPending(null)
+            setSelected(entry.path)
+          }}
+          isTarget={(path) =>
+            isCurrentVoiceAsset(path, library.locale, library.scriptName, unitKey)
+          }
+        />
 
         <div className="voice-picker-footer">
           <span className="voice-picker-hint">

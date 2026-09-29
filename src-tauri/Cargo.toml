@@ -26,11 +26,3 @@ tauri = { version = "2.11.6", features = [] }
 tauri-plugin-log = "2"
 tauri-plugin-dialog = "2.7"
 tokio = { version = "1", features = ["time"] }
-
-# Match the webview2-com version pulled by Tauri/wry so `with_webview` hooks compile.
-[target.'cfg(windows)'.dependencies]
-webview2-com = "0.38"
-windows = { version = "0.61", features = [
-  "Win32_Foundation",
-  "Win32_Graphics_Dwm",
-] }

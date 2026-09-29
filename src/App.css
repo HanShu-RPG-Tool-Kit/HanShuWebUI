@@ -34,11 +34,6 @@
   font-size: var(--ui-font-size);
 }
 
-html.splash-windowed .app {
-  background: transparent;
-  overflow: hidden;
-}
-
 .titlebar {
   display: grid;
   grid-template-columns: 1fr auto 1fr;
@@ -51,40 +46,26 @@ html.splash-windowed .app {
   flex-shrink: 0;
 }
 
-.titlebar.is-desktop {
-  -webkit-app-region: drag;
-  app-region: drag;
-}
-
-.titlebar.is-desktop .menubar,
-.titlebar.is-desktop .workspace-tabs,
-.titlebar.is-desktop .titlebar-right {
-  -webkit-app-region: no-drag;
-  app-region: no-drag;
-}
-
 .titlebar-left {
   display: flex;
   align-items: center;
-  gap: 0;
+  gap: 4px;
   min-width: 0;
 }
 
-.app-wordmark {
-  display: block;
-  width: auto;
-  height: 11px;
+.app-icon {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
   margin-right: 6px;
+  border-radius: 3px;
+  background: #3d6f99;
+  color: #f0ebe3;
+  font-size: 12px;
+  font-weight: 700;
+  font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
   flex-shrink: 0;
-  pointer-events: none;
-  opacity: 0.92;
-  /* 字标填满 viewBox，几何居中会显得比菜单字略高 */
-  transform: translateY(1px);
-}
-
-/* 字标旁首项略收左内边距，避免和字标叠得太开 */
-.menubar .menu-item:first-child .menu-trigger {
-  padding-left: 8px;
 }
 
 .menubar {
@@ -270,30 +251,12 @@ html.splash-windowed .app {
   height: 100%;
 }
 
-.win-btn {
-  display: grid;
-  place-items: center;
-  width: 48px;
+.win-buttons {
+  display: flex;
   height: 100%;
-  border: 0;
-  padding: 0;
-  background: transparent;
-  font: inherit;
-  font-size: 12px;
-  color: var(--text);
-  cursor: default;
 }
 
-.win-btn:hover {
-  background: #50555e;
-}
-
-.win-btn.close:hover {
-  background: #c44a52;
-  color: #fff;
-}
-
-/* —— 语言选择 —— */
+/* —— 标题栏语言选择（窗口按钮左侧） —— */
 .lang-select {
   position: relative;
   display: flex;
@@ -1187,6 +1150,24 @@ html.splash-windowed .app {
   margin-left: 6px;
   color: var(--text);
   opacity: 0.85;
+}
+
+.win-btn {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 100%;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.win-btn:hover {
+  background: #50555e;
+}
+
+.win-btn.close:hover {
+  background: #c44a52;
+  color: #fff;
 }
 
 .tabbar {
@@ -2618,4 +2599,696 @@ body.is-resizing .monaco-editor {
 
 .diff-btn-danger:hover {
   background: rgba(244, 135, 113, 0.12);
+}
+
+/* ============================================================
+   录音棚（内置在剧本编辑器右侧的配音工作台）
+   ------------------------------------------------------------
+   - 位置与 Agent 窗口对称：Agent 在编辑器左侧，录音棚贴在应用最右侧
+   - 宽度可调（把手复用 .split-handle），右上角一个 `×` 关闭
+   - 编辑器进入"键名选择"模式时（.hs-studio-mode）常规交互让位
+   ============================================================ */
+
+.studio {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  min-width: 280px;
+  min-height: 0;
+  background: var(--bg-sidebar);
+  border-left: 1px solid var(--border);
+  overflow: hidden;
+}
+
+/*
+ * 拖入外部音频时：**整个面板**都是投放目标（见 RecordingStudio 的 studioDropProps），
+ * 所以高亮也画在整个面板上 —— 只高亮预览窗那一格会让人以为别处不能放。
+ */
+.studio.is-drop-target {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.studio-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 6px;
+  flex-shrink: 0;
+  min-height: 36px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.studio-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.studio-sub {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-close {
+  appearance: none;
+  flex-shrink: 0;
+  width: 24px;
+  height: 22px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.studio-close:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-bright);
+}
+
+/* —— 两种模式：单选配音 / 批量配音 —— */
+.studio-modes {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 8px 10px 0;
+}
+
+.studio-mode {
+  appearance: none;
+  flex: 1 1 0;
+  padding: 5px 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.studio-mode:hover {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.studio-mode.is-on {
+  border-color: var(--accent);
+  background: rgba(91, 159, 212, 0.2);
+  color: var(--text-bright);
+}
+
+/* —— 配音模式提示 —— */
+.studio-hintbar {
+  flex-shrink: 0;
+  margin: 8px 10px 0;
+  padding: 6px 9px;
+  border-left: 3px solid var(--accent);
+  border-radius: 2px;
+  background: rgba(91, 159, 212, 0.12);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* —— 选中概况与清除按钮 —— */
+.studio-selection {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 8px 10px 0;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.studio-selection .spacer {
+  flex: 1 1 auto;
+}
+
+.studio-mini {
+  appearance: none;
+  padding: 3px 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.studio-mini:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.studio-mini.is-danger {
+  color: #e8656d;
+  border-color: rgba(206, 78, 74, 0.5);
+}
+
+.studio-mini.is-danger:hover:not(:disabled) {
+  background: rgba(206, 78, 74, 0.2);
+}
+
+.studio-mini:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.studio-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  flex-shrink: 0;
+  max-height: 72px;
+  margin: 8px 10px 0;
+  padding: 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: 3px;
+  background: var(--bg);
+  overflow: auto;
+}
+
+.studio-chip {
+  padding: 1px 6px;
+  border: 1px dashed rgba(206, 78, 74, 0.6);
+  border-radius: 3px;
+  color: #e8a9a5;
+  font-family: Consolas, monospace;
+  font-size: 11px;
+}
+
+.studio-chip.is-has-voice {
+  border-style: solid;
+  border-color: rgba(214, 186, 74, 0.6);
+  color: #f4e6b4;
+}
+
+.studio-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+  /* 面板高度不够时整体滚动：宁可滚，也不要把"搜索 + 资源树"压成 0 高 */
+  overflow-y: auto;
+}
+
+/* 预览窗 / 播放条 / 信息栏 / 搜索框都是固定高度的，不参与压缩 */
+.studio-body > * {
+  flex: 0 0 auto;
+}
+
+/* 资源树给一个下限，否则在矮窗口里会被挤没；太高则由 max-height 收住 */
+.studio-body > .voice-picker-tree {
+  min-height: 132px;
+  max-height: 340px;
+}
+
+.studio-empty,
+.studio-placeholder {
+  padding: 16px 14px;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.studio-placeholder-title {
+  color: var(--text-bright);
+  font-weight: 600;
+  margin-bottom: 6px;
+}
+
+.studio-placeholder code {
+  font-family: Consolas, monospace;
+  color: #d4a574;
+}
+
+/* —— 预览窗（参考音频选择器：可拖拽 + 波形）—— */
+.studio-wave {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  height: 108px;
+  margin: 10px 10px 0;
+  padding: 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  background: #22252a;
+  color: var(--accent);
+  overflow: hidden;
+}
+
+.studio-wave svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.studio-wave.is-empty {
+  color: #6a7078;
+}
+
+.studio-wave.is-empty svg {
+  width: 46px;
+  height: 46px;
+}
+
+.studio-wave.is-drop-target {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.studio-wave-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.studio-wave-loading svg {
+  width: 40px;
+  height: 40px;
+}
+
+/* 波形里"已播过"的那段：换一个颜色（`fill` 是表现属性，CSS 能盖掉） */
+.studio-wave svg rect.is-played,
+.studio-take-wave svg rect.is-played {
+  fill: #9ec9ea;
+}
+
+/* —— 播放与进度条控制 —— */
+.studio-player {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 8px 10px 0;
+}
+
+.studio-play {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 24px;
+  padding: 4px;
+}
+
+.studio-player-time {
+  flex: 0 0 auto;
+  min-width: 40px;
+  color: var(--text-dim);
+  font-family: Consolas, monospace;
+  font-size: 11px;
+  text-align: center;
+}
+
+.studio-progress {
+  position: relative;
+  flex: 1 1 auto;
+  height: 8px;
+  border-radius: 4px;
+  background: #1d2025;
+  border: 1px solid var(--border-soft);
+  cursor: pointer;
+  touch-action: none;
+}
+
+.studio-progress-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: 4px;
+  background: var(--accent);
+}
+
+/* —— 音频信息栏目 —— */
+.studio-info {
+  flex-shrink: 0;
+  padding: 8px 10px 0;
+}
+
+.studio-info .voice-picker-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.studio-info .voice-picker-row-label {
+  flex: 0 0 68px;
+  color: var(--text-dim);
+}
+
+.studio-info .voice-picker-row-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  cursor: text;
+}
+
+/* —— 批量录音 —— */
+.studio-record {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 0 0 auto;
+  padding: 12px 10px 0;
+}
+
+.studio-record-target {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.studio-record-key {
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: rgba(214, 186, 74, 0.22);
+  color: #f4e6b4;
+  font-family: Consolas, monospace;
+  font-size: 13px;
+}
+
+.studio-record-queue {
+  color: var(--text-dim);
+}
+
+.studio-record-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.studio-record-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  appearance: none;
+  padding: 7px 14px;
+  border: 1px solid rgba(206, 78, 74, 0.6);
+  border-radius: 3px;
+  background: rgba(206, 78, 74, 0.16);
+  color: #f2d7d5;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.studio-record-btn:hover:not(:disabled) {
+  background: rgba(206, 78, 74, 0.3);
+}
+
+.studio-record-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.studio-record-btn.is-recording {
+  border-color: #e8656d;
+  background: rgba(206, 78, 74, 0.42);
+  color: #fff;
+}
+
+.studio-record-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #e8656d;
+}
+
+.studio-record-btn.is-recording .studio-record-dot {
+  animation: studio-record-pulse 1s ease-in-out infinite;
+}
+
+@keyframes studio-record-pulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+.studio-record-clock {
+  min-width: 46px;
+  color: var(--text-bright);
+  font-family: Consolas, monospace;
+  font-size: 13px;
+}
+
+.studio-record-auto {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.studio-record-level {
+  height: 6px;
+  border-radius: 3px;
+  background: #1d2025;
+  border: 1px solid var(--border-soft);
+  overflow: hidden;
+}
+
+.studio-record-level-fill {
+  width: 0;
+  height: 100%;
+  background: linear-gradient(90deg, #4ec9b0, #d6ba4a, #ce4e4a);
+  transition: width 0.05s linear;
+}
+
+.studio-take {
+  flex: 0 0 auto;
+}
+
+.studio-take-title {
+  margin-bottom: 4px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.studio-take-body {
+  padding: 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  background: var(--bg);
+}
+
+.studio-take-time {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.studio-take-time .spacer {
+  flex: 1 1 auto;
+}
+
+.studio-take-wave {
+  height: 64px;
+  margin-top: 8px;
+  padding: 4px;
+  border: 1px solid var(--border-soft);
+  border-radius: 3px;
+  background: #22252a;
+  color: var(--accent);
+}
+
+.studio-take-wave svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.studio-take-empty {
+  padding: 10px;
+  border: 1px dashed var(--border-soft);
+  border-radius: 4px;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.studio-notice {
+  flex-shrink: 0;
+  margin: 8px 10px 0;
+  padding: 6px 9px;
+  border-radius: 3px;
+  background: rgba(206, 78, 74, 0.16);
+  border-left: 3px solid #ce4e4a;
+  color: #f2d7d5;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* —— 页脚：上拉框 + 最底部的「确认导入」 —— */
+.studio-footer {
+  flex-shrink: 0;
+  padding: 8px 10px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-sidebar);
+}
+
+.studio-footer-hint {
+  margin-bottom: 6px;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.studio-confirm {
+  appearance: none;
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  background: #2b3a47;
+  color: var(--text-bright);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.studio-confirm:hover:not(:disabled) {
+  background: #35485a;
+}
+
+.studio-confirm:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* 上拉框：菜单从触发器**上方**展开（需求里的"上拉"） */
+.studio-picker {
+  position: relative;
+  margin-bottom: 8px;
+}
+
+.studio-picker-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  appearance: none;
+  width: 100%;
+  padding: 6px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 3px;
+  background: #262a30;
+  color: var(--text-bright);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.studio-picker-trigger:hover {
+  background: #2f343c;
+}
+
+.studio-picker-caret {
+  color: var(--accent);
+  font-size: 11px;
+}
+
+.studio-picker-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+
+.studio-picker-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 4px);
+  z-index: 41;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border: 1px solid #3c4149;
+  border-radius: 4px;
+  background: #22252a;
+  box-shadow: 0 -6px 18px rgba(0, 0, 0, 0.45);
+}
+
+.studio-picker-menu button {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-bright);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.studio-picker-menu button:hover {
+  background: #2f343c;
+}
+
+.studio-picker-menu button.is-on {
+  background: rgba(91, 159, 212, 0.22);
+  color: #9ec9ea;
+}
+
+/* —— 编辑器进入录音棚选择模式 —— */
+.hs-studio-mode,
+.hs-studio-mode .view-lines {
+  cursor: crosshair;
+}
+
+/* 只读时不要把光标画出来：那会儿点击的语义是"选中"，不是"定位" */
+.hs-studio-mode .cursor,
+.hs-studio-mode .cursors-layer {
+  visibility: hidden;
+}
+
+/* 录音棚已选中的键名（与文档选区无关的高亮） */
+.hs-lang-unit.is-studio-selected {
+  background: rgba(91, 159, 212, 0.28);
+  border-radius: 2px;
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.hs-lang-unit.is-studio-selected .hs-lang-box {
+  color: var(--text-bright);
+}
+
+/* 划框的矩形（覆盖层坐标，纯视觉） */
+.hs-lang-marquee {
+  position: absolute;
+  z-index: 6;
+  border: 1px dashed var(--accent);
+  background: rgba(91, 159, 212, 0.16);
+  pointer-events: none;
 }

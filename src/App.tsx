@@ -1,12 +1,4 @@
-import {
-  Fragment,
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type Ref,
-} from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type Ref } from 'react'
 import {
   loadActiveWorkspaceId,
   saveActiveWorkspaceId,
@@ -28,22 +20,7 @@ import {
   UI_SCALES,
   type UiScale,
 } from './displayPrefs.ts'
-import {
-  closeDesktopWindow,
-  finishDesktopSplashToMain,
-  isTauriRuntime,
-  minimizeDesktopWindow,
-  presentDesktopSplashWindow,
-  revealDesktopMainWindow,
-  toggleMaximizeDesktopWindow,
-  watchDesktopMaximized,
-} from './desktopWindow.ts'
-import { SplashOverlay } from './SplashOverlay.tsx'
-import { shouldShowSplash } from './splashSession.ts'
-import appWordmarkUrl from './brand/hanshu-wordmark.svg'
 import './App.css'
-
-const isDesktopShell = isTauriRuntime()
 
 const MENUS = [
   {
@@ -76,6 +53,7 @@ const MENUS = [
     label: '查看',
     items: [
       'Agent 窗口',
+      '录音棚',
       '命令面板...',
       '外观',
       '编辑器布局',
@@ -124,13 +102,6 @@ function App() {
     null,
   )
   const [uiScale, setUiScale] = useState<UiScale>(() => loadUiScale())
-  const [maximized, setMaximized] = useState(false)
-  const [showSplash, setShowSplash] = useState(
-    () => isDesktopShell && shouldShowSplash(),
-  )
-  /** Bumps to remount splash when replaying via debug shortcut. */
-  const [splashPreviewKey, setSplashPreviewKey] = useState(0)
-  const splashPreview = !isDesktopShell
   const menubarRef = useRef<HTMLElement>(null)
   const scriptRef = useRef<ScriptWorkspaceHandle>(null)
   const progressRef = useRef<ProgressWorkspaceHandle>(null)
@@ -139,86 +110,6 @@ function App() {
   useEffect(() => {
     applyUiScale(uiScale)
   }, [uiScale])
-
-  useEffect(() => {
-    if (!isDesktopShell) return
-    document.documentElement.classList.add('is-desktop-shell')
-    return () => document.documentElement.classList.remove('is-desktop-shell')
-  }, [])
-
-  // Web-only: Alt+Shift+S replays the startup splash for design iteration.
-  // (Alt+Space is often stolen by the browser / OS window menu.)
-  useEffect(() => {
-    if (isDesktopShell) return
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (!event.altKey || !event.shiftKey || event.code !== 'KeyS') return
-      if (event.ctrlKey || event.metaKey) return
-      event.preventDefault()
-      setSplashPreviewKey((key) => key + 1)
-      setShowSplash(true)
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => window.removeEventListener('keydown', onKeyDown)
-  }, [])
-
-  // Desktop: splash window first (PS-style), then maximize the main shell.
-  useEffect(() => {
-    if (!isDesktopShell) return
-    let cancelled = false
-    void (async () => {
-      try {
-        if (showSplash) await presentDesktopSplashWindow()
-        else await revealDesktopMainWindow()
-      } catch (err) {
-        console.error('desktop window bootstrap failed', err)
-        // Last resort: force-show whatever window we have.
-        try {
-          const { getCurrentWindow } = await import('@tauri-apps/api/window')
-          await getCurrentWindow().show()
-        } catch {
-          /* ignore */
-        }
-        if (!cancelled) {
-          await revealDesktopMainWindow().catch(() => undefined)
-        }
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-    // Only on cold mount — showSplash is the initial gate, not a live toggle.
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional mount bootstrap
-  }, [])
-
-  useEffect(() => {
-    if (!isDesktopShell) return
-    let disposed = false
-    let unwatch: (() => void) | undefined
-    void watchDesktopMaximized((next) => {
-      if (!disposed) setMaximized(next)
-    }).then((stop) => {
-      if (disposed) stop()
-      else unwatch = stop
-    })
-    return () => {
-      disposed = true
-      unwatch?.()
-    }
-  }, [])
-
-  const onSplashDone = useCallback(() => {
-    if (!isDesktopShell) {
-      setShowSplash(false)
-      return
-    }
-    void finishDesktopSplashToMain(() => setShowSplash(false)).catch((err) => {
-      console.error('reveal main window failed', err)
-      setShowSplash(false)
-    })
-  }, [])
-
-  /** Desktop cold splash: hide main chrome until the dialog finishes. */
-  const showMainShell = !isDesktopShell || !showSplash
 
   const changeUiScale = useCallback((scale: UiScale) => {
     setUiScale(scale)
@@ -260,10 +151,6 @@ function App() {
       changeUiScale(125)
       return
     }
-    if (item === '退出') {
-      void closeDesktopWindow()
-      return
-    }
     if (activeWorkspaceId === 'progress-flow') progressRef.current?.handleMenuAction(item)
     else if (activeWorkspaceId === 'script') scriptRef.current?.handleMenuAction(item)
   }
@@ -281,24 +168,11 @@ function App() {
 
   return (
     <div className="app">
-      {showSplash && (
-        <SplashOverlay
-          key={splashPreviewKey}
-          preview={splashPreview}
-          windowed={isDesktopShell}
-          onDone={onSplashDone}
-        />
-      )}
-      {showMainShell && (
-      <Fragment>
-      <header className={`titlebar${isDesktopShell ? ' is-desktop' : ''}`}>
+      <header className="titlebar">
         <div className="titlebar-left">
-          <img
-            className="app-wordmark"
-            src={appWordmarkUrl}
-            alt="HanShu"
-            draggable={false}
-          />
+          <span className="app-icon" aria-hidden>
+            书
+          </span>
           <nav className="menubar" ref={menubarRef} aria-label="主菜单">
             {MENUS.map((menu) => (
               <div
@@ -380,37 +254,12 @@ function App() {
             ))}
           </div>
         </div>
-        <div className="titlebar-center" data-tauri-drag-region>
-          {titleCenter}
+        <div className="titlebar-center">{titleCenter}</div>
+        <div className="titlebar-right" aria-hidden>
+          <span className="win-btn">─</span>
+          <span className="win-btn">□</span>
+          <span className="win-btn close">×</span>
         </div>
-        {isDesktopShell && (
-          <div className="titlebar-right">
-            <button
-              type="button"
-              className="win-btn"
-              aria-label="最小化"
-              onClick={() => void minimizeDesktopWindow()}
-            >
-              ─
-            </button>
-            <button
-              type="button"
-              className="win-btn"
-              aria-label={maximized ? '还原' : '最大化'}
-              onClick={() => void toggleMaximizeDesktopWindow()}
-            >
-              {maximized ? '❐' : '□'}
-            </button>
-            <button
-              type="button"
-              className="win-btn close"
-              aria-label="关闭"
-              onClick={() => void closeDesktopWindow()}
-            >
-              ×
-            </button>
-          </div>
-        )}
       </header>
 
       <div className="app-body">
@@ -432,8 +281,6 @@ function App() {
           </div>
         ))}
       </div>
-      </Fragment>
-      )}
     </div>
   )
 }

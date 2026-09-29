@@ -129,6 +129,27 @@ export type TextHost = {
   onUnitDrop?(request: TextUnitDropRequest): void
   /** 点了配音按钮但当前是缺失 / 无效态：请求给这个键挑一个音频 */
   onVoicePick?(key: string): void
+  /**
+   * **录音棚模式**下左键点了某个键名（或缺失态下点了它的配音按钮）。
+   * `additive` = 按住 Shift / Ctrl / Cmd（多选）。
+   */
+  onUnitSelect?(request: TextUnitSelectRequest): void
+  /** 录音棚模式下划框选中了一批键（框在空白处松开且没拖动时 keys 为空 = 清空） */
+  onMarquee?(request: TextMarqueeRequest): void
+}
+
+/** 录音棚模式下点选一个键名 */
+export type TextUnitSelectRequest = {
+  key: string
+  /** 追加到已选集合（否则替换） */
+  additive: boolean
+}
+
+/** 录音棚模式下划框选中 */
+export type TextMarqueeRequest = {
+  /** 落在框内的键名（正文顺序） */
+  keys: string[]
+  additive: boolean
 }
 
 export type TextBinding = {
@@ -142,6 +163,15 @@ export type TextBinding = {
   deleteUnit(key: string): void
   /** 拖拽"替换键名"用：把目标键的原文换成另一个键名 */
   replaceUnitKey(targetKey: string, nextKey: string): void
+  /**
+   * 录音棚模式开关：开着的时候左键=选中键名、按住 Shift 多选、长按拖动=划框，
+   * 并且**不再**打开编辑框 / 右键菜单（常规编辑器交互被禁用）。
+   */
+  setStudioMode(on: boolean): void
+  /** 录音棚：设置"已选中的键名"（覆盖层据此画高亮） */
+  setStudioSelection(keys: readonly string[]): void
+  /** 录音棚：正文里出现的全部键名（按出现顺序、去重） */
+  listKeys(): string[]
   dispose(): void
 }
 
@@ -173,6 +203,14 @@ const DROP_CARET_CLASS = 'hs-lang-drop-caret'
 const SELECTED_CLASS = 'is-selected'
 /** 编辑器失焦：选区底色换成 vs-dark 的"非活动选区"色 */
 const UNFOCUSED_CLASS = 'is-unfocused'
+/** 录音棚：该键名被选中（与文档选区无关，是录音棚自己的集合） */
+const STUDIO_SELECTED_CLASS = 'is-studio-selected'
+/** 录音棚模式：挂在编辑器根节点上（换光标、禁文本选区等） */
+const STUDIO_MODE_CLASS = 'hs-studio-mode'
+/** 录音棚划框时画的选框（纯视觉，pointer-events 已被 layer 关掉） */
+const MARQUEE_CLASS = 'hs-lang-marquee'
+/** 划框的最小位移：小于它算"点了一下空白处"（清空选择） */
+const MARQUEE_MIN_DRAG_PX = 4
 
 /**
  * 片段集合的指纹：`起始偏移:结束偏移:值` 拼起来。
@@ -272,6 +310,10 @@ export function bindText(
   let disposed = false
   let timer: number | null = null
   let frame: number | null = null
+  /** 录音棚模式：左键=选中、Shift=多选、长按拖动=划框（常规交互被禁用） */
+  let studioMode = false
+  /** 录音棚已选中的键名（覆盖层据此画高亮；渲染时读它） */
+  let studioSelection = new Set<string>()
 
   /** 单行行高（来自编辑器字体信息） */
   const lineHeightPx = (): number => {
@@ -606,7 +648,7 @@ export function bindText(
     state: VoiceButtonState,
     sizePx: number,
     title: string,
-    onToggle: () => void,
+    onToggle: (event: MouseEvent) => void,
   ): HTMLElement => {
     const button = document.createElement('div')
     button.className = `${VOICE_CLASS} ${VOICE_STATE_CLASS[state]}`
@@ -625,7 +667,7 @@ export function bindText(
     button.addEventListener('click', (event) => {
       event.preventDefault()
       event.stopPropagation()
-      onToggle()
+      onToggle(event)
     })
     return button
   }
@@ -637,8 +679,10 @@ export function bindText(
    * 支持的投放才 `preventDefault` 并高亮，其余一律不接管（让浏览器保持默认）。
    */
   const bindUnitDragDrop = (unit: HTMLElement, key: string) => {
-    unit.draggable = true
+    // 录音棚模式下不拖拽：那时是"划框选择"，留着 HTML5 拖拽会和它抢手势
+    unit.draggable = !studioMode
     unit.addEventListener('dragstart', (event) => {
+      if (studioMode) return
       writeDragPayload(event.dataTransfer, { kind: 'key', key })
     })
     unit.addEventListener('dragend', () => {
@@ -716,6 +760,162 @@ export function bindText(
         ? 'hs-diag-enter-close'
         : 'hs-diag-close'
       : 'hs-diag-enter'
+
+  // ——————————————————————————————————————————————————————————————
+  //  录音棚模式（键名选择）
+  //  - 左键点键名 = 选中（Shift / Ctrl / Cmd = 追加多选）
+  //  - 在空白处按下并拖动 = 划框选择范围内的键名
+  //  - 常规交互（打开编辑框、右键菜单）在这个模式下全部让位
+  //
+  //  为什么选择逻辑放在这里而不是上层：键名是覆盖层画出来的 DOM，
+  //  "哪些键在框里"只有这里量得到（lineEntries 持有每个单位的真实矩形）。
+  //  上层只收到「哪些键被选中」这一个事实。
+  // ——————————————————————————————————————————————————————————————
+
+  /** 把已选集合画到现有的覆盖框上（不重建 DOM） */
+  const applyStudioSelection = () => {
+    for (const entry of lineEntries) {
+      const key = normalizeLocaleKey(entry.span.value)
+      entry.unit?.classList.toggle(
+        STUDIO_SELECTED_CLASS,
+        Boolean(key && studioSelection.has(key)),
+      )
+    }
+  }
+
+  /** 正文里出现的键名（按出现顺序、去重）—— 上层做范围选择与排序要靠它 */
+  const listUnitKeys = (): string[] => {
+    const out: string[] = []
+    const seen = new Set<string>()
+    for (const span of currentSpans()) {
+      const key = normalizeLocaleKey(span.value)
+      if (!key || seen.has(key)) continue
+      seen.add(key)
+      out.push(key)
+    }
+    return out
+  }
+
+  /** 划框中的状态（null = 没在划） */
+  let marquee: {
+    startX: number
+    startY: number
+    additive: boolean
+    dragging: boolean
+  } | null = null
+  let marqueeEl: HTMLElement | null = null
+
+  const removeMarquee = () => {
+    marqueeEl?.remove()
+    marqueeEl = null
+  }
+
+  /** 视口坐标 → 覆盖层坐标（layer 铺满编辑器，见 LAYER_CLASS） */
+  const drawMarquee = (x: number, y: number) => {
+    if (!marquee || !marqueeEl) return
+    const base = layer.getBoundingClientRect()
+    marqueeEl.style.left = `${Math.min(marquee.startX, x) - base.left}px`
+    marqueeEl.style.top = `${Math.min(marquee.startY, y) - base.top}px`
+    marqueeEl.style.width = `${Math.abs(x - marquee.startX)}px`
+    marqueeEl.style.height = `${Math.abs(y - marquee.startY)}px`
+  }
+
+  /** 框住哪些键：按单位（文本 + 配音按钮）的真实矩形做相交判定 */
+  const keysInMarquee = (
+    box: { startX: number; startY: number },
+    x: number,
+    y: number,
+  ): string[] => {
+    const left = Math.min(box.startX, x)
+    const right = Math.max(box.startX, x)
+    const top = Math.min(box.startY, y)
+    const bottom = Math.max(box.startY, y)
+    const keys: string[] = []
+    const seen = new Set<string>()
+    for (const entry of lineEntries) {
+      const key = normalizeLocaleKey(entry.span.value)
+      if (!key || seen.has(key) || !entry.unit) continue
+      const rect = entry.unit.getBoundingClientRect()
+      if (rect.width <= 0 && rect.height <= 0) continue
+      if (rect.right < left || rect.left > right) continue
+      if (rect.bottom < top || rect.top > bottom) continue
+      seen.add(key)
+      keys.push(key)
+    }
+    return keys
+  }
+
+  const onStudioPointerDown = (event: PointerEvent) => {
+    if (!studioMode || disposed || event.button !== 0) return
+    const target = event.target as HTMLElement | null
+    // 键名容器（含配音按钮）自己处理点击，放行
+    if (target?.closest?.(`.${UNIT_CLASS}`)) return
+    // 滚动条 / 小地图 / 概览标尺不是"空白处"，别拦
+    if (
+      target?.closest?.('.scrollbar, .minimap, .slider, .decorationsOverviewRuler')
+    ) {
+      return
+    }
+    // 空白处按下：吃掉这次按下 —— 否则 Monaco 会开始选文本 / 移动光标；
+    // 然后按"按下并拖动"起一个划框
+    event.preventDefault()
+    event.stopPropagation()
+    marquee = {
+      startX: event.clientX,
+      startY: event.clientY,
+      additive: event.shiftKey || event.metaKey || event.ctrlKey,
+      dragging: false,
+    }
+  }
+
+  const onStudioPointerMove = (event: PointerEvent) => {
+    const box = marquee
+    if (!box) return
+    const dx = event.clientX - box.startX
+    const dy = event.clientY - box.startY
+    if (!box.dragging && Math.hypot(dx, dy) < MARQUEE_MIN_DRAG_PX) return
+    if (!box.dragging) {
+      box.dragging = true
+      marqueeEl = document.createElement('div')
+      marqueeEl.className = MARQUEE_CLASS
+      layer.appendChild(marqueeEl)
+    }
+    drawMarquee(event.clientX, event.clientY)
+  }
+
+  const onStudioPointerUp = (event: PointerEvent) => {
+    const box = marquee
+    if (!box) return
+    marquee = null
+    removeMarquee()
+    if (box.dragging) {
+      host.onMarquee?.({
+        keys: keysInMarquee(box, event.clientX, event.clientY),
+        additive: box.additive,
+      })
+      return
+    }
+    // 没拖动 = 点了一下空白处：清空选择（按住 Shift 时保留）
+    if (!box.additive) host.onMarquee?.({ keys: [], additive: false })
+  }
+
+  const setStudioMode = (on: boolean) => {
+    if (studioMode === on) return
+    studioMode = on
+    if (on) {
+      domNode?.classList.add(STUDIO_MODE_CLASS)
+      // 让编辑器失焦：否则之前留下的焦点会让「插入角色 / 成键」那套快捷键照样生效
+      // （那些热键只在 hasTextFocus 时动作），录音棚模式下正文不该再被改动
+      const active = document.activeElement as HTMLElement | null
+      if (active && domNode?.contains(active)) active.blur()
+    } else {
+      domNode?.classList.remove(STUDIO_MODE_CLASS)
+      marquee = null
+      removeMarquee()
+    }
+    // 进/出模式都重画一次：按钮的 title 与"缺失态点按钮 = 选中"的语义跟着变
+    render()
+  }
 
   /**
    * 语法诊断 → Monaco 装饰：波浪线画在锚点之后（"离文本一个空格"的留白由 CSS 负责），
@@ -860,7 +1060,9 @@ export function bindText(
 
       // 上级容器：文本 + 配音按钮。原子化（右键 / 拖拽 / 打开编辑框）都归它
       const unit = document.createElement('div')
-      unit.className = UNIT_CLASS
+      unit.className = `${UNIT_CLASS}${
+        studioMode ? ' is-studio' : ''
+      }${studioSelection.has(key) ? ` ${STUDIO_SELECTED_CLASS}` : ''}`
       // 键名既是拖拽源（拖到别的键名=替换、拖到文本=插入键名文本），也是投放目标
       bindUnitDragDrop(unit, key)
 
@@ -873,8 +1075,24 @@ export function bindText(
       const button = makeVoiceButton(
         voiceState,
         VOICE_BUTTON_PX,
-        voiceButtonTitle(voiceState, status),
-        () => {
+        studioMode
+          ? `${VOICE_STATE_LABEL[voiceState]} · ${
+              voiceState === 'ready' || voiceState === 'playing'
+                ? '点击播放 / 停止'
+                : '点击选中这个键'
+            }`
+          : voiceButtonTitle(voiceState, status),
+        (event) => {
+          const additive = event.shiftKey || event.metaKey || event.ctrlKey
+          // 录音棚模式下：有音频就照常试听，没有音频点它 = 选中这个键
+          if (studioMode) {
+            if (voiceState === 'ready' || voiceState === 'playing') {
+              voice?.togglePlay(key)
+            } else {
+              host.onUnitSelect?.({ key, additive })
+            }
+            return
+          }
           // 缺失 / 无效：没有可播的东西，点它就是"挑一个" —— 直接开音频选择器
           if (voiceState === 'missing' || voiceState === 'invalid') {
             host.onVoicePick?.(key)
@@ -890,23 +1108,33 @@ export function bindText(
       // 阻止了键名就拖不动了。打开编辑框挪到 click（拖拽之后不会触发 click，正好区分）。
       // 代价是焦点会离开编辑器（点不可聚焦的 div 会把焦点丢给 body），
       // 于是 Monaco 收不到 Ctrl+Z、撤销失效 —— 所以这里显式把焦点还回去。
+      // 录音棚模式下不抢焦点：编辑器是只读的，抢过去只会多一个没用的光标。
       unit.addEventListener('mousedown', (event) => {
         if (event.button !== 0) return
         event.stopPropagation()
-        ed.focus()
+        if (!studioMode) ed.focus()
       })
       unit.addEventListener('click', (event) => {
         event.preventDefault()
         event.stopPropagation()
+        // 录音棚：左键 = 单选，按住 Shift / Ctrl / Cmd = 多选
+        if (studioMode) {
+          host.onUnitSelect?.({
+            key,
+            additive: event.shiftKey || event.metaKey || event.ctrlKey,
+          })
+          return
+        }
         openEditor(span, box)
       })
-      // 右键：交给上层弹可扩展菜单
+      // 右键：交给上层弹可扩展菜单（录音棚模式下没有常规交互，直接吃掉）
       unit.addEventListener('contextmenu', (event) => {
         event.preventDefault()
         event.stopPropagation()
+        if (studioMode) return
         host.onUnitMenu?.({ key, x: event.clientX, y: event.clientY })
       })
-
+      unit.setAttribute('data-hs-key', key)
       row.appendChild(unit)
       // `//` 渲染在第一行、框外右侧（行是 flex-start 对齐，所以贴在首行）
       const tail = span.terminator ? makeTail() : null
@@ -1425,6 +1653,8 @@ export function bindText(
   // 覆盖框盖住了键名，Monaco 收不到点击；这里兜住直接点在键名占位上的情况
   const mouseSub = ed.onMouseDown((event) => {
     if (!host.getMap()) return
+    // 录音棚：常规交互整体让位（左键点键名归覆盖层，点空白处归划框）
+    if (studioMode) return
     const model = ed.getModel()
     const position = event.target.position
     if (!model || !position) return
@@ -1480,6 +1710,11 @@ export function bindText(
   // 兜底：任何地方结束拖拽（拖到窗口外、按 ESC 取消）都收掉落点光标
   window.addEventListener('dragend', hideDropCaret, true)
   window.addEventListener('drop', hideDropCaret, true)
+  // 录音棚划框：按下在编辑器内（捕获阶段，先于 Monaco），移动 / 抬起听 window
+  domNode?.addEventListener('pointerdown', onStudioPointerDown, true)
+  window.addEventListener('pointermove', onStudioPointerMove)
+  window.addEventListener('pointerup', onStudioPointerUp)
+  window.addEventListener('pointercancel', onStudioPointerUp)
 
   // 初次：先成键再渲染
   migrateNow()
@@ -1497,6 +1732,14 @@ export function bindText(
     editUnit,
     deleteUnit,
     replaceUnitKey,
+    setStudioMode,
+    setStudioSelection(keys) {
+      studioSelection = new Set(
+        keys.map((key) => normalizeLocaleKey(key)).filter(Boolean),
+      )
+      applyStudioSelection()
+    },
+    listKeys: listUnitKeys,
     dispose() {
       disposed = true
       if (timer != null) window.clearTimeout(timer)
@@ -1508,6 +1751,13 @@ export function bindText(
       domNode?.removeEventListener('dragover', onEditorDragOver, true)
       domNode?.removeEventListener('drop', onEditorDrop, true)
       domNode?.removeEventListener('dragleave', onEditorDragLeave, true)
+      domNode?.removeEventListener('pointerdown', onStudioPointerDown, true)
+      window.removeEventListener('pointermove', onStudioPointerMove)
+      window.removeEventListener('pointerup', onStudioPointerUp)
+      window.removeEventListener('pointercancel', onStudioPointerUp)
+      domNode?.classList.remove(STUDIO_MODE_CLASS)
+      marquee = null
+      removeMarquee()
       window.removeEventListener('dragend', hideDropCaret, true)
       window.removeEventListener('drop', hideDropCaret, true)
       hideDropCaret()

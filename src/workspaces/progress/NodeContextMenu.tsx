@@ -4,8 +4,8 @@ import { createPortal } from 'react-dom'
 export type NodeMenuItem = { label: string; disabled?: boolean; hint?: string; action: () => void }
 
 /** Portal coordinates are viewport coordinates, independent of canvas zoom and scrolling. */
-export function NodeContextMenu({ x, y, title, items, onClose, label = '节点操作', className = '' }: {
-  x: number; y: number; title: string; items: NodeMenuItem[]; onClose: (restoreFocus?: boolean) => void; label?: string; className?: string
+export function NodeContextMenu({ x, y, title, items, onClose }: {
+  x: number; y: number; title: string; items: NodeMenuItem[]; onClose: (restoreFocus?: boolean) => void
 }) {
   const menu = useRef<HTMLDivElement>(null)
   useLayoutEffect(() => {
@@ -46,7 +46,7 @@ export function NodeContextMenu({ x, y, title, items, onClose, label = '节点�
     }
   }
 
-  return createPortal(<div ref={menu} className={`flow-node-menu ${className}`} style={{ left: x, top: y }} role="menu" aria-label={label} onKeyDown={onKeyDown} onContextMenu={(event) => event.preventDefault()}>
+  return createPortal(<div ref={menu} className="flow-node-menu" style={{ left: x, top: y }} role="menu" aria-label="节点操作" onKeyDown={onKeyDown} onContextMenu={(event) => event.preventDefault()}>
     <div className="flow-node-menu-title" title={title}>{title}</div>
     {items.map((item) => <button key={item.label} type="button" role="menuitem" tabIndex={-1} disabled={item.disabled} title={item.hint} onClick={() => { onClose(); item.action() }}>
       {item.label}

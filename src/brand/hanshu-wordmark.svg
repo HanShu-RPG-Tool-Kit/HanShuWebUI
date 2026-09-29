@@ -1,7 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="280" height="48" viewBox="2 0 280 48" role="img" aria-label="HanShu"><title>HanShu</title><g transform="translate(6 0) skewX(-5)"><path fill="#F9F7F1" fill-rule="evenodd" transform="translate(0 0)" d="M0 0H10V18H28V0H38V48H28V28H10V48H0Z" />
-<path fill="#F9F7F1" fill-rule="evenodd" transform="translate(46 0)" d="M0 48V10L10 0H30L40 10V48H30V31H10V48ZM10 10V21H30V10Z" />
-<path fill="#F9F7F1" fill-rule="evenodd" transform="translate(94 0)" d="M0 48V0H10L30 28V0H40V48H30L10 20V48Z" />
-<path fill="#FF8847" fill-rule="evenodd" transform="translate(142 0)" d="M10 0H40V10H12L10 12V18H30L40 28V38L30 48H0V38H28L30 36V30H10L0 20V10Z" />
-<path fill="#FF8847" fill-rule="evenodd" transform="translate(190 0)" d="M0 0H10V18H28V0H38V48H28V28H10V48H0Z" />
-<path fill="#FF8847" fill-rule="evenodd" transform="translate(236 0)" d="M0 0H10V36L12 38H28L30 36V0H40V38L30 48H10L0 38Z" /></g>
-</svg>

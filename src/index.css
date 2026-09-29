@@ -9,7 +9,6 @@ body,
 #root {
   margin: 0;
   height: 100%;
-  overflow: hidden;
 }
 
 body {
@@ -22,30 +21,6 @@ body {
   -webkit-font-smoothing: antialiased;
   background: #2a2d33;
   color: #d8d4ce;
-}
-
-/* Desktop shell: transparent page so CSS radius / shadows can show desktop. */
-html.is-desktop-shell,
-html.is-desktop-shell body,
-html.is-desktop-shell #root,
-html.splash-windowed,
-html.splash-windowed body,
-html.splash-windowed #root {
-  background: transparent;
-  overflow: hidden;
-}
-
-html.splash-windowed,
-html.splash-windowed body {
-  scrollbar-width: none;
-}
-
-html.splash-windowed::-webkit-scrollbar,
-html.splash-windowed body::-webkit-scrollbar,
-html.splash-windowed #root::-webkit-scrollbar {
-  width: 0;
-  height: 0;
-  display: none;
 }
 
 button {

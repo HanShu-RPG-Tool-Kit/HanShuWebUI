@@ -137,6 +137,7 @@ import {
 import {
   runVoiceImport,
   formatVoiceImportSourceLabel,
+  VOICE_IMPORT_RESULT,
   type VoiceImportIo,
   type VoiceImportSource,
 } from '../i18n/voiceImport'
@@ -145,6 +146,11 @@ import { createVoiceDiskSink } from '../project/voiceDiskSink'
 import type { DragSource } from '../drag/dragPayload'
 import { TextUnitMenu, type TextUnitMenuItem } from '../TextUnitMenu'
 import { VoicePickerModal } from '../VoicePickerModal'
+import {
+  RecordingStudio,
+  type StudioMode,
+  type StudioSourceMode,
+} from '../studio/RecordingStudio'
 import { VoiceImportProgress } from '../VoiceImportProgress'
 import { VoiceToast } from '../VoiceToast'
 import {
@@ -215,6 +221,10 @@ export const ScriptWorkspace = forwardRef<
   })
   const splitRef = useRef<HTMLDivElement>(null)
   const draggingRef = useRef(false)
+  /** 正在拖录音棚的右把手（存按下时的横向起点与宽度） */
+  const studioDragRef = useRef<{ startX: number; startWidth: number } | null>(
+    null,
+  )
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null)
   const rolesRef = useRef(roles)
   const valueRef = useRef(value)
@@ -292,6 +302,21 @@ export const ScriptWorkspace = forwardRef<
     progress: number
     phase: 'process' | 'write'
   } | null>(null)
+
+  // —— 录音棚（右侧可调宽面板，与 Agent 窗口一样从底部栏唤出）——
+  const [studioOpen, setStudioOpen] = useState(false)
+  const [studioWidth, setStudioWidth] = useState(() => {
+    const saved = Number(localStorage.getItem('hanshu.studioWidth'))
+    return Number.isFinite(saved) && saved >= 280 && saved <= 760 ? saved : 420
+  })
+  const [studioMode, setStudioMode] = useState<StudioMode>('single')
+  /** 配音方式（固定音频 / TTS / 录音）：**单选与批量共用**，只是目标键集合不同 */
+  const [studioSourceMode, setStudioSourceMode] =
+    useState<StudioSourceMode>('fixed')
+  /** 录音棚里"已选中的键名"（按正文顺序）。选中动作发生在编辑器里，见 textEditor 的选择模式 */
+  const [studioSelection, setStudioSelection] = useState<string[]>([])
+  /** 编辑器里挂上 TextBinding 的轮次：挂载/重建后要把模式与选中态重新灌回去 */
+  const [textBindingSeq, setTextBindingSeq] = useState(0)
 
   /**
    * 导入结果浮窗（自动消失）。内容就是工作流要返回的那条消息，
@@ -615,56 +640,112 @@ export const ScriptWorkspace = forwardRef<
   }
 
   /**
-   * 跑一次「音频导入」：源 = 资源管理器里选中的资产，或拖进来的外部文件；
-   * 目标 = 该键的对等文件。进度条由 voiceImport 状态驱动；中断（点 ×）返回 interrupted。
+   * 跑一次「音频导入」：源 = 资源管理器里选中的资产，或拖进来的外部文件 / 刚录下的字节；
+   * 目标 = 一个或多个键的对等文件。进度条由 voiceImport 状态驱动；中断（点 ×）返回 interrupted。
+   *
+   * 多个键时**串行**跑同一个工作流（源字节只读一次，但每个目标都要独立落盘），
+   * 总进度按 `(已完成的键 + 当前键的进度) / 键数` 聚合 —— 进度条不会在第二个键上跳回 0。
    */
-  const runVoiceImportFor = (key: string, source: VoiceImportSource) => {
+  const runVoiceImportForKeys = (keys: string[], source: VoiceImportSource) => {
     const library = voiceLibraryRef.current
     const packageId = activePackage()?.id
-    if (!library || !packageId) return
-    const targetPath = library.targetPathOf(key)
+    if (!library || !packageId || keys.length === 0) return
+
+    const targets = keys.map((key) => library.targetPathOf(key))
     setVoiceImportMessage(null)
     setVoiceImport({
       sourceLabel: formatVoiceImportSourceLabel(source),
-      targetPath,
+      targetPath:
+        targets.length === 1
+          ? targets[0]
+          : `${targets[0]}（共 ${targets.length} 个目标）`,
       progress: 0,
       phase: 'process',
     })
 
-    const run = runVoiceImport(
-      { source, targetPath },
-      createVoiceImportIo(packageId),
-      createVoiceProcessor(),
-      {
-        onPhase: (phase) =>
-          setVoiceImport((current) => (current ? { ...current, phase } : current)),
-        onProgress: (progress) =>
-          setVoiceImport((current) =>
-            current ? { ...current, progress } : current,
-          ),
-        // 工作流在结果落定前发出这条：先弹浮窗，稍后状态栏再留一条可点掉的记录
-        onNotice: (notice) =>
-          setVoiceToast({ id: Date.now(), message: notice.message, ok: notice.ok }),
-      },
-    )
-    voiceImportCancelRef.current = run.cancel
+    const cancelled = { value: false }
+    voiceImportCancelRef.current = () => {
+      cancelled.value = true
+    }
 
-    void run.result.then((report) => {
+    const io = createVoiceImportIo(packageId)
+    const processor = createVoiceProcessor()
+
+    void (async () => {
+      let ok = 0
+      let failed = 0
+      let lastMessage: string = VOICE_IMPORT_RESULT.interrupted
+      let lastDetail: string | undefined
+
+      for (let index = 0; index < targets.length; index += 1) {
+        if (cancelled.value) {
+          failed += targets.length - index
+          break
+        }
+        const run = runVoiceImport(
+          { source, targetPath: targets[index] },
+          io,
+          processor,
+          {
+            onPhase: (phase) =>
+              setVoiceImport((current) =>
+                current ? { ...current, phase } : current,
+              ),
+            onProgress: (ratio) =>
+              setVoiceImport((current) =>
+                current
+                  ? {
+                      ...current,
+                      progress: (index + Math.max(0, Math.min(1, ratio))) /
+                        targets.length,
+                    }
+                  : current,
+              ),
+          },
+        )
+        const report = await run.result
+        lastMessage = report.message
+        lastDetail = report.detail
+        if (report.ok) ok += 1
+        else failed += 1
+        if (report.outcome === 'interrupted') {
+          failed += targets.length - index - 1
+          break
+        }
+      }
+
       voiceImportCancelRef.current = null
       setVoiceImport(null)
-      // 常量枚举消息原样展示；技术细节只进控制台
+
+      const message =
+        targets.length === 1
+          ? lastMessage
+          : failed === 0
+            ? VOICE_IMPORT_RESULT.success
+            : ok === 0
+              ? lastMessage
+              : `${ok} 个已导入，${failed} 个失败（${lastMessage}）`
       setVoiceImportMessage({
-        message: report.message,
-        ok: report.ok,
+        message,
+        ok: failed === 0,
         // 没绑定工程文件夹时，导入只会写进应用内资源（IndexedDB）—— 说清楚，
         // 免得看到"成功"却在磁盘上找不到文件
         hint: projectRef.current?.handle
-          ? undefined          : '未绑定工程文件夹，只写入了应用内资源',
+          ? targets.length > 1
+            ? `共 ${targets.length} 个键`
+            : undefined
+          : '未绑定工程文件夹，只写入了应用内资源',
       })
-      if (!report.ok && report.detail) {
-        console.warn('[hanshu] 音频导入失败：', report.detail)
+      setVoiceToast({ id: Date.now(), message, ok: failed === 0 })
+      if (failed > 0 && lastDetail) {
+        console.warn('[hanshu] 音频导入失败：', lastDetail)
       }
-    })
+    })()
+  }
+
+  /** 单键导入（右键菜单、拖到键名上、音频选择器都走这条） */
+  const runVoiceImportFor = (key: string, source: VoiceImportSource) => {
+    runVoiceImportForKeys([key], source)
   }
 
   /** 把一个外部文件读成「文件源」（拖到键名上导入音频用；外部文件拿不到路径） */
@@ -759,32 +840,18 @@ export const ScriptWorkspace = forwardRef<
   }
 
   /**
-   * 删除某个键的配音（右键菜单 Delete Voice）。
+   * 删除某个键的配音（**不做确认**，只是动作本身）。
    *
    * 动作与删除资产一致（元数据 + blob），但**必须连磁盘那一份一起删**：
    * 配音是写穿到工程目录的，只删应用内的话，下次打开工程又会被读回来。
-   *
-   * 两种确认文案：正常情况就是删这个文件；若它是靠"同名回落"从别的目录解析到的，
-   * 说明可能有其它脚本的键也在用它，得说清楚影响面。
    */
-  const handleDeleteVoice = (key: string) => {
+  const deleteVoiceCore = (key: string): boolean => {
     const library = voiceLibraryRef.current
     const pkg = activePackage()
-    if (!library || !pkg) return
+    if (!library || !pkg) return false
     const status = library.statusOf(key)
     const path = status.path
-    if (!path) return
-
-    const targetPath = library.targetPathOf(key)
-    if (path.toLowerCase() === targetPath.toLowerCase()) {
-      if (!window.confirm(`删除配音「${path}」？`)) return
-    } else if (
-      !window.confirm(
-        `该配音来自其它目录：${path}\n删除会影响所有引用它的键，确定删除？`,
-      )
-    ) {
-      return
-    }
+    if (!path) return false
 
     // 正在播就先停掉，否则播的是已经被删掉的音频
     if (status.state === 'playing') library.togglePlay(key)
@@ -806,7 +873,129 @@ export const ScriptWorkspace = forwardRef<
       },
     )
     void sink.remove(path)
+    return true
   }
+
+  /**
+   * 删除某个键的配音（右键菜单 Delete Voice）。
+   *
+   * 两种确认文案：正常情况就是删这个文件；若它是靠"同名回落"从别的目录解析到的，
+   * 说明可能有其它脚本的键也在用它，得说清楚影响面。
+   */
+  const handleDeleteVoice = (key: string) => {
+    const library = voiceLibraryRef.current
+    if (!library) return
+    const status = library.statusOf(key)
+    const path = status.path
+    if (!path) return
+
+    const targetPath = library.targetPathOf(key)
+    if (path.toLowerCase() === targetPath.toLowerCase()) {
+      if (!window.confirm(`删除配音「${path}」？`)) return
+    } else if (
+      !window.confirm(
+        `该配音来自其它目录：${path}\n删除会影响所有引用它的键，确定删除？`,
+      )
+    ) {
+      return
+    }
+
+    deleteVoiceCore(key)
+  }
+
+  /** 录音棚：清除选中键名的配音（一次确认，逐个删） */
+  const deleteVoicesFor = (keys: string[]) => {
+    const library = voiceLibraryRef.current
+    if (!library || keys.length === 0) return
+    const withVoice = keys.filter((key) => library.statusOf(key).path != null)
+    if (withVoice.length === 0) {
+      window.alert('选中的键都没有配音文件，没什么可清除的')
+      return
+    }
+    if (
+      !window.confirm(
+        `清除 ${withVoice.length} 个键的配音？\n（对等文件会从应用内资源与工程文件夹一起删掉）`,
+      )
+    ) {
+      return
+    }
+    for (const key of withVoice) deleteVoiceCore(key)
+  }
+
+  // ——————————————————————————————————————————————————————————————
+  //  录音棚接线
+  // ——————————————————————————————————————————————————————————————
+
+  /** 按正文顺序整理选中集合（划框 / 多选给出的顺序不一定和正文一致） */
+  const orderKeys = (keys: string[]): string[] => {
+    const order = textBindingRef.current?.listKeys() ?? []
+    const rank = new Map(order.map((key, index) => [key, index]))
+    return [...new Set(keys.map((key) => key.trim().toLowerCase()))]
+      .filter(Boolean)
+      .sort(
+        (a, b) =>
+          (rank.get(a) ?? Number.MAX_SAFE_INTEGER) -
+          (rank.get(b) ?? Number.MAX_SAFE_INTEGER),
+      )
+  }
+
+  /**
+   * 编辑器里左键点了键名。
+   *
+   * 语义按需求写死：**左键 = 单选配音**（把录音棚切到单选模式并只留这一个键），
+   * **按住 Shift / Ctrl / Cmd = 多选**（切到批量配音并把这个键追加进去）。
+   */
+  const handleUnitSelect = (request: { key: string; additive: boolean }) => {
+    setStudioMode(request.additive ? 'batch' : 'single')
+    setStudioSelection((prev) =>
+      orderKeys(request.additive ? [...prev, request.key] : [request.key]),
+    )
+  }
+
+  /** 编辑器里划框：keys 为空 = 点了空白处（清空选择） */
+  const handleMarquee = (request: { keys: string[]; additive: boolean }) => {
+    setStudioSelection((prev) => {
+      const next = orderKeys(
+        request.additive ? [...prev, ...request.keys] : request.keys,
+      )
+      // 框到多个键就是批量；只框到一个键按单选处理（等价于点了一下）
+      if (request.additive || next.length > 1) setStudioMode('batch')
+      else if (next.length === 1) setStudioMode('single')
+      return next
+    })
+  }
+
+  /** 录音棚底部「确认导入」：把这份音频写进这些键的对等文件 */
+  const handleStudioImport = (keys: string[], source: VoiceImportSource) => {
+    runVoiceImportForKeys(orderKeys(keys), source)
+  }
+
+  const toggleStudio = () => {
+    setStudioOpen((open) => {
+      if (open) {
+        // 关掉时顺手清空选中：下次打开不该还挂着上次的键
+        setStudioSelection([])
+        setStudioMode('single')
+      }
+      return !open
+    })
+  }
+
+  // 录音棚开关 → 编辑器进入 / 退出"键名选择"模式（常规交互被禁用）
+  useEffect(() => {
+    textBindingRef.current?.setStudioMode(studioOpen)
+  }, [studioOpen, textBindingSeq])
+
+  // 选中集合 → 覆盖层高亮
+  useEffect(() => {
+    textBindingRef.current?.setStudioSelection(studioSelection)
+  }, [studioSelection, textBindingSeq])
+
+  // 换文件（含换资产）时选中集合作废：那些键已经不在正文里了
+  useEffect(() => {
+    setStudioSelection([])
+  }, [titleName])
+
 
   /**
    * 上级容器的右键菜单条目。**可扩展**：往这里加一条就多一个功能；
@@ -1546,6 +1735,16 @@ export const ScriptWorkspace = forwardRef<
 
   useEffect(() => {
     const onMove = (event: PointerEvent) => {
+      // 录音棚右把手：从"按下时的宽度"倒推，不依赖容器矩形
+      const studio = studioDragRef.current
+      if (studio) {
+        const next = Math.min(
+          760,
+          Math.max(280, studio.startWidth + (studio.startX - event.clientX)),
+        )
+        setStudioWidth(next)
+        return
+      }
       if (!draggingRef.current || !splitRef.current) return
       const rect = splitRef.current.getBoundingClientRect()
       if (rect.width <= 0) return
@@ -1554,6 +1753,15 @@ export const ScriptWorkspace = forwardRef<
       setAgentPercent(next)
     }
     const onUp = () => {
+      if (studioDragRef.current) {
+        studioDragRef.current = null
+        document.body.classList.remove('is-resizing')
+        setStudioWidth((current) => {
+          localStorage.setItem('hanshu.studioWidth', String(Math.round(current)))
+          return current
+        })
+        return
+      }
       if (!draggingRef.current) return
       draggingRef.current = false
       document.body.classList.remove('is-resizing')
@@ -1631,6 +1839,10 @@ export const ScriptWorkspace = forwardRef<
     }
     if (item === 'Agent 窗口') {
       setAgentOpen((open) => !open)
+      return
+    }
+    if (item === '录音棚') {
+      toggleStudio()
       return
     }
   }
@@ -2619,7 +2831,12 @@ export const ScriptWorkspace = forwardRef<
                         onUnitDrop: (request) => handleUnitDrop(request),
                         // 缺失 / 无效态点按钮 = 挑一个音频
                         onVoicePick: (key) => openVoicePicker(key),
+                        // 录音棚：左键点键名 / 划框都会走到这里
+                        onUnitSelect: (request) => handleUnitSelect(request),
+                        onMarquee: (request) => handleMarquee(request),
                       })
+                      // 绑定重建后，把录音棚的模式与选中态重新灌回去
+                      setTextBindingSeq((seq) => seq + 1)
                     }}
                     onChange={(next) => {
                       setValue(next ?? '')
@@ -2629,6 +2846,12 @@ export const ScriptWorkspace = forwardRef<
                       fontFamily:
                         'Consolas, "Courier New", "Sarasa Mono SC", monospace',
                       lineHeight: 28,
+                      /**
+                       * 录音棚打开时编辑器是**只读**的：那会儿左键点键名是"选中"、
+                       * 空白处按下是"划框"，不允许再改正文（正常交互整体让位）。
+                       */
+                      readOnly: studioOpen,
+                      domReadOnly: studioOpen,
                       minimap: { enabled: false },
                       wordWrap: 'on',
                       scrollBeyondLastLine: false,
@@ -2705,6 +2928,41 @@ export const ScriptWorkspace = forwardRef<
             </ul>
           </aside>
         )}
+
+        {studioOpen && (
+          <>
+            <div
+              className="split-handle"
+              title="拖动调整录音棚宽度"
+              onPointerDown={(event) => {
+                event.preventDefault()
+                studioDragRef.current = {
+                  startX: event.clientX,
+                  startWidth: studioWidth,
+                }
+                document.body.classList.add('is-resizing')
+              }}
+            />
+            <RecordingStudio
+              mode={studioMode}
+              sourceMode={studioSourceMode}
+              selectedKeys={studioSelection}
+              library={
+                editingHanshu ? (voiceRuntime ?? voiceLibraryRef.current) : null
+              }
+              onClose={() => toggleStudio()}
+              onModeChange={setStudioMode}
+              onSourceModeChange={setStudioSourceMode}
+              onClearSelection={() => setStudioSelection([])}
+              onClearVoice={deleteVoicesFor}
+              onImport={handleStudioImport}
+              style={{
+                flex: `0 0 ${studioWidth}px`,
+                width: `${studioWidth}px`,
+              }}
+            />
+          </>
+        )}
       </div>
 
       {diffOpen && agentDiffs.length > 0 && (
@@ -2778,6 +3036,20 @@ export const ScriptWorkspace = forwardRef<
             }}
           >
             Agent
+          </span>
+          <span
+            className={studioOpen ? 'status-on' : ''}
+            onClick={toggleStudio}
+            title="开关录音棚（配音工作台）"
+            role="button"
+            tabIndex={0}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                toggleStudio()
+              }
+            }}
+          >
+            录音棚
           </span>
           <span>行 {lineCount}</span>
           <span>空格: 2</span>

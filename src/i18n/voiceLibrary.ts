@@ -13,6 +13,7 @@ import {
   formatVoiceDuration,
   type VoiceAudioInfo,
   type VoiceDecodeResult,
+  type VoicePlaybackProgress,
   type VoiceRuntime,
   type VoiceSource,
 } from './voiceRuntime'
@@ -94,6 +95,15 @@ export type VoiceLibrary = {
   inspect(path: string): VoiceDecodeResult | null
   /** 选择器用：这条资产是不是正在试听 */
   isPreviewing(path: string): boolean
+  /** 试听进度（没有在播 / 元信息未就绪时 null） */
+  previewProgress(): VoicePlaybackProgress | null
+  /** 试听暂停 / 继续（没有在播时忽略） */
+  pausePreview(): void
+  resumePreview(): void
+  /** 拖动进度条（0..1 比例） */
+  seekPreview(ratio: number): void
+  /** 进度订阅：**独立于 subscribe**（timeupdate 频率高，不能带着覆盖层重绘） */
+  subscribePreviewProgress(listener: () => void): () => void
   /**
    * 资产清单变了（导入完成 / 拖入 / 删除）时由上层调用：
    * 清掉解析缓存并广播一次，让覆盖层按钮与已打开的选择器都刷新。
@@ -305,6 +315,16 @@ export function createVoiceLibrary(options: {
     },
 
     isPreviewing: (path) => runtime.isPlaying(path),
+
+    previewProgress: () => runtime.playbackProgress(),
+
+    pausePreview: () => runtime.pause(),
+
+    resumePreview: () => runtime.resume(),
+
+    seekPreview: (ratio) => runtime.seekRatio(ratio),
+
+    subscribePreviewProgress: (listener) => runtime.subscribeProgress(listener),
 
     notifyAssetsChanged() {
       cachedAssets = null

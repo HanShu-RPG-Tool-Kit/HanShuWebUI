@@ -12,20 +12,13 @@
   "app": {
     "windows": [
       {
-        "label": "main",
         "title": "汉书",
-        "width": 884,
-        "height": 525,
-        "minWidth": 640,
-        "minHeight": 360,
-        "center": true,
+        "width": 1280,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 600,
         "resizable": true,
         "fullscreen": false,
-        "maximized": false,
-        "visible": false,
-        "decorations": false,
-        "transparent": true,
-        "shadow": false,
         "dragDropEnabled": false
       }
     ],

@@ -1,6 +1,4 @@
 mod skin;
-mod webview_perms;
-mod window_chrome;
 
 use tauri::Manager;
 
@@ -19,15 +17,9 @@ pub fn run() {
             // MC 皮肤管理器：独立 Rust core + 薄 IPC 适配层。
             let skin_state = skin::state::SkinState::init(app.handle())?;
             app.manage(skin_state);
-            // 桌面壳：自动放行 WebView 的文件读写授权弹窗（仍会弹出选文件夹）。
-            webview_perms::install(app.handle())?;
-            // Splash starts hidden; apply rounded / borderless chrome before first show.
-            let _ = window_chrome::set_chrome(app.handle(), true);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            window_chrome::desktop_set_splash_chrome,
-            window_chrome::desktop_set_main_chrome,
             skin::commands::skin_get_capabilities,
             skin::commands::skin_list_entries,
             skin::commands::skin_get_entry,
