@@ -1,34 +1,42 @@
-import { addNode, branches, clone, connectNodes, getCanvasNote, getNode, hasCanvasItem, NOTE_COLORS, getGoalNode, getLogicNode, getTransitionNode, getHubNode, getGatewayNode, hasContentNode, makeNode, removeNode, LOGIC_SYMBOLS, text, type FlowCanvasNote, type FlowPort, type FlowPosition, type LogicOperator, type ProgressFlow } from './model'
+import { addNode, branches, clone, connectNodes, getCanvasNote, getNode, hasCanvasItem, NOTE_COLORS, getGoalNode, getPredicateNode, getTransitionNode, getConditionalNode, getDiffNode, getMergeNode, getSwapNode, hasContentNode, makeNode, removeNode, text, type FlowCanvasNote, type FlowPort, type FlowPosition, type ProgressFlow } from './model'
 
 export const NODE_WIDTH = 216
 export const NODE_HEIGHT = 108
 export const ENTRY_HEIGHT = 62
 export const SOCKET_Y = 59
+export const SWAP_ENTRY_ROW = 28
+export const SWAP_HEADER = 44
 const COLUMN_WIDTH = 276
 const ROW_HEIGHT = 144
 const PADDING = 64
 
 export function socketOffset(flow: ProgressFlow, id: string, port: FlowPort): FlowPosition {
   const metrics = nodeMetrics(flow, id)
-  const right = port === 'output' || port === 'output2'
+  const right = port === 'output' || port === 'output2' || /^out\d+$/.test(port)
   let y = metrics.socketY
-  if (getTransitionNode(flow, id) && !right) y = port === 'input2' ? 86 : 58
-  else if (getHubNode(flow, id) && right) y = port === 'output2' ? 86 : 58
-  else if (getGatewayNode(flow, id) && !right) y = port === 'input2' ? 86 : 58
+  if (getSwapNode(flow, id)) {
+    const index = Number((/^in(\d+)$/.exec(port) ?? /^out(\d+)$/.exec(port))?.[1] ?? 0)
+    y = SWAP_HEADER + index * SWAP_ENTRY_ROW + SWAP_ENTRY_ROW / 2
+  } else if ((getDiffNode(flow, id) || getTransitionNode(flow, id) || getConditionalNode(flow, id)) && !right) y = port === 'input2' ? 86 : 58
+  else if (getDiffNode(flow, id) && right) y = port === 'output2' ? 86 : 58
   return { x: right ? metrics.width : 0, y }
 }
 export function nodeMetrics(flow: ProgressFlow, id: string) {
   const note = getCanvasNote(flow, id)
   if (note) return { width: note.width, height: note.height, socketY: 0 }
   if (id === flow.entry.id) return { width: 156, height: ENTRY_HEIGHT, socketY: 44 }
-  if (getTransitionNode(flow, id) || getHubNode(flow, id) || getGatewayNode(flow, id)) return { width: 180, height: 108, socketY: 72 }
-  if (getLogicNode(flow, id)) return { width: 156, height: 76, socketY: 57 }
-  return { width: NODE_WIDTH, height: getGoalNode(flow, id) ? 94 : NODE_HEIGHT, socketY: SOCKET_Y }
+  if (getSwapNode(flow, id)) {
+    const entries = getSwapNode(flow, id)!.entries
+    const height = SWAP_HEADER + entries * SWAP_ENTRY_ROW + 12
+    return { width: 180, height, socketY: SWAP_HEADER + SWAP_ENTRY_ROW / 2 }
+  }
+  if (getTransitionNode(flow, id) || getConditionalNode(flow, id) || getDiffNode(flow, id) || getMergeNode(flow, id)) return { width: 180, height: 108, socketY: 72 }
+  return { width: NODE_WIDTH, height: getGoalNode(flow, id) || getPredicateNode(flow, id) ? 94 : NODE_HEIGHT, socketY: SOCKET_Y }
 }
 
 /** Initial arrangement only. Once edited, saved positions keep unrelated nodes still. */
 export function layoutCanvas(flow: ProgressFlow) {
-  const ids = [flow.entry.id, ...Object.keys(flow.nodes), ...Object.keys(flow.logic?.nodes ?? {}), ...Object.keys(flow.goals ?? {}), ...Object.keys(flow.transitions ?? {}), ...Object.keys(flow.hubs ?? {}), ...Object.keys(flow.gateways ?? {}), ...Object.keys(flow.layout?.notes ?? {})], known = new Set(ids)
+  const ids = [flow.entry.id, ...Object.keys(flow.nodes), ...Object.keys(flow.goals ?? {}), ...Object.keys(flow.predicates ?? {}), ...Object.keys(flow.transitions ?? {}), ...Object.keys(flow.conditionals ?? {}), ...Object.keys(flow.diffs ?? {}), ...Object.keys(flow.merges ?? {}), ...Object.keys(flow.swaps ?? {}), ...Object.keys(flow.layout?.notes ?? {})], known = new Set(ids)
   const edges = branches(flow).map(({ parent, branch }) => ({ parent, target: branch.target }))
   for (const link of flow.logic?.links ?? []) edges.push({ parent: link.from, target: link.to })
   if (flow.entry.target !== null) edges.unshift({ parent: flow.entry.id, target: flow.entry.target })
@@ -98,49 +106,61 @@ export function createCheckpoint(flow: ProgressFlow, position: FlowPosition) {
   return { flow: next, id }
 }
 
-export function createLogicNode(flow: ProgressFlow, operator: LogicOperator, position: FlowPosition) {
-  requirePosition(position)
-  if (!['and', 'or'].includes(operator)) throw new Error('未知的逻辑节点类型。')
-  const next = withCanvasPositions(flow)
-  let id: string
-  do { id = `logic_${crypto.randomUUID()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
-  next.logic ??= { nodes: {}, links: [] }
-  next.logic.nodes[id] = { operator, title: text(`A ${LOGIC_SYMBOLS[operator]} B`), description: text() }
-  next.layout!.positions[id] = { ...position }
-  return { flow: next, id }
-}
 export function createTransitionNode(flow: ProgressFlow, position: FlowPosition) {
   requirePosition(position)
   const next = withCanvasPositions(flow)
   let id: string
   do { id = `transition_${crypto.randomUUID()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
   next.transitions ??= {}
-  next.transitions[id] = { title: text('转移'), description: text() }
+  next.transitions[id] = { title: text('线性变迁'), description: text() }
   next.layout!.positions[id] = { ...position }
   return { flow: next, id }
 }
 
-export function createHubNode(flow: ProgressFlow, position: FlowPosition) {
+export function createConditionalNode(flow: ProgressFlow, position: FlowPosition) {
   requirePosition(position)
   const next = withCanvasPositions(flow)
   let id: string
-  do { id = `hub_${crypto.randomUUID()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
-  next.hubs ??= {}
-  next.hubs[id] = { title: text('集线器'), description: text() }
+  do { id = `conditional_${crypto.randomUUID()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
+  next.conditionals ??= {}
+  next.conditionals[id] = { title: text('条件变迁'), description: text() }
   next.layout!.positions[id] = { ...position }
   return { flow: next, id }
 }
 
-export function createGatewayNode(flow: ProgressFlow, position: FlowPosition) {
+export function createDiffNode(flow: ProgressFlow, position: FlowPosition) {
   requirePosition(position)
   const next = withCanvasPositions(flow)
   let id: string
-  do { id = `gateway_${crypto.randomUUID()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
-  next.gateways ??= {}
-  next.gateways[id] = { title: text('网关'), description: text() }
+  do { id = `diff_${crypto.randomUUID()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
+  next.diffs ??= {}
+  next.diffs[id] = { title: text('差分变迁'), description: text() }
   next.layout!.positions[id] = { ...position }
   return { flow: next, id }
 }
+
+export function createMergeNode(flow: ProgressFlow, position: FlowPosition) {
+  requirePosition(position)
+  const next = withCanvasPositions(flow)
+  let id: string
+  do { id = `merge_${crypto.randomUUID()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
+  next.merges ??= {}
+  next.merges[id] = { title: text('合并变迁'), description: text() }
+  next.layout!.positions[id] = { ...position }
+  return { flow: next, id }
+}
+
+export function createSwapNode(flow: ProgressFlow, position: FlowPosition) {
+  requirePosition(position)
+  const next = withCanvasPositions(flow)
+  let id: string
+  do { id = `swap_${crypto.randomUUID()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
+  next.swaps ??= {}
+  next.swaps[id] = { title: text('交换变迁'), description: text(), entries: 1 }
+  next.layout!.positions[id] = { ...position }
+  return { flow: next, id }
+}
+
 
 export function createGoalNode(flow: ProgressFlow, position: FlowPosition) {
   requirePosition(position)
@@ -149,6 +169,17 @@ export function createGoalNode(flow: ProgressFlow, position: FlowPosition) {
   do { id = `goal_${crypto.randomUUID()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
   next.goals ??= {}
   next.goals[id] = { kind: 'manual', title: text('新目标'), description: text(), params: {}, nodeRefs: [] }
+  next.layout!.positions[id] = { ...position }
+  return { flow: next, id }
+}
+
+export function createPredicateNode(flow: ProgressFlow, position: FlowPosition) {
+  requirePosition(position)
+  const next = withCanvasPositions(flow)
+  let id: string
+  do { id = `predicate_${crypto.randomUUID()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
+  next.predicates ??= {}
+  next.predicates[id] = { kind: 'manual', title: text('新谓词'), description: text(), params: {}, nodeRefs: [] }
   next.layout!.positions[id] = { ...position }
   return { flow: next, id }
 }

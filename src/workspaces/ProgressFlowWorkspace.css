@@ -64,14 +64,25 @@
 .flow-route { font: 12px Consolas, monospace; overflow-wrap: anywhere; line-height: 1.8; }
 .flow-route span { color: var(--accent); margin: 0 7px; }
 .flow-validation { border-top: 1px solid var(--border-soft); background: var(--bg-sidebar); }
+.flow-validation.has-cycle { background: #453a28; border-top-color: #8a7040; }
 .flow-workspace .flow-validation-toggle { display: flex; justify-content: space-between; width: 100%; padding: 10px 15px; border: 0; border-radius: 0; font-size: 12px; background: transparent; }
+.flow-validation.has-cycle .flow-validation-toggle { color: #f0dfb8; }
 .flow-validation-toggle > span:last-child { color: var(--text-dim); }
+.flow-validation.has-cycle .flow-validation-toggle > span:last-child { color: #dcc193; }
 .flow-issues { max-height: 180px; overflow: auto; padding: 0 15px 10px; }
 .flow-issues p { font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
 .flow-issues code { font: 11px Consolas, monospace; }
 .flow-error { color: #efa49a; }
 .flow-valid { color: #9dcbb5; }
 .flow-warning { color: #dcc193; }
+.flow-alert-dialog { width: min(440px, calc(100vw - 32px)); padding: 0; border: 1px solid #8a7040; border-radius: 8px; background: #2f2a22; color: var(--text); box-shadow: 0 20px 80px #000a; font: 13px/1.5 var(--ui-font-family, 'Microsoft YaHei', sans-serif); overflow: hidden; }
+.flow-alert-dialog[open] { display: flex; flex-direction: column; }
+.flow-alert-dialog::backdrop { background: #10151bb8; }
+.flow-alert-dialog > header { padding: 14px 16px 10px; border-bottom: 1px solid #5a4a30; color: #f0dfb8; font-size: 14px; }
+.flow-alert-body { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+.flow-alert-body p { margin: 0; overflow-wrap: anywhere; }
+.flow-alert-dialog > footer { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px 14px; border-top: 1px solid #5a4a30; }
+.flow-alert-dialog > footer button { padding: 7px 12px; }
 .flow-source-pane { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 10px 15px 15px; gap: 10px; }
 .flow-source-heading { display: flex; align-items: center; justify-content: space-between; color: var(--text-dim); gap: 12px; }
 .flow-workspace .flow-source { flex: 1; resize: none; white-space: pre; border-radius: 4px; min-height: 120px; padding: 15px; overflow: auto; }
