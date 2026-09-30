@@ -70,6 +70,12 @@ export type ProtocolInfo = {
    * 编一个数字进去比不校验更坏，用户会以为那是厂商规定的上下限。
    */
   speedRange?: readonly [number, number]
+  /**
+   * 单次请求的字符上限，超过要在客户端切分。**同样只填有文档依据的**：
+   * 补一个猜的数会让长文本在某一段突然失败，而切分本身是免费的。
+   * 留空 = 没有已知上限，不切。
+   */
+  requestCharLimit?: number
 }
 
 export const PROTOCOLS: Record<ProtocolId, ProtocolInfo> = {
@@ -78,23 +84,27 @@ export const PROTOCOLS: Record<ProtocolId, ProtocolInfo> = {
     endpoint: 'POST /v1/audio/speech，JSON → 裸音频字节',
     authShape: 'apiKey',
     speedRange: [0.25, 4],
+    requestCharLimit: 4096,
   },
   elevenlabs: {
     label: 'ElevenLabs',
     endpoint: 'POST /v1/text-to-speech/{voice_id}，JSON → 裸音频字节',
     authShape: 'apiKey',
     speedRange: [0.7, 1.2],
+    requestCharLimit: 5000,
   },
   azure: {
     label: 'Azure Speech',
     endpoint: 'POST /cognitiveservices/v1，SSML → 裸音频字节',
     authShape: 'apiKey',
+    // 没查到明确的单请求字符上限，所以不切 —— 猜一个只会让长文本在中间莫名失败
   },
   minimax: {
     label: 'MiniMax',
-    endpoint: 'POST /v1/t2a_v2，JSON → JSON 内 base64',
+    endpoint: 'POST /v1/t2a_v2，JSON → **JSON 内 hex**',
     authShape: 'apiKey',
     speedRange: [0.5, 2],
+    requestCharLimit: 10000,
   },
   google: {
     label: 'Google Cloud TTS',
@@ -126,6 +136,34 @@ export type Issue = {
   level: IssueLevel
   path: string
   message: string
+}
+
+/**
+ * 合成失败的分类。**分类本身是功能**:每一种都要给用户不同的下一步,
+ * 混成一句"合成失败"等于什么都没说。
+ *
+ * - `config` —— 服务定义自己不成立(缺端点 / 缺模型),改的是 `.ttsservice`
+ * - `credential` —— 本机缺凭据,改的是凭据库
+ * - `unsupported` —— 该协议还没实现,改的是选哪家
+ * - `clone-required` —— 克隆音色还没登记,该做的是先克隆
+ * - `transport` —— 请求没发出去(CORS / DNS / 断网 / 证书)
+ * - `http` —— 厂商明确拒绝了(Key 无效 / 额度不足 / 模型名不对)
+ * - `decode` —— 响应读不出来或音频解不开
+ */
+export type TtsFailureKind =
+  | 'config'
+  | 'credential'
+  | 'unsupported'
+  | 'clone-required'
+  | 'transport'
+  | 'http'
+  | 'decode'
+
+export type TtsFailure = {
+  kind: TtsFailureKind
+  message: string
+  /** 用户能照做的下一步。有的话一定要给 —— 这才是失败信息的意义 */
+  hint?: string
 }
 
 /** 纯对象 —— JSON 里的 `{}`，不含数组与 null */
