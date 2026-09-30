@@ -3312,7 +3312,7 @@ body.is-resizing .monaco-editor {
   pointer-events: none;
 }
 
-/* —— 录音棚：TTS 的两级选择（角色方案 → 语言方案）—— */
+/* —— 录音棚：TTS 的两级选择（配音方案 → 语言方案）—— */
 .studio-tts {
   padding: 14px;
 }

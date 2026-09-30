@@ -18,6 +18,7 @@ import {
   CREDENTIAL_REF_RE,
   PROTOCOLS,
   SERVICE_FILE_DIR,
+  defaultCredentialRef,
   hasErrors,
   isCapabilityId,
   isPlainObject,
@@ -385,6 +386,36 @@ export function resolveService(
 // ===== 写出 =====
 
 /** 只写当前版本的规范形状 + 保留下来的未知键 */
+/**
+ * 新建一个服务定义的**起点**。
+ *
+ * 直接建成能通过结构校验的：选一家供应商、按该协议的鉴权形态把凭据引用起好名字。
+ * 存一份"什么都还没填"的空壳，只会让它在**方案的服务下拉里都出不来** ——
+ * 而新建之后最需要看到它的地方，恰恰就是那里。
+ *
+ * 端点、模型、能力都不写 —— 留空即跟随预设（§4.6），那是新建时最合理的状态。
+ */
+export function blankServiceDefinition(
+  id: string,
+  provider: string,
+  presets: readonly ProviderPreset[],
+): ServiceDefinition {
+  const preset = presets.find((item) => item.id === provider)
+  const definition: ServiceDefinition = {
+    version: 1,
+    provider: preset?.id ?? provider,
+    auth: {},
+    extra: {},
+  }
+  if (preset) {
+    definition.label = preset.label
+    for (const field of AUTH_SHAPES[PROTOCOLS[preset.protocol].authShape]) {
+      definition.auth[field.key] = defaultCredentialRef(id, field.key)
+    }
+  }
+  return definition
+}
+
 export function stringifyServiceDefinition(definition: ServiceDefinition): string {
   const out: Record<string, unknown> = { version: definition.version }
   if (definition.label !== undefined) out.label = definition.label

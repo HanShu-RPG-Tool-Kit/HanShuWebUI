@@ -21,7 +21,7 @@ export type AllowedExtension = (typeof ALLOWED_EXTENSIONS)[number]
  *
  * - **源文件进 `src/<kind>/`**：编译与运行时都从这里取（会进 PAK）
  * - **创作资料进 `meta/`**：文档 `meta/docs/`、配音配置 `meta/voice/`
- *   （角色方案 `*.tts` 扁平放这一层，服务定义 `*.ttsservice` 放 `meta/voice/service/`）。
+ *   （配音方案 `*.tts` 扁平放这一层，服务定义 `*.ttsservice` 放 `meta/voice/service/`）。
  *   `meta/` 下的东西**不进 PAK**（`resourcePack` 只认 `src/` 与 `assets/`），
  *   但会被「导出工程包」原样带上 —— 这正是它存在的意义。
  *
@@ -88,8 +88,15 @@ export const ALLOWED_EXTENSIONS_LABEL = ALLOWED_EXTENSIONS.join('  ')
  * 注意：它们仍是合法的包内文件格式（`ALLOWED_EXTENSIONS`），**Agent 的写入能力不受限** ——
  * `write_source` 走的是 `normalizeResourceName`，照样能建、能改。
  */
+/**
+ * 可手工新建 / 改名的后缀。
+ *
+ * `.lang` / `.voice` 不行 —— 它们的名字由剧本名派生（改名剧本时会一起搬），
+ * 手工建一个只会变成孤儿。`.ttsservice` 可以：它是从零配一个供应商，
+ * 打开后有图形化设置页接着填（见 `tts/TtsServiceForm.tsx`）。
+ */
 export const MANUAL_FILE_EXTENSIONS = ALLOWED_EXTENSIONS.filter(
-  (ext) => ext !== '.lang' && ext !== '.voice' && ext !== '.ttsservice',
+  (ext) => ext !== '.lang' && ext !== '.voice',
 )
 
 /** 给人看的手动新建 / 改名后缀文案 */

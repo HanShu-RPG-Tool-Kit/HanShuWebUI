@@ -10,7 +10,7 @@
 
 import { FILE_DIRS } from '../workspace'
 
-/** 角色配音方案的后缀 */
+/** 配音方案的后缀 */
 export const VOICE_PLAN_EXTENSION = '.tts'
 /** 服务定义的后缀 —— 比 `.tts` 长，`getExtension` 取最后一个点之后的全串，不会误判 */
 export const SERVICE_FILE_EXTENSION = '.ttsservice'
@@ -55,6 +55,29 @@ export const AUTH_SHAPES = {
 } as const
 
 export type AuthShapeId = keyof typeof AUTH_SHAPES
+
+/**
+ * 凭据字段 → 引用名的后缀。
+ *
+ * `apiKeyRef` 不加后缀（一个服务一个 Key，名字就是服务名）；其余要区分，
+ * 否则 Polly 的两个引用会都叫 `app:polly` —— 那在凭据库里没法看。
+ */
+export const AUTH_SUFFIX: Record<string, string> = {
+  apiKeyRef: '',
+  accessKeyRef: '-access',
+  secretKeyRef: '-secret',
+  serviceAccountRef: '-sa',
+}
+
+/**
+ * 凭据引用的默认名字。
+ *
+ * 新建服务 / 换供应商时用它补上没填的引用：空着只是把同样的输入推后一步，
+ * 而这个名字与凭据库里要填的那条对得上。**已有的值不动。**
+ */
+export function defaultCredentialRef(serviceId: string, fieldKey: string): string {
+  return `app:${serviceId}${AUTH_SUFFIX[fieldKey] ?? ''}`
+}
 
 export const AUTH_SHAPE_IDS = Object.keys(AUTH_SHAPES) as AuthShapeId[]
 
@@ -249,6 +272,13 @@ export function serviceIdOfFileName(fileName: string): string | null {
 /** `.tts` 的文件名 ←→ 角色名（角色名就是文件名去后缀，见规范 §5.1） */
 export function planFileName(character: string): string {
   return `${character}${VOICE_PLAN_EXTENSION}`
+}
+
+/** 这个文件名属于哪一类 TTS 文件；都不是则 null */
+export function ttsFileKindOf(fileName: string): 'service' | 'plan' | null {
+  if (serviceIdOfFileName(fileName)) return 'service'
+  if (characterNameOfFileName(fileName)) return 'plan'
+  return null
 }
 
 export function characterNameOfFileName(fileName: string): string | null {

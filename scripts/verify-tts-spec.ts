@@ -67,7 +67,7 @@ check('服务文件名 → id', serviceIdOfFileName('minimax-main.ttsservice'), 
 check('大小写不影响识别', serviceIdOfFileName('MINIMAX.TTSSERVICE'), 'MINIMAX')
 check('角色文件名 → 角色名（中文）', characterNameOfFileName('旁白.tts'), '旁白')
 check('.tts 不是服务文件', serviceIdOfFileName('旁白.tts'), null)
-check('.ttsservice 不是角色方案', characterNameOfFileName('x.ttsservice'), null)
+check('.ttsservice 不是配音方案', characterNameOfFileName('x.ttsservice'), null)
 check('含路径分隔的拒绝', serviceIdOfFileName('a/b.ttsservice'), null)
 check('服务目录列举', listServiceIds(['b.ttsservice', 'a.ttsservice', '旁白.tts']), ['a', 'b'])
 

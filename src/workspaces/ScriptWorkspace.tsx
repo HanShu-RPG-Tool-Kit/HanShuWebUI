@@ -59,7 +59,7 @@ import {
   downloadBlob,
 } from '../export/resourcePack'
 import { buildProjectPackZip } from '../export/projectPack'
-import { normalizeAssetPath, normalizeFolderPath } from '../assets/paths'
+import { isAudioAsset, normalizeAssetPath, normalizeFolderPath } from '../assets/paths'
 import {
   moveAssetToDir,
   moveScriptToPackage,
@@ -120,7 +120,6 @@ import type {
   ScriptChromeInfo,
   ScriptWorkspaceHandle,
 } from './scriptTypes'
-import { packageSnapshotOf, publishPackageSnapshot } from './packageBus'
 import { LocaleSelect } from '../LocaleSelect'
 import { TextEditBox } from '../TextEditBox'
 import {
@@ -159,8 +158,21 @@ import { synthesizePlanLocale } from '../tts/client'
 import { createCredentialResolver, createLocalBackend } from '../tts/credentials'
 import { readVoicePlan } from '../tts/plan'
 import { resolvePresets } from '../tts/providers'
-import { resolveService, readServiceDefinition, type ResolvedService } from '../tts/service'
-import { characterNameOfFileName } from '../tts/spec'
+import {
+  blankServiceDefinition,
+  readServiceDefinition,
+  resolveService,
+  stringifyServiceDefinition,
+  type ResolvedService,
+} from '../tts/service'
+import {
+  characterNameOfFileName,
+  isValidServiceId,
+  serviceFileName,
+  ttsFileKindOf,
+} from '../tts/spec'
+import { TtsPlanForm } from '../tts/TtsPlanForm'
+import { TtsServiceForm } from '../tts/TtsServiceForm'
 import { createFetchTransport } from '../tts/transport'
 import { VoiceImportProgress } from '../VoiceImportProgress'
 import { VoiceToast } from '../VoiceToast'
@@ -265,59 +277,9 @@ export const ScriptWorkspace = forwardRef<
     activeIdRef.current = next.activeScriptId
     setWorkspace(next)
     saveWorkspace(next)
-    // 工具工作区订阅这份快照 —— 包是它们的外部系统，改完就广播
-    publishPackageSnapshot(packageSnapshotOf(next))
   }
 
-  // ===== 工具工作区的文件通道 =====
-  //
-  // 工具工作区（例如 TTS 服务编辑器）要读写包内文件，但它拿不到这里的内存状态。
-  // 所以从这里开一扇窄门 —— 而不是让它绕过去直接写盘：保存时"不在包里的文本文件"
-  // 会被当作多余删掉，绕过这扇门的写入下一次保存就没了。
-
-  const listPackageFiles = (): string[] =>
-    workspaceRef.current.packages.flatMap((pkg) => pkg.scripts.map((item) => item.name))
-
-  const readPackageText = (name: string): string | null => {
-    const hit = findScriptByName(workspaceRef.current, name)
-    return hit ? hit.script.content : null
-  }
-
-  const writePackageText = (name: string, content: string): boolean => {
-    const normalized = normalizeResourceName(name)
-    if (!normalized) return false
-
-    const current = workspaceRef.current
-    const hit = findScriptByName(current, normalized)
-
-    if (!hit) {
-      const pkg = current.packages[0]
-      if (!pkg) return false
-      const script = createScript(normalized, content)
-      commitWorkspace({
-        ...current,
-        packages: current.packages.map((item) =>
-          item.id === pkg.id
-            ? { ...item, collapsed: false, scripts: [...item.scripts, script] }
-            : item,
-        ),
-      })
-      return true
-    }
-
-    commitWorkspace(updateScriptContent(current, hit.script.id, content))
-
-    // 目标正好是编辑器里打开的那个文件时，编辑器的正文也得跟上 ——
-    // 否则它停在旧内容上，下一次保存会把刚写进去的东西覆盖回去
-    if (hit.script.id === activeIdRef.current) {
-      valueRef.current = content
-      setValue(content)
-      editorRef.current?.setValue(content)
-      setSavedAt(Date.now())
-    }
-    return true
-  }
-
+  /** 读资源字节 —— 编辑器里的伴随面板要拿声音样本来做克隆 */
   const readAssetBytes = async (path: string): Promise<Uint8Array | null> => {
     const normalized = normalizeAssetPath(path)
     const packageId = activePackage()?.id
@@ -325,11 +287,6 @@ export const ScriptWorkspace = forwardRef<
     const blob = await getAssetBlob(packageId, normalized)
     return blob ? new Uint8Array(await blob.arrayBuffer()) : null
   }
-
-  // 首帧先广播一次：工具工作区可能与这里同时挂载，谁先渲染没有保证
-  useEffect(() => {
-    publishPackageSnapshot(packageSnapshotOf(workspaceRef.current))
-  }, [])
 
   const [locale, setLocale] = useState(loadLocale)
   const [langEdit, setLangEdit] = useState<{
@@ -1051,7 +1008,7 @@ export const ScriptWorkspace = forwardRef<
 
   // ===== 录音棚的 TTS =====
   //
-  // 两级选择（角色方案 → 语言方案）是**强制**的：缺任一级 `canGenerate` 就是 false，
+  // 两级选择（配音方案 → 语言方案）是**强制**的：缺任一级 `canGenerate` 就是 false，
   // 按钮不可用（规范 §7.4）。生成出来的字节交给 `handleStudioImport` ——
   // 与拖进来的文件完全同一条路，转码、落盘、试听都不需要第二份实现。
 
@@ -1096,6 +1053,86 @@ export const ScriptWorkspace = forwardRef<
     () => [...ttsServices.values()].flatMap((service) => service.auth.map((f) => f.value)),
     [ttsServices],
   )
+
+  /**
+   * 工程里的音频资产 —— 配音方案的克隆样本从这里选，不让人手打路径。
+   *
+   * 从 `workspace`(状态)推导，**不走 `activePackage()`** —— 那个读的是 ref，
+   * 而渲染期读 ref 拿不到保证是最新值。这里要的就是"渲染期的当前包"。
+   */
+  const ttsAudioAssets = useMemo(() => {
+    const pkg = findScript(workspace, workspace.activeScriptId)?.pkg
+    return (pkg?.assets ?? [])
+      .filter((asset) => isAudioAsset(asset.path, asset.mime))
+      .map((asset) => asset.path)
+      .sort((a, b) => a.localeCompare(b, 'zh-CN'))
+  }, [workspace])
+
+  /** 工程的语言表 —— 配音方案的语言从它里面挑，而不是手打一个工程里没有的 */
+  const ttsProjectLocales = useMemo(
+    () =>
+      listLocalesOf(workspace)
+        .map((item) => item.locale)
+        .sort((a, b) => a.localeCompare(b)),
+    [workspace],
+  )
+
+  /**
+   * 新建一个服务定义文件。**只建，不切换。**
+   *
+   * 调用方（方案设置页）紧接着要把新 id 写进方案，而那一步写的是"当前活动文件" ——
+   * 这里如果顺手切过去，方案内容就会写进那个新服务里。
+   */
+  const createTtsService = (): string | null => {
+    const raw = window.prompt('新服务的名字（也就是文件名，只用字母、数字、- 和 _）', 'my-service')
+    if (raw === null) return null
+    const id = raw.trim()
+    if (!isValidServiceId(id)) {
+      window.alert('这个名字不行 —— 只用字母、数字、- 和 _，且不能为空')
+      return null
+    }
+
+    const current = workspaceRef.current
+    const fileName = serviceFileName(id)
+    if (findScriptByName(current, fileName)) {
+      window.alert(`「${fileName}」已经存在`)
+      return null
+    }
+    const pkg = findScript(current, current.activeScriptId)?.pkg ?? current.packages[0]
+    if (!pkg) return null
+
+    // 建成**能通过结构校验**的样子 —— 空壳会在方案的服务下拉里都出不来，
+    // 而那正是新建之后最需要看到它的地方
+    const script = createScript(
+      fileName,
+      stringifyServiceDefinition(
+        blankServiceDefinition(id, ttsPresets[0]?.id ?? 'template', ttsPresets),
+      ),
+    )
+    commitWorkspace({
+      ...current,
+      packages: current.packages.map((item) =>
+        item.id === pkg.id
+          ? { ...item, collapsed: false, scripts: [...item.scripts, script] }
+          : item,
+      ),
+    })
+    return id
+  }
+
+  /** 打开某个服务定义的设置页 */
+  const openTtsService = (id: string) => {
+    const current = workspaceRef.current
+    const hit = findScriptByName(current, serviceFileName(id))
+    if (!hit) return
+    // 先把当前这份落定，再切 —— 否则方案里刚写的那笔会被丢掉
+    persistActiveContent(valueRef.current)
+    commitWorkspace({ ...current, activeScriptId: hit.script.id, activeAssetId: null })
+    setValue(hit.script.content)
+    valueRef.current = hit.script.content
+    editorRef.current?.setValue(hit.script.content)
+    setSavedAt(hit.script.updatedAt)
+  }
 
   const runStudioTts = async (
     keys: string[],
@@ -1204,6 +1241,39 @@ export const ScriptWorkspace = forwardRef<
       },
     }
   })()
+
+  /**
+   * 当前打开的是不是 TTS 的那两类文件。
+   *
+   * 判据是**编辑器里打开的文件**，不是工作区 —— `.tts` / `.ttsservice` 就在常规剧本
+   * 编辑器里编辑，下面这一格只在打开它们时出现。换成别的文件它自动消失。
+   */
+  const ttsFileKind = viewingAsset ? null : ttsFileKindOf(titleName)
+
+  /**
+   * 有谁选了"以文本方式编辑"。
+   *
+   * 记的是**文件名**而不是布尔值 —— 换到别的文件自然就不再匹配，于是自动回到表单，
+   * 不需要"换文件时重置一下"的 effect。
+   */
+  const [ttsRawEditFor, setTtsRawEditFor] = useState<string | null>(null)
+
+  /**
+   * 打开这两类文件时一律给设置页。
+   *
+   * **内容无效也算数** —— 读不出设置就从零填：读取器失败时给的本来就是一份空定义
+   * (`toServiceDefinition(null)`)，表单照着它渲染即可。早先的写法是"读不出来就
+   * 退回文本编辑"，那等于惩罚用户打开了一个坏文件。文本编辑仍然从设置页够得着。
+   */
+  const ttsUseForm = Boolean(ttsFileKind && ttsRawEditFor !== titleName)
+
+  /** 由表单写回文件：与手改走同一条路 —— 先回编辑器正文，再照常落盘 */
+  const handleTtsRewrite = (next: string) => {
+    setValue(next)
+    valueRef.current = next
+    editorRef.current?.setValue(next)
+    persistActiveContent(next)
+  }
 
   const toggleStudio = () => {
     setStudioOpen((open) => {
@@ -2917,9 +2987,6 @@ export const ScriptWorkspace = forwardRef<
 
   useImperativeHandle(ref, () => ({
     handleMenuAction,
-    listPackageFiles,
-    readPackageText,
-    writePackageText,
     readAssetBytes,
   }))
 
@@ -3027,7 +3094,7 @@ export const ScriptWorkspace = forwardRef<
               editingMarkdown && mdPreviewOn ? ' split-md' : ''
             }${editingHanshu && hscPreviewOn ? ' split-hsc' : ''}${
               viewingAsset ? ' asset-mode' : ''
-            }`}
+            }${ttsFileKind ? ' tts-file' : ''}`}
             style={
               agentOpen
                 ? { flex: `1 1 ${100 - agentPercent}%` }
@@ -3040,8 +3107,44 @@ export const ScriptWorkspace = forwardRef<
                 asset={activeAssetHit.asset}
                 onSaveText={handleSaveTextAsset}
               />
+            ) : ttsUseForm ? (
+              ttsFileKind === 'service' ? (
+                <TtsServiceForm
+                  fileName={titleName}
+                  text={value}
+                  onChange={handleTtsRewrite}
+                  onSwitchToRaw={() => setTtsRawEditFor(titleName)}
+                  onOpenCredentials={() => setShowTtsCredentials(true)}
+                />
+              ) : (
+                <TtsPlanForm
+                  fileName={titleName}
+                  text={value}
+                  services={ttsServices}
+                  audioAssets={ttsAudioAssets}
+                  projectLocales={ttsProjectLocales}
+                  createService={createTtsService}
+                  openService={openTtsService}
+                  onChange={handleTtsRewrite}
+                  onSwitchToRaw={() => setTtsRawEditFor(titleName)}
+                  onOpenCredentials={() => setShowTtsCredentials(true)}
+                  readAssetBytes={readAssetBytes}
+                />
+              )
             ) : (
               <>
+                {ttsFileKind && (
+                  <div className="tts-raw-bar">
+                    <span>按原始 JSON 编辑</span>
+                    <button
+                      type="button"
+                      className="tts-form-link"
+                      onClick={() => setTtsRawEditFor(null)}
+                    >
+                      用表单编辑
+                    </button>
+                  </div>
+                )}
                 <div className="editor-pane">
                   <Editor
                     height="100%"

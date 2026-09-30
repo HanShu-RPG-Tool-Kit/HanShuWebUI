@@ -70,7 +70,7 @@ export type StudioTtsStatus =
  * 而不是等点了才报错。"选不到"由上游决定:没配的语言根本不在这两个列表里。
  */
 export type StudioTtsPanel = {
-  /** 工程里的角色配音方案 */
+  /** 工程里的配音方案 */
   plans: { name: string; character: string }[]
   planName: string | null
   /** 当前方案可选的语言 */
@@ -581,7 +581,7 @@ export function RecordingStudio({
             ? '用左键在编辑器里点一个键名'
             : '按住 Shift 或在编辑器里划框多选键名'
           : !tts?.planName
-            ? '先选一个角色配音方案'
+            ? '先选一个配音方案'
             : !tts.locale
               ? '这份方案还没配语言'
               : tts.canGenerate
@@ -774,7 +774,7 @@ export function RecordingStudio({
         {sourceMode === 'tts' ? (
           <div className="studio-tts">
             <label className="studio-tts-field">
-              <span>角色方案</span>
+              <span>配音方案</span>
               <select
                 value={tts?.planName ?? ''}
                 onChange={(event) => tts?.onPlanChange(event.target.value)}
@@ -814,13 +814,14 @@ export function RecordingStudio({
             {/* 两级没选齐就不给生成 —— 而不是等点了才报错 */}
             {!tts || tts.plans.length === 0 ? (
               <p className="studio-tts-note">
-                还没有角色配音方案。到「配音方案」工作区为这个说话人建一份，
-                再在里面选好服务和音色。
+                还没有配音方案。配音方案是每个说话人一份 —— 在资源树里新建一个
+                「说话人名.tts」（文件名就是说话人的名字），打开它就是设置页，
+                在里面选好服务和音色。
               </p>
             ) : tts.locales.length === 0 ? (
               <p className="studio-tts-note">
-                这份方案一条语言都没配 —— 到「配音方案」工作区给它加上这一条。
-                没配的语言在这里不会出现，也不会在别处回退成别的语言。
+                这份方案一条语言都没配 —— 打开这个说话人的 .tts，让它按工程的语言表
+                加上一条。没配的语言在这里不会出现，也不会在别处回退成别的语言。
               </p>
             ) : tts.status.kind === 'error' ? (
               <>

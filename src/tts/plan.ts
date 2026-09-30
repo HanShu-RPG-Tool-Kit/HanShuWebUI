@@ -1,5 +1,5 @@
 /**
- * `.tts` 角色配音方案的读写与校验 —— 规范 `docs/tts-spec.md` §3 / §5 / §7.1 / §7.2。
+ * `.tts` 配音方案的读写与校验 —— 规范 `docs/tts-spec.md` §3 / §5 / §7.1 / §7.2。
  *
  * 两条读写法则（规范 §9）：
  * - **读要宽容**：老版本、未知键都能进；解析不动原文里认识的键之外的东西。
@@ -441,7 +441,7 @@ export function stringifyVoicePlan(plan: VoicePlan): string {
 // ===== 录音棚的两级门禁（§7.4）=====
 
 /**
- * 第①级：工程里有哪些角色方案。
+ * 第①级：工程里有哪些配音方案。
  * **没有 `.tts` 的说话人不出现在这一级** —— 选不到，而不是报错。
  */
 export function listPlanCharacters(

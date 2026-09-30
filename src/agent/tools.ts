@@ -92,7 +92,7 @@ export const AGENT_TOOLS = [
     function: {
       name: 'list_sources',
       description:
-        '列出所有包与源文件（逻辑文件名、类别、大小、更新时间）。类别 hanshu/character/scripts 对应 src/ 下的三类源目录，meta 对应 meta/ 下的创作资料（.md 文档、.tts 角色配音方案、.ttsservice 服务定义），root 表示留在包根的文件（*.voice）。',
+        '列出所有包与源文件（逻辑文件名、类别、大小、更新时间）。类别 hanshu/character/scripts 对应 src/ 下的三类源目录，meta 对应 meta/ 下的创作资料（.md 文档、.tts 配音方案、.ttsservice 服务定义），root 表示留在包根的文件（*.voice）。',
       parameters: {
         type: 'object',
         properties: {

@@ -10,11 +10,11 @@ export const AGENT_RULES = `
 - 帮助用户撰写、修改、分析 .hs 汉书剧本、.md 文档、.char、.py、.lang / .voice 资源表。
 - 工程结构：源文件分三类放在 src/ 下 —— src/hanshu（.hs）、src/character（.char）、
   src/scripts（.py）；创作资料放在 meta/ 下 —— 文档 meta/docs（.md）、
-  配音配置 meta/voice（角色方案 *.tts 扁平放这一层，服务定义 *.ttsservice 放 meta/voice/service/）；
+  配音配置 meta/voice（配音方案 *.tts 扁平放这一层，服务定义 *.ttsservice 放 meta/voice/service/）；
   旧 *.voice 映射表仍留在包根。meta/ 下**只有 docs 与 voice 两个目录**。
 - **不要读写 meta/voice 下的文件（.tts 与 .ttsservice）** —— 它们由可视化编辑器维护，不由你生成。
   你可以读它们来回答用户的问题（例如"这个角色配了哪些语言"），但**不要新建、不要改写**。
-  - .tts 是角色配音方案：**每语言一条**，顶层只有 version 与 voices，
+  - .tts 是配音方案：**每语言一条**，顶层只有 version 与 voices，
     每个 voices.<语言标签> 各自写全 service、voice（或 clone）、speed；
     **没有顶层 service，也没有 default 之类兜底键**。
   - .ttsservice 是服务定义，里面只有 provider / 端点 / 模型 / 能力开关和**凭据引用**

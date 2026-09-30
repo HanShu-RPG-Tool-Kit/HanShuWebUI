@@ -1,0 +1,293 @@
+/**
+ * `.tts` / `.ttsservice` 的图形化设置页 —— 打开这两类文件时**取代**代码编辑器。
+ *
+ * 配色只用 `index.css` 的主题变量 —— 硬编码颜色会在换主题时变成一块补丁。
+ */
+
+.tts-form {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 20px 24px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: var(--ui-font-size);
+}
+
+.tts-form-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.tts-form-title {
+  color: var(--text-bright);
+  font-size: 1.15em;
+  font-weight: 600;
+}
+
+.tts-form-subtitle {
+  color: var(--text-dim);
+}
+
+.tts-form-head-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+
+.tts-form-section {
+  margin-bottom: 18px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  background: var(--bg-sidebar);
+}
+
+.tts-form-section-title {
+  margin: 0 0 10px;
+  color: var(--text-dim);
+  font-weight: 600;
+}
+
+.tts-form-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.tts-form-row:last-child {
+  margin-bottom: 0;
+}
+
+.tts-form-label {
+  flex: 0 0 110px;
+  color: var(--text-dim);
+}
+
+.tts-form-control {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tts-form-control input[type='text'],
+.tts-form-control input[type='number'],
+.tts-form-control select {
+  height: var(--ui-row-h);
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.tts-form-control input[type='text'] {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.tts-form-control input[type='number'] {
+  width: 84px;
+}
+
+.tts-form-control select {
+  min-width: 0;
+}
+
+.tts-form-control input:disabled,
+.tts-form-control select:disabled {
+  opacity: 0.55;
+}
+
+.tts-form-hint {
+  color: var(--text-dim);
+}
+
+.tts-form-hint code,
+.tts-form-static code,
+.tts-form-issues code {
+  font-family: Consolas, monospace;
+  color: var(--text-bright);
+}
+
+.tts-form-static {
+  color: var(--text);
+}
+
+/* 次要动作：不该看起来像主按钮 */
+.tts-form-link {
+  padding: 2px 9px;
+  border: 1px solid var(--border-soft);
+  border-radius: 3px;
+  background: none;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.tts-form-link:hover:not(:disabled) {
+  background: var(--bg-menu-hover);
+}
+
+.tts-form-link:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.tts-form-btn {
+  height: var(--ui-row-h);
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg-tab);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.tts-form-btn:hover:not(:disabled) {
+  background: var(--bg-tab-active);
+}
+
+.tts-form-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.tts-form-issues {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tts-form-issues li {
+  padding: 2px 0;
+  color: var(--text-dim);
+  line-height: 1.7;
+}
+
+.tts-form-issues .level-error {
+  color: #e08a8a;
+}
+
+.tts-form-issues .level-warning {
+  color: #d8b45a;
+}
+
+.tts-form-ok {
+  margin: 0;
+  color: var(--text-dim);
+}
+
+/* ===== 语言卡片（配音方案用）===== */
+
+.tts-lang {
+  margin-bottom: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  background: var(--bg-sidebar);
+}
+
+.tts-lang:last-child {
+  margin-bottom: 0;
+}
+
+.tts-lang-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.tts-lang-tag {
+  color: var(--text-bright);
+  font-weight: 600;
+}
+
+.tts-lang-head-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+
+.tts-lang-samples {
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.tts-lang-samples li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.tts-lang-samples select {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: var(--ui-row-h);
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.tts-lang-note {
+  margin: 6px 0 0;
+  color: var(--text-dim);
+  line-height: 1.7;
+}
+
+.tts-lang-note.is-warn {
+  color: #d8b45a;
+}
+
+.tts-lang-note.is-done {
+  color: #7fb98a;
+}
+
+/* 打开这两类文件时，编辑器外壳改成竖排：表单（或原始编辑的提示条）在上/下排布 */
+.editor-shell.tts-file {
+  flex-direction: column;
+}
+
+/* 退回原始编辑时的一条提示 —— 说明为什么在这里，以及怎么回去 */
+.tts-raw-bar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-status);
+  color: var(--text-dim);
+  font-size: var(--ui-font-size);
+}
+
+.tts-raw-bar button {
+  margin-left: auto;
+}
+
+/* 内容读不出来（或文件还空着）时的一条说明 —— 不是错误，是"从零填"的起点 */
+.tts-form-notice {
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid #d8b45a;
+  border-radius: 3px;
+  background: var(--bg-status);
+  color: var(--text-dim);
+  line-height: 1.7;
+}

@@ -85,8 +85,9 @@ function toEntry(value: unknown): CloneEntry | null {
 /**
  * 登记表是个外部存储,界面要能跟着它变 —— 所以它可订阅。
  *
- * 与 `workspaces/packageBus` 同一个模式。**快照必须缓存**:`getSnapshot` 每次渲染都会
- * 被调用,现算一个新数组会让 React 认为一直在变,于是无限重渲染。
+ * 存储是"外部系统",所以用 `useSyncExternalStore` 订阅(`project/bindingBus` 是同一模式)。
+ * **快照必须缓存**:`getSnapshot` 每次渲染都会被调用,现算一个新数组会让 React 认为
+ * 一直在变,于是无限重渲染。
  */
 let cachedEntries: readonly CloneEntry[] | null = null
 const registryListeners = new Set<() => void>()
