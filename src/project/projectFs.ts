@@ -1,6 +1,6 @@
 /**
  * 文件夹工程：打开 / 新建 / 保存
- * 一个目录 = 一个 ScriptPackage；文本在根目录，二进制在 assets/
+ * 一个目录 = 一个 ScriptPackage；文本在 `src/`（源）与 `meta/`（创作资料），二进制在 `assets/`
  */
 
 import {
@@ -11,8 +11,10 @@ import {
 import { normalizeAssetPath, normalizeFolderPath } from '../assets/paths'
 import {
   ALLOWED_EXTENSIONS,
+  FILE_DIRS,
   createPackage,
   createScript,
+  fileDir,
   findScript,
   getExtension,
   isAllowedExtension,
@@ -65,6 +67,14 @@ export type LoadProjectResult = {
 function uid(prefix: string) {
   return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`
 }
+
+/**
+ * 根目录之外存放文本文件的固定目录（`src` 与 `meta`）。
+ * 由 `FILE_DIRS` 推导 —— 以后新增归位目录不用再来改这里。
+ */
+const TEXT_ROOT_DIRS = [
+  ...new Set(Object.values(FILE_DIRS).map((dir) => dir.split('/')[0] ?? '')),
+]
 
 function isScriptFileName(name: string): boolean {
   if (name === PROJECT_FILE) return false
@@ -187,7 +197,8 @@ async function readPackageFromDirectory(
   // 换工程前清掉同 id 的旧 blob，避免脏数据（id 稳定时是覆盖写入）
   await deletePackageAssetBlobs(manifest.id)
 
-  // 源文件在 `src/<kind>/` 下；`.md` 与旧 `*.voice` 仍留在根目录
+  // 源文件在 `src/<kind>/`、创作资料在 `meta/` 下。
+  // 老工程的 `.md` 等仍平铺在包根：两处都读，保存时会统一归位。
   const scripts = []
   const seen = new Set<string>()
   const addScript = async (name: string, path: string) => {
@@ -206,16 +217,18 @@ async function readPackageFromDirectory(
     if (!isProjectLoadableFile(entry.name)) continue
     await addScript(entry.name, entry.name)
   }
-  try {
-    const srcDir = await root.getDirectoryHandle('src')
-    for (const path of await listFilesRecursive(srcDir, '')) {
-      const name = path.split('/').pop() ?? ''
-      if (name.toLowerCase().endsWith('.new')) continue
-      if (!isProjectLoadableFile(name)) continue
-      await addScript(name, `src/${path}`)
+  for (const dirName of TEXT_ROOT_DIRS) {
+    try {
+      const dir = await root.getDirectoryHandle(dirName)
+      for (const path of await listFilesRecursive(dir, '')) {
+        const name = path.split('/').pop() ?? ''
+        if (name.toLowerCase().endsWith('.new')) continue
+        if (!isProjectLoadableFile(name)) continue
+        await addScript(name, `${dirName}/${path}`)
+      }
+    } catch {
+      // 还没有这个目录（旧平铺工程，或尚未创建）
     }
-  } catch {
-    // 没有 src/：旧平铺工程，根目录那份上面已经读过了
   }
 
   if (scripts.length === 0) {
@@ -341,7 +354,7 @@ export async function createProjectFromPicker(): Promise<LoadProjectResult> {
   pkg.name = manifest.name
 
   await writeTextFile(handle, PROJECT_FILE, serializeManifest(manifest))
-  await writeTextFile(handle, script.name, script.content)
+  await writeFileAtPath(handle, sourceRelativePath(script.name), script.content)
 
   const binding: BoundProject = {
     handle,
@@ -420,31 +433,35 @@ export async function saveProjectToDirectory(
   // 1) project.json
   await writeTextFile(root, PROJECT_FILE, serializeManifest(manifest))
 
-  // 2) 脚本：按 `src/<kind>/` 写入；清掉多余的源文件与旧平铺副本
+  // 2) 文本文件：按规范归位（`src/<kind>/` 与 `meta/`）；再清掉根目录旧平铺副本与错位残留
   const wanted = new Set(pkg.scripts.map((s) => s.name.toLowerCase()))
   for (const script of pkg.scripts) {
     await writeFileAtPath(root, sourceRelativePath(script.name), script.content)
   }
-  // 旧布局把脚本平铺在根目录：同名副本已搬到 src/ 下，删掉免得重复
+  // 旧布局把文本平铺在根目录：凡有归位目录的后缀一律搬走，别留重复副本
+  // （`.lang` / 旧 `*.voice` 没有归位目录，仍留在包根，这里不碰）
   for (const entry of await listChildren(root)) {
     if (entry.kind !== 'file') continue
     if (!isScriptFileName(entry.name)) continue
-    if (wanted.has(entry.name.toLowerCase())) {
-      await removeEntryIfExists(root, entry.name)
-    }
+    if (!fileDir(entry.name)) continue
+    await removeEntryIfExists(root, entry.name)
   }
-  try {
-    const srcDir = await root.getDirectoryHandle('src')
-    for (const path of await listFilesRecursive(srcDir, '')) {
-      if (path.toLowerCase().endsWith('.new')) continue
-      const name = path.split('/').pop() ?? ''
-      if (!isScriptFileName(name)) continue
-      if (!wanted.has(name.toLowerCase())) {
-        await removeEntryIfExists(srcDir, path)
+  // `src/` 与 `meta/`：删掉已不存在的文件，以及路径不合归位的错位副本
+  for (const dirName of TEXT_ROOT_DIRS) {
+    try {
+      const dir = await root.getDirectoryHandle(dirName)
+      for (const path of await listFilesRecursive(dir, '')) {
+        if (path.toLowerCase().endsWith('.new')) continue
+        const name = path.split('/').pop() ?? ''
+        if (!isScriptFileName(name)) continue
+        const misplaced = `${dirName}/${path}` !== sourceRelativePath(name)
+        if (misplaced || !wanted.has(name.toLowerCase())) {
+          await removeEntryIfExists(dir, path)
+        }
       }
+    } catch {
+      // 尚未创建该目录
     }
-  } catch {
-    // 尚未创建 src/
   }
 
   // 3) assets：整树重写（先删再写，逻辑简单可靠）

@@ -11,42 +11,85 @@ export const ALLOWED_EXTENSIONS = [
   '.py',
   '.lang',
   '.voice',
+  '.tts',
+  '.ttsservice',
 ] as const
 export type AllowedExtension = (typeof ALLOWED_EXTENSIONS)[number]
 
 /**
- * 源文件按后缀归入的工作目录（工程结构 `src/<kind>/`）：
- * `.hs` → `src/hanshu/`、`.char` → `src/character/`、`.py` → `src/scripts/`。
- * 未列出的后缀（`.md` 文档、旧 `*.voice` 映射）不参与该结构，留在包根。
+ * 包内文件在磁盘上的**目标目录**（相对包根）；未列出的后缀留在包根。
+ *
+ * - **源文件进 `src/<kind>/`**：编译与运行时都从这里取（会进 PAK）
+ * - **创作资料进 `meta/`**：文档 `meta/docs/`、配音配置 `meta/voice/`
+ *   （角色方案 `*.tts` 扁平放这一层，服务定义 `*.ttsservice` 放 `meta/voice/service/`）。
+ *   `meta/` 下的东西**不进 PAK**（`resourcePack` 只认 `src/` 与 `assets/`），
+ *   但会被「导出工程包」原样带上 —— 这正是它存在的意义。
+ *
+ * 值可以是多层路径，归位校验比较 `${根目录}/${相对路径}` 与 `sourceRelativePath`，
+ * 不假设只有一层。
  */
-export const SOURCE_KIND_DIRS: Record<string, string> = {
-  '.hs': 'hanshu',
-  '.char': 'character',
-  '.py': 'scripts',
+export const FILE_DIRS: Record<string, string> = {
+  '.hs': 'src/hanshu',
+  '.char': 'src/character',
+  '.py': 'src/scripts',
+  '.md': 'meta/docs',
+  '.tts': 'meta/voice',
+  '.ttsservice': 'meta/voice/service',
 }
 
-/** `src/<kind>/` 的固定顺序：展示与导出都按它排 */
+/** 运行时源目录（会进 PAK）；导出目录骨架与分组展示都按它排 */
 export const SOURCE_KIND_ORDER = ['hanshu', 'character', 'scripts'] as const
 
-/** 源文件在工程结构里的相对路径：`xx.hs` → `src/hanshu/xx.hs`；非源文件原样返回 */
+/** 工作区分组顺序：运行时源三类 + 创作资料 `meta` */
+export const WORKSPACE_GROUP_ORDER = [...SOURCE_KIND_ORDER, 'meta'] as const
+
+/** 文件的目标目录（相对包根）；未归类返回 null（留在包根） */
+export function fileDir(name: string): string | null {
+  return FILE_DIRS[getExtension(name)] ?? null
+}
+
+/** 是否属于创作资料（`meta/` 下，不进 PAK） */
+export function isMetaFile(name: string): boolean {
+  const dir = fileDir(name)
+  return dir === 'meta' || (dir?.startsWith('meta/') ?? false)
+}
+
+/** 文件在工程结构里的相对路径：`xx.hs` → `src/hanshu/xx.hs`；未归类原样返回 */
 export function sourceRelativePath(name: string): string {
-  const kind = SOURCE_KIND_DIRS[getExtension(name)]
-  return kind ? `src/${kind}/${name}` : name
+  const dir = fileDir(name)
+  return dir ? `${dir}/${name}` : name
+}
+
+/** 工作区分组键：`hanshu` / `character` / `scripts` / `meta`；留在包根为 `root` */
+export function sourceKindOf(name: string): string {
+  if (isMetaFile(name)) return 'meta'
+  const dir = fileDir(name)
+  return dir ? dir.slice('src/'.length) : 'root'
+}
+
+/** 分组在工程里的目录前缀（资源树表头用）：`hanshu` → `src/hanshu`、`meta` → `meta` */
+export function groupDirPrefix(group: string): string {
+  return group === 'meta' ? 'meta' : `src/${group}`
 }
 
 /** 给人看的后缀列表文案 */
 export const ALLOWED_EXTENSIONS_LABEL = ALLOWED_EXTENSIONS.join('  ')
 
 /**
- * 手动新建 / 改名的后缀：语言文本（`.lang`）与配音映射（`.voice`）的名字都由剧本名派生
- * （见 `localeLayout`：改名 `.hs` 会连带搬走它们），手工造这两个名字会切断派生关系，
+ * 手动新建 / 改名的后缀：
+ *
+ * - `.lang` / `.voice` 的名字都由剧本名派生（见 `localeLayout`：改名 `.hs` 会连带搬走它们），
+ *   手工造这两个名字会切断派生关系。
+ * - `.ttsservice` 是**服务定义**，只该由服务编辑器写 —— 手建一个没有 `provider` 的空壳
+ *   只会被校验器拒掉。
+ *
  * 所以界面上的「新建」与「改名」都不接受它们。
  *
- * 注意：两者仍是合法的包内文件格式（`ALLOWED_EXTENSIONS`），**Agent 的写入能力不受限** ——
- * `write_source` 走的是 `normalizeResourceName`，照样能建、能改 `.lang` / `.voice`。
+ * 注意：它们仍是合法的包内文件格式（`ALLOWED_EXTENSIONS`），**Agent 的写入能力不受限** ——
+ * `write_source` 走的是 `normalizeResourceName`，照样能建、能改。
  */
 export const MANUAL_FILE_EXTENSIONS = ALLOWED_EXTENSIONS.filter(
-  (ext) => ext !== '.lang' && ext !== '.voice',
+  (ext) => ext !== '.lang' && ext !== '.voice' && ext !== '.ttsservice',
 )
 
 /** 给人看的手动新建 / 改名后缀文案 */
@@ -123,7 +166,9 @@ export function editorLanguageForFile(name: string): string {
   const ext = getExtension(name)
   if (ext === '.md') return 'markdown'
   if (ext === '.char' || ext === '.py') return 'python'
-  if (ext === '.lang' || ext === '.voice') return 'json'
+  if (ext === '.lang' || ext === '.voice' || ext === '.tts' || ext === '.ttsservice') {
+    return 'json'
+  }
   return 'hanshu' // .hs 汉书剧本
 }
 

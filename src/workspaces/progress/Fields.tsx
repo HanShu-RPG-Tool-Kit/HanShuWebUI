@@ -13,7 +13,24 @@ export function TextField({ label, value, onChange, multiline = false, placehold
     : <input value={value} disabled={disabled} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />}</Field>
 }
 
-/** JSON subfields are applied explicitly; pending input blocks navigation and export. */
+/** IDs are applied before submitting so an unblurred field cannot lose its rename. */
+export function IdField({ label, value, onApply, onPending, disabled }: {
+  label: string; value: string; onApply: (value: string) => void; onPending: (label: string, pending: boolean) => void; disabled: boolean
+}) {
+  const [draft, setDraft] = useState(value)
+  const [error, setError] = useState('')
+  const dirty = draft !== value
+  function apply() {
+    if (!dirty) return
+    try { const next = draft.trim(); onApply(next); setDraft(next); setError(''); onPending(label, false) }
+    catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) }
+  }
+  return <div><Field label={label}><input value={draft} disabled={disabled && !dirty} onChange={(event) => { setDraft(event.target.value); setError(''); onPending(label, event.target.value !== value) }} onKeyDown={(event) => {
+    if (event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); apply() }
+  }} /></Field>{dirty && <div className="flow-inline-actions"><button type="button" onClick={apply}>应用 ID</button><button type="button" onClick={() => { setDraft(value); setError(''); onPending(label, false) }}>放弃修改</button></div>}{error && <p className="flow-error" role="alert">{error}</p>}</div>
+}
+
+/** JSON subfields are applied explicitly before the dialog is completed. */
 export function JsonField({ label, value, onApply, onPending, shape = 'object' }: {
   label: string; value: unknown; onApply: (value: unknown) => void; onPending: (label: string, pending: boolean) => void; shape?: 'object' | 'array'
 }) {

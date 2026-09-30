@@ -25,12 +25,11 @@ import { resolveVoiceAssetFor, voiceAssetDir } from '../i18n/voiceMap'
 import { analyzeHsDiagnostics, type HsDiagnostic } from '../monaco/hsDiagnostics'
 import { parseTextSpans } from '../monaco/textSpans'
 import {
-  SOURCE_KIND_DIRS,
   ensureAssetFolder,
-  getExtension,
   isHanshuFile,
   removeAssetFolder,
   removeAssetMeta,
+  sourceKindOf,
   sourceRelativePath,
   upsertAssetMeta,
   type Workspace,
@@ -39,10 +38,11 @@ import {
 /** 工具返回值：一律带 `ok`，失败带 `error`（可选 `hint` 指向正确工具） */
 export type AgentOpResult = { ok: boolean; [key: string]: unknown }
 
-/** 源文件类别（与 `src/<kind>/` 一致；非源文件为 `root`） */
-export function sourceKindOf(name: string): string {
-  return SOURCE_KIND_DIRS[getExtension(name)] ?? 'root'
-}
+/**
+ * 源文件类别：`hanshu` / `character` / `scripts` / `meta`（创作资料）；留在包根为 `root`。
+ * 与写盘归位同源（`workspace.sourceKindOf`），不在这里另立一套。
+ */
+export { sourceKindOf }
 
 /** 活动文件的项目相对路径：`序章.hs` → `src/hanshu/序章.hs`（仅供参考，工具仍收逻辑名） */
 export function activeFilePathOf(

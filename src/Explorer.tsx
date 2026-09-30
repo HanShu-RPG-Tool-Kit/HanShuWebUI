@@ -18,9 +18,9 @@ import {
   type AssetTreeNode,
 } from './assets/paths'
 import {
-  SOURCE_KIND_DIRS,
-  SOURCE_KIND_ORDER,
-  getExtension,
+  WORKSPACE_GROUP_ORDER,
+  groupDirPrefix,
+  sourceKindOf,
 } from './workspace'
 
 /**
@@ -305,15 +305,14 @@ function PackageNode({
     onPayload: (source) => onDropIntoFolder(pkg.id, 'assets', source),
   })
 
-  // 源文件按 `src/<kind>/` 分组展示；其余（`.md`、旧 `*.voice`）留在包根
+  // 源文件按 `src/<kind>/` 分组、创作资料归 `meta/`；旧 `*.voice` 等留在包根
   const grouped = useMemo(() => {
     const byKind = new Map<string, Array<(typeof pkg.scripts)[number]>>(
-      SOURCE_KIND_ORDER.map((kind) => [kind, []]),
+      WORKSPACE_GROUP_ORDER.map((kind) => [kind, []]),
     )
     const root: Array<(typeof pkg.scripts)[number]> = []
     for (const script of pkg.scripts) {
-      const kind = SOURCE_KIND_DIRS[getExtension(script.name)]
-      const bucket = kind ? byKind.get(kind) : null
+      const bucket = byKind.get(sourceKindOf(script.name))
       if (bucket) bucket.push(script)
       else root.push(script)
     }
@@ -424,12 +423,12 @@ function PackageNode({
       {!pkg.collapsed && (
         <>
           <ul className="explorer-files">
-            {SOURCE_KIND_ORDER.map((kind) => {
+            {WORKSPACE_GROUP_ORDER.map((kind) => {
               const items = grouped.byKind.get(kind) ?? []
               if (items.length === 0) return null
               return (
                 <li key={`kind-${kind}`} className="explorer-kind">
-                  <div className="explorer-kind-row">src/{kind}</div>
+                  <div className="explorer-kind-row">{groupDirPrefix(kind)}</div>
                   <ul className="explorer-files nested">
                     {items.map(renderScriptRow)}
                   </ul>
