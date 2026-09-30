@@ -847,6 +847,11 @@ GDPR 把声音算生物特征数据;EU AI Act 另要求披露 AI 生成内容。
   `${dirName}/${path}` 与 `sourceRelativePath(name)`,`writeFileAtPath` 会沿途建中间目录,
   `listFilesRecursive` 本来就递归 —— 两处都已经支持任意深度。
 - `src/agent/rules.ts`、`src/agent/tools.ts`:工程结构描述同步(含 `list_sources` 的说明)。
+- **工具工作区必须经 `ScriptWorkspace` 的包内文件通道读写,不能直接写盘。**
+  工程的内存包才是真相,而保存时会清掉"不在包里的文本文件" —— 绕过它写盘的文件
+  在下次保存时会被当多余删掉;如果那个文件正在资源编辑器里打开,还会被旧正文覆盖回去。
+  所以 `ScriptWorkspaceHandle` 加了 `listPackageFiles` / `readPackageText` / `writePackageText`
+  三个方法,`TtsServiceWorkspace` 是第一个使用者。
 - **`meta/schema/` 已删。** 因为 `.tts` 从未有过更高版本,不存在"旧工程需要迁移"的情况;
   磁盘上若残留一个空的 `meta/schema/`,它不属于 `FILE_DIRS` 的任何归位目录,
   保存时的清理逻辑不会碰它 —— 由用户自行删除即可,不必写迁移代码。
@@ -910,10 +915,29 @@ JSON 解析用 `JSON.parse`,写出复用现成的保真写入思路。
 - **MiniMax 的国际端点不带 `GroupId`**,国内端点(`api.minimaxi.chat`)才要。
   预设用的是国际端点,所以不做那条分支。
 
+**界面**(已完成):
+
+| 界面 | 形态 | 位置 |
+|---|---|---|
+| 服务编辑器 | **工作区** —— 等效直接编辑 `meta/voice/service/*.ttsservice` | `workspaces/TtsServiceWorkspace.tsx` |
+| 配音方案编辑器 | **工作区** —— 等效直接编辑 `meta/voice/<角色>.tts` | `workspaces/TtsPlanWorkspace.tsx` |
+| 凭据库 | **模态** —— 本机设置,只在打开时挂载 | `TtsCredentialsModal.tsx` |
+| 录音棚两级门禁 | 接进已有的 source 选择,「确认导入」变成「生成配音」 | `studio/RecordingStudio.tsx` |
+| 克隆登记 | 配音方案里**每条克隆语言**一行「登记音色」,结果就地显示 | `workspaces/TtsPlanWorkspace.tsx` |
+
+工具工作区**不能直接写盘**:保存工程时会清掉"不在内存包里的文本文件",绕过它写盘的内容
+下次保存就没了。所以读走 `packageBus` 的**快照订阅**(`useSyncExternalStore`),
+写走 `ScriptWorkspaceHandle.writePackageText` —— 读写各只有一条路。
+
+**克隆为什么必须手动触发**:它要花钱,还会在厂商账号下建一个音色。所以合成时发现
+"还没登记"只会给 `clone-required` 并指出去哪儿做,**绝不替用户悄悄上传**。
+点「登记音色」会先问一句(样本数、厂商、授权),再逐样本读字节、跑克隆、落登记。
+
 **还没做**:
 
-- **UI** —— 服务编辑器、凭据库、录音棚的两级门禁与生成入口。
 - **传输装配** —— `createFetchTransport` 已经能用;桌面版接 Rust 侧传输还差一行装配。
+  在这之前,浏览器与 webview 都受 CORS 约束:**OpenAI 那类不返回 CORS 头的供应商一定失败**
+  (见 §1 的说明)。失败会报成 `transport` 而不是含糊的"合成失败",就是为了让人认得出这一条。
 - **无损音频档** —— 见 §11.2。
 
 ### 10.3 服务编辑器与凭据库(两块新 UI)

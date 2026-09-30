@@ -12,6 +12,7 @@
  * 换来的是"改了样本却还在用旧音色"这种最难查的错不会发生。
  */
 
+import { useSyncExternalStore } from 'react'
 import { createAppStorage, type StorageLike } from './appStore'
 
 /** 克隆登记在 `localStorage` 里的键（沿用 `hanshu.*` 命名） */
@@ -81,6 +82,47 @@ function toEntry(value: unknown): CloneEntry | null {
   }
 }
 
+/**
+ * 登记表是个外部存储,界面要能跟着它变 —— 所以它可订阅。
+ *
+ * 与 `workspaces/packageBus` 同一个模式。**快照必须缓存**:`getSnapshot` 每次渲染都会
+ * 被调用,现算一个新数组会让 React 认为一直在变,于是无限重渲染。
+ */
+let cachedEntries: readonly CloneEntry[] | null = null
+const registryListeners = new Set<() => void>()
+
+function invalidateCloneRegistry(): void {
+  cachedEntries = null
+  for (const listener of registryListeners) {
+    try {
+      listener()
+    } catch (error) {
+      console.error('clone registry listener failed', error)
+    }
+  }
+}
+
+function subscribeCloneRegistry(listener: () => void): () => void {
+  registryListeners.add(listener)
+  return () => {
+    registryListeners.delete(listener)
+  }
+}
+
+function getCloneRegistrySnapshot(): readonly CloneEntry[] {
+  cachedEntries ??= createCloneRegistry().all()
+  return cachedEntries
+}
+
+/** 订阅本机已登记的克隆 —— 登记成功后列表自己就更新了 */
+export function useCloneRegistryEntries(): readonly CloneEntry[] {
+  return useSyncExternalStore(
+    subscribeCloneRegistry,
+    getCloneRegistrySnapshot,
+    getCloneRegistrySnapshot,
+  )
+}
+
 export function createCloneRegistry(storage?: StorageLike): CloneRegistry {
   const store = createAppStorage(CLONE_REGISTRY_KEY, storage)
   const read = (): Record<string, CloneEntry> => {
@@ -104,6 +146,7 @@ export function createCloneRegistry(storage?: StorageLike): CloneRegistry {
       const table = read()
       table[cloneKeyOf(serviceId, fingerprints)] = entry
       store.write(table)
+      invalidateCloneRegistry()
       return entry
     },
     forget: (serviceId) => {
@@ -115,7 +158,10 @@ export function createCloneRegistry(storage?: StorageLike): CloneRegistry {
           removed += 1
         }
       }
-      if (removed) store.write(table)
+      if (removed) {
+        store.write(table)
+        invalidateCloneRegistry()
+      }
       return removed
     },
     all: () => Object.values(read()),

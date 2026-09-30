@@ -3311,3 +3311,71 @@ body.is-resizing .monaco-editor {
   background: rgba(91, 159, 212, 0.16);
   pointer-events: none;
 }
+
+/* —— 录音棚：TTS 的两级选择（角色方案 → 语言方案）—— */
+.studio-tts {
+  padding: 14px;
+}
+
+.studio-tts-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.studio-tts-field > span {
+  flex: 0 0 64px;
+  color: var(--text-dim);
+}
+
+.studio-tts-field select {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: var(--ui-row-h);
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.studio-tts-field select:disabled {
+  opacity: 0.55;
+}
+
+.studio-tts-note {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.studio-tts-note.is-error {
+  color: #e08a8a;
+}
+
+.studio-tts-note.is-done {
+  color: #7fb98a;
+}
+
+.studio-tts-note code {
+  font-family: Consolas, monospace;
+  color: #d4a574;
+}
+
+.studio-tts-link {
+  margin-top: 8px;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg-tab);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.studio-tts-link:hover {
+  background: var(--bg-tab-active);
+}

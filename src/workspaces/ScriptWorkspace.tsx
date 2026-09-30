@@ -120,6 +120,7 @@ import type {
   ScriptChromeInfo,
   ScriptWorkspaceHandle,
 } from './scriptTypes'
+import { packageSnapshotOf, publishPackageSnapshot } from './packageBus'
 import { LocaleSelect } from '../LocaleSelect'
 import { TextEditBox } from '../TextEditBox'
 import {
@@ -150,7 +151,17 @@ import {
   RecordingStudio,
   type StudioMode,
   type StudioSourceMode,
+  type StudioTtsStatus,
 } from '../studio/RecordingStudio'
+import { TtsCredentialsModal } from '../TtsCredentialsModal'
+import { createCloneRegistry, lookupClonedVoice } from '../tts/cloneRegistry'
+import { synthesizePlanLocale } from '../tts/client'
+import { createCredentialResolver, createLocalBackend } from '../tts/credentials'
+import { readVoicePlan } from '../tts/plan'
+import { resolvePresets } from '../tts/providers'
+import { resolveService, readServiceDefinition, type ResolvedService } from '../tts/service'
+import { characterNameOfFileName } from '../tts/spec'
+import { createFetchTransport } from '../tts/transport'
 import { VoiceImportProgress } from '../VoiceImportProgress'
 import { VoiceToast } from '../VoiceToast'
 import {
@@ -254,7 +265,71 @@ export const ScriptWorkspace = forwardRef<
     activeIdRef.current = next.activeScriptId
     setWorkspace(next)
     saveWorkspace(next)
+    // 工具工作区订阅这份快照 —— 包是它们的外部系统，改完就广播
+    publishPackageSnapshot(packageSnapshotOf(next))
   }
+
+  // ===== 工具工作区的文件通道 =====
+  //
+  // 工具工作区（例如 TTS 服务编辑器）要读写包内文件，但它拿不到这里的内存状态。
+  // 所以从这里开一扇窄门 —— 而不是让它绕过去直接写盘：保存时"不在包里的文本文件"
+  // 会被当作多余删掉，绕过这扇门的写入下一次保存就没了。
+
+  const listPackageFiles = (): string[] =>
+    workspaceRef.current.packages.flatMap((pkg) => pkg.scripts.map((item) => item.name))
+
+  const readPackageText = (name: string): string | null => {
+    const hit = findScriptByName(workspaceRef.current, name)
+    return hit ? hit.script.content : null
+  }
+
+  const writePackageText = (name: string, content: string): boolean => {
+    const normalized = normalizeResourceName(name)
+    if (!normalized) return false
+
+    const current = workspaceRef.current
+    const hit = findScriptByName(current, normalized)
+
+    if (!hit) {
+      const pkg = current.packages[0]
+      if (!pkg) return false
+      const script = createScript(normalized, content)
+      commitWorkspace({
+        ...current,
+        packages: current.packages.map((item) =>
+          item.id === pkg.id
+            ? { ...item, collapsed: false, scripts: [...item.scripts, script] }
+            : item,
+        ),
+      })
+      return true
+    }
+
+    commitWorkspace(updateScriptContent(current, hit.script.id, content))
+
+    // 目标正好是编辑器里打开的那个文件时，编辑器的正文也得跟上 ——
+    // 否则它停在旧内容上，下一次保存会把刚写进去的东西覆盖回去
+    if (hit.script.id === activeIdRef.current) {
+      valueRef.current = content
+      setValue(content)
+      editorRef.current?.setValue(content)
+      setSavedAt(Date.now())
+    }
+    return true
+  }
+
+  const readAssetBytes = async (path: string): Promise<Uint8Array | null> => {
+    const normalized = normalizeAssetPath(path)
+    const packageId = activePackage()?.id
+    if (!normalized || !packageId) return null
+    const blob = await getAssetBlob(packageId, normalized)
+    return blob ? new Uint8Array(await blob.arrayBuffer()) : null
+  }
+
+  // 首帧先广播一次：工具工作区可能与这里同时挂载，谁先渲染没有保证
+  useEffect(() => {
+    publishPackageSnapshot(packageSnapshotOf(workspaceRef.current))
+  }, [])
 
   const [locale, setLocale] = useState(loadLocale)
   const [langEdit, setLangEdit] = useState<{
@@ -645,11 +720,15 @@ export const ScriptWorkspace = forwardRef<
    *
    * 多个键时**串行**跑同一个工作流（源字节只读一次，但每个目标都要独立落盘），
    * 总进度按 `(已完成的键 + 当前键的进度) / 键数` 聚合 —— 进度条不会在第二个键上跳回 0。
+   *
+   * **返回这次导入的 promise。** 批量 TTS 要一个键一个键地"先合成、再导入"，
+   * 不 await 就会同时跑起多个导入 —— 它们共用同一份进度与取消引用，进度会跳、
+   * 取消会乱。别的地方不关心返回值，照旧不等。
    */
   const runVoiceImportForKeys = (keys: string[], source: VoiceImportSource) => {
     const library = voiceLibraryRef.current
     const packageId = activePackage()?.id
-    if (!library || !packageId || keys.length === 0) return
+    if (!library || !packageId || keys.length === 0) return Promise.resolve()
 
     const targets = keys.map((key) => library.targetPathOf(key))
     setVoiceImportMessage(null)
@@ -671,7 +750,7 @@ export const ScriptWorkspace = forwardRef<
     const io = createVoiceImportIo(packageId)
     const processor = createVoiceProcessor()
 
-    void (async () => {
+    return (async () => {
       let ok = 0
       let failed = 0
       let lastMessage: string = VOICE_IMPORT_RESULT.interrupted
@@ -969,6 +1048,162 @@ export const ScriptWorkspace = forwardRef<
   const handleStudioImport = (keys: string[], source: VoiceImportSource) => {
     runVoiceImportForKeys(orderKeys(keys), source)
   }
+
+  // ===== 录音棚的 TTS =====
+  //
+  // 两级选择（角色方案 → 语言方案）是**强制**的：缺任一级 `canGenerate` 就是 false，
+  // 按钮不可用（规范 §7.4）。生成出来的字节交给 `handleStudioImport` ——
+  // 与拖进来的文件完全同一条路，转码、落盘、试听都不需要第二份实现。
+
+  const ttsPresets = useMemo(() => resolvePresets().presets, [])
+  const ttsCredentialStore = useMemo(
+    () => createCredentialResolver({ backend: createLocalBackend() }),
+    [],
+  )
+  const ttsCloneRegistry = useMemo(() => createCloneRegistry(), [])
+  const ttsTransport = useMemo(() => createFetchTransport(), [])
+
+  const [ttsPlanName, setTtsPlanName] = useState<string | null>(null)
+  const [ttsLocale, setTtsLocale] = useState<string | null>(null)
+  const [ttsStatus, setTtsStatus] = useState<StudioTtsStatus>({ kind: 'idle' })
+  const [showTtsCredentials, setShowTtsCredentials] = useState(false)
+
+  const ttsFiles = useMemo(
+    () =>
+      workspace.packages
+        .flatMap((pkg) => pkg.scripts)
+        .filter((script) => script.name.toLowerCase().endsWith('.tts')),
+    [workspace],
+  )
+
+  /** 工程里的服务定义 → 生效值（与配音方案工作区同一套推导） */
+  const ttsServices = useMemo(() => {
+    const map = new Map<string, ResolvedService>()
+    for (const pkg of workspace.packages) {
+      for (const script of pkg.scripts) {
+        if (!script.name.toLowerCase().endsWith('.ttsservice')) continue
+        const id = script.name.slice(0, script.name.length - '.ttsservice'.length).trim()
+        if (!id) continue
+        const read = readServiceDefinition(script.content, id, ttsPresets)
+        if (read.ok) map.set(id, resolveService(read.value, id, ttsPresets))
+      }
+    }
+    return map
+  }, [workspace, ttsPresets])
+
+  /** 这个工程用到的凭据引用 —— 凭据库据此列出"还缺哪几个" */
+  const ttsRequiredRefs = useMemo(
+    () => [...ttsServices.values()].flatMap((service) => service.auth.map((f) => f.value)),
+    [ttsServices],
+  )
+
+  const runStudioTts = async (
+    keys: string[],
+    planName: string | null,
+    locale: string | null,
+  ) => {
+    const targets = orderKeys(keys)
+    if (!planName || !locale || targets.length === 0) return
+
+    const file = ttsFiles.find((script) => script.name === planName)
+    const parsed = file ? readVoicePlan(file.content, file.name) : null
+    if (!file || !parsed?.ok) {
+      setTtsStatus({ kind: 'error', message: '这份配音方案读不出来' })
+      return
+    }
+
+    const packageId = activePackage()?.id
+
+    for (const [index, key] of targets.entries()) {
+      setTtsStatus({
+        kind: 'busy',
+        message: `正在生成 ${index + 1}/${targets.length} —— ${key}`,
+      })
+
+      // 没有译文的键不该拿去合成：那会生成一条念着空白的配音
+      const text = textMapRef.current?.get(key) ?? null
+      if (!text) {
+        setTtsStatus({
+          kind: 'error',
+          message: `键「${key}」还没有这个语言的译文`,
+          hint: '按顺序来：先写译文，再生成配音',
+        })
+        return
+      }
+
+      const result = await synthesizePlanLocale(
+        { plan: parsed.value, locale, text, services: ttsServices },
+        {
+          transport: ttsTransport,
+          credential: ttsCredentialStore.resolve,
+          lookupClonedVoice: async ({ serviceId, samples }) => {
+            if (!packageId) return null
+            return lookupClonedVoice({
+              registry: ttsCloneRegistry,
+              readSample: async (path) => {
+                const normalized = normalizeAssetPath(path)
+                if (!normalized) return null
+                const blob = await getAssetBlob(packageId, normalized)
+                return blob ? new Uint8Array(await blob.arrayBuffer()) : null
+              },
+              input: { serviceId, samples },
+            })
+          },
+        },
+      )
+
+      if (!result.ok) {
+        // 失败分类直接透出去：凭据缺失、CORS、厂商拒绝各有各的下一步
+        setTtsStatus({
+          kind: 'error',
+          message: result.failure.message,
+          hint: result.failure.hint,
+        })
+        return
+      }
+
+      // 等这一次导入落定再合成下一个：导入共用一份进度与取消引用，并发跑会互相踩
+      await runVoiceImportForKeys([key], {
+        kind: 'file',
+        name: `${key}.wav`,
+        bytes: result.audio,
+      })
+    }
+
+    setTtsStatus({ kind: 'done', message: `已生成 ${targets.length} 条，正在导入` })
+  }
+
+  /** 录音棚那一格要的东西。每次渲染重算 —— 解析一份小 JSON 比维护依赖表便宜 */
+  const studioTts = (() => {
+    const plans = ttsFiles
+      .map((script) => ({
+        name: script.name,
+        character: characterNameOfFileName(script.name) ?? script.name,
+      }))
+      .sort((a, b) => a.character.localeCompare(b.character, 'zh-CN'))
+
+    const plan = plans.find((item) => item.name === ttsPlanName) ?? plans[0] ?? null
+    const content = plan ? (ttsFiles.find((s) => s.name === plan.name)?.content ?? '') : ''
+    const parsed = plan ? readVoicePlan(content, plan.name) : null
+    // 这份方案配了哪些语言，第②级就只有哪些 —— 选不到，而不是报错
+    const locales = parsed?.ok ? Object.keys(parsed.value.voices).sort() : []
+    const locale = ttsLocale && locales.includes(ttsLocale) ? ttsLocale : (locales[0] ?? null)
+
+    return {
+      plans,
+      planName: plan?.name ?? null,
+      locales,
+      locale,
+      status: ttsStatus,
+      canGenerate: Boolean(plan && locale && parsed?.ok),
+      onPlanChange: setTtsPlanName,
+      onLocaleChange: setTtsLocale,
+      onOpenCredentials: () => setShowTtsCredentials(true),
+      onGenerate: (keys: string[]) => {
+        void runStudioTts(keys, plan?.name ?? null, locale)
+      },
+    }
+  })()
 
   const toggleStudio = () => {
     setStudioOpen((open) => {
@@ -2682,6 +2917,10 @@ export const ScriptWorkspace = forwardRef<
 
   useImperativeHandle(ref, () => ({
     handleMenuAction,
+    listPackageFiles,
+    readPackageText,
+    writePackageText,
+    readAssetBytes,
   }))
 
   useEffect(() => {
@@ -2943,6 +3182,12 @@ export const ScriptWorkspace = forwardRef<
                 document.body.classList.add('is-resizing')
               }}
             />
+            {showTtsCredentials && (
+              <TtsCredentialsModal
+                onClose={() => setShowTtsCredentials(false)}
+                requiredRefs={ttsRequiredRefs}
+              />
+            )}
             <RecordingStudio
               mode={studioMode}
               sourceMode={studioSourceMode}
@@ -2956,6 +3201,7 @@ export const ScriptWorkspace = forwardRef<
               onClearSelection={() => setStudioSelection([])}
               onClearVoice={deleteVoicesFor}
               onImport={handleStudioImport}
+              tts={studioTts}
               style={{
                 flex: `0 0 ${studioWidth}px`,
                 width: `${studioWidth}px`,

@@ -9,6 +9,8 @@ export type AppWorkspaceMeta = {
 export const APP_WORKSPACES: readonly AppWorkspaceMeta[] = [
   { id: 'script', label: '剧本' },
   { id: 'progress-flow', label: '进度流程' },
+  { id: 'tts-service', label: '配音服务' },
+  { id: 'tts-plan', label: '配音方案' },
   { id: 'mc-skin', label: '皮肤管理器' },
   { id: 'mc-stream', label: '串流' },
 ] as const

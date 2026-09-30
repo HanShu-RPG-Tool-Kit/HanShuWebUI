@@ -56,6 +56,41 @@ import {
 export type StudioMode = 'single' | 'batch'
 export type StudioSourceMode = 'fixed' | 'tts' | 'record'
 
+/** TTS 生成的当前状态 —— 失败要分类、要给出下一步,不能只说"生成失败" */
+export type StudioTtsStatus =
+  | { kind: 'idle' }
+  | { kind: 'busy'; message: string }
+  | { kind: 'error'; message: string; hint?: string }
+  | { kind: 'done'; message: string }
+
+/**
+ * TTS 那一格要的全部东西。
+ *
+ * 两级选择是**强制**的(规范 §7.4):缺任一级就不能生成 —— 按钮不可用,
+ * 而不是等点了才报错。"选不到"由上游决定:没配的语言根本不在这两个列表里。
+ */
+export type StudioTtsPanel = {
+  /** 工程里的角色配音方案 */
+  plans: { name: string; character: string }[]
+  planName: string | null
+  /** 当前方案可选的语言 */
+  locales: string[]
+  locale: string | null
+  status: StudioTtsStatus
+  canGenerate: boolean
+  onPlanChange(name: string): void
+  onLocaleChange(locale: string): void
+  /**
+   * 为这些键各生成一条。
+   *
+   * 目标集合由这里算好再传出去 —— 单选/批量、哪些键还没有配音,这一格本来就知道,
+   * 上层不该再推一遍同样的逻辑。
+   */
+  onGenerate(keys: string[]): void
+  /** 缺凭据时的下一步 */
+  onOpenCredentials?(): void
+}
+
 export type RecordingStudioProps = {
   mode: StudioMode
   sourceMode: StudioSourceMode
@@ -71,6 +106,8 @@ export type RecordingStudioProps = {
   onClearVoice(keys: string[]): void
   /** 用同一份音频导入到这些键 */
   onImport(keys: string[], source: VoiceImportSource): void
+  /** TTS 那一格；null 表示工程还没准备好（没打开文件、没有配音方案等） */
+  tts?: StudioTtsPanel | null
   style?: CSSProperties
 }
 
@@ -104,7 +141,7 @@ function sourceModeLabel(mode: StudioMode, source: StudioSourceMode): string {
 /** 配音方式的说明文案（两种作用范围下含义略有不同） */
 function sourceModeTitle(mode: StudioMode, source: StudioSourceMode): string {
   const scope = mode === 'single' ? '这一个键' : '所有选中的键'
-  if (source === 'tts') return `TTS（待接入）· 为${scope}各生成一条`
+  if (source === 'tts') return `TTS · 为${scope}各生成一条`
   if (source === 'record') return `录音 · 为${scope}逐条录制`
   return `固定音频 · 同一份音频写进${scope}`
 }
@@ -125,6 +162,7 @@ export function RecordingStudio({
   onClearSelection,
   onClearVoice,
   onImport,
+  tts,
   style,
 }: RecordingStudioProps) {
   /** 资产树上选中的资产（单选/固定模式用） */
@@ -507,6 +545,8 @@ export function RecordingStudio({
     mode === 'single' ? (activeKey ? [activeKey] : []) : selectedKeys
   /** 配音方式是"录音"就走逐键录音那条路（单选 / 批量同一套，只是目标集合不同） */
   const confirmRecord = sourceMode === 'record'
+  /** TTS 那一格的"确认"就是生成 —— 仍然是同一个按钮，不另开一条路 */
+  const confirmTts = sourceMode === 'tts'
   /**
    * 单选模式下自动跟随出来的"候选源"可能就是它**自己当前的配音** ——
    * 那种情况导入只会白白报一句 already imported，所以直接禁用并说明。
@@ -520,10 +560,12 @@ export function RecordingStudio({
       source.path.toLowerCase()
   const canConfirm = confirmRecord
     ? Boolean(recordTarget && take)
-    : Boolean(source && importTargets.length > 0 && sourceMode !== 'tts' && !selfOnly)
+    : confirmTts
+      ? Boolean(tts?.canGenerate && importTargets.length > 0)
+      : Boolean(source && importTargets.length > 0 && !selfOnly)
 
-  const confirmLabel = '确认导入'
-  const confirmHint = confirmRecord
+  const confirmLabel = confirmTts ? '生成配音' : '确认导入'
+  const confirmHint = confirmTts
     ? recordTarget
       ? `为「${recordTarget}」写入这条录音${
           mode === 'batch' && autoContinue ? '，然后自动录下一个' : ''
@@ -531,8 +573,22 @@ export function RecordingStudio({
       : selectedKeys.length === 0
         ? '先在编辑器里选择键名'
         : '选中的键都有配音了'
-    : sourceMode === 'tts'
-      ? 'TTS 待接入'
+    : confirmTts
+      ? tts?.status.kind === 'busy'
+        ? tts.status.message
+        : importTargets.length === 0
+          ? mode === 'single'
+            ? '用左键在编辑器里点一个键名'
+            : '按住 Shift 或在编辑器里划框多选键名'
+          : !tts?.planName
+            ? '先选一个角色配音方案'
+            : !tts.locale
+              ? '这份方案还没配语言'
+              : tts.canGenerate
+                ? mode === 'single'
+                  ? `用「${tts.locale}」生成「${activeKey ?? ''}」`
+                  : `用「${tts.locale}」为 ${importTargets.length} 个键各生成一条`
+                : '还差凭据 —— 先去凭据库填一份'
       : importTargets.length === 0
         ? mode === 'single'
           ? '用左键在编辑器里点一个键名'
@@ -547,6 +603,12 @@ export function RecordingStudio({
 
   const handleConfirm = () => {
     if (!canConfirm) return
+    if (confirmTts) {
+      // 生成之后仍然走 onImport —— 合成出来的字节与拖进来的文件是同一种输入，
+      // 转码、落盘、试听都不需要第二条路
+      tts?.onGenerate(importTargets)
+      return
+    }
     if (confirmRecord) {
       if (!recordTarget || !take) return
       // 只有批量才有"下一个"：单选录完这一个就结束，别挂自动续录的钩子
@@ -710,15 +772,86 @@ export function RecordingStudio({
 
       <div className="studio-body">
         {sourceMode === 'tts' ? (
-          <div className="studio-placeholder">
-            <div className="studio-placeholder-title">
-              {mode === 'single' ? 'TTS' : '批量 TTS'}
-            </div>
-            <p>
-              这一格按需求**先留空**：后续接入文本转语音时，在这里配置音色与语速，
-              {mode === 'single' ? '为选中的这一个键' : '选中的每个键各'}生成一条，
-              仍然走同一个「确认导入」。
-            </p>
+          <div className="studio-tts">
+            <label className="studio-tts-field">
+              <span>角色方案</span>
+              <select
+                value={tts?.planName ?? ''}
+                onChange={(event) => tts?.onPlanChange(event.target.value)}
+                disabled={!tts || tts.plans.length === 0}
+              >
+                {!tts || tts.plans.length === 0 ? (
+                  <option value="">（工程里还没有配音方案）</option>
+                ) : (
+                  tts.plans.map((plan) => (
+                    <option key={plan.name} value={plan.name}>
+                      {plan.character}
+                    </option>
+                  ))
+                )}
+              </select>
+            </label>
+
+            <label className="studio-tts-field">
+              <span>语言方案</span>
+              <select
+                value={tts?.locale ?? ''}
+                onChange={(event) => tts?.onLocaleChange(event.target.value)}
+                disabled={!tts || tts.locales.length === 0}
+              >
+                {!tts || tts.locales.length === 0 ? (
+                  <option value="">（这份方案没配语言）</option>
+                ) : (
+                  tts.locales.map((locale) => (
+                    <option key={locale} value={locale}>
+                      {locale}
+                    </option>
+                  ))
+                )}
+              </select>
+            </label>
+
+            {/* 两级没选齐就不给生成 —— 而不是等点了才报错 */}
+            {!tts || tts.plans.length === 0 ? (
+              <p className="studio-tts-note">
+                还没有角色配音方案。到「配音方案」工作区为这个说话人建一份，
+                再在里面选好服务和音色。
+              </p>
+            ) : tts.locales.length === 0 ? (
+              <p className="studio-tts-note">
+                这份方案一条语言都没配 —— 到「配音方案」工作区给它加上这一条。
+                没配的语言在这里不会出现，也不会在别处回退成别的语言。
+              </p>
+            ) : tts.status.kind === 'error' ? (
+              <>
+                <p className="studio-tts-note is-error">{tts.status.message}</p>
+                {tts.status.hint && (
+                  <p className="studio-tts-note">
+                    {tts.status.hint}
+                    {tts.status.kind === 'error' &&
+                      tts.status.message.includes('凭据') &&
+                      tts.onOpenCredentials && (
+                        <button
+                          type="button"
+                          className="studio-tts-link"
+                          onClick={tts.onOpenCredentials}
+                        >
+                          打开凭据库
+                        </button>
+                      )}
+                  </p>
+                )}
+              </>
+            ) : tts.status.kind === 'done' ? (
+              <p className="studio-tts-note is-done">{tts.status.message}</p>
+            ) : tts.status.kind === 'busy' ? (
+              <p className="studio-tts-note">{tts.status.message}</p>
+            ) : (
+              <p className="studio-tts-note">
+                生成后仍走同一个「{confirmLabel}」，与拖进来的文件完全同一条路：
+                转码成单声道 Vorbis、写进这个键的配音资产。
+              </p>
+            )}
           </div>
         ) : sourceMode === 'record' ? (
           <div className="studio-record">

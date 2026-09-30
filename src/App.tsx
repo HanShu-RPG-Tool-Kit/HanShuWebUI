@@ -6,6 +6,7 @@ import {
   useRef,
   useState,
   type Ref,
+  type RefObject,
 } from 'react'
 import {
   loadActiveWorkspaceId,
@@ -16,6 +17,8 @@ import { McSkinWorkspace } from './workspaces/McSkinWorkspace.tsx'
 import { ProgressFlowWorkspace, type ProgressWorkspaceHandle } from './workspaces/ProgressFlowWorkspace.tsx'
 import { McStreamWorkspace } from './workspaces/McStreamWorkspace.tsx'
 import { ScriptWorkspace } from './workspaces/ScriptWorkspace.tsx'
+import { TtsServiceWorkspace } from './workspaces/TtsServiceWorkspace.tsx'
+import { TtsPlanWorkspace } from './workspaces/TtsPlanWorkspace.tsx'
 import type {
   ScriptChromeInfo,
   ScriptWorkspaceHandle,
@@ -103,10 +106,21 @@ const MENUS = [
 
 const WORKSPACE_IDS = APP_WORKSPACES.map((w) => w.id)
 
-function renderToolWorkspace(id: AppWorkspaceId, active: boolean, progressRef: Ref<ProgressWorkspaceHandle>) {
+function renderToolWorkspace(
+  id: AppWorkspaceId,
+  active: boolean,
+  progressRef: Ref<ProgressWorkspaceHandle>,
+  scriptRef: RefObject<ScriptWorkspaceHandle | null>,
+) {
   switch (id) {
     case 'progress-flow':
       return <ProgressFlowWorkspace active={active} workspaceRef={progressRef} />
+    case 'tts-service':
+      // 服务定义是工程文件，所以这个工作区借 ScriptWorkspace 的包内文件通道读写 ——
+      // 绕过它直接写盘的内容会在下一次保存时被当成"多余文件"清掉
+      return <TtsServiceWorkspace active={active} scriptRef={scriptRef} />
+    case 'tts-plan':
+      return <TtsPlanWorkspace active={active} scriptRef={scriptRef} />
     case 'mc-skin':
       return <McSkinWorkspace active={active} />
     case 'mc-stream':
@@ -429,7 +443,7 @@ function App() {
               activeWorkspaceId === ws.id ? ' active' : ''
             }`}
           >
-            {renderToolWorkspace(ws.id, activeWorkspaceId === ws.id, progressRef)}
+            {renderToolWorkspace(ws.id, activeWorkspaceId === ws.id, progressRef, scriptRef)}
           </div>
         ))}
       </div>

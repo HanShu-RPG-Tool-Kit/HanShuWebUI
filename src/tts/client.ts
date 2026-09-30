@@ -197,7 +197,8 @@ export async function synthesizePlanLocale(
         failure: {
           kind: 'clone-required',
           message: `「${input.locale}」用的是克隆音色，但还没有登记`,
-          hint: `先拿 ${entry.clone.samples.length} 个样本做一次克隆`,
+          // 说清去哪儿做 —— 克隆要花钱、还会在厂商账号下建东西，不该在这里偷偷替用户做
+          hint: `到「配音方案」工作区，为这一条语言点一次「登记音色」（要上传 ${entry.clone.samples.length} 个样本）`,
         },
       }
     }

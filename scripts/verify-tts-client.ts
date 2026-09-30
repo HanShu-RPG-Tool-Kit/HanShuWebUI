@@ -312,7 +312,16 @@ const cloneMiss = await synthesizePlanLocale(
   { transport: recordingTransport().transport, credential, lookupClonedVoice: () => null },
 )
 check('克隆还没登记归到 clone-required', cloneMiss.ok ? '' : cloneMiss.failure.kind, 'clone-required')
-check('并说清要先克隆', cloneMiss.ok ? '' : cloneMiss.failure.hint?.includes('克隆'), true)
+check(
+  '并说清去哪儿做（不是只说"先克隆"）',
+  cloneMiss.ok
+    ? ''
+    : Boolean(
+        cloneMiss.failure.hint?.includes('配音方案') &&
+          cloneMiss.failure.hint?.includes('登记音色'),
+      ),
+  true,
+)
 
 const cloneTransport = recordingTransport()
 const cloneHit = await synthesizePlanLocale(
