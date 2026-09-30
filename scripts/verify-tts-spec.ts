@@ -3,7 +3,7 @@
  * Run: npm run test:tts-spec
  *
  * 覆盖的是**规范里写死的规则**，不是实现细节：两级校验的每一条、保真写入、
- * 预设合并与能力只能收窄、`template` 档的必填约束、以及录音棚两级门禁。
+ * 预设合并、`template` 档的必填约束、以及录音棚两级门禁。
  */
 
 import {
@@ -128,55 +128,32 @@ check(
   ['voices.zh-CN'],
 )
 
-const BOTH = '{"version":1,"voices":{"zh_cn":{"service":"a","voice":"b","clone":{"samples":["assets/x.wav"],"consent":"meta/docs/x.md"}}}}'
+const BOTH = '{"version":1,"voices":{"zh_cn":{"service":"a","voice":"b","clone":{"samples":["assets/x.wav"]}}}}'
 check(
-  'voice 与 clone 同时出现',
+  '旧格式 clone 键给迁移提示（克隆在厂商控制台做，这里只填音色 id）',
   errorPaths(validateVoicePlanStructure(parse(BOTH))),
-  ['voices.zh_cn'],
+  ['voices.zh_cn.clone'],
 )
 check(
-  '音色来源缺失',
+  '音色 id 缺失',
   errorPaths(validateVoicePlanStructure(parse('{"version":1,"voices":{"zh_cn":{"service":"a"}}}'))),
-  ['voices.zh_cn'],
+  ['voices.zh_cn.voice'],
 )
 check(
   '每条语言都必须自带 service',
   errorPaths(validateVoicePlanStructure(parse('{"version":1,"voices":{"zh_cn":{"voice":"b"}}}'))),
   ['voices.zh_cn.service'],
 )
+check(
+  '旧格式：只有 clone 没有 voice → 两个错都报出来（缺的补、旧的迁）',
+  errorPaths(
+    validateVoicePlanStructure(
+      parse('{"version":1,"voices":{"zh_cn":{"service":"a","clone":{"samples":["assets/x.wav"]}}}}'),
+    ),
+  ),
+  ['voices.zh_cn.voice', 'voices.zh_cn.clone'],
+)
 
-const CLONE_BASE = (clone: string) =>
-  `{"version":1,"voices":{"zh_cn":{"service":"a","clone":${clone}}}}`
-check(
-  '样本不能是空数组',
-  errorPaths(validateVoicePlanStructure(parse(CLONE_BASE('{"samples":[],"consent":"meta/docs/x.md"}')), )),
-  ['voices.zh_cn.clone.samples'],
-)
-check(
-  '样本必须是合法 assets 路径（走 normalizeAssetPath）',
-  errorPaths(
-    validateVoicePlanStructure(
-      parse(CLONE_BASE('{"samples":["assets/../x.wav"],"consent":"meta/docs/x.md"}')),
-    ),
-  ),
-  ['voices.zh_cn.clone.samples[0]'],
-)
-check(
-  '同意凭证不能在 meta/ 之外',
-  errorPaths(
-    validateVoicePlanStructure(
-      parse(CLONE_BASE('{"samples":["assets/x.wav"],"consent":"docs/x.md"}')),
-    ),
-  ),
-  ['voices.zh_cn.clone.consent'],
-)
-check(
-  '同意凭证可以是 env: / app: 引用',
-  validateVoicePlanStructure(
-    parse(CLONE_BASE('{"samples":["assets/x.wav"],"consent":"app:voice-consent"}')),
-  ),
-  [],
-)
 check(
   'speed 必须是数值',
   errorPaths(
@@ -199,13 +176,9 @@ check(
   ['voices.zh_cn.foo'],
 )
 check(
-  'clone 内未知键',
-  warningPaths(
-    validateVoicePlanStructure(
-      parse(CLONE_BASE('{"samples":["assets/x.wav"],"consent":"meta/docs/x.md","bar":1}')),
-    ),
-  ),
-  ['voices.zh_cn.clone.bar'],
+  '旧格式 clone 不当未知键（它有自己的迁移提示，不混在警告里）',
+  warningPaths(validateVoicePlanStructure(parse(BOTH))),
+  [],
 )
 check(
   '未知键不产生错误',
@@ -330,8 +303,8 @@ check(
   ['auth.accessKeyRef', 'auth.secretKeyRef'],
 )
 check(
-  '能力只能收窄：不能在 google 上开 clone',
-  errorPaths(
+  '旧文件里的 capabilities 是未知键（保留、警告，不报错 —— 能力开关已随克隆一起移除）',
+  warningPaths(
     validateServiceStructure(
       parse('{"version":1,"provider":"google","baseUrl":"https://texttospeech.googleapis.com","auth":{"serviceAccountRef":"app:sa"},"capabilities":["clone"]}'),
       'x',
@@ -339,15 +312,6 @@ check(
     ),
   ),
   ['capabilities'],
-)
-check(
-  '能力可以收窄：elevenlabs 上关掉 clone 合法',
-  validateServiceStructure(
-    parse('{"version":1,"provider":"elevenlabs","auth":{"apiKeyRef":"env:X"},"capabilities":[]}'),
-    'x',
-    presets,
-  ),
-  [],
 )
 check(
   '模型不在候选里只警告（厂商上新快于发版）',
@@ -372,23 +336,20 @@ check(
   ['foo'],
 )
 
-// ===== 5. 能力的两层：协议提供 ≠ 默认开启 =====
+// ===== 5. 解析成生效值（预设默认值在这里补齐）=====
 
-section('5. 能力两层：available（协议提供）与 defaultCapabilities（默认开启）')
+section('5. 解析成生效值：预设默认值补齐')
 const resolveOf = (json: string, id = 'x'): ResolvedService =>
   resolveService(toServiceDefinition(parse(json)), id, presets)
 
 const openaiService = resolveOf('{"version":1,"provider":"openai","auth":{"apiKeyRef":"env:OPENAI_API_KEY"}}')
 const elevenService = resolveOf('{"version":1,"provider":"elevenlabs","auth":{"apiKeyRef":"env:EL_KEY"}}')
 const azureService = resolveOf(
-  '{"version":1,"provider":"azure","baseUrl":"https://eastasia.tts.speech.microsoft.com","auth":{"apiKeyRef":"app:azure"},"capabilities":["clone"]}',
+  '{"version":1,"provider":"azure","baseUrl":"https://eastasia.tts.speech.microsoft.com","auth":{"apiKeyRef":"app:azure"}}',
 )
 
 check('预设带出固定协议', openaiService.protocol, 'openai-compatible')
 check('预设带出默认端点与模型', [openaiService.baseUrl, openaiService.model], ['https://api.openai.com/v1', 'gpt-4o-mini-tts'])
-check('OpenAI 协议提供克隆但默认关闭', openaiService.capabilities, [])
-check('ElevenLabs 默认就开克隆', elevenService.capabilities, ['clone'])
-check('Azure 显式开启后生效', azureService.capabilities, ['clone'])
 check('凭据形态跟着协议走', [openaiService.authShape, azureService.authShape], ['apiKey', 'apiKey'])
 check(
   'Polly 的凭据形态是一对',
@@ -414,7 +375,6 @@ const plan = toVoicePlan(parse(GOOD_PLAN))
 const services = new Map<string, ResolvedService>([['openai-main', openaiService]])
 const context: PlanSemanticContext = {
   services,
-  assetPaths: new Set<string>(),
 }
 
 check('服务在、凭据不校验时零问题', validateVoicePlanSemantics(plan, context), [])
@@ -425,26 +385,6 @@ check(
     validateVoicePlanSemantics(toVoicePlan(parse('{"version":1,"voices":{"zh_cn":{"service":"ghost","voice":"alloy"}}}')), context),
   ),
   ['voices.zh_cn.service'],
-)
-check(
-  '克隆能力由服务商决定，不由 .tts 决定',
-  errorPaths(
-    validateVoicePlanSemantics(
-      toVoicePlan(parse('{"version":1,"voices":{"zh_cn":{"service":"openai-main","clone":{"samples":["assets/a.wav"],"consent":"meta/docs/c.md"}}}}')),
-      context,
-    ),
-  ),
-  ['voices.zh_cn.clone'],
-)
-check(
-  '样本不在工程里 → 警告，不拦（§7.2）',
-  warningPaths(
-    validateVoicePlanSemantics(
-      toVoicePlan(parse('{"version":1,"voices":{"zh_cn":{"service":"elevenlabs-main","clone":{"samples":["assets/a.wav"],"consent":"meta/docs/c.md"}}}}')),
-      { services: new Map([['elevenlabs-main', elevenService]]), assetPaths: new Set() },
-    ),
-  ),
-  ['voices.zh_cn.clone.samples'],
 )
 check(
   '缺凭据只提示不报错（协作者打开工程必然缺）',
@@ -479,11 +419,8 @@ const RICH = `{
     "zh_cn": { "service": "openai-main", "voice": "alloy", "futureEntry": "keep" },
     "ja_jp": {
       "service": "elevenlabs-main",
-      "clone": {
-        "samples": ["assets/s/01.wav"],
-        "consent": "meta/docs/c.md",
-        "futureClone": [1, 2]
-      }
+      "voice": "x",
+      "futureEntry2": [1, 2]
     }
   }
 }`
@@ -496,8 +433,20 @@ const roundTripped = JSON.parse(stringifyVoicePlan(richRead.value)) as Record<st
 const rtVoices = roundTripped.voices as Record<string, Record<string, unknown>>
 check('顶层未知键往返不丢', roundTripped.futureTop, { a: 1 })
 check('语言条目未知键往返不丢', rtVoices.zh_cn.futureEntry, 'keep')
-check('clone 内未知键往返不丢', (rtVoices.ja_jp.clone as Record<string, unknown>).futureClone, [1, 2])
+check('另一个条目的未知键往返不丢', rtVoices.ja_jp.futureEntry2, [1, 2])
 check('规范形状写出来了', [roundTripped.version, rtVoices.zh_cn.service], [1, 'openai-main'])
+
+const legacy = readVoicePlan(
+  '{"version":1,"voices":{"zh_cn":{"service":"a","clone":{"samples":["assets/x.wav"],"futureClone":[3]}}}}',
+  '林晚.tts',
+)
+check('旧格式 clone 读得进（错误提示迁移，不丢数据）', legacy.ok, false)
+check(
+  '旧格式 clone 落进 extra，往返不丢',
+  (JSON.parse(stringifyVoicePlan(legacy.value)) as Record<string, Record<string, Record<string, unknown>>>)
+    .voices.zh_cn.clone,
+  { samples: ['assets/x.wav'], futureClone: [3] },
+)
 
 const bad = readVoicePlan('{ not json', '旁白.tts')
 check('坏 JSON：ok=false（不要回写）', bad.ok, false)

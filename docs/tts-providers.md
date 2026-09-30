@@ -21,15 +21,18 @@
    `runVoiceImport` 落地路径,不新开第二条写入通道。
 6. **多语言是"语言 → 音色"的一层映射**,不是"再建一套东西":配音资产本来就按
    `assets/<语言标签>/` 分目录,配音方案只需要能按语言给不同音色(甚至不同家服务)。
-7. **音色克隆是一次性登记,不是每次合成**:上传样本换 `voice_id`,登记表存应用侧。
-   **参考音频当作普通 assets 资源引用** —— 由资源系统管理,但不进 PAK(见 §5.3)。
-   一个语言的音色来源**二选一**:给 `voice`(预置音色)或给 `clone`(样本),
-   两者并存判非法。
-8. **能不能克隆由服务商决定,不由配音方案声明。** 协议不提供的开不了,
-   协议提供但受限的由服务显式开启 —— 编辑器据此决定要不要显示"克隆"选项(见 §5.4)。
+7. **克隆在厂商控制台做,工程里只引用音色 id。** 应用内不做克隆上传:
+   用户在 ElevenLabs / MiniMax 控制台克隆好音色,`.tts` 里只填一个 `voice` id(见 §5.3)。
+   实测结论(2026-09,真实账号):ElevenLabs 控制台克隆音色可经 API 全量列出;
+   MiniMax 控制台「音色库」音色 API 列不出,但合成与校验都正常 ——
+   所以自定义音色走"手填 id + 探测验证"闭环(见 §5.4)。
+8. **应用侧只保留两个只读能力**:音色列表(`listVoices`,目前只有 ElevenLabs 协议支持)
+   与音色验证(`probeVoice`,合成两个字符确认 id 存在,全协议通用)。
+   服务定义里**没有任何"能力声明"** —— 能不能列音色由协议形态决定,
+   不是用户可以开关的东西。
 9. **服务定义是工程文件,凭据才留在本机。** 服务定义放
    `meta/voice/service/<服务名>.ttsservice`(挂在 `meta/voice/` 下,因为它**只服务于 TTS**),
-   是复合对象:`provider`(哪家)/ `protocol`(怎么发)/ `auth`(凭什么)/ 端点 / 模型 / 能力。
+   是复合对象:`provider`(哪家)/ `protocol`(怎么发)/ `auth`(凭什么)/ 端点 / 模型。
    一个工程几十个角色共用一两个账号,内联在角色文件里就是几十份重复;
    抽成工程级文件后,`.tts` 的**每条语言条目**里只留 `service: "<服务 id>"` ——
    一个**工程内**引用,而不是一个别处定义的悬空 id。
@@ -138,7 +141,7 @@ Elo 来自 Artificial Analysis Speech Arena 的第三方快照,价格是各家�
 | **OpenAI 兼容** | OpenAI、Groq、OpenRouter、LLM Gateway、各类自建网关 | `POST /v1/audio/speech` | `Authorization: Bearer` | JSON: `model` `input` `voice` `response_format` `speed` `instructions` | **裸音频字节** | mp3(默认)/opus/aac/flac/wav/pcm |
 | **ElevenLabs** | ElevenLabs | `POST /v1/text-to-speech/{voice_id}` | **`xi-api-key` 头** | JSON: `text` `model_id` `voice_settings` `language_code` | **裸音频字节** | `output_format` 需带采样率,如 `mp3_44100_128` / `wav_44100` / `pcm_24000` |
 | **SSML REST** | Azure | `POST https://{region}.tts.speech.microsoft.com/cognitiveservices/v1` | `Ocp-Apim-Subscription-Key`(或 Bearer) | **SSML XML** | 裸音频字节 | `X-Microsoft-OutputFormat` 指定,如 `riff-24khz-16bit-mono-pcm` |
-| **JSON 内嵌 base64** | MiniMax | `POST https://api.minimax.io/v1/t2a_v2` | `Authorization: Bearer` | JSON: `model` `text` `voice_id` `speed` `vol` `pitch` `format` | **JSON 里的 base64** | mp3/pcm/flac/wav |
+| **JSON 内嵌 base64** | MiniMax | `POST https://api.minimaxi.com/v1/t2a_v2`(国内;国际站 `api.minimax.io`,两套 key 不通用,实测) | `Authorization: Bearer` | JSON: `model` `text` `voice_id` `speed` `vol` `pitch` `format` | **JSON 里的 base64** | mp3/pcm/flac/wav |
 | **AWS 签名** | Amazon Polly | `SynthesizeSpeech` | SigV4 签名 | JSON | 裸音频字节 | mp3/ogg_vorbis/pcm |
 | **OAuth2** | Google Cloud | `text:synthesize` | Service Account | JSON + SSML 字段 | JSON 内 base64 | LINEAR16 / MP3 / **OGG_OPUS** |
 | **WebSocket 状态机** | MiniMax、阿里云 DashScope(CosyVoice) | `wss://…` | 握手头 | 事件流 `run-task` → `continue-task` → `finish-task` | 二进制/十六进制分片 | 各家自定义 |
@@ -152,8 +155,9 @@ WebSocket 那类是为**边生成边播**设计的,本项目是"生成后落成�
 请求体键名也不同(`text` / `model_id` 而非 `input` / `model`)。硬塞需要一层
 路径 + 键名 + 鉴权头的特例改写,不如单列一个薄适配器干净。
 
-**克隆端点不属于这张表。** 克隆是**一次性登记**(上传样本换一个 `voice_id`),
-不是每次合成都要走的路径。详见 §5.3。
+**克隆端点不属于这张表,也不属于本项目。** 克隆在厂商控制台完成(见 §5.3),
+工程里出现的 `voice` 一律是厂商账号下的音色 id —— 对适配器来说,
+预置音色与克隆音色没有任何区别,都是请求里的一个字符串。
 
 ---
 
@@ -171,10 +175,10 @@ WebSocket 那类是为**边生成边播**设计的,本项目是"生成后落成�
 ### 4.2 分层
 
 ```
-meta/voice/service/*.ttsservice  ← 协议 / 端点 / 模型 / 能力 / 凭据引用（**进工程**）
+meta/voice/service/*.ttsservice  ← 协议 / 端点 / 模型 / 凭据引用（**进工程**）
         ▲                          └── *Ref ──► 本机凭据库（真实密钥，**不进工程**）
         │  每条语言条目各写一次 service: "minimax-main"
-meta/voice/<角色>.tts            ← 逐语言：service 引用 + 音色 + 语速 + 克隆声明
+meta/voice/<角色>.tts            ← 逐语言：service 引用 + 音色 id + 语速
         │
         ▼
 调用方(录音棚 / Agent / 批量)
@@ -224,31 +228,33 @@ OpenAI 兼容与 MiniMax **没有这个字段**(按正文自动判语言,传了�
 > 不用改,适配器也不用知道。这一层完全由 `.tts` 的 `voices.<语言>.service` 表达:
 > **每条语言自带服务,没有顶层默认值可以继承**,见 `docs/tts-spec.md` §5.5。
 
-### 4.2.1 克隆登记不在统一接口里
+### 4.2.1 克隆不在统一接口里,也不在应用里
 
-克隆是**一次性**的:上传样本 → 换一个 `voice_id` → 之后合成走上面的普通端点。
-所以它不进 `TtsRequest`,而是独立的一个"登记"动作:
+克隆**不在本项目做**:用户在厂商控制台上传样本、克隆音色,
+应用只引用厂商账号下的音色 id。所以 `TtsRequest` 自始至终只有一个 `voice` 字段,
+预置音色与克隆音色对协议层完全同构:
 
 ```
-样本资源(assets/…) ──► 克隆端点 ──► provider voice_id
-                                            │
-                                            ▼
-                    应用侧登记表 [服务id + 样本哈希 → voice_id]
-                                            │
-                             之后每次合成：填进 TtsRequest.voice
+厂商控制台(上传样本 → 克隆 → 账号下的 voice_id)
+        │
+        ▼
+.tts 里填 voice: "<voice_id>"  ──►  TtsRequest.voice  ──►  普通合成端点
 ```
 
-- **登记表的键带 `服务id` 前缀** —— 同一份样本在不同 provider / 不同账号下是不同 id。
-- **登记表失配时重新克隆并更新登记表**。`.tts` 里存的是样本而不是 id,
-  所以换账号、换机器都不需要改文件 —— 见 `docs/tts-spec.md` §5.6。
+应用侧只保留两个**只读**能力,都走服务自己的凭据(实现在 `src/tts/voices.ts`):
 
-> 注意:`TtsRequest` 本身**不区分**"预置音色"和"克隆音色" —— 两者在协议侧
-> 都是个字符串 id。区分只在 `.tts` 的声明层(`voices.<k>` 里 `voice` 与 `clone` 二选一),
-> 不污染请求层。
+- **`listVoices`(音色列表)**:ElevenLabs `GET /v1/voices` 能列出账号下全部音色
+  (含控制台克隆的,category 为 `cloned` / `generated`),编辑器用它做下拉选择。
+  MiniMax 的 `get_voice` 列不出控制台「音色库」音色(2026-09 实测),所以列表
+  能力按**协议白名单**,只有 ElevenLabs 提供;别的协议不显示「拉取音色」按钮。
+- **`probeVoice`(音色验证)**:用两个字符试合成一次,音色不存在时厂商会报明确错误
+  (MiniMax 报 `2054 voice id not exist`,**不会静默回退成默认音色** —— 实测),
+  全协议通用。列表不可用的协议,就靠"控制台复制 id → 手填 → 点验证"闭环。
 
 ### 4.3 落点与依赖
 
-- 代码侧:`src/tts/`(`spec.ts` / `client.ts` / `protocols/` / `cloneRegistry.ts` /
+- 代码侧:`src/tts/`(`spec.ts` / `plan.ts` / `service.ts` / `client.ts` /
+  `protocols.ts` / `transport.ts` / `voices.ts`(音色列表 + 验证)/
   **`providers.ts` 预设表**)。
 - **工程侧**:服务定义放 `meta/voice/service/<服务名>.ttsservice`(一个账号一个文件),
   角色的配音方案放 `meta/voice/<角色名>.tts`(**一个文件一个角色**),
@@ -266,10 +272,11 @@ OpenAI 兼容与 MiniMax **没有这个字段**(按正文自动判语言,传了�
   不发版、不新写适配器(前提是它的协议已在枚举里)。这是本方案真正的扩展点。
   内置那批住代码(`src/tts/providers.ts`),**用户自建那批住应用级存储**、与内置同权,
   所以预设管理是一个**可增删的列表**,不是只读表格。一次性连接走 `provider: "template"`。
-- **能力开关是"克隆由服务商约束"的落点**:协议不提供克隆的(google / polly)开不了;
-  协议提供但受限的(azure / openai)要服务显式开启。编辑器据此决定要不要显示"克隆"选项。
-- 克隆样本是 `assets/` 下的**普通资源**(`.tts` 里写资源路径引用),
-  由资源系统统一管理 —— 见 §5.3。
+- **克隆不在应用里做**,服务定义里因此没有任何"能力声明":能不能列音色由协议形态
+  决定(ElevenLabs 可列,MiniMax 不可列),编辑器按协议白名单决定是否显示
+  「拉取音色」按钮 —— 见 §5.4。
+- 克隆样本**不进工程**:样本由用户直接传到厂商控制台,`assets/` 里不需要为它留位置,
+  PAK 裁剪也不用为它特判 —— 见 §5.3。
 - 依赖:**零新增**。`fetch`、Vorbis 编码(已有的 `@audio/encode-ogg`,MIT)、
   `JSON.parse` 都是现成的(`.tts` 定为 JSON,与 `.lang` / `.voice` 对齐)。
 
@@ -293,72 +300,59 @@ OpenAI 兼容接口单请求上限约 **4096 字符**,MiniMax 是 10000,`gpt-4o-
 按 **2000 token** 计。剧本是长文本,必须按**句子/段落**切分后逐段合成再拼接——
 切点要落在句末,否则拼接处会有不自然的停顿或语调断裂。
 
-### 5.3 克隆样本是普通 assets 资源
+### 5.3 克隆在厂商控制台做,样本不进工程
 
-**参考音频依旧不能进 PAK** —— 它会被打进出厂资源包,一句 10 秒的"念一下这段话"
-就跟着游戏发到每个玩家手里。但"不进 PAK"**不等于**"不能放 `assets/`":
-`resourcePack` 是**选择性导出**,不是整个 `assets/` 全收。
+早先的设计是"`.tts` 里引用工程内样本,应用代为上传克隆,登记表存应用侧"。
+2026-09 用真实账号实测后**改为:克隆动作整个交给厂商控制台,工程里只引用音色 id。**
+理由:
 
-```ts
-// src/export/resourcePack.ts —— 逐个资产判定，认不出的直接跳过
-if (parseTextAssetLocale(asset.path)) { /* 导出裁剪过的 lang */ continue }
-const parsed = parseVoiceAssetKey(asset.path)
-if (!parsed) continue          // ← 非 lang_/voice_ 布局的资产在这里被排除
-```
+- **控制台克隆本来就是厂商的主路径**:ElevenLabs / MiniMax 控制台都有完整的样本
+  上传、命名、管理界面;用户反正要去控制台开通权限、看额度。
+- **两家的 API 枚举能力不对称**:ElevenLabs `GET /v1/voices` 能列出控制台克隆音色;
+  MiniMax `get_voice` **列不出**控制台「音色库」音色(只有 API 克隆、且合成用过的
+  才出现 —— 实测)。应用内做克隆管理反而要维护一张"登记过哪些 id"的对照表,
+  还永远对不齐控制台。
+- **工程文件因此完全无状态**:`.tts` 里只有 `voice: "<id>"`,换机器、换工程不涉及
+  样本与登记表的迁移;换账号就换 id,语义直白。
 
-它只认两种布局:
+于是两个老问题一起消失了:
 
-- `assets/<语言标签>/lang_<后缀>/…`(按 `.hsc` 引用到的键裁剪)
-- `assets/<语言标签>/voice_<后缀>/…/‹键名›.ogg`(同上)
+- **样本不进 `assets/`,不用讨论 PAK**:样本从用户本机直接传到厂商,工程树里没有
+  参考音频,`resourcePack` 的裁剪规则无需为它特判(旧设计里"样本布局不匹配就被
+  跳过"的隐式排除也随之作废)。
+- **合规把关在厂商,应用不多管闲事**:声音是生物特征数据,各家控制台都有自己的
+  授权流程(ElevenLabs 专业克隆要 voice captcha,Azure 要 Limited Access + 声纹核验,
+  OpenAI 定制声音要同意录音)。用户在控制台完成克隆即已完成该厂商的授权流程,
+  工程文件里不需要、也不应该再放 `consent` 之类的声明字段。
 
-**其余资产一律跳过。** 所以把样本放成 `assets/voice-samples/…/01.wav` 这类路径,
-它进不了 PAK —— **落点由布局决定,不是由"在不在 `assets/` 里"决定。**
+### 5.4 音色从哪来:列表 or 手填 + 验证
 
-于是样本就当普通资源用,白拿一整套资源能力:
+克隆移出应用后,编辑器只剩一个问题:用户怎么把音色 id 填对。按协议分两类:
 
-- 出现在**资源管理器**里,可预览、可拖拽导入、可改名;
-- 保存工程时随 assets **整树重写**,不需要单独的读写通道;
-- 因为它是工程资产的一部分,**跟着工程走**;
-- 路径校验直接用现成的 `normalizeAssetPath`,不另写一套。
+- **ElevenLabs —— 可列出**。`GET /v1/voices` 返回账号下全部音色(系统预置 +
+  控制台克隆,`category` 字段区分),编辑器直接给下拉框,选中即填好 id。
+  注意受限 API key 可能缺 `voices_read` 权限,报错体会指明缺的权限名(实测),
+  编辑器把这条错误原样显示即可。
+- **其余协议 —— 手填 + 验证**。用户在控制台复制音色 id 粘贴进来,点「验证」,
+  应用用两个字符试合成一次:音色不存在时 MiniMax 返回 `2054 voice id not exist`、
+  ElevenLabs 返回明确 4xx,都**不会静默换成默认音色**(2026-09 实测),
+  所以探测验证是**精确**的,不是"大概能合成"。
 
-> ⚠️ 这条排除是**隐式**的 —— 靠"布局不匹配就跳过"。若将来扩大 PAK 的收录范围,
-> 要显式排除样本目录。
+探测成本约 2 字符额度/次,可以忽略。**不要凭旧印象假设厂商会静默回退** ——
+早先担心的"填错 id 悄悄换成默认音色"在实测中不存在。
 
-**合规上还有一层:** 声音是生物特征数据。GDPR 把它当敏感个人数据;
-Azure 要求 Limited Access 申请 + 口述授权录音 + **声纹核验**(比对授权录音与训练音频
-是否同一人),且只有微软托管客户可申请;ElevenLabs 专业克隆加 voice captcha;
-OpenAI 定制声音要求声优按指定语句录同意录音,每组织上限 20 个。
-所以 `.tts` 的 `voices.<语言>.clone.consent` 是**必需字段** ——
-让"没有同意"这件事在编辑期就写不出来。
-
-### 5.4 克隆的可用性由服务商决定
-
-写 `clone` 不等于能克隆。**能不能克隆是服务的能力,不是配音方案的属性** ——
-所以判断依据是那个语言条目里 `service` 指向的**服务定义**,而不是 `.tts` 里写了什么。
-
-分两级:
-
-- **协议不提供克隆的**(`google` / `polly`)→ 服务也开不了;
-- **协议提供但受限的**(`azure` 需 Limited Access、`openai` 需 sales 审批)
-  → 由服务定义显式开启能力开关;
-- **协议默认可用的**(`elevenlabs` / `minimax`)→ 开箱即用。
-
-落地方式:服务定义带一个可省的 `capabilities`,默认值来自 **`provider` 预设表**,
-且**只能收窄不能放宽**(`capabilities ⊆ 预设`)。**编辑器在该服务不具备能力时
-根本不显示"克隆"选项** —— 用户不该先选了一个做不到的东西,再被报错拦下。
-
-详见 `docs/tts-spec.md` §4.6 与 §5.6。
+详见 `docs/tts-spec.md` §5.6。
 
 ---
 
 ## 6. 建议的接入顺序
 
 1. **`openai-compatible`** —— 一家吃下 OpenAI / Groq / OpenRouter,先跑通闭环。
-2. **`minimax`** —— 中文听感与情绪控制最好,补上粤语;顺带把**克隆登记**跑通
-   (它的流程最短:上传 → `voice_clone` → 拿 `voice_id`)。
+2. **`minimax`** —— 中文听感与情绪控制最好,补上粤语;顺带把**音色验证**跑通
+   (它的 `2054 voice id not exist` 报错清晰,适合先验证"手填 id + 探测"闭环)。
 3. **`azure`** —— 中文与多语言覆盖面最好(140+ locale),且能直出单声道 PCM,转码最干净。
-   ⚠️ 但它的**克隆**是 Limited Access,只有微软托管客户可申请,别把它当克隆主力。
-4. **`elevenlabs`** —— 多语言(70+)与克隆质量最好,补上"一个角色跨语言仍像同一个人"。
+4. **`elevenlabs`** —— 多语言(70+)与克隆质量最好,补上"一个角色跨语言仍像同一个人";
+   顺带把**音色列表**跑通(`GET /v1/voices`,目前唯一可列的协议)。
 5. **`provider: "template"`** —— 预设表之外的自建 / 长尾服务:用户选一个已有协议 + 填端点。
    协议层再往外的**不做** —— 协议枚举里没有"自定义协议"(见 `docs/tts-spec.md` §5.2)。
 6. Google / Polly / 聚合网关 / 流式 —— 按需再加。
@@ -367,9 +361,9 @@ OpenAI 定制声音要求声优按指定语句录同意录音,每组织上限 20
 > 只要协议已在枚举里,往预设表加一条数据就够了。而且**用户自己就能加**,
 > 不用等发版:预设表是插件式的(见 §4.3)。
 
-> 第 2 和第 4 步是**克隆能力**的主要落点。这两家的克隆默认可用;
-> `azure` / `openai-compatible` 虽然协议里有克隆入口,但都要额外审批,
-> 所以**默认关闭、由服务显式开启**(见 §5.4)。
+> 第 2 和第 4 步是**自定义音色**的主要落点:这两家的克隆在控制台做、门槛低,
+> 是用户最可能用到自定义音色的地方。ElevenLabs 顺带提供音色列表,
+> MiniMax 走"手填 id + 验证"(见 §5.4)。
 
 ---
 
@@ -377,11 +371,11 @@ OpenAI 定制声音要求声优按指定语句录同意录音,每组织上限 20
 
 1. `.tts` 规范已定稿到 v1(见 `docs/tts-spec.md`),剩余待确认项记在那份文档的 §11。
 2. **凭据的落盘方式**:服务定义已定落 `meta/voice/service/*.ttsservice`(**跟工程**),
-   而真实密钥落哪未定 —— `localStorage` 还是 Tauri 安全存储?涉及打包后的安全性。
-   克隆登记表里存的是 `voice_id`(不是密钥),可以放宽。
-3. 音色列表要不要缓存?各家的 `voices/list` 接口形态不一(Azure / Polly 有,OpenAI 是固定枚举,
-   ElevenLabs 有 `/v1/voices`,MiniMax 有音色列表但克隆音色要单独查)。克隆登记表的
-   失效策略也依赖这个。
+   而真实密钥落哪未定 —— 目前是 `localStorage` 明文,桌面端建议升级到
+   OS 钥匙串(Tauri 侧),涉及打包后的安全性。
+3. **音色列表要不要缓存**:目前只有 ElevenLabs 可列(`GET /v1/voices`),
+   每次拉取有一次请求延迟,编辑器要不要缓存、缓存多久待定。
+   其余协议靠"手填 + 验证",没有列表可缓存。
 4. 是否需要"服务端代发"以避免前端暴露密钥 —— 若走 Tauri 命令,则请求/响应 DTO
    要另立 `src/tts/contracts/`。
 

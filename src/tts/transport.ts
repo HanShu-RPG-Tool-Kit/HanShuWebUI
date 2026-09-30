@@ -20,6 +20,11 @@
 export type TtsHttpRequest = {
   url: string
   headers: Record<string, string>
+  /**
+   * 方法。默认 `POST`（合成全是 POST）；`GET` 用于只读查询（如 ElevenLabs 的音色列表），
+   * 此时 `body` 被忽略 —— GET 不允许带请求体。
+   */
+  method?: 'GET' | 'POST'
   /** **已序列化**的请求体 —— 适配器负责序列化,传输只管发 */
   body: string | Uint8Array
   /** 取消用。适配器不需要认识它,由 `client` 在发之前挂上去 */
@@ -58,7 +63,7 @@ type FetchLike = (
   init: {
     method: string
     headers: Record<string, string>
-    body: string | Uint8Array
+    body?: string | Uint8Array
     signal?: AbortSignal
   },
 ) => Promise<Response>
@@ -77,9 +82,10 @@ export function createFetchTransport(impl?: FetchLike): TtsTransport {
     let response: Response
     try {
       response = await send(request.url, {
-        method: 'POST',
+        method: request.method ?? 'POST',
         headers: request.headers,
-        body: request.body,
+        // GET 不允许带请求体 —— fetch 会直接拒绝
+        body: request.method === 'GET' ? undefined : request.body,
         signal: request.signal,
       })
     } catch (error) {

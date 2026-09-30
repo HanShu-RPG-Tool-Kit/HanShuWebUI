@@ -2,8 +2,7 @@
  * 一次合成 —— 把"服务定义 + 一条语言 + 传输 + 凭据"串起来。
  *
  * 它只做三件事:**切分文本、逐块走适配器、把音频按顺序拼回去**。
- * 它**不做**落盘(那是 `runVoiceImport` 的活)、不做克隆(那是克隆端点 + `cloneRegistry`
- * 的活)、不认识界面、不碰工程文件。
+ * 它**不做**落盘(那是 `runVoiceImport` 的活)、不认识界面、不碰工程文件。
  *
  * 长文本在这里切好、按顺序发、按顺序拼。顺序不能乱 —— 乱一次,旁白就会跳。
  */
@@ -38,7 +37,7 @@ export type SynthesizeResult =
 export type SynthesizeInput = {
   service: ResolvedService
   text: string
-  /** 音色 id。预置音色直接给;克隆音色要先用登记表查出来 */
+  /** 音色 id —— 厂商账号下的那个；克隆音色也是 id（克隆在厂商控制台做） */
   voice: string
   language?: string
   speed?: number
@@ -136,18 +135,10 @@ export async function synthesize(
 
 // ===== 从一份 `.tts` 的一条语言出发 =====
 
-export type PlanSynthesizeContext = SynthesizeContext & {
-  /** 查克隆音色的登记表；返回 null 表示还没登记过 */
-  lookupClonedVoice?: (input: {
-    serviceId: string
-    samples: readonly string[]
-  }) => Promise<string | null> | string | null
-}
-
 /**
  * 按 `.tts` 的一条语言合成 —— 录音棚真正调的就是这个。
  *
- * 规范 §7.4 的两级门禁在这一层体现:没配的语言、找不到的服务、还没登记的克隆,
+ * 规范 §7.4 的两级门禁在这一层体现:没配的语言、找不到的服务、没填的音色 id,
  * 都给出**分类明确的失败**,而不是一句"生成失败"。
  */
 export async function synthesizePlanLocale(
@@ -157,7 +148,7 @@ export async function synthesizePlanLocale(
     text: string
     services: ReadonlyMap<string, ResolvedService>
   },
-  context: PlanSynthesizeContext,
+  context: SynthesizeContext,
 ): Promise<SynthesizeResult> {
   const entry = input.plan.voices[input.locale]
   if (!entry) {
@@ -183,33 +174,22 @@ export async function synthesizePlanLocale(
     }
   }
 
-  let voice = entry.voice ?? ''
-  if (entry.clone) {
-    const resolved = context.lookupClonedVoice
-      ? await context.lookupClonedVoice({
-          serviceId: service.id,
-          samples: entry.clone.samples,
-        })
-      : null
-    if (!resolved) {
-      return {
-        ok: false,
-        failure: {
-          kind: 'clone-required',
-          message: `「${input.locale}」用的是克隆音色，但还没有登记`,
-          // 说清去哪儿做 —— 克隆要花钱、还会在厂商账号下建东西，不该在这里偷偷替用户做
-          hint: `到「配音方案」工作区，为这一条语言点一次「登记音色」（要上传 ${entry.clone.samples.length} 个样本）`,
-        },
-      }
+  if (!entry.voice?.trim()) {
+    return {
+      ok: false,
+      failure: {
+        kind: 'config',
+        message: `「${input.locale}」还没有配音色`,
+        hint: '在编辑器里打开这个配音方案（.tts 文件），为这一条选/填一个音色 id',
+      },
     }
-    voice = resolved
   }
 
   return synthesize(
     {
       service,
       text: input.text,
-      voice,
+      voice: entry.voice,
       language: input.locale,
       speed: entry.speed,
     },

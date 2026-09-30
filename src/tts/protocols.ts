@@ -61,8 +61,8 @@ export type AdaptedRequest =
   | { ok: false; failure: TtsFailure }
 
 /**
- * 取值的两种结果。导出给 `clone.ts` 复用 —— 克隆也要"缺端点 / 缺凭据"这两句
- * 一模一样的话,抄一份迟早会有一处忘记改。
+ * 取值的两种结果。导出给 `voices.ts` 复用 —— 音色列表/验证也要"缺端点 / 缺凭据"
+ * 这两句一模一样的话,抄一份迟早会有一处忘记改。
  */
 export type Resolved<T> = { ok: true; value: T } | { ok: false; failure: TtsFailure }
 

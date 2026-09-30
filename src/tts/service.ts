@@ -20,7 +20,6 @@ import {
   SERVICE_FILE_DIR,
   defaultCredentialRef,
   hasErrors,
-  isCapabilityId,
   isPlainObject,
   isProtocolId,
   isValidBaseUrl,
@@ -28,7 +27,6 @@ import {
   serviceFileName,
   serviceIdOfFileName,
   type AuthShapeId,
-  type CapabilityId,
   type Issue,
   type ProtocolId,
   type ReadResult,
@@ -47,8 +45,6 @@ export type ServiceDefinition = {
   auth: AuthSpec
   baseUrl?: string
   model?: string
-  /** 能力开关，只能从预设的 `available` 里收窄 */
-  capabilities?: CapabilityId[]
   /** 保留的未知键，回写时带上（规范 §9） */
   extra: Record<string, unknown>
 }
@@ -61,7 +57,6 @@ const KNOWN_KEYS = [
   'auth',
   'baseUrl',
   'model',
-  'capabilities',
 ]
 
 /** 该 id 的服务定义在工程里的路径 */
@@ -122,7 +117,6 @@ export function validateServiceStructure(
   const protocol = validateProtocol(raw, { isTemplate, preset, error })
   validateAuth(raw, protocol, { error, warn })
   validateEndpointAndModel(raw, { isTemplate, preset, error, warn })
-  validateCapabilities(raw, preset, { error, warn })
 
   for (const key of Object.keys(raw)) {
     if (!KNOWN_KEYS.includes(key)) {
@@ -240,38 +234,6 @@ function validateEndpointAndModel(
   }
 }
 
-function validateCapabilities(
-  raw: Record<string, unknown>,
-  preset: ProviderPreset | null,
-  { error, warn }: Reporters,
-): void {
-  const value = raw.capabilities
-  if (value === undefined) return
-
-  if (!Array.isArray(value)) {
-    error('capabilities', 'capabilities 必须是数组')
-    return
-  }
-
-  const seen = new Set<CapabilityId>()
-  for (const item of value) {
-    if (!isCapabilityId(item)) {
-      error('capabilities', `不是已知的能力：「${String(item)}」`)
-      continue
-    }
-    if (seen.has(item)) {
-      warn('capabilities', `重复的能力「${item}」`)
-      continue
-    }
-    seen.add(item)
-    // 硬规则：只能收窄，不能放宽。放宽等于声明一个服务商没提供的能力，
-    // 后面必然运行时失败（规范 §4.6）
-    if (preset && !preset.available.includes(item)) {
-      error('capabilities', `「${preset.id}」的协议不提供「${item}」`)
-    }
-  }
-}
-
 // ===== 解析 =====
 
 export function toServiceDefinition(raw: unknown): ServiceDefinition {
@@ -284,9 +246,6 @@ export function toServiceDefinition(raw: unknown): ServiceDefinition {
   if (isProtocolId(raw.protocol)) definition.protocol = raw.protocol
   if (typeof raw.baseUrl === 'string') definition.baseUrl = raw.baseUrl
   if (typeof raw.model === 'string') definition.model = raw.model
-  if (Array.isArray(raw.capabilities)) {
-    definition.capabilities = raw.capabilities.filter(isCapabilityId)
-  }
   if (isPlainObject(raw.auth)) {
     for (const [key, value] of Object.entries(raw.auth)) {
       if (typeof value === 'string') definition.auth[key] = value
@@ -337,8 +296,6 @@ export type ResolvedService = {
   protocol: ProtocolId | null
   baseUrl: string | null
   model: string | null
-  /** **生效能力**：写了就用写的，没写才用预设默认 */
-  capabilities: CapabilityId[]
   /** 该协议要求的凭据字段与引用，供凭据体检与适配器取用 */
   auth: { key: string; value: string }[]
   authShape: AuthShapeId | null
@@ -375,7 +332,6 @@ export function resolveService(
     protocol,
     baseUrl: definition.baseUrl ?? preset?.baseUrl ?? null,
     model: definition.model ?? preset?.model ?? null,
-    capabilities: definition.capabilities ?? [...(preset?.defaultCapabilities ?? [])],
     auth: Object.entries(definition.auth).map(([key, value]) => ({ key, value })),
     authShape: protocol ? PROTOCOLS[protocol].authShape : null,
     preset,
@@ -393,7 +349,7 @@ export function resolveService(
  * 存一份"什么都还没填"的空壳，只会让它在**方案的服务下拉里都出不来** ——
  * 而新建之后最需要看到它的地方，恰恰就是那里。
  *
- * 端点、模型、能力都不写 —— 留空即跟随预设（§4.6），那是新建时最合理的状态。
+ * 端点、模型都不写 —— 留空即跟随预设（§4.6），那是新建时最合理的状态。
  */
 export function blankServiceDefinition(
   id: string,
@@ -424,7 +380,6 @@ export function stringifyServiceDefinition(definition: ServiceDefinition): strin
   out.auth = { ...definition.auth }
   if (definition.baseUrl !== undefined) out.baseUrl = definition.baseUrl
   if (definition.model !== undefined) out.model = definition.model
-  if (definition.capabilities !== undefined) out.capabilities = [...definition.capabilities]
 
   for (const [key, value] of Object.entries(definition.extra)) out[key] = value
 

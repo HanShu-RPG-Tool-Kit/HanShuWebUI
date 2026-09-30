@@ -1,5 +1,5 @@
 /**
- * 客户端的核对 —— 文本切分、克隆登记、一次合成的编排。
+ * 客户端的核对 —— 文本切分、一次合成的编排。
  * Run: npm run test:tts-client
  *
  * 不打真实网络:传输是注入的,用假实现按调用次序返回不同的字节,
@@ -10,14 +10,6 @@ import { resolvePresets } from '../src/tts/providers.ts'
 import { resolveService, toServiceDefinition, type ResolvedService } from '../src/tts/service.ts'
 import { toVoicePlan } from '../src/tts/plan.ts'
 import { splitTextForSynthesis } from '../src/tts/textSplit.ts'
-import {
-  cloneKeyOf,
-  createCloneRegistry,
-  fingerprintBytes,
-  fingerprintSamples,
-  lookupClonedVoice,
-  recordClonedVoice,
-} from '../src/tts/cloneRegistry.ts'
 import { concatAudio, synthesize, synthesizePlanLocale } from '../src/tts/client.ts'
 import {
   TtsTransportError,
@@ -114,80 +106,9 @@ const byClause = splitTextForSynthesis(clauses, 12)
 check('单句超限时先退到从句', byClause.map((c) => c.text), ['甲甲甲甲甲，乙乙乙乙乙，', '丙丙丙丙丙。'])
 check('从句切也不丢字', byClause.map((c) => c.text).join(''), clauses)
 
-// ===== 2. 克隆登记 =====
+// ===== 2. 一次合成 =====
 
-section('2. 克隆登记：服务 id + 样本内容指纹')
-const sampleA = encodeText('take-1')
-const sampleB = encodeText('take-2')
-const fpA = fingerprintBytes(sampleA)
-const fpB = fingerprintBytes(sampleB)
-check('指纹是 8 位小写十六进制', /^[0-9a-f]{8}$/.test(fpA), true)
-check('同一内容指纹相同', fingerprintBytes(encodeText('take-1')), fpA)
-check('不同内容指纹不同', fpB === fpA, false)
-check('**样本顺序不影响指纹**', fingerprintSamples([fpA, fpB]), fingerprintSamples([fpB, fpA]))
-check('键带服务前缀（同一批样本在不同账号是不同 id）', cloneKeyOf('mm', [fpA]).startsWith('mm#'), true)
-check('换服务就换键', cloneKeyOf('mm', [fpA]) === cloneKeyOf('el', [fpA]), false)
-
-const memory = new Map<string, string>()
-const fakeStorage = {
-  getItem: (key: string) => memory.get(key) ?? null,
-  setItem: (key: string, value: string) => {
-    memory.set(key, value)
-  },
-}
-const registry = createCloneRegistry(fakeStorage)
-check('没登记时查不到', registry.lookup('mm', [fpA]), null)
-
-const recorded = registry.record('mm', [fpA], 'voice-abc', 1700000000000)
-check('登记后查得到', registry.lookup('mm', [fpA])?.voiceId, 'voice-abc')
-check('登记项带服务与指纹', [recorded.serviceId, recorded.fingerprint], ['mm', fpA])
-check('换了样本就查不到了（该重新克隆）', registry.lookup('mm', [fpB]), null)
-check('同一批样本换个顺序仍查得到', registry.lookup('mm', [fpA])?.voiceId, 'voice-abc')
-check('另一个服务查不到', registry.lookup('el', [fpA]), null)
-check('存储键沿用 hanshu.* 命名', memory.has('hanshu.tts.clones.v1'), true)
-
-registry.record('el', [fpA], 'voice-xyz')
-check('两个服务各自独立', registry.all().length, 2)
-check('forget 只清指定的服务', registry.forget('mm'), 1)
-check('清掉之后只剩另一个', registry.all().map((e) => e.serviceId), ['el'])
-
-const readSample = async (path: string) =>
-  path === 'assets/s/01.wav' ? sampleA : path === 'assets/s/02.wav' ? sampleB : null
-
-check(
-  '按**路径**查登记（要读样本算指纹）',
-  await lookupClonedVoice({
-    registry: createCloneRegistry(fakeStorage),
-    readSample,
-    input: { serviceId: 'el', samples: ['assets/s/01.wav'] },
-  }),
-  'voice-xyz',
-)
-check(
-  '样本读不到就不登记也不查表（不把"文件没了"说成"登记丢了"）',
-  await lookupClonedVoice({
-    registry: createCloneRegistry(fakeStorage),
-    readSample,
-    input: { serviceId: 'el', samples: ['assets/s/missing.wav'] },
-  }),
-  null,
-)
-check(
-  '克隆成功后落登记',
-  (
-    await recordClonedVoice({
-      registry: createCloneRegistry(fakeStorage),
-      readSample,
-      input: { serviceId: 'el', samples: ['assets/s/02.wav'] },
-      voiceId: 'voice-new',
-    })
-  )?.voiceId,
-  'voice-new',
-)
-
-// ===== 3. 一次合成 =====
-
-section('3. 一次合成')
+section('2. 一次合成')
 check('拼接工具', [...concatAudio([new Uint8Array([1, 2]), new Uint8Array([3])])], [1, 2, 3])
 
 const single = recordingTransport()
@@ -209,7 +130,7 @@ check('请求带上了语言与音色', JSON.parse(String(single.requests[0].bod
   response_format: 'wav',
 })
 
-section('4. 长文本：分块发、按顺序拼')
+section('3. 长文本：分块发、按顺序拼')
 const multi = recordingTransport()
 const ratios: number[] = []
 const multiResult = await synthesize(
@@ -235,7 +156,7 @@ check(
 )
 check('进度从 1/n 到 1', ratios, [0.5, 1])
 
-section('5. 失败：分类 + 不留半截音频')
+section('4. 失败：分类 + 不留半截音频')
 const noKey = await synthesize(
   { service: openaiService, text: '你好。', voice: 'alloy' },
   { transport: recordingTransport().transport, credential: () => null },
@@ -278,12 +199,12 @@ const aborted = await synthesize(
 check('已取消就不发请求', cancelled.requests.length, 0)
 check('取消也是一次明确的失败', aborted.ok ? '' : aborted.failure.message, '合成已取消')
 
-// ===== 6. 从一条语言出发（两级门禁）=====
+// ===== 5. 从一条语言出发（两级门禁）=====
 
-section('6. 从 `.tts` 的一条语言出发')
+section('5. 从 `.tts` 的一条语言出发')
 const plan = toVoicePlan(
   JSON.parse(
-    '{"version":1,"voices":{"zh_cn":{"service":"openai-main","voice":"alloy"},"ja_jp":{"service":"openai-main","clone":{"samples":["assets/s/01.wav"],"consent":"meta/docs/c.md"}}}}',
+    '{"version":1,"voices":{"zh_cn":{"service":"openai-main","voice":"alloy"},"ja_jp":{"service":"openai-main","voice":"voice-custom"}}}',
   ),
 )
 const services = new Map<string, ResolvedService>([['openai-main', openaiService]])
@@ -307,33 +228,27 @@ const noService = await synthesizePlanLocale(
 )
 check('服务文件缺失归到 config', noService.ok ? '' : noService.failure.kind, 'config')
 
-const cloneMiss = await synthesizePlanLocale(
+const customTransport = recordingTransport()
+const customVoice = await synthesizePlanLocale(
   { plan, locale: 'ja_jp', text: 'こんにちは。', services },
-  { transport: recordingTransport().transport, credential, lookupClonedVoice: () => null },
+  { transport: customTransport.transport, credential },
 )
-check('克隆还没登记归到 clone-required', cloneMiss.ok ? '' : cloneMiss.failure.kind, 'clone-required')
+check('自定义音色 id（控制台克隆的也是 id）直接合成', customVoice.ok, true)
+check('**音色就是 .tts 里写的那个 id**', JSON.parse(String(customTransport.requests[0].body)).voice, 'voice-custom')
+
+const noVoicePlan = toVoicePlan(
+  JSON.parse('{"version":1,"voices":{"zh_cn":{"service":"openai-main"}}}'),
+)
+const noVoice = await synthesizePlanLocale(
+  { plan: noVoicePlan, locale: 'zh_cn', text: '你好。', services },
+  { transport: recordingTransport().transport, credential },
+)
+check('没填音色 id 归到 config', noVoice.ok ? '' : noVoice.failure.kind, 'config')
 check(
-  '并说清去哪儿做（不是只说"先克隆"）',
-  cloneMiss.ok
-    ? ''
-    : Boolean(
-        cloneMiss.failure.hint?.includes('配音方案') &&
-          cloneMiss.failure.hint?.includes('登记音色'),
-      ),
+  '并说清去哪儿填（不是只说"生成失败"）',
+  noVoice.ok ? '' : Boolean(noVoice.failure.hint?.includes('配音方案') && noVoice.failure.hint?.includes('音色')),
   true,
 )
-
-const cloneTransport = recordingTransport()
-const cloneHit = await synthesizePlanLocale(
-  { plan, locale: 'ja_jp', text: 'こんにちは。', services },
-  {
-    transport: cloneTransport.transport,
-    credential,
-    lookupClonedVoice: () => 'voice-cloned',
-  },
-)
-check('登记命中就用登记的音色', cloneHit.ok, true)
-check('音色是登记表给的，不是 .tts 里的', JSON.parse(String(cloneTransport.requests[0].body)).voice, 'voice-cloned')
 
 // ===== 汇总 =====
 

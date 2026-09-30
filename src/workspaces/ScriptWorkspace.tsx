@@ -59,7 +59,7 @@ import {
   downloadBlob,
 } from '../export/resourcePack'
 import { buildProjectPackZip } from '../export/projectPack'
-import { isAudioAsset, normalizeAssetPath, normalizeFolderPath } from '../assets/paths'
+import { normalizeAssetPath, normalizeFolderPath } from '../assets/paths'
 import {
   moveAssetToDir,
   moveScriptToPackage,
@@ -153,7 +153,6 @@ import {
   type StudioTtsStatus,
 } from '../studio/RecordingStudio'
 import { TtsCredentialsModal } from '../TtsCredentialsModal'
-import { createCloneRegistry, lookupClonedVoice } from '../tts/cloneRegistry'
 import { synthesizePlanLocale } from '../tts/client'
 import { createCredentialResolver, createLocalBackend } from '../tts/credentials'
 import { readVoicePlan } from '../tts/plan'
@@ -277,15 +276,6 @@ export const ScriptWorkspace = forwardRef<
     activeIdRef.current = next.activeScriptId
     setWorkspace(next)
     saveWorkspace(next)
-  }
-
-  /** 读资源字节 —— 编辑器里的伴随面板要拿声音样本来做克隆 */
-  const readAssetBytes = async (path: string): Promise<Uint8Array | null> => {
-    const normalized = normalizeAssetPath(path)
-    const packageId = activePackage()?.id
-    if (!normalized || !packageId) return null
-    const blob = await getAssetBlob(packageId, normalized)
-    return blob ? new Uint8Array(await blob.arrayBuffer()) : null
   }
 
   const [locale, setLocale] = useState(loadLocale)
@@ -1017,7 +1007,6 @@ export const ScriptWorkspace = forwardRef<
     () => createCredentialResolver({ backend: createLocalBackend() }),
     [],
   )
-  const ttsCloneRegistry = useMemo(() => createCloneRegistry(), [])
   const ttsTransport = useMemo(() => createFetchTransport(), [])
 
   const [ttsPlanName, setTtsPlanName] = useState<string | null>(null)
@@ -1053,20 +1042,6 @@ export const ScriptWorkspace = forwardRef<
     () => [...ttsServices.values()].flatMap((service) => service.auth.map((f) => f.value)),
     [ttsServices],
   )
-
-  /**
-   * 工程里的音频资产 —— 配音方案的克隆样本从这里选，不让人手打路径。
-   *
-   * 从 `workspace`(状态)推导，**不走 `activePackage()`** —— 那个读的是 ref，
-   * 而渲染期读 ref 拿不到保证是最新值。这里要的就是"渲染期的当前包"。
-   */
-  const ttsAudioAssets = useMemo(() => {
-    const pkg = findScript(workspace, workspace.activeScriptId)?.pkg
-    return (pkg?.assets ?? [])
-      .filter((asset) => isAudioAsset(asset.path, asset.mime))
-      .map((asset) => asset.path)
-      .sort((a, b) => a.localeCompare(b, 'zh-CN'))
-  }, [workspace])
 
   /** 工程的语言表 —— 配音方案的语言从它里面挑，而不是手打一个工程里没有的 */
   const ttsProjectLocales = useMemo(
@@ -1149,8 +1124,6 @@ export const ScriptWorkspace = forwardRef<
       return
     }
 
-    const packageId = activePackage()?.id
-
     for (const [index, key] of targets.entries()) {
       setTtsStatus({
         kind: 'busy',
@@ -1173,19 +1146,6 @@ export const ScriptWorkspace = forwardRef<
         {
           transport: ttsTransport,
           credential: ttsCredentialStore.resolve,
-          lookupClonedVoice: async ({ serviceId, samples }) => {
-            if (!packageId) return null
-            return lookupClonedVoice({
-              registry: ttsCloneRegistry,
-              readSample: async (path) => {
-                const normalized = normalizeAssetPath(path)
-                if (!normalized) return null
-                const blob = await getAssetBlob(packageId, normalized)
-                return blob ? new Uint8Array(await blob.arrayBuffer()) : null
-              },
-              input: { serviceId, samples },
-            })
-          },
         },
       )
 
@@ -2987,7 +2947,6 @@ export const ScriptWorkspace = forwardRef<
 
   useImperativeHandle(ref, () => ({
     handleMenuAction,
-    readAssetBytes,
   }))
 
   useEffect(() => {
@@ -3121,14 +3080,12 @@ export const ScriptWorkspace = forwardRef<
                   fileName={titleName}
                   text={value}
                   services={ttsServices}
-                  audioAssets={ttsAudioAssets}
                   projectLocales={ttsProjectLocales}
                   createService={createTtsService}
                   openService={openTtsService}
                   onChange={handleTtsRewrite}
                   onSwitchToRaw={() => setTtsRawEditFor(titleName)}
                   onOpenCredentials={() => setShowTtsCredentials(true)}
-                  readAssetBytes={readAssetBytes}
                 />
               )
             ) : (

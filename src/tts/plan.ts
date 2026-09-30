@@ -7,13 +7,12 @@
  *
  * 校验分两级，别混：
  * - `validateVoicePlanStructure` 只看这份 JSON 的形状，**离线可跑**，不需要工程上下文。
- * - `validateVoicePlanSemantics` 查引用：服务文件在不在、服务有没有克隆能力、样本在不在。
+ * - `validateVoicePlanSemantics` 查引用：服务文件在不在、音色 id 拼得对不对。
  *
  * 顶层只有 `version` 与 `voices`。**没有顶层 `service`，也没有 `default` 兜底键** ——
  * 每条语言写全自己的配置，缺语言是"录音棚里选不到"，不是错误（规范 §7.4）。
  */
 
-import { normalizeAssetPath } from '../assets/paths'
 import { formatLocaleTag, isValidLocaleTag } from '../i18n/locales'
 import {
   PROTOCOLS,
@@ -22,29 +21,21 @@ import {
   characterNameOfFileName,
   hasErrors,
   isPlainObject,
-  isValidConsentRef,
   type Issue,
   type ReadResult,
 } from './spec'
 import type { ResolvedService } from './service'
 
-/** 克隆来源：样本 + 同意凭证 */
-export type CloneSource = {
-  /** `assets/` 下的资源路径，不规定目录 */
-  samples: string[]
-  /** `meta/` 下的相对路径，或 `env:` / `app:` 引用 */
-  consent: string
-  /** 保留的未知键，回写时带上（规范 §9） */
-  extra: Record<string, unknown>
-}
-
-/** 一条语言。**自给自足** —— 服务、音色来源、语速都在这一层 */
+/** 一条语言。**自给自足** —— 服务、音色、语速都在这一层 */
 export type VoicePlanEntry = {
   /** 服务 id，引用 `meta/voice/service/<id>.ttsservice` */
   service: string
-  /** 预置音色 id；与 `clone` 恰好一个 */
+  /**
+   * 音色 id —— 厂商账号下的那个。**克隆音色也是 id**：克隆在厂商控制台做，
+   * 这里只引用结果（实测：ElevenLabs 的 `GET /v1/voices` 能列出控制台建的音色；
+   * MiniMax 列不出，但 T2A 对不存在的 id 报 `2054 voice id not exist`，可精确验证）。
+   */
   voice?: string
-  clone?: CloneSource
   /** 语速；不写即 1.0（**字段默认值**，不是从别处继承） */
   speed?: number
   /** 保留的未知键，回写时带上（规范 §9） */
@@ -59,8 +50,7 @@ export type VoicePlan = {
 }
 
 const KNOWN_TOP_KEYS = ['version', 'voices']
-const KNOWN_ENTRY_KEYS = ['service', 'voice', 'clone', 'speed']
-const KNOWN_CLONE_KEYS = ['samples', 'consent']
+const KNOWN_ENTRY_KEYS = ['service', 'voice', 'speed']
 
 /**
  * 顶层出现即**报错**的键。它们是"认识的键放错了位置" ——
@@ -178,28 +168,17 @@ function validateEntryStructure(
     error(`${path}.service`, '缺少 service（每条语言都要自带服务）')
   }
 
-  const hasVoice = entry.voice !== undefined
-  const hasClone = entry.clone !== undefined
+  if (typeof entry.voice !== 'string' || !entry.voice.trim()) {
+    error(`${path}.voice`, '缺少 voice —— 厂商账号下的音色 id（克隆音色也在厂商控制台克隆，这里只填 id）')
+  }
 
-  if (hasVoice === hasClone) {
+  // 旧版格式（≤0.0.x）允许 `clone` 描述样本集并在本机克隆 —— 实测后改为「克隆一律
+  // 在厂商控制台做，这里只引用音色 id」。旧键不丢：落进 `extra` 原样保留（§9）。
+  if (entry.clone !== undefined) {
     error(
-      `${path}`,
-      hasVoice
-        ? '`voice` 与 `clone` 只能有一个'
-        : '缺少音色来源：`voice` 与 `clone` 必须有一个',
+      `${path}.clone`,
+      '克隆已不在工程里做 —— 到厂商控制台克隆，把音色 id 填进 voice（这个键会被原样保留，不会丢）',
     )
-  }
-
-  if (hasVoice && (typeof entry.voice !== 'string' || !entry.voice.trim())) {
-    error(`${path}.voice`, 'voice 必须是非空字符串')
-  }
-
-  if (hasClone) {
-    if (!isPlainObject(entry.clone)) {
-      error(`${path}.clone`, 'clone 必须是对象')
-    } else {
-      validateCloneStructure(entry.clone, `${path}.clone`, { error, warn })
-    }
   }
 
   if (entry.speed !== undefined && typeof entry.speed !== 'number') {
@@ -207,46 +186,9 @@ function validateEntryStructure(
   }
 
   for (const key of Object.keys(entry)) {
-    if (!KNOWN_ENTRY_KEYS.includes(key)) {
+    if (!KNOWN_ENTRY_KEYS.includes(key) && key !== 'clone') {
       warn(`${path}.${key}`, '未知键，会被原样保留')
     }
-  }
-}
-
-function validateCloneStructure(
-  clone: Record<string, unknown>,
-  path: string,
-  { error, warn }: Reporters,
-): void {
-  for (const key of Object.keys(clone)) {
-    if (!KNOWN_CLONE_KEYS.includes(key)) {
-      warn(`${path}.${key}`, '未知键，会被原样保留')
-    }
-  }
-
-  const samples = clone.samples
-  if (!Array.isArray(samples)) {
-    error(`${path}.samples`, '缺少 samples（数组，至少一项）')
-  } else if (samples.length === 0) {
-    error(`${path}.samples`, '至少要给一个样本')
-  } else {
-    samples.forEach((sample, index) => {
-      const samplePath = `${path}.samples[${index}]`
-      if (typeof sample !== 'string' || !sample.trim()) {
-        error(samplePath, '样本必须是非空字符串')
-        return
-      }
-      // 直接走资源系统的规范化 —— 不另写一套路径检查
-      if (!normalizeAssetPath(sample)) {
-        error(samplePath, '不是合法的 assets 资源路径')
-      }
-    })
-  }
-
-  if (typeof clone.consent !== 'string' || !clone.consent.trim()) {
-    error(`${path}.consent`, '缺少同意凭证——声音是生物特征数据，这一步不能省')
-  } else if (!isValidConsentRef(clone.consent)) {
-    error(`${path}.consent`, 'consent 必须是 `meta/` 下的路径，或 `env:` / `app:` 引用')
   }
 }
 
@@ -267,21 +209,6 @@ export function toVoicePlan(raw: unknown): VoicePlan {
       if (typeof entryRaw.service === 'string') entry.service = entryRaw.service
       if (typeof entryRaw.voice === 'string') entry.voice = entryRaw.voice
       if (typeof entryRaw.speed === 'number') entry.speed = entryRaw.speed
-      if (isPlainObject(entryRaw.clone)) {
-        const cloneRaw = entryRaw.clone
-        const samples = cloneRaw.samples
-        const clone: CloneSource = {
-          samples: Array.isArray(samples)
-            ? samples.filter((value): value is string => typeof value === 'string')
-            : [],
-          consent: typeof cloneRaw.consent === 'string' ? cloneRaw.consent : '',
-          extra: {},
-        }
-        for (const [key, value] of Object.entries(cloneRaw)) {
-          if (!KNOWN_CLONE_KEYS.includes(key)) clone.extra[key] = value
-        }
-        entry.clone = clone
-      }
 
       for (const [key, value] of Object.entries(entryRaw)) {
         if (!KNOWN_ENTRY_KEYS.includes(key)) entry.extra[key] = value
@@ -323,8 +250,6 @@ export function readVoicePlan(raw: string, fileName?: string): ReadResult<VoiceP
 export type PlanSemanticContext = {
   /** 工程里已有的服务定义，按 id 索引 */
   services: ReadonlyMap<string, ResolvedService>
-  /** 工程里已有的资源路径；不给则跳过"样本是否存在"这一项 */
-  assetPaths?: ReadonlySet<string>
   /** 本机凭据是否可解析；不给则跳过凭据体检 */
   hasCredential?: (ref: string) => boolean
 }
@@ -353,23 +278,6 @@ export function validateVoicePlanSemantics(
         `找不到服务「${entry.service}」—— 工程里需要 ${SERVICE_FILE_DIR}/${entry.service}.ttsservice`,
       )
       continue
-    }
-
-    // 克隆的可用性由**服务商**决定，不由 `.tts` 里写了什么决定（规范 §5.6 硬规则三）
-    if (entry.clone && !service.capabilities.includes('clone')) {
-      error(
-        `${path}.clone`,
-        `服务「${entry.service}」没有开启克隆能力，不能在它上面写 clone`,
-      )
-    }
-
-    if (entry.clone && context.assetPaths) {
-      for (const sample of entry.clone.samples) {
-        const normalized = normalizeAssetPath(sample)
-        if (normalized && !context.assetPaths.has(normalized)) {
-          warn(`${path}.clone.samples`, `工程里没有资源「${normalized}」`)
-        }
-      }
     }
 
     // 音色能否用，取决于该服务走的预设 —— 预设给了固定枚举时才判得了
@@ -409,16 +317,7 @@ export function validateVoicePlanSemantics(
 
 function entryToJson(entry: VoicePlanEntry): Record<string, unknown> {
   const out: Record<string, unknown> = { service: entry.service }
-  if (entry.clone) {
-    const clone: Record<string, unknown> = {
-      samples: [...entry.clone.samples],
-      consent: entry.clone.consent,
-    }
-    for (const [key, value] of Object.entries(entry.clone.extra)) clone[key] = value
-    out.clone = clone
-  } else if (entry.voice !== undefined) {
-    out.voice = entry.voice
-  }
+  if (entry.voice !== undefined) out.voice = entry.voice
   if (entry.speed !== undefined) out.speed = entry.speed
   // 未知键原样带上，跨版本往返不丢数据
   for (const [key, value] of Object.entries(entry.extra)) out[key] = value

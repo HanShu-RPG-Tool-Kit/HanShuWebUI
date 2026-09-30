@@ -1,21 +1,21 @@
 /**
  * `.tts` 的**图形化设置页** —— 打开这个文件时取代代码编辑器。
  *
- * 一份方案由若干条**自给自足**的语言组成(规范 §4.2):每条自己带服务、音色来源、语速。
+ * 一份方案由若干条**自给自足**的语言组成(规范 §4.2):每条自己带服务、音色、语速。
  * 所以界面就是一张张语言卡片,而不是"全局设置 + 例外"。
  *
  * 改动一律先拼出完整方案再 `stringifyVoicePlan` 写回 —— 未知键跟着 `extra` 回去,
  * 表单只管它认识的那些。
  *
- * 克隆的样本从**工程里已有的音频资产**里选,不让人手打路径 ——
- * 手打一个不存在的路径,要等到点"登记音色"才知道写错了。
+ * 音色一律是**厂商账号下的 id**,克隆也不例外 —— 克隆在厂商控制台做(实测见
+ * `voices.ts` 头注释):ElevenLabs 的控制台音色能被 `GET /v1/voices` 列出,所以
+ * 这家给「拉取音色」;MiniMax 列不全,但 T2A 会精确报 `2054`,所以给「验证」。
  */
 
 import { useMemo, useState } from 'react'
 import {
   PROTOCOLS,
   characterNameOfFileName,
-  isValidConsentRef,
   type Issue,
   type ProtocolId,
 } from './spec'
@@ -23,40 +23,28 @@ import {
   readVoicePlan,
   stringifyVoicePlan,
   validateVoicePlanSemantics,
-  type CloneSource,
   type VoicePlan,
   type VoicePlanEntry,
 } from './plan'
 import type { ResolvedService } from './service'
 import { createCredentialResolver, createLocalBackend } from './credentials'
-import { ensureClonedVoice, type CloneSample } from './clone'
-import { createCloneRegistry, useCloneRegistryEntries } from './cloneRegistry'
+import { canListVoices, listVoices, probeVoice, type VoiceInfo } from './voices'
 import { createFetchTransport } from './transport'
 import './form.css'
 
-const SAMPLE_MIME: Record<string, string> = {
-  wav: 'audio/wav',
-  mp3: 'audio/mpeg',
-  m4a: 'audio/mp4',
-  flac: 'audio/flac',
-  ogg: 'audio/ogg',
-}
+type VoiceListEntry =
+  | { kind: 'busy' }
+  | { kind: 'done'; voices: VoiceInfo[] }
+  | { kind: 'done'; error: string }
 
-function sampleMime(path: string): string {
-  const ext = /\.([a-z0-9]+)$/i.exec(path.trim())?.[1]?.toLowerCase() ?? ''
-  return SAMPLE_MIME[ext] ?? 'application/octet-stream'
-}
-
-type CloneState =
-  | { locale: string; kind: 'busy'; message: string }
+type ProbeState =
+  | { locale: string; kind: 'busy' }
   | { locale: string; kind: 'done'; ok: boolean; message: string }
 
 export type TtsPlanFormProps = {
   fileName: string
   text: string
   services: ReadonlyMap<string, ResolvedService>
-  /** 工程里已有的音频资产 —— 克隆样本从这里选 */
-  audioAssets: readonly string[]
   /** 工程的**语言表**（`assets/<locale>/lang_*` 真实存在过的那些）—— 语言从它里面选 */
   projectLocales: readonly string[]
   /** 新建一个服务定义文件，返回新服务的 id；取消或名字不合法时返回 null。**不切换文件** */
@@ -66,29 +54,27 @@ export type TtsPlanFormProps = {
   onChange(next: string): void
   onSwitchToRaw(): void
   onOpenCredentials(): void
-  readAssetBytes(path: string): Promise<Uint8Array | null>
 }
 
 export function TtsPlanForm({
   fileName,
   text,
   services,
-  audioAssets,
   projectLocales,
   createService,
   openService,
   onChange,
   onSwitchToRaw,
   onOpenCredentials,
-  readAssetBytes,
 }: TtsPlanFormProps) {
   const resolver = useMemo(
     () => createCredentialResolver({ backend: createLocalBackend() }),
     [],
   )
-  const registry = useMemo(() => createCloneRegistry(), [])
   const transport = useMemo(() => createFetchTransport(), [])
-  const [cloneState, setCloneState] = useState<CloneState | null>(null)
+  /** 已拉取的音色列表，按服务 id 缓存 —— 多条语言共用一家服务时不用重复拉 */
+  const [voiceLists, setVoiceLists] = useState<Record<string, VoiceListEntry>>({})
+  const [probeState, setProbeState] = useState<ProbeState | null>(null)
   const [newLocale, setNewLocale] = useState('')
   /** 刚在这儿新建的服务 —— 用来提示"它还是默认设置，要不要现在去填" */
   const [createdService, setCreatedService] = useState<string | null>(null)
@@ -121,8 +107,6 @@ export function TtsPlanForm({
     }
   }, [text])
 
-  const entries = useCloneRegistryEntries()
-
   /** 整份方案写回。未知键在 `extra` 里，跟着一起回去 */
   const write = (voices: Record<string, VoicePlanEntry>) => {
     onChange(stringifyVoicePlan({ ...plan, voices }))
@@ -152,12 +136,11 @@ export function TtsPlanForm({
     const tag = newLocale.trim()
     if (!tag || plan.voices[tag]) return
     const first = Object.values(plan.voices)[0]
-    // 新的一条抄第一条的服务与音色来源 —— 从零填一条语言是最容易填错的
+    // 新的一条抄第一条的服务与音色 —— 从零填一条语言是最容易填错的
     const entry: VoicePlanEntry = first
       ? {
           service: first.service,
           ...(first.voice !== undefined ? { voice: first.voice } : {}),
-          ...(first.clone ? { clone: { ...first.clone, samples: [...first.clone.samples] } } : {}),
           extra: {},
         }
       : { service: [...services.keys()][0] ?? '', voice: '', extra: {} }
@@ -165,57 +148,33 @@ export function TtsPlanForm({
     setNewLocale('')
   }
 
-  const cloneFor = async (locale: string, entry: VoicePlanEntry, service: ResolvedService) => {
-    if (!entry.clone) return
-    const samples = entry.clone.samples
-    const confirmed = window.confirm(
-      `克隆会把 ${samples.length} 个样本上传到 ${service.label}，并在你的账号下建一个音色。\n` +
-        `这通常会计费，而且只有你已经拿到这个人的声音授权才该做。\n\n继续？`,
-    )
-    if (!confirmed) return
-
-    setCloneState({ locale, kind: 'busy', message: '正在读取样本…' })
-
-    const payload: CloneSample[] = []
-    for (const path of samples) {
-      const bytes = await readAssetBytes(path)
-      if (!bytes) {
-        setCloneState({
-          locale,
-          kind: 'done',
-          ok: false,
-          message: `样本「${path}」读不到 —— 确认它还在 assets 里`,
-        })
-        return
-      }
-      payload.push({ path, bytes, contentType: sampleMime(path) })
-    }
-
-    const result = await ensureClonedVoice(
-      {
-        service,
-        credential: resolver.resolve,
-        // ElevenLabs 侧显示用；MiniMax 的 voice_id 由样本指纹派生，不看这个名字
-        name: `${character}-${locale}`,
-        samples: payload,
-        registry,
-      },
-      {
-        transport,
-        onStep: (label) => setCloneState({ locale, kind: 'busy', message: label }),
-      },
-    )
-
-    setCloneState(
-      result.ok
-        ? {
-            locale,
+  const fetchVoices = async (service: ResolvedService) => {
+    setVoiceLists((current) => ({ ...current, [service.id]: { kind: 'busy' } }))
+    const result = await listVoices(service, { transport, credential: resolver.resolve })
+    setVoiceLists((current) => ({
+      ...current,
+      [service.id]: result.ok
+        ? { kind: 'done', voices: result.voices }
+        : {
             kind: 'done',
-            ok: true,
-            message: result.cloned
-              ? `已登记为 ${result.voiceId}`
-              : `这批样本早就登记过：${result.voiceId}`,
-          }
+            error: result.failure.hint
+              ? `${result.failure.message} —— ${result.failure.hint}`
+              : result.failure.message,
+          },
+    }))
+  }
+
+  const probe = async (locale: string, entry: VoicePlanEntry, service: ResolvedService) => {
+    const voice = entry.voice?.trim() ?? ''
+    if (!voice) return
+    setProbeState({ locale, kind: 'busy' })
+    const result = await probeVoice(service, voice, {
+      transport,
+      credential: resolver.resolve,
+    })
+    setProbeState(
+      result.ok
+        ? { locale, kind: 'done', ok: true, message: '音色存在，可以合成' }
         : {
             locale,
             kind: 'done',
@@ -262,7 +221,7 @@ export function TtsPlanForm({
 
           {locales.length === 0 && (
             <p className="tts-form-ok">
-              这份方案一条语言都没有 —— 录音棚里第②级将是空的。下面加一条。
+              你需要为该配音方案添加语言方案
             </p>
           )}
         </>
@@ -273,11 +232,10 @@ export function TtsPlanForm({
         const service = services.get(entry.service) ?? null
         const protocol: ProtocolId | undefined = service?.protocol ?? undefined
         const range = protocol ? PROTOCOLS[protocol].speedRange : undefined
-        const busy = cloneState?.locale === locale && cloneState.kind === 'busy'
-        // 登记表按**样本指纹**索引，而这里不去读样本字节 —— 所以只能说
-        // "这家在本机登记过哪几个音色"，不能说"这一条登记过了没有"。
-        // 想知道后者，点一次「登记音色」，它命中登记表会直接告诉你。
-        const registered = entries.filter((item) => item.serviceId === entry.service)
+        const listable = protocol !== undefined && canListVoices(protocol)
+        const listState = service ? voiceLists[service.id] : undefined
+        const fetchedVoices = listState?.kind === 'done' && 'voices' in listState ? listState.voices : null
+        const probing = probeState?.locale === locale && probeState.kind === 'busy'
 
         return (
           <div className="tts-lang" key={locale}>
@@ -301,7 +259,7 @@ export function TtsPlanForm({
                     生成时会拿不到译文，而那是要等点了才知道的错 */}
                 <select value={locale} onChange={(event) => renameEntry(locale, event.target.value)}>
                   {!projectLocales.includes(locale) && (
-                    <option value={locale}>{locale}（工程里没有这个语言）</option>
+                    <option value={locale}>不存在该语言 {locale}</option>
                   )}
                   {projectLocales.map((tag) => (
                     <option key={tag} value={tag}>
@@ -311,7 +269,7 @@ export function TtsPlanForm({
                 </select>
                 {projectLocales.length === 0 && (
                   <span className="tts-form-hint">
-                    工程的 assets 下还没有语言资源
+                    语言资源缺失
                   </span>
                 )}
               </span>
@@ -326,7 +284,7 @@ export function TtsPlanForm({
                 >
                   {!services.has(entry.service) && (
                     <option value={entry.service}>
-                      {entry.service || '（未填）'} —— 工程里没有这个服务
+                      {entry.service || 'Empty'} —— 无效服务
                     </option>
                   )}
                   {/* 带上 id —— 同一个预设可以建好几个服务，光看显示名分不出是哪一个，
@@ -359,193 +317,95 @@ export function TtsPlanForm({
                 <span className="tts-form-label" />
                 <span className="tts-form-control">
                   <span className="tts-form-hint">
-                    「{createdService}」刚建好，还是默认设置 —— 供应商、端点、凭据都还没定
+                    {createdService} 缺失有效信息
                   </span>
                   <button
                     type="button"
                     className="tts-form-link"
                     onClick={() => openService(createdService)}
                   >
-                    去填它
+                    补充信息
                   </button>
                 </span>
               </div>
             )}
 
             <div className="tts-form-row">
-              <span className="tts-form-label">音色来源</span>
+              <span className="tts-form-label">音色</span>
               <span className="tts-form-control">
-                <select
-                  value={entry.clone ? 'clone' : 'voice'}
-                  onChange={(event) => {
-                    if (event.target.value === 'clone') {
-                      patchEntry(locale, {
-                        clone: entry.clone ?? {
-                          samples: audioAssets.slice(0, 1),
-                          consent: '',
-                          extra: {},
-                        },
-                        voice: undefined,
-                      })
-                    } else {
-                      patchEntry(locale, { clone: undefined, voice: entry.voice ?? '' })
-                    }
-                  }}
+                <input
+                  type="text"
+                  value={entry.voice ?? ''}
+                  placeholder="音色 id（到厂商控制台查）"
+                  onChange={(event) =>
+                    patchEntry(locale, { voice: event.target.value || undefined })
+                  }
+                />
+                {listable && service && (
+                  <button
+                    type="button"
+                    className="tts-form-link"
+                    disabled={listState?.kind === 'busy'}
+                    onClick={() => void fetchVoices(service)}
+                  >
+                    {listState?.kind === 'busy' ? '拉取中…' : '拉取音色'}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="tts-form-link"
+                  disabled={probing || !service || !entry.voice?.trim()}
+                  onClick={() => service && void probe(locale, entry, service)}
                 >
-                  <option value="voice">预置音色</option>
-                  <option value="clone">克隆音色</option>
-                </select>
-                {entry.clone ? (
-                  <span className="tts-form-hint">
-                    样本 {entry.clone.samples.length} 个
-                    {registered.length > 0
-                      ? ` · ${service?.label ?? entry.service} 在本机登记过 ${registered
-                          .map((item) => item.voiceId)
-                          .join('、')}`
-                      : ' · 这家还没登记过音色'}
+                  {probing ? '验证中…' : '验证'}
+                </button>
+                {probeState?.locale === locale && probeState.kind === 'done' && (
+                  <span
+                    className={probeState.ok ? 'tts-form-hint' : 'tts-form-hint is-warn'}
+                  >
+                    {probeState.message}
                   </span>
-                ) : null}
+                )}
               </span>
             </div>
 
-            {entry.clone ? (
-              <>
-                <div className="tts-form-row">
-                  <span className="tts-form-label">样本</span>
-                  <span className="tts-form-control">
-                    <span className="tts-form-hint">
-                      上传给厂商的就是这几个文件
-                    </span>
-                  </span>
-                </div>
-                <ul className="tts-lang-samples">
-                  {entry.clone.samples.map((sample, index) => (
-                    <li key={`${sample}-${index}`}>
-                      <select
-                        value={sample}
-                        onChange={(event) => {
-                          const samples = [...entry.clone!.samples]
-                          samples[index] = event.target.value
-                          patchEntry(locale, {
-                            clone: { ...entry.clone!, samples },
-                          })
-                        }}
-                      >
-                        {!audioAssets.includes(sample) && (
-                          <option value={sample}>{sample || '（未选）'}</option>
-                        )}
-                        {audioAssets.map((path) => (
-                          <option key={path} value={path}>
-                            {path}
-                          </option>
-                        ))}
-                      </select>
-                      <button
-                        type="button"
-                        className="tts-form-link"
-                        onClick={() => {
-                          const samples = entry.clone!.samples.filter((_, i) => i !== index)
-                          patchEntry(locale, { clone: { ...entry.clone!, samples } })
-                        }}
-                      >
-                        移除
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-                <div className="tts-form-row">
-                  <span className="tts-form-label" />
-                  <span className="tts-form-control">
-                    <button
-                      type="button"
-                      className="tts-form-link"
-                      onClick={() => {
-                        const unused = audioAssets.find(
-                          (path) => !entry.clone!.samples.includes(path),
-                        )
-                        patchEntry(locale, {
-                          clone: {
-                            ...entry.clone!,
-                            samples: [...entry.clone!.samples, unused ?? ''],
-                          },
-                        })
-                      }}
-                    >
-                      加一个样本
-                    </button>
-                    {audioAssets.length === 0 && (
-                      <span className="tts-form-hint">
-                        工程里还没有音频资产 —— 先把样本放进 assets
-                      </span>
-                    )}
-                  </span>
-                </div>
-
-                <div className="tts-form-row">
-                  <span className="tts-form-label">授权书</span>
-                  <span className="tts-form-control">
-                    <input
-                      type="text"
-                      value={entry.clone.consent}
-                      placeholder="meta/docs/授权书.pdf 或 app:某人-授权"
-                      onChange={(event) => {
-                        const clone: CloneSource = { ...entry.clone!, consent: event.target.value }
-                        patchEntry(locale, { clone })
-                      }}
-                    />
-                    <span
-                      className={
-                        entry.clone.consent && !isValidConsentRef(entry.clone.consent)
-                          ? 'tts-form-hint is-warn'
-                          : 'tts-form-hint'
-                      }
-                    >
-                      {!entry.clone.consent
-                        ? '必填 —— 没有授权不该克隆'
-                        : isValidConsentRef(entry.clone.consent)
-                          ? '格式没问题'
-                          : '要写成 meta/ 下的路径，或 env: / app: 引用'}
-                    </span>
-                  </span>
-                </div>
-
-                <div className="tts-form-row">
-                  <span className="tts-form-label" />
-                  <span className="tts-form-control">
-                    <button
-                      type="button"
-                      className="tts-form-btn"
-                      disabled={busy || !service}
-                      onClick={() => service && void cloneFor(locale, entry, service)}
-                    >
-                      {busy ? '克隆中…' : '登记音色'}
-                    </button>
-                    {cloneState?.locale === locale && (
-                      <span
-                        className={
-                          cloneState.kind === 'done' && !cloneState.ok
-                            ? 'tts-form-hint is-warn'
-                            : 'tts-form-hint'
-                        }
-                      >
-                        {cloneState.message}
-                      </span>
-                    )}
-                  </span>
-                </div>
-              </>
-            ) : (
+            {fetchedVoices && (
               <div className="tts-form-row">
-                <span className="tts-form-label">音色</span>
+                <span className="tts-form-label" />
                 <span className="tts-form-control">
-                  <input
-                    type="text"
-                    value={entry.voice ?? ''}
-                    placeholder="音色 id（到厂商控制台查）"
-                    onChange={(event) =>
-                      patchEntry(locale, { voice: event.target.value || undefined })
-                    }
-                  />
+                  <select
+                    value={fetchedVoices.some((item) => item.id === entry.voice) ? entry.voice : ''}
+                    onChange={(event) => {
+                      if (event.target.value) patchEntry(locale, { voice: event.target.value })
+                    }}
+                  >
+                    <option value="">从列表里选一个（{fetchedVoices.length} 个）</option>
+                    {fetchedVoices.map((item) => (
+                      <option key={item.id} value={item.id}>
+                        {item.name === item.id ? item.id : `${item.name}（${item.id}）`}
+                        {item.category && item.category !== 'premade' ? ` · ${item.category}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                </span>
+              </div>
+            )}
+            {listState?.kind === 'done' && 'error' in listState && (
+              <div className="tts-form-row">
+                <span className="tts-form-label" />
+                <span className="tts-form-control">
+                  <span className="tts-form-hint is-warn">{listState.error}</span>
+                </span>
+              </div>
+            )}
+            {protocol === 'minimax' && (
+              <div className="tts-form-row">
+                <span className="tts-form-label" />
+                <span className="tts-form-control">
+                  <span className="tts-form-hint">
+                    克隆到 MiniMax 控制台做；它的音色列表查不全，填好 id 点「验证」确认
+                    （试合成两个字符，按合成计费）
+                  </span>
                 </span>
               </div>
             )}
@@ -579,7 +439,7 @@ export function TtsPlanForm({
       })}
 
       <div className="tts-form-section">
-        <p className="tts-form-section-title">加一条语言</p>
+        <p className="tts-form-section-title">新增语言方案</p>
         <div className="tts-form-row">
           <span className="tts-form-label">语言</span>
           <span className="tts-form-control">
@@ -591,8 +451,8 @@ export function TtsPlanForm({
             >
               <option value="">
                 {unusedLocales.length === 0
-                  ? '（工程里的语言都配上了）'
-                  : '选一个语言'}
+                  ? '没有可选语言'
+                  : '选择语言'}
               </option>
               {unusedLocales.map((tag) => (
                 <option key={tag} value={tag}>
@@ -606,10 +466,10 @@ export function TtsPlanForm({
               disabled={!newLocale}
               onClick={addEntry}
             >
-              加上
+              新增
             </button>
             <span className="tts-form-hint">
-              新的一条会先抄第一条的服务与音色来源，再改
+              新建语言方案会默认继承头条方案的服务与音色
             </span>
           </span>
         </div>

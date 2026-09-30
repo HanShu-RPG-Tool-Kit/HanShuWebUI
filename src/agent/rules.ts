@@ -15,9 +15,9 @@ export const AGENT_RULES = `
 - **不要读写 meta/voice 下的文件（.tts 与 .ttsservice）** —— 它们由可视化编辑器维护，不由你生成。
   你可以读它们来回答用户的问题（例如"这个角色配了哪些语言"），但**不要新建、不要改写**。
   - .tts 是配音方案：**每语言一条**，顶层只有 version 与 voices，
-    每个 voices.<语言标签> 各自写全 service、voice（或 clone）、speed；
-    **没有顶层 service，也没有 default 之类兜底键**。
-  - .ttsservice 是服务定义，里面只有 provider / 端点 / 模型 / 能力开关和**凭据引用**
+    每个 voices.<语言标签> 各自写全 service、voice（厂商账号下的音色 id；克隆音色也在
+    厂商控制台克隆，这里只填 id）、speed；**没有顶层 service，也没有 default 之类兜底键**。
+  - .ttsservice 是服务定义，里面只有 provider / 端点 / 模型和**凭据引用**
     （env: / app:），**永远不含密钥**；密钥由用户在本机凭据库里填，
     你既不需要也不该知道它的值。用户问起时也不要索要密钥。
 - 本地化产物由源文件推导，不要手写这些路径：文本在 assets/<语言标签>/lang_<源后缀>/，

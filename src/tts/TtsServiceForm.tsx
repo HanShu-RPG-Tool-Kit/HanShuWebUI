@@ -14,9 +14,7 @@ import {
   AUTH_SHAPES,
   PROTOCOLS,
   defaultCredentialRef,
-  isCapabilityId,
   serviceIdOfFileName,
-  type CapabilityId,
   type Issue,
   type ProtocolId,
 } from './spec'
@@ -36,10 +34,6 @@ import './form.css'
 
 /** 不是预设、自己填协议的档（规范 §4.4） */
 const TEMPLATE_ID = 'template'
-
-const CAPABILITY_LABELS: Record<CapabilityId, string> = {
-  clone: '声音克隆',
-}
 
 export type TtsServiceFormProps = {
   fileName: string
@@ -95,8 +89,6 @@ export function TtsServiceForm({
   }
 
   const authFields = info ? AUTH_SHAPES[info.authShape] : []
-  // 能力上限由**预设**定（协议提供、预设收窄），不是协议自己声明的
-  const available = preset?.available ?? []
 
   return (
     <div className="tts-form">
@@ -272,51 +264,6 @@ export function TtsServiceForm({
           </span>
         </div>
       </div>
-
-      {available.length > 0 && (
-        <div className="tts-form-section">
-          <p className="tts-form-section-title">能力</p>
-          <p className="tts-form-note tts-form-hint">
-            没能开的能力会在这里灰掉 —— 声明一个供应商根本没提供的能力，
-            只会在运行时失败。
-          </p>
-          {available.map((capability) => {
-            const on = definition.capabilities?.includes(capability) ?? null
-            const presetOn = preset?.defaultCapabilities.includes(capability) ?? false
-            return (
-              <div className="tts-form-row" key={capability}>
-                <span className="tts-form-label">{CAPABILITY_LABELS[capability]}</span>
-                <span className="tts-form-control">
-                  <select
-                    value={on === null ? 'inherit' : on ? 'on' : 'off'}
-                    onChange={(event) => {
-                      const choice = event.target.value
-                      if (choice === 'inherit') {
-                        patch({ capabilities: undefined })
-                        return
-                      }
-                      const current = (definition.capabilities ?? []).filter(isCapabilityId)
-                      const next = choice === 'on' ? [capability] : []
-                      patch({
-                        capabilities: [
-                          ...current.filter((item) => item !== capability),
-                          ...next,
-                        ],
-                      })
-                    }}
-                  >
-                    <option value="inherit">
-                      跟随预设（默认{presetOn ? '开' : '关'}）
-                    </option>
-                    <option value="on">开</option>
-                    <option value="off">关</option>
-                  </select>
-                </span>
-              </div>
-            )
-          })}
-        </div>
-      )}
 
       <div className="tts-form-section">
         <p className="tts-form-section-title">凭据</p>

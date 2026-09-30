@@ -141,15 +141,6 @@ export const PROTOCOLS: Record<ProtocolId, ProtocolInfo> = {
   },
 }
 
-// ===== 能力 =====
-
-export const CAPABILITY_IDS = ['clone'] as const
-export type CapabilityId = (typeof CAPABILITY_IDS)[number]
-
-export function isCapabilityId(value: unknown): value is CapabilityId {
-  return typeof value === 'string' && (CAPABILITY_IDS as readonly string[]).includes(value)
-}
-
 // ===== 校验 =====
 
 export type IssueLevel = 'error' | 'warning'
@@ -168,16 +159,14 @@ export type Issue = {
  * - `config` —— 服务定义自己不成立(缺端点 / 缺模型),改的是 `.ttsservice`
  * - `credential` —— 本机缺凭据,改的是凭据库
  * - `unsupported` —— 该协议还没实现,改的是选哪家
- * - `clone-required` —— 克隆音色还没登记,该做的是先克隆
  * - `transport` —— 请求没发出去(CORS / DNS / 断网 / 证书)
- * - `http` —— 厂商明确拒绝了(Key 无效 / 额度不足 / 模型名不对)
+ * - `http` —— 厂商明确拒绝了(Key 无效 / 额度不足 / 模型名不对 / 音色不存在)
  * - `decode` —— 响应读不出来或音频解不开
  */
 export type TtsFailureKind =
   | 'config'
   | 'credential'
   | 'unsupported'
-  | 'clone-required'
   | 'transport'
   | 'http'
   | 'decode'
@@ -223,20 +212,6 @@ export function isValidServiceId(raw: string): boolean {
   const id = raw.trim()
   if (!id) return false
   return !RESOURCE_NAME_BAD_RE.test(id)
-}
-
-/**
- * 同意凭证的引用：`meta/` 下的相对路径，或 `env:` / `app:` 引用。
- * 声音是生物特征数据，同意书怕丢失，所以允许指向工程内的 `.md`。
- */
-export function isValidConsentRef(raw: string): boolean {
-  const value = raw.trim()
-  if (!value) return false
-  if (CREDENTIAL_REF_RE.test(value)) return true
-  const path = value.replace(/\\/g, '/')
-  if (!path.startsWith('meta/')) return false
-  if (path.includes('..') || path.includes(':') || /\/{2,}/.test(path)) return false
-  return !path.endsWith('/')
 }
 
 /** 端点：必须 `https://`；只对 localhost / 127.0.0.1 放行 `http://` */
