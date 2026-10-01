@@ -1,290 +1,437 @@
 /**
  * `.tts` / `.ttsservice` 的图形化设置页 —— 打开这两类文件时**取代**代码编辑器。
  *
- * 间距走**统一节奏**，不是逐块补 margin：块与块之间靠 `> * + *`，行与行之间靠
- * `.tts-form-row + .tts-form-row`。加一格不用再想它该配多少 margin，
- * 也就不会出现"这里 8px、那里 14px"这种不均。
+ * 三条约定，改动时请照着来：
  *
- * 配色只用 `index.css` 的主题变量 —— 硬编码颜色会在换主题时变成一块补丁。
+ * 1. **间距走统一节奏**：块与块靠 `.tts-form-inner > * + *`，行与行靠 `.tts-row` 的 grid gap。
+ * 2. **配色只用主题变量**（`App.css` 的 `:root`）；语义色用 `--ok / --warn / --danger`。
+ * 3. **一行 = 一个 grid**（标签列 + 控件列），窄屏下整行塌成一列，结构不用改。
+ *
+ * 唯一被外部复用的类名是 `.tts-form-btn` 与 `.tts-form-link`（ScriptWorkspace 的原始编辑
+ * 提示条在用），改名要一并改那边。
+ *
+ * **这里刻意没有的东西**：汇总条、副标题、置顶的问题清单。检查结论一律贴在出问题的那
+ * 一行下面（`.tts-row.is-note`），页面顶部只留标题与动作。
  */
 
+/* ===== 外壳 ===== */
+
 .tts-form {
-  --tts-label-w: 96px;
-  --tts-row-gap: 10px;
-  --tts-block-gap: 16px;
+  --tts-label-w: 84px;
+  --tts-row-gap: 9px;
+  --tts-block-gap: 14px;
 
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  padding: 18px 22px 26px;
+  padding: 0 0 40px;
   background: var(--bg);
   color: var(--text);
   font-size: var(--ui-font-size);
 }
 
-/* 块间距：表单的直接子元素之间 */
-.tts-form > * + * {
+/* 内容列。宽屏下不铺满整幅 —— 一行排到 1600px 宽时，标签与控件离得太远。 */
+.tts-form-inner {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 16px 22px 0;
+}
+
+.tts-form-inner > * + * {
   margin-top: var(--tts-block-gap);
 }
 
-/* 块间距：分段与语言卡片内部用行间距，标题另算 */
-.tts-form-section > * + *,
-.tts-lang > * + * {
-  margin-top: var(--tts-row-gap);
+/* ===== 页头（跟着滚）===== */
+
+.tts-page-head {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
 }
 
-.tts-form-head {
+.tts-page-head-inner {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
-  gap: 10px;
+  align-items: center;
+  gap: 8px 10px;
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 10px 22px;
 }
 
-.tts-form-title {
+.tts-page-name {
   color: var(--text-bright);
-  font-size: 1.15em;
+  font-size: 1.06em;
   font-weight: 600;
 }
 
-.tts-form-subtitle {
-  color: var(--text-dim);
-}
-
-.tts-form-head-actions {
-  margin-left: auto;
+.tts-page-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  margin-left: auto;
 }
 
-.tts-form-section,
-.tts-lang {
-  padding: 14px 16px;
+/* ===== 卡片 ===== */
+
+.tts-card {
   border: 1px solid var(--border-soft);
-  border-radius: 4px;
+  border-radius: var(--radius-m);
   background: var(--bg-sidebar);
+  overflow: hidden;
 }
 
-.tts-form-section-title {
-  margin: 0;
-  color: var(--text-dim);
+.tts-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 10px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-tab);
+}
+
+.tts-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+/* 卡片头里的语言选择器就是这张卡的标题：不要边框，直接当标题读 */
+.tts-card-head .tts-control select {
+  height: 26px;
+  padding: 0 6px;
+  border-color: transparent;
+  background: none;
+  color: var(--text-bright);
+  font-size: 1em;
   font-weight: 600;
+}
+
+.tts-card-head .tts-control select:hover {
+  border-color: var(--border-soft);
+  background: var(--bg);
+}
+
+.tts-card-head .tts-control select:focus {
+  border-color: var(--accent);
+  box-shadow: none;
+}
+
+.tts-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--tts-row-gap);
+  padding: 12px;
 }
 
 /* ===== 一行 ===== */
 
-.tts-form-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
+.tts-row {
+  display: grid;
+  grid-template-columns: var(--tts-label-w) minmax(0, 1fr);
+  gap: 4px 10px;
+  align-items: start;
 }
 
-.tts-form-row + .tts-form-row {
-  margin-top: var(--tts-row-gap);
-}
-
-/* 标签定宽，好让所有控件的左边缘对齐；行里内容换行时标签停在第一行，不与控件错位 */
-.tts-form-label {
-  flex: 0 0 var(--tts-label-w);
+.tts-row-label {
   display: flex;
   align-items: center;
   min-height: var(--ui-row-h);
   color: var(--text-dim);
+  font-size: 0.95em;
 }
 
-.tts-form-control {
-  flex: 1 1 auto;
-  min-width: 0;
+.tts-row > .tts-control {
+  grid-column: 2;
+}
+
+/* 只占控件列的一行，用来贴就地说明 */
+.tts-row.is-note {
+  gap: 0;
+}
+
+/* 说明行没有标签 —— 空的标签格不要再占一行高（`:empty` 匹配自闭合的 span） */
+.tts-row.is-note > .tts-row-label:empty {
+  min-height: 0;
+}
+
+/* ===== 控件 ===== */
+
+.tts-control {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+  min-width: 0;
 }
 
-/* 控件一律同高，行与行看起来才是一条线 */
-.tts-form-control input[type='text'],
-.tts-form-control input[type='number'],
-.tts-form-control select,
-.tts-sample-list select {
+.tts-control input[type='text'],
+.tts-control input[type='password'],
+.tts-control select {
   height: var(--ui-row-h);
   padding: 0 8px;
   border: 1px solid var(--border);
-  border-radius: 3px;
+  border-radius: var(--radius-s);
   background: var(--bg);
   color: var(--text);
   font: inherit;
+  font-size: 0.97em;
+  transition:
+    border-color 0.12s,
+    box-shadow 0.12s;
 }
 
-.tts-form-control input[type='text'] {
+.tts-control input[type='text'] {
   flex: 1 1 auto;
   min-width: 0;
 }
 
-.tts-form-control input[type='number'] {
-  width: 88px;
-}
-
-.tts-form-control select {
+/* 语速用 text + inputMode 渲染：原生 number 会在"小数点刚敲下"时把值规范化回去，
+   1.05 这种就永远打不完。宽度按内容给短一点。 */
+.tts-control input.is-number {
+  flex: 0 0 82px;
   min-width: 0;
+  text-align: right;
 }
 
-.tts-form-control input:disabled,
-.tts-form-control select:disabled {
+.tts-control select {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.tts-control input:focus,
+.tts-control select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--focus-glow) inset;
+}
+
+.tts-control input:disabled,
+.tts-control select:disabled {
   opacity: 0.55;
 }
 
-.tts-form-hint {
-  color: var(--text-dim);
-  line-height: 1.6;
+/* 端点这类长输入：单行占满，别和按钮挤在一条线上 */
+.tts-control input.is-wide {
+  flex: 1 1 240px;
 }
 
-/* 整段落出现时（不是行内小字），margin 交给统一节奏管 */
-p.tts-form-hint,
-p.tts-form-note {
-  margin: 0;
+/* 标了 aria-invalid 的输入框直接变边 —— 旁边那句说明才有人读 */
+.tts-control input[aria-invalid='true'] {
+  border-color: rgb(232 101 109 / 55%);
 }
 
-.tts-form-hint.is-warn {
-  color: #d8b45a;
+.tts-control input[aria-invalid='true']:focus {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 2px rgb(232 101 109 / 25%) inset;
 }
 
-.tts-form-static {
+.tts-static {
   display: flex;
   align-items: center;
+  gap: 6px;
   min-height: var(--ui-row-h);
   color: var(--text);
 }
 
-.tts-form-hint code,
-.tts-form-static code,
-.tts-form-issues code,
-.tts-form-ok code {
+.tts-static code {
   font-family: Consolas, monospace;
   color: var(--text-bright);
 }
 
+/* ===== 文字 ===== */
+
+.tts-hint {
+  color: var(--text-dim);
+  font-size: 0.92em;
+  line-height: 1.6;
+}
+
+.tts-hint.is-warn {
+  color: var(--warn);
+}
+
+.tts-hint.is-ok {
+  color: var(--ok);
+}
+
+.tts-hint.is-danger {
+  color: #e8a5a9;
+}
+
+p.tts-hint,
+p.tts-note {
+  margin: 0;
+}
+
+.tts-hint code,
+.tts-note code,
+.tts-static code {
+  font-family: Consolas, monospace;
+  color: inherit;
+}
+
 /* ===== 按钮 ===== */
 
+.tts-btn,
 .tts-form-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   height: var(--ui-row-h);
-  padding: 0 12px;
-  border: 1px solid var(--border);
-  border-radius: 3px;
+  padding: 0 11px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-s);
   background: var(--bg-tab);
   color: var(--text);
   font: inherit;
+  font-size: 0.95em;
+  white-space: nowrap;
   cursor: pointer;
+  transition:
+    background 0.12s,
+    border-color 0.12s,
+    color 0.12s;
 }
 
+.tts-btn:hover:not(:disabled),
 .tts-form-btn:hover:not(:disabled) {
-  background: var(--bg-tab-active);
+  background: var(--bg-menu-hover);
 }
 
+.tts-btn:disabled,
 .tts-form-btn:disabled {
-  opacity: 0.5;
-  cursor: default;
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
-/* 次要动作：嵌在行里的那些，不该看起来像主按钮 —— 但与输入框同高、同基线 */
+.tts-btn.is-primary {
+  border-color: var(--accent-dim);
+  background: var(--accent-soft);
+  color: #cfe6f7;
+}
+
+.tts-btn.is-primary:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: rgb(91 159 212 / 26%);
+}
+
+/* 幽灵按钮：行内次要动作。它不该看起来像主按钮，但仍与输入框同高 ——
+   否则一行里会出现三种基线 */
+.tts-btn.is-ghost,
 .tts-form-link {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   height: var(--ui-row-h);
-  padding: 0 10px;
-  border: 1px solid var(--border-soft);
-  border-radius: 3px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-s);
   background: none;
   color: var(--text);
   font: inherit;
+  font-size: 0.95em;
+  white-space: nowrap;
   cursor: pointer;
+  transition:
+    background 0.12s,
+    color 0.12s;
 }
 
+.tts-btn.is-ghost:hover:not(:disabled),
 .tts-form-link:hover:not(:disabled) {
   background: var(--bg-menu-hover);
 }
 
+.tts-btn.is-ghost.is-danger,
+.tts-form-link.is-danger {
+  color: var(--danger);
+}
+
+.tts-btn.is-ghost.is-danger:hover:not(:disabled),
+.tts-form-link.is-danger:hover:not(:disabled) {
+  background: rgb(232 101 109 / 14%);
+}
+
+.tts-btn:disabled,
 .tts-form-link:disabled {
-  opacity: 0.5;
-  cursor: default;
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
-/* ===== 问题与说明 ===== */
+/* 键盘焦点一律看得见 —— 表单是纯键盘能走完的 */
+.tts-form input:focus-visible,
+.tts-form select:focus-visible,
+.tts-form button:focus-visible,
+.tts-cred input:focus-visible,
+.tts-cred select:focus-visible,
+.tts-cred button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
 
-.tts-form-issues {
+/* ===== 说明条（一次动作的结果 / 文件级问题）===== */
+
+.tts-note {
   margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.tts-form-issues li {
-  line-height: 1.7;
-  color: var(--text-dim);
-}
-
-.tts-form-issues .level-error {
-  color: #e08a8a;
-}
-
-.tts-form-issues .level-warning {
-  color: #d8b45a;
-}
-
-.tts-form-ok {
-  margin: 0;
-  color: var(--text-dim);
-  line-height: 1.7;
-}
-
-/* 内容读不出来（或文件还空着）时的一条说明 —— 不是错误，是"从零填"的起点 */
-.tts-form-notice {
-  margin: 0;
-  padding: 10px 12px;
+  padding: 8px 11px;
   border: 1px solid var(--border-soft);
-  border-left: 3px solid #d8b45a;
-  border-radius: 3px;
-  background: var(--bg-status);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-s);
+  background: var(--bg-sidebar);
   color: var(--text-dim);
-  line-height: 1.7;
+  font-size: 0.95em;
+  line-height: 1.65;
 }
 
-/* ===== 语言卡片 ===== */
-
-.tts-lang-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+.tts-note.is-warn {
+  border-left-color: var(--warn);
 }
 
-.tts-lang-tag {
-  color: var(--text-bright);
-  font-weight: 600;
+.tts-note.is-danger {
+  border-left-color: var(--danger);
 }
 
-/* 克隆样本：一行一个。
-   缩进到控件那一列（标签宽 + 行内间距），与上面的「新增样本」左边缘对齐 ——
-   横着排会让路径挤成一团，看不出选的是哪个文件。 */
-.tts-sample-list {
-  /* 上间距显式写出来：`.tts-lang > * + *` 与本选择器同优先级，
-     靠后来的规则生效，只写 `margin: 0` 会把它悄悄压掉 */
-  margin: var(--tts-row-gap) 0 0;
-  padding: 0 0 0 calc(var(--tts-label-w) + 10px);
-  list-style: none;
+/* ===== 空态 ===== */
+
+.tts-empty {
+  padding: 18px 14px;
+  border: 1px dashed var(--border-soft);
+  border-radius: var(--radius-m);
+  color: var(--text-dim);
+  line-height: 1.65;
 }
 
-.tts-sample-list li {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
+/* ===== 窄屏：整行塌成一列 ===== */
 
-.tts-sample-list li + li {
-  margin-top: var(--tts-row-gap);
-}
+@media (max-width: 720px) {
+  .tts-form-inner,
+  .tts-page-head-inner {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
 
-.tts-sample-list select {
-  flex: 1 1 auto;
-  min-width: 0;
+  .tts-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .tts-row-label {
+    min-height: 0;
+  }
+
+  .tts-row > .tts-control {
+    grid-column: 1;
+  }
+
+  .tts-page-actions {
+    margin-left: 0;
+  }
 }
 
 /* ===== 原始编辑时的提示条（由 ScriptWorkspace 渲染）===== */
@@ -302,7 +449,7 @@ p.tts-form-note {
   padding: 6px 12px;
   border-bottom: 1px solid var(--border-soft);
   background: var(--bg-status);
-  color: var(--text-dim);
+  color: var(--text-bright);
   font-size: var(--ui-font-size);
 }
 

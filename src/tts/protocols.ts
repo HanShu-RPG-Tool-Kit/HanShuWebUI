@@ -110,7 +110,7 @@ export function requireBaseUrl(service: ResolvedService): Resolved<string> {
       failure: {
         kind: 'config',
         message: `服务「${service.id}」没有端点地址`,
-        hint: '到服务编辑器里填 `baseUrl`',
+        hint: '在服务设置页里填端点',
       },
     }
   }
@@ -124,7 +124,7 @@ function requireModel(service: ResolvedService): Resolved<string> {
       failure: {
         kind: 'config',
         message: `服务「${service.id}」没有模型`,
-        hint: '到服务编辑器里选一个模型',
+        hint: '在服务设置页里选模型',
       },
     }
   }
@@ -143,7 +143,7 @@ export function requireApiKey(input: {
       failure: {
         kind: 'config',
         message: `服务「${input.service.id}」没有 apiKeyRef`,
-        hint: '到服务编辑器里补上凭据引用',
+        hint: '在服务设置页里补上 API KEY 引用',
       },
     }
   }
@@ -153,8 +153,8 @@ export function requireApiKey(input: {
       ok: false,
       failure: {
         kind: 'credential',
-        message: `本机还没有凭据「${field.value}」`,
-        hint: '到设置里的凭据库填一份 —— 它不进工程，只在你这台机器上',
+        message: `本地缓存里没有 API KEY「${field.value}」`,
+        hint: '打开本地缓存填一份 —— 它不进工程，只在你这台机器上',
       },
     }
   }

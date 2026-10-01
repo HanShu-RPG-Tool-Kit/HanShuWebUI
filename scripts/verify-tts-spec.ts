@@ -130,9 +130,9 @@ check(
 
 const BOTH = '{"version":1,"voices":{"zh_cn":{"service":"a","voice":"b","clone":{"samples":["assets/x.wav"]}}}}'
 check(
-  '旧格式 clone 键给迁移提示（克隆在厂商控制台做，这里只填音色 id）',
+  '旧格式 clone 键：不报错（当它不存在）',
   errorPaths(validateVoicePlanStructure(parse(BOTH))),
-  ['voices.zh_cn.clone'],
+  [],
 )
 check(
   '音色 id 缺失',
@@ -145,13 +145,13 @@ check(
   ['voices.zh_cn.service'],
 )
 check(
-  '旧格式：只有 clone 没有 voice → 两个错都报出来（缺的补、旧的迁）',
+  '旧格式：只有 clone 没有 voice → 只报缺音色，clone 不出声',
   errorPaths(
     validateVoicePlanStructure(
       parse('{"version":1,"voices":{"zh_cn":{"service":"a","clone":{"samples":["assets/x.wav"]}}}}'),
     ),
   ),
-  ['voices.zh_cn.voice', 'voices.zh_cn.clone'],
+  ['voices.zh_cn.voice'],
 )
 
 check(
@@ -176,7 +176,7 @@ check(
   ['voices.zh_cn.foo'],
 )
 check(
-  '旧格式 clone 不当未知键（它有自己的迁移提示，不混在警告里）',
+  '旧格式 clone 不当未知键（一个字都不提）',
   warningPaths(validateVoicePlanStructure(parse(BOTH))),
   [],
 )
@@ -437,12 +437,12 @@ check('另一个条目的未知键往返不丢', rtVoices.ja_jp.futureEntry2, [1
 check('规范形状写出来了', [roundTripped.version, rtVoices.zh_cn.service], [1, 'openai-main'])
 
 const legacy = readVoicePlan(
-  '{"version":1,"voices":{"zh_cn":{"service":"a","clone":{"samples":["assets/x.wav"],"futureClone":[3]}}}}',
+  '{"version":1,"voices":{"zh_cn":{"service":"a","voice":"v","clone":{"samples":["assets/x.wav"],"futureClone":[3]}}}}',
   '林晚.tts',
 )
-check('旧格式 clone 读得进（错误提示迁移，不丢数据）', legacy.ok, false)
+check('旧格式 clone：文件照样通过校验（clone 本身不成问题）', legacy.ok, true)
 check(
-  '旧格式 clone 落进 extra，往返不丢',
+  '旧格式 clone 落进 extra，往返不丢（不校验，也不丢）',
   (JSON.parse(stringifyVoicePlan(legacy.value)) as Record<string, Record<string, Record<string, unknown>>>)
     .voices.zh_cn.clone,
   { samples: ['assets/x.wav'], futureClone: [3] },

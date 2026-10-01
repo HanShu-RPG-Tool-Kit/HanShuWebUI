@@ -53,6 +53,16 @@ const KNOWN_TOP_KEYS = ['version', 'voices']
 const KNOWN_ENTRY_KEYS = ['service', 'voice', 'speed']
 
 /**
+ * 认识、但**既不校验也不提示**的键。
+ *
+ * `clone` 是旧版本（≤0.0.x）用来描述本机克隆样本的键 —— 克隆改到厂商控制台做之后它
+ * 就没有意义了。既然它不参与合成、也不影响任何判断，就**别再拿它打扰用户**：
+ * 不报错、不警告、界面上一个字都不提。读取时照旧落进 `extra` 原样保留（规范 §9 的
+ * "不认识的内容不丢"），写入时跟着回去 —— 它只是不再有一条属于自己的提示。
+ */
+const SILENT_ENTRY_KEYS = ['clone']
+
+/**
  * 顶层出现即**报错**的键。它们是"认识的键放错了位置" ——
  * 当未知键放过的话，用户会以为顶层那个值生效了，而实际读的是语言条目里的值。
  * 与规范 §5.1 拒绝顶层 `character` / `name` 是同一条思路。
@@ -165,20 +175,11 @@ function validateEntryStructure(
   { error, warn }: Reporters,
 ): void {
   if (typeof entry.service !== 'string' || !entry.service.trim()) {
-    error(`${path}.service`, '缺少 service（每条语言都要自带服务）')
+    error(`${path}.service`, '缺少 service')
   }
 
   if (typeof entry.voice !== 'string' || !entry.voice.trim()) {
-    error(`${path}.voice`, '缺少 voice —— 厂商账号下的音色 id（克隆音色也在厂商控制台克隆，这里只填 id）')
-  }
-
-  // 旧版格式（≤0.0.x）允许 `clone` 描述样本集并在本机克隆 —— 实测后改为「克隆一律
-  // 在厂商控制台做，这里只引用音色 id」。旧键不丢：落进 `extra` 原样保留（§9）。
-  if (entry.clone !== undefined) {
-    error(
-      `${path}.clone`,
-      '克隆已不在工程里做 —— 到厂商控制台克隆，把音色 id 填进 voice（这个键会被原样保留，不会丢）',
-    )
+    error(`${path}.voice`, '缺少音色 id')
   }
 
   if (entry.speed !== undefined && typeof entry.speed !== 'number') {
@@ -186,9 +187,8 @@ function validateEntryStructure(
   }
 
   for (const key of Object.keys(entry)) {
-    if (!KNOWN_ENTRY_KEYS.includes(key) && key !== 'clone') {
-      warn(`${path}.${key}`, '未知键，会被原样保留')
-    }
+    if (KNOWN_ENTRY_KEYS.includes(key) || SILENT_ENTRY_KEYS.includes(key)) continue
+    warn(`${path}.${key}`, '未知键，会被原样保留')
   }
 }
 
@@ -275,7 +275,7 @@ export function validateVoicePlanSemantics(
     if (!service) {
       error(
         `${path}.service`,
-        `找不到服务「${entry.service}」—— 工程里需要 ${SERVICE_FILE_DIR}/${entry.service}.ttsservice`,
+        `找不到服务「${entry.service}」：需要 ${SERVICE_FILE_DIR}/${entry.service}.ttsservice`,
       )
       continue
     }
@@ -293,7 +293,7 @@ export function validateVoicePlanSemantics(
       if (range && (entry.speed < range[0] || entry.speed > range[1])) {
         warn(
           `${path}.speed`,
-          `${service.protocol} 的语速区间是 ${range[0]}–${range[1]}，${entry.speed} 会被钳制`,
+          `语速超出 ${service.protocol} 的 ${range[0]}–${range[1]}，会被钳制`,
         )
       }
     }
@@ -303,7 +303,7 @@ export function validateVoicePlanSemantics(
         if (!context.hasCredential(field.value)) {
           warn(
             `${path}.service`,
-            `本机还没有凭据「${field.value}」（服务「${entry.service}」需要）`,
+            `本地缓存里没有「${field.value}」（服务「${entry.service}」需要）`,
           )
         }
       }

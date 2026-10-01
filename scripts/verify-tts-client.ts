@@ -164,7 +164,7 @@ const noKey = await synthesize(
 check('凭据缺失归到 credential', noKey.ok ? unknownFailure.kind : noKey.failure.kind, 'credential')
 check(
   '并且带下一步',
-  noKey.ok ? false : noKey.failure.hint?.includes('凭据库'),
+  noKey.ok ? false : noKey.failure.hint?.includes('本地缓存'),
   true,
 )
 

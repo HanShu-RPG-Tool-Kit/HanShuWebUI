@@ -141,7 +141,7 @@ Elo 来自 Artificial Analysis Speech Arena 的第三方快照,价格是各家�
 | **OpenAI 兼容** | OpenAI、Groq、OpenRouter、LLM Gateway、各类自建网关 | `POST /v1/audio/speech` | `Authorization: Bearer` | JSON: `model` `input` `voice` `response_format` `speed` `instructions` | **裸音频字节** | mp3(默认)/opus/aac/flac/wav/pcm |
 | **ElevenLabs** | ElevenLabs | `POST /v1/text-to-speech/{voice_id}` | **`xi-api-key` 头** | JSON: `text` `model_id` `voice_settings` `language_code` | **裸音频字节** | `output_format` 需带采样率,如 `mp3_44100_128` / `wav_44100` / `pcm_24000` |
 | **SSML REST** | Azure | `POST https://{region}.tts.speech.microsoft.com/cognitiveservices/v1` | `Ocp-Apim-Subscription-Key`(或 Bearer) | **SSML XML** | 裸音频字节 | `X-Microsoft-OutputFormat` 指定,如 `riff-24khz-16bit-mono-pcm` |
-| **JSON 内嵌 base64** | MiniMax | `POST https://api.minimaxi.com/v1/t2a_v2`(国内;国际站 `api.minimax.io`,两套 key 不通用,实测) | `Authorization: Bearer` | JSON: `model` `text` `voice_id` `speed` `vol` `pitch` `format` | **JSON 里的 base64** | mp3/pcm/flac/wav |
+| **JSON 内嵌 base64** | MiniMax | `POST https://api.minimax.cn/v1/t2a_v2`（国内；国际站 `api.minimax.io`，两套 key 不通用，实测。国内另有文档里出现的备用地址 `api.minimaxi.com`、`api-bj.minimaxi.com`） | `Authorization: Bearer` | JSON: `model` `text` `voice_id` `speed` `vol` `pitch` `format` | **JSON 里的 base64** | mp3/pcm/flac/wav |
 | **AWS 签名** | Amazon Polly | `SynthesizeSpeech` | SigV4 签名 | JSON | 裸音频字节 | mp3/ogg_vorbis/pcm |
 | **OAuth2** | Google Cloud | `text:synthesize` | Service Account | JSON + SSML 字段 | JSON 内 base64 | LINEAR16 / MP3 / **OGG_OPUS** |
 | **WebSocket 状态机** | MiniMax、阿里云 DashScope(CosyVoice) | `wss://…` | 握手头 | 事件流 `run-task` → `continue-task` → `finish-task` | 二进制/十六进制分片 | 各家自定义 |

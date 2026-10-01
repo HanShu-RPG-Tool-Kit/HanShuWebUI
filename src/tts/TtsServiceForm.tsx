@@ -1,39 +1,58 @@
 /**
  * `.ttsservice` 的**图形化设置页** —— 打开这个文件时取代代码编辑器。
  *
- * 用户面对的是"选一家供应商、贴一个 Key、要不要开克隆",不是 JSON。文件仍然是真相:
- * 每一处改动都先在内存里拼出完整的服务定义,再由 `stringifyServiceDefinition` 写回去
- * —— 所以**不认识的内容会原样保留**(规范 §9):表单只管它认识的那些键。
+ * 用户面对的是"选一家供应商、填一个 API KEY、端点要不要覆盖"，不是 JSON。文件仍然是
+ * 真相：每一处改动都先在内存里拼出完整的服务定义，再由 `stringifyServiceDefinition`
+ * 写回去 —— 所以**不认识的内容会原样保留**（规范 §9），表单只管它认识的键。
  *
- * "留空 = 跟随预设"是刻意的:端点、模型、能力三项都不写也能工作,
- * 那时取预设的默认值。所以每一项都显示"现在实际用的是哪个",以及一个「用默认」把它清回去。
+ * ## 界面上的三条约定
+ *
+ * - **检查结论贴在出问题的那一行下面**（`RowNote`），页面顶部不攒问题清单。
+ * - **没有副标题、没有汇总条、没有重复回显**。"现在实际用的是哪个端点"由输入框的
+ *   占位符与「用默认」表示，不再单开一行复述一遍。
+ * - **措辞简短、术语固定**：供应商 / 协议 / 端点 / 模型 / API KEY / 本地缓存。
+ *
+ * ## 两处刻意的做法
+ *
+ * - **"留空 = 跟随预设"**：端点、模型都不写也能工作，那时取预设的默认值。
+ *   所以留空时占位符显示的就是那个默认值，覆盖时给一个「用默认」清回去。
+ * - **凭据名允许为空，但不写半截引用**。`app:` 后面什么都没有不是合法引用
+ *   （规范 §5.3 的 `^…:[A-Za-z0-9_.-]+$`），把它写进文件等于给校验器塞一条错误；
+ *   空名字的语义是"未填写"，那就**删掉这个键**，让校验器说"缺少 API KEY，不能省"。
  */
 
-import { useMemo } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import {
   AUTH_SHAPES,
   PROTOCOLS,
   defaultCredentialRef,
+  isValidBaseUrl,
   serviceIdOfFileName,
-  type Issue,
   type ProtocolId,
 } from './spec'
 import { resolvePresets } from './providers'
 import {
   readServiceDefinition,
-  resolveService,
   stringifyServiceDefinition,
+  type AuthSpec,
   type ServiceDefinition,
 } from './service'
 import {
   createCredentialResolver,
   createLocalBackend,
   parseCredentialRef,
+  type CredentialScheme,
 } from './credentials'
 import './form.css'
 
 /** 不是预设、自己填协议的档（规范 §4.4） */
 const TEMPLATE_ID = 'template'
+
+/** 凭据引用名允许的字符 —— 与 `CREDENTIAL_REF_RE` 的后半段一致 */
+const CREDENTIAL_NAME_RE = /^[A-Za-z0-9_.-]+$/
+
+/** 正在输入的凭据引用（输入期间用草稿，别把半截值写进文件） */
+type AuthEdit = { key: string; scheme: CredentialScheme; name: string }
 
 export type TtsServiceFormProps = {
   fileName: string
@@ -42,6 +61,18 @@ export type TtsServiceFormProps = {
   onChange(next: string): void
   onSwitchToRaw(): void
   onOpenCredentials(): void
+}
+
+/** 就地说明：贴在出问题的那一行下面，而不是攒到页面顶部 */
+function RowNote({ tone, children }: { tone: 'danger' | 'warn' | 'ok'; children: ReactNode }) {
+  return (
+    <div className="tts-row is-note">
+      <span className="tts-row-label" />
+      <div className="tts-control">
+        <span className={`tts-hint is-${tone}`}>{children}</span>
+      </div>
+    </div>
+  )
 }
 
 export function TtsServiceForm({
@@ -56,6 +87,7 @@ export function TtsServiceForm({
     () => createCredentialResolver({ backend: createLocalBackend() }),
     [],
   )
+  const [authEdit, setAuthEdit] = useState<AuthEdit | null>(null)
 
   const id = serviceIdOfFileName(fileName) ?? fileName
   const read = useMemo(() => readServiceDefinition(text, id, presets), [text, id, presets])
@@ -66,7 +98,6 @@ export function TtsServiceForm({
    *
    * 这种情况**不当死路**：读不出任何设置，那就从零填 —— `read.value` 已经是一份
    * 空的服务定义(`toServiceDefinition(null)`)，表单照着它渲染即可。
-   * 把人赶去手写 JSON，等于惩罚他打开了一个坏文件。
    */
   const unreadable = useMemo(() => {
     if (!text.trim()) return true
@@ -81,7 +112,7 @@ export function TtsServiceForm({
   const preset = presets.find((item) => item.id === definition.provider) ?? null
   const protocol: ProtocolId | undefined = definition.protocol ?? preset?.protocol
   const info = protocol ? PROTOCOLS[protocol] : null
-  const resolved = useMemo(() => resolveService(definition, id, presets), [definition, id, presets])
+  const isTemplate = definition.provider === TEMPLATE_ID
 
   /** 改一处 → 拼出完整定义 → 写回文件。未知键在 `extra` 里，跟着一起回去 */
   const patch = (partial: Partial<ServiceDefinition>) => {
@@ -89,238 +120,427 @@ export function TtsServiceForm({
   }
 
   const authFields = info ? AUTH_SHAPES[info.authShape] : []
+  const expectedAuthKeys = new Set<string>(authFields.map((field) => field.key))
+  const strayAuthKeys = Object.keys(definition.auth).filter((key) => !expectedAuthKeys.has(key))
+
+  /** 能在页面上找到位置的路径 —— 其余只有两种去处：页面级错误、页脚计数 */
+  const isPlaced = (path: string) =>
+    path === 'label' ||
+    path === 'provider' ||
+    path === 'protocol' ||
+    path === 'baseUrl' ||
+    path === 'model' ||
+    path.startsWith('auth.')
+
+  const issuesAt = (path: string) => read.issues.filter((issue) => issue.path === path)
+  const fileErrors = unreadable
+    ? []
+    : read.issues.filter((issue) => issue.level === 'error' && !isPlaced(issue.path))
+  const foreignWarnings = unreadable
+    ? 0
+    : read.issues.filter((issue) => issue.level === 'warning' && !isPlaced(issue.path)).length
+
+  const notesFor = (path: string) => {
+    const list = issuesAt(path)
+    if (list.length === 0) return null
+    return (
+      <RowNote tone={list.some((issue) => issue.level === 'error') ? 'danger' : 'warn'}>
+        {list.map((issue) => issue.message).join('；')}
+      </RowNote>
+    )
+  }
+
+  /** 凭据引用：草稿优先，其次是文件里写的 */
+  const authRefOf = (fieldKey: string): { scheme: CredentialScheme; name: string } => {
+    if (authEdit?.key === fieldKey) {
+      return { scheme: authEdit.scheme, name: authEdit.name }
+    }
+    const parsed = parseCredentialRef(definition.auth[fieldKey] ?? '')
+    return { scheme: parsed?.scheme ?? 'app', name: parsed?.name ?? '' }
+  }
+
+  /**
+   * 写回一条凭据引用。
+   *
+   * 名字为空 → **删掉这个键**（"未填写"的正确表示，见文件头注释）；
+   * 名字非法 → 只留草稿、不写文件，让用户看得到自己在敲什么。
+   */
+  const writeAuthRef = (fieldKey: string, scheme: CredentialScheme, name: string) => {
+    const auth: AuthSpec = { ...definition.auth }
+    if (!name) delete auth[fieldKey]
+    else if (CREDENTIAL_NAME_RE.test(name)) auth[fieldKey] = `${scheme}:${name}`
+    else return
+    patch({ auth })
+  }
+
+  const baseUrlInvalid =
+    definition.baseUrl !== undefined &&
+    definition.baseUrl.trim() !== '' &&
+    !isValidBaseUrl(definition.baseUrl)
 
   return (
     <div className="tts-form">
-      <div className="tts-form-head">
-        <span className="tts-form-title">服务设置</span>
-        <span className="tts-form-subtitle">{fileName}</span>
-        <span className="tts-form-head-actions">
-          <button type="button" className="tts-form-btn" onClick={onOpenCredentials}>
-            凭据库
-          </button>
-          <button type="button" className="tts-form-link" onClick={onSwitchToRaw}>
-            以文本方式编辑
-          </button>
-        </span>
-      </div>
-
-      {unreadable ? (
-        <p className="tts-form-notice">
-          {text.trim()
-            ? '这个文件的内容不是合法 JSON，读不出任何设置 —— 下面是空的，从零填就行。保存会覆盖原来的内容。'
-            : '这个文件还是空的 —— 从下面开始填，保存后它就是内容。'}
-        </p>
-      ) : (
-        read.issues.length > 0 && (
-          <ul className="tts-form-issues">
-            {read.issues.map((issue: Issue, index) => (
-              <li key={`${issue.path}-${index}`} className={`level-${issue.level}`}>
-                <code>{issue.path}</code> {issue.message}
-              </li>
-            ))}
-          </ul>
-        )
-      )}
-
-      <div className="tts-form-section">
-        <p className="tts-form-section-title">这是什么</p>
-
-        <div className="tts-form-row">
-          <span className="tts-form-label">显示名</span>
-          <span className="tts-form-control">
-            <input
-              type="text"
-              value={definition.label ?? ''}
-              placeholder={id}
-              onChange={(event) => patch({ label: event.target.value || undefined })}
-            />
+      <header className="tts-page-head">
+        <div className="tts-page-head-inner">
+          <span className="tts-page-name">
+            服务设置 · {definition.label?.trim() || id}
           </span>
-        </div>
-
-        <div className="tts-form-row">
-          <span className="tts-form-label">供应商</span>
-          <span className="tts-form-control">
-            <select
-              value={definition.provider}
-              onChange={(event) => {
-                const provider = event.target.value
-                if (provider === TEMPLATE_ID) {
-                  // 预设档的协议是派生值；`template` 要自己选，先给一个
-                  patch({ provider, protocol: definition.protocol ?? 'openai-compatible' })
-                  return
-                }
-                const next = presets.find((item) => item.id === provider)
-                if (!next) {
-                  patch({ provider })
-                  return
-                }
-                // 顺手补上缺的凭据引用名。已有的值不动 —— 换供应商不该把你填好的引用冲掉
-                const auth = { ...definition.auth }
-                for (const field of AUTH_SHAPES[PROTOCOLS[next.protocol].authShape]) {
-                  if (!auth[field.key]) auth[field.key] = defaultCredentialRef(id, field.key)
-                }
-                patch({ provider, protocol: undefined, auth })
-              }}
+          <span className="tts-page-actions">
+            <button
+              type="button"
+              className="tts-btn"
+              onClick={onOpenCredentials}
+              title="查看与增删本机保存的 API KEY"
             >
-              {!presets.some((item) => item.id === definition.provider) && (
-                <option value={definition.provider}>
-                  {definition.provider || '（未填）'}
-                </option>
-              )}
-              {presets.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.label}
-                </option>
-              ))}
-              <option value={TEMPLATE_ID}>template（自己选协议）</option>
-            </select>
+              编辑本地缓存
+            </button>
+            <button type="button" className="tts-btn is-ghost" onClick={onSwitchToRaw}>
+              以文本方式编辑
+            </button>
           </span>
         </div>
+      </header>
 
-        <div className="tts-form-row">
-          <span className="tts-form-label">协议</span>
-          <span className="tts-form-control">
-            {definition.provider === TEMPLATE_ID ? (
-              <select
-                value={definition.protocol ?? ''}
-                onChange={(event) => patch({ protocol: event.target.value as ProtocolId })}
-              >
-                {(Object.keys(PROTOCOLS) as ProtocolId[]).map((key) => (
-                  <option key={key} value={key}>
-                    {PROTOCOLS[key].label}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <span className="tts-form-static">
-                <code>{info?.label ?? '（未知）'}</code>
-                <span className="tts-form-hint"> —— 由预设决定，不用选</span>
-              </span>
-            )}
-          </span>
-        </div>
-
-        {info && (
-          <div className="tts-form-row">
-            <span className="tts-form-label">怎么发</span>
-            <span className="tts-form-static tts-form-hint">{info.endpoint}</span>
-          </div>
-        )}
-      </div>
-
-      <div className="tts-form-section">
-        <p className="tts-form-section-title">端点与模型</p>
-
-        <div className="tts-form-row">
-          <span className="tts-form-label">端点</span>
-          <span className="tts-form-control">
-            <input
-              type="text"
-              value={definition.baseUrl ?? ''}
-              placeholder={
-                preset?.baseUrl || (preset ? '（这家没有默认端点，必填）' : '（协议根地址）')
-              }
-              onChange={(event) => patch({ baseUrl: event.target.value || undefined })}
-            />
-            {definition.baseUrl !== undefined && (
-              <button
-                type="button"
-                className="tts-form-link"
-                onClick={() => patch({ baseUrl: undefined })}
-              >
-                用默认
-              </button>
-            )}
-          </span>
-        </div>
-
-        <div className="tts-form-row">
-          <span className="tts-form-label">模型</span>
-          <span className="tts-form-control">
-            <input
-              type="text"
-              value={definition.model ?? ''}
-              placeholder={preset?.model ?? '（这家没有默认模型）'}
-              onChange={(event) => patch({ model: event.target.value || undefined })}
-            />
-            {definition.model !== undefined && (
-              <button
-                type="button"
-                className="tts-form-link"
-                onClick={() => patch({ model: undefined })}
-              >
-                用默认
-              </button>
-            )}
-          </span>
-        </div>
-
-        <div className="tts-form-row">
-          <span className="tts-form-label">实际用的</span>
-          <span className="tts-form-static tts-form-hint">
-            端点 <code>{resolved.baseUrl || '（还没有）'}</code> · 模型{' '}
-            <code>{resolved.model ?? '（还没有）'}</code>
-          </span>
-        </div>
-      </div>
-
-      <div className="tts-form-section">
-        <p className="tts-form-section-title">凭据</p>
-        <p className="tts-form-hint">
-          这里只写「引用」，真值放在本机凭据库 —— 所以工程可以整个发出去，密钥不会跟着走。
-        </p>
-
-        {authFields.map((field) => {
-          const ref = definition.auth[field.key] ?? ''
-          const parsed = parseCredentialRef(ref)
-          const scheme = parsed?.scheme ?? 'app'
-          const name = parsed?.name ?? ''
-          const ready = ref ? resolver.has(ref) : false
-          return (
-            <div className="tts-form-row" key={field.key}>
-              <span className="tts-form-label">{field.label}</span>
-              <span className="tts-form-control">
-                <select
-                  value={scheme}
-                  onChange={(event) => patch({ auth: { ...definition.auth, [field.key]: `${event.target.value}:${name}` } })}
-                >
-                  <option value="app">本机凭据库</option>
-                  <option value="env">环境变量</option>
-                </select>
-                <input
-                  type="text"
-                  value={name}
-                  placeholder={scheme === 'env' ? 'OPENAI_API_KEY' : `${id}`}
-                  onChange={(event) =>
-                    patch({
-                      auth: { ...definition.auth, [field.key]: `${scheme}:${event.target.value}` },
-                    })
-                  }
-                />
-                <span className={ready ? 'tts-form-hint' : 'tts-form-hint'}>
-                  {!ref ? (
-                    '还没填'
-                  ) : scheme === 'env' ? (
-                    '环境变量（由桌面壳读进来）'
-                  ) : ready ? (
-                    '已配置'
-                  ) : (
-                    <button type="button" className="tts-form-link" onClick={onOpenCredentials}>
-                      本机没有 —— 去填一份
-                    </button>
-                  )}
-                </span>
-              </span>
-            </div>
+      <div className="tts-form-inner">
+        {unreadable ? (
+          <p className="tts-note is-warn">
+            {text.trim()
+              ? '文件不是合法 JSON，读不出设置 —— 下面从零填，保存会覆盖原内容。'
+              : '文件是空的 —— 从下面开始填。'}
+          </p>
+        ) : (
+          fileErrors.length > 0 && (
+            <p className="tts-note is-danger">
+              {fileErrors.map((issue) => `${issue.path} ${issue.message}`).join('；')}
+            </p>
           )
-        })}
-      </div>
+        )}
 
-      <div className="tts-form-section">
-        <p className="tts-form-section-title">这份文件的其它内容</p>
-        <p className="tts-form-ok">
-          表单只管它认识的键。文件里如果还有别的键，会「原样保留」，不会被这个页面抹掉。
+        <section className="tts-card" aria-label="供应商">
+          <div className="tts-card-head">
+            <span className="tts-page-name">供应商</span>
+          </div>
+          <div className="tts-card-body">
+            <div className="tts-row">
+              <label className="tts-row-label" htmlFor="tts-svc-label">
+                名称
+              </label>
+              <div className="tts-control">
+                <input
+                  id="tts-svc-label"
+                  type="text"
+                  value={definition.label ?? ''}
+                  placeholder={id}
+                  onChange={(event) => patch({ label: event.target.value || undefined })}
+                />
+              </div>
+            </div>
+            {notesFor('label')}
+
+            <div className="tts-row">
+              <label className="tts-row-label" htmlFor="tts-svc-provider">
+                预设
+              </label>
+              <div className="tts-control">
+                <select
+                  id="tts-svc-provider"
+                  value={definition.provider}
+                  onChange={(event) => {
+                    const provider = event.target.value
+                    if (provider === TEMPLATE_ID) {
+                      // 预设档的协议是派生值；`template` 要自己选，先给一个
+                      patch({ provider, protocol: definition.protocol ?? 'openai-compatible' })
+                      return
+                    }
+                    const next = presets.find((item) => item.id === provider)
+                    if (!next) {
+                      patch({ provider })
+                      return
+                    }
+                    // 换供应商 = 换鉴权形态：**只保留新形态要的那几个引用**，
+                    // 其余是死键（Polly 的 secretKeyRef 在 apiKey 下没有任何意义）。
+                    // 同一个键上已有的值不动 —— 那是用户填过的。
+                    const shape = AUTH_SHAPES[PROTOCOLS[next.protocol].authShape]
+                    const auth: AuthSpec = {}
+                    for (const field of shape) {
+                      const current = definition.auth[field.key]
+                      auth[field.key] = current?.trim()
+                        ? current
+                        : defaultCredentialRef(id, field.key)
+                    }
+                    patch({ provider, protocol: undefined, auth })
+                    setAuthEdit(null)
+                  }}
+                >
+                  {/* 空 provider（手写的半成品文件）不能让下拉默认停在第一项上 ——
+                      那会显示 OpenAI 而文件里什么都没有 */}
+                  {!definition.provider && (
+                    <option value="" disabled>
+                      （未选）
+                    </option>
+                  )}
+                  {definition.provider &&
+                    !presets.some((item) => item.id === definition.provider) &&
+                    !isTemplate && (
+                      <optgroup label="当前值">
+                        <option value={definition.provider}>{definition.provider}</option>
+                      </optgroup>
+                    )}
+                  <optgroup label="内置">
+                    {presets
+                      .filter((item) => item.builtin)
+                      .map((item) => (
+                        <option key={item.id} value={item.id}>
+                          {item.label}
+                        </option>
+                      ))}
+                  </optgroup>
+                  {presets.some((item) => !item.builtin) && (
+                    <optgroup label="自定义预设">
+                      {presets
+                        .filter((item) => !item.builtin)
+                        .map((item) => (
+                          <option key={item.id} value={item.id}>
+                            {item.label}
+                          </option>
+                        ))}
+                    </optgroup>
+                  )}
+                  <option value={TEMPLATE_ID}>template（自行指定协议）</option>
+                </select>
+              </div>
+            </div>
+            {notesFor('provider')}
+
+            <div className="tts-row">
+              <span className="tts-row-label">协议</span>
+              <div className="tts-control">
+                {isTemplate ? (
+                  <select
+                    value={definition.protocol ?? ''}
+                    aria-label="协议"
+                    onChange={(event) =>
+                      patch({ protocol: event.target.value as ProtocolId })
+                    }
+                  >
+                    {(Object.keys(PROTOCOLS) as ProtocolId[]).map((key) => (
+                      <option key={key} value={key}>
+                        {PROTOCOLS[key].label}
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <span className="tts-static">
+                    <code>{info?.label ?? '（未定）'}</code>
+                  </span>
+                )}
+              </div>
+            </div>
+            {notesFor('protocol')}
+          </div>
+        </section>
+
+        <section className="tts-card" aria-label="连接">
+          <div className="tts-card-head">
+            <span className="tts-page-name">连接</span>
+          </div>
+          <div className="tts-card-body">
+            <div className="tts-row">
+              <label className="tts-row-label" htmlFor="tts-svc-baseurl">
+                端点
+              </label>
+              <div className="tts-control">
+                <input
+                  id="tts-svc-baseurl"
+                  className="is-wide"
+                  type="text"
+                  value={definition.baseUrl ?? ''}
+                  placeholder={preset?.baseUrl ?? 'https://'}
+                  aria-invalid={baseUrlInvalid}
+                  onChange={(event) => patch({ baseUrl: event.target.value || undefined })}
+                />
+                {definition.baseUrl !== undefined && (
+                  <button
+                    type="button"
+                    className="tts-btn is-ghost"
+                    onClick={() => patch({ baseUrl: undefined })}
+                    title={preset?.baseUrl ? `默认 ${preset.baseUrl}` : '这家没有默认端点'}
+                  >
+                    用默认
+                  </button>
+                )}
+              </div>
+            </div>
+            {baseUrlInvalid ? (
+              <RowNote tone="danger">
+                必须是 <code>https://</code> 端点（localhost 可用 http://）
+              </RowNote>
+            ) : definition.baseUrl === undefined && preset && !preset.baseUrl ? (
+              <RowNote tone="danger">该供应商没有默认端点</RowNote>
+            ) : (
+              notesFor('baseUrl')
+            )}
+
+            <div className="tts-row">
+              <label className="tts-row-label" htmlFor="tts-svc-model">
+                模型
+              </label>
+              <div className="tts-control">
+                <input
+                  id="tts-svc-model"
+                  className="is-wide"
+                  type="text"
+                  value={definition.model ?? ''}
+                  placeholder={preset?.model ?? '可留空'}
+                  list={preset?.models ? 'tts-svc-models' : undefined}
+                  onChange={(event) => patch({ model: event.target.value || undefined })}
+                />
+                {preset?.models && (
+                  <datalist id="tts-svc-models">
+                    {preset.models.map((model) => (
+                      <option key={model} value={model} />
+                    ))}
+                  </datalist>
+                )}
+                {definition.model !== undefined && (
+                  <button
+                    type="button"
+                    className="tts-btn is-ghost"
+                    onClick={() => patch({ model: undefined })}
+                    title={preset?.model ? `默认 ${preset.model}` : '这家没有默认模型'}
+                  >
+                    用默认
+                  </button>
+                )}
+              </div>
+            </div>
+            {notesFor('model')}
+          </div>
+        </section>
+
+        <section className="tts-card" aria-label="API KEY">
+          <div className="tts-card-head">
+            <span className="tts-page-name">API KEY</span>
+          </div>
+          <div className="tts-card-body">
+            <p className="tts-hint">密钥只存在本机，不写入工程文件。</p>
+
+            {authFields.length === 0 ? (
+              <RowNote tone="warn">先选预设</RowNote>
+            ) : (
+              authFields.map((field) => {
+                const { scheme, name } = authRefOf(field.key)
+                const ref = definition.auth[field.key] ?? ''
+                const ready = ref.trim() !== '' && resolver.has(ref)
+                const nameInvalid = name !== '' && !CREDENTIAL_NAME_RE.test(name)
+                /*
+                 * **一个字段只出一条结论。**
+                 *
+                 * 这里刻意不去渲染校验器给 `auth.<键>` 的消息：键被清空时它会说
+                 * "缺少 API KEY，不能省"，而那不是用户眼前这件事（他只是把名字删了）。
+                 * 只有"文件里写着一个格式不对的引用"才用它的原话 —— 那是文件的问题。
+                 */
+                const refMalformed = ref.trim() !== '' && parseCredentialRef(ref) === null
+                return (
+                  <div key={field.key}>
+                    <div className="tts-row">
+                      <label className="tts-row-label" htmlFor={`tts-svc-auth-${field.key}`}>
+                        {field.label}
+                      </label>
+                      <div className="tts-control">
+                        <select
+                          value={scheme}
+                          aria-label={`${field.label} 来源`}
+                          onChange={(event) => {
+                            const next = event.target.value as CredentialScheme
+                            setAuthEdit({ key: field.key, scheme: next, name })
+                            writeAuthRef(field.key, next, name)
+                          }}
+                        >
+                          <option value="app">本地缓存</option>
+                          <option value="env">环境变量</option>
+                        </select>
+                        <input
+                          id={`tts-svc-auth-${field.key}`}
+                          type="text"
+                          value={name}
+                          placeholder={scheme === 'env' ? 'MINIMAX_API_KEY' : id}
+                          aria-invalid={nameInvalid || refMalformed}
+                          onChange={(event) => {
+                            const next = event.target.value
+                            setAuthEdit({ key: field.key, scheme, name: next })
+                            writeAuthRef(field.key, scheme, next)
+                          }}
+                          onBlur={() =>
+                            setAuthEdit((current) =>
+                              current?.key === field.key ? null : current,
+                            )
+                          }
+                        />
+                        {/* 就在密钥旁边再给一个入口：改一份 key 是这一行的事，
+                            不必先回到页头去点那个按钮 */}
+                        <button
+                          type="button"
+                          className="tts-btn is-ghost"
+                          onClick={onOpenCredentials}
+                          title={`在本地缓存里增删或修改 ${ref.trim() || field.label}`}
+                        >
+                          编辑本地缓存
+                        </button>
+                      </div>
+                    </div>
+                    {nameInvalid ? (
+                      <RowNote tone="danger">
+                        名字只能用字母、数字、<code>_</code>、<code>.</code>、<code>-</code>
+                      </RowNote>
+                    ) : refMalformed ? (
+                      <RowNote tone="danger">
+                        引用必须是 <code>env:名字</code> 或 <code>app:名字</code>
+                      </RowNote>
+                    ) : ref.trim() === '' ? (
+                      <RowNote tone="danger">未填写</RowNote>
+                    ) : scheme === 'env' ? (
+                      <RowNote tone="warn">环境变量：当前窗口读不到</RowNote>
+                    ) : ready ? (
+                      <RowNote tone="ok">已配置</RowNote>
+                    ) : (
+                      <RowNote tone="warn">
+                        未配置
+                        <button type="button" className="tts-form-link" onClick={onOpenCredentials}>
+                          填写
+                        </button>
+                      </RowNote>
+                    )}
+                  </div>
+                )
+              })
+            )}
+
+            {strayAuthKeys.length > 0 && (
+              <RowNote tone="warn">
+                当前协议用不到 <code>{strayAuthKeys.join('、')}</code>
+                <button
+                  type="button"
+                  className="tts-form-link"
+                  onClick={() => {
+                    const auth: AuthSpec = {}
+                    for (const key of expectedAuthKeys) {
+                      const current = definition.auth[key]
+                      if (current !== undefined) auth[key] = current
+                    }
+                    patch({ auth })
+                  }}
+                >
+                  清除
+                </button>
+              </RowNote>
+            )}
+          </div>
+        </section>
+
+        <p className="tts-hint">
+          未在此页管理的字段会原样保留
+          {foreignWarnings > 0 ? `（另有 ${foreignWarnings} 处）` : ''}。
         </p>
       </div>
     </div>

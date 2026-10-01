@@ -320,7 +320,7 @@ const noCredential = failureOf(
   }),
 )
 check('凭据没配 —— 是 credential，不是"合成失败"', noCredential.kind, 'credential')
-check('并且告诉用户下一步', noCredential.hint?.includes('凭据库'), true)
+check('并且告诉用户下一步', noCredential.hint?.includes('本地缓存'), true)
 
 const noBaseUrl = failureOf(
   ADAPTERS.azure({

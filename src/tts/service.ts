@@ -195,7 +195,7 @@ function validateAuth(
   const expected = new Set<string>(AUTH_SHAPES[shape].map((field) => field.key))
   for (const key of Object.keys(auth)) {
     if (key.endsWith('Ref') && !expected.has(key)) {
-      warn(`auth.${key}`, `${protocol} 用不到这个凭据字段`)
+      warn(`auth.${key}`, `${protocol} 用不到这个字段`)
     }
   }
 }

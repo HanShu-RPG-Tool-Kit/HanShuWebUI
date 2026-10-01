@@ -60,7 +60,7 @@ export async function synthesize(
       failure: {
         kind: 'config',
         message: `服务「${service.id}」没有可用的协议`,
-        hint: '到服务编辑器里选一个供应商，或给 template 档指定协议',
+        hint: '在服务设置页里选供应商，或给 template 档指定协议',
       },
     }
   }
@@ -157,7 +157,7 @@ export async function synthesizePlanLocale(
       failure: {
         kind: 'config',
         message: `这份配音方案没有配「${input.locale}」`,
-        hint: '到角色编辑器里加一条语言',
+        hint: '在这份方案的设置页里加一条语言',
       },
     }
   }

@@ -1,15 +1,24 @@
 /**
- * 凭据库（本机）—— `auth` 里那些 `env:` / `app:` 引用在这里落成真值。
+ * 本地缓存 —— 服务定义里那些 `env:` / `app:` 引用在这里落成 API KEY 真值。
  *
- * **它不进工程。** 工程会给人、会上传、会备份,而 `.ttsservice` 会被导出工程包原样带走、
- * 会被 Agent 读、会进 git 历史 —— 密钥一旦写进文本就收不回来(规范 §1)。
- * 所以这个界面里的东西只活在这台机器上,换个人打开同一个工程,该填的是他自己的一份。
+ * **它不进工程。** 工程会给人、会上传、会备份，而 `.ttsservice` 会被导出工程包原样带走、
+ * 会被 Agent 读、会进 git 历史 —— 密钥一旦写进文本就收不回来（规范 §1）。
+ * 所以这个界面里的东西只活在这台机器上，换个人打开同一个工程，该填的是他自己的一份。
  *
- * 只处理 `app:` 引用。`env:` 指向环境变量,浏览器与 webview 都读不到进程环境变量,
- * 得由桌面壳从 Rust 侧递过来 —— 那一步没做之前,`env:` 在这里只会显示"取不到"。
+ * 只处理 `app:` 引用。`env:` 指向环境变量，浏览器与 webview 都读不到进程环境变量，
+ * 得由桌面壳从 Rust 侧递过来 —— 那一步没做之前，`env:` 在这里只会显示"读不到"。
+ *
+ * ## 三处刻意的做法
+ *
+ * - **名字先过关再入库**。名字要能拼进 `app:名字` 才算数（规范 §5.3 的字符集），
+ *   存一个引用不到的键只是给缓存添垃圾。
+ * - **覆盖与删除都要确认**。删掉一份 API KEY 就得回厂商控制台重签一份 ——
+ *   这不是一个可以误点的动作。
+ * - **"工程还需要"里的每一项可以一键填**：点一下就把名字带进表单、光标落到密钥那一格。
+ *   协作者打开别人的工程时这是唯一必须重做的一步，别让他手抄一遍名字。
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   createLocalBackend,
   maskSecret,
@@ -17,6 +26,9 @@ import {
   type CredentialBackend,
 } from './tts/credentials'
 import './TtsCredentialsModal.css'
+
+/** 名称允许的字符 —— 与 `CREDENTIAL_REF_RE` 的后半段一致 */
+const CREDENTIAL_NAME_RE = /^[A-Za-z0-9_.-]+$/
 
 export type TtsCredentialsModalProps = {
   onClose(): void
@@ -30,9 +42,8 @@ export type TtsCredentialsModalProps = {
 /**
  * **由调用方只在需要时挂载**（`{open && <TtsCredentialsModal …/>}`），这里没有 `open` 参数。
  *
- * 这样列表的初值就是挂载那一刻的真实值,增删由用户自己的动作驱动 ——
- * 不需要"用 effect 把自己和存储同步一遍"。那个写法既多一轮渲染,
- * 也正是 React 点名要避免的。
+ * 这样列表的初值就是挂载那一刻的真实值，增删由用户自己的动作驱动 ——
+ * 不需要"用 effect 把自己和存储同步一遍"。
  */
 export function TtsCredentialsModal({
   onClose,
@@ -43,6 +54,8 @@ export function TtsCredentialsModal({
   const [revealed, setRevealed] = useState<Record<string, boolean>>({})
   const [newName, setNewName] = useState('')
   const [newValue, setNewValue] = useState('')
+  const nameRef = useRef<HTMLInputElement>(null)
+  const valueRef = useRef<HTMLInputElement>(null)
 
   const refresh = useCallback(() => setNames(backend.names().sort()), [backend])
 
@@ -54,29 +67,63 @@ export function TtsCredentialsModal({
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
 
-  /** 工程要的引用里,本机没有的那些。`env:` 单独说 —— 它不是"没填",是取不到 */
+  /** 打开就把光标放到"下一个能填的地方"：还没有就填名称，有就填密钥 */
+  useEffect(() => {
+    if (backend.names().length === 0) nameRef.current?.focus()
+    else valueRef.current?.focus()
+  }, [backend])
+
+  /** 工程要的引用里，本机还没有的那些。`env:` 单独说 —— 它不是"没填"，是读不到 */
   const missing = useMemo(() => {
     const have = new Set(names)
-    return requiredRefs
-      .map((ref) => ({ ref, parsed: parseCredentialRef(ref) }))
-      .filter((item) => item.parsed && item.parsed.scheme === 'app' && !have.has(item.parsed.name))
-      .map((item) => item.parsed!.name)
+    const out: string[] = []
+    for (const ref of requiredRefs) {
+      const parsed = parseCredentialRef(ref)
+      if (parsed && parsed.scheme === 'app' && !have.has(parsed.name) && !out.includes(parsed.name)) {
+        out.push(parsed.name)
+      }
+    }
+    return out
   }, [requiredRefs, names])
 
   const envRefs = useMemo(
-    () =>
-      requiredRefs.filter((ref) => parseCredentialRef(ref)?.scheme === 'env').length,
+    () => requiredRefs.filter((ref) => parseCredentialRef(ref)?.scheme === 'env').length,
     [requiredRefs],
   )
 
+  const trimmedName = newName.trim()
+  const nameInvalid = trimmedName !== '' && !CREDENTIAL_NAME_RE.test(trimmedName)
+  const exists = names.includes(trimmedName)
+  const canSave = trimmedName !== '' && !nameInvalid && newValue.trim() !== ''
+
   const add = () => {
-    const name = newName.trim()
-    const value = newValue.trim()
-    if (!name || !value) return
-    backend.set(name, value)
+    if (!canSave) return
+    if (exists && !window.confirm(`「${trimmedName}」已存在，覆盖它？`)) return
+    backend.set(trimmedName, newValue.trim())
     setNewName('')
     setNewValue('')
     refresh()
+    nameRef.current?.focus()
+  }
+
+  const remove = (name: string) => {
+    if (!window.confirm(`删除本机的「${name}」？工程里的引用不变，下次要用需重新填写。`)) {
+      return
+    }
+    backend.remove(name)
+    setRevealed((prev) => {
+      const next = { ...prev }
+      delete next[name]
+      return next
+    })
+    refresh()
+  }
+
+  /** 从"工程还需要"点过来：名称预填好，光标直接落到密钥那一格 */
+  const fillFor = (name: string) => {
+    setNewName(name)
+    setNewValue('')
+    valueRef.current?.focus()
   }
 
   return (
@@ -85,101 +132,122 @@ export function TtsCredentialsModal({
         className="tts-cred"
         role="dialog"
         aria-modal="true"
-        aria-label="凭据库"
+        aria-labelledby="tts-cred-title"
         onMouseDown={(event) => event.stopPropagation()}
       >
-        <div className="tts-cred-head">
-          <h2>凭据库（只在这台机器上）</h2>
-          <button type="button" onClick={onClose}>
-            关闭
+        <header className="tts-cred-head">
+          <h2 id="tts-cred-title">本地缓存</h2>
+          <button
+            type="button"
+            className="tts-cred-close"
+            onClick={onClose}
+            aria-label="关闭"
+            title="关闭（Esc）"
+          >
+            ×
           </button>
-        </div>
+        </header>
 
         <div className="tts-cred-body">
-          <p className="tts-cred-note">
-            服务定义里只写引用（例如 <code>app:minimax-main</code>），真值放在这里。
-            工程因此可以整个发出去，而密钥不会跟着走 —— 协作者打开它时，
-            看到的是"这个工程需要一份凭据"，由他自己填一份。
-          </p>
+          <p className="tts-cred-hint">密钥只存在本机，不写入工程文件。</p>
 
-          {names.length === 0 ? (
-            <p className="tts-cred-empty">本机还没有任何凭据。</p>
-          ) : (
-            <ul className="tts-cred-list">
-              {names.map((name) => {
-                const value = backend.get(name) ?? ''
-                const shown = revealed[name]
-                return (
+          {missing.length > 0 && (
+            <div className="tts-cred-todo">
+              <div className="tts-cred-todo-head">工程还需要 {missing.length} 个 API KEY</div>
+              <ul>
+                {missing.map((name) => (
                   <li key={name}>
-                    <span className="tts-cred-name" title={name}>
-                      {name}
-                    </span>
-                    <span className="tts-cred-value">
-                      {shown ? value : maskSecret(value)}
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => setRevealed((prev) => ({ ...prev, [name]: !shown }))}
-                    >
-                      {shown ? '隐藏' : '显示'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        backend.remove(name)
-                        setRevealed((prev) => {
-                          const next = { ...prev }
-                          delete next[name]
-                          return next
-                        })
-                        refresh()
-                      }}
-                    >
-                      删除
+                    <code>{name}</code>
+                    <button type="button" className="tts-cred-btn" onClick={() => fillFor(name)}>
+                      填写
                     </button>
                   </li>
-                )
-              })}
-            </ul>
+                ))}
+              </ul>
+            </div>
           )}
 
-          <div className="tts-cred-add">
+          <div className="tts-cred-form">
             <input
+              ref={nameRef}
+              type="text"
               value={newName}
-              placeholder="名字（与引用里 app: 后面一致）"
+              placeholder="名称"
+              aria-invalid={nameInvalid}
+              aria-label="名称"
               onChange={(event) => setNewName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') valueRef.current?.focus()
+              }}
             />
             <input
-              value={newValue}
-              placeholder="粘贴密钥"
+              ref={valueRef}
               type="password"
+              value={newValue}
+              placeholder="API KEY"
+              aria-label="API KEY"
               onChange={(event) => setNewValue(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') add()
               }}
             />
-            <button type="button" onClick={add} disabled={!newName.trim() || !newValue.trim()}>
-              保存
+            <button
+              type="button"
+              className="tts-cred-btn is-primary"
+              onClick={add}
+              disabled={!canSave}
+            >
+              {exists ? '覆盖' : '保存'}
             </button>
           </div>
+          {nameInvalid ? (
+            <p className="tts-cred-hint is-danger">
+              名称只能用字母、数字、<code>_</code>、<code>.</code>、<code>-</code>
+            </p>
+          ) : exists && newValue.trim() !== '' ? (
+            <p className="tts-cred-hint is-warn">已有「{trimmedName}」，保存会覆盖原值</p>
+          ) : null}
 
-          {missing.length > 0 && (
-            <ul className="tts-cred-missing">
-              {missing.map((name) => (
-                <li key={name}>
-                  这个工程还需要 <code>{name}</code>
-                </li>
-              ))}
-            </ul>
-          )}
+          <div className="tts-cred-stored">
+            <div className="tts-cred-stored-head">已有 {names.length}</div>
+            {names.length === 0 ? (
+              <p className="tts-cred-empty">本机还没有 API KEY</p>
+            ) : (
+              <ul className="tts-cred-list">
+                {names.map((name) => {
+                  const value = backend.get(name) ?? ''
+                  const shown = Boolean(revealed[name])
+                  return (
+                    <li key={name}>
+                      <span className="tts-cred-name" title={name}>
+                        {name}
+                      </span>
+                      <span className="tts-cred-value">{shown ? value : maskSecret(value)}</span>
+                      <button
+                        type="button"
+                        className="tts-cred-btn"
+                        onClick={() => setRevealed((prev) => ({ ...prev, [name]: !shown }))}
+                      >
+                        {shown ? '隐藏' : '显示'}
+                      </button>
+                      <button
+                        type="button"
+                        className="tts-cred-btn is-danger"
+                        onClick={() => remove(name)}
+                      >
+                        删除
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+            )}
+          </div>
 
           {envRefs > 0 && (
-            <ul className="tts-cred-missing">
-              <li>
-                另有 {envRefs} 处用的是 <code>env:</code> 引用 —— 那个指向环境变量，
-                浏览器窗口读不到，得由桌面壳递进来。
-              </li>
-            </ul>
+            <p className="tts-cred-hint is-warn">
+              另有 {envRefs} 处使用环境变量引用，当前窗口读不到
+            </p>
           )}
         </div>
       </div>

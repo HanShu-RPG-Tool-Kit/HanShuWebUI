@@ -164,8 +164,8 @@
 是两个人,用的账号与服务也可能不同。**
 
 > 旧版格式(≤0.0.x)曾允许 `clone` 键描述样本集、由应用上传克隆 —— 2026-09 实测后
-> 移除(§5.6 记录了实测依据)。旧文件里的 `clone` 键不丢:结构校验给迁移提示,
-> 内容落进 `extra` 原样保留(§9)。
+> 移除(§5.6 记录了实测依据)。**旧文件里的 `clone` 键一律无视**:不校验、不报错、不警告,
+> 界面上一个字都不提;内容落进 `extra` 原样保留(§9),写入时跟着回去。
 
 ---
 
@@ -236,7 +236,8 @@
 |---|---|---|
 | `openai` | `openai-compatible` | `https://api.openai.com/v1` |
 | `elevenlabs` | `elevenlabs` | `https://api.elevenlabs.io` |
-| `minimax` | `minimax` | `https://api.minimax.io/v1`(国际);国内用 `https://api.minimaxi.com` |
+| `minimax` | `minimax` | `https://api.minimax.io/v1`（国际） |
+| `minimax-cn` | `minimax` | `https://api.minimax.cn/v1`（国内） |
 | `azure` | `azure` | —(按区域部署,服务自填) |
 | `google` | `google` | `https://texttospeech.googleapis.com` |
 | `polly` | `polly` | —(按区域部署,服务自填) |
@@ -582,7 +583,7 @@ OpenAI 指定语句录音),应用内再设任何字段都证明不了什么 —�
 | `voices.<k>` | 键**必须**是合法语言标签(`isValidLocaleTag`)—— 没有 `default` 之类兜底键;值必须是对象 |
 | `voices.<k>.service` | **必需**,非空字符串(它能解析到哪个服务文件属 §7.2 的语义校验) |
 | `voices.<k>.voice` | **必需**,非空字符串 —— 厂商账号下的音色 id |
-| `voices.<k>.clone` | **旧格式键**(≤0.0.x):报**错误**并给迁移提示("克隆在厂商控制台做,填 voice");内容落进 `extra` 原样保留,不丢 |
+| `voices.<k>.clone` | **旧格式键**(≤0.0.x):**无视**它 —— 不校验、不报错、不警告,界面上不提;内容落进 `extra` 原样保留,不丢 |
 | `voices.<k>.speed` | 可省,数值 |
 | 未知键 | **警告**,不报错(见 §9 的保留规则) |
 
@@ -791,7 +792,8 @@ JSON 解析用 `JSON.parse`,写出复用现成的保真写入思路。
 
 几处实测细节,免得后来者以为写错了:
 
-- **MiniMax 的国内端点是 `api.minimaxi.com`(不是 `.chat`)**,这套端点
+- **MiniMax 的国内端点是 `api.minimax.cn`**（官方 `.cn` 文档里 OpenAPI 的 `servers`；
+  同族的备用地址还有 `api.minimaxi.com`、`api-bj.minimaxi.com` —— 都不是 `.chat`），这套端点
   (`/files/upload`、`/voice_clone`、`/get_voice`、`/t2a_v2`)国内外**都不需要 `GroupId`**。
 - **MiniMax 的 `file_id` 是整数**,按字符串发回 `/voice_clone` 会吃
   `2013 invalid params`(应用内克隆已移除,此处仅留档给将来要直连的人)。

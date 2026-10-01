@@ -46,7 +46,7 @@ export function isProtocolId(value: unknown): value is ProtocolId {
  * 用户看到的是"贴一个 Key"或"贴一对 Key"，不是抽象的字段名。
  */
 export const AUTH_SHAPES = {
-  apiKey: [{ key: 'apiKeyRef', label: 'API Key' }],
+  apiKey: [{ key: 'apiKeyRef', label: 'API KEY' }],
   awsSigV4: [
     { key: 'accessKeyRef', label: 'Access Key' },
     { key: 'secretKeyRef', label: 'Secret Key' },
@@ -157,7 +157,7 @@ export type Issue = {
  * 混成一句"合成失败"等于什么都没说。
  *
  * - `config` —— 服务定义自己不成立(缺端点 / 缺模型),改的是 `.ttsservice`
- * - `credential` —— 本机缺凭据,改的是凭据库
+ * - `credential` —— 本地缓存里没有 API KEY，改的是本地缓存
  * - `unsupported` —— 该协议还没实现,改的是选哪家
  * - `transport` —— 请求没发出去(CORS / DNS / 断网 / 证书)
  * - `http` —— 厂商明确拒绝了(Key 无效 / 额度不足 / 模型名不对 / 音色不存在)

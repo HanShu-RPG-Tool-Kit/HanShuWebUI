@@ -60,9 +60,24 @@ export const BUILTIN_PRESETS: readonly ProviderPreset[] = [
   },
   {
     id: 'minimax',
-    label: 'MiniMax',
+    label: 'MiniMax（国际）',
     protocol: 'minimax',
     baseUrl: 'https://api.minimax.io/v1',
+    model: 'speech-2.8-hd',
+    models: ['speech-2.8-hd', 'speech-2.8-turbo'],
+    builtin: true,
+  },
+  {
+    // 国内外是**两套账号、两套 key**（实测不通用），所以是两个预设而不是一个端点选项：
+    // `provider` 是随工程走的，选错了别人拿到的就是一个连不上的工程。
+    //
+    // 国内端点以官方 `.cn` 文档的 OpenAPI `servers` 为准（`https://api.minimax.cn`）。
+    // 同族还有两个在文档里出现的备用地址，遇到区域解析 / 证书问题可以改端点试：
+    // `https://api.minimaxi.com`、`https://api-bj.minimaxi.com`。
+    id: 'minimax-cn',
+    label: 'MiniMax（国内）',
+    protocol: 'minimax',
+    baseUrl: 'https://api.minimax.cn/v1',
     model: 'speech-2.8-hd',
     models: ['speech-2.8-hd', 'speech-2.8-turbo'],
     builtin: true,
