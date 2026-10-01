@@ -128,3 +128,47 @@ export function isUnderVoiceRoot(
   const root = `${voiceRootDir(locale, ext).toLowerCase()}/`
   return path.trim().replace(/\\/g, '/').toLowerCase().startsWith(root)
 }
+
+/** 一条本地化产物路径拆开之后的样子 */
+export type LocaleAssetPath = {
+  /** 语言标签（原样，未规范化） */
+  locale: string
+  /** 产物类别 */
+  kind: 'text' | 'voice'
+  /** 根目录里标明的**源后缀**（小写）：`hs`、`char`… */
+  sourceExt: string
+  /** 根目录之后的相对路径：文本 `目录/cp1.lang`、音频 `目录/cp1/键名.ogg` */
+  rest: string
+}
+
+const LOCALE_ASSET_RE = /^assets\/([^/]+)\/(lang|voice)_([a-z0-9]+)\/(.+)$/i
+
+/**
+ * 把一条资产路径**反解**成"哪个语言、哪种产物、哪个源后缀、根目录之后是什么"。
+ *
+ * 布局在这里只认一次（上面那几个函数负责拼，这里负责拆）。需要反解的地方 —— 目前是
+ * 改名时连带搬迁 —— 拿结构化结果，而不是再写一遍 `lang_` / `voice_` 的字符串匹配：
+ * 少写一处，就少一处"只比对了文件名、忘了比对后缀"的机会（那正是改名会把别的文件的
+ * 产物一起搬走的原因）。
+ */
+export function parseLocaleAssetPath(path: string): LocaleAssetPath | null {
+  const match = LOCALE_ASSET_RE.exec(normalizeSourcePath(path))
+  if (!match) return null
+  const [, locale, kind, sourceExt, rest] = match
+  return {
+    locale,
+    kind: kind.toLowerCase() === 'lang' ? 'text' : 'voice',
+    sourceExt: sourceExt.toLowerCase(),
+    rest,
+  }
+}
+
+/** 同一份产物换成一个新的源后缀之后的根目录：`assets/zh_cn/lang_hs` → `assets/zh_cn/lang_md` */
+export function localeAssetRootWithExt(
+  asset: LocaleAssetPath,
+  ext: string,
+): string {
+  return asset.kind === 'text'
+    ? textRootDir(asset.locale, ext)
+    : voiceRootDir(asset.locale, ext)
+}
