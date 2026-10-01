@@ -19,6 +19,7 @@ import { VOICE_EXTRA_GLYPHS } from '../ui/voiceIcons'
 import { VoiceEmptyGlyph, VoiceGlyph, VoiceWaveform } from '../ui/VoiceVisuals'
 import { hasExternalFiles } from '../drag/dragPayload'
 import { formatBytes } from '../assets/paths'
+import type { TtsFailureKind } from '../tts/spec'
 import {
   VoiceAssetBrowser,
   voiceFormatOfPath,
@@ -56,11 +57,16 @@ import {
 export type StudioMode = 'single' | 'batch'
 export type StudioSourceMode = 'fixed' | 'tts' | 'record'
 
-/** TTS 生成的当前状态 —— 失败要分类、要给出下一步,不能只说"生成失败" */
+/**
+ * TTS 生成的当前状态 —— 失败要分类、要给出下一步，不能只说"生成失败"。
+ *
+ * `failureKind` 直接带上 `TtsFailure.kind`：界面据此决定给哪个"下一步"按钮
+ * （API KEY 缺失 → 打开本地缓存），而不是去猜消息里有没有"凭据"两个字。
+ */
 export type StudioTtsStatus =
   | { kind: 'idle' }
   | { kind: 'busy'; message: string }
-  | { kind: 'error'; message: string; hint?: string }
+  | { kind: 'error'; message: string; hint?: string; failureKind?: TtsFailureKind }
   | { kind: 'done'; message: string }
 
 /**
@@ -76,7 +82,24 @@ export type StudioTtsPanel = {
   /** 当前方案可选的语言 */
   locales: string[]
   locale: string | null
+  /**
+   * 这份方案**为什么还不能用**（校验器给的第一条错误原话）；null = 能用了。
+   *
+   * 直接透出原话而不是写死一句"还没填完"：拦住的可能是缺音色 id、缺服务，
+   * 也可能是旧文件留了个废弃键 —— 猜错一句就等于把用户指错方向。
+   */
+  planBlockedReason: string | null
   status: StudioTtsStatus
+  /**
+   * 正在生成。
+   *
+   * **它必须把「生成配音」按住。** 合成是逐键串行的,而导入共用同一份进度与取消引用
+   * (见 ScriptWorkspace 的 `runVoiceImportForKeys`) —— 同一个按钮点两下会跑起两条
+   * 合成循环,进度条互相覆盖、取消也取消不干净。
+   */
+  busy: boolean
+  /** 一次合成的分块进度(长文本会切成好几块)。null = 还没开始 */
+  progress: { ratio: number; label: string } | null
   canGenerate: boolean
   onPlanChange(name: string): void
   onLocaleChange(locale: string): void
@@ -87,7 +110,13 @@ export type StudioTtsPanel = {
    * 上层不该再推一遍同样的逻辑。
    */
   onGenerate(keys: string[]): void
-  /** 缺凭据时的下一步 */
+  /** 停止生成(中断当前合成,并挡住后面还没开始的键) */
+  onCancel?(): void
+  /** 新建一份配音方案。建完自动选中它，但**不抢走编辑器** —— 缺什么由这一格说出来 */
+  onCreatePlan?(): void
+  /** 打开当前选中的那份方案，去把缺的填上 */
+  onOpenPlan?(): void
+  /** 缺 API KEY 时的下一步 */
   onOpenCredentials?(): void
 }
 
@@ -543,6 +572,23 @@ export function RecordingStudio({
   /** 底部「确认导入」到底做什么 */
   const importTargets =
     mode === 'single' ? (activeKey ? [activeKey] : []) : selectedKeys
+
+  /**
+   * 台词来自哪个语言。
+   *
+   * 录音棚是**按"当前脚本 + 当前语言"建起来的**（`library.locale`），
+   * 而 TTS 合成用的文本正是编辑器里那份 `.lang` —— 所以判据在这里，
+   * 不需要上层再传一遍。
+   */
+  const textLocale = library?.locale ?? null
+  /**
+   * 选的音色语言与台词语言是否一致。
+   *
+   * 不一致时合成出来的是"用 A 语言的台词配 B 语言的音色"：发音对、内容错，
+   * 比直接报错难发现得多。所以**不给生成**，并说清先切语言。
+   */
+  const localeMatchesText =
+    textLocale === null || !tts?.locale || tts.locale === textLocale
   /** 配音方式是"录音"就走逐键录音那条路（单选 / 批量同一套，只是目标集合不同） */
   const confirmRecord = sourceMode === 'record'
   /** TTS 那一格的"确认"就是生成 —— 仍然是同一个按钮，不另开一条路 */
@@ -558,48 +604,71 @@ export function RecordingStudio({
     source?.kind === 'asset' &&
     (library?.resolvedPathOf(activeKey)?.toLowerCase() ?? '') ===
       source.path.toLowerCase()
+  /**
+   * 能不能按下去。三种方式各有各的门槛，但**都回到同一个按钮** —— 学习成本只付一次。
+   *
+   * TTS 那条多一个 `!tts.busy`：生成中再点一次会跑起第二条合成循环，
+   * 而两次导入共用同一份进度与取消引用（见 `onGenerate` 的类型注释）。
+   */
   const canConfirm = confirmRecord
     ? Boolean(recordTarget && take)
     : confirmTts
-      ? Boolean(tts?.canGenerate && importTargets.length > 0)
+      ? Boolean(
+          tts?.canGenerate &&
+            !tts.busy &&
+            localeMatchesText &&
+            importTargets.length > 0,
+        )
       : Boolean(source && importTargets.length > 0 && !selfOnly)
 
-  const confirmLabel = confirmTts ? '生成配音' : '确认导入'
-  const confirmHint = confirmTts
-    ? recordTarget
-      ? `为「${recordTarget}」写入这条录音${
+  const confirmLabel = confirmTts ? (tts?.busy ? '生成中…' : '生成配音') : '确认导入'
+
+  /**
+   * 按钮上方那句话。
+   *
+   * 它回答的是"按下去会发生什么"，**不是复述上面的状态** —— 所以顺序是
+   * "先看这次能不能成、再看为什么不能"，而不是把模式的判断抄一遍。
+   */
+  const confirmHint = (() => {
+    if (confirmTts) {
+      if (tts?.busy) return tts.status.kind === 'busy' ? tts.status.message : '正在生成…'
+      if (importTargets.length === 0) {
+        return mode === 'single'
+          ? '在编辑器里点一个键名'
+          : '在编辑器里多选键名（Shift 或划框）'
+      }
+      if (!tts || tts.plans.length === 0) return '没有配音方案'
+      if (!tts.planName) return '先选配音方案'
+      if (!tts.locale) return '这份方案没有语言'
+      if (!localeMatchesText) {
+        return `台词是「${textLocale}」的 —— 先切到「${tts.locale}」`
+      }
+      if (!tts.canGenerate) {
+        return tts.planBlockedReason ? '这份方案还不能用' : '缺少 API KEY'
+      }
+      return mode === 'single'
+        ? `用「${tts.locale}」生成「${activeKey ?? ''}」`
+        : `用「${tts.locale}」为 ${importTargets.length} 个键各生成一条`
+    }
+    if (confirmRecord) {
+      if (recordTarget) {
+        return `为「${recordTarget}」写入这条录音${
           mode === 'batch' && autoContinue ? '，然后自动录下一个' : ''
         }`
-      : selectedKeys.length === 0
-        ? '先在编辑器里选择键名'
-        : '选中的键都有配音了'
-    : confirmTts
-      ? tts?.status.kind === 'busy'
-        ? tts.status.message
-        : importTargets.length === 0
-          ? mode === 'single'
-            ? '用左键在编辑器里点一个键名'
-            : '按住 Shift 或在编辑器里划框多选键名'
-          : !tts?.planName
-            ? '先选一个配音方案'
-            : !tts.locale
-              ? '这份方案还没配语言'
-              : tts.canGenerate
-                ? mode === 'single'
-                  ? `用「${tts.locale}」生成「${activeKey ?? ''}」`
-                  : `用「${tts.locale}」为 ${importTargets.length} 个键各生成一条`
-                : '还差凭据 —— 先去凭据库填一份'
-      : importTargets.length === 0
-        ? mode === 'single'
-          ? '用左键在编辑器里点一个键名'
-          : '按住 Shift 或在编辑器里划框多选键名'
-        : source
-          ? selfOnly
-            ? `这就是「${activeKey}」当前的配音，换一个文件再导入`
-            : mode === 'single'
-              ? `写入「${activeKey}」`
-              : `同一份音频写入 ${importTargets.length} 个键`
-          : '先选择或拖入一个音频文件'
+      }
+      return selectedKeys.length === 0 ? '先选择键名' : '选中的键都已有配音'
+    }
+    if (importTargets.length === 0) {
+      return mode === 'single'
+        ? '在编辑器里点一个键名'
+        : '在编辑器里多选键名（Shift 或划框）'
+    }
+    if (!source) return '先选择或拖入音频'
+    if (selfOnly) return `这就是「${activeKey}」当前的配音`
+    return mode === 'single'
+      ? `写入「${activeKey}」`
+      : `同一份音频写入 ${importTargets.length} 个键`
+  })()
 
   const handleConfirm = () => {
     if (!canConfirm) return
@@ -634,30 +703,14 @@ export function RecordingStudio({
 
   /** 配音方式的名字：批量下是需求点名的"批量 TTS / 批量录音"，单选下去掉前缀 */
   const sourceLabel = sourceModeLabel(mode, sourceMode)
-  const modeHint = (() => {
-    const scope =
-      mode === 'single'
-        ? activeKey
-          ? `正在给「${activeKey}」`
-          : '左键点键名选中一个键'
-        : `已选 ${selectedKeys.length} 个键`
-    if (sourceMode === 'tts') {
-      return `${mode === 'single' ? '单选配音' : '批量配音'} · ${sourceLabel} · ${scope}（待接入）`
-    }
-    if (sourceMode === 'record') {
-      if (mode === 'single') {
-        return `单选配音 · ${sourceLabel} · ${activeKey ? `正在给「${activeKey}」录` : '左键点键名选中一个键'}`
-      }
-      return `批量配音 · ${sourceLabel} · ${scope}，其中 ${pendingKeys.length} 个待录`
-    }
-    return `${mode === 'single' ? '单选配音' : '批量配音'} · ${sourceLabel} · ${scope}`
-  })()
 
   if (!library) {
     return (
       <section className="studio" style={style} aria-label="录音棚">
         <header className="studio-header">
-          <div className="studio-title">录音棚</div>
+          <div className="studio-title">
+            <span className="studio-title-name">录音棚</span>
+          </div>
           <button
             type="button"
             className="studio-close"
@@ -684,10 +737,9 @@ export function RecordingStudio({
     >
       <header className="studio-header">
         <div className="studio-title">
-          录音棚
-          <span className="studio-sub">
-            {library.locale} · {library.scriptName}
-          </span>
+          <span className="studio-title-name">录音棚</span>
+          {/* 只留语言：它决定合成用的是哪份台词，而 TTS 那一格会按它拦人 */}
+          <span className="studio-sub">{library.locale}</span>
         </div>
         <button
           type="button"
@@ -700,11 +752,11 @@ export function RecordingStudio({
         </button>
       </header>
 
-      <div className="studio-modes" role="tablist" aria-label="配音模式">
+      {/* 分段控件，不是两个独立按钮 —— 它们互斥，能一眼看出当前在哪一档 */}
+      <div className="studio-modes" role="group" aria-label="配音模式">
         <button
           type="button"
-          role="tab"
-          aria-selected={mode === 'single'}
+          aria-pressed={mode === 'single'}
           className={`studio-mode${mode === 'single' ? ' is-on' : ''}`}
           onClick={() => onModeChange('single')}
         >
@@ -712,8 +764,7 @@ export function RecordingStudio({
         </button>
         <button
           type="button"
-          role="tab"
-          aria-selected={mode === 'batch'}
+          aria-pressed={mode === 'batch'}
           className={`studio-mode${mode === 'batch' ? ' is-on' : ''}`}
           onClick={() => onModeChange('batch')}
         >
@@ -721,15 +772,31 @@ export function RecordingStudio({
         </button>
       </div>
 
-      {/* 配音模式提示 */}
-      <div className="studio-hintbar">{modeHint}</div>
-
       <div className="studio-selection">
+        {/*
+          没选键名时这一格**就是**操作指引 —— 不再单开一条提示说同一件事
+          （选中之后它换成计数，位置不变，看的人不用重新找）。
+        */}
         <span className="studio-selection-count">
-          已选 {selectedKeys.length} 个键
-          {mode === 'batch' && sourceMode === 'record' && selectedKeys.length > 0
-            ? ` · 已录 ${recordedCount}`
-            : ''}
+          {selectedKeys.length === 0 ? (
+            mode === 'single' ? (
+              '在编辑器里点一个键名'
+            ) : (
+              '在编辑器里多选键名（Shift 或划框）'
+            )
+          ) : (
+            <>
+              已选 <span className="studio-num">{selectedKeys.length}</span> 个键
+              <span className="studio-sep" aria-hidden>
+                ·
+              </span>
+              已有配音 <span className="studio-num">{recordedCount}</span>
+              <span className="studio-sep" aria-hidden>
+                ·
+              </span>
+              待配 <span className="studio-num">{selectedKeys.length - recordedCount}</span>
+            </>
+          )}
         </span>
         <span className="spacer" />
         <button
@@ -754,34 +821,41 @@ export function RecordingStudio({
 
       {selectedKeys.length > 0 && (
         <div className="studio-chips">
-          {selectedKeys.map((key) => (
-            <span
-              key={key}
-              className={`studio-chip${hasVoice(key) ? ' is-has-voice' : ''}`}
-              title={
-                hasVoice(key)
-                  ? `${key} · 已有配音（${library.resolvedPathOf(key) ?? ''}）`
-                  : `${key} · 还没有配音`
-              }
-            >
-              {key}
-            </span>
-          ))}
+          {selectedKeys.map((key) => {
+            const filled = hasVoice(key)
+            return (
+              <span
+                key={key}
+                className={`studio-chip${filled ? ' is-has-voice' : ''}`}
+                title={
+                  filled
+                    ? `${key} · 已有配音（${library.resolvedPathOf(key) ?? ''}）`
+                    : `${key} · 没有配音`
+                }
+              >
+                <span className="studio-chip-mark" aria-hidden />
+                {key}
+              </span>
+            )
+          })}
         </div>
       )}
 
       <div className="studio-body">
         {sourceMode === 'tts' ? (
           <div className="studio-tts">
-            <label className="studio-tts-field">
-              <span>配音方案</span>
+            <div className="studio-field">
+              <label className="studio-field-label" htmlFor="studio-tts-plan">
+                配音方案
+              </label>
               <select
+                id="studio-tts-plan"
                 value={tts?.planName ?? ''}
                 onChange={(event) => tts?.onPlanChange(event.target.value)}
-                disabled={!tts || tts.plans.length === 0}
+                disabled={!tts || tts.plans.length === 0 || tts.busy}
               >
                 {!tts || tts.plans.length === 0 ? (
-                  <option value="">（工程里还没有配音方案）</option>
+                  <option value="">（没有配音方案）</option>
                 ) : (
                   tts.plans.map((plan) => (
                     <option key={plan.name} value={plan.name}>
@@ -790,14 +864,28 @@ export function RecordingStudio({
                   ))
                 )}
               </select>
-            </label>
+              {tts?.onCreatePlan && (
+                <button
+                  type="button"
+                  className="studio-mini"
+                  disabled={tts.busy}
+                  onClick={tts.onCreatePlan}
+                  title="新建一份配音方案（一个说话人一份）"
+                >
+                  新建
+                </button>
+              )}
+            </div>
 
-            <label className="studio-tts-field">
-              <span>语言方案</span>
+            <div className="studio-field">
+              <label className="studio-field-label" htmlFor="studio-tts-locale">
+                语言方案
+              </label>
               <select
+                id="studio-tts-locale"
                 value={tts?.locale ?? ''}
                 onChange={(event) => tts?.onLocaleChange(event.target.value)}
-                disabled={!tts || tts.locales.length === 0}
+                disabled={!tts || tts.locales.length === 0 || tts.busy}
               >
                 {!tts || tts.locales.length === 0 ? (
                   <option value="">（这份方案没配语言）</option>
@@ -809,50 +897,110 @@ export function RecordingStudio({
                   ))
                 )}
               </select>
-            </label>
+            </div>
 
-            {/* 两级没选齐就不给生成 —— 而不是等点了才报错 */}
-            {!tts || tts.plans.length === 0 ? (
-              <p className="studio-tts-note">
-                还没有配音方案。配音方案是每个说话人一份 —— 在资源树里新建一个
-                「说话人名.tts」（文件名就是说话人的名字），打开它就是设置页，
-                在里面选好服务和音色。
-              </p>
-            ) : tts.locales.length === 0 ? (
-              <p className="studio-tts-note">
-                这份方案一条语言都没配 —— 打开这个说话人的 .tts，让它按工程的语言表
-                加上一条。没配的语言在这里不会出现，也不会在别处回退成别的语言。
-              </p>
-            ) : tts.status.kind === 'error' ? (
-              <>
-                <p className="studio-tts-note is-error">{tts.status.message}</p>
-                {tts.status.hint && (
-                  <p className="studio-tts-note">
-                    {tts.status.hint}
-                    {tts.status.kind === 'error' &&
-                      tts.status.message.includes('凭据') &&
-                      tts.onOpenCredentials && (
-                        <button
-                          type="button"
-                          className="studio-tts-link"
-                          onClick={tts.onOpenCredentials}
-                        >
-                          打开凭据库
-                        </button>
-                      )}
-                  </p>
-                )}
-              </>
-            ) : tts.status.kind === 'done' ? (
-              <p className="studio-tts-note is-done">{tts.status.message}</p>
-            ) : tts.status.kind === 'busy' ? (
-              <p className="studio-tts-note">{tts.status.message}</p>
-            ) : (
-              <p className="studio-tts-note">
-                生成后仍走同一个「{confirmLabel}」，与拖进来的文件完全同一条路：
-                转码成单声道 Vorbis、写进这个键的配音资产。
-              </p>
+            {/* 生成中：进度 + 中断。长文本会切成好几块，没进度就只能干等 */}
+            {tts?.busy && (
+              <div className="studio-run">
+                <div className="studio-run-head">
+                  <span className="studio-run-text">
+                    {tts.status.kind === 'busy' ? tts.status.message : '正在生成…'}
+                  </span>
+                  {tts.progress && (
+                    <span className="studio-run-pct">
+                      {Math.round(tts.progress.ratio * 100)}%
+                    </span>
+                  )}
+                </div>
+                <div
+                  className={`studio-bar${tts.progress ? '' : ' is-indeterminate'}`}
+                  role="progressbar"
+                  aria-label="合成进度"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={tts.progress ? Math.round(tts.progress.ratio * 100) : undefined}
+                >
+                  <span
+                    className="studio-bar-fill"
+                    style={
+                      tts.progress
+                        ? { width: `${Math.round(tts.progress.ratio * 100)}%` }
+                        : undefined
+                    }
+                  />
+                </div>
+                <div className="studio-run-foot">
+                  <span className="studio-run-label">{tts.progress?.label ?? ''}</span>
+                  {tts.onCancel && (
+                    <button type="button" className="studio-mini" onClick={tts.onCancel}>
+                      停止生成
+                    </button>
+                  )}
+                </div>
+              </div>
             )}
+
+            {/*
+              两级没选齐就不给生成 —— 而不是等点了才报错。
+              这里只解释"缺的是哪一级、怎么补"，不重复页脚那句"按下去会怎样"。
+            */}
+            {!tts || tts.plans.length === 0 ? (
+              <div className="studio-guide">
+                <div className="studio-guide-title">没有配音方案</div>
+                <p>配音方案一个说话人一份，里面写服务与音色。</p>
+                {tts?.onCreatePlan && (
+                  <button
+                    type="button"
+                    className="studio-mini is-primary"
+                    onClick={tts.onCreatePlan}
+                  >
+                    新建配音方案
+                  </button>
+                )}
+              </div>
+            ) : !localeMatchesText && tts.locale ? (
+              <div className="studio-guide is-warn">
+                <div className="studio-guide-title">台词与语言不一致</div>
+                <p>
+                  台词是「{textLocale}」的，方案是「{tts.locale}」的 ——
+                  先把语言切到「{tts.locale}」再生成。
+                </p>
+              </div>
+            ) : tts.locales.length === 0 ? (
+              <div className="studio-guide">
+                <div className="studio-guide-title">这份方案没有语言</div>
+                <p>按工程的语言表加一条。</p>
+                {tts.onOpenPlan && (
+                  <button type="button" className="studio-mini" onClick={tts.onOpenPlan}>
+                    打开方案
+                  </button>
+                )}
+              </div>
+            ) : tts.planBlockedReason ? (
+              <div className="studio-guide is-warn">
+                <div className="studio-guide-title">这份方案还不能用</div>
+                <p>{tts.planBlockedReason}</p>
+                {tts.onOpenPlan && (
+                  <button type="button" className="studio-mini" onClick={tts.onOpenPlan}>
+                    打开方案
+                  </button>
+                )}
+              </div>
+            ) : tts.status.kind === 'error' ? (
+              <div className="studio-note is-error" role="status">
+                <div className="studio-note-title">{tts.status.message}</div>
+                {tts.status.hint && <p className="studio-note-body">{tts.status.hint}</p>}
+                {tts.status.failureKind === 'credential' && tts.onOpenCredentials && (
+                  <button type="button" className="studio-mini" onClick={tts.onOpenCredentials}>
+                    填写 API KEY
+                  </button>
+                )}
+              </div>
+            ) : tts.status.kind === 'done' ? (
+              <div className="studio-note is-done" role="status">
+                <div className="studio-note-title">{tts.status.message}</div>
+              </div>
+            ) : null}
           </div>
         ) : sourceMode === 'record' ? (
           <div className="studio-record">
@@ -860,23 +1008,17 @@ export function RecordingStudio({
               {recordTarget ? (
                 <>
                   <span className="studio-record-label">
-                    {mode === 'single' ? '本次录制目标键' : '当前待录键'}
+                    {mode === 'single' ? '目标键' : '待录键'}
                   </span>
                   <code className="studio-record-key">{recordTarget}</code>
                   {mode === 'batch' && (
-                    <span className="studio-record-queue">
-                      还剩 {pendingKeys.length} 个
-                    </span>
+                    <span className="studio-record-queue">剩 {pendingKeys.length}</span>
                   )}
                 </>
               ) : selectedKeys.length === 0 ? (
-                <span className="studio-record-label">
-                  先在编辑器里选择键名（左键点选中，Shift 多选，长按划框）
-                </span>
+                <span className="studio-record-label">先选择键名</span>
               ) : (
-                <span className="studio-record-label">
-                  选中的键都已有配音 —— 没有需要录的键
-                </span>
+                <span className="studio-record-label">选中的键都已有配音</span>
               )}
             </div>
 
@@ -986,10 +1128,10 @@ export function RecordingStudio({
               ) : (
                 <div className="studio-take-empty">
                   {recording
-                    ? '正在收音…说完点「停止录音」'
+                    ? '正在收音 —— 说完点「停止录音」'
                     : mode === 'single'
-                      ? '点「开始录音」录一条，再点「确认导入」写进这个键'
-                      : '点「开始录音」录一条，确认导入后会自动接着录下一个没有配音的键'}
+                      ? '点「开始录音」录一条'
+                      : '点「开始录音」；确认后自动接下一个'}
                 </div>
               )}
             </div>
@@ -1143,7 +1285,11 @@ export function RecordingStudio({
         )}
       </div>
 
-      {notice && <div className="studio-notice">{notice}</div>}
+      {notice && (
+        <div className="studio-notice" role="status">
+          {notice}
+        </div>
+      )}
 
       <footer className="studio-footer">
         {/*
@@ -1160,10 +1306,11 @@ export function RecordingStudio({
             title={sourceModeTitle(mode, sourceMode)}
             onClick={() => setSourceMenuOpen((open) => !open)}
           >
+            <span className="studio-picker-caption">配音方式</span>
+            <span className="studio-picker-label">{sourceLabel}</span>
             <span className="studio-picker-caret" aria-hidden>
               ▴
             </span>
-            <span className="studio-picker-label">{sourceLabel}</span>
           </button>
           {sourceMenuOpen && (
             <>
@@ -1196,9 +1343,13 @@ export function RecordingStudio({
         <div className="studio-footer-hint">{confirmHint}</div>
         <button
           type="button"
-          className="studio-confirm"
+          className={`studio-confirm${confirmTts ? ' is-tts' : ''}${
+            confirmRecord ? ' is-record' : ''
+          }`}
           disabled={!canConfirm}
           onClick={handleConfirm}
+          /* 灰掉的按钮也要能问出"为什么灰" —— 否则用户只能猜 */
+          title={canConfirm ? undefined : confirmHint}
         >
           {confirmLabel}
         </button>
