@@ -83,10 +83,21 @@ export function TtsServiceForm({
   onOpenCredentials,
 }: TtsServiceFormProps) {
   const presets = useMemo(() => resolvePresets().presets, [])
+  const backend = useMemo(() => createLocalBackend(), [])
   const resolver = useMemo(
-    () => createCredentialResolver({ backend: createLocalBackend() }),
-    [],
+    () => createCredentialResolver({ backend }),
+    [backend],
   )
+  /**
+   * 本机已有的缓存名。
+   *
+   * `app:` 那一栏是**从已有缓存里选**，不是自由输入：一份 key 只能先在缓存里存在，
+   * 才谈得上被引用；新增走"编辑本地缓存"。
+   *
+   * 每次渲染现读，不做 memo —— 名单什么时候变由那个对话框决定，与其维护一张依赖表，
+   * 不如跟 `resolver.has` 一样现问一次（关闭对话框会让这一层重渲染，名单随之刷新）。
+   */
+  const cachedNames = backend.names().sort((a, b) => a.localeCompare(b))
   const [authEdit, setAuthEdit] = useState<AuthEdit | null>(null)
 
   const id = serviceIdOfFileName(fileName) ?? fileName
@@ -441,6 +452,9 @@ export function TtsServiceForm({
                  * 只有"文件里写着一个格式不对的引用"才用它的原话 —— 那是文件的问题。
                  */
                 const refMalformed = ref.trim() !== '' && parseCredentialRef(ref) === null
+                /** 文件里引用的名字本机没有（协作者的文件、或缓存被删过） */
+                const notCached =
+                  scheme === 'app' && name !== '' && !cachedNames.includes(name)
                 return (
                   <div key={field.key}>
                     <div className="tts-row">
@@ -453,6 +467,11 @@ export function TtsServiceForm({
                           aria-label={`${field.label} 来源`}
                           onChange={(event) => {
                             const next = event.target.value as CredentialScheme
+                            /*
+                             * 换来源时**留着名字**：两个来源常常用同一个名字
+                             * （`env:MINIMAX_API_KEY` 与缓存里的 `MINIMAX_API_KEY`）。
+                             * 名字在目标来源里不存在时，那一栏会说清"本机没有"，不藏起来。
+                             */
                             setAuthEdit({ key: field.key, scheme: next, name })
                             writeAuthRef(field.key, next, name)
                           }}
@@ -460,33 +479,66 @@ export function TtsServiceForm({
                           <option value="app">本地缓存</option>
                           <option value="env">环境变量</option>
                         </select>
-                        <input
-                          id={`tts-svc-auth-${field.key}`}
-                          type="text"
-                          value={name}
-                          placeholder={scheme === 'env' ? 'MINIMAX_API_KEY' : id}
-                          aria-invalid={nameInvalid || refMalformed}
-                          onChange={(event) => {
-                            const next = event.target.value
-                            setAuthEdit({ key: field.key, scheme, name: next })
-                            writeAuthRef(field.key, scheme, next)
-                          }}
-                          onBlur={() =>
-                            setAuthEdit((current) =>
-                              current?.key === field.key ? null : current,
-                            )
-                          }
-                        />
-                        {/* 就在密钥旁边再给一个入口：改一份 key 是这一行的事，
-                            不必先回到页头去点那个按钮 */}
-                        <button
-                          type="button"
-                          className="tts-btn is-ghost"
-                          onClick={onOpenCredentials}
-                          title={`在本地缓存里增删或修改 ${ref.trim() || field.label}`}
-                        >
-                          编辑本地缓存
-                        </button>
+                        {scheme === 'app' ? (
+                          /*
+                           * **只列已有的缓存**。以前这里是自由输入 —— 打一个缓存里没有的
+                           * 名字等于写了一行永远不会通过的引用，而"加一份 key"本来就不是
+                           * 这一栏的职责（那是"编辑本地缓存"）。
+                           */
+                          <select
+                            id={`tts-svc-auth-${field.key}`}
+                            value={name}
+                            aria-label={`${field.label} 本地缓存`}
+                            aria-invalid={refMalformed}
+                            onChange={(event) => {
+                              const next = event.target.value
+                              setAuthEdit({ key: field.key, scheme, name: next })
+                              writeAuthRef(field.key, scheme, next)
+                            }}
+                          >
+                            <option value="">
+                              {cachedNames.length === 0 ? '（本地缓存是空的）' : '选择 API KEY'}
+                            </option>
+                            {notCached && <option value={name}>{name}（本机没有）</option>}
+                            {cachedNames.map((entry) => (
+                              <option key={entry} value={entry}>
+                                {entry}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            id={`tts-svc-auth-${field.key}`}
+                            type="text"
+                            value={name}
+                            placeholder="MINIMAX_API_KEY"
+                            aria-invalid={nameInvalid || refMalformed}
+                            onChange={(event) => {
+                              const next = event.target.value
+                              setAuthEdit({ key: field.key, scheme, name: next })
+                              writeAuthRef(field.key, scheme, next)
+                            }}
+                            onBlur={() =>
+                              setAuthEdit((current) =>
+                                current?.key === field.key ? null : current,
+                              )
+                            }
+                          />
+                        )}
+                        {/*
+                          入口只在**缓存**这一侧：选环境变量时这个名字不在本地缓存里，
+                          摆一个"编辑本地缓存"只会让人以为还得去那儿补一份。
+                        */}
+                        {scheme === 'app' && (
+                          <button
+                            type="button"
+                            className="tts-btn is-ghost"
+                            onClick={onOpenCredentials}
+                            title="打开本地缓存，增删或修改这里引用的 API KEY"
+                          >
+                            编辑本地缓存
+                          </button>
+                        )}
                       </div>
                     </div>
                     {nameInvalid ? (
@@ -498,17 +550,23 @@ export function TtsServiceForm({
                         引用必须是 <code>env:名字</code> 或 <code>app:名字</code>
                       </RowNote>
                     ) : ref.trim() === '' ? (
-                      <RowNote tone="danger">未填写</RowNote>
+                      <RowNote tone="danger">
+                        {scheme === 'app' ? '未选择' : '未填写'}
+                      </RowNote>
                     ) : scheme === 'env' ? (
                       <RowNote tone="warn">环境变量：当前窗口读不到</RowNote>
                     ) : ready ? (
                       <RowNote tone="ok">已配置</RowNote>
                     ) : (
+                      /* 动作就是旁边那个按钮，这里不再挂一个同义的链接 */
                       <RowNote tone="warn">
-                        未配置
-                        <button type="button" className="tts-form-link" onClick={onOpenCredentials}>
-                          填写
-                        </button>
+                        {notCached ? (
+                          <>
+                            本机没有 <code>{name}</code>
+                          </>
+                        ) : (
+                          '未配置'
+                        )}
                       </RowNote>
                     )}
                   </div>

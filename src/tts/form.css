@@ -221,12 +221,14 @@
   flex: 1 1 240px;
 }
 
-/* 标了 aria-invalid 的输入框直接变边 —— 旁边那句说明才有人读 */
-.tts-control input[aria-invalid='true'] {
+/* 标了 aria-invalid 的输入框 / 下拉直接变边 —— 旁边那句说明才有人读 */
+.tts-control input[aria-invalid='true'],
+.tts-control select[aria-invalid='true'] {
   border-color: rgb(232 101 109 / 55%);
 }
 
-.tts-control input[aria-invalid='true']:focus {
+.tts-control input[aria-invalid='true']:focus,
+.tts-control select[aria-invalid='true']:focus {
   border-color: var(--danger);
   box-shadow: 0 0 0 2px rgb(232 101 109 / 25%) inset;
 }
