@@ -31,6 +31,7 @@ import {
   type ProtocolId,
 } from './spec'
 import { resolvePresets } from './providers'
+import { isProtocolImplemented } from './protocols'
 import {
   readServiceDefinition,
   stringifyServiceDefinition,
@@ -348,6 +349,15 @@ export function TtsServiceForm({
               </div>
             </div>
             {notesFor('protocol')}
+            {/*
+              协议还没实现的预设（Google / Polly 要 OAuth2 / SigV4 签名）：
+              在这里就说清。配好一半、点合成才炸，是最难查的那种失败。
+            */}
+            {protocol && !isProtocolImplemented(protocol) && (
+              <RowNote tone="danger">
+                {PROTOCOLS[protocol].label} 的鉴权要签名，尚未实现 —— 先换一家
+              </RowNote>
+            )}
           </div>
         </section>
 

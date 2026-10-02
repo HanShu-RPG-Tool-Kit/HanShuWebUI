@@ -407,7 +407,17 @@ function minimax(input: AdapterInput): AdaptedRequest {
  * `google` 要 OAuth2(给 service account 私钥签 JWT 换 access token),
  * `polly` 要 SigV4 签名 —— 两件都是**签名**活儿,和"贴一个 Key"不是一回事,
  * 单独一片做。在这里明确失败,好过让用户在服务编辑器里配好了却在合成时才炸。
+ *
+ * 这张清单是**单一事实来源**:适配器表、服务设置页的提示、预设核对脚本都读它,
+ * 补上实现时只需要改这一处(以及把这条注释删掉)。
  */
+export const UNIMPLEMENTED_PROTOCOLS: readonly ProtocolId[] = ['google', 'polly']
+
+/** 该协议能不能真的合成 */
+export function isProtocolImplemented(protocol: ProtocolId): boolean {
+  return !UNIMPLEMENTED_PROTOCOLS.includes(protocol)
+}
+
 function notImplemented(protocol: ProtocolId): (input: AdapterInput) => AdaptedRequest {
   return () => ({
     ok: false,
