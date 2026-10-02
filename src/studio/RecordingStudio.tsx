@@ -601,6 +601,15 @@ export function RecordingStudio({
   const studioDropProps = dropTargetProps(false)
   const waveDropProps = dropTargetProps(true)
 
+  /**
+   * 从本机挑一个音频文件当候选 —— 和拖入走**同一条路**（`cacheDroppedFile`）。
+   *
+   * 为什么必须有一个点选的入口：外部文件拖放依赖窗口层的一串前置条件
+   * （WebView2 的 `AllowExternalDrop`、以管理员身份运行时 Windows 的跨权限拦截……），
+   * 一旦事件压根没进到网页层，应用里的任何判定都无从生效。点选不受这些影响。
+   */
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
   /** 底部「确认导入」到底做什么 */
   const importTargets =
     mode === 'single' ? (activeKey ? [activeKey] : []) : selectedKeys
@@ -1202,6 +1211,30 @@ export function RecordingStudio({
                   <span>松开即可选用</span>
                 </div>
               )}
+            </div>
+
+            {/* 点选入口：拖放被窗口层拦住时的兜底（与拖入同一条路） */}
+            <div className="studio-source-row">
+              <button
+                type="button"
+                className="studio-mini"
+                onClick={() => fileInputRef.current?.click()}
+                title="从本机挑一个音频文件当候选音频（拖放被系统拦住时用这个）"
+              >
+                选择文件…
+              </button>
+              <input
+                ref={fileInputRef}
+                className="studio-file-input"
+                type="file"
+                accept="audio/*"
+                onChange={(event) => {
+                  const file = event.target.files?.[0]
+                  // 先清空：同一个文件再选一次也要能触发 change
+                  event.target.value = ''
+                  if (file) cacheDroppedFile(file)
+                }}
+              />
             </div>
 
             {/* 播放与进度条控制（有选定音频才显示） */}
