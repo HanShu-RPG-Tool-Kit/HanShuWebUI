@@ -55,19 +55,15 @@ import {
   isVoiceRefPath,
   listMissingVoiceOggs,
   parseVoiceRefContent,
-  stringifyVoiceRefContent,
 } from '../i18n/voiceMap'
+import { createVoiceOps, type VoiceOps } from '../i18n/voiceOps'
 import { voiceRootDir } from '../i18n/localeLayout'
 import {
   buildResourcePackZip,
   downloadBlob,
 } from '../export/resourcePack'
 import { buildProjectPackZip } from '../export/projectPack'
-import {
-  isAudioAsset,
-  normalizeAssetPath,
-  normalizeFolderPath,
-} from '../assets/paths'
+import { normalizeAssetPath, normalizeFolderPath } from '../assets/paths'
 import {
   moveAssetToDir,
   moveScriptToPackage,
@@ -816,7 +812,7 @@ export const ScriptWorkspace = forwardRef<
           ok += 1
           // 落成了 `.ogg`：把同基名的 `.ref` 清掉 —— 一个键只该有一个来源
           // （否则解析按 `.ogg` 优先，用户会以为刚写的引用还在生效）
-          clearPeerBindingOf(keys[index], 'file')
+          voiceOps().clearPeerBindingOf(keys[index], 'file')
         } else {
           failed += 1
         }
@@ -952,234 +948,30 @@ export const ScriptWorkspace = forwardRef<
   }
 
   /**
-   * 清掉某个键对等位置上**另一种形式**的绑定。
+   * 配音资产的写 / 删 / 引用 —— 领域逻辑住在 `i18n/voiceOps.ts`，
+   * 这里只把组件才做得到的那几件事注进去（工作区读写、活动包、工程句柄、提示）。
    *
-   * 一个键的对等基名只有一份语义（见 voiceMap：`.ogg` 优先、`.ref` 兜底），所以：
-   * - 导入 / 录音 / 合成写 `.ogg` 之前，先把同基名的 `.ref` 清掉；
-   * - 写 `.ref` 之前，先把同基名的 `.ogg` 清掉。
-   *
-   * 不清的后果是"两个来源同时存在"：解析按 `.ogg` 优先，于是用户以为改了引用、其实没生效，
-   * 或者反过来 —— 这类幽灵绑定最难查，所以在这里一次做干净（元数据 + blob + 磁盘副本）。
+   * **在调用时才建，建完不缓存**：`createVoiceOps` 的宿主里到处是 `ref.current`
+   * 与 `Date.now()`，直接写在渲染体里会被 React 规则判成"渲染期访问 ref / 调用非纯函数"，
+   * 而它本来就只在事件处理里用得到。每次现建几个闭包对象换来的是宿主状态**必然**最新，
+   * 不会跨工程切换后还拿着旧句柄。
    */
-  const clearPeerBindingOf = (key: string, keep: 'file' | 'ref'): void => {
-    const library = voiceLibraryRef.current
-    const pkg = activePackage()
-    if (!library || !pkg) return
-
-    const peerPath =
-      keep === 'ref'
-        ? library.targetPathOf(key) // 要留引用 → 清同基名的 `.ogg`
-        : library.refPathOf(key) // 要留实文件 → 清同基名的 `.ref`
-    const wanted = peerPath.toLowerCase()
-    const asset = pkg.assets.find((item) => item.path.toLowerCase() === wanted)
-    if (!asset) return
-
-    commitWorkspace(removeAssetMeta(workspaceRef.current, asset.id))
-    // 元数据 + blob + 磁盘副本（含 `.new` 残留）：与其它删除路径同一套
-    removeAssetEverywhere(pkg.id, [asset.path])
-  }
-
-  /**
-   * 把一个或多个键的配音设成**「引用资产」**：对等位置上写一个 `.ref`，正文是目标音频路径。
-   *
-   * 与音频导入的区别：**不转码、不搬字节** —— 被引用的那份音频就留在原处，
-   * 键只是指向它。所以同一份音频可以被多个键引用而不产生多份拷贝。
-   *
-   * 目标必须是**本包内**的音频资产：跨包引用在这里做不到（资产按包存，
-   * 解析也只看当前包，见 voiceMap 的 describeRefTarget）。
-   */
-  const referenceVoicesForKeys = (keys: string[], targetPath: string) => {
-    const library = voiceLibraryRef.current
-    const pkg = activePackage()
-    if (!library || !pkg || keys.length === 0) return
-
-    const target = normalizeAssetPath(targetPath)
-    const asset = target
-      ? pkg.assets.find((item) => item.path.toLowerCase() === target.toLowerCase())
-      : null
-    if (!asset || !isAudioAsset(asset.path, asset.mime)) {
-      window.alert(
-        `引用的目标必须是本包内的音频资产。\n当前：${targetPath}\n` +
-          '（跨包引用、指向文本或图片都不行）',
-      )
-      return
-    }
-
-    const content = stringifyVoiceRefContent(asset.path)
-    const bytes = new TextEncoder().encode(content)
-    const blob = new Blob([bytes as BlobPart], { type: 'text/plain' })
-    const sink = createVoiceDiskSink(
-      projectRef.current?.handle ?? null,
-      (failedPath, error) => {
-        if (!error) return
-        console.warn('[hanshu] 引用文件写入磁盘失败', failedPath, error)
-        setVoiceDiskError({
-          path: failedPath,
-          message: error instanceof Error ? error.message : String(error),
-        })
+  const voiceOps = (): VoiceOps =>
+    createVoiceOps({
+      getWorkspace: () => workspaceRef.current,
+      commit: (next) => commitWorkspace(next),
+      activePackage: () => {
+        const pkg = activePackage()
+        return pkg ? { id: pkg.id, assets: pkg.assets } : null
       },
-    )
-
-    void (async () => {
-      for (const key of keys) {
-        // 先清掉同基名的 `.ogg`：一个键只该有一个来源（见 clearPeerBindingOf）
-        clearPeerBindingOf(key, 'ref')
-
-        const refPath = library.refPathOf(key)
-        await putAssetBlob(pkg.id, refPath, blob)
-
-        /*
-         * 每次都从**当前**工作区出发：上面那步 `clearPeerBindingOf` 刚提交过一次，
-         * 用循环外捕获的旧引用去写会把刚清掉的 `.ogg` 元数据又带回来。
-         * 目标路径随元数据一起记下：配音四态是**同步**判定的，不能等到读文件才知道指向谁。
-         */
-        const result = registerAsset(
-          workspaceRef.current,
-          pkg.id,
-          refPath,
-          'text/plain',
-          blob.size,
-          asset.path,
-        )
-        if (result) commitWorkspace(result.workspace)
-        if (sink.enabled) await sink.write(refPath, bytes, 'text/plain')
-      }
-
-      voiceLibraryRef.current?.notifyAssetsChanged()
-      textBindingRef.current?.refreshVoice()
-      const shown = keys.length === 1 ? `「${keys[0]}」` : `${keys.length} 个键`
-      setVoiceToast({
-        id: Date.now(),
-        message: `已把 ${shown} 的配音设为引用：${asset.path}`,
-        ok: true,
-      })
-    })()
-  }
-
-  /**
-   * 彻底删掉一个资产：元数据 + IndexedDB blob + **磁盘副本**。
-   *
-   * 三步缺一不可，尤其第三步：配音是写穿到工程目录的，只删应用内的话，**下次打开工程
-   * 又会被 `loadAssetsFromDisk` 读回来**（它扫整个 `assets/`），表现就是"删了没删掉"。
-   * 原先只有 `deleteVoiceCore` 做全了三步，资源管理器里删资产 / 删文件夹只做前两步，
-   * 于是同一个应用里两种删除语义。合成一处。
-   *
-   * 磁盘失败只 `console.warn` 不回滚：IndexedDB 是权威，「保存工程」还会整树重写磁盘。
-   */
-  const removeAssetEverywhere = (
-    packageId: string,
-    paths: readonly string[],
-  ): void => {
-    if (paths.length === 0) return
-    const sink = createVoiceDiskSink(
-      projectRef.current?.handle ?? null,
-      (failedPath, error) => {
-        if (error) {
-          console.warn('[hanshu] 没能删掉磁盘上的资产文件：', failedPath, error)
-        }
+      projectHandle: () => projectRef.current?.handle ?? null,
+      library: () => voiceLibraryRef.current,
+      refresh: () => {
+        voiceLibraryRef.current?.notifyAssetsChanged()
+        textBindingRef.current?.refreshVoice()
       },
-    )
-    for (const path of paths) {
-      void deleteAssetBlob(packageId, path)
-      void sink.remove(path)
-    }
-  }
-
-  /**
-   * 删除某个键的配音（**不做确认**，只是动作本身）。
-   *
-   * 动作与删除资产一致（元数据 + blob），但**必须连磁盘那一份一起删**：
-   * 配音是写穿到工程目录的，只删应用内的话，下次打开工程又会被读回来。
-   *
-   * 删的是 `status.path` —— **绑定文件本身**：实文件删 `.ogg`，引用就只删 `.ref`，
-   * 被引用的那份音频留在原地（别的键可能还在用它）。
-   */
-  const deleteVoiceCore = (key: string): boolean => {
-    const library = voiceLibraryRef.current
-    const pkg = activePackage()
-    if (!library || !pkg) return false
-    const status = library.statusOf(key)
-    const path = status.path
-    if (!path) return false
-
-    // 正在播就先停掉，否则播的是已经被删掉的音频
-    if (status.state === 'playing') library.togglePlay(key)
-
-    const asset = pkg.assets.find(
-      (item) => item.path.toLowerCase() === path.toLowerCase(),
-    )
-    if (asset) {
-      commitWorkspace(removeAssetMeta(workspaceRef.current, asset.id))
-    }
-    // 元数据 + blob + 磁盘副本：删掉才算真的删了（见 removeAssetEverywhere）
-    removeAssetEverywhere(pkg.id, [path])
-    return true
-  }
-
-  /**
-   * 删除某个键的配音（右键菜单 Delete Voice）。
-   *
-   * 两种确认文案：正常情况就是删这个文件；若它是靠"同名回落"从别的目录解析到的，
-   * 说明可能有其它脚本的键也在用它，得说清楚影响面。
-   */
-  const handleDeleteVoice = (key: string) => {
-    const library = voiceLibraryRef.current
-    if (!library) return
-    const status = library.statusOf(key)
-    const path = status.path
-    if (!path) return
-
-    const targetPath = library.targetPathOf(key)
-    const refPath = library.refPathOf(key)
-    // 对等位置上那两种写法都算"这个键自己的绑定"：`.ogg` 是实文件，`.ref` 是引用
-    const atPeer =
-      path.toLowerCase() === targetPath.toLowerCase() ||
-      path.toLowerCase() === refPath.toLowerCase()
-    if (atPeer) {
-      const what = status.source === 'ref' ? '引用' : '配音'
-      // 引用的删除**只解除引用**：被引用的那份音频是共享的，别的键可能还在用
-      const extra =
-        status.source === 'ref'
-          ? `\n（只解除引用，不会删掉它指向的音频${
-              status.audioPath ? `：${status.audioPath}` : ''
-            }）`
-          : ''
-      if (!window.confirm(`删除${what}「${path}」？${extra}`)) return
-    } else if (
-      !window.confirm(
-        `该配音来自其它目录：${path}\n删除会影响所有引用它的键，确定删除？`,
-      )
-    ) {
-      return
-    }
-
-    deleteVoiceCore(key)
-  }
-
-  /** 录音棚：清除选中键名的配音（一次确认，逐个删） */
-  const deleteVoicesFor = (keys: string[]) => {
-    const library = voiceLibraryRef.current
-    if (!library || keys.length === 0) return
-    const withVoice = keys.filter((key) => library.statusOf(key).path != null)
-    if (withVoice.length === 0) {
-      window.alert('选中的键都没有配音文件，没什么可清除的')
-      return
-    }
-    const refCount = withVoice.filter(
-      (key) => library.statusOf(key).source === 'ref',
-    ).length
-    if (
-      !window.confirm(
-        `清除 ${withVoice.length} 个键的配音？\n（对等文件会从应用内资源与工程文件夹一起删掉）` +
-          (refCount > 0
-            ? `\n（其中 ${refCount} 个是引用：只解除引用，被引用的音频不动）`
-            : ''),
-      )
-    ) {
-      return
-    }
-    for (const key of withVoice) deleteVoiceCore(key)
-  }
+      notify: (message, ok) => setVoiceToast({ id: Date.now(), message, ok }),
+    })
 
   // ——————————————————————————————————————————————————————————————
   //  录音棚接线
@@ -1239,7 +1031,7 @@ export const ScriptWorkspace = forwardRef<
    * 键的对等位置上写一个指向它的 `.ref`。所以同一份音频给多个键用也不会多出拷贝。
    */
   const handleStudioReference = (keys: string[], targetPath: string) => {
-    referenceVoicesForKeys(orderKeys(keys), targetPath)
+    voiceOps().referenceForKeys(orderKeys(keys), targetPath)
   }
 
   // ===== 录音棚的 TTS =====
@@ -1736,7 +1528,7 @@ export const ScriptWorkspace = forwardRef<
       label: 'Delete Voice',
       // 没有配音文件（缺失态）就没什么可删的
       disabled: (voiceRuntime?.statusOf(key).path ?? null) == null,
-      onSelect: () => handleDeleteVoice(key),
+      onSelect: () => voiceOps().confirmAndDeleteVoice(key),
     },
     {
       id: 'delete',
@@ -2186,8 +1978,8 @@ export const ScriptWorkspace = forwardRef<
     if (!hit) return
     if (!window.confirm(`删除资产「${hit.asset.path}」？`)) return
     commitWorkspace(removeAssetMeta(workspaceRef.current, assetId))
-    // 磁盘那一份也要删：只删应用内的话，重开工程会被读回来（见 removeAssetEverywhere）
-    removeAssetEverywhere(hit.pkg.id, [hit.asset.path])
+    // 磁盘那一份也要删：只删应用内的话，重开工程会被读回来
+    voiceOps().removeAssetEverywhere(hit.pkg.id, [hit.asset.path])
   }
 
   const handleNewAssetFolder = (packageId: string, parentPath: string) => {
@@ -2221,7 +2013,7 @@ export const ScriptWorkspace = forwardRef<
     )
     commitWorkspace(next)
     // 整个文件夹的磁盘副本一起删（同上：不删就会在下次打开工程时整批复活）
-    removeAssetEverywhere(
+    voiceOps().removeAssetEverywhere(
       packageId,
       removed.map((asset) => asset.path),
     )
@@ -3701,7 +3493,7 @@ export const ScriptWorkspace = forwardRef<
               onModeChange={setStudioMode}
               onSourceModeChange={setStudioSourceMode}
               onClearSelection={() => setStudioSelection([])}
-              onClearVoice={deleteVoicesFor}
+              onClearVoice={(keys) => voiceOps().deleteVoices(keys)}
               onImport={handleStudioImport}
               onReference={handleStudioReference}
               tts={studioTts}
