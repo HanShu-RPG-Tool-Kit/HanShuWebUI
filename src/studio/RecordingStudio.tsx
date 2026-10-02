@@ -17,7 +17,12 @@ import {
 import type { VoiceImportSource } from '../i18n/voiceImport'
 import { VOICE_EXTRA_GLYPHS } from '../ui/voiceIcons'
 import { VoiceEmptyGlyph, VoiceGlyph, VoiceWaveform } from '../ui/VoiceVisuals'
-import { droppedFiles, isInternalDrag, shouldAcceptDrop } from '../drag/dragPayload'
+import {
+  acceptsAudioDrop,
+  draggedAssetPath,
+  droppedFiles,
+  isInternalDrag,
+} from '../drag/dragPayload'
 import { formatBytes } from '../assets/paths'
 import type { TtsFailureKind } from '../tts/spec'
 import {
@@ -547,14 +552,17 @@ export function RecordingStudio({
    * 只挂在那 108px 高的预览窗上等于"拖进来没反应"，这条以前踩过）；**预览窗**是
    * "就丢在这一格上"的精确目标 —— 拖到哪一格，哪一格就得亮、就得认。
    *
-   * 两处的行为必须一模一样：高亮、拦住默认行为（不拦的话浏览器会直接导航到那个
-   * 文件，整个应用状态丢失）、拖入的文件只当候选源（导入一律走「确认导入」）。
-   * 预览窗那一层 `stopPropagation`，免得同一份文件被读两遍。
+   * 接两类源：
+   * - **外部文件**（从资源管理器 / 桌面拖进来的）：一律接下，见 `shouldAcceptDrop`；
+   * - **工程里的资产**（资源管理器的资产拖进来）：等价于在下面的资产树里点了它一下。
+   *
+   * 键名、脚本拖进来没有语义，保持浏览器默认的"不允许"反馈。
    */
   const dropTargetProps = (stop: boolean) => ({
     onDragOver: (event: ReactDragEvent<HTMLElement>) => {
-      // 准放判据见 `shouldAcceptDrop`：不是内部拖拽就一律接下（别再拿 types 判有没有文件）
-      if (!shouldAcceptDrop(event.dataTransfer)) return
+      // 准放判据见 acceptsAudioDrop：外部拖拽一律接下（别拿 types 判有没有文件），
+      // 内部拖拽只认"资产"这一种 —— 漏了资产就是"资产拖到录音棚上没反应"
+      if (!acceptsAudioDrop(event.dataTransfer)) return
       event.preventDefault()
       if (stop) event.stopPropagation()
       if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
@@ -566,12 +574,22 @@ export function RecordingStudio({
     },
     onDrop: (event: ReactDragEvent<HTMLElement>) => {
       const files = droppedFiles(event.dataTransfer)
-      const internal = isInternalDrag(event.dataTransfer)
+      const assetPath = draggedAssetPath()
       setDropActive(false)
       event.preventDefault()
       if (stop) event.stopPropagation()
-      // 本应用自己的拖拽（键名 / 资产）落到录音棚没有对应语义，静默放过
-      if (internal) return
+      /*
+       * 工程里的资产：与资产树里点一下完全等价 —— 它成为候选源。
+       * 先把内存候选清掉，否则 `source` 会继续优先那个（见下面的 source 求值顺序）。
+       */
+      if (assetPath) {
+        setPicked(assetPath)
+        setMemory(null)
+        setNotice(null)
+        return
+      }
+      // 本应用自己的其它拖拽（键名 / 脚本）落到录音棚没有对应语义，静默放过
+      if (isInternalDrag(event.dataTransfer)) return
       const file = files[0]
       if (!file) {
         /*
@@ -1188,7 +1206,7 @@ export function RecordingStudio({
               className={`studio-wave${audioInfo ? ' is-filled' : ' is-empty'}${
                 dropActive ? ' is-drop-target' : ''
               }`}
-              title="把外部音频文件拖到这里（或录音棚任意位置）即可当候选音频，再点「确认导入」"
+              title="把音频文件，或资源管理器里的资产，拖到这里（或录音棚任意位置）即可当候选音频，再点「确认导入」"
               {...waveDropProps}
             >
               {audioInfo ? (

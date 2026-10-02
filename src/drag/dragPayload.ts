@@ -133,6 +133,17 @@ export function droppedFiles(dataTransfer: DataTransfer | null): File[] {
 }
 
 /**
+ * 正在拖的**资产**路径（不是资产拖拽时为 null）。
+ *
+ * 给"录音棚"这类目标用：外部文件是"从磁盘拿一个"，内部资产是"用工程里已有的那一个"，
+ * 两者的落点相同，但取源的方式不同 —— 判定时用这个，别去翻 `dataTransfer`。
+ */
+export function draggedAssetPath(): string | null {
+  const drag = currentDrag()
+  return drag?.kind === 'asset' ? drag.path : null
+}
+
+/**
  * **准放判据：这次拖拽要不要接下（`preventDefault`）。**
  *
  * 所有投放点都走这一个函数，因为"要不要接"只有一条规矩：
@@ -143,9 +154,25 @@ export function droppedFiles(dataTransfer: DataTransfer | null): File[] {
  * 不 `preventDefault` → 浏览器不允许投放 → `drop` 永远不来 →
  * 用户看到"拖到预览框上没反应，鼠标是禁止光标 🚫"。
  * 是不是文件，等 `drop` 时看 `dataTransfer.files` 才有准数（见 `droppedFiles`）。
+ *
+ * 内部拖拽默认不接（各处只认自己有语义的那几种，例如录音棚认资产、键名只认键名）；
+ * 想要内部载荷的目标，自己再判 `draggedAssetPath` 之类。
  */
 export function shouldAcceptDrop(dataTransfer: DataTransfer | null): boolean {
   return !isInternalDrag(dataTransfer)
+}
+
+/**
+ * **音频落点**的准放判据（录音棚的预览框 / 面板就是这种落点）：
+ * **外部文件**一律接，**工程里的资产**也接（等价于在资产树里点了它一下）；
+ * 键名、脚本拖进来没有语义。
+ *
+ * 单独一个函数是因为这条例外**漏过一次**：录音棚当时只认外部文件，
+ * 于是"把资源管理器里的资产拖到录音棚上"毫无反应（连高亮都没有）。
+ * 有名字 + 有检查脚本，才不会再漏第二回。
+ */
+export function acceptsAudioDrop(dataTransfer: DataTransfer | null): boolean {
+  return shouldAcceptDrop(dataTransfer) || draggedAssetPath() !== null
 }
 
 /** 拖拽源的文字表示（dataTransfer 的 text/plain；也用于提示） */
