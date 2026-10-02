@@ -22,7 +22,13 @@ pub fn set_chrome(app: &tauri::AppHandle, splash: bool) -> Result<(), String> {
     let window = app
       .get_webview_window("main")
       .ok_or_else(|| "main window missing".to_string())?;
-    apply_chrome(&window, splash).map_err(|e| e.to_string())
+    apply_chrome(&window, splash).map_err(|e| e.to_string())?;
+    // 切到主壳时窗口已经真的显示出来了：确认"接受系统拖进来的文件"是开着的。
+    // 初始隐藏的窗口上曾见它没被激活（拖文件进来毫无反应），见 webview_perms。
+    if !splash {
+      crate::webview_perms::ensure_external_drop(app);
+    }
+    Ok(())
   }
   #[cfg(not(windows))]
   {
