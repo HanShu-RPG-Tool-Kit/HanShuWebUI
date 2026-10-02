@@ -36,6 +36,8 @@ import {
   type MemoryAudioInfo,
   type VoiceRecorder,
 } from './audioPreview'
+// 面板样式跟着组件走（原先在 App.css 里，见 studio.css 的头注释）
+import './studio.css'
 
 /**
  * 录音棚（内置在剧本编辑器里的配音工作台）。

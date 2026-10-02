@@ -975,13 +975,8 @@ export const ScriptWorkspace = forwardRef<
     if (!asset) return
 
     commitWorkspace(removeAssetMeta(workspaceRef.current, asset.id))
-    void deleteAssetBlob(pkg.id, asset.path)
-    const sink = createVoiceDiskSink(projectRef.current?.handle ?? null, (failedPath, error) => {
-      if (error) {
-        console.warn('[hanshu] 没能清掉同基名的另一种配音绑定：', failedPath, error)
-      }
-    })
-    void sink.remove(asset.path)
+    // 元数据 + blob + 磁盘副本（含 `.new` 残留）：与其它删除路径同一套
+    removeAssetEverywhere(pkg.id, [asset.path])
   }
 
   /**
@@ -1062,6 +1057,35 @@ export const ScriptWorkspace = forwardRef<
   }
 
   /**
+   * 彻底删掉一个资产：元数据 + IndexedDB blob + **磁盘副本**。
+   *
+   * 三步缺一不可，尤其第三步：配音是写穿到工程目录的，只删应用内的话，**下次打开工程
+   * 又会被 `loadAssetsFromDisk` 读回来**（它扫整个 `assets/`），表现就是"删了没删掉"。
+   * 原先只有 `deleteVoiceCore` 做全了三步，资源管理器里删资产 / 删文件夹只做前两步，
+   * 于是同一个应用里两种删除语义。合成一处。
+   *
+   * 磁盘失败只 `console.warn` 不回滚：IndexedDB 是权威，「保存工程」还会整树重写磁盘。
+   */
+  const removeAssetEverywhere = (
+    packageId: string,
+    paths: readonly string[],
+  ): void => {
+    if (paths.length === 0) return
+    const sink = createVoiceDiskSink(
+      projectRef.current?.handle ?? null,
+      (failedPath, error) => {
+        if (error) {
+          console.warn('[hanshu] 没能删掉磁盘上的资产文件：', failedPath, error)
+        }
+      },
+    )
+    for (const path of paths) {
+      void deleteAssetBlob(packageId, path)
+      void sink.remove(path)
+    }
+  }
+
+  /**
    * 删除某个键的配音（**不做确认**，只是动作本身）。
    *
    * 动作与删除资产一致（元数据 + blob），但**必须连磁盘那一份一起删**：
@@ -1086,18 +1110,9 @@ export const ScriptWorkspace = forwardRef<
     )
     if (asset) {
       commitWorkspace(removeAssetMeta(workspaceRef.current, asset.id))
-      void deleteAssetBlob(pkg.id, asset.path)
     }
-    // 磁盘副本（含可能残留的 .new）：删掉才算真的删了
-    const sink = createVoiceDiskSink(
-      projectRef.current?.handle ?? null,
-      (failedPath, error) => {
-        if (error) {
-          console.warn('[hanshu] 没能删掉磁盘上的配音文件：', failedPath, error)
-        }
-      },
-    )
-    void sink.remove(path)
+    // 元数据 + blob + 磁盘副本：删掉才算真的删了（见 removeAssetEverywhere）
+    removeAssetEverywhere(pkg.id, [path])
     return true
   }
 
@@ -2170,9 +2185,9 @@ export const ScriptWorkspace = forwardRef<
     const hit = findAsset(workspaceRef.current, assetId)
     if (!hit) return
     if (!window.confirm(`删除资产「${hit.asset.path}」？`)) return
-    const next = removeAssetMeta(workspaceRef.current, assetId)
-    commitWorkspace(next)
-    void deleteAssetBlob(hit.pkg.id, hit.asset.path)
+    commitWorkspace(removeAssetMeta(workspaceRef.current, assetId))
+    // 磁盘那一份也要删：只删应用内的话，重开工程会被读回来（见 removeAssetEverywhere）
+    removeAssetEverywhere(hit.pkg.id, [hit.asset.path])
   }
 
   const handleNewAssetFolder = (packageId: string, parentPath: string) => {
@@ -2205,9 +2220,11 @@ export const ScriptWorkspace = forwardRef<
       folderPath,
     )
     commitWorkspace(next)
-    for (const asset of removed) {
-      void deleteAssetBlob(packageId, asset.path)
-    }
+    // 整个文件夹的磁盘副本一起删（同上：不删就会在下次打开工程时整批复活）
+    removeAssetEverywhere(
+      packageId,
+      removed.map((asset) => asset.path),
+    )
   }
 
   const handleImportAssets = async (

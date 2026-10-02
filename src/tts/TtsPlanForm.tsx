@@ -226,9 +226,20 @@ export function TtsPlanForm({
     setSpeedEdit((current) => (current?.locale === locale ? null : current))
   }
 
+  /**
+   * 这条语言标签是否已经占了。
+   *
+   * 用 `Object.hasOwn` 而不是 `plan.voices[tag]` 的真值判断：`voices` 是普通对象，
+   * `plan.voices['__proto__']` 会从原型链上取到 `Object.prototype`（真值），
+   * 于是"改名成 __proto__"会被当成"这个标签已存在"而**静默什么都不做**。
+   * 目前两个入口都是 `<select>`（值来自语言表，不可能出现这种键），
+   * 但把判据写对不花钱，将来换成自由输入也不会踩。
+   */
+  const isTagTaken = (tag: string) => Object.hasOwn(plan.voices, tag)
+
   const renameEntry = (from: string, to: string) => {
     const tag = to.trim()
-    if (!tag || tag === from || plan.voices[tag]) return
+    if (!tag || tag === from || isTagTaken(tag)) return
     const next: Record<string, VoicePlanEntry> = {}
     for (const [locale, entry] of Object.entries(plan.voices)) {
       next[locale === from ? tag : locale] = entry
@@ -240,7 +251,7 @@ export function TtsPlanForm({
 
   const addEntry = () => {
     const tag = newLocale.trim()
-    if (!tag || plan.voices[tag]) return
+    if (!tag || isTagTaken(tag)) return
     const first = plan.voices[locales[0] ?? ''] ?? Object.values(plan.voices)[0]
     // 新的一条复制第一条的服务与音色 —— 从零填一条语言是最容易填错的
     const entry: VoicePlanEntry = first
@@ -465,7 +476,7 @@ export function TtsPlanForm({
                     {localeGroups.map((group) => (
                       <optgroup key={group.label} label={group.label}>
                         {group.items.map((entry) => {
-                          const used = entry.tag !== locale && Boolean(plan.voices[entry.tag])
+                          const used = entry.tag !== locale && isTagTaken(entry.tag)
                           return (
                             <option key={entry.tag} value={entry.tag} disabled={used}>
                               {used
