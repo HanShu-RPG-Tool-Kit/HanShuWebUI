@@ -128,8 +128,9 @@ export type AssetFile = {
    * 「引用资产」配音（`.ref`）正文里指向的那个资产路径；其它资产没有这个字段。
    *
    * 为什么放元数据里：配音解析（四态）是**同步**的 —— 编辑器渲染期就要问，而 `.ref`
-   * 的正文得异步读。所以在**加载**（projectFs 读盘时顺手解）与**写入**（voiceRef 写引用时
-   * 一起带上）两个时刻把目标解好放这儿，解析层只比字符串，不碰 IO。
+   * 的正文得异步读。所以在**加载**（projectFs 读盘时顺手解）与**写入**
+   * （ScriptWorkspace 的 referenceVoicesForKeys）两个时刻把目标解好放这儿，
+   * 解析层只比字符串，不碰 IO。
    */
   refTarget?: string | null
 }
@@ -410,6 +411,43 @@ export function upsertAssetMeta(
     }),
   }
   return { workspace: next, asset }
+}
+
+/**
+ * 把一个资产**登记进工作区**：建好父文件夹 + 写元数据，一步到位。
+ *
+ * 这串「父目录切片 → `ensureAssetFolder` → `upsertAssetMeta`」原先在导入资产、
+ * 导入配音、写引用、新建占位配音、Agent 写文本资产等**六处**各抄一遍，
+ * 父目录规则（顶层落 `assets`）一改就要全部想起来。这里合成一次。
+ *
+ * **不碰 IO、不提交**：字节该写哪儿（IndexedDB / 磁盘写穿）由调用方决定，
+ * 提交时机也归调用方 —— 批量导入是攒完一批只提交一次（见 `handleImportAssets`），
+ * 单文件写入则每步提交。塞进来只会逼出一种不合适的做法。
+ *
+ * 包不存在时返回 `null`（与 `upsertAssetMeta` 一致）。
+ */
+export function registerAsset(
+  workspace: Workspace,
+  packageId: string,
+  path: string,
+  mime: string,
+  size: number,
+  /** `.ref` 引用目标；不传=不是引用（见 `AssetFile.refTarget`） */
+  refTarget?: string | null,
+): { workspace: Workspace; asset: AssetFile } | null {
+  const normalized = path.replace(/\\/g, '/')
+  const parent = normalized.includes('/')
+    ? normalized.slice(0, normalized.lastIndexOf('/'))
+    : 'assets'
+  const withFolder = ensureAssetFolder(workspace, packageId, parent)
+  return upsertAssetMeta(
+    withFolder,
+    packageId,
+    normalized,
+    mime,
+    size,
+    refTarget,
+  )
 }
 
 export function removeAssetMeta(

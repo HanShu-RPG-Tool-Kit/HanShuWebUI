@@ -25,10 +25,8 @@ import {
   parseCredentialRef,
   type CredentialBackend,
 } from './tts/credentials'
+import { CREDENTIAL_NAME_RE } from './tts/spec'
 import './TtsCredentialsModal.css'
-
-/** 名称允许的字符 —— 与 `CREDENTIAL_REF_RE` 的后半段一致 */
-const CREDENTIAL_NAME_RE = /^[A-Za-z0-9_.-]+$/
 
 export type TtsCredentialsModalProps = {
   onClose(): void

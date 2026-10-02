@@ -24,6 +24,7 @@
 import { useMemo, useState, type ReactNode } from 'react'
 import {
   AUTH_SHAPES,
+  CREDENTIAL_NAME_RE,
   PROTOCOLS,
   defaultCredentialRef,
   isValidBaseUrl,
@@ -48,9 +49,6 @@ import './form.css'
 
 /** 不是预设、自己填协议的档（规范 §4.4） */
 const TEMPLATE_ID = 'template'
-
-/** 凭据引用名允许的字符 —— 与 `CREDENTIAL_REF_RE` 的后半段一致 */
-const CREDENTIAL_NAME_RE = /^[A-Za-z0-9_.-]+$/
 
 /** 正在输入的凭据引用（输入期间用草稿，别把半截值写进文件） */
 type AuthEdit = { key: string; scheme: CredentialScheme; name: string }

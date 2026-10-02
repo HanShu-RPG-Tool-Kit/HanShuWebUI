@@ -2598,7 +2598,14 @@ body.is-resizing .monaco-editor {
   font-size: 12px;
 }
 
-.studio-selection .spacer {
+/*
+ * 占位撑开：把右侧元素（清除按钮 / 计时 / 自动录下一个）推到行尾。
+ *
+ * **不限定父选择器** —— 它被三行 flex 共用（选中概况、本次录音、录音控制），
+ * 原先按父级各写一条，结果「录音控制」那一行漏了，那个 span 完全不生效。
+ * 一个只为 flex 撑开的空元素没什么可冲突的，通用一条即可。
+ */
+.spacer {
   flex: 1 1 auto;
 }
 
@@ -3117,10 +3124,6 @@ body.is-resizing .monaco-editor {
   gap: 8px;
   color: var(--text-dim);
   font-size: 12px;
-}
-
-.studio-take-time .spacer {
-  flex: 1 1 auto;
 }
 
 .studio-take-wave {

@@ -40,13 +40,13 @@ import {
   ALLOWED_EXTENSIONS_LABEL,
   MANUAL_FILE_EXTENSIONS_LABEL,
   isManualFileName,
+  registerAsset,
   removeAssetMeta,
+  removeAssetFolder,
   saveWorkspace,
   toggleAssetsCollapsed,
   updateScriptContent,
-  upsertAssetMeta,
   ensureAssetFolder,
-  removeAssetFolder,
   isVoiceMapFile,
   type Workspace,
 } from '../workspace'
@@ -459,7 +459,7 @@ export const ScriptWorkspace = forwardRef<
     const mime = asset.mime || TEXT_ASSET_MIME
     const blob = new Blob([content], { type: mime })
     await putAssetBlob(pkg.id, asset.path, blob)
-    const result = upsertAssetMeta(
+    const result = registerAsset(
       workspaceRef.current,
       pkg.id,
       asset.path,
@@ -497,11 +497,6 @@ export const ScriptWorkspace = forwardRef<
     // 文本缓存在组件作用域的 textCacheRef 上：资产编辑器保存后也要用它收敛
     // （见 handleSaveTextAsset）。
 
-    /** 资产路径的父目录；顶层返回 `assets` */
-    const parentDirOf = (path: string): string =>
-      path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : 'assets'
-
-    /** 旧状态清理：把误写成包内文件的那条记录移出 scripts */
     /*
      * 旧状态清理：把误写成包内文件的那条记录移出 scripts。
      *
@@ -540,13 +535,8 @@ export const ScriptWorkspace = forwardRef<
 
       const migrated = new Blob([legacy.content], { type: TEXT_ASSET_MIME })
       await putAssetBlob(hit.pkg.id, fileName, migrated)
-      const withFolder = ensureAssetFolder(
+      const withAsset = registerAsset(
         base,
-        hit.pkg.id,
-        parentDirOf(fileName),
-      )
-      const withAsset = upsertAssetMeta(
-        withFolder,
         hit.pkg.id,
         fileName,
         TEXT_ASSET_MIME,
@@ -569,13 +559,8 @@ export const ScriptWorkspace = forwardRef<
         if (!hit) return
         const blob = new Blob([content], { type: TEXT_ASSET_MIME })
         void putAssetBlob(hit.pkg.id, fileName, blob).then(() => {
-          const withFolder = ensureAssetFolder(
+          const result = registerAsset(
             workspaceRef.current,
-            hit.pkg.id,
-            parentDirOf(fileName),
-          )
-          const result = upsertAssetMeta(
-            withFolder,
             hit.pkg.id,
             fileName,
             TEXT_ASSET_MIME,
@@ -725,15 +710,13 @@ export const ScriptWorkspace = forwardRef<
         await putAssetBlob(packageId, path, blob)
         onProgress?.(0.4)
 
-        const parent = path.includes('/')
-          ? path.slice(0, path.lastIndexOf('/'))
-          : 'assets'
-        const withFolder = ensureAssetFolder(
+        const result = registerAsset(
           workspaceRef.current,
           packageId,
-          parent,
+          path,
+          mime,
+          blob.size,
         )
-        const result = upsertAssetMeta(withFolder, packageId, path, mime, blob.size)
         if (result) commitWorkspace(result.workspace)
         onProgress?.(0.6)
 
@@ -1050,21 +1033,17 @@ export const ScriptWorkspace = forwardRef<
         const refPath = library.refPathOf(key)
         await putAssetBlob(pkg.id, refPath, blob)
 
-        const parent = refPath.includes('/')
-          ? refPath.slice(0, refPath.lastIndexOf('/'))
-          : 'assets'
         /*
          * 每次都从**当前**工作区出发：上面那步 `clearPeerBindingOf` 刚提交过一次，
          * 用循环外捕获的旧引用去写会把刚清掉的 `.ogg` 元数据又带回来。
+         * 目标路径随元数据一起记下：配音四态是**同步**判定的，不能等到读文件才知道指向谁。
          */
-        const withFolder = ensureAssetFolder(workspaceRef.current, pkg.id, parent)
-        const result = upsertAssetMeta(
-          withFolder,
+        const result = registerAsset(
+          workspaceRef.current,
           pkg.id,
           refPath,
           'text/plain',
           blob.size,
-          // 目标路径随元数据一起记下：配音四态是**同步**判定的，不能等到读文件才知道指向谁
           asset.path,
         )
         if (result) commitWorkspace(result.workspace)
@@ -2257,12 +2236,7 @@ export const ScriptWorkspace = forwardRef<
       }
       try {
         await putAssetBlob(packageId, path, file)
-        // 确保父文件夹存在于树中
-        const parent = path.includes('/')
-          ? path.slice(0, path.lastIndexOf('/'))
-          : 'assets'
-        next = ensureAssetFolder(next, packageId, parent)
-        const result = upsertAssetMeta(
+        const result = registerAsset(
           next,
           packageId,
           path,
@@ -2328,12 +2302,8 @@ export const ScriptWorkspace = forwardRef<
 
     for (const { path } of missing) {
       try {
-        const parent = path.includes('/')
-          ? path.slice(0, path.lastIndexOf('/'))
-          : 'assets'
-        next = ensureAssetFolder(next, hit.pkg.id, parent)
         await putAssetBlob(hit.pkg.id, path, blank)
-        const result = upsertAssetMeta(
+        const result = registerAsset(
           next,
           hit.pkg.id,
           path,

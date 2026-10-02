@@ -204,6 +204,14 @@ export type ReadResult<T> = {
 /** 凭据引用：`env:NAME` / `app:NAME`。`auth` 里每个 `*Ref` 键都要匹配它 */
 export const CREDENTIAL_REF_RE = /^(env|app):[A-Za-z0-9_.-]+$/
 
+/**
+ * 凭据**名字**允许的字符 —— 就是 `CREDENTIAL_REF_RE` 去掉 `env:` / `app:` 前缀那一段。
+ *
+ * 单独导出而不是让每个表单各写一份：名字的字符集是引用语法的一半，
+ * 抄一份迟早会有一处忘记改（凭据弹窗与服务表单原先是两份字面量相同的正则）。
+ */
+export const CREDENTIAL_NAME_RE = /^[A-Za-z0-9_.-]+$/
+
 /** 服务 id 可用字符（与 `normalizeResourceName` 一致：非空、不含这些字符） */
 export const RESOURCE_NAME_BAD_RE = /[\\/:*?"<>|]/
 

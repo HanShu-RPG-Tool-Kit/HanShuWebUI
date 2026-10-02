@@ -80,13 +80,6 @@ export function voiceFormatOfPath(
   return `${base} · ${name}`
 }
 
-export function voiceFormatLabel(
-  entry: VoiceAssetEntry,
-  decoded: VoiceDecodeResult | null,
-): string {
-  return voiceFormatOfPath(entry.path, decoded)
-}
-
 export type VoiceAssetBrowserProps = {
   library: VoiceLibrary
   query: string

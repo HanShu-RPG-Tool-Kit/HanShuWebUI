@@ -25,13 +25,12 @@ import { resolveVoiceBindingFor, voiceAssetDir } from '../i18n/voiceMap'
 import { analyzeHsDiagnostics, type HsDiagnostic } from '../monaco/hsDiagnostics'
 import { parseTextSpans } from '../monaco/textSpans'
 import {
-  ensureAssetFolder,
   isHanshuFile,
+  registerAsset,
   removeAssetFolder,
   removeAssetMeta,
   sourceKindOf,
   sourceRelativePath,
-  upsertAssetMeta,
   type Workspace,
 } from '../workspace'
 
@@ -148,7 +147,7 @@ export async function readLangAsset(
   return parseTextFile(await blob.text())
 }
 
-/** 写语言文本：blob → 目录 → 元数据，顺序与界面里的资产写入一致 */
+/** 写语言文本：blob → 登记进工作区（父目录 + 元数据），顺序与界面里的资产写入一致 */
 export async function writeLangAsset(
   workspace: Workspace,
   packageId: string,
@@ -157,11 +156,14 @@ export async function writeLangAsset(
 ): Promise<Workspace> {
   const blob = new Blob([stringifyTextFile(data)], { type: TEXT_ASSET_MIME })
   await putAssetBlob(packageId, path, blob)
-  let next = workspace
-  const dir = path.slice(0, path.lastIndexOf('/'))
-  if (dir) next = ensureAssetFolder(next, packageId, dir)
-  const result = upsertAssetMeta(next, packageId, path, TEXT_ASSET_MIME, blob.size)
-  return result?.workspace ?? next
+  const result = registerAsset(
+    workspace,
+    packageId,
+    path,
+    TEXT_ASSET_MIME,
+    blob.size,
+  )
+  return result?.workspace ?? workspace
 }
 
 export type LocaleSummary = { locale: string; langFiles: number; voiceFiles: number }

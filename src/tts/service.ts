@@ -341,7 +341,6 @@ export function resolveService(
 
 // ===== 写出 =====
 
-/** 只写当前版本的规范形状 + 保留下来的未知键 */
 /**
  * 新建一个服务定义的**起点**。
  *
@@ -372,6 +371,7 @@ export function blankServiceDefinition(
   return definition
 }
 
+/** 只写当前版本的规范形状 + 保留下来的未知键 */
 export function stringifyServiceDefinition(definition: ServiceDefinition): string {
   const out: Record<string, unknown> = { version: definition.version }
   if (definition.label !== undefined) out.label = definition.label

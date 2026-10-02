@@ -802,7 +802,8 @@ export function RecordingStudio({
       // 转码、落盘、试听都不需要第二条路
       tts?.onGenerate(importTargets)
       return
-    }    if (confirmRecord) {
+    }
+    if (confirmRecord) {
       if (!recordTarget || !take) return
       // 只有批量才有"下一个"：单选录完这一个就结束，别挂自动续录的钩子
       if (mode === 'batch') awaitingNextRef.current = true
