@@ -14,6 +14,26 @@
   --text-dim: #a39e96;
   --text-bright: #f0ebe3;
   --accent: #5b9fd4;
+
+  /* 语义色 —— TTS 设置页与录音棚共用。
+     深色主题下同一个色相要提亮才有对比度，所以这里给的是"暗底上能读"的那一档，
+     别处不要再各自硬编码一份（换主题时那会变成一堆补丁）。 */
+  --ok: #7fb98a;
+  --warn: #d8b45a;
+  --danger: #e8656d;
+  --accent-soft: rgb(91 159 212 / 16%);
+  --accent-dim: rgb(91 159 212 / 45%);
+  --focus-ring: 2px solid var(--accent);
+  /* 输入框聚焦时贴边的光晕。**它是一个 box-shadow 值**，与 --focus-ring（outline 值）
+     不是一回事 —— 混用会得到一条无效声明，被浏览器静默丢掉。 */
+  --focus-glow: 0 0 0 2px rgb(91 159 212 / 30%);
+
+  /* 圆角与"凹陷面"（波形窗、进度槽）—— 面板里所有 3px/4px 的随手取值都归到这两个 */
+  --radius-s: 4px;
+  --radius-m: 8px;
+  --radius-pill: 999px;
+  --bg-sunken: #22252a;
+
   --ui-font-size: 15px;
   --ui-titlebar-h: 40px;
   --ui-tabbar-h: 44px;
@@ -711,130 +731,8 @@ html.splash-windowed .app {
   background: rgba(206, 78, 74, 0.22);
 }
 
-/* —— 音频选择器弹窗 —— */
-.voice-picker-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 310;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: rgba(0, 0, 0, 0.55);
-}
-
-.voice-picker {
-  display: flex;
-  flex-direction: column;
-  width: min(980px, 94vw);
-  height: min(760px, 90vh);
-  border: 1px solid #3c4149;
-  border-radius: 6px;
-  background: #22252a;
-  color: var(--text-bright);
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5);
-}
-
-.voice-picker-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 14px;
-  border-bottom: 1px solid #34383f;
-}
-
-.voice-picker-title {
-  font-size: 14px;
-}
-
-.voice-picker-key {
-  margin-left: 8px;
-  color: var(--text);
-  font-family: Consolas, "Sarasa Mono New", monospace;
-  font-size: 13px;
-}
-
-.voice-picker-close {
-  padding: 4px 10px;
-  border: 1px solid #3c4149;
-  border-radius: 3px;
-  background: transparent;
-  color: var(--text-bright);
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.voice-picker-close:hover {
-  background: #2f343c;
-}
-
-/* 顶部预览：左 2/3 音频形状，右 1/3 元信息 */
-.voice-picker-preview {
-  display: flex;
-  gap: 12px;
-  height: 190px;
-  padding: 14px;
-  border-bottom: 1px solid #34383f;
-}
-
-.voice-picker-wave {
-  flex: 2 1 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 0;
-  /* 幕布要绝对定位盖在上面 */
-  position: relative;
-  border: 1px solid #34383f;
-  border-radius: 4px;
-  background: #1d2025;
-  color: #7fc4f0;
-  overflow: hidden;
-}
-
-.voice-picker-wave svg {
-  display: block;
-  width: 100%;
-  height: 100%;
-}
-
-.voice-picker-wave.is-empty {
-  color: #6a7078;
-}
-
-/* 拖入但还没导入的文件：只缓存在内存里，这里说明状态 */
-.voice-picker-pending {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 6px;
-  padding: 0 16px;
-  text-align: center;
-}
-
-.voice-picker-pending-name {
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: #cfd6de;
-  font-size: 13px;
-}
-
-.voice-picker-pending-hint {
-  color: #8b929b;
-  font-size: 11px;
-}
-
-/* 外部文件拖到预览框上：蓝色**虚线**框 + 一层半透明白色幕布（幕布在下面单独写） */
-.voice-picker-wave.is-drop-target {
-  outline: 2px dashed #4f9ed8;
-  outline-offset: -3px;
-}
-
 /* 幕布：盖住整个预览框，表明"这里能放"；不吃事件（拖拽判定仍打在框上） */
-.voice-picker-wave-scrim {
+.voice-wave-scrim {
   position: absolute;
   inset: 0;
   display: flex;
@@ -847,42 +745,25 @@ html.splash-windowed .app {
   pointer-events: none;
 }
 
-.voice-picker-wave.is-empty svg {
-  width: 84px;
-  height: 84px;
-}
-
-.voice-picker-info {
-  flex: 1 1 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-  padding: 10px;
-  border: 1px solid #34383f;
-  border-radius: 4px;
-  background: #1d2025;
-}
-
-.voice-picker-row {
+.voice-row {
   display: flex;
   gap: 8px;
   font-size: 12px;
 }
 
-.voice-picker-row-label {
+.voice-row-label {
   flex: 0 0 64px;
   color: var(--text);
 }
 
-.voice-picker-row-value {
+.voice-row-value {
   flex: 1 1 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.voice-picker-play {
+.voice-play {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -897,40 +778,27 @@ html.splash-windowed .app {
   cursor: pointer;
 }
 
-.voice-picker-play:hover {
+.voice-play:hover {
   background: #2f343c;
 }
 
-.voice-picker-play:disabled {
+.voice-play:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
 
-.voice-picker-play svg {
+.voice-play svg {
   display: block;
   width: 14px;
   height: 14px;
 }
 
-.voice-picker-hint {
-  font-size: 12px;
-  color: var(--text);
-}
-
-.voice-picker-hint.is-warn {
-  color: #d9a24a;
-}
-
-.voice-picker-hint.is-danger {
-  color: #e8656d;
-}
-
-.voice-picker-search {
+.voice-search {
   padding: 10px 14px;
   border-bottom: 1px solid #34383f;
 }
 
-.voice-picker-search input {
+.voice-search input {
   box-sizing: border-box;
   width: 100%;
   height: 30px;
@@ -943,12 +811,12 @@ html.splash-windowed .app {
   outline: none;
 }
 
-.voice-picker-search input:focus {
+.voice-search input:focus {
   border-color: var(--accent);
 }
 
 /* 底部资源管理器：可见根目录固定为 assets/<语言标签>/voice */
-.voice-picker-tree {
+.voice-tree {
   flex: 1 1 auto;
   min-height: 0;
   padding: 8px 6px;
@@ -1014,46 +882,6 @@ html.splash-windowed .app {
   padding: 12px 10px;
   color: var(--text);
   font-size: 12px;
-}
-
-.voice-picker-footer {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
-  border-top: 1px solid #34383f;
-}
-
-.voice-picker-footer .spacer {
-  flex: 1 1 auto;
-}
-
-.voice-picker-btn {
-  padding: 5px 14px;
-  border: 1px solid #3c4149;
-  border-radius: 3px;
-  background: #262a30;
-  color: var(--text-bright);
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.voice-picker-btn:hover {
-  background: #2f343c;
-}
-
-.voice-picker-btn.is-primary {
-  border-color: var(--accent);
-  background: #2b3a47;
-}
-
-.voice-picker-btn.is-danger {
-  color: #e8656d;
-}
-
-.voice-picker-btn:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
 }
 
 /* 树里标出「这个文件就是对等目标」 */
@@ -2619,3 +2447,37 @@ body.is-resizing .monaco-editor {
 .diff-btn-danger:hover {
   background: rgba(244, 135, 113, 0.12);
 }
+
+/* —— 编辑器进入录音棚选择模式 —— */
+.hs-studio-mode,
+.hs-studio-mode .view-lines {
+  cursor: crosshair;
+}
+
+/* 只读时不要把光标画出来：那会儿点击的语义是"选中"，不是"定位" */
+.hs-studio-mode .cursor,
+.hs-studio-mode .cursors-layer {
+  visibility: hidden;
+}
+
+/* 录音棚已选中的键名（与文档选区无关的高亮） */
+.hs-lang-unit.is-studio-selected {
+  background: rgba(91, 159, 212, 0.28);
+  border-radius: 2px;
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.hs-lang-unit.is-studio-selected .hs-lang-box {
+  color: var(--text-bright);
+}
+
+/* 划框的矩形（覆盖层坐标，纯视觉） */
+.hs-lang-marquee {
+  position: absolute;
+  z-index: 6;
+  border: 1px dashed var(--accent);
+  background: rgba(91, 159, 212, 0.16);
+  pointer-events: none;
+}
+

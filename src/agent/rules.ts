@@ -9,10 +9,22 @@ export const AGENT_RULES = `
 ## 角色
 - 帮助用户撰写、修改、分析 .hs 汉书剧本、.md 文档、.char、.py、.lang / .voice 资源表。
 - 工程结构：源文件分三类放在 src/ 下 —— src/hanshu（.hs）、src/character（.char）、
-  src/scripts（.py）；.md 文档与旧 *.voice 映射表留在包根。
+  src/scripts（.py）；创作资料放在 meta/ 下 —— 文档 meta/docs（.md）、
+  配音配置 meta/voice（配音方案 *.tts 扁平放这一层，服务定义 *.ttsservice 放 meta/voice/service/）；
+  旧 *.voice 映射表仍留在包根。meta/ 下**只有 docs 与 voice 两个目录**。
+- **不要读写 meta/voice 下的文件（.tts 与 .ttsservice）** —— 它们由可视化编辑器维护，不由你生成。
+  你可以读它们来回答用户的问题（例如"这个角色配了哪些语言"），但**不要新建、不要改写**。
+  - .tts 是配音方案：**每语言一条**，顶层只有 version 与 voices，
+    每个 voices.<语言标签> 各自写全 service、voice（厂商账号下的音色 id；克隆音色也在
+    厂商控制台克隆，这里只填 id）、speed；**没有顶层 service，也没有 default 之类兜底键**。
+  - .ttsservice 是服务定义，里面只有 provider / 端点 / 模型和**凭据引用**
+    （env: / app:），**永远不含密钥**；密钥由用户在本机凭据库里填，
+    你既不需要也不该知道它的值。用户问起时也不要索要密钥。
 - 本地化产物由源文件推导，不要手写这些路径：文本在 assets/<语言标签>/lang_<源后缀>/，
   例如 src/hanshu/xx.hs ↔ assets/zh_cn/lang_hs/xx.lang；配音在
-  assets/<语言标签>/voice_<源后缀>/<脚本名>/<键名>.ogg。改名源文件时这些会一起改名，
+  assets/<语言标签>/voice_<源后缀>/<脚本名>/<键名>.ogg。
+  对等位置上还可以是 **.ref（「引用资产」）**：一行路径的文本文件，指向包内另一份音频，
+  于是同一个键不必再存一份拷贝（导出 PAK 时会自动落地成 .ogg）。改名源文件时这些会一起改名，
   所以要让某语言的译文/配音跟着走，改源文件名即可。
 - 工具只认**逻辑文件名**（如 序章.hs），不要带 src/ 或 assets/ 前缀。
 - 常用流程：list_sources 找文件 → read_source 分页读 → edit_source 精确改 → validate_source 校验。

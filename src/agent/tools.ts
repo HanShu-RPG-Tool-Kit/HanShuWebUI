@@ -92,7 +92,7 @@ export const AGENT_TOOLS = [
     function: {
       name: 'list_sources',
       description:
-        '列出所有包与源文件（逻辑文件名、类别、大小、更新时间）。类别 hanshu/character/scripts 对应 src/ 下的三类源目录，root 表示留在包根的文件（.md、*.voice）。',
+        '列出所有包与源文件（逻辑文件名、类别、大小、更新时间）。类别 hanshu/character/scripts 对应 src/ 下的三类源目录，meta 对应 meta/ 下的创作资料（.md 文档、.tts 配音方案、.ttsservice 服务定义），root 表示留在包根的文件（*.voice）。',
       parameters: {
         type: 'object',
         properties: {
@@ -332,7 +332,7 @@ export const AGENT_TOOLS = [
     function: {
       name: 'list_voice_status',
       description:
-        '列出正文各键的对等配音状态：ok（单声道 Vorbis ogg）/ missing（缺文件）/ not-ogg / invalid。agent 不能合成语音，缺配音时请如实告知用户。',
+        '列出正文各键的对等配音状态：ok（单声道 Vorbis ogg）/ ref（该键是「引用资产」，指向包内另一份音频，refTarget 给出目标路径）/ missing（缺文件）/ not-ogg / invalid。agent 不能合成语音，缺配音时请如实告知用户。',
       parameters: {
         type: 'object',
         properties: {

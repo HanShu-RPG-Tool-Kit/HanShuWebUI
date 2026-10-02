@@ -172,5 +172,8 @@ export function guessMime(path: string): string {
   if (lower.endsWith('.ogg')) return 'audio/ogg'
   if (lower.endsWith('.flac')) return 'audio/flac'
   if (lower.endsWith('.json')) return 'application/json'
+  // 「引用资产」配音：一行路径的文本文件。标成 text/plain 才会被当成可读文本
+  // （见 assets/paths 的 isTextAsset），否则资源管理器里只会显示"此类型暂无预览"
+  if (lower.endsWith('.ref')) return 'text/plain'
   return 'application/octet-stream'
 }
