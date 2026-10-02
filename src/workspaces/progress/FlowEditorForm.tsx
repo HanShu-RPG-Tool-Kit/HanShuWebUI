@@ -1,5 +1,5 @@
 import { Field, IdField, JsonField, TextField } from './Fields'
-import { branches, clone, connectEntry, descendants, disconnectLink, displayText, getGoalNode, getLogicNode, getTransitionNode, getHubNode, getGatewayNode, getNode, GOAL_NAMES, LOGIC_NAMES, moveNode, parseFlow, removeNode, renameNode, reorderBranch, text, type Data, type FlowBranch, type FlowCondition, type FlowSelection, type FlowText, type ProgressFlow } from './model'
+import { branches, clone, connectEntry, descendants, disconnectLink, displayText, getGoalNode, getPredicateNode, getTransitionNode, getConditionalNode, getDiffNode, getMergeNode, getSwapNode, getNode, GOAL_NAMES, PREDICATE_NAMES, moveNode, parseFlow, removeNode, renameNode, reorderBranch, text, type Data, type FlowBranch, type FlowCondition, type FlowSelection, type FlowText, type ProgressFlow } from './model'
 import { addNextCheckpoint, withCanvasPositions } from './canvas'
 
 function AuthorText({ label, value, onChange, multiline = false, disabled }: {
@@ -26,12 +26,11 @@ export function FlowEditorForm({ flow, selection, onChange, onSelect, onPending,
   const authorText = (label: string, value: FlowText, update: (next: ProgressFlow, value: FlowText) => void, multiline = false) => <AuthorText label={label} value={value} multiline={multiline} disabled={locked} onChange={(value) => edit((next) => update(next, value))} />
 
   if (selection.kind === 'entry' || selection.kind === 'entry-link') return <div className="flow-editor-fields">
-    <p className="flow-hint">起点出口等同转移 Next：可接到一条 checkpoint 或集线器，不承载阶段内容。它可以自由移动，始终保留在画布中。</p>
+    <p className="flow-hint">开始节点出口等同线性变迁 Next：可接到一条 checkpoint，不承载阶段内容。它可以自由移动，始终保留在画布中。Ctrl+点击可发出 S(未激活→已激活)。</p>
     <Field label="起始节点"><select disabled={locked} value={flow.entry.target ?? ''} onChange={(event) => attempt(() => onChange(connectEntry(withCanvasPositions(flow), event.target.value || null)))}>
       <option value="">暂不连接</option>
       {Object.entries(flow.nodes).map(([id, node]) => <option key={id} value={id}>{displayText(node.title) || id}</option>)}
-      {Object.entries(flow.hubs ?? {}).map(([id, hub]) => <option key={id} value={id}>{displayText(hub.title) || id}（集线器）</option>)}
-    </select></Field>
+          </select></Field>
     <button type="button" disabled={locked || flow.entry.target !== null} onClick={() => attempt(() => {
       const result = addNextCheckpoint(flow, flow.entry.id); onChange(result.flow); onSelect({ kind: 'node', id: result.id })
     })}>＋ 新建并连接 checkpoint</button>
@@ -74,14 +73,14 @@ export function FlowEditorForm({ flow, selection, onChange, onSelect, onPending,
       </select></Field>
       <div className="flow-section-heading"><h4>后续阶段 · {node.children.length}</h4><button type="button" disabled={locked || node.completion === 'finish'} onClick={() => attempt(() => {
         const result = addNextCheckpoint(flow, id); onChange(result.flow); onSelect({ kind: 'node', id: result.id })
-      })}>＋ 经转移新建</button></div>
-      {node.children.length > 0 && <p className="flow-hint">仍有旧的直连分支（校验会报错）。请改为经转移节点连接。</p>}
+      })}>＋ 经线性变迁新建</button></div>
+      {node.children.length > 0 && <p className="flow-hint">仍有旧的直连分支（校验会报错）。请改为经线性变迁连接。</p>}
       <div className="flow-children">{node.children.map((b, index) => <div className="flow-child" key={b.id}>
         <button type="button" disabled={locked} onClick={() => onSelect({ kind: 'branch', parent: id, id: b.id })}><strong>{displayText(b.title) || b.id}</strong><small>→ {displayText(getNode(flow, b.target)?.title ?? text(b.target))}</small></button>
         <button type="button" disabled={locked || index === 0} aria-label={`上移分支 ${b.id}`} onClick={() => onChange(reorderBranch(flow, id, b.id, -1))}>↑</button>
         <button type="button" disabled={locked || index === node.children.length - 1} aria-label={`下移分支 ${b.id}`} onClick={() => onChange(reorderBranch(flow, id, b.id, 1))}>↓</button>
       </div>)}</div>
-      {!node.children.length && <p className="flow-hint">后续需经转移：ckpt → Parent → Next → ckpt。也可将当前节点标记为流程终点。</p>}
+      {!node.children.length && <p className="flow-hint">后续经线性变迁：ckpt 激活出 → Parent；Next 发 S → 下一 ckpt。Goal 口接一条 Goal 节点。</p>}
       <div className="flow-inline-actions"><button type="button" className="flow-danger" disabled={locked} onClick={() => {
         attempt(() => { onChange(removeNode(withCanvasPositions(flow), id)); onSelect({ kind: 'flow' }) })
       }}>删除当前节点</button></div><p className="flow-hint">只删除当前节点及相关连接，其他节点保留。完成后可撤销。</p>
@@ -94,6 +93,7 @@ export function FlowEditorForm({ flow, selection, onChange, onSelect, onPending,
     if (!goal) return <p className="flow-hint">目标已移除，请重新选择。</p>
     const update = (patch: Partial<typeof goal>) => edit(next => { Object.assign(next.goals![id], patch) })
     return <div className="flow-editor-fields">
+      <p className="flow-hint">Goal：单出口接到线性或差分变迁 Goal 口。接受 A→订阅中、D→已关闭；订阅中可发出 G（线性合取）或 G-Y / G-N（差分）。</p>
       {authorText('目标名称', goal.title, (next, value) => { next.goals![id].title = value })}
       {authorText('目标说明', goal.description, (next, value) => { next.goals![id].description = value }, true)}
       <Field label="条件类型"><select disabled={locked} value={goal.kind} onChange={event => {
@@ -111,53 +111,90 @@ export function FlowEditorForm({ flow, selection, onChange, onSelect, onPending,
     </div>
   }
 
+  if (selection.kind === 'predicate') {
+    const { id } = selection, predicate = getPredicateNode(flow, id)
+    if (!predicate) return <p className="flow-hint">谓词已移除，请重新选择。</p>
+    const update = (patch: Partial<typeof predicate>) => edit(next => { Object.assign(next.predicates![id], patch) })
+    return <div className="flow-editor-fields">
+      <p className="flow-hint">Predicate：单出口接到条件变迁 Predicate 口。接受 A→订阅中、D→已关闭；订阅中可发出 P。</p>
+      {authorText('谓词名称', predicate.title, (next, value) => { next.predicates![id].title = value })}
+      {authorText('谓词说明', predicate.description, (next, value) => { next.predicates![id].description = value }, true)}
+      <Field label="条件类型"><select disabled={locked} value={predicate.kind} onChange={event => {
+        const kind = event.target.value as FlowCondition['kind']
+        update({ kind, nodeRefs: [], params: kind === 'counter' ? { event: '', target: 1 } : kind === 'signal' ? { event: '' } : kind === 'external' ? { reference: '', args: {} } : {} })
+      }}>{Object.entries(PREDICATE_NAMES).map(([kind, name]) => <option key={kind} value={kind}>{name}</option>)}</select></Field>
+      {['counter', 'signal'].includes(predicate.kind) && <TextField label="事件或信号引用" disabled={locked} value={String(predicate.params.event ?? '')} onChange={event => update({ params: { ...predicate.params, event } })} />}
+      {predicate.kind === 'counter' && <Field label="累计目标值"><input type="number" min="1" disabled={locked} value={Number(predicate.params.target ?? 1)} onChange={event => update({ params: { ...predicate.params, target: Number(event.target.value) } })} /></Field>}
+      {predicate.kind === 'nodes' && <div className="flow-node-refs">{Object.entries(flow.nodes).map(([ref, node]) => <label className="flow-check" key={ref}><input type="checkbox" disabled={locked} checked={predicate.nodeRefs.includes(ref)} onChange={event => update({ nodeRefs: event.target.checked ? [...predicate.nodeRefs, ref] : predicate.nodeRefs.filter(value => value !== ref) })} />{displayText(node.title) || ref}</label>)}</div>}
+      {predicate.kind === 'external' && <>
+        <TextField label="条件资源引用" disabled={locked} value={String(predicate.params.reference ?? '')} onChange={reference => update({ params: { ...predicate.params, reference } })} />
+        <JsonField label="条件参数" value={predicate.params.args ?? {}} onPending={onPending} onApply={args => update({ params: { ...predicate.params, args: args as Data } })} />
+      </>}
+      <button type="button" className="flow-danger" disabled={locked} onClick={() => { onChange(removeNode(withCanvasPositions(flow), id)); onSelect({ kind: 'flow' }) }}>删除当前节点</button>
+    </div>
+  }
+
   if (selection.kind === 'transition') {
     const node = getTransitionNode(flow, selection.id)
     if (!node) return <p className="flow-hint">节点已移除，请重新选择。</p>
     return <div className="flow-editor-fields">
+      <p className="flow-hint">线性变迁：Parent / Next 各一条线；Goal 口可多线合取。Parent 收 A → Next 发 S(未激活→活跃中)，并向全部 Goal 发 A。任一 Goal 发 G → 回 D 关掉该 Goal，再向全部 Goal 发 C；均已关闭并回报 C-R 后 Next 发 S(活跃中→已激活)。无 Goal 时 Parent 的 A 后直接完成。</p>
       {authorText('节点名称', node.title, (next, value) => { next.transitions![selection.id].title = value })}
       {authorText('节点说明', node.description, (next, value) => { next.transitions![selection.id].description = value }, true)}
       <button type="button" className="flow-danger" disabled={locked} onClick={() => { onChange(removeNode(withCanvasPositions(flow), selection.id)); onSelect({ kind: 'flow' }) }}>删除当前节点</button>
     </div>
   }
 
-  if (selection.kind === 'hub') {
-    const node = getHubNode(flow, selection.id)
+  if (selection.kind === 'conditional') {
+    const node = getConditionalNode(flow, selection.id)
     if (!node) return <p className="flow-hint">节点已移除，请重新选择。</p>
     return <div className="flow-editor-fields">
-      <p className="flow-hint">集线器：一条进入（checkpoint / 起点），多条分出到转移 Parent，并可有一条到网关。</p>
-      {authorText('节点名称', node.title, (next, value) => { next.hubs![selection.id].title = value })}
-      {authorText('节点说明', node.description, (next, value) => { next.hubs![selection.id].description = value }, true)}
+      <p className="flow-hint">条件变迁：Predicate / Parent / Next 各一条线。Parent 收 A → Next 发 S(未激活→活跃中)，并向 Predicate 发 A。Predicate 发 P → 回 D 关闭谓词，Next 发 S(活跃中→已激活)。无 Predicate 时 Parent 的 A 后直接完成。</p>
+      {authorText('节点名称', node.title, (next, value) => { next.conditionals![selection.id].title = value })}
+      {authorText('节点说明', node.description, (next, value) => { next.conditionals![selection.id].description = value }, true)}
       <button type="button" className="flow-danger" disabled={locked} onClick={() => { onChange(removeNode(withCanvasPositions(flow), selection.id)); onSelect({ kind: 'flow' }) }}>删除当前节点</button>
     </div>
   }
 
-  if (selection.kind === 'gateway') {
-    const node = getGatewayNode(flow, selection.id)
+  if (selection.kind === 'diff') {
+    const node = getDiffNode(flow, selection.id)
     if (!node) return <p className="flow-hint">节点已移除，请重新选择。</p>
     return <div className="flow-editor-fields">
-      <p className="flow-hint">网关：多条汇入（转移 Next，可选一条集线器），一条离开到 checkpoint。</p>
-      {authorText('节点名称', node.title, (next, value) => { next.gateways![selection.id].title = value })}
-      {authorText('节点说明', node.description, (next, value) => { next.gateways![selection.id].description = value }, true)}
+      <p className="flow-hint">差分变迁：Goal / Parent 各一条线；成功 / 失败各一条出线。Parent 收 A → 成功口发 S(未激活→活跃中) 且 Goal 口发 A。收 G-Y → 成功口发 S(活跃中→已激活)；收 G-N → 成功口发 S-C、失败口发 S(未激活→已激活)。成功/失败口收 S-C → 转发到 Parent 并对 Goal 发 D。</p>
+      {authorText('节点名称', node.title, (next, value) => { next.diffs![selection.id].title = value })}
+      {authorText('节点说明', node.description, (next, value) => { next.diffs![selection.id].description = value }, true)}
       <button type="button" className="flow-danger" disabled={locked} onClick={() => { onChange(removeNode(withCanvasPositions(flow), selection.id)); onSelect({ kind: 'flow' }) }}>删除当前节点</button>
     </div>
   }
 
-  if (selection.kind === 'logic') {
-    const node = getLogicNode(flow, selection.id)
+  if (selection.kind === 'merge') {
+    const node = getMergeNode(flow, selection.id)
     if (!node) return <p className="flow-hint">节点已移除，请重新选择。</p>
     return <div className="flow-editor-fields">
-      <p className="flow-hint">{LOGIC_NAMES[node.operator]}节点 · 当前仅编辑结构，不计算真值。</p>
-      {authorText('节点名称', node.title, (next, value) => { next.logic!.nodes[selection.id].title = value })}
-      {authorText('节点说明', node.description, (next, value) => { next.logic!.nodes[selection.id].description = value }, true)}
+      <p className="flow-hint">合并变迁：入点多线收 A；每次收 A 时 Next 发 S(未激活→活跃中)，入点回传查询 C。各上游 ckpt 若已激活则回报 C-R；全部回报后 Next 发 S(活跃中→已激活)。</p>
+      {authorText('节点名称', node.title, (next, value) => { next.merges![selection.id].title = value })}
+      {authorText('节点说明', node.description, (next, value) => { next.merges![selection.id].description = value }, true)}
       <button type="button" className="flow-danger" disabled={locked} onClick={() => { onChange(removeNode(withCanvasPositions(flow), selection.id)); onSelect({ kind: 'flow' }) }}>删除当前节点</button>
     </div>
   }
+
+  if (selection.kind === 'swap') {
+    const node = getSwapNode(flow, selection.id)
+    if (!node) return <p className="flow-hint">节点已移除，请重新选择。</p>
+    return <div className="flow-editor-fields">
+      <p className="flow-hint">交换变迁：默认 1 个条目，每个条目有 A 入 / S 出；接到末槽时自动扩容。某条目收 A 时，同条目 S 出发 S(未激活→已激活)，其余条目入点发 S-C。</p>
+      <p className="flow-hint">当前条目槽位：{node.entries}</p>
+      {authorText('节点名称', node.title, (next, value) => { next.swaps![selection.id].title = value })}
+      {authorText('节点说明', node.description, (next, value) => { next.swaps![selection.id].description = value }, true)}
+      <button type="button" className="flow-danger" disabled={locked} onClick={() => { onChange(removeNode(withCanvasPositions(flow), selection.id)); onSelect({ kind: 'flow' }) }}>删除当前节点</button>
+    </div>
+  }
+
 
   if (selection.kind === 'logic-link') {
     const link = flow.logic?.links.find(link => link.id === selection.id)
     if (!link) return <p className="flow-hint">连接已移除，请重新选择。</p>
-    const name = (id: string) => displayText((getNode(flow, id) ?? getLogicNode(flow, id) ?? getGoalNode(flow, id) ?? getTransitionNode(flow, id) ?? getHubNode(flow, id) ?? getGatewayNode(flow, id))?.title ?? text(id))
+    const name = (id: string) => displayText((getNode(flow, id) ?? getGoalNode(flow, id) ?? getPredicateNode(flow, id) ?? getTransitionNode(flow, id) ?? getConditionalNode(flow, id) ?? getDiffNode(flow, id) ?? getMergeNode(flow, id) ?? getSwapNode(flow, id))?.title ?? text(id))
     return <div className="flow-editor-fields">
       <p className="flow-route">{name(link.from)} → {name(link.to)}</p>
       <p className="flow-hint">输出连接到输入端口。</p>

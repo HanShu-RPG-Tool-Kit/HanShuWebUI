@@ -15,7 +15,7 @@ const CREDITS = [
   'Hueihuea',
   'SaltfishSheep',
   'MayIHaveK',
-  '丰川祥子',
+  'Muzermat',
   'Vallovely',
   'Sweda',
 ] as const

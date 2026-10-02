@@ -1,6 +1,7 @@
 import { useEffect, useImperativeHandle, useMemo, useRef, useState, type Ref } from 'react'
+import { createPortal } from 'react-dom'
 import { branches, clone, connectEntry, connectNodes, createFlow, disconnectLink, displayText, getNode, hasContentNode, parseFlow, validateFlow, type CanvasNodeType, type FlowCanvasNote, type FlowInputPort, type FlowPort, type FlowPosition, type FlowSelection, type ProgressFlow } from './progress/model'
-import { addNextCheckpoint, createCanvasNote, updateCanvasNote, removeCanvasItems, createCheckpoint, createGoalNode, createLogicNode, createTransitionNode, createHubNode, createGatewayNode, groupCanvasNodes, moveCanvasNodes, renameCanvasGroup, ungroupCanvasNodes, withCanvasPositions } from './progress/canvas'
+import { addNextCheckpoint, createCanvasNote, updateCanvasNote, removeCanvasItems, createCheckpoint, createGoalNode, createPredicateNode, createTransitionNode, createConditionalNode, createDiffNode, createMergeNode, createSwapNode, groupCanvasNodes, moveCanvasNodes, renameCanvasGroup, ungroupCanvasNodes, withCanvasPositions } from './progress/canvas'
 import { smartArrangeCanvas } from './progress/arrange'
 import { ProgressGraph } from './progress/ProgressGraph'
 import { FlowEditorDialog } from './progress/FlowEditorDialog'
@@ -22,9 +23,12 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
   const [editor, setEditor] = useState<{ key: string; flow: ProgressFlow; selection: FlowSelection; origin: HTMLElement | null } | null>(null)
   const [busy, setBusy] = useState(false)
   const [showIssues, setShowIssues] = useState(false)
+  const [cycleAlert, setCycleAlert] = useState<string | null>(null)
   const [history, setHistory] = useState(() => new Map<string, History>())
   const fileInput = useRef<HTMLInputElement>(null)
   const importFolder = useRef<string | null>(null)
+  const seenCycle = useRef<string | null>(null)
+  const cycleDialog = useRef<HTMLDialogElement>(null)
   const doc = state.documents.find((item) => item.key === state.activeKey)
   const parsed = useMemo(() => {
     if (!doc) return { flow: null, error: '' }
@@ -34,7 +38,30 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
   const issues = useMemo(() => parsed.flow ? validateFlow(parsed.flow) : [], [parsed.flow])
   const errorCount = issues.filter((issue) => issue.severity === 'error').length + (parsed.error ? 1 : 0)
   const warningCount = issues.filter((issue) => issue.severity === 'warning').length
+  const cycleWarning = issues.find(issue => issue.path === 'graph' && issue.message.includes('环'))
   const locked = editor !== null
+
+  useEffect(() => {
+    const message = cycleWarning?.message ?? null
+    if (!message) {
+      seenCycle.current = null
+      return
+    }
+    if (seenCycle.current === message) return
+    seenCycle.current = message
+    setCycleAlert(message)
+    setShowIssues(true)
+  }, [cycleWarning?.message])
+
+  useEffect(() => {
+    const element = cycleDialog.current
+    if (!element) return
+    if (cycleAlert) {
+      if (!element.open) element.showModal()
+    } else if (element.open) {
+      element.close()
+    }
+  }, [cycleAlert])
 
   useEffect(() => {
     if (initial.error) return
@@ -74,8 +101,8 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
   }
   function createNode(position: FlowPosition, operator?: CanvasNodeType) {
     if (!parsed.flow || locked || busy) return
-    const result = operator === 'transition' ? createTransitionNode(parsed.flow, position) : operator === 'hub' ? createHubNode(parsed.flow, position) : operator === 'gateway' ? createGatewayNode(parsed.flow, position) : operator === 'note' ? createCanvasNote(parsed.flow, position) : operator === 'goal' ? createGoalNode(parsed.flow, position) : operator ? createLogicNode(parsed.flow, operator, position) : createCheckpoint(parsed.flow, position)
-    changeFlow(result.flow); setSelection({ kind: operator === 'transition' ? 'transition' : operator === 'hub' ? 'hub' : operator === 'gateway' ? 'gateway' : operator === 'note' ? 'note' : operator === 'goal' ? 'goal' : operator ? 'logic' : 'node', id: result.id })
+    const result = operator === 'transition' ? createTransitionNode(parsed.flow, position) : operator === 'conditional' ? createConditionalNode(parsed.flow, position) : operator === 'diff' ? createDiffNode(parsed.flow, position) : operator === 'merge' ? createMergeNode(parsed.flow, position) : operator === 'swap' ? createSwapNode(parsed.flow, position) : operator === 'note' ? createCanvasNote(parsed.flow, position) : operator === 'goal' ? createGoalNode(parsed.flow, position) : operator === 'predicate' ? createPredicateNode(parsed.flow, position) : createCheckpoint(parsed.flow, position)
+    changeFlow(result.flow); setSelection({ kind: operator === 'transition' ? 'transition' : operator === 'conditional' ? 'conditional' : operator === 'diff' ? 'diff' : operator === 'merge' ? 'merge' : operator === 'swap' ? 'swap' : operator === 'note' ? 'note' : operator === 'goal' ? 'goal' : operator === 'predicate' ? 'predicate' : 'node', id: result.id })
   }
   function moveCanvasSelection(positions: Record<string, FlowPosition>) {
     if (!parsed.flow || locked || busy) return
@@ -252,17 +279,28 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
             <div className="flow-source-heading"><code>{doc.name}</code><button type="button" disabled={!parsed.flow} onClick={() => parsed.flow && changeFlow(parsed.flow)}>格式化</button></div>
             <textarea className="flow-source flow-code" aria-label="树图文档结构" value={doc.source} onChange={(event) => changeSource(event.target.value, true)} spellCheck={false} />
           </div> : parsed.flow ? <>
-            <div className="flow-canvas-heading"><div><strong>{displayText(parsed.flow.title) || '未命名流程'}</strong><small>{Object.keys(parsed.flow.nodes).length} 个阶段{Object.keys(parsed.flow.logic?.nodes ?? {}).length > 0 && ` · ${Object.keys(parsed.flow.logic!.nodes).length} 个逻辑节点`}{Object.keys(parsed.flow.goals ?? {}).length > 0 && ` · ${Object.keys(parsed.flow.goals!).length} 个目标`}{Object.keys(parsed.flow.transitions ?? {}).length > 0 && ` · ${Object.keys(parsed.flow.transitions!).length} 个转移节点`}{Object.keys(parsed.flow.hubs ?? {}).length > 0 && ` · ${Object.keys(parsed.flow.hubs!).length} 个集线器`}{Object.keys(parsed.flow.gateways ?? {}).length > 0 && ` · ${Object.keys(parsed.flow.gateways!).length} 个网关`} · {branches(parsed.flow).length} 条分支</small></div><button type="button" disabled={locked} onClick={() => openEditor({ kind: 'flow' })}>流程信息</button></div>
+            <div className="flow-canvas-heading"><div><strong>{displayText(parsed.flow.title) || '未命名流程'}</strong><small>{Object.keys(parsed.flow.nodes).length} 个阶段{Object.keys(parsed.flow.goals ?? {}).length > 0 && ` · ${Object.keys(parsed.flow.goals!).length} 个目标`}{Object.keys(parsed.flow.predicates ?? {}).length > 0 && ` · ${Object.keys(parsed.flow.predicates!).length} 个谓词`}{Object.keys(parsed.flow.transitions ?? {}).length > 0 && ` · ${Object.keys(parsed.flow.transitions!).length} 个转移节点`}{Object.keys(parsed.flow.conditionals ?? {}).length > 0 && ` · ${Object.keys(parsed.flow.conditionals!).length} 个条件变迁`} · {branches(parsed.flow).length} 条分支</small></div><button type="button" disabled={locked} onClick={() => openEditor({ kind: 'flow' })}>流程信息</button></div>
             <ProgressGraph key={doc.key} flow={parsed.flow} selection={selection} onSelect={setSelection} onEdit={openEditor} onAddNext={addNextNode} onCreate={createNode} onMove={moveCanvasSelection} onGroup={groupCanvasSelection} onUngroup={ungroupCanvasSelection} onRenameGroup={renameGroup} onDelete={deleteNode} onDeleteMany={deleteNodes} onArrange={arrangeSelection} onUpdateNote={updateNote} onConnectEntry={setEntryTarget} onConnect={connectCanvasNodes} onDisconnect={disconnectCanvasLink} onCut={disconnectCanvasLinks} onSetCompletion={setNodeCompletion} active={active} disabled={locked || busy} />
           </> : <div className="flow-empty"><h3>草稿暂时无法显示为树图</h3><p>{parsed.error}</p><button type="button" onClick={() => setView('source')}>修复文档结构</button></div>}
-          <div className="flow-validation">
-            <button type="button" className="flow-validation-toggle" aria-expanded={showIssues} onClick={() => setShowIssues(!showIssues)}><span className={errorCount ? 'flow-error' : 'flow-valid'}>{errorCount ? `${errorCount} 个结构错误` : '草稿结构校验通过'}</span><span>{warningCount ? `${warningCount} 条设计提示` : '结构检查'} {showIssues ? '▾' : '▴'}</span></button>
-            {showIssues && <div className="flow-issues">{parsed.error && <p className="flow-error">{parsed.error}</p>}{issues.map((issue, index) => <p key={index} className={issue.severity === 'error' ? 'flow-error' : 'flow-warning'}><code>{issue.path}</code> {issue.message}</p>)}<p className="flow-hint">保留独立起点，checkpoint 可自由创建和删除；当前检查连接引用与条件声明。任务归属及执行规则留待后续设计。</p></div>}
+          <div className={`flow-validation${cycleWarning ? ' has-cycle' : ''}`}>
+            <button type="button" className="flow-validation-toggle" aria-expanded={showIssues} onClick={() => setShowIssues(!showIssues)}><span className={errorCount ? 'flow-error' : cycleWarning ? 'flow-warning' : 'flow-valid'}>{errorCount ? `${errorCount} 个结构错误` : cycleWarning ? '画布连线存在环' : '草稿结构校验通过'}</span><span>{cycleWarning ? '环路警告 · ' : ''}{warningCount ? `${warningCount} 条设计提示` : '结构检查'} {showIssues ? '▾' : '▴'}</span></button>
+            {showIssues && <div className="flow-issues">{parsed.error && <p className="flow-error">{parsed.error}</p>}{issues.map((issue, index) => <p key={index} className={issue.severity === 'error' ? 'flow-error' : 'flow-warning'}><code>{issue.path}</code> {issue.message}</p>)}<p className="flow-hint">保留独立起点，checkpoint 可自由创建和删除；检查连接引用、条件声明，以及画布连线是否成环（仅警告）。任务归属及执行规则留待后续设计。</p></div>}
           </div>
         </> : <div className="flow-empty"><span className="flow-empty-icon">◇</span><h2>设计一个进度流程</h2><p>在左侧资源管理器中新建或导入流程。</p></div>}
       </main>
     </div>
     <footer className="flow-statusbar"><span>{storageError ? '本地保存异常' : '草稿自动保存'}{locked ? ' · 正在编辑' : ''}</span><span>进度流程 · 原型草稿</span></footer>
     {editor && active && <FlowEditorDialog key={editor.key} flow={editor.flow} initialSelection={editor.selection} origin={editor.origin} onComplete={(flow, nextSelection) => { changeFlow(flow); setSelection(nextSelection); setEditor(null) }} onCancel={() => setEditor(null)} />}
+    {createPortal(<dialog ref={cycleDialog} className="flow-alert-dialog" aria-labelledby="flow-cycle-alert-title" onCancel={(event) => { event.preventDefault(); setCycleAlert(null) }}>
+      <header><strong id="flow-cycle-alert-title">画布连线成环</strong></header>
+      <div className="flow-alert-body">
+        <p className="flow-warning">{cycleAlert}</p>
+        <p className="flow-hint">这只是警告，仍可继续编辑与保存。若需要保持 DAG，请断开环上的某条连线。</p>
+      </div>
+      <footer>
+        <button type="button" onClick={() => { setShowIssues(true); setCycleAlert(null) }}>查看问题列表</button>
+        <button type="button" className="flow-primary" onClick={() => setCycleAlert(null)}>知道了</button>
+      </footer>
+    </dialog>, document.body)}
   </section>
 }

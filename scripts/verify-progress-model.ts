@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
-import { addNode, canConnectNodes, clone, connectEntry, connectNodes, createFlow, descendants, disconnectLink, getCanvasNote, getHubNode, getGatewayNode, hasContentNode, inputPorts, linkSourcePort, makeNode, moveNode, outgoingCount, outputPorts, parseFlow, portKind, removeNode, renameNode, reorderBranch, text, validateFlow, type ProgressFlow } from '../src/workspaces/progress/model.ts'
+import { addNode, canConnectNodes, clone, connectEntry, connectNodes, createFlow, descendants, disconnectLink, findCanvasCycle, getCanvasNote, hasContentNode, inputPorts, linkSourcePort, makeNode, moveNode, outgoingCount, outputPorts, parseFlow, portKind, removeNode, renameNode, reorderBranch, swapInPort, swapOutPort, text, validateFlow, type ProgressFlow } from '../src/workspaces/progress/model.ts'
 import { FLOW_STORAGE_KEY, createFlowDocument, importFlowDocument, loadFlowWorkspace, saveFlowWorkspace } from '../src/workspaces/progress/storage.ts'
 import { addFlowFolder, moveFlowEntry, renameFlowEntry, uniqueDocumentName } from '../src/workspaces/progress/library.ts'
-import { addNextCheckpoint, createCanvasNote, removeCanvasItems, updateCanvasNote, removeCanvasNote, groupCanvasNodes, moveCanvasNodes, nodeMetrics, createCheckpoint, createLogicNode, createGoalNode, createTransitionNode, createHubNode, createGatewayNode, layoutCanvas, moveCheckpoint, socketOffset, withCanvasPositions } from '../src/workspaces/progress/canvas.ts'
+import { addNextCheckpoint, createCanvasNote, removeCanvasItems, updateCanvasNote, removeCanvasNote, groupCanvasNodes, moveCanvasNodes, nodeMetrics, createCheckpoint, createGoalNode, createPredicateNode, createTransitionNode, createConditionalNode, createDiffNode, createMergeNode, createSwapNode, layoutCanvas, moveCheckpoint, socketOffset, withCanvasPositions } from '../src/workspaces/progress/canvas.ts'
 import { smartArrangeCanvas } from '../src/workspaces/progress/arrange.ts'
 import { MAX_CANVAS_ZOOM, MIN_CANVAS_ZOOM, worldPoint, zoomCamera } from '../src/workspaces/progress/camera.ts'
+import { CKPT_STATES, GOAL_STATES, PREDICATE_STATES, ckptState, createSimState, fireCkptTransition, fireGoalComplete, fireGoalNo, fireGoalYes, firePredicateComplete, fireStart, goalState, mergeSim, outgoingSignalTargets, predicateState, propagateSignals, resetSimState, syncSimState } from '../src/workspaces/progress/signals.ts'
 
 let passed = 0
 function test(name: string, check: () => void) { check(); passed++; console.log(`[OK] ${name}`) }
@@ -63,7 +64,24 @@ test('Direct children fail validation; shared targets and cycles via transitions
   assert.equal(shared.flow.logic!.links.filter(link => link.to === 'node_1').length, 2)
   const cycle = linkViaTransition(fixture(), 'start', 'start')
   assert.equal(errors(cycle.flow).length, 0)
+  assert.ok(validateFlow(cycle.flow).some(i => i.severity === 'warning' && i.path === 'graph' && i.message.includes('环')))
+  assert.ok(findCanvasCycle(cycle.flow)?.includes('start'))
   assert.equal(layoutCanvas(cycle.flow).positions.size, Object.keys(cycle.flow.nodes).length + Object.keys(cycle.flow.transitions!).length + 1)
+})
+
+test('Canvas wire DAG warning reports one cycle; acyclic graphs stay clean', () => {
+  const dag = linkViaTransition(fixture(), 'start', 'node_1')
+  assert.equal(findCanvasCycle(dag.flow), null)
+  assert.ok(!validateFlow(dag.flow).some(i => i.path === 'graph'))
+  // entry → start → t → node_1 → t2 → start
+  const back = createTransitionNode(dag.flow, { x: 0, y: 0 })
+  let flow = connectNodes(back.flow, 'node_1', back.id, 'input2').flow
+  flow = connectNodes(flow, back.id, 'start').flow
+  const path = findCanvasCycle(flow)
+  assert.ok(path)
+  assert.equal(path![0], path![path!.length - 1])
+  assert.ok(path!.includes('start') && path!.includes('node_1'))
+  assert.ok(validateFlow(flow).some(i => i.severity === 'warning' && i.message.includes(path!.join(' → '))))
 })
 test('An independent checkpoint is a valid draft without a finish marker', () => {
   const flow = createFlow('draft')
@@ -283,97 +301,6 @@ test('Cursor-centered zoom keeps its world point fixed across scale limits and n
     }
   }
 })
-test('Both logic nodes remain portable authoring content with independent positions', () => {
-  let flow = withCanvasPositions(fixture())
-  const original = clone(flow)
-  for (const [index, operator] of (['and', 'or'] as const).entries()) {
-    const added = createLogicNode(flow, operator, { x: 800, y: 100 + index * 200 })
-    assert.equal(added.flow.logic!.nodes[added.id].operator, operator)
-    assert.deepEqual(Object.keys(added.flow.logic!.nodes[added.id]), ['operator', 'title', 'description'])
-    assert.deepEqual(added.flow.layout!.positions[added.id], { x: 800, y: 100 + index * 200 })
-    assert.deepEqual(added.flow.nodes, original.nodes)
-    flow = added.flow
-  }
-  assert.equal(layoutCanvas(flow).positions.size, 7)
-  assert.equal(errors(flow).length, 0)
-  assert.deepEqual(parseFlow(JSON.stringify(flow)), flow)
-  assert.equal(original.logic, undefined)
-})
-test('Logic input ports allow multiple sources without changing checkpoint branches', () => {
-  const conjunction = createLogicNode(fixture(), 'and', { x: 800, y: 100 })
-  let flow = connectNodes(conjunction.flow, 'start', conjunction.id).flow
-  flow = connectNodes(flow, 'node_1', conjunction.id).flow
-  assert.deepEqual(flow.logic!.links.map(link => link.port), ['input', 'input'])
-  assert.equal(connectNodes(flow, 'start', conjunction.id).flow, flow)
-  assert.deepEqual(flow.nodes, conjunction.flow.nodes)
-  assert.deepEqual(inputPorts(flow, conjunction.id), ['input'])
-  assert.equal(socketOffset(flow, conjunction.id, 'output').y, socketOffset(flow, conjunction.id, 'input').y)
-  assert.equal(errors(flow).length, 0)
-  assert.deepEqual(parseFlow(JSON.stringify(flow)), flow)
-})
-test('Logic links can target checkpoints without rewriting their existing branches', () => {
-  const added = createLogicNode(fixture(), 'or', { x: 800, y: 100 })
-  const connected = connectNodes(added.flow, added.id, 'node_1')
-  assert.deepEqual(connected.flow.nodes, added.flow.nodes)
-  assert.equal(connected.selection.kind, 'logic-link')
-  const disconnected = disconnectLink(connected.flow, connected.selection)
-  assert.deepEqual(disconnected, added.flow)
-  assert.equal(errors(connected.flow).length, 0)
-})
-test('Renaming and removing nodes maintain logic endpoints without removing unrelated content', () => {
-  const first = createLogicNode(fixture(), 'and', { x: 800, y: 100 })
-  const second = createLogicNode(first.flow, 'or', { x: 1100, y: 100 })
-  let flow = connectNodes(second.flow, 'start', first.id).flow
-  flow = connectNodes(flow, first.id, second.id).flow
-  flow = connectNodes(flow, second.id, 'node_1').flow
-  const renamed = renameNode(flow, 'start', 'invitation')
-  assert.equal(renamed.logic!.links[0].from, 'invitation')
-  assert.throws(() => renameNode(flow, 'start', first.id), /节点 ID/)
-  const moved = moveCheckpoint(renamed, first.id, { x: 20, y: 600 })
-  assert.deepEqual(moved.logic, renamed.logic)
-  assert.deepEqual(moved.layout!.positions[second.id], renamed.layout!.positions[second.id])
-  assert.throws(() => connectEntry(moved, first.id), /输入端口/)
-  const removed = removeNode(moved, first.id)
-  assert.equal(removed.entry.target, 'invitation')
-  assert.equal(removed.logic!.nodes[first.id], undefined)
-  assert.deepEqual(removed.logic!.nodes[second.id], flow.logic!.nodes[second.id])
-  assert.deepEqual(removed.logic!.links, [flow.logic!.links[2]])
-  assert.deepEqual(removed.nodes, renamed.nodes)
-  assert.equal(removed.layout!.positions[first.id], undefined)
-  assert.equal(removeNode(removed, removed.entry.id), removed)
-  const checkpointRemoved = removeNode(removed, 'node_1')
-  assert.deepEqual(checkpointRemoved.logic!.links, [])
-  assert.equal(errors(checkpointRemoved).length, 0)
-})
-test('The entry only targets checkpoints; logic drafts and unused ports remain editable', () => {
-  const added = createLogicNode(createFlow('logic-draft'), 'or', { x: 400, y: 100 })
-  assert.equal(canConnectNodes(added.flow, added.flow.entry.id, added.id, 'input'), false)
-  assert.throws(() => connectNodes(added.flow, added.flow.entry.id, added.id), /端口/)
-  const ckpt = createCheckpoint(added.flow, { x: 200, y: 100 })
-  const connected = connectNodes(ckpt.flow, ckpt.flow.entry.id, ckpt.id)
-  assert.equal(connected.flow.entry.target, ckpt.id)
-  const loop = connectNodes(connected.flow, added.id, added.id)
-  assert.equal(errors(loop.flow).length, 0)
-  assert.equal(layoutCanvas(loop.flow).positions.size, 3)
-  assert.equal(errors(disconnectLink(loop.flow, connected.selection)).length, 0)
-})
-test('Malformed logic operators, identities and ports cannot be silently accepted', () => {
-  const added = createLogicNode(createFlow('logic-shape'), 'and', { x: 0, y: 0 })
-  const invalidOperator = clone(added.flow)
-  Reflect.set(invalidOperator.logic!.nodes[added.id], 'operator', 'not')
-  assert.throws(() => parseFlow(JSON.stringify(invalidOperator)), /operator/)
-  const collision = clone(added.flow)
-  collision.nodes[added.id] = makeNode()
-  assert.throws(() => parseFlow(JSON.stringify(collision)), /logic.nodes/)
-  const badLink = clone(added.flow)
-  badLink.logic!.links.push({ id: 'link', from: added.id, to: 'missing', port: 'input' })
-  assert(errors(badLink).some(issue => issue.message.includes('端点')))
-  badLink.logic!.links[0].to = added.id
-  Reflect.set(badLink.logic!.links[0], 'port', 'b')
-  assert(errors(badLink).some(issue => issue.message.includes('端口')))
-  assert.throws(() => createLogicNode(added.flow, 'or', { x: Infinity, y: 0 }))
-})
-
 test('Bad condition declarations and resource references are reported', () => {
   const flow = fixture()
   flow.nodes.start.children = [strayBranch('branch_1', 'node_1', [{ id: 'count', kind: 'counter', title: text(), params: { event: '', target: 0 }, nodeRefs: [] }])]
@@ -383,6 +310,25 @@ test('Bad condition declarations and resource references are reported', () => {
   assert(errors(flow).some((i) => i.message.includes('事件引用')))
   assert(errors(flow).some((i) => i.message.includes('资源引用')))
 })
+
+test('Legacy AND/OR logic.nodes are stripped on parse with dangling links cleaned', () => {
+  const added = createTransitionNode(fixture(), { x: 400, y: 100 })
+  const raw = clone(added.flow) as ProgressFlow & { logic?: { nodes?: Record<string, unknown>; links: { id: string; from: string; to: string; port: string }[] } }
+  raw.logic = {
+    nodes: { logic_old: { operator: 'or', title: text('A ∨ B'), description: text() } },
+    links: [
+      { id: 'link_keep', from: 'start', to: added.id, port: 'input2' },
+      { id: 'link_dead', from: 'logic_old', to: 'node_1', port: 'input' },
+    ],
+  }
+  raw.layout = { positions: { ...(raw.layout?.positions ?? {}), logic_old: { x: 1, y: 2 } } }
+  const parsed = parseFlow(JSON.stringify(raw))
+  assert.equal(Object.hasOwn(parsed.logic as object, 'nodes'), false)
+  assert.deepEqual(parsed.logic!.links.map(link => link.id), ['link_keep'])
+  assert.equal(parsed.layout!.positions.logic_old, undefined)
+  assert.equal(errors(parsed).length, 0)
+})
+
 test('Flat storage supports long transition chains without deeply nested document JSON', () => {
   let flow = createFlow('deep')
   const first = addNode(flow, flow.entry.id)
@@ -422,14 +368,6 @@ test('Native import preserves authored text and accepts UTF-8 BOM', () => {
   const flow = fixture(), doc = importFlowDocument('故事.hflow', '\uFEFF' + JSON.stringify(flow))
   assert.equal(doc.name, '故事.hflow')
   assert.deepEqual(parseFlow(doc.source), flow)
-})
-test('Workspace save and reload preserve logic names, positions and port connections', () => {
-  const added = createLogicNode(fixture(), 'or', { x: 900, y: 300 })
-  const flow = connectNodes(added.flow, 'start', added.id).flow
-  flow.logic!.nodes[added.id].title = { text: '条件关系', key: 'logic.title' }
-  const doc = createFlowDocument(flow)
-  saveFlowWorkspace({ documents: [doc], folders: [], activeKey: doc.key })
-  assert.deepEqual(parseFlow(loadFlowWorkspace().state.documents[0].source), flow)
 })
 test('Nested resource folders persist without changing flow content or active identity', () => {
   const doc = createFlowDocument(fixture()), empty = { documents: [doc], folders: [], activeKey: doc.key }
@@ -509,21 +447,24 @@ test('Malformed notes and ID collisions are rejected before rendering', () => {
 
 test('Mixed multi-delete protects the entry, cleans references and leaves other items fixed', () => {
   const note = createCanvasNote(fixture(), { x: -200, y: 100 })
-  const logic = createLogicNode(note.flow, 'and', { x: 500, y: -100 })
-  const linked = connectNodes(logic.flow, 'start', logic.id).flow
+  const goal = createGoalNode(note.flow, { x: 500, y: -100 })
+  const transition = createTransitionNode(goal.flow, { x: 300, y: 200 })
+  const linked = connectNodes(transition.flow, goal.id, transition.id).flow
   const grouped = groupCanvasNodes(linked, ['start', note.id, 'node_1']).flow, before = clone(grouped)
-  const after = removeCanvasItems(grouped, [grouped.entry.id, 'start', 'start', note.id, logic.id, 'missing'])
+  const after = removeCanvasItems(grouped, [grouped.entry.id, 'start', 'start', note.id, goal.id, 'missing'])
   assert.equal(after.entry.id, before.entry.id)
   assert.equal(after.entry.target, null)
   assert.equal(after.nodes.start, undefined)
   assert.equal(getCanvasNote(after, note.id), undefined)
-  assert.equal(after.logic!.nodes[logic.id], undefined)
-  assert.deepEqual(after.logic!.links, [])
+  assert.equal(after.goals![goal.id], undefined)
+  assert.equal(after.logic!.links.filter(link => link.from === goal.id || link.to === goal.id).length, 0)
   assert.deepEqual(after.layout!.groups, {})
   for (const id of ['node_1', 'node_2', 'node_3']) {
     assert.deepEqual(after.nodes[id], before.nodes[id])
     assert.deepEqual(after.layout!.positions[id], before.layout!.positions[id])
   }
+  assert.ok(after.transitions?.[transition.id])
+  assert.deepEqual(after.transitions![transition.id].title, before.transitions![transition.id].title)
   assert.equal(errors(after).length, 0)
   assert.deepEqual(grouped, before)
   assert.equal(removeCanvasItems(grouped, [grouped.entry.id, 'missing']), grouped)
@@ -567,7 +508,7 @@ test('Smart arrangement preserves sparse designs, large deliberate gaps and ambi
 test('Smart arrangement avoids new collisions with unselected items and supports mixed sizes', () => {
   const blocked = arrangeFixture({ a: { x: 0, y: 0 }, b: { x: 280, y: 24 }, obstacle: { x: 0, y: 114 } })
   assert.equal(smartArrangeCanvas(blocked, ['a', 'b']), blocked)
-  const original = createLogicNode(createCanvasNote(arrangeFixture({ a: { x: 0, y: 10 } }), { x: 275, y: 0 }).flow, 'or', { x: 620, y: 7 })
+  const original = createMergeNode(createCanvasNote(arrangeFixture({ a: { x: 0, y: 10 } }), { x: 275, y: 0 }).flow, { x: 620, y: 7 })
   const ids = ['a', ...Object.keys(original.flow.layout!.notes!), original.id]
   const next = smartArrangeCanvas(original.flow, ids), p = next.layout!.positions
   assert.equal(p[ids[0]].y, p[ids[1]].y)
@@ -592,7 +533,7 @@ test('Transition nodes expose two independent inputs and one centered output', (
   assert.equal(errors(moved).length, 0)
 })
 
-test('Transition connections match Goals / Parent / Next types and replace exclusive ports', () => {
+test('Transition connections match Goal / Parent / Next types and replace exclusive ports', () => {
   const added = createTransitionNode(fixture(), { x: 400, y: 100 })
   const goal = createGoalNode(added.flow, { x: 100, y: 240 })
   const secondGoal = createGoalNode(goal.flow, { x: 100, y: 360 })
@@ -610,7 +551,10 @@ test('Transition connections match Goals / Parent / Next types and replace exclu
   assert.throws(() => connectNodes(goal.flow, goal.flow.entry.id, added.id, 'input'), /端口/)
   assert.throws(() => connectNodes(goal.flow, goal.flow.entry.id, added.id, 'input2'), /端口/)
   let flow = connectNodes(secondGoal.flow, goal.id, added.id, 'input').flow
+  // Goal 口允许多线合取
   flow = connectNodes(flow, secondGoal.id, added.id, 'input').flow
+  assert.equal(flow.logic!.links.filter(link => link.to === added.id && link.port === 'input').length, 2)
+  assert.deepEqual(flow.logic!.links.filter(link => link.to === added.id && link.port === 'input').map(link => link.from).sort(), [goal.id, secondGoal.id].sort())
   flow = connectNodes(flow, 'start', added.id, 'input2').flow
   const replacedParent = connectNodes(flow, 'node_1', added.id, 'input2').flow
   assert.equal(replacedParent.logic!.links.filter(link => link.to === added.id && link.port === 'input2').length, 1)
@@ -622,12 +566,12 @@ test('Transition connections match Goals / Parent / Next types and replace exclu
   const replacedNext = connectNodes(flow, added.id, 'start').flow
   assert.equal(replacedNext.logic!.links.filter(link => link.from === added.id).length, 1)
   assert.equal(replacedNext.logic!.links.find(link => link.from === added.id)!.to, 'start')
-  assert.equal(connectNodes(flow, goal.id, added.id, 'input').flow, flow)
+  assert.equal(connectNodes(flow, secondGoal.id, added.id, 'input').flow, flow)
   assert.deepEqual(flow.logic!.links.map(link => link.port).sort(), ['input', 'input', 'input', 'input2'])
   assert.deepEqual(flow.nodes, added.flow.nodes)
   assert.equal(errors(flow).length, 0)
   assert.deepEqual(parseFlow(JSON.stringify(flow)), flow)
-  assert.throws(() => connectNodes(flow, added.id, goal.id), /端口/)
+  assert.throws(() => connectNodes(flow, added.id, secondGoal.id), /端口/)
   assert.throws(() => connectNodes(flow, added.id, 'node_1', 'input2'), /端口/)
   const cut = disconnectLink(flow, { kind: 'logic-link', id: flow.logic!.links.find(link => link.port === 'input2')!.id })
   assert.equal(cut.logic!.links.filter(link => link.port === 'input2').length, 0)
@@ -660,15 +604,13 @@ test('Entry out ≡ Transition Next: entry only connects to checkpoints; Parent 
 test('Checkpoints keep multi in/out while entry and transition Parent/Next stay single', () => {
   const first = createTransitionNode(fixture(), { x: 400, y: 100 })
   const second = createTransitionNode(first.flow, { x: 400, y: 280 })
-  const logic = createLogicNode(second.flow, 'or', { x: 100, y: 400 })
-  let flow = connectNodes(logic.flow, 'start', first.id, 'input2').flow
+  let flow = connectNodes(second.flow, 'start', first.id, 'input2').flow
   flow = connectNodes(flow, 'start', second.id, 'input2').flow
   assert.equal(flow.logic!.links.filter(link => link.from === 'start' && link.port === 'input2').length, 2)
   assert.ok(outgoingCount(flow, 'start') >= 2)
   flow = connectNodes(flow, first.id, 'node_1').flow
   flow = connectNodes(flow, second.id, 'node_1').flow
-  flow = connectNodes(flow, logic.id, 'node_1').flow
-  assert.equal(flow.logic!.links.filter(link => link.to === 'node_1').length, 3)
+  assert.equal(flow.logic!.links.filter(link => link.to === 'node_1').length, 2)
   assert.equal(flow.nodes.start.children.length, 0)
   assert.equal(errors(flow).length, 0)
   const replaced = connectNodes(flow, flow.entry.id, 'node_2').flow
@@ -692,107 +634,463 @@ test('Malformed transition content and colliding canvas identities are rejected'
   assert.throws(() => parseFlow(JSON.stringify(invalidEntry)), /entry/)
 })
 
-test('Hub and gateway create, roundtrip, and metrics', () => {
-  const hub = createHubNode(fixture(), { x: 120, y: 80 })
-  const gateway = createGatewayNode(hub.flow, { x: 320, y: 80 })
-  assert.ok(getHubNode(gateway.flow, hub.id))
-  assert.ok(getGatewayNode(gateway.flow, gateway.id))
-  assert.deepEqual(inputPorts(gateway.flow, hub.id), ['input'])
-  assert.deepEqual(inputPorts(gateway.flow, gateway.id), ['input', 'input2'])
-  assert.deepEqual(outputPorts(gateway.flow, hub.id), ['output', 'output2'])
-  assert.deepEqual(outputPorts(gateway.flow, gateway.id), ['output'])
-  assert.equal(portKind(gateway.flow, hub.id, 'input'), 'checkpoint')
-  assert.equal(portKind(gateway.flow, hub.id, 'output'), 'checkpoint')
-  assert.equal(portKind(gateway.flow, hub.id, 'output2'), 'bridge')
-  assert.equal(portKind(gateway.flow, gateway.id, 'input'), 'checkpoint')
-  assert.equal(portKind(gateway.flow, gateway.id, 'input2'), 'bridge')
-  assert.equal(portKind(gateway.flow, gateway.id, 'output'), 'checkpoint')
-  assert.equal(nodeMetrics(gateway.flow, hub.id).width, 180)
-  assert.equal(nodeMetrics(gateway.flow, gateway.id).height, 108)
-  assert.deepEqual(socketOffset(gateway.flow, hub.id, 'output'), { x: 180, y: 58 })
-  assert.deepEqual(socketOffset(gateway.flow, hub.id, 'output2'), { x: 180, y: 86 })
-  assert.deepEqual(socketOffset(gateway.flow, gateway.id, 'input'), { x: 0, y: 58 })
-  assert.deepEqual(socketOffset(gateway.flow, gateway.id, 'input2'), { x: 0, y: 86 })
-  const restored = parseFlow(JSON.stringify(gateway.flow))
-  assert.deepEqual(restored.hubs, gateway.flow.hubs)
-  assert.deepEqual(restored.gateways, gateway.flow.gateways)
-  assert.equal(errors(restored).length, 0)
-  assert.ok(layoutCanvas(restored).positions.has(hub.id))
-  assert.ok(layoutCanvas(restored).positions.has(gateway.id))
+
+test('Start node emits S(未激活→已激活); matching ckpt transitions and fires activation', () => {
+  const flow = createFlow('sim-start')
+  flow.nodes.a = makeNode('A')
+  flow.entry.target = 'a'
+  assert.deepEqual(outgoingSignalTargets(flow, flow.entry.id), [{ to: 'a', port: 'input' }])
+  let sim = createSimState(flow)
+  assert.equal(ckptState(sim, 'a'), 'inactive')
+  sim = fireStart(flow, sim)
+  assert.equal(ckptState(sim, 'a'), 'activated')
+  assert.equal(CKPT_STATES[ckptState(sim, 'a')], '已激活')
+  assert.ok(sim.log.some(item => item.accepted && item.to === 'a' && item.signal.kind === 'ckpt-transition'))
+  const again = fireStart(flow, sim)
+  assert.equal(ckptState(again, 'a'), 'activated')
+  assert.ok(again.log.at(-1)?.accepted === false)
 })
 
-test('Hub and gateway connection rules and cardinalities', () => {
-  const hub = createHubNode(fixture(), { x: 200, y: 100 })
-  const gateway = createGatewayNode(hub.flow, { x: 420, y: 100 })
-  const t1 = createTransitionNode(gateway.flow, { x: 300, y: 40 })
-  const t2 = createTransitionNode(t1.flow, { x: 300, y: 180 })
-  let flow = t2.flow
-  assert.equal(canConnectNodes(flow, flow.entry.id, hub.id, 'input'), true)
-  assert.equal(canConnectNodes(flow, 'start', hub.id, 'input'), true)
-  assert.equal(canConnectNodes(flow, hub.id, t1.id, 'input2', 'output'), true)
-  assert.equal(canConnectNodes(flow, hub.id, gateway.id, 'input', 'output'), false)
-  assert.equal(canConnectNodes(flow, hub.id, gateway.id, 'input2', 'output'), false)
-  assert.equal(canConnectNodes(flow, hub.id, gateway.id, 'input2', 'output2'), true)
-  assert.equal(canConnectNodes(flow, t1.id, gateway.id, 'input'), true)
-  assert.equal(canConnectNodes(flow, t1.id, gateway.id, 'input2'), false)
-  assert.equal(canConnectNodes(flow, gateway.id, 'node_1', 'input'), true)
-  assert.equal(canConnectNodes(flow, gateway.id, hub.id, 'input'), false)
-  assert.equal(canConnectNodes(flow, hub.id, 'node_1', 'input'), false)
-  assert.equal(canConnectNodes(flow, 'start', gateway.id, 'input'), false)
-  assert.equal(canConnectNodes(flow, flow.entry.id, gateway.id, 'input'), false)
+test('Ckpt only transitions when believed original state matches; activation ignores on ckpt input', () => {
+  const flow = createFlow('sim-match')
+  flow.nodes.a = makeNode('A')
+  flow.nodes.b = makeNode('B')
+  flow.entry.target = 'a'
+  // Authoring still forbids ckpt→ckpt; inject a wire only to assert activation delivery is rejected at ckpt input.
+  flow.logic = { links: [{ id: 'link_1', from: 'a', to: 'b', port: 'input' }] }
+  let sim = createSimState(flow)
+  sim = fireStart(flow, sim)
+  assert.equal(ckptState(sim, 'a'), 'activated')
+  assert.equal(ckptState(sim, 'b'), 'inactive')
+  assert.ok(sim.log.some(item => item.to === 'b' && item.signal.kind === 'activation' && item.accepted === false))
+  sim = fireCkptTransition(flow, sim, 'b', 'inactive', 'active')
+  assert.equal(ckptState(sim, 'b'), 'active')
+  sim = fireCkptTransition(flow, sim, 'b', 'inactive', 'activated')
+  assert.equal(ckptState(sim, 'b'), 'active')
+  sim = fireCkptTransition(flow, sim, 'b', 'active', 'activated')
+  assert.equal(ckptState(sim, 'b'), 'activated')
+})
 
-  flow = connectNodes(flow, 'start', hub.id, 'input').flow
-  assert.equal(flow.logic!.links.filter(link => link.to === hub.id).length, 1)
-  flow = connectNodes(flow, flow.entry.id, hub.id, 'input').flow
-  assert.equal(flow.entry.target, hub.id)
-  assert.equal(flow.logic!.links.filter(link => link.to === hub.id).length, 0)
-
-  flow = connectNodes(flow, hub.id, t1.id, 'input2', 'output').flow
-  flow = connectNodes(flow, hub.id, t2.id, 'input2', 'output').flow
-  assert.equal(flow.logic!.links.filter(link => link.from === hub.id && link.port === 'input2' && getGatewayNode(flow, link.to) === undefined).length, 2)
-
-  flow = connectNodes(flow, t1.id, gateway.id).flow
-  flow = connectNodes(flow, t2.id, gateway.id).flow
-  assert.equal(flow.logic!.links.filter(link => link.to === gateway.id && link.port === 'input' && (link.from === t1.id || link.from === t2.id)).length, 2)
-
-  assert.throws(() => connectNodes(flow, hub.id, gateway.id), /端口/)
-  assert.throws(() => connectNodes(flow, hub.id, gateway.id, 'input', 'output2'), /端口/)
-  flow = connectNodes(flow, hub.id, gateway.id, 'input2', 'output2').flow
-  assert.equal(flow.logic!.links.filter(link => link.from === hub.id && link.to === gateway.id && link.port === 'input2').length, 1)
-  assert.equal(linkSourcePort(flow, hub.id, gateway.id, 'input2'), 'output2')
-  assert.equal(flow.logic!.links.filter(link => link.from === hub.id && link.port === 'input2').length, 3)
-  const otherHub = createHubNode(flow, { x: 200, y: 260 })
-  const otherGateway = createGatewayNode(otherHub.flow, { x: 420, y: 260 })
-  flow = connectNodes(otherGateway.flow, otherHub.id, gateway.id, 'input2', 'output2').flow
-  assert.equal(flow.logic!.links.filter(link => link.from === hub.id && link.to === gateway.id).length, 0)
-  assert.equal(flow.logic!.links.filter(link => link.from === otherHub.id && link.to === gateway.id && link.port === 'input2').length, 1)
-  flow = connectNodes(flow, otherHub.id, otherGateway.id, 'input2', 'output2').flow
-  assert.equal(flow.logic!.links.filter(link => link.from === otherHub.id && link.to === gateway.id).length, 0)
-  assert.equal(flow.logic!.links.filter(link => link.from === otherHub.id && link.to === otherGateway.id && link.port === 'input2').length, 1)
-
-  flow = connectNodes(flow, gateway.id, 'node_1').flow
-  assert.equal(flow.logic!.links.find(link => link.from === gateway.id)!.to, 'node_1')
-  flow = connectNodes(flow, gateway.id, 'node_2').flow
-  assert.equal(flow.logic!.links.filter(link => link.from === gateway.id).length, 1)
-  assert.equal(flow.logic!.links.find(link => link.from === gateway.id)!.to, 'node_2')
+test('Linear transition Parent A drives Next S and Goal A; Goal G closes and activates next ckpt', () => {
+  let flow = createFlow('sim-linear')
+  flow.nodes.parent = makeNode('父阶段')
+  flow.nodes.child = makeNode('子阶段')
+  flow.entry.target = 'parent'
+  const linear = createTransitionNode(flow, { x: 300, y: 100 })
+  const goal = createGoalNode(linear.flow, { x: 100, y: 100 })
+  flow = connectNodes(goal.flow, 'parent', linear.id, 'input2').flow
+  flow = connectNodes(flow, linear.id, 'child').flow
+  flow = connectNodes(flow, goal.id, linear.id, 'input').flow
   assert.equal(errors(flow).length, 0)
 
-  assert.throws(() => connectNodes(flow, gateway.id, otherHub.id), /端口/)
-  assert.throws(() => connectNodes(flow, otherHub.id, 'node_1'), /端口/)
-  const removed = removeNode(flow, otherHub.id)
-  assert.equal(removed.hubs![otherHub.id], undefined)
-  assert.ok(!removed.logic!.links.some(link => link.from === otherHub.id || link.to === otherHub.id))
+  let sim = createSimState(flow)
+  sim = fireStart(flow, sim)
+  assert.equal(ckptState(sim, 'parent'), 'activated')
+  assert.equal(ckptState(sim, 'child'), 'active')
+  assert.equal(goalState(sim, goal.id), 'subscribed')
+  assert.equal(GOAL_STATES[goalState(sim, goal.id)], '订阅中')
+  assert.ok(sim.log.some(item => item.to === linear.id && item.port === 'input2' && item.signal.kind === 'activation' && item.accepted))
+  assert.ok(sim.log.some(item => item.to === 'child' && item.signal.kind === 'ckpt-transition' && item.accepted))
+  assert.ok(sim.log.some(item => item.to === goal.id && item.signal.kind === 'activation' && item.accepted))
+
+  sim = fireGoalComplete(flow, sim, goal.id)
+  assert.equal(goalState(sim, goal.id), 'closed')
+  assert.equal(ckptState(sim, 'child'), 'activated')
+  assert.ok(sim.log.some(item => item.to === linear.id && item.port === 'input' && item.signal.kind === 'goal-complete' && item.accepted))
+  assert.ok(sim.log.some(item => item.to === goal.id && item.signal.kind === 'cancel' && item.accepted))
+  assert.ok(sim.log.some(item => item.to === goal.id && item.signal.kind === 'query' && item.accepted))
+  assert.ok(sim.log.some(item => item.to === linear.id && item.signal.kind === 'query-response' && item.accepted))
+
+  const blocked = fireGoalComplete(flow, sim, goal.id)
+  assert.equal(goalState(blocked, goal.id), 'closed')
+  assert.ok(blocked.log.at(-1)?.accepted === false)
 })
 
-test('Hub/gateway identity collisions and malformed content are rejected', () => {
-  const hub = createHubNode(fixture(), { x: 0, y: 0 })
-  const collision = clone(hub.flow)
-  collision.hubs!.start = collision.hubs![hub.id]
-  assert.throws(() => parseFlow(JSON.stringify(collision)), /hubs/)
-  const gateway = createGatewayNode(hub.flow, { x: 40, y: 40 })
-  const bad = clone(gateway.flow)
-  Reflect.set(bad.gateways![gateway.id], 'description', 1)
-  assert.throws(() => parseFlow(JSON.stringify(bad)), /gateways/)
+test('Goal cannot emit G before subscribe; Goal out is single-wire', () => {
+  const linear = createTransitionNode(createFlow('goal-wire'), { x: 0, y: 0 })
+  const other = createTransitionNode(linear.flow, { x: 80, y: 0 })
+  const first = createGoalNode(other.flow, { x: 0, y: 0 })
+  const second = createGoalNode(first.flow, { x: 40, y: 40 })
+  let flow = connectNodes(second.flow, first.id, linear.id, 'input').flow
+  flow = connectNodes(flow, second.id, linear.id, 'input').flow
+  assert.equal(flow.logic!.links.filter(link => link.to === linear.id && link.port === 'input').length, 2)
+  // Goal 出口仍是单线：改挂到另一变迁会拆掉旧线
+  flow = connectNodes(flow, first.id, other.id, 'input').flow
+  assert.equal(flow.logic!.links.filter(link => link.from === first.id).length, 1)
+  assert.equal(flow.logic!.links.find(link => link.from === first.id)!.to, other.id)
+  const sim = fireGoalComplete(flow, createSimState(flow), second.id)
+  assert.equal(goalState(sim, second.id), 'inactive')
+  assert.ok(sim.log.at(-1)?.reason?.includes('尚未订阅'))
+})
+
+test('Linear Goal conjunction waits for all closed Goals via C/C-R', () => {
+  let flow = createFlow('sim-goal-and')
+  flow.nodes.parent = makeNode('父阶段')
+  flow.nodes.child = makeNode('子阶段')
+  flow.entry.target = 'parent'
+  const linear = createTransitionNode(flow, { x: 300, y: 100 })
+  const g1 = createGoalNode(linear.flow, { x: 40, y: 40 })
+  const g2 = createGoalNode(g1.flow, { x: 40, y: 120 })
+  flow = connectNodes(g2.flow, 'parent', linear.id, 'input2').flow
+  flow = connectNodes(flow, linear.id, 'child').flow
+  flow = connectNodes(flow, g1.id, linear.id, 'input').flow
+  flow = connectNodes(flow, g2.id, linear.id, 'input').flow
+  assert.equal(errors(flow).length, 0)
+
+  let sim = fireStart(flow, createSimState(flow))
+  assert.equal(ckptState(sim, 'child'), 'active')
+  assert.equal(goalState(sim, g1.id), 'subscribed')
+  assert.equal(goalState(sim, g2.id), 'subscribed')
+
+  sim = fireGoalComplete(flow, sim, g1.id)
+  assert.equal(goalState(sim, g1.id), 'closed')
+  assert.equal(goalState(sim, g2.id), 'subscribed')
+  assert.equal(ckptState(sim, 'child'), 'active')
+  assert.ok(sim.log.some(item => item.to === g1.id && item.signal.kind === 'query' && item.accepted))
+  assert.ok(sim.log.some(item => item.to === g2.id && item.signal.kind === 'query' && !item.accepted))
+
+  sim = fireGoalComplete(flow, sim, g2.id)
+  assert.equal(goalState(sim, g2.id), 'closed')
+  assert.equal(ckptState(sim, 'child'), 'activated')
+  assert.ok(sim.log.some(item => item.to === linear.id && item.signal.kind === 'query-response' && item.accepted))
+})
+
+test('Simulator state syncs with graph edits and reset clears runtime', () => {
+  const flow = createFlow('sim-sync')
+  flow.nodes.a = makeNode('A')
+  flow.entry.target = 'a'
+  let sim = fireStart(flow, createSimState(flow))
+  assert.equal(ckptState(sim, 'a'), 'activated')
+  const added = createCheckpoint(flow, { x: 10, y: 10 })
+  sim = syncSimState(sim, added.flow)
+  assert.equal(ckptState(sim, 'a'), 'activated')
+  assert.equal(ckptState(sim, added.id), 'inactive')
+  const removed = removeNode(added.flow, 'a')
+  sim = syncSimState(sim, removed)
+  assert.equal(Object.hasOwn(sim.ckpt, 'a'), false)
+  sim = resetSimState(added.flow)
+  assert.equal(ckptState(sim, 'a'), 'inactive')
+  assert.equal(ckptState(sim, added.id), 'inactive')
+})
+
+test('Unconnected start records a rejected pulse without mutating checkpoints', () => {
+  const flow = createFlow('sim-open')
+  flow.nodes.a = makeNode('A')
+  const sim = fireStart(flow, createSimState(flow))
+  assert.equal(ckptState(sim, 'a'), 'inactive')
+  assert.equal(sim.pulse, 1)
+  assert.equal(sim.log[0]?.accepted, false)
+})
+
+test('Merge node create, roundtrip, multi-in single-out cardinality', () => {
+  const merge = createMergeNode(fixture(), { x: 200, y: 100 })
+  assert.equal(merge.flow.merges![merge.id].title.text, '合并变迁')
+  assert.deepEqual(inputPorts(merge.flow, merge.id), ['input'])
+  assert.deepEqual(outputPorts(merge.flow, merge.id), ['output'])
+  assert.deepEqual(parseFlow(JSON.stringify(merge.flow)).merges, merge.flow.merges)
+  let flow = connectNodes(merge.flow, 'start', merge.id).flow
+  flow = connectNodes(flow, 'node_1', merge.id).flow
+  assert.equal(flow.logic!.links.filter(link => link.to === merge.id).length, 2)
+  flow = connectNodes(flow, merge.id, 'node_2').flow
+  const swapped = connectNodes(flow, merge.id, 'node_3').flow
+  assert.equal(swapped.logic!.links.filter(link => link.from === merge.id).length, 1)
+  assert.equal(swapped.logic!.links.find(link => link.from === merge.id)!.to, 'node_3')
+  assert.equal(errors(swapped).length, 0)
+  assert.throws(() => connectNodes(swapped, swapped.entry.id, merge.id), /端口/)
+  assert.throws(() => connectNodes(swapped, merge.id, merge.id), /端口/)
+})
+
+test('Merge on A queries upstream; all C-R then emit S(活跃中→已激活)', () => {
+  let flow = createFlow('sim-merge')
+  flow.nodes.a = makeNode('A')
+  flow.nodes.b = makeNode('B')
+  flow.nodes.child = makeNode('Child')
+  const merge = createMergeNode(flow, { x: 0, y: 0 })
+  flow = connectNodes(merge.flow, 'a', merge.id).flow
+  flow = connectNodes(flow, 'b', merge.id).flow
+  flow = connectNodes(flow, merge.id, 'child').flow
+  let sim = createSimState(flow)
+  sim = fireCkptTransition(flow, sim, 'a', 'inactive', 'activated')
+  sim = fireCkptTransition(flow, sim, 'b', 'inactive', 'activated')
+  sim = propagateSignals(flow, sim, [{ from: 'a', to: merge.id, port: 'input', signal: { kind: 'activation' } }])
+  assert.equal(ckptState(sim, 'child'), 'activated')
+  assert.ok(sim.log.some(item => item.to === 'a' && item.port === 'output' && item.signal.kind === 'query' && item.accepted))
+  assert.ok(sim.log.some(item => item.to === 'b' && item.signal.kind === 'query' && item.accepted))
+  assert.ok(sim.log.some(item => item.to === merge.id && item.signal.kind === 'query-response' && item.accepted))
+  assert.deepEqual(mergeSim(sim, merge.id), { awaiting: [], reported: [] })
+})
+
+test('Merge waits until every incoming wire returns C-R', () => {
+  let flow = createFlow('sim-merge-partial')
+  flow.nodes.a = makeNode('A')
+  flow.nodes.b = makeNode('B')
+  flow.nodes.child = makeNode('Child')
+  const merge = createMergeNode(flow, { x: 0, y: 0 })
+  flow = connectNodes(merge.flow, 'a', merge.id).flow
+  flow = connectNodes(flow, 'b', merge.id).flow
+  flow = connectNodes(flow, merge.id, 'child').flow
+  let sim = createSimState(flow)
+  sim = fireCkptTransition(flow, sim, 'a', 'inactive', 'activated')
+  // b stays inactive → refuses C
+  sim = propagateSignals(flow, sim, [{ from: 'a', to: merge.id, port: 'input', signal: { kind: 'activation' } }])
+  assert.equal(ckptState(sim, 'child'), 'active')
+  assert.ok(sim.log.some(item => item.to === 'b' && item.signal.kind === 'query' && item.accepted === false))
+  assert.deepEqual(mergeSim(sim, merge.id).awaiting.sort(), ['a', 'b'])
+  assert.deepEqual(mergeSim(sim, merge.id).reported, ['a'])
+  // Activate b and re-fire A to start a fresh query round
+  sim = fireCkptTransition(flow, sim, 'b', 'inactive', 'activated')
+  sim = propagateSignals(flow, sim, [{ from: 'a', to: merge.id, port: 'input', signal: { kind: 'activation' } }])
+  assert.equal(ckptState(sim, 'child'), 'activated')
+})
+
+test('Entering 已激活 emits S-C from S input; transitions forward S-C to A sources', () => {
+  let flow = createFlow('sim-sc')
+  flow.nodes.parent = makeNode('P')
+  flow.nodes.child = makeNode('C')
+  flow.entry.target = 'parent'
+  const linear = createTransitionNode(flow, { x: 0, y: 0 })
+  const goal = createGoalNode(linear.flow, { x: 40, y: 40 })
+  flow = connectNodes(goal.flow, 'parent', linear.id, 'input2').flow
+  flow = connectNodes(flow, linear.id, 'child').flow
+  flow = connectNodes(flow, goal.id, linear.id, 'input').flow
+  let sim = createSimState(flow)
+  sim = fireStart(flow, sim)
+  assert.equal(ckptState(sim, 'parent'), 'activated')
+  assert.equal(ckptState(sim, 'child'), 'active')
+  // parent 进入已激活时发出 S-C；无 S 入线（起点）则无处投递，child 仍活跃中
+  assert.ok(sim.log.some(item => item.to === 'parent' && item.accepted && item.signal.kind === 'ckpt-transition' && item.signal.to === 'activated'))
+  sim = fireCkptTransition(flow, sim, 'child', 'active', 'activated')
+  assert.equal(ckptState(sim, 'child'), 'activated')
+  // child → S-C → 线性变迁 Next → Parent 来源 parent（已激活，忽略）
+  assert.ok(sim.log.some(item => item.to === linear.id && item.port === 'output' && item.signal.kind === 'cancel-cascade' && item.accepted))
+  assert.ok(sim.log.some(item => item.to === 'parent' && item.signal.kind === 'cancel-cascade' && item.accepted === false))
+  assert.equal(ckptState(sim, 'parent'), 'activated')
+})
+
+test('S-C cancels 活跃中 without forward; 未激活 only forwards and never cancels', () => {
+  let flow = createFlow('sim-sc-cancel')
+  flow.nodes.live = makeNode('Live')
+  flow.nodes.idle = makeNode('Idle')
+  flow.nodes.upstream = makeNode('Up')
+  const linear = createTransitionNode(flow, { x: 0, y: 0 })
+  // upstream → linear → idle；另用注入把 live 设为活跃中后直接喂 S-C
+  flow = connectNodes(linear.flow, 'upstream', linear.id, 'input2').flow
+  flow = connectNodes(flow, linear.id, 'idle').flow
+  let sim = createSimState(flow)
+  sim = fireCkptTransition(flow, sim, 'live', 'inactive', 'active')
+  sim = propagateSignals(flow, sim, [{ from: null, to: 'live', port: 'input', signal: { kind: 'cancel-cascade' } }])
+  assert.equal(ckptState(sim, 'live'), 'cancelled')
+  assert.ok(!sim.log.some(item => item.from === 'live' && item.signal.kind === 'cancel-cascade' && item.accepted && item.to !== 'live'))
+
+  // 入点收到 S-C：未激活不取消、不转发
+  sim = propagateSignals(flow, sim, [{ from: linear.id, to: 'idle', port: 'input', signal: { kind: 'cancel-cascade' } }])
+  assert.equal(ckptState(sim, 'idle'), 'inactive')
+  assert.ok(sim.log.some(item => item.to === 'idle' && item.signal.kind === 'cancel-cascade' && item.accepted))
+  assert.ok(!sim.log.some(item => item.to === linear.id && item.signal.kind === 'cancel-cascade' && item.from === 'idle'))
+  assert.equal(ckptState(sim, 'upstream'), 'inactive')
+
+  // 出点回灌 S-C：未激活只转发、不取消
+  sim = propagateSignals(flow, sim, [{ from: null, to: 'idle', port: 'output', signal: { kind: 'cancel-cascade' } }])
+  assert.equal(ckptState(sim, 'idle'), 'inactive')
+  assert.ok(sim.log.some(item => item.to === linear.id && item.signal.kind === 'cancel-cascade' && item.accepted))
+})
+
+test('Active ckpt on S-C emits G-C; linear transition forwards D from Goal', () => {
+  let flow = createFlow('sim-gc')
+  flow.nodes.parent = makeNode('P')
+  flow.nodes.child = makeNode('C')
+  flow.entry.target = 'parent'
+  const linear = createTransitionNode(flow, { x: 0, y: 0 })
+  const goal = createGoalNode(linear.flow, { x: 40, y: 40 })
+  flow = connectNodes(goal.flow, 'parent', linear.id, 'input2').flow
+  flow = connectNodes(flow, linear.id, 'child').flow
+  flow = connectNodes(flow, goal.id, linear.id, 'input').flow
+  let sim = createSimState(flow)
+  sim = fireStart(flow, sim)
+  assert.equal(ckptState(sim, 'child'), 'active')
+  assert.equal(goalState(sim, goal.id), 'subscribed')
+  sim = propagateSignals(flow, sim, [{ from: null, to: 'child', port: 'input', signal: { kind: 'cancel-cascade' } }])
+  assert.equal(ckptState(sim, 'child'), 'cancelled')
+  assert.ok(sim.log.some(item => item.to === linear.id && item.port === 'output' && item.signal.kind === 'goal-cancel-cascade' && item.accepted))
+  assert.ok(sim.log.some(item => item.to === goal.id && item.signal.kind === 'cancel' && item.accepted))
+  assert.equal(goalState(sim, goal.id), 'closed')
+})
+
+test('Swap node defaults to one entry and auto-expands when last slot is used', () => {
+  const swap = createSwapNode(fixture(), { x: 200, y: 100 })
+  assert.equal(swap.flow.swaps![swap.id].title.text, '交换变迁')
+  assert.equal(swap.flow.swaps![swap.id].entries, 1)
+  assert.deepEqual(inputPorts(swap.flow, swap.id), ['in0'])
+  assert.deepEqual(outputPorts(swap.flow, swap.id), ['out0'])
+  assert.deepEqual(parseFlow(JSON.stringify(swap.flow)).swaps, swap.flow.swaps)
+  let flow = connectNodes(swap.flow, 'start', swap.id, swapInPort(0)).flow
+  assert.equal(flow.swaps![swap.id].entries, 2)
+  assert.deepEqual(inputPorts(flow, swap.id), ['in0', 'in1'])
+  flow = connectNodes(flow, 'node_1', swap.id, swapInPort(1)).flow
+  assert.equal(flow.swaps![swap.id].entries, 3)
+  flow = connectNodes(flow, swap.id, 'node_2', 'input', swapOutPort(0)).flow
+  assert.equal(flow.logic!.links.find(link => link.from === swap.id)!.fromPort, 'out0')
+  const replaced = connectNodes(flow, swap.id, 'node_3', 'input', swapOutPort(0)).flow
+  assert.equal(replaced.logic!.links.filter(link => link.from === swap.id && link.fromPort === 'out0').length, 1)
+  assert.equal(replaced.logic!.links.find(link => link.from === swap.id && link.fromPort === 'out0')!.to, 'node_3')
+  assert.equal(errors(replaced).length, 0)
+  const cut = disconnectLink(replaced, { kind: 'logic-link', id: replaced.logic!.links.find(link => link.to === swap.id && link.port === 'in1')!.id })
+  assert.equal(cut.swaps![swap.id].entries, 2)
+  assert.throws(() => connectNodes(cut, cut.entry.id, swap.id, swapInPort(0)), /端口/)
+})
+
+test('Swap on A emits S(未激活→已激活) on same entry and S-C on other entry inputs', () => {
+  let flow = createFlow('sim-swap')
+  flow.nodes.a = makeNode('A')
+  flow.nodes.b = makeNode('B')
+  flow.nodes.nextA = makeNode('NextA')
+  flow.nodes.nextB = makeNode('NextB')
+  const swap = createSwapNode(flow, { x: 0, y: 0 })
+  flow = connectNodes(swap.flow, 'a', swap.id, swapInPort(0)).flow
+  flow = connectNodes(flow, 'b', swap.id, swapInPort(1)).flow
+  flow = connectNodes(flow, swap.id, 'nextA', 'input', swapOutPort(0)).flow
+  flow = connectNodes(flow, swap.id, 'nextB', 'input', swapOutPort(1)).flow
+  assert.equal(flow.swaps![swap.id].entries, 3)
+  let sim = createSimState(flow)
+  sim = propagateSignals(flow, sim, [{ from: 'a', to: swap.id, port: swapInPort(0), signal: { kind: 'activation' } }])
+  assert.equal(ckptState(sim, 'nextA'), 'activated')
+  assert.equal(ckptState(sim, 'nextB'), 'inactive')
+  assert.ok(sim.log.some(item => item.to === 'nextA' && item.accepted && item.signal.kind === 'ckpt-transition' && item.signal.from === 'inactive' && item.signal.to === 'activated'))
+  assert.ok(sim.log.some(item => item.to === 'b' && item.accepted && item.signal.kind === 'cancel-cascade'))
+  // 未激活 ckpt 遇 S-C（出点回灌）只转发、不取消
+  assert.equal(ckptState(sim, 'b'), 'inactive')
+})
+
+test('Diff node G-Y activates success path; G-N sends S-C on success and activates fail path', () => {
+  let flow = createFlow('sim-diff')
+  flow.nodes.parent = makeNode('P')
+  flow.nodes.ok = makeNode('Ok')
+  flow.nodes.fail = makeNode('Fail')
+  flow.entry.target = 'parent'
+  const diff = createDiffNode(flow, { x: 0, y: 0 })
+  const goal = createGoalNode(diff.flow, { x: 40, y: 40 })
+  flow = connectNodes(goal.flow, 'parent', diff.id, 'input2').flow
+  flow = connectNodes(flow, goal.id, diff.id, 'input').flow
+  flow = connectNodes(flow, diff.id, 'ok', 'input', 'output').flow
+  flow = connectNodes(flow, diff.id, 'fail', 'input', 'output2').flow
+  assert.equal(errors(flow).length, 0)
+  assert.deepEqual(outputPorts(flow, diff.id), ['output', 'output2'])
+  assert.deepEqual(parseFlow(JSON.stringify(flow)).diffs, flow.diffs)
+
+  let sim = fireStart(flow, createSimState(flow))
+  assert.equal(ckptState(sim, 'ok'), 'active')
+  assert.equal(ckptState(sim, 'fail'), 'inactive')
+  assert.equal(goalState(sim, goal.id), 'subscribed')
+
+  sim = fireGoalYes(flow, sim, goal.id)
+  assert.equal(goalState(sim, goal.id), 'closed')
+  assert.equal(ckptState(sim, 'ok'), 'activated')
+  assert.equal(ckptState(sim, 'fail'), 'inactive')
+})
+
+test('Diff G-N cancels active success via input S-C without cascade; activates fail', () => {
+  let flow = createFlow('sim-diff-no')
+  flow.nodes.parent = makeNode('P')
+  flow.nodes.ok = makeNode('Ok')
+  flow.nodes.fail = makeNode('Fail')
+  flow.entry.target = 'parent'
+  const diff = createDiffNode(flow, { x: 0, y: 0 })
+  const goal = createGoalNode(diff.flow, { x: 40, y: 40 })
+  flow = connectNodes(goal.flow, 'parent', diff.id, 'input2').flow
+  flow = connectNodes(flow, goal.id, diff.id, 'input').flow
+  flow = connectNodes(flow, diff.id, 'ok', 'input', 'output').flow
+  flow = connectNodes(flow, diff.id, 'fail', 'input', 'output2').flow
+  let sim = fireStart(flow, createSimState(flow))
+  assert.equal(ckptState(sim, 'ok'), 'active')
+  sim = fireGoalNo(flow, sim, goal.id)
+  assert.equal(goalState(sim, goal.id), 'closed')
+  assert.equal(ckptState(sim, 'ok'), 'cancelled')
+  assert.equal(ckptState(sim, 'fail'), 'activated')
+  assert.ok(sim.log.some(item => item.to === 'ok' && item.port === 'input' && item.signal.kind === 'cancel-cascade' && item.accepted))
+  // 入点 S-C 不继续转发
+  assert.ok(!sim.log.some(item => item.from === 'ok' && item.signal.kind === 'cancel-cascade' && item.to === diff.id))
+})
+
+test('Diff success/fail outs forward S-C to Parent and D to Goal', () => {
+  let flow = createFlow('sim-diff-sc')
+  flow.nodes.parent = makeNode('P')
+  flow.nodes.ok = makeNode('Ok')
+  flow.nodes.fail = makeNode('Fail')
+  const diff = createDiffNode(flow, { x: 0, y: 0 })
+  const goal = createGoalNode(diff.flow, { x: 40, y: 40 })
+  flow = connectNodes(goal.flow, 'parent', diff.id, 'input2').flow
+  flow = connectNodes(flow, goal.id, diff.id, 'input').flow
+  flow = connectNodes(flow, diff.id, 'ok', 'input', 'output').flow
+  flow = connectNodes(flow, diff.id, 'fail', 'input', 'output2').flow
+  let sim = createSimState(flow)
+  sim = { ...sim, goals: { ...sim.goals, [goal.id]: 'subscribed' } }
+  // 从成功出点回灌 S-C（Parent 仍未激活，故会接受并只转发）
+  sim = propagateSignals(flow, sim, [{ from: 'ok', to: diff.id, port: 'output', signal: { kind: 'cancel-cascade' } }])
+  assert.ok(sim.log.some(item => item.to === diff.id && item.port === 'output' && item.signal.kind === 'cancel-cascade' && item.accepted))
+  assert.ok(sim.log.some(item => item.to === 'parent' && item.signal.kind === 'cancel-cascade' && item.accepted))
+  assert.equal(ckptState(sim, 'parent'), 'inactive')
+  assert.ok(sim.log.some(item => item.to === goal.id && item.signal.kind === 'cancel' && item.accepted))
+  assert.equal(goalState(sim, goal.id), 'closed')
+
+  // 失败出点同样转发
+  sim = { ...createSimState(flow), goals: { [goal.id]: 'subscribed' } }
+  sim = propagateSignals(flow, sim, [{ from: 'fail', to: diff.id, port: 'output2', signal: { kind: 'cancel-cascade' } }])
+  assert.ok(sim.log.some(item => item.to === 'parent' && item.signal.kind === 'cancel-cascade' && item.accepted))
+  assert.equal(goalState(sim, goal.id), 'closed')
+})
+
+test('Conditional node Predicate/Parent/Next are single-wire; Goal cannot connect', () => {
+  const conditional = createConditionalNode(fixture(), { x: 0, y: 0 })
+  const predicate = createPredicateNode(conditional.flow, { x: 40, y: 40 })
+  const other = createPredicateNode(predicate.flow, { x: 40, y: 80 })
+  const goal = createGoalNode(other.flow, { x: 80, y: 40 })
+  assert.equal(conditional.flow.conditionals![conditional.id].title.text, '条件变迁')
+  assert.equal(predicate.flow.predicates![predicate.id].title.text, '新谓词')
+  assert.deepEqual(inputPorts(predicate.flow, conditional.id), ['input', 'input2'])
+  assert.deepEqual(outputPorts(predicate.flow, conditional.id), ['output'])
+  assert.ok(!canConnectNodes(goal.flow, goal.id, conditional.id, 'input'))
+  let flow = connectNodes(goal.flow, predicate.id, conditional.id, 'input').flow
+  flow = connectNodes(flow, 'start', conditional.id, 'input2').flow
+  flow = connectNodes(flow, conditional.id, 'node_1').flow
+  assert.equal(errors(flow).length, 0)
+  // Predicate 口只保留一条线
+  const replaced = connectNodes(flow, other.id, conditional.id, 'input').flow
+  assert.equal(replaced.logic!.links.filter(link => link.to === conditional.id && link.port === 'input').length, 1)
+  assert.equal(replaced.logic!.links.find(link => link.to === conditional.id && link.port === 'input')!.from, other.id)
+  assert.deepEqual(parseFlow(JSON.stringify(replaced)).conditionals, replaced.conditionals)
+  assert.deepEqual(parseFlow(JSON.stringify(replaced)).predicates, replaced.predicates)
+})
+
+test('Conditional Parent A activates Next and Predicate; P closes and activates next ckpt', () => {
+  let flow = createFlow('sim-conditional')
+  flow.nodes.parent = makeNode('P')
+  flow.nodes.child = makeNode('C')
+  flow.entry.target = 'parent'
+  const conditional = createConditionalNode(flow, { x: 0, y: 0 })
+  const predicate = createPredicateNode(conditional.flow, { x: 40, y: 40 })
+  flow = connectNodes(predicate.flow, 'parent', conditional.id, 'input2').flow
+  flow = connectNodes(flow, predicate.id, conditional.id, 'input').flow
+  flow = connectNodes(flow, conditional.id, 'child').flow
+  let sim = fireStart(flow, createSimState(flow))
+  assert.equal(ckptState(sim, 'child'), 'active')
+  assert.equal(predicateState(sim, predicate.id), 'subscribed')
+  sim = firePredicateComplete(flow, sim, predicate.id)
+  assert.equal(predicateState(sim, predicate.id), 'closed')
+  assert.equal(ckptState(sim, 'child'), 'activated')
+})
+
+test('Predicate cannot emit P before subscribe; out is single-wire', () => {
+  const conditional = createConditionalNode(createFlow('pred-wire'), { x: 0, y: 0 })
+  const other = createConditionalNode(conditional.flow, { x: 80, y: 0 })
+  const first = createPredicateNode(other.flow, { x: 0, y: 0 })
+  const second = createPredicateNode(first.flow, { x: 40, y: 40 })
+  let flow = connectNodes(second.flow, first.id, conditional.id, 'input').flow
+  flow = connectNodes(flow, first.id, other.id, 'input').flow
+  assert.equal(flow.logic!.links.filter(link => link.from === first.id).length, 1)
+  assert.equal(flow.logic!.links.find(link => link.from === first.id)!.to, other.id)
+  let sim = createSimState(flow)
+  sim = firePredicateComplete(flow, sim, first.id)
+  assert.ok(sim.log.some(item => item.from === first.id && item.signal.kind === 'predicate-complete' && !item.accepted))
 })
 
 console.log(`Progress model: ${passed} checks passed.`)
