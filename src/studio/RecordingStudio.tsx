@@ -16,7 +16,8 @@ import {
 } from '../i18n/voiceRuntime'
 import type { VoiceImportSource } from '../i18n/voiceImport'
 import { VOICE_EXTRA_GLYPHS } from '../ui/voiceIcons'
-import { VoiceEmptyGlyph, VoiceGlyph, VoiceWaveform } from '../ui/VoiceVisuals'
+import { VoiceGlyph } from '../ui/VoiceVisuals'
+import { WaveformSlot } from './WaveformSlot'
 import {
   acceptsAudioDrop,
   draggedAssetPath,
@@ -1273,12 +1274,15 @@ export function RecordingStudio({
                   </div>
                   <div className="studio-take-wave">
                     {memoryInfo ? (
-                      <VoiceWaveform
-                        peaks={memoryInfo.peaks}
-                        progress={playedRatio}
+                      <WaveformSlot
+                        state={{
+                          kind: 'ready',
+                          peaks: memoryInfo.peaks,
+                          progress: playedRatio,
+                        }}
                       />
                     ) : (
-                      <VoiceEmptyGlyph />
+                      <WaveformSlot state={{ kind: 'empty' }} />
                     )}
                   </div>
                 </div>
@@ -1312,19 +1316,19 @@ export function RecordingStudio({
               {...dropPropsIfAny(waveDropProps)}
             >
               {audioInfo ? (
-                <VoiceWaveform peaks={audioInfo.peaks} progress={playedRatio} />
+                <WaveformSlot
+                  state={{
+                    kind: 'ready',
+                    peaks: audioInfo.peaks,
+                    progress: playedRatio,
+                  }}
+                />
               ) : memoryStatus === 'failed' ? (
-                <div className="studio-wave-loading">
-                  <VoiceEmptyGlyph />
-                  <span>这个文件解不开</span>
-                </div>
+                <WaveformSlot state={{ kind: 'failed' }} />
               ) : source ? (
-                <div className="studio-wave-loading">
-                  <VoiceEmptyGlyph />
-                  <span>解码中…</span>
-                </div>
+                <WaveformSlot state={{ kind: 'decoding' }} />
               ) : (
-                <VoiceEmptyGlyph />
+                <WaveformSlot state={{ kind: 'empty' }} />
               )}
               {dropActive && (
                 <div className="voice-wave-scrim">
