@@ -41,7 +41,6 @@ import {
 } from './desktopWindow.ts'
 import { SplashOverlay } from './SplashOverlay.tsx'
 import { shouldShowSplash } from './splashSession.ts'
-import { DragDropProbe } from './studio/DragDropProbe.tsx'
 import appWordmarkUrl from './brand/hanshu-wordmark.svg'
 import './App.css'
 
@@ -441,13 +440,6 @@ function App() {
       </div>
       </Fragment>
       )}
-      {/*
-        拖放探针：只在开发构建里出现。外部文件拖放要先过窗口层的一串前置条件
-        （WebView2 的 AllowExternalDrop、管理员权限带来的跨权限拦截……），
-        事件没进到网页层时应用里写什么都没用 —— 这个探针把"窗口收到了什么"摊开。
-        见 studio/DragDropProbe.tsx。
-      */}
-      {import.meta.env.DEV && <DragDropProbe />}
     </div>
   )
 }
