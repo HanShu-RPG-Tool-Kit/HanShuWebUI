@@ -124,6 +124,14 @@ export type AssetFile = {
   mime: string
   size: number
   updatedAt: number
+  /**
+   * 「引用资产」配音（`.ref`）正文里指向的那个资产路径；其它资产没有这个字段。
+   *
+   * 为什么放元数据里：配音解析（四态）是**同步**的 —— 编辑器渲染期就要问，而 `.ref`
+   * 的正文得异步读。所以在**加载**（projectFs 读盘时顺手解）与**写入**（voiceRef 写引用时
+   * 一起带上）两个时刻把目标解好放这儿，解析层只比字符串，不碰 IO。
+   */
+  refTarget?: string | null
 }
 
 export type ScriptPackage = {
@@ -360,6 +368,11 @@ export function upsertAssetMeta(
   path: string,
   mime: string,
   size: number,
+  /**
+   * `.ref`（「引用资产」）指向的目标路径。**不传 = 不是引用**，此时保留原有字段不动；
+   * 传 `null`（正文读不出路径）也要如实记下来 —— 配音四态据此报"引用解析不出来"。
+   */
+  refTarget?: string | null,
 ): { workspace: Workspace; asset: AssetFile } | null {
   const pkg = workspace.packages.find((item) => item.id === packageId)
   if (!pkg) return null
@@ -367,7 +380,7 @@ export function upsertAssetMeta(
   const existing = pkg.assets.find(
     (item) => item.path.toLowerCase() === path.toLowerCase(),
   )
-  const asset: AssetFile = existing
+  const base: AssetFile = existing
     ? { ...existing, mime, size, updatedAt: Date.now() }
     : {
         id: uid('asset'),
@@ -376,6 +389,8 @@ export function upsertAssetMeta(
         size,
         updatedAt: Date.now(),
       }
+  const asset: AssetFile =
+    refTarget === undefined ? base : { ...base, refTarget }
 
   const next: Workspace = {
     ...workspace,

@@ -9,6 +9,7 @@ import {
   putAssetBlob,
 } from '../assets/idb'
 import { normalizeAssetPath, normalizeFolderPath } from '../assets/paths'
+import { isVoiceRefPath, parseVoiceRefContent } from '../i18n/voiceMap'
 import {
   ALLOWED_EXTENSIONS,
   FILE_DIRS,
@@ -147,12 +148,21 @@ async function loadAssetsFromDisk(
     })()
 
     await putAssetBlob(packageId, norm, file)
+    /*
+     * 「引用资产」配音（`.ref`）：正文指向的资产路径在**这里**解出来。
+     * 配音四态是同步判定的（编辑器渲染期就问），而 `.ref` 的正文要异步读 ——
+     * 读盘这一步本来就是逐文件 await，顺手解掉最省事：之后解析层只比字符串。
+     */
+    const refTarget = isVoiceRefPath(norm)
+      ? parseVoiceRefContent(await file.text())
+      : undefined
     assets.push({
       id: uid('asset'),
       path: norm,
       mime: file.type || guessMime(norm),
       size: file.size,
       updatedAt: file.lastModified || Date.now(),
+      ...(refTarget !== undefined ? { refTarget } : {}),
     })
   }
 

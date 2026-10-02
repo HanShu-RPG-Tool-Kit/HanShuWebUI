@@ -60,7 +60,8 @@ export function isJsonAsset(path: string, mime?: string): boolean {
 export function isTextAsset(path: string, mime?: string): boolean {
   if (isJsonAsset(path, mime)) return true
   if (mime?.startsWith('text/')) return true
-  return /\.(txt|md|csv|tsv)$/i.test(path)
+  // `.ref`（「引用资产」配音）是一行路径的文本文件：点开就能看/改指向
+  return /\.(txt|md|csv|tsv|ref)$/i.test(path)
 }
 
 export function formatBytes(size: number): string {

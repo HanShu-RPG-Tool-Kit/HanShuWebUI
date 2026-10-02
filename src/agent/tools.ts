@@ -332,7 +332,7 @@ export const AGENT_TOOLS = [
     function: {
       name: 'list_voice_status',
       description:
-        '列出正文各键的对等配音状态：ok（单声道 Vorbis ogg）/ missing（缺文件）/ not-ogg / invalid。agent 不能合成语音，缺配音时请如实告知用户。',
+        '列出正文各键的对等配音状态：ok（单声道 Vorbis ogg）/ ref（该键是「引用资产」，指向包内另一份音频，refTarget 给出目标路径）/ missing（缺文件）/ not-ogg / invalid。agent 不能合成语音，缺配音时请如实告知用户。',
       parameters: {
         type: 'object',
         properties: {

@@ -14,7 +14,8 @@ import { DEFAULT_LOCALE_TAG, formatLocaleTag } from './locales'
  * 新增可本地化的后缀（`.char` / `.md` …）只需要继续调用这里的函数 —— **不要再写
  * 第二套路径拼装**：以前语音与语言文件各拼一套，改布局时两边必须同步改，很容易漏。
  *
- * 布局常量只有 `lang_` / `voice_` 两个前缀与 `.lang` / `.ogg` 两个目标后缀。
+ * 布局常量只有 `lang_` / `voice_` 两个前缀与 `.lang` / `.ogg` 两个目标后缀；
+ * 「引用资产」配音（`.ref`）与 `.ogg` 共用同一个对等基名，见 `VOICE_REF_EXTENSION`。
  */
 
 /** 默认的源文件后缀：目前唯一可本地化的源类型是 `.hs` */
@@ -25,6 +26,15 @@ export const TEXT_ASSET_EXTENSION = 'lang'
 
 /** 音频产物的后缀（是否单通道要解码后才知道） */
 export const VOICE_ASSET_EXTENSION = 'ogg'
+
+/**
+ * 「引用资产」这类配音的后缀：对等位置上的一个**文本文件** `.ref`，
+ * 内容指向同包内的另一个音频资产。
+ *
+ * 它和 `.ogg` 抢同一个对等基名，解析顺序是 **`.ogg` 优先、`.ref` 兜底**（见 voiceMap）；
+ * 导出 PAK 时引用会被落地成对等位置上的真实 `.ogg`（引擎不认识 `.ref`）。
+ */
+export const VOICE_REF_EXTENSION = 'ref'
 
 /** 规范化语言标签：认不出来时退回默认标签 */
 export function localeTag(locale: string): string {

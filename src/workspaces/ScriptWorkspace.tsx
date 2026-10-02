@@ -52,7 +52,10 @@ import {
 } from '../workspace'
 import {
   createBlankOggBlob,
+  isVoiceRefPath,
   listMissingVoiceOggs,
+  parseVoiceRefContent,
+  stringifyVoiceRefContent,
 } from '../i18n/voiceMap'
 import { voiceRootDir } from '../i18n/localeLayout'
 import {
@@ -60,7 +63,11 @@ import {
   downloadBlob,
 } from '../export/resourcePack'
 import { buildProjectPackZip } from '../export/projectPack'
-import { normalizeAssetPath, normalizeFolderPath } from '../assets/paths'
+import {
+  isAudioAsset,
+  normalizeAssetPath,
+  normalizeFolderPath,
+} from '../assets/paths'
 import {
   moveAssetToDir,
   moveScriptToPackage,
@@ -368,6 +375,14 @@ export const ScriptWorkspace = forwardRef<
   const voiceLibraryRef = useRef<VoiceLibrary | null>(null)
   /** 音频映射管理的渲染态镜像（ref 给编辑器用，state 给弹窗用） */
   const [voiceRuntime, setVoiceRuntime] = useState<VoiceLibrary | null>(null)
+  /**
+   * 语言文本映射的渲染态镜像（值本身不用，只为"映射加载完了"能触发一次重渲染）。
+   *
+   * 映射是**异步**建出来的（先读资产再建 sink）：只写 `textMapRef` 的话，录音棚那边
+   * 拿到的会一直是"还没有文本"，直到碰巧有别的 state 变化 —— 录音的人不该看到这种
+   * 状态。同 `voiceRuntime`：库/映射是刚建出来的，不会引发级联渲染。
+   */
+  const [, setTextRuntime] = useState<TextMap | null>(null)
   /** 上级容器右键菜单（null = 没开） */
   const [unitMenu, setUnitMenu] = useState<{
     key: string
@@ -450,8 +465,15 @@ export const ScriptWorkspace = forwardRef<
       asset.path,
       mime,
       blob.size,
+      // 手改 `.ref`（引用资产）的正文：目标路径必须跟着更新，
+      // 否则四态还按旧目标判 —— 一直错到重开工程为止
+      isVoiceRefPath(asset.path) ? parseVoiceRefContent(content) : undefined,
     )
     if (result) commitWorkspace(result.workspace)
+    if (isVoiceRefPath(asset.path)) {
+      voiceLibraryRef.current?.notifyAssetsChanged()
+      textBindingRef.current?.refreshVoice()
+    }
 
     if (textMapRef.current?.fileName.toLowerCase() === asset.path.toLowerCase()) {
       textCacheRef.current = content
@@ -597,6 +619,8 @@ export const ScriptWorkspace = forwardRef<
       unsubscribe = map.subscribe(() => textBindingRef.current?.refresh())
       map.load()
       textBindingRef.current?.refresh()
+      // 文本已加载好：让"读 ref 的内容"（录音棚的台词）拿到它，见 setTextRuntime 的注释
+      setTextRuntime(map)
     })()
 
     return () => {
@@ -805,8 +829,14 @@ export const ScriptWorkspace = forwardRef<
         const report = await run.result
         lastMessage = report.message
         lastDetail = report.detail
-        if (report.ok) ok += 1
-        else failed += 1
+        if (report.ok) {
+          ok += 1
+          // 落成了 `.ogg`：把同基名的 `.ref` 清掉 —— 一个键只该有一个来源
+          // （否则解析按 `.ogg` 优先，用户会以为刚写的引用还在生效）
+          clearPeerBindingOf(keys[index], 'file')
+        } else {
+          failed += 1
+        }
         if (report.outcome === 'interrupted') {
           failed += targets.length - index - 1
           break
@@ -939,10 +969,127 @@ export const ScriptWorkspace = forwardRef<
   }
 
   /**
+   * 清掉某个键对等位置上**另一种形式**的绑定。
+   *
+   * 一个键的对等基名只有一份语义（见 voiceMap：`.ogg` 优先、`.ref` 兜底），所以：
+   * - 导入 / 录音 / 合成写 `.ogg` 之前，先把同基名的 `.ref` 清掉；
+   * - 写 `.ref` 之前，先把同基名的 `.ogg` 清掉。
+   *
+   * 不清的后果是"两个来源同时存在"：解析按 `.ogg` 优先，于是用户以为改了引用、其实没生效，
+   * 或者反过来 —— 这类幽灵绑定最难查，所以在这里一次做干净（元数据 + blob + 磁盘副本）。
+   */
+  const clearPeerBindingOf = (key: string, keep: 'file' | 'ref'): void => {
+    const library = voiceLibraryRef.current
+    const pkg = activePackage()
+    if (!library || !pkg) return
+
+    const peerPath =
+      keep === 'ref'
+        ? library.targetPathOf(key) // 要留引用 → 清同基名的 `.ogg`
+        : library.refPathOf(key) // 要留实文件 → 清同基名的 `.ref`
+    const wanted = peerPath.toLowerCase()
+    const asset = pkg.assets.find((item) => item.path.toLowerCase() === wanted)
+    if (!asset) return
+
+    commitWorkspace(removeAssetMeta(workspaceRef.current, asset.id))
+    void deleteAssetBlob(pkg.id, asset.path)
+    const sink = createVoiceDiskSink(projectRef.current?.handle ?? null, (failedPath, error) => {
+      if (error) {
+        console.warn('[hanshu] 没能清掉同基名的另一种配音绑定：', failedPath, error)
+      }
+    })
+    void sink.remove(asset.path)
+  }
+
+  /**
+   * 把一个或多个键的配音设成**「引用资产」**：对等位置上写一个 `.ref`，正文是目标音频路径。
+   *
+   * 与音频导入的区别：**不转码、不搬字节** —— 被引用的那份音频就留在原处，
+   * 键只是指向它。所以同一份音频可以被多个键引用而不产生多份拷贝。
+   *
+   * 目标必须是**本包内**的音频资产：跨包引用在这里做不到（资产按包存，
+   * 解析也只看当前包，见 voiceMap 的 describeRefTarget）。
+   */
+  const referenceVoicesForKeys = (keys: string[], targetPath: string) => {
+    const library = voiceLibraryRef.current
+    const pkg = activePackage()
+    if (!library || !pkg || keys.length === 0) return
+
+    const target = normalizeAssetPath(targetPath)
+    const asset = target
+      ? pkg.assets.find((item) => item.path.toLowerCase() === target.toLowerCase())
+      : null
+    if (!asset || !isAudioAsset(asset.path, asset.mime)) {
+      window.alert(
+        `引用的目标必须是本包内的音频资产。\n当前：${targetPath}\n` +
+          '（跨包引用、指向文本或图片都不行）',
+      )
+      return
+    }
+
+    const content = stringifyVoiceRefContent(asset.path)
+    const bytes = new TextEncoder().encode(content)
+    const blob = new Blob([bytes as BlobPart], { type: 'text/plain' })
+    const sink = createVoiceDiskSink(
+      projectRef.current?.handle ?? null,
+      (failedPath, error) => {
+        if (!error) return
+        console.warn('[hanshu] 引用文件写入磁盘失败', failedPath, error)
+        setVoiceDiskError({
+          path: failedPath,
+          message: error instanceof Error ? error.message : String(error),
+        })
+      },
+    )
+
+    void (async () => {
+      for (const key of keys) {
+        // 先清掉同基名的 `.ogg`：一个键只该有一个来源（见 clearPeerBindingOf）
+        clearPeerBindingOf(key, 'ref')
+
+        const refPath = library.refPathOf(key)
+        await putAssetBlob(pkg.id, refPath, blob)
+
+        const parent = refPath.includes('/')
+          ? refPath.slice(0, refPath.lastIndexOf('/'))
+          : 'assets'
+        /*
+         * 每次都从**当前**工作区出发：上面那步 `clearPeerBindingOf` 刚提交过一次，
+         * 用循环外捕获的旧引用去写会把刚清掉的 `.ogg` 元数据又带回来。
+         */
+        const withFolder = ensureAssetFolder(workspaceRef.current, pkg.id, parent)
+        const result = upsertAssetMeta(
+          withFolder,
+          pkg.id,
+          refPath,
+          'text/plain',
+          blob.size,
+          // 目标路径随元数据一起记下：配音四态是**同步**判定的，不能等到读文件才知道指向谁
+          asset.path,
+        )
+        if (result) commitWorkspace(result.workspace)
+        if (sink.enabled) await sink.write(refPath, bytes, 'text/plain')
+      }
+
+      voiceLibraryRef.current?.notifyAssetsChanged()
+      textBindingRef.current?.refreshVoice()
+      const shown = keys.length === 1 ? `「${keys[0]}」` : `${keys.length} 个键`
+      setVoiceToast({
+        id: Date.now(),
+        message: `已把 ${shown} 的配音设为引用：${asset.path}`,
+        ok: true,
+      })
+    })()
+  }
+
+  /**
    * 删除某个键的配音（**不做确认**，只是动作本身）。
    *
    * 动作与删除资产一致（元数据 + blob），但**必须连磁盘那一份一起删**：
    * 配音是写穿到工程目录的，只删应用内的话，下次打开工程又会被读回来。
+   *
+   * 删的是 `status.path` —— **绑定文件本身**：实文件删 `.ogg`，引用就只删 `.ref`，
+   * 被引用的那份音频留在原地（别的键可能还在用它）。
    */
   const deleteVoiceCore = (key: string): boolean => {
     const library = voiceLibraryRef.current
@@ -989,8 +1136,21 @@ export const ScriptWorkspace = forwardRef<
     if (!path) return
 
     const targetPath = library.targetPathOf(key)
-    if (path.toLowerCase() === targetPath.toLowerCase()) {
-      if (!window.confirm(`删除配音「${path}」？`)) return
+    const refPath = library.refPathOf(key)
+    // 对等位置上那两种写法都算"这个键自己的绑定"：`.ogg` 是实文件，`.ref` 是引用
+    const atPeer =
+      path.toLowerCase() === targetPath.toLowerCase() ||
+      path.toLowerCase() === refPath.toLowerCase()
+    if (atPeer) {
+      const what = status.source === 'ref' ? '引用' : '配音'
+      // 引用的删除**只解除引用**：被引用的那份音频是共享的，别的键可能还在用
+      const extra =
+        status.source === 'ref'
+          ? `\n（只解除引用，不会删掉它指向的音频${
+              status.audioPath ? `：${status.audioPath}` : ''
+            }）`
+          : ''
+      if (!window.confirm(`删除${what}「${path}」？${extra}`)) return
     } else if (
       !window.confirm(
         `该配音来自其它目录：${path}\n删除会影响所有引用它的键，确定删除？`,
@@ -1011,9 +1171,15 @@ export const ScriptWorkspace = forwardRef<
       window.alert('选中的键都没有配音文件，没什么可清除的')
       return
     }
+    const refCount = withVoice.filter(
+      (key) => library.statusOf(key).source === 'ref',
+    ).length
     if (
       !window.confirm(
-        `清除 ${withVoice.length} 个键的配音？\n（对等文件会从应用内资源与工程文件夹一起删掉）`,
+        `清除 ${withVoice.length} 个键的配音？\n（对等文件会从应用内资源与工程文件夹一起删掉）` +
+          (refCount > 0
+            ? `\n（其中 ${refCount} 个是引用：只解除引用，被引用的音频不动）`
+            : ''),
       )
     ) {
       return
@@ -1070,6 +1236,16 @@ export const ScriptWorkspace = forwardRef<
   /** 录音棚底部「确认导入」：把这份音频写进这些键的对等文件 */
   const handleStudioImport = (keys: string[], source: VoiceImportSource) => {
     runVoiceImportForKeys(orderKeys(keys), source)
+  }
+
+  /**
+   * 录音棚：「引用资产」这种配音方式 —— 把这些键的配音设成引用。
+   *
+   * 与"确认导入"的区别只有一件事：**不转码、不搬字节**。被引用的那份音频留在原处，
+   * 键的对等位置上写一个指向它的 `.ref`。所以同一份音频给多个键用也不会多出拷贝。
+   */
+  const handleStudioReference = (keys: string[], targetPath: string) => {
+    referenceVoicesForKeys(orderKeys(keys), targetPath)
   }
 
   // ===== 录音棚的 TTS =====
@@ -3191,7 +3367,20 @@ export const ScriptWorkspace = forwardRef<
       }
     },
     checkExport: async () => {
-      const pak = await buildResourcePackZip(workspaceRef.current)
+      let pak: Awaited<ReturnType<typeof buildResourcePackZip>>
+      try {
+        pak = await buildResourcePackZip(workspaceRef.current)
+      } catch (error) {
+        /*
+         * 引用解析不出来会让 PAK 导出**中止**（见 resourcePack）：预演要把这件事
+         * 当成"这份工程现在导不出 PAK"报出去，而不是让工具调用直接炸掉 ——
+         * Agent 拿到原话才能去修那条引用。
+         */
+        return {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      }
       const project = await buildProjectPackZip(workspaceRef.current)
       return {
         ok: true,
@@ -3516,12 +3705,18 @@ export const ScriptWorkspace = forwardRef<
               library={
                 editingHanshu ? (voiceRuntime ?? voiceLibraryRef.current) : null
               }
+              /*
+                台词取自当前语言的文本映射（和 TTS 合成用的是同一份）：
+                录音的人要照着念的，就是编辑器里显示的那一句。
+              */
+              textFor={(key) => textMapRef.current?.get(key) ?? null}
               onClose={() => toggleStudio()}
               onModeChange={setStudioMode}
               onSourceModeChange={setStudioSourceMode}
               onClearSelection={() => setStudioSelection([])}
               onClearVoice={deleteVoicesFor}
               onImport={handleStudioImport}
+              onReference={handleStudioReference}
               tts={studioTts}
               style={{
                 flex: `0 0 ${studioWidth}px`,

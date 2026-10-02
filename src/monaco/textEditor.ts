@@ -747,13 +747,22 @@ export function bindText(
     status: VoiceUnitStatus | null,
   ): string => {
     const label = VOICE_STATE_LABEL[state]
-    if (state === 'playing') return `${label} · 点击停止`
+    /*
+     * 「引用资产」的键在四态上与真文件一模一样（都是 ready），但**来源不同**：
+     * 它不是这个键自己的音频，而是指向别处的一份。不说清楚，用户会去对等位置
+     * 找一个并不存在的 `.ogg`。
+     */
+    const viaRef =
+      status?.source === 'ref' && status.audioPath
+        ? ` · 引用自 ${status.audioPath}`
+        : ''
+    if (state === 'playing') return `${label}${viaRef} · 点击停止`
     if (state === 'ready') {
       const duration =
         status?.info != null ? formatVoiceDuration(status.info.duration) : ''
       return duration
-        ? `${label} · 点击播放 · ${duration}`
-        : `${label} · 点击播放`
+        ? `${label}${viaRef} · 点击播放 · ${duration}`
+        : `${label}${viaRef} · 点击播放`
     }
     const hint = state === 'invalid' ? '点击重新选择' : '点击选择'
     return status?.reason ? `${label} · ${status.reason} · ${hint}` : `${label} · ${hint}`

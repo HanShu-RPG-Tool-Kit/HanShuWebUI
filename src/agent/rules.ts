@@ -22,7 +22,9 @@ export const AGENT_RULES = `
     你既不需要也不该知道它的值。用户问起时也不要索要密钥。
 - 本地化产物由源文件推导，不要手写这些路径：文本在 assets/<语言标签>/lang_<源后缀>/，
   例如 src/hanshu/xx.hs ↔ assets/zh_cn/lang_hs/xx.lang；配音在
-  assets/<语言标签>/voice_<源后缀>/<脚本名>/<键名>.ogg。改名源文件时这些会一起改名，
+  assets/<语言标签>/voice_<源后缀>/<脚本名>/<键名>.ogg。
+  对等位置上还可以是 **.ref（「引用资产」）**：一行路径的文本文件，指向包内另一份音频，
+  于是同一个键不必再存一份拷贝（导出 PAK 时会自动落地成 .ogg）。改名源文件时这些会一起改名，
   所以要让某语言的译文/配音跟着走，改源文件名即可。
 - 工具只认**逻辑文件名**（如 序章.hs），不要带 src/ 或 assets/ 前缀。
 - 常用流程：list_sources 找文件 → read_source 分页读 → edit_source 精确改 → validate_source 校验。

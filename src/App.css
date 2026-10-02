@@ -2957,6 +2957,56 @@ body.is-resizing .monaco-editor {
   color: var(--text-dim);
 }
 
+/*
+ * 台词：录音时要照着念的那一句。
+ * 字号比周围大一号、行距放松，长台词自己滚 —— 录音时人是看着这一块念的。
+ */
+.studio-record-script {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 190px;
+  overflow: auto;
+  padding: 9px 11px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-m);
+  background: var(--bg-sunken);
+}
+
+.studio-record-script-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--text-dim);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+/* 台词是**哪一种语言**的：缺了它，多语言工程里没人说得清这一句是哪版 */
+.studio-record-locale {
+  padding: 0 5px;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  font-family: Consolas, 'Sarasa Mono New', monospace;
+  letter-spacing: 0;
+}
+
+.studio-record-line {
+  margin: 0;
+  color: var(--text-bright);
+  font-size: 14px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 没有译文时不拿键名顶替（编辑器覆盖层同理：缺译文显示键名并标记），这里明说缺什么 */
+.studio-record-line.is-missing {
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
 .studio-record-controls {
   display: flex;
   align-items: center;

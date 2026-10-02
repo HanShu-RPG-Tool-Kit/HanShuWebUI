@@ -60,7 +60,7 @@ import {
  */
 
 export type StudioMode = 'single' | 'batch'
-export type StudioSourceMode = 'fixed' | 'tts' | 'record'
+export type StudioSourceMode = 'fixed' | 'tts' | 'record' | 'ref'
 
 /**
  * TTS 生成的当前状态 —— 失败要分类、要给出下一步，不能只说"生成失败"。
@@ -132,6 +132,14 @@ export type RecordingStudioProps = {
   selectedKeys: string[]
   /** 音频映射管理；非 .hs 或尚未就绪时为 null */
   library: VoiceLibrary | null
+  /**
+   * 当前语言的台词：录音时要照着念的那一句；null = 这个键在当前语言下还没有文本。
+   *
+   * 传函数而不是传一段文本：**要显示哪个键由这一格自己定** —— 单选是选中的那个，
+   * 批量录音是队列里还没配音的第一个（录完自动往后走）。上层再推一遍这个判断，
+   * 迟早会和下面那行"待录键"说的不是同一个键。
+   */
+  textFor?: (key: string) => string | null
   onClose(): void
   onModeChange(mode: StudioMode): void
   onSourceModeChange(mode: StudioSourceMode): void
@@ -140,6 +148,12 @@ export type RecordingStudioProps = {
   onClearVoice(keys: string[]): void
   /** 用同一份音频导入到这些键 */
   onImport(keys: string[], source: VoiceImportSource): void
+  /**
+   * 把这些键的配音设成**引用**（「引用资产」）：对等位置上写 `.ref`，不拷贝字节。
+   *
+   * 与 `onImport` 的区别只有这一件事 —— 被引用的音频留在原处，多个键可以引用同一份。
+   */
+  onReference?(keys: string[], targetPath: string): void
   /** TTS 那一格；null 表示工程还没准备好（没打开文件、没有配音方案等） */
   tts?: StudioTtsPanel | null
   style?: CSSProperties
@@ -157,18 +171,19 @@ type StudioSource =
       origin: 'drop' | 'record'
     }
 
-/** 上拉框里的顺序（固定音频 / TTS / 录音） */
-const SOURCE_MODES: StudioSourceMode[] = ['fixed', 'tts', 'record']
+/** 上拉框里的顺序（固定音频 / 引用资产 / TTS / 录音） */
+const SOURCE_MODES: StudioSourceMode[] = ['fixed', 'ref', 'tts', 'record']
 
 /**
  * 配音方式的标签。
  *
- * 批量下的三个名字是需求里点名固定的（固定音频 / 批量 TTS / 批量录音）；
+ * 批量下的名字是需求里点名固定的（固定音频 / 批量 TTS / 批量录音）；
  * 单选下同一个方式是"就这一个键"，再叫"批量"会自相矛盾，所以去掉前缀。
  */
 function sourceModeLabel(mode: StudioMode, source: StudioSourceMode): string {
   if (source === 'tts') return mode === 'batch' ? '批量 TTS' : 'TTS'
   if (source === 'record') return mode === 'batch' ? '批量录音' : '录音'
+  if (source === 'ref') return mode === 'batch' ? '批量引用' : '引用资产'
   return '固定音频'
 }
 
@@ -177,6 +192,9 @@ function sourceModeTitle(mode: StudioMode, source: StudioSourceMode): string {
   const scope = mode === 'single' ? '这一个键' : '所有选中的键'
   if (source === 'tts') return `TTS · 为${scope}各生成一条`
   if (source === 'record') return `录音 · 为${scope}逐条录制`
+  if (source === 'ref') {
+    return `引用资产 · 让${scope}指向同一份音频（不拷贝字节，改的是引用）`
+  }
   return `固定音频 · 同一份音频写进${scope}`
 }
 
@@ -190,12 +208,14 @@ export function RecordingStudio({
   sourceMode,
   selectedKeys,
   library,
+  textFor,
   onClose,
   onModeChange,
   onSourceModeChange,
   onClearSelection,
   onClearVoice,
   onImport,
+  onReference,
   tts,
   style,
 }: RecordingStudioProps) {
@@ -377,6 +397,14 @@ export function RecordingStudio({
         ? activeKey
         : (pendingKeys[0] ?? null)
   const recordedCount = selectedKeys.filter(hasVoice).length
+
+  /**
+   * 台词：正要录的这个键、在当前语言下的文本。
+   *
+   * 没有译文时**不拿键名顶替**（编辑器覆盖层也是这个规矩：缺译文显示键名并标记），
+   * 这里明说缺什么 —— 对着键名念出来的录音是废的，而且发现时人已经念完了。
+   */
+  const recordText = recordTarget ? (textFor?.(recordTarget) ?? null) : null
 
   // 选中集合变了：把不再存在的键从跳过表里清掉（否则会一直"少一个"）
   useEffect(() => {
@@ -618,6 +646,13 @@ export function RecordingStudio({
 
   const studioDropProps = dropTargetProps(false)
   const waveDropProps = dropTargetProps(true)
+  /*
+   * 「引用资产」那种方式**不接拖放**：引用只能指向工程里已有的资产，
+   * 从桌面拖进来的文件没有包内路径可指（要用它就先在「固定音频」里导入）。
+   * 接了反而会让人以为"拖进来就能引用"。
+   */
+  const dropPropsIfAny = (props: ReturnType<typeof dropTargetProps>) =>
+    sourceMode === 'ref' ? {} : props
 
   /**
    * 从本机挑一个音频文件当候选 —— 和拖入走**同一条路**（`cacheDroppedFile`）。
@@ -652,22 +687,26 @@ export function RecordingStudio({
   const confirmRecord = sourceMode === 'record'
   /** TTS 那一格的"确认"就是生成 —— 仍然是同一个按钮，不另开一条路 */
   const confirmTts = sourceMode === 'tts'
+  /** 「引用资产」：确认 = 把这些键指向选中的那份资产（不拷贝字节） */
+  const confirmRef = sourceMode === 'ref'
   /**
    * 单选模式下自动跟随出来的"候选源"可能就是它**自己当前的配音** ——
    * 那种情况导入只会白白报一句 already imported，所以直接禁用并说明。
+   * 引用同理：让一个键引用它自己现在用的那份音频，什么也没发生。
    */
   const selfOnly =
     mode === 'single' &&
-    sourceMode === 'fixed' &&
+    (sourceMode === 'fixed' || confirmRef) &&
     activeKey != null &&
     source?.kind === 'asset' &&
     (library?.resolvedPathOf(activeKey)?.toLowerCase() ?? '') ===
       source.path.toLowerCase()
   /**
-   * 能不能按下去。三种方式各有各的门槛，但**都回到同一个按钮** —— 学习成本只付一次。
+   * 能不能按下去。各种方式各有各的门槛，但**都回到同一个按钮** —— 学习成本只付一次。
    *
    * TTS 那条多一个 `!tts.busy`：生成中再点一次会跑起第二条合成循环，
    * 而两次导入共用同一份进度与取消引用（见 `onGenerate` 的类型注释）。
+   * 引用那条多一个 `source.kind === 'asset'`：外部文件没有包内路径，指不了。
    */
   const canConfirm = confirmRecord
     ? Boolean(recordTarget && take)
@@ -678,9 +717,21 @@ export function RecordingStudio({
             localeMatchesText &&
             importTargets.length > 0,
         )
-      : Boolean(source && importTargets.length > 0 && !selfOnly)
+      : confirmRef
+        ? Boolean(
+            source?.kind === 'asset' &&
+              importTargets.length > 0 &&
+              !selfOnly,
+          )
+        : Boolean(source && importTargets.length > 0 && !selfOnly)
 
-  const confirmLabel = confirmTts ? (tts?.busy ? '生成中…' : '生成配音') : '确认导入'
+  const confirmLabel = confirmTts
+    ? tts?.busy
+      ? '生成中…'
+      : '生成配音'
+    : confirmRef
+      ? '确认引用'
+      : '确认导入'
 
   /**
    * 按钮上方那句话。
@@ -717,6 +768,21 @@ export function RecordingStudio({
       }
       return selectedKeys.length === 0 ? '先选择键名' : '选中的键都已有配音'
     }
+    if (confirmRef) {
+      if (importTargets.length === 0) {
+        return mode === 'single'
+          ? '在编辑器里点一个键名'
+          : '在编辑器里多选键名（Shift 或划框）'
+      }
+      if (!source) return '先在下面的资源树里选一份音频资产'
+      if (source.kind !== 'asset') {
+        return '引用只能指向工程里的资产 —— 外部文件请改用「固定音频」导入'
+      }
+      if (selfOnly) return `这就是「${activeKey}」当前的配音`
+      return mode === 'single'
+        ? `让「${activeKey}」引用它（不拷贝音频）`
+        : `让 ${importTargets.length} 个键都引用它（不拷贝音频）`
+    }
     if (importTargets.length === 0) {
       return mode === 'single'
         ? '在编辑器里点一个键名'
@@ -736,8 +802,7 @@ export function RecordingStudio({
       // 转码、落盘、试听都不需要第二条路
       tts?.onGenerate(importTargets)
       return
-    }
-    if (confirmRecord) {
+    }    if (confirmRecord) {
       if (!recordTarget || !take) return
       // 只有批量才有"下一个"：单选录完这一个就结束，别挂自动续录的钩子
       if (mode === 'batch') awaitingNextRef.current = true
@@ -750,8 +815,14 @@ export function RecordingStudio({
       return
     }
     if (!source) return
-    // 播着就别继续播了：导入会把目标覆盖掉，试听那条已经不是最终产物
+    // 播着就别继续播了：导入 / 改引用会把目标覆盖掉，试听那条已经不是最终产物
     library?.stop()
+    if (confirmRef) {
+      // 内部资产才能被引用（`canConfirm` 已经挡住了非资产源）
+      if (source.kind !== 'asset') return
+      onReference?.(importTargets, source.path)
+      return
+    }
     onImport(
       importTargets,
       source.kind === 'asset'
@@ -792,7 +863,7 @@ export function RecordingStudio({
       className={`studio${dropActive ? ' is-drop-target' : ''}`}
       style={style}
       aria-label="录音棚"
-      {...studioDropProps}
+      {...dropPropsIfAny(studioDropProps)}
     >
       <header className="studio-header">
         <div className="studio-title">
@@ -1081,6 +1152,30 @@ export function RecordingStudio({
               )}
             </div>
 
+            {/*
+              台词：录音时要照着念的那一句。放在「开始录音」**上面** —— 按下按钮之前
+              应该已经能看见词，而不是录到一半才去找。
+            */}
+            {recordTarget && (
+              <div className="studio-record-script">
+                <div className="studio-record-script-head">
+                  <span>台词</span>
+                  {library && (
+                    <span className="studio-record-locale">{library.locale}</span>
+                  )}
+                </div>
+                {recordText ? (
+                  <p className="studio-record-line">{recordText}</p>
+                ) : (
+                  <p className="studio-record-line is-missing">
+                    {`这个键${
+                      library ? `在「${library.locale}」里` : '在当前语言里'
+                    }还没有文本：先写上译文，再录`}
+                  </p>
+                )}
+              </div>
+            )}
+
             <div className="studio-record-controls">
               <button
                 type="button"
@@ -1206,8 +1301,12 @@ export function RecordingStudio({
               className={`studio-wave${audioInfo ? ' is-filled' : ' is-empty'}${
                 dropActive ? ' is-drop-target' : ''
               }`}
-              title="把音频文件，或资源管理器里的资产，拖到这里（或录音棚任意位置）即可当候选音频，再点「确认导入」"
-              {...waveDropProps}
+              title={
+                sourceMode === 'ref'
+                  ? '在下面的资源树里选一份工程内的音频资产，再点「确认引用」'
+                  : '把音频文件，或资源管理器里的资产，拖到这里（或录音棚任意位置）即可当候选音频，再点「确认导入」'
+              }
+              {...dropPropsIfAny(waveDropProps)}
             >
               {audioInfo ? (
                 <VoiceWaveform peaks={audioInfo.peaks} progress={playedRatio} />
@@ -1231,29 +1330,32 @@ export function RecordingStudio({
               )}
             </div>
 
-            {/* 点选入口：拖放被窗口层拦住时的兜底（与拖入同一条路） */}
-            <div className="studio-source-row">
-              <button
-                type="button"
-                className="studio-mini"
-                onClick={() => fileInputRef.current?.click()}
-                title="从本机挑一个音频文件当候选音频（拖放被系统拦住时用这个）"
-              >
-                选择文件…
-              </button>
-              <input
-                ref={fileInputRef}
-                className="studio-file-input"
-                type="file"
-                accept="audio/*"
-                onChange={(event) => {
-                  const file = event.target.files?.[0]
-                  // 先清空：同一个文件再选一次也要能触发 change
-                  event.target.value = ''
-                  if (file) cacheDroppedFile(file)
-                }}
-              />
-            </div>
+            {/* 点选入口：拖放被窗口层拦住时的兜底（与拖入同一条路）。
+                引用方式不显示它 —— 外部文件没有包内路径，指不了。 */}
+            {sourceMode !== 'ref' && (
+              <div className="studio-source-row">
+                <button
+                  type="button"
+                  className="studio-mini"
+                  onClick={() => fileInputRef.current?.click()}
+                  title="从本机挑一个音频文件当候选音频（拖放被系统拦住时用这个）"
+                >
+                  选择文件…
+                </button>
+                <input
+                  ref={fileInputRef}
+                  className="studio-file-input"
+                  type="file"
+                  accept="audio/*"
+                  onChange={(event) => {
+                    const file = event.target.files?.[0]
+                    // 先清空：同一个文件再选一次也要能触发 change
+                    event.target.value = ''
+                    if (file) cacheDroppedFile(file)
+                  }}
+                />
+              </div>
+            )}
 
             {/* 播放与进度条控制（有选定音频才显示） */}
             {source && (
