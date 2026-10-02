@@ -37,6 +37,7 @@ import {
   hasExternalFiles,
   readDragPayload,
   resolveDropIntent,
+  shouldAcceptDrop,
   writeDragPayload,
   type DragSource,
   type DropIntent,
@@ -695,7 +696,16 @@ export function bindText(
         source: currentDrag(),
         hasFiles: hasExternalFiles(event.dataTransfer),
       })
-      if (!intent) return
+      if (!intent) {
+        /*
+         * 判定不出意图也要把默认行为吃掉：准放判据只有一条 —— 不是本应用自己的内部
+         * 拖拽就一律接下（见 `shouldAcceptDrop`）。拿 `types` 判"有没有文件"在
+         * WebView2 上会漏，漏了就是不 preventDefault、浏览器不允许投放、`drop` 不来
+         * （"拖到键名上没反应 + 🚫"）。
+         */
+        if (shouldAcceptDrop(event.dataTransfer)) event.preventDefault()
+        return
+      }
       event.preventDefault()
       event.stopPropagation()
       if (event.dataTransfer) {

@@ -17,7 +17,7 @@ import {
 import type { VoiceImportSource } from '../i18n/voiceImport'
 import { VOICE_EXTRA_GLYPHS } from '../ui/voiceIcons'
 import { VoiceEmptyGlyph, VoiceGlyph, VoiceWaveform } from '../ui/VoiceVisuals'
-import { hasExternalFiles } from '../drag/dragPayload'
+import { droppedFiles, isInternalDrag, shouldAcceptDrop } from '../drag/dragPayload'
 import { formatBytes } from '../assets/paths'
 import type { TtsFailureKind } from '../tts/spec'
 import {
@@ -553,7 +553,8 @@ export function RecordingStudio({
    */
   const dropTargetProps = (stop: boolean) => ({
     onDragOver: (event: ReactDragEvent<HTMLElement>) => {
-      if (!hasExternalFiles(event.dataTransfer)) return
+      // 准放判据见 `shouldAcceptDrop`：不是内部拖拽就一律接下（别再拿 types 判有没有文件）
+      if (!shouldAcceptDrop(event.dataTransfer)) return
       event.preventDefault()
       if (stop) event.stopPropagation()
       if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
@@ -564,11 +565,35 @@ export function RecordingStudio({
       if (!next || !event.currentTarget.contains(next)) setDropActive(false)
     },
     onDrop: (event: ReactDragEvent<HTMLElement>) => {
-      const file = event.dataTransfer?.files?.[0]
+      const files = droppedFiles(event.dataTransfer)
+      const internal = isInternalDrag(event.dataTransfer)
       setDropActive(false)
-      if (!file) return
       event.preventDefault()
       if (stop) event.stopPropagation()
+      // 本应用自己的拖拽（键名 / 资产）落到录音棚没有对应语义，静默放过
+      if (internal) return
+      const file = files[0]
+      if (!file) {
+        /*
+         * 拖进来了，但系统一个文件都没交出来：说清成因，别让它表现成"拖了没反应"。
+         *
+         * 先分辨"本来就不是文件"（拖的是一段文本）—— 那种情况把责任推给权限只会误导。
+         */
+        const kinds = Array.from(event.dataTransfer?.types ?? []).map((type) =>
+          type.toLowerCase(),
+        )
+        const claimedFiles = kinds.includes('files')
+        const looksLikeText =
+          !claimedFiles &&
+          kinds.some((type) => type.startsWith('text/'))
+        setNotice(
+          looksLikeText
+            ? '这里只接受音频文件（拖进来的是文本）'
+            : '这次拖拽没带上文件：拖拽事件到了，但系统没把文件交给窗口。' +
+              '若一直如此，多半是本程序以管理员身份在运行 —— Windows 会拦住从普通权限的 Explorer 往高权限窗口拖文件。',
+        )
+        return
+      }
       cacheDroppedFile(file)
     },
   })

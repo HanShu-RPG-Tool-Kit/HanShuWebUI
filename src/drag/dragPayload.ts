@@ -94,8 +94,15 @@ export function readDragPayload(
  * 拖拽源是否携带外部文件（从系统拖进来的）。
  *
  * `dragover` 阶段 `dataTransfer.files` **往往是空的**（规范只保证 drop 时有），
- * 所以必须同时看 `types` 里的 'Files' —— 少了这一步，dragover 就不会 preventDefault，
- * 浏览器不允许投放，drop 永远不来。
+ * 所以必须同时看 `types` 里的 'Files'。
+ *
+ * **警告：只能拿它决定"要不要高亮 / 算哪种投放意图"，绝不能拿它决定
+ * 要不要 `preventDefault`。** 有的 webview（Windows 上的 WebView2 就有）在
+ * 拖外部文件时 `dragover` 的 `types` 里根本不给 'Files' —— 拿它当准放判据的话，
+ * `dragover` 不会 `preventDefault`，浏览器**不允许投放**，`drop` 永远不来，
+ * 用户看到的就是"拖进来没反应 + 禁止光标 🚫"。
+ * 准放判据用 `isInternalDrag`（不是我们自己的拖拽就一律接下），
+ * 到底有没有文件等 `drop` 时再看 `dataTransfer.files`。
  */
 export function hasExternalFiles(dataTransfer: DataTransfer | null): boolean {
   if (!dataTransfer) return false
@@ -103,6 +110,42 @@ export function hasExternalFiles(dataTransfer: DataTransfer | null): boolean {
   return Array.from(dataTransfer.types ?? []).some(
     (type) => type.toLowerCase() === 'files',
   )
+}
+
+/**
+ * 是不是**本应用自己发起**的拖拽（资源管理器里的脚本/资产、编辑器里的键名）。
+ *
+ * 两种判据都要看：`dataTransfer` 里的私有 MIME（正常路径），以及拖拽开始时记下的
+ * 内存态（某些环境禁止在 `dragstart` 之外写 `dataTransfer`，见 `writeDragPayload`）。
+ * 内部拖拽有明确的目标集合，落到别处应当保持浏览器的"不允许"反馈；
+ * 反过来，**不是内部拖拽就一律当外部文件接下**，见 `hasExternalFiles` 的警告。
+ */
+export function isInternalDrag(dataTransfer: DataTransfer | null): boolean {
+  if (currentDrag()) return true
+  return Array.from(dataTransfer?.types ?? []).some(
+    (type) => type.toLowerCase() === HANSHU_DRAG_MIME,
+  )
+}
+
+/** 投放时到底有没有拿到文件（**只有 drop 阶段读得准**） */
+export function droppedFiles(dataTransfer: DataTransfer | null): File[] {
+  return Array.from(dataTransfer?.files ?? [])
+}
+
+/**
+ * **准放判据：这次拖拽要不要接下（`preventDefault`）。**
+ *
+ * 所有投放点都走这一个函数，因为"要不要接"只有一条规矩：
+ * **不是本应用自己的内部拖拽，就一律当外部文件接下。**
+ *
+ * 反面教材（这个 bug 真发生过）：拿 `hasExternalFiles(...)` 当准放判据。
+ * WebView2 上拖外部文件时 `dragover` 的 `types` 里可能没有 'Files'，判据为假 →
+ * 不 `preventDefault` → 浏览器不允许投放 → `drop` 永远不来 →
+ * 用户看到"拖到预览框上没反应，鼠标是禁止光标 🚫"。
+ * 是不是文件，等 `drop` 时看 `dataTransfer.files` 才有准数（见 `droppedFiles`）。
+ */
+export function shouldAcceptDrop(dataTransfer: DataTransfer | null): boolean {
+  return !isInternalDrag(dataTransfer)
 }
 
 /** 拖拽源的文字表示（dataTransfer 的 text/plain；也用于提示） */
