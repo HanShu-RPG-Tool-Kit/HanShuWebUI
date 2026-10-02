@@ -1,5 +1,6 @@
 import {
   forwardRef,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useMemo,
@@ -146,7 +147,6 @@ import { createVoiceProcessor } from '../i18n/voiceTranscode'
 import { createVoiceDiskSink } from '../project/voiceDiskSink'
 import type { DragSource } from '../drag/dragPayload'
 import { TextUnitMenu, type TextUnitMenuItem } from '../TextUnitMenu'
-import { VoicePickerModal } from '../VoicePickerModal'
 import {
   RecordingStudio,
   type StudioMode,
@@ -373,12 +373,6 @@ export const ScriptWorkspace = forwardRef<
     key: string
     x: number
     y: number
-  } | null>(null)
-  /** 音频选择器弹窗（null = 没开）。带上建它时的那个 library 实例：
-      换文件 / 换语言会重建库，身份一变弹窗自动失效，不用在 effect 里再 setState */
-  const [voicePicker, setVoicePicker] = useState<{
-    key: string
-    library: VoiceLibrary
   } | null>(null)
   /** 正在跑的音频导入（null = 没在导入）：驱动置顶进度条 */
   const [voiceImport, setVoiceImport] = useState<{
@@ -664,11 +658,19 @@ export const ScriptWorkspace = forwardRef<
     voiceLibraryRef.current?.notifyAssetsChanged()
   }, [voiceAssetSignature])
 
-  /** 打开音频选择器：内容全由音频映射管理推导，这里只记键与那个库实例 */
-  const openVoicePicker = (key: string) => {
-    const library = voiceLibraryRef.current
-    if (!library) return
-    setVoicePicker({ key, library })
+  /**
+   * 编辑某个键的音频：**打开录音棚**，并把这个键选成当前目标。
+   *
+   * 以前这里开的是"音频选择器"弹窗；它的全部职责（挑工程里的资产、拖外部文件进来、
+   * 录音、TTS 合成）录音棚都有，而且录音棚还能顺带预览与确认，所以那个弹窗被删了 ——
+   * 编辑器里所有"要给这个键配一条音频"的入口都汇到这一条路。
+   */
+  const editVoiceInStudio = (key: string) => {
+    setStudioSelection(orderKeys([key]))
+    // 固定音频是"手上有文件 / 挑了资产"的那条路；录音与 TTS 在棚里随时可切
+    setStudioSourceMode('fixed')
+    setStudioMode('single')
+    setStudioOpen(true)
   }
 
   /**
@@ -840,7 +842,7 @@ export const ScriptWorkspace = forwardRef<
     })()
   }
 
-  /** 单键导入（右键菜单、拖到键名上、音频选择器都走这条） */
+  /** 单键导入（右键菜单、拖到键名上、录音棚的确认导入都走这条） */
   const runVoiceImportFor = (key: string, source: VoiceImportSource) => {
     runVoiceImportForKeys([key], source)
   }
@@ -1049,18 +1051,21 @@ export const ScriptWorkspace = forwardRef<
     )
   }
 
-  /** 编辑器里划框：keys 为空 = 点了空白处（清空选择） */
-  const handleMarquee = (request: { keys: string[]; additive: boolean }) => {
-    setStudioSelection((prev) => {
-      const next = orderKeys(
-        request.additive ? [...prev, ...request.keys] : request.keys,
-      )
-      // 框到多个键就是批量；只框到一个键按单选处理（等价于点了一下）
-      if (request.additive || next.length > 1) setStudioMode('batch')
-      else if (next.length === 1) setStudioMode('single')
-      return next
-    })
-  }
+  /** 编辑器里划框：keys 为空 = 点了空白处（清空选择）。Ctrl+A 走同一条 */
+  const handleMarquee = useCallback(
+    (request: { keys: string[]; additive: boolean }) => {
+      setStudioSelection((prev) => {
+        const next = orderKeys(
+          request.additive ? [...prev, ...request.keys] : request.keys,
+        )
+        // 框到多个键就是批量；只框到一个键按单选处理（等价于点了一下）
+        if (request.additive || next.length > 1) setStudioMode('batch')
+        else if (next.length === 1) setStudioMode('single')
+        return next
+      })
+    },
+    [],
+  )
 
   /** 录音棚底部「确认导入」：把这份音频写进这些键的对等文件 */
   const handleStudioImport = (keys: string[], source: VoiceImportSource) => {
@@ -1498,6 +1503,33 @@ export const ScriptWorkspace = forwardRef<
     textBindingRef.current?.setStudioMode(studioOpen)
   }, [studioOpen, textBindingSeq])
 
+  /**
+   * 录音棚模式下 Ctrl / Cmd + A = **选中全部键名**。
+   *
+   * 挂在 window 上而不是编辑器上：录音棚模式会把编辑器**失焦**（正文只读，常规编辑
+   * 交互整体让位），编辑器自己收不到按键。输入框里的 Ctrl+A 是它自己的"全选"，
+   * 一律放行。选择语义与划框完全一致（走同一条 `handleMarquee`），所以它是"框住了
+   * 所有键"，单选 / 批量的切换规则也一致。
+   */
+  useEffect(() => {
+    if (!studioOpen) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!isActive || event.altKey) return
+      if (!(event.ctrlKey || event.metaKey)) return
+      if (event.key.toLowerCase() !== 'a') return
+      const target = event.target as HTMLElement | null
+      if (target?.closest?.('input, textarea, select, [contenteditable="true"]')) {
+        return
+      }
+      const keys = textBindingRef.current?.listKeys() ?? []
+      if (keys.length === 0) return
+      event.preventDefault()
+      handleMarquee({ keys, additive: false })
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [studioOpen, isActive, handleMarquee])
+
   // 选中集合 → 覆盖层高亮
   useEffect(() => {
     textBindingRef.current?.setStudioSelection(studioSelection)
@@ -1527,7 +1559,7 @@ export const ScriptWorkspace = forwardRef<
     {
       id: 'edit-voice',
       label: 'Edit Voice',
-      onSelect: () => openVoicePicker(key),
+      onSelect: () => editVoiceInStudio(key),
     },
     {
       id: 'delete-voice',
@@ -3357,8 +3389,8 @@ export const ScriptWorkspace = forwardRef<
                         },
                         onUnitMenu: (request) => setUnitMenu(request),
                         onUnitDrop: (request) => handleUnitDrop(request),
-                        // 缺失 / 无效态点按钮 = 挑一个音频
-                        onVoicePick: (key) => openVoicePicker(key),
+                        // 缺失 / 无效态点按钮 = 去录音棚配一条
+                        onEditVoice: (key) => editVoiceInStudio(key),
                         // 录音棚：左键点键名 / 划框都会走到这里
                         onUnitSelect: (request) => handleUnitSelect(request),
                         onMarquee: (request) => handleMarquee(request),
@@ -3702,28 +3734,6 @@ export const ScriptWorkspace = forwardRef<
           onClose={() => setUnitMenu(null)}
         />
       )}
-      {voicePicker &&
-        voiceRuntime != null &&
-        voiceRuntime === voicePicker.library && (
-          <VoicePickerModal
-            unitKey={voicePicker.key}
-            targetPath={voicePicker.library.targetPathOf(voicePicker.key)}
-            currentPath={voicePicker.library.resolvedPathOf(voicePicker.key)}
-            library={voicePicker.library}
-            onImport={(sourcePath) => {
-              const key = voicePicker.key
-              setVoicePicker(null)
-              runVoiceImportFor(key, { kind: 'asset', path: sourcePath })
-            }}
-            onImportFile={(source) => {
-              // 选择器里已经把这文件缓存在内存里了（拖入 ≠ 导入），这里只负责跑工作流
-              const key = voicePicker.key
-              setVoicePicker(null)
-              runVoiceImportFor(key, { kind: 'file', name: source.name, bytes: source.bytes })
-            }}
-            onClose={() => setVoicePicker(null)}
-          />
-        )}
       {voiceImport && (
         <VoiceImportProgress
           progress={voiceImport.progress}

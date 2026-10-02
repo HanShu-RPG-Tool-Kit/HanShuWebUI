@@ -11,11 +11,10 @@ import {
 import { formatBytes } from '../assets/paths'
 
 /**
- * 音频资产浏览器：**搜索框 + 资源树**。
+ * 音频资产浏览器：**搜索框 + 资源树**，录音棚里的候选音频就从这里挑。
  *
- * 音频选择器弹窗与录音棚**同款共用**（需求里"音频选择器同款搜索"就落在这里）：
- * 两边只是外框不同（一个是模态、一个是侧栏），浏览体验必须一模一样，
- * 所以这个文件是唯一实现，不允许各写一份。
+ * 独立成一个文件，是因为它将来可能出现在别处（例如资产的另一种挑选界面）；
+ * 无论外框是侧栏还是别的形态，浏览体验必须一模一样，所以只允许这一份实现。
  *
  * 树根固定为 `assets`；文件项在**平台解不了**时才标红，
  * 能解但还不是目标格式（wav / 立体声 ogg / Opus…）属正常 —— 导入时会转码。
@@ -178,7 +177,7 @@ export function VoiceAssetBrowser({
 
   return (
     <>
-      <div className="voice-picker-search">
+      <div className="voice-search">
         <input
           value={query}
           placeholder={placeholder ?? `在 ${rootDir} 下搜索（按路径匹配）`}
@@ -186,7 +185,7 @@ export function VoiceAssetBrowser({
         />
       </div>
 
-      <div className="voice-picker-tree">
+      <div className="voice-tree">
         <div className="voice-tree-root">{rootDir}</div>
         {tree.length > 0 ? (
           renderNodes(tree, 0)

@@ -127,8 +127,8 @@ export type TextHost = {
   onUnitMenu?(request: TextUnitMenuRequest): void
   /** 上级容器被投放（拖拽） */
   onUnitDrop?(request: TextUnitDropRequest): void
-  /** 点了配音按钮但当前是缺失 / 无效态：请求给这个键挑一个音频 */
-  onVoicePick?(key: string): void
+  /** 点了配音按钮但当前是缺失 / 无效态：请求打开录音棚编辑这个键的音频 */
+  onEditVoice?(key: string): void
   /**
    * **录音棚模式**下左键点了某个键名（或缺失态下点了它的配音按钮）。
    * `additive` = 按住 Shift / Ctrl / Cmd（多选）。
@@ -796,10 +796,17 @@ export function bindText(
     return out
   }
 
-  /** 划框中的状态（null = 没在划） */
+  /**
+   * 划框中的状态（null = 没在划）。
+   *
+   * 三个坐标都是**内容坐标**（编辑器里的正文坐标，与滚动量无关），见 `contentPointOf`。
+   */
   let marquee: {
     startX: number
     startY: number
+    /** 拖到的最后一点：滚轮翻页时没有 pointermove，要靠它重画 */
+    lastX: number
+    lastY: number
     additive: boolean
     dragging: boolean
   } | null = null
@@ -810,35 +817,89 @@ export function bindText(
     marqueeEl = null
   }
 
-  /** 视口坐标 → 覆盖层坐标（layer 铺满编辑器，见 LAYER_CLASS） */
-  const drawMarquee = (x: number, y: number) => {
-    if (!marquee || !marqueeEl) return
-    const base = layer.getBoundingClientRect()
-    marqueeEl.style.left = `${Math.min(marquee.startX, x) - base.left}px`
-    marqueeEl.style.top = `${Math.min(marquee.startY, y) - base.top}px`
-    marqueeEl.style.width = `${Math.abs(x - marquee.startX)}px`
-    marqueeEl.style.height = `${Math.abs(y - marquee.startY)}px`
+  /**
+   * 视口坐标 → **内容坐标**。
+   *
+   * 划框必须按内容坐标记。滚动之后同一个屏幕位置对应的是另一行正文：屏幕坐标的框
+   * 永远只覆盖得到当前视口，视口外的键名一辈子框不进来 —— 而"按住往下拖、中途用滚轮
+   * 翻页"要选中的恰恰是**内容上跨过的那一段**。
+   */
+  const contentPointOf = (clientX: number, clientY: number) => {
+    const rect =
+      typeof domNode?.getBoundingClientRect === 'function'
+        ? domNode.getBoundingClientRect()
+        : null
+    return {
+      x: (rect ? clientX - rect.left : clientX) + ed.getScrollLeft(),
+      y: (rect ? clientY - rect.top : clientY) + ed.getScrollTop(),
+    }
   }
 
-  /** 框住哪些键：按单位（文本 + 配音按钮）的真实矩形做相交判定 */
-  const keysInMarquee = (
-    box: { startX: number; startY: number },
-    x: number,
-    y: number,
-  ): string[] => {
-    const left = Math.min(box.startX, x)
-    const right = Math.max(box.startX, x)
-    const top = Math.min(box.startY, y)
-    const bottom = Math.max(box.startY, y)
+  /** 内容坐标 → 覆盖层坐标（layer 铺满编辑器视口，见 LAYER_CLASS） */
+  const layerPointOf = (x: number, y: number) => ({
+    x: x - ed.getScrollLeft(),
+    y: y - ed.getScrollTop(),
+  })
+
+  /** 按当前滚动量把划框重画到覆盖层上（超出视口的部分夹掉，画出去也看不见） */
+  const drawMarquee = () => {
+    if (!marquee || !marqueeEl) return
+    const a = layerPointOf(marquee.startX, marquee.startY)
+    const b = layerPointOf(marquee.lastX, marquee.lastY)
+    const left = Math.max(0, Math.min(a.x, b.x))
+    const top = Math.max(0, Math.min(a.y, b.y))
+    const right = Math.min(domNode?.clientWidth ?? 0, Math.max(a.x, b.x))
+    const bottom = Math.min(domNode?.clientHeight ?? 0, Math.max(a.y, b.y))
+    marqueeEl.style.left = `${left}px`
+    marqueeEl.style.top = `${top}px`
+    marqueeEl.style.width = `${Math.max(0, right - left)}px`
+    marqueeEl.style.height = `${Math.max(0, bottom - top)}px`
+  }
+
+  /**
+   * 框住哪些键：按单位（文本 + 配音按钮）与框的相交判定，两边都在**内容坐标**里比。
+   *
+   * 可见的那些用**真实矩形**（DOM 量出来最准）；滚出视口的那些 Monaco 根本没渲染，
+   * 没有矩形可用 —— 只能按**行带**判定（`getTopForLineNumber` 给的也是内容坐标），
+   * 横向不再参与。这正是"往下拖、滚轮翻页，中间所有键都选上"要的语义：
+   * 横向只对眼睛看得见的那一段有意义。行带是近似（编辑器上下各 14px 内边距没算进去，
+   * 误差在半行以内），只落在看不见的那一段上，够用。
+   */
+  const keysInMarquee = (): string[] => {
+    if (!marquee) return []
+    const left = Math.min(marquee.startX, marquee.lastX)
+    const right = Math.max(marquee.startX, marquee.lastX)
+    const top = Math.min(marquee.startY, marquee.lastY)
+    const bottom = Math.max(marquee.startY, marquee.lastY)
+
+    const rect =
+      typeof domNode?.getBoundingClientRect === 'function'
+        ? domNode.getBoundingClientRect()
+        : null
+    const scrollTop = ed.getScrollTop()
+    const scrollLeft = ed.getScrollLeft()
     const keys: string[] = []
     const seen = new Set<string>()
     for (const entry of lineEntries) {
       const key = normalizeLocaleKey(entry.span.value)
       if (!key || seen.has(key) || !entry.unit) continue
-      const rect = entry.unit.getBoundingClientRect()
-      if (rect.width <= 0 && rect.height <= 0) continue
-      if (rect.right < left || rect.left > right) continue
-      if (rect.bottom < top || rect.top > bottom) continue
+      const hidden = entry.el.style.display === 'none'
+      const unitRect =
+        hidden || typeof entry.unit.getBoundingClientRect !== 'function'
+          ? null
+          : entry.unit.getBoundingClientRect()
+      if (unitRect && rect && (unitRect.width > 0 || unitRect.height > 0)) {
+        const unitLeft = unitRect.left - rect.left + scrollLeft
+        const unitRight = unitRect.right - rect.left + scrollLeft
+        const unitTop = unitRect.top - rect.top + scrollTop
+        const unitBottom = unitRect.bottom - rect.top + scrollTop
+        if (unitRight < left || unitLeft > right) continue
+        if (unitBottom < top || unitTop > bottom) continue
+      } else {
+        const lineTop = ed.getTopForLineNumber(entry.span.line)
+        const lineBottom = ed.getTopForLineNumber(entry.span.endLine) + lineHeightPx()
+        if (lineBottom < top || lineTop > bottom) continue
+      }
       seen.add(key)
       keys.push(key)
     }
@@ -860,9 +921,12 @@ export function bindText(
     // 然后按"按下并拖动"起一个划框
     event.preventDefault()
     event.stopPropagation()
+    const point = contentPointOf(event.clientX, event.clientY)
     marquee = {
-      startX: event.clientX,
-      startY: event.clientY,
+      startX: point.x,
+      startY: point.y,
+      lastX: point.x,
+      lastY: point.y,
       additive: event.shiftKey || event.metaKey || event.ctrlKey,
       dragging: false,
     }
@@ -871,8 +935,11 @@ export function bindText(
   const onStudioPointerMove = (event: PointerEvent) => {
     const box = marquee
     if (!box) return
-    const dx = event.clientX - box.startX
-    const dy = event.clientY - box.startY
+    const point = contentPointOf(event.clientX, event.clientY)
+    const dx = point.x - box.startX
+    const dy = point.y - box.startY
+    box.lastX = point.x
+    box.lastY = point.y
     if (!box.dragging && Math.hypot(dx, dy) < MARQUEE_MIN_DRAG_PX) return
     if (!box.dragging) {
       box.dragging = true
@@ -880,22 +947,21 @@ export function bindText(
       marqueeEl.className = MARQUEE_CLASS
       layer.appendChild(marqueeEl)
     }
-    drawMarquee(event.clientX, event.clientY)
+    drawMarquee()
   }
 
-  const onStudioPointerUp = (event: PointerEvent) => {
+  const onStudioPointerUp = () => {
     const box = marquee
     if (!box) return
-    marquee = null
     removeMarquee()
     if (box.dragging) {
-      host.onMarquee?.({
-        keys: keysInMarquee(box, event.clientX, event.clientY),
-        additive: box.additive,
-      })
+      const keys = keysInMarquee()
+      marquee = null
+      host.onMarquee?.({ keys, additive: box.additive })
       return
     }
     // 没拖动 = 点了一下空白处：清空选择（按住 Shift 时保留）
+    marquee = null
     if (!box.additive) host.onMarquee?.({ keys: [], additive: false })
   }
 
@@ -1093,9 +1159,9 @@ export function bindText(
             }
             return
           }
-          // 缺失 / 无效：没有可播的东西，点它就是"挑一个" —— 直接开音频选择器
+          // 缺失 / 无效：没有可播的东西，点它就是"配一条音频" —— 打开录音棚
           if (voiceState === 'missing' || voiceState === 'invalid') {
-            host.onVoicePick?.(key)
+            host.onEditVoice?.(key)
             return
           }
           voice?.togglePlay(key)
@@ -1643,7 +1709,11 @@ export function bindText(
     setCtrl(event.ctrlKey || event.metaKey)
   const onBlur = () => setCtrl(false)
 
-  const onScroll = () => schedulePosition()
+  const onScroll = () => {
+    schedulePosition()
+    // 划框中滚轮翻页：框锚在内容上，滚动后要按新的滚动量重画，才跟着正文走
+    if (marquee?.dragging) drawMarquee()
+  }
   // 注意：加 view zone 本身会触发 layout 变化，这里绝不能重建 zone
   const onLayout = () => {
     if (domNode) ed.applyFontInfo(layer)

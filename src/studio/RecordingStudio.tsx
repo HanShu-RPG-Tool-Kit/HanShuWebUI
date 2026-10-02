@@ -48,7 +48,7 @@ import {
  *
  * 单选与「固定音频」共用同一套固定组件（也是全模式的公共外壳）：
  * 配音模式提示 → 预览窗（可拖拽 + 波形）→ 播放与进度条 → 音频信息（路径/时长/格式/声道）
- * → 音频选择器同款搜索（见 studio/VoiceAssetBrowser）。
+ * → 共用的资产搜索与资源树（见 studio/VoiceAssetBrowser）。
  *
  * 组件是**受控**的：选中了哪些键、当前什么模式都由 ScriptWorkspace 持有
  * （因为选中动作发生在编辑器里，见 monaco/textEditor 的录音棚选择模式）。
@@ -250,8 +250,8 @@ export function RecordingStudio({
   }, [library])
 
   /**
-   * 单选模式下自动跟随：选中某个键就把它现有的配音当候选源（没有就清空）。
-   * 这和音频选择器"默认选中当前对等文件"是同一个口径。
+   * 单选模式下自动跟随：选中某个键就把它现有的配音当候选源（没有就清空）——
+   * "编辑这个键的音频"打开时要能直接看到它现在是什么。
    */
   useEffect(() => {
     if (mode !== 'single' || !library || !activeKey) return
@@ -487,7 +487,7 @@ export function RecordingStudio({
   }, [selectionKey, sourceMode, mode])
 
   /**
-   * 拖入外部文件：只当候选源，不直接导入（与音频选择器同口径）。
+   * 拖入外部文件：只当候选源，不直接导入（导入一律走「确认导入」这一步）。
    * 顺手把配音方式切回「固定音频」—— 拖文件进来就是要用它，
    * 停在录音 / TTS 那一栏只会让人以为"拖了没反应"。
    */
@@ -541,18 +541,21 @@ export function RecordingStudio({
   }
 
   /**
-   * 整个录音棚面板都是投放目标。
+   * 投放目标的三件套（面板根节点与预览窗共用）。
    *
-   * 之前只在预览窗那一小块（108px 高）接了拖放，实际用起来等于「拖进来没反应」——
-   * 拖拽是"瞄准整个面板"的手势，不会精准落在那一格里。这里把投放弃在面板根节点上，
-   * 预览窗只负责高亮（见 `.studio-wave.is-drop-target`）。
+   * 两处都接：**面板根**是"随手拖进录音棚"的宽目标（拖拽是瞄准整个面板的手势，
+   * 只挂在那 108px 高的预览窗上等于"拖进来没反应"，这条以前踩过）；**预览窗**是
+   * "就丢在这一格上"的精确目标 —— 拖到哪一格，哪一格就得亮、就得认。
    *
-   * 一律 `preventDefault`：不拦的话浏览器会直接导航到被拖进来的文件，整个应用状态丢失。
+   * 两处的行为必须一模一样：高亮、拦住默认行为（不拦的话浏览器会直接导航到那个
+   * 文件，整个应用状态丢失）、拖入的文件只当候选源（导入一律走「确认导入」）。
+   * 预览窗那一层 `stopPropagation`，免得同一份文件被读两遍。
    */
-  const studioDropProps = {
+  const dropTargetProps = (stop: boolean) => ({
     onDragOver: (event: ReactDragEvent<HTMLElement>) => {
       if (!hasExternalFiles(event.dataTransfer)) return
       event.preventDefault()
+      if (stop) event.stopPropagation()
       if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
       setDropActive(true)
     },
@@ -561,13 +564,17 @@ export function RecordingStudio({
       if (!next || !event.currentTarget.contains(next)) setDropActive(false)
     },
     onDrop: (event: ReactDragEvent<HTMLElement>) => {
-      setDropActive(false)
       const file = event.dataTransfer?.files?.[0]
+      setDropActive(false)
       if (!file) return
       event.preventDefault()
+      if (stop) event.stopPropagation()
       cacheDroppedFile(file)
     },
-  }
+  })
+
+  const studioDropProps = dropTargetProps(false)
+  const waveDropProps = dropTargetProps(true)
 
   /** 底部「确认导入」到底做什么 */
   const importTargets =
@@ -1067,7 +1074,7 @@ export function RecordingStudio({
                   <div className="studio-take-time">
                     <button
                       type="button"
-                      className="voice-picker-play studio-play"
+                      className="voice-play studio-play"
                       onClick={togglePlay}
                       title={playing ? '暂停 / 继续' : '试听这条录音'}
                     >
@@ -1139,15 +1146,16 @@ export function RecordingStudio({
         ) : (
           <>
             {/*
-              预览窗：参考音频选择器（可拖拽 + 波形）。
-              拖放**不在这里接** —— 整个面板才是投放目标（见 studioDropProps），
-              这一格只负责在拖入时高亮，以及画出波形。
+              预览窗：波形 + 拖拽投放。
+              拖放**自己接**（`waveDropProps`）：丢在这一格上就是丢给它，亮起与承接都在
+              这里；面板根那层是"拖到了录音棚别处"的宽目标，见 `dropTargetProps`。
             */}
             <div
               className={`studio-wave${audioInfo ? ' is-filled' : ' is-empty'}${
                 dropActive ? ' is-drop-target' : ''
               }`}
-              title="把外部音频文件拖到录音棚里即可当作候选音频"
+              title="把外部音频文件拖到这里（或录音棚任意位置）即可当候选音频，再点「确认导入」"
+              {...waveDropProps}
             >
               {audioInfo ? (
                 <VoiceWaveform peaks={audioInfo.peaks} progress={playedRatio} />
@@ -1165,7 +1173,7 @@ export function RecordingStudio({
                 <VoiceEmptyGlyph />
               )}
               {dropActive && (
-                <div className="voice-picker-wave-scrim">
+                <div className="voice-wave-scrim">
                   <span>松开即可选用</span>
                 </div>
               )}
@@ -1176,7 +1184,7 @@ export function RecordingStudio({
               <div className="studio-player">
                 <button
                   type="button"
-                  className="voice-picker-play studio-play"
+                  className="voice-play studio-play"
                   onClick={togglePlay}
                   title={playing ? '暂停 / 继续' : '播放候选音频'}
                 >
@@ -1228,44 +1236,44 @@ export function RecordingStudio({
 
             {/* 音频信息栏目 */}
             <div className="studio-info">
-              <div className="voice-picker-row">
-                <span className="voice-picker-row-label">音频路径</span>
+              <div className="voice-row">
+                <span className="voice-row-label">音频路径</span>
                 <span
-                  className="voice-picker-row-value"
+                  className="voice-row-value"
                   title={sourcePathLabel ?? undefined}
                 >
                   {sourcePathLabel ?? '未选择'}
                 </span>
               </div>
-              <div className="voice-picker-row">
-                <span className="voice-picker-row-label">音频时长</span>
-                <span className="voice-picker-row-value">
+              <div className="voice-row">
+                <span className="voice-row-label">音频时长</span>
+                <span className="voice-row-value">
                   {audioInfo ? formatVoiceDuration(audioInfo.duration) : '—'}
                 </span>
               </div>
-              <div className="voice-picker-row">
-                <span className="voice-picker-row-label">音频格式</span>
-                <span className="voice-picker-row-value">
+              <div className="voice-row">
+                <span className="voice-row-label">音频格式</span>
+                <span className="voice-row-value">
                   {sourceFormat ?? '—'}
                 </span>
               </div>
-              <div className="voice-picker-row">
-                <span className="voice-picker-row-label">声道</span>
-                <span className="voice-picker-row-value">
+              <div className="voice-row">
+                <span className="voice-row-label">声道</span>
+                <span className="voice-row-value">
                   {audioInfo ? formatVoiceChannels(audioInfo.channels) : '—'}
                 </span>
               </div>
               {source?.kind === 'memory' && (
-                <div className="voice-picker-row">
-                  <span className="voice-picker-row-label">大小</span>
-                  <span className="voice-picker-row-value">
+                <div className="voice-row">
+                  <span className="voice-row-label">大小</span>
+                  <span className="voice-row-value">
                     {formatBytes(source.size)} · 尚未写入工程
                   </span>
                 </div>
               )}
             </div>
 
-            {/* 音频选择器同款搜索 + 资源树 */}
+            {/* 候选音频：搜索 + 资源树（见 studio/VoiceAssetBrowser） */}
             <VoiceAssetBrowser
               library={library}
               query={query}
