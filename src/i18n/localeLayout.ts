@@ -14,7 +14,8 @@ import { DEFAULT_LOCALE_TAG, formatLocaleTag } from './locales'
  * 新增可本地化的后缀（`.char` / `.md` …）只需要继续调用这里的函数 —— **不要再写
  * 第二套路径拼装**：以前语音与语言文件各拼一套，改布局时两边必须同步改，很容易漏。
  *
- * 布局常量只有 `lang_` / `voice_` 两个前缀与 `.lang` / `.ogg` 两个目标后缀。
+ * 布局常量只有 `lang_` / `voice_` 两个前缀与 `.lang` / `.ogg` 两个目标后缀；
+ * 「引用资产」配音（`.ref`）与 `.ogg` 共用同一个对等基名，见 `VOICE_REF_EXTENSION`。
  */
 
 /** 默认的源文件后缀：目前唯一可本地化的源类型是 `.hs` */
@@ -25,6 +26,15 @@ export const TEXT_ASSET_EXTENSION = 'lang'
 
 /** 音频产物的后缀（是否单通道要解码后才知道） */
 export const VOICE_ASSET_EXTENSION = 'ogg'
+
+/**
+ * 「引用资产」这类配音的后缀：对等位置上的一个**文本文件** `.ref`，
+ * 内容指向同包内的另一个音频资产。
+ *
+ * 它和 `.ogg` 抢同一个对等基名，解析顺序是 **`.ogg` 优先、`.ref` 兜底**（见 voiceMap）；
+ * 导出 PAK 时引用会被落地成对等位置上的真实 `.ogg`（引擎不认识 `.ref`）。
+ */
+export const VOICE_REF_EXTENSION = 'ref'
 
 /** 规范化语言标签：认不出来时退回默认标签 */
 export function localeTag(locale: string): string {
@@ -127,4 +137,48 @@ export function isUnderVoiceRoot(
 ): boolean {
   const root = `${voiceRootDir(locale, ext).toLowerCase()}/`
   return path.trim().replace(/\\/g, '/').toLowerCase().startsWith(root)
+}
+
+/** 一条本地化产物路径拆开之后的样子 */
+export type LocaleAssetPath = {
+  /** 语言标签（原样，未规范化） */
+  locale: string
+  /** 产物类别 */
+  kind: 'text' | 'voice'
+  /** 根目录里标明的**源后缀**（小写）：`hs`、`char`… */
+  sourceExt: string
+  /** 根目录之后的相对路径：文本 `目录/cp1.lang`、音频 `目录/cp1/键名.ogg` */
+  rest: string
+}
+
+const LOCALE_ASSET_RE = /^assets\/([^/]+)\/(lang|voice)_([a-z0-9]+)\/(.+)$/i
+
+/**
+ * 把一条资产路径**反解**成"哪个语言、哪种产物、哪个源后缀、根目录之后是什么"。
+ *
+ * 布局在这里只认一次（上面那几个函数负责拼，这里负责拆）。需要反解的地方 —— 目前是
+ * 改名时连带搬迁 —— 拿结构化结果，而不是再写一遍 `lang_` / `voice_` 的字符串匹配：
+ * 少写一处，就少一处"只比对了文件名、忘了比对后缀"的机会（那正是改名会把别的文件的
+ * 产物一起搬走的原因）。
+ */
+export function parseLocaleAssetPath(path: string): LocaleAssetPath | null {
+  const match = LOCALE_ASSET_RE.exec(normalizeSourcePath(path))
+  if (!match) return null
+  const [, locale, kind, sourceExt, rest] = match
+  return {
+    locale,
+    kind: kind.toLowerCase() === 'lang' ? 'text' : 'voice',
+    sourceExt: sourceExt.toLowerCase(),
+    rest,
+  }
+}
+
+/** 同一份产物换成一个新的源后缀之后的根目录：`assets/zh_cn/lang_hs` → `assets/zh_cn/lang_md` */
+export function localeAssetRootWithExt(
+  asset: LocaleAssetPath,
+  ext: string,
+): string {
+  return asset.kind === 'text'
+    ? textRootDir(asset.locale, ext)
+    : voiceRootDir(asset.locale, ext)
 }

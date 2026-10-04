@@ -1,6 +1,7 @@
 import JSZip from 'jszip'
 import { getAssetBlob } from '../assets/idb'
 import { LOCALE_KEY_TEXT_RE } from '../i18n/textMap'
+import { isVoiceRefPath, voiceAssetExtension } from '../i18n/voiceMap'
 import {
   compileHsToHsc,
   hscAssetName,
@@ -54,17 +55,26 @@ function parseTextAssetLocale(name: string): string | null {
   return parts[1]!.toLowerCase()
 }
 
-/** `assets/<locale>/voice_<ext>/…/<键名>.ogg` → `{ locale, key }`；不合布局返回 null */
+/**
+ * `assets/<locale>/voice_<ext>/…/<键名>.ogg|.ref` → `{ locale, key, kind }`；不合布局返回 null。
+ *
+ * `.ref`（「引用资产」）也是配音的一种写法，但**导出时它会被落地成对等位置的 `.ogg`** ——
+ * 引擎不认识 `.ref`，PAK 里只能有音频。
+ */
 function parseVoiceAssetKey(
   path: string,
-): { locale: string; key: string } | null {
+): { locale: string; key: string; kind: 'file' | 'ref' } | null {
   const parts = path.trim().replace(/\\/g, '/').split('/')
   if (parts.length < 4) return null
   if (parts[0]?.toLowerCase() !== 'assets') return null
   if (!/^voice_[a-z0-9]+$/i.test(parts[2] ?? '')) return null
   const file = parts[parts.length - 1] ?? ''
+  const locale = parts[1]!.toLowerCase()
+  if (/\.ref$/i.test(file)) {
+    return { locale, key: file.replace(/\.ref$/i, ''), kind: 'ref' }
+  }
   if (!/\.ogg$/i.test(file)) return null
-  return { locale: parts[1]!.toLowerCase(), key: file.replace(/\.ogg$/i, '') }
+  return { locale, key: file.replace(/\.ogg$/i, ''), kind: 'file' }
 }
 
 export async function buildResourcePackZip(
@@ -117,6 +127,8 @@ export async function buildResourcePackZip(
     // —— 本地化资产：保持 `assets/<locale>/lang_<ext>|voice_<ext>/…` 原布局，
     //      但只导出被 `.hsc` 引用到的键（语言文本按条裁剪，一条不剩就不导出）——
     const seenVoice = new Set<string>()
+    /** 要落地成音频的引用：**等所有真文件处理完**再处理（`.ogg` 优先这条规矩导出侧同样成立） */
+    const pendingRefs: string[] = []
     for (const asset of pkg.assets) {
       const assetPathInPack = asset.path.replace(/\\/g, '/')
 
@@ -145,6 +157,10 @@ export async function buildResourcePackZip(
 
       const parsed = parseVoiceAssetKey(asset.path)
       if (!parsed) continue
+      if (parsed.kind === 'ref') {
+        pendingRefs.push(assetPathInPack)
+        continue
+      }
       const { locale, key } = parsed
       // 只保留被 `.hsc` 引用到的键（键名就是文件名）
       if (!markedKeys.has(key.toLowerCase())) continue
@@ -161,6 +177,68 @@ export async function buildResourcePackZip(
         continue
       }
       zip.file(assetPathInPack, blob)
+      fileCount++
+      hasVoice = true
+    }
+
+    /*
+     * 「引用资产」：**落地成对等位置上的真实 ogg**。
+     *
+     * PAK 是引擎产物，引擎只按对等位置读 `<键名>.ogg` —— 它不认识 `.ref`。
+     * 所以引用只存在于创作期：这里把被引用的字节取出来，写到引用自己的位置上（后缀换成 .ogg）。
+     *
+     * 解析不出来时**直接中止导出**（而不是警告后跳过）：包里少一条配音，进引擎才发现哑了，
+     * 那时候已经查不回是哪一步丢的。宁可现在导不出来，也不能导出一个缺配音的包。
+     */
+    for (const refPathInPack of pendingRefs) {
+      const parsed = parseVoiceAssetKey(refPathInPack)!
+      const { locale, key } = parsed
+      if (!markedKeys.has(key.toLowerCase())) continue
+      const dedupe = `${key}.${locale}`
+      // 同键已经有真文件（或先处理过的引用）→ `.ogg` 优先，静默让位
+      if (seenVoice.has(dedupe)) continue
+      seenVoice.add(dedupe)
+
+      const refAsset = pkg.assets.find(
+        (item) => item.path.replace(/\\/g, '/') === refPathInPack,
+      )
+      const target = refAsset?.refTarget ?? null
+      const hit = target
+        ? pkg.assets.find(
+            (item) => item.path.toLowerCase() === target.toLowerCase(),
+          )
+        : undefined
+
+      if (!target || !hit) {
+        throw new Error(
+          `${refPathInPack} 的引用解析不出来 —— ` +
+            (target
+              ? `指向的资产不在这个包里：${target}`
+              : '正文里没有可用的路径（应为一行 assets/… 路径）'),
+        )
+      }
+      if (isVoiceRefPath(hit.path)) {
+        throw new Error(
+          `${refPathInPack} 指向了另一个引用（${hit.path}）—— ` +
+            '引用只能指向音频文件',
+        )
+      }
+      if (!hit.path.toLowerCase().endsWith('.ogg')) {
+        const ext = voiceAssetExtension(hit.path) || '无后缀'
+        throw new Error(
+          `${refPathInPack} 引用的目标不是 .ogg（当前是 ${ext}）：` +
+            `${hit.path} —— 引擎只认对等位置上的单通道 ogg`,
+        )
+      }
+
+      const blob = await getAssetBlob(pkg.id, hit.path)
+      if (!blob) {
+        throw new Error(
+          `${refPathInPack} 引用的目标在应用内资源里没有数据：${hit.path}`,
+        )
+      }
+      // 写到**引用自己的对等位置**上，后缀换成 .ogg；`.ref` 本身不进包
+      zip.file(refPathInPack.replace(/\.ref$/i, '.ogg'), blob)
       fileCount++
       hasVoice = true
     }

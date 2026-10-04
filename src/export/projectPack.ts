@@ -1,5 +1,7 @@
 import JSZip from 'jszip'
+import { isAudioAsset } from '../assets/paths'
 import { getAssetBlob } from '../assets/idb'
+import { isVoiceRefPath } from '../i18n/voiceMap'
 import { sourceRelativePath, type Workspace } from '../workspace'
 import type { ExportResult, ExportWarning } from './resourcePack'
 
@@ -51,6 +53,34 @@ export async function buildProjectPackZip(
       }
       zip.file(`${root}/${path}`, blob)
       fileCount++
+    }
+
+    /*
+     * 「引用资产」（`.ref`）**原样进包**：工程包是"可继续编辑的源"，引用在这里是对的
+     * （落地成音频是导出 PAK 的职责）。但悬空引用不能静默跟着包流出去 ——
+     * 收包的人打开只会看到"这个键没有配音"，查不回原因。
+     */
+    for (const asset of pkg.assets) {
+      if (!isVoiceRefPath(asset.path)) continue
+      const target = asset.refTarget ?? null
+      if (!target) {
+        warnings.push(
+          `[${pkg.name}] ${asset.path}: 引用正文里没有可用的路径（应为一行 assets/… 路径）`,
+        )
+        continue
+      }
+      const hit = pkg.assets.find(
+        (item) => item.path.toLowerCase() === target.toLowerCase(),
+      )
+      if (!hit) {
+        warnings.push(
+          `[${pkg.name}] ${asset.path}: 引用指向的资产不在这个包里（${target}）`,
+        )
+      } else if (!isAudioAsset(hit.path, hit.mime)) {
+        warnings.push(
+          `[${pkg.name}] ${asset.path}: 引用只能指向音频文件（${target}）`,
+        )
+      }
     }
 
     for (const folder of [...folders].sort((a, b) => a.localeCompare(b))) {

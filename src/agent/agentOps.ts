@@ -21,28 +21,27 @@ import {
   type TextFile,
 } from '../i18n/textMap'
 import { describeVoiceFormat, inspectOggBytes, isMonoVorbisOgg } from '../i18n/voiceBytes'
-import { resolveVoiceAssetFor, voiceAssetDir } from '../i18n/voiceMap'
+import { resolveVoiceBindingFor, voiceAssetDir } from '../i18n/voiceMap'
 import { analyzeHsDiagnostics, type HsDiagnostic } from '../monaco/hsDiagnostics'
 import { parseTextSpans } from '../monaco/textSpans'
 import {
-  SOURCE_KIND_DIRS,
-  ensureAssetFolder,
-  getExtension,
   isHanshuFile,
+  registerAsset,
   removeAssetFolder,
   removeAssetMeta,
+  sourceKindOf,
   sourceRelativePath,
-  upsertAssetMeta,
   type Workspace,
 } from '../workspace'
 
 /** 工具返回值：一律带 `ok`，失败带 `error`（可选 `hint` 指向正确工具） */
 export type AgentOpResult = { ok: boolean; [key: string]: unknown }
 
-/** 源文件类别（与 `src/<kind>/` 一致；非源文件为 `root`） */
-export function sourceKindOf(name: string): string {
-  return SOURCE_KIND_DIRS[getExtension(name)] ?? 'root'
-}
+/**
+ * 源文件类别：`hanshu` / `character` / `scripts` / `meta`（创作资料）；留在包根为 `root`。
+ * 与写盘归位同源（`workspace.sourceKindOf`），不在这里另立一套。
+ */
+export { sourceKindOf }
 
 /** 活动文件的项目相对路径：`序章.hs` → `src/hanshu/序章.hs`（仅供参考，工具仍收逻辑名） */
 export function activeFilePathOf(
@@ -148,7 +147,7 @@ export async function readLangAsset(
   return parseTextFile(await blob.text())
 }
 
-/** 写语言文本：blob → 目录 → 元数据，顺序与界面里的资产写入一致 */
+/** 写语言文本：blob → 登记进工作区（父目录 + 元数据），顺序与界面里的资产写入一致 */
 export async function writeLangAsset(
   workspace: Workspace,
   packageId: string,
@@ -157,11 +156,14 @@ export async function writeLangAsset(
 ): Promise<Workspace> {
   const blob = new Blob([stringifyTextFile(data)], { type: TEXT_ASSET_MIME })
   await putAssetBlob(packageId, path, blob)
-  let next = workspace
-  const dir = path.slice(0, path.lastIndexOf('/'))
-  if (dir) next = ensureAssetFolder(next, packageId, dir)
-  const result = upsertAssetMeta(next, packageId, path, TEXT_ASSET_MIME, blob.size)
-  return result?.workspace ?? next
+  const result = registerAsset(
+    workspace,
+    packageId,
+    path,
+    TEXT_ASSET_MIME,
+    blob.size,
+  )
+  return result?.workspace ?? workspace
 }
 
 export type LocaleSummary = { locale: string; langFiles: number; voiceFiles: number }
@@ -261,7 +263,7 @@ export async function deleteSourceAssets(
   return { workspace: next, removed }
 }
 
-export type VoiceState = 'ok' | 'missing' | 'not-ogg' | 'not-mono' | 'invalid'
+export type VoiceState = 'ok' | 'missing' | 'not-ogg' | 'not-mono' | 'invalid' | 'ref'
 
 /**
  * 解析（自动成键）：把还不是键名的可本地化文本换成**文本哈希键**，
@@ -340,27 +342,79 @@ export type VoiceStatusEntry = {
   state: VoiceState
   fileName?: string
   format?: string
+  /** 这一条是引用（`.ref`）时给出它指向的音频路径 —— Agent 该照实说明 */
+  refTarget?: string
 }
 
 /**
  * 对等配音状态：只读 ogg 头部 64KB 就能判断封装与声道，
  * 因此不必整份解码 —— 判定标准与导入时的一致（单声道 Vorbis ogg）。
+ *
+ * 「引用资产」（`.ref`）也算配音，但要**分开报**：`ref` 表示这个键指向别处的一份音频，
+ * 目标不存在 / 不是 ogg 时照实说 `invalid`，不要混进 `not-ogg` —— 那会把
+ * "这个键用引用"说成"这个文件格式不对"，指错方向。
  */
 export async function voiceStatusOf(
   packageId: string,
-  assets: Array<{ path: string }>,
+  assets: Array<{ path: string; mime?: string; refTarget?: string | null }>,
   source: string,
   locale: string,
   keys: string[],
 ): Promise<VoiceStatusEntry[]> {
   const out: VoiceStatusEntry[] = []
   for (const key of keys) {
-    const asset = resolveVoiceAssetFor<{ path: string }>(source, key, locale, assets)
-    if (!asset) {
+    const binding = resolveVoiceBindingFor(source, key, locale, assets)
+    if (!binding) {
       out.push({ key, state: 'missing' })
       continue
     }
-    const fileName = asset.path.slice(asset.path.lastIndexOf('/') + 1)
+    const fileName = binding.path.slice(binding.path.lastIndexOf('/') + 1)
+
+    if (binding.kind === 'ref') {
+      if (!binding.audioPath) {
+        out.push({
+          key,
+          state: 'invalid',
+          fileName,
+          format: binding.reason ?? '引用解析不出来',
+        })
+        continue
+      }
+      const target = binding.audioPath
+      const targetName = target.slice(target.lastIndexOf('/') + 1)
+      if (!/\.ogg$/i.test(target)) {
+        out.push({
+          key,
+          state: 'invalid',
+          fileName,
+          refTarget: target,
+          format: `引用目标不是 ogg：${targetName}`,
+        })
+        continue
+      }
+      const refBlob = await getAssetBlob(packageId, target)
+      if (!refBlob) {
+        out.push({
+          key,
+          state: 'invalid',
+          fileName,
+          refTarget: target,
+          format: '引用目标没有数据',
+        })
+        continue
+      }
+      const refHead = new Uint8Array(await refBlob.slice(0, 64 * 1024).arrayBuffer())
+      out.push({
+        key,
+        state: isMonoVorbisOgg(refHead) ? 'ref' : 'invalid',
+        fileName,
+        refTarget: target,
+        format: describeVoiceFormat(inspectOggBytes(refHead)),
+      })
+      continue
+    }
+
+    const asset = binding.asset
     if (!/\.ogg$/i.test(asset.path)) {
       out.push({ key, state: 'not-ogg', fileName })
       continue

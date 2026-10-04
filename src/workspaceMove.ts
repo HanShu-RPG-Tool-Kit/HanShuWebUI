@@ -4,8 +4,14 @@ import {
   normalizeAssetPath,
   normalizeFolderPath,
 } from './assets/paths'
-import { sourceDir, sourceFileStemName } from './i18n/localeLayout'
-import { isTextAssetName } from './i18n/textMap'
+import {
+  localeAssetRootWithExt,
+  parseLocaleAssetPath,
+  sourceDir,
+  sourceExtension,
+  sourceFileStemName,
+  TEXT_ASSET_EXTENSION,
+} from './i18n/localeLayout'
 import {
   ensureAssetFolder,
   removeAssetFolder,
@@ -135,6 +141,13 @@ export type ScriptAssetRename =
  * - 音频：`assets/<locale>/voice_<ext>/<目录>/<剧本名>/<键名>.ogg`
  *
  * 路径里带 `<locale>` 的段不参与判断，所以 `zh_cn`、`en_us`…… 会被一视同仁地搬走。
+ *
+ * **只搬"这份文件自己那个后缀"的产物**：本地化产物按源后缀分家（`lang_hs` / `voice_hs`），
+ * 产物路径里的 `<ext>` 必须与源文件的后缀一致 —— 否则改名 `note.md` 会把
+ * `assets/<locale>/lang_hs/note.lang` 与 `assets/<locale>/voice_hs/note/` 一起搬走，
+ * 那是**另一个文件**的产物。改了后缀（`cp1.hs` → `cp1.md`）时，产物跟着换根目录，
+ * 不留在旧根下做孤儿。
+ *
  * 纯函数只改元数据；blob 搬迁由调用方按 `moves` 完成（与 `moveAssetToDir` 同规矩）。
  * 目标位置已被占用时返回 `blocked`（不覆盖，调用方放弃整次改名）。
  */
@@ -153,35 +166,42 @@ export function renameScriptAssets(
     [sourceDir(name), sourceFileStemName(name)].filter(Boolean).join('/')
   const oldStem = stemOf(script.name)
   const newStem = stemOf(newName)
-  if (!oldStem || !newStem || oldStem === newStem) return { kind: 'none' }
+  const oldExt = sourceExtension(script.name)
+  const newExt = sourceExtension(newName)
+  if (!oldStem || !newStem || !oldExt || !newExt) return { kind: 'none' }
+  // 名字和后缀都没变：没有任何产物需要动
+  if (oldStem === newStem && oldExt === newExt) return { kind: 'none' }
 
-  const textSuffix = `/${oldStem}.lang`.toLowerCase()
-  const voiceMarker = `/${oldStem}/`.toLowerCase()
+  const oldTail = oldStem.toLowerCase()
+  const textRest = `${oldTail}.${TEXT_ASSET_EXTENSION}`
+  const voicePrefix = `${oldTail}/`
   const moves: AssetPathMove[] = []
   const emptiedDirs: string[] = []
 
   for (const asset of pkg.assets) {
-    const path = asset.path.replace(/\\/g, '/')
-    const lower = path.toLowerCase()
+    const parsed = parseLocaleAssetPath(asset.path)
+    // 后缀对不上就不是这份文件的产物（见上面的注释）
+    if (!parsed || parsed.sourceExt !== oldExt) continue
+    const rest = parsed.rest.toLowerCase()
+    const root = localeAssetRootWithExt(parsed, newExt)
 
-    // 文本：布局合法且文件名正是 `<剧本名>.lang`
-    if (isTextAssetName(path) && lower.endsWith(textSuffix)) {
+    // 文本：根目录之后的相对路径整条就是 `<目录>/<剧本名>.lang`
+    if (parsed.kind === 'text') {
+      if (rest !== textRest) continue
       moves.push({
         fromPath: asset.path,
-        toPath: `${path.slice(0, path.length - textSuffix.length)}/${newStem}.lang`,
+        toPath: `${root}/${newStem}.${TEXT_ASSET_EXTENSION}`,
       })
       continue
     }
 
-    // 音频：`<剧本名>` 必须是这条 ogg 的**直接父目录**
-    if (!/\/voice_[a-z0-9]+\//i.test(path)) continue
-    const idx = lower.indexOf(voiceMarker)
-    if (idx < 0) continue
-    const rest = path.slice(idx + voiceMarker.length)
-    if (!rest || rest.includes('/')) continue
+    // 音频：`<目录>/<剧本名>/<键名>.ogg` —— 键名必须是紧邻的下一段
+    if (!rest.startsWith(voicePrefix)) continue
+    const key = parsed.rest.slice(voicePrefix.length)
+    if (!key || key.includes('/')) continue
     moves.push({
       fromPath: asset.path,
-      toPath: `${path.slice(0, idx)}/${newStem}/${rest}`,
+      toPath: `${root}/${newStem}/${key}`,
     })
     emptiedDirs.push(assetParentDir(asset.path))
   }

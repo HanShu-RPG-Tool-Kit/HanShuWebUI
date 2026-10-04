@@ -1,0 +1,1108 @@
+/*
+ * 录音棚（内置在剧本编辑器右侧的配音工作台）。
+ *
+ * 从 App.css 整段搬出来的：它是自成一体的面板，样式跟着组件走（与 src/tts/form.css 一致），
+ * 而不是继续加厚那个已经三千多行的全局表。
+ *
+ * 留在 App.css 的只有编辑器覆盖层那几条（`.hs-studio-mode` / `.hs-lang-unit.is-studio-selected`
+ * / `.hs-lang-marquee`）—— 它们属于 `hs-` 覆盖层那一族，由 textEditor 挂类名，不归这个面板。
+ *
+ * 段落顺序与面板从上到下一致：外壳 → 分段控件 → 选中概况 → 候选源 → 波形与播放 →
+ * 信息栏 → 录音 → 提示条 → 页脚（配音方式 + 确认按钮）→ TTS 两级选择。
+ */
+
+.studio {
+  --studio-pad: 10px;
+
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  min-width: 280px;
+  min-height: 0;
+  background: var(--bg-sidebar);
+  border-left: 1px solid var(--border);
+  overflow: hidden;
+}
+
+/* 面板里的控件一律吃主题变量 —— 硬编码的 #22252a / #2b3a47 那几档在换主题时
+   会各留一块补丁，所以凹陷面统一用 --bg-sunken。 */
+.studio select,
+.studio input {
+  font: inherit;
+}
+
+/*
+ * 拖入外部音频时：**整个面板**都是投放目标（见 RecordingStudio 的 studioDropProps），
+ * 所以高亮也画在整个面板上 —— 只高亮预览窗那一格会让人以为别处不能放。
+ */
+.studio.is-drop-target {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+/* ===== 头 ===== */
+
+.studio-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-shrink: 0;
+  min-height: 42px;
+  padding: 8px var(--studio-pad);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-tab);
+}
+
+.studio-title {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.studio-title-name {
+  color: var(--text-bright);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.studio-sub {
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  appearance: none;
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background 0.12s,
+    color 0.12s;
+}
+
+.studio-close:hover {
+  background: var(--bg-menu-hover);
+  color: var(--text-bright);
+}
+
+/* ===== 分段控件：单选配音 / 批量配音 ===== */
+
+.studio-modes {
+  display: flex;
+  gap: 2px;
+  flex-shrink: 0;
+  margin: 8px var(--studio-pad) 0;
+  padding: 2px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-m);
+  background: var(--bg-sunken);
+}
+
+.studio-mode {
+  appearance: none;
+  flex: 1 1 0;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    background 0.14s,
+    color 0.14s,
+    box-shadow 0.14s;
+}
+
+.studio-mode:hover:not(.is-on) {
+  color: var(--text);
+  background: rgb(255 255 255 / 5%);
+}
+
+.studio-mode.is-on {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent-dim);
+  color: var(--text-bright);
+  font-weight: 600;
+}
+
+/* ===== 选中概况与清除按钮 ===== */
+
+.studio-selection {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 9px var(--studio-pad) 0;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+/*
+ * 占位撑开：把右侧元素（清除按钮 / 计时 / 自动录下一个）推到行尾。
+ *
+ * **不限定父选择器** —— 它被三行 flex 共用（选中概况、本次录音、录音控制），
+ * 原先按父级各写一条，结果「录音控制」那一行漏了，那个 span 完全不生效。
+ * 一个只为 flex 撑开的空元素没什么可冲突的，通用一条即可。
+ */
+.spacer {
+  flex: 1 1 auto;
+}
+
+/* 计数可能很长（已选 / 已有 / 待配），窄面板里先省略号，别把按钮挤出去 */
+.studio-selection-count {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-num {
+  color: var(--text-bright);
+  font-family: Consolas, monospace;
+}
+
+.studio-sep {
+  margin: 0 4px;
+  opacity: 0.5;
+}
+
+.studio-mini {
+  appearance: none;
+  padding: 3px 9px;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background 0.12s,
+    border-color 0.12s;
+}
+
+.studio-mini:hover:not(:disabled) {
+  background: var(--bg-menu-hover);
+}
+
+.studio-mini.is-danger {
+  border-color: rgb(232 101 109 / 45%);
+  color: var(--danger);
+}
+
+.studio-mini.is-danger:hover:not(:disabled) {
+  background: rgb(232 101 109 / 14%);
+}
+
+.studio-mini:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ===== 已选键名 ===== */
+
+.studio-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  flex-shrink: 0;
+  max-height: 76px;
+  margin: 8px var(--studio-pad) 0;
+  padding: 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-s);
+  background: var(--bg);
+  overflow: auto;
+}
+
+.studio-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 7px;
+  border: 1px dashed rgb(232 101 109 / 55%);
+  border-radius: 5px;
+  color: #e8a9a5;
+  font-family: Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.studio-chip.is-has-voice {
+  border-style: solid;
+  border-color: rgb(127 185 138 / 50%);
+  color: #bfe0c6;
+}
+
+/* 状态点：颜色之外再给一个形状线索（空心 / 实心） */
+.studio-chip-mark {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border: 1px solid currentcolor;
+  border-radius: 50%;
+}
+
+.studio-chip-mark.is-has-voice,
+.studio-chip.is-has-voice .studio-chip-mark {
+  background: currentcolor;
+}
+
+.studio-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+  /* 面板高度不够时整体滚动：宁可滚，也不要把"搜索 + 资源树"压成 0 高 */
+  overflow-y: auto;
+}
+
+/* 预览窗 / 播放条 / 信息栏 / 搜索框都是固定高度的，不参与压缩 */
+.studio-body > * {
+  flex: 0 0 auto;
+}
+
+/* 资源树给一个下限，否则在矮窗口里会被挤没；太高则由 max-height 收住 */
+.studio-body > .voice-tree {
+  min-height: 132px;
+  max-height: 340px;
+}
+
+.studio-empty,
+.studio-placeholder {
+  margin: 12px var(--studio-pad) 0;
+  padding: 18px 14px;
+  border: 1px dashed var(--border-soft);
+  border-radius: var(--radius-m);
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.studio-placeholder-title {
+  margin-bottom: 6px;
+  color: var(--text-bright);
+  font-weight: 600;
+}
+
+.studio-placeholder code {
+  font-family: Consolas, monospace;
+  color: var(--warn);
+}
+
+/* ===== 预览窗（波形 + 拖放投放）===== */
+
+.studio-wave {
+  position: relative;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  height: 108px;
+  margin: 12px var(--studio-pad) 0;
+  padding: 6px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-m);
+  background: var(--bg-sunken);
+  color: var(--accent);
+  overflow: hidden;
+}
+
+.studio-wave svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* 点选入口那一行：贴着预览窗，与它同一份左右留白 */
+.studio-source-row {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  margin: 8px var(--studio-pad) 0;
+}
+
+/* 真正的 input 藏起来：按钮代它出面，避免多出一个原生控件 */
+.studio-file-input {
+  display: none;
+}
+
+/* 空的时候是"待投入"的一格：虚线 + 更暗的图标，与"有音频"形成对比 */
+.studio-wave.is-empty {
+  border-style: dashed;
+  color: #6a7078;
+}
+
+.studio-wave.is-empty svg {
+  width: 46px;
+  height: 46px;
+}
+
+.studio-wave.is-drop-target {
+  border-color: var(--accent);
+  border-style: solid;
+  box-shadow: inset 0 0 0 2px var(--accent-soft);
+}
+
+.studio-wave-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.studio-wave-loading svg {
+  width: 40px;
+  height: 40px;
+}
+
+/* 波形里"已播过"的那段：换一个颜色（`fill` 是表现属性，CSS 能盖掉） */
+.studio-wave svg rect.is-played,
+.studio-take-wave svg rect.is-played {
+  fill: #9ec9ea;
+}
+
+/* ===== 播放与进度条 ===== */
+
+.studio-player {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  padding: 8px var(--studio-pad) 0;
+}
+
+.studio-play {
+  flex: 0 0 auto;
+  width: 28px;
+  height: 26px;
+  padding: 4px;
+}
+
+.studio-player-time {
+  flex: 0 0 auto;
+  min-width: 42px;
+  color: var(--text-dim);
+  font-family: Consolas, monospace;
+  font-size: 11px;
+  text-align: center;
+}
+
+.studio-progress {
+  position: relative;
+  flex: 1 1 auto;
+  height: 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-pill);
+  background: var(--bg-sunken);
+  cursor: pointer;
+  touch-action: none;
+}
+
+.studio-progress-fill {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+}
+
+/* 进度头上一颗小圆点：指到哪一眼看得出，也让细条更好抓 */
+.studio-progress-fill::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: -1px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text-bright);
+  transform: translate(50%, -50%);
+  box-shadow: 0 0 0 2px var(--bg-sunken);
+}
+
+/* ===== 音频信息 ===== */
+
+.studio-info {
+  flex-shrink: 0;
+  margin: 10px var(--studio-pad) 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-s);
+  background: var(--bg);
+}
+
+.studio-info .voice-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1.75;
+}
+
+.studio-info .voice-row + .voice-row {
+  border-top: 1px solid rgb(255 255 255 / 4%);
+}
+
+.studio-info .voice-row-label {
+  flex: 0 0 64px;
+  color: var(--text-dim);
+}
+
+.studio-info .voice-row-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text);
+  cursor: text;
+}
+
+/* ===== 录音 ===== */
+
+.studio-record {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 0 0 auto;
+  padding: 12px var(--studio-pad) 0;
+}
+
+.studio-record-target {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.studio-record-label {
+  color: var(--text-dim);
+}
+
+.studio-record-key {
+  padding: 1px 7px;
+  border: 1px solid rgb(216 180 90 / 35%);
+  border-radius: 5px;
+  background: rgb(216 180 90 / 14%);
+  color: #f4e6b4;
+  font-family: Consolas, monospace;
+  font-size: 13px;
+}
+
+.studio-record-queue {
+  color: var(--text-dim);
+}
+
+/*
+ * 台词：录音时要照着念的那一句。
+ * 字号比周围大一号、行距放松，长台词自己滚 —— 录音时人是看着这一块念的。
+ */
+.studio-record-script {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 190px;
+  overflow: auto;
+  padding: 9px 11px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-m);
+  background: var(--bg-sunken);
+}
+
+.studio-record-script-head {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--text-dim);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+}
+
+/* 台词是**哪一种语言**的：缺了它，多语言工程里没人说得清这一句是哪版 */
+.studio-record-locale {
+  padding: 0 5px;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  font-family: Consolas, 'Sarasa Mono New', monospace;
+  letter-spacing: 0;
+}
+
+.studio-record-line {
+  margin: 0;
+  color: var(--text-bright);
+  font-size: 14px;
+  line-height: 1.75;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 没有译文时不拿键名顶替（编辑器覆盖层同理：缺译文显示键名并标记），这里明说缺什么 */
+.studio-record-line.is-missing {
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.studio-record-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.studio-record-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  appearance: none;
+  padding: 7px 15px;
+  border: 1px solid rgb(232 101 109 / 45%);
+  border-radius: var(--radius-s);
+  background: rgb(232 101 109 / 12%);
+  color: #f2d7d5;
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    background 0.14s,
+    border-color 0.14s;
+}
+
+.studio-record-btn:hover:not(:disabled) {
+  background: rgb(232 101 109 / 24%);
+}
+
+.studio-record-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.studio-record-btn.is-recording {
+  border-color: var(--danger);
+  background: rgb(232 101 109 / 34%);
+  color: #fff;
+}
+
+.studio-record-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--danger);
+}
+
+.studio-record-btn.is-recording .studio-record-dot {
+  animation: studio-record-pulse 1s ease-in-out infinite;
+}
+
+@keyframes studio-record-pulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+.studio-record-clock {
+  min-width: 48px;
+  color: var(--text-bright);
+  font-family: Consolas, monospace;
+  font-size: 13px;
+}
+
+.studio-record-auto {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-dim);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.studio-record-level {
+  height: 7px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-pill);
+  background: var(--bg-sunken);
+  overflow: hidden;
+}
+
+.studio-record-level-fill {
+  width: 0;
+  height: 100%;
+  background: linear-gradient(90deg, #4ec9b0, #d6ba4a, #ce4e4a);
+  transition: width 0.05s linear;
+}
+
+.studio-take {
+  flex: 0 0 auto;
+}
+
+.studio-take-title {
+  margin-bottom: 4px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.studio-take-body {
+  padding: 9px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-s);
+  background: var(--bg);
+}
+
+.studio-take-time {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.studio-take-wave {
+  height: 64px;
+  margin-top: 8px;
+  padding: 4px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-s);
+  background: var(--bg-sunken);
+  color: var(--accent);
+}
+
+.studio-take-wave svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.studio-take-empty {
+  padding: 12px;
+  border: 1px dashed var(--border-soft);
+  border-radius: var(--radius-s);
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.65;
+}
+
+/* ===== 提示条（拖入失败、解码失败…）===== */
+
+.studio-notice {
+  flex-shrink: 0;
+  margin: 8px var(--studio-pad) 0;
+  padding: 7px 10px;
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid var(--danger);
+  border-radius: var(--radius-s);
+  background: rgb(232 101 109 / 10%);
+  color: #f2d7d5;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+/* ===== 页脚：上拉框 + 最底部的确认按钮 ===== */
+
+.studio-footer {
+  flex-shrink: 0;
+  padding: 9px var(--studio-pad) 11px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-tab);
+}
+
+.studio-footer-hint {
+  margin-bottom: 7px;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.55;
+  /* 说明可能有一两行，别因为它把按钮顶出可视区 */
+  max-height: 3.2em;
+  overflow: hidden;
+}
+
+.studio-confirm {
+  appearance: none;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--accent-dim);
+  border-radius: var(--radius-s);
+  background: var(--accent-soft);
+  color: #d7e9f8;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition:
+    background 0.14s,
+    border-color 0.14s;
+}
+
+.studio-confirm:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: rgb(91 159 212 / 26%);
+}
+
+/* 录音那一格按下去是"留下这条录音"，与 TTS 的"生成"用同一个按钮但换个色调 —— 
+   位置与形状不变，颜色只负责提醒"这一步会覆盖已有配音" */
+.studio-confirm.is-record {
+  border-color: rgb(232 101 109 / 45%);
+  background: rgb(232 101 109 / 16%);
+  color: #f6dcdc;
+}
+
+.studio-confirm.is-record:hover:not(:disabled) {
+  border-color: var(--danger);
+  background: rgb(232 101 109 / 26%);
+}
+
+.studio-confirm:disabled {
+  border-color: var(--border-soft);
+  background: var(--bg-tab-active);
+  color: var(--text-dim);
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+/* 上拉框：菜单从触发器**上方**展开（需求里的"上拉"） */
+.studio-picker {
+  position: relative;
+  margin-bottom: 8px;
+}
+
+.studio-picker-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  appearance: none;
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-s);
+  background: var(--bg-sunken);
+  color: var(--text-bright);
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    background 0.12s,
+    border-color 0.12s;
+}
+
+.studio-picker-trigger:hover {
+  border-color: var(--accent-dim);
+  background: var(--bg-sidebar);
+}
+
+.studio-picker-caption {
+  color: var(--text-dim);
+  font-size: 11.5px;
+}
+
+.studio-picker-label {
+  flex: 1 1 auto;
+  text-align: left;
+  font-weight: 600;
+}
+
+.studio-picker-caret {
+  color: var(--accent);
+  font-size: 11px;
+}
+
+.studio-picker-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+}
+
+.studio-picker-menu {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 41;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-m);
+  background: var(--bg-dropdown);
+  box-shadow: 0 -10px 26px rgb(0 0 0 / 45%);
+}
+
+.studio-picker-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-bright);
+  font: inherit;
+  font-size: 13px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.studio-picker-menu button::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border: 1px solid currentcolor;
+  border-radius: 50%;
+  opacity: 0.5;
+}
+
+.studio-picker-menu button:hover {
+  background: var(--bg-menu-hover);
+}
+
+.studio-picker-menu button.is-on {
+  background: var(--accent-soft);
+  color: #9ec9ea;
+}
+
+.studio-picker-menu button.is-on::before {
+  background: currentcolor;
+  opacity: 1;
+}
+
+/* ===== 录音棚：TTS 的两级选择（配音方案 → 语言方案）===== */
+
+.studio-tts {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px var(--studio-pad) 0;
+}
+
+.studio-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.studio-field-label {
+  flex: 0 0 64px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.studio-field select {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: var(--ui-row-h);
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-s);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+}
+
+.studio-field select:disabled {
+  opacity: 0.5;
+}
+
+/* —— 生成中的进度与中断 —— */
+.studio-run {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 9px 10px;
+  border: 1px solid var(--accent-dim);
+  border-radius: var(--radius-s);
+  background: var(--accent-soft);
+}
+
+.studio-run-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--text-bright);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.studio-run-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-run-pct {
+  flex: 0 0 auto;
+  font-family: Consolas, monospace;
+  font-size: 12px;
+  color: #9ec9ea;
+}
+
+.studio-bar {
+  position: relative;
+  height: 6px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-sunken);
+  overflow: hidden;
+}
+
+.studio-bar-fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  transition: width 0.15s linear;
+}
+
+/* 还没拿到分块进度时走一条来回跑的条 —— 比"卡在 0%"诚实 */
+.studio-bar.is-indeterminate .studio-bar-fill {
+  width: 38%;
+  animation: studio-bar-sweep 1.1s ease-in-out infinite;
+}
+
+@keyframes studio-bar-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(265%);
+  }
+}
+
+.studio-run-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.studio-run-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* —— 说明卡（缺方案 / 缺语言）—— */
+.studio-guide {
+  padding: 11px 12px;
+  border: 1px dashed var(--border-soft);
+  border-radius: var(--radius-s);
+  color: var(--text-dim);
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+
+.studio-guide-title {
+  margin-bottom: 4px;
+  color: var(--text);
+  font-weight: 600;
+}
+
+.studio-guide p {
+  margin: 0;
+}
+
+/* 说明卡里的动作按钮：与上面那段话拉开一点 */
+.studio-guide .studio-mini {
+  margin-top: 9px;
+}
+
+/* 说明卡里的主行动（"新建配音方案"）—— 这一格里唯一该被先点的东西 */
+.studio-mini.is-primary {
+  border-color: var(--accent-dim);
+  background: var(--accent-soft);
+  color: #cfe6f7;
+}
+
+.studio-mini.is-primary:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: rgb(91 159 212 / 26%);
+}
+
+/* 需要用户先做一件事才能继续（例如语言对不上）—— 值得比普通说明更显眼 */
+.studio-guide.is-warn {
+  border-style: solid;
+  border-left: 3px solid var(--warn);
+  background: rgb(216 180 90 / 8%);
+}
+
+.studio-guide.is-warn .studio-guide-title {
+  color: var(--warn);
+}
+
+/* —— 状态卡（失败 / 成功 / 常规说明）—— */
+.studio-note {
+  padding: 10px 12px;
+  border: 1px solid var(--border-soft);
+  border-left: 3px solid var(--border-soft);
+  border-radius: var(--radius-s);
+  background: var(--bg);
+  color: var(--text-dim);
+}
+
+.studio-note-title {
+  color: var(--text);
+  font-size: 12.5px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.studio-note-body {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.7;
+}
+
+.studio-note.is-error {
+  border-left-color: var(--danger);
+  background: rgb(232 101 109 / 8%);
+}
+
+.studio-note.is-error .studio-note-title {
+  color: #f0b8bb;
+}
+
+.studio-note.is-done {
+  border-left-color: var(--ok);
+  background: rgb(127 185 138 / 8%);
+}
+
+.studio-note.is-done .studio-note-title {
+  color: #bfe0c6;
+}
+
+.studio-note .studio-mini {
+  margin-top: 8px;
+}
+
+.studio-note code {
+  font-family: Consolas, monospace;
+  color: var(--warn);
+}
+

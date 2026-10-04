@@ -1,10 +1,13 @@
 import { getAssetBlob } from '../assets/idb'
 import {
+  VOICE_REF_EXTENSION,
   isSameVoiceAsset,
-  resolveVoiceAssetFor,
+  resolveVoiceBindingFor,
   voiceAssetExtension,
   voiceFileName,
   voiceKeyAssetPath,
+  voiceKeyRefPath,
+  type VoiceBinding,
 } from './voiceMap'
 import { canPlatformDecodeAudio } from './voiceTranscode'
 import {
@@ -13,6 +16,7 @@ import {
   formatVoiceDuration,
   type VoiceAudioInfo,
   type VoiceDecodeResult,
+  type VoicePlaybackProgress,
   type VoiceRuntime,
   type VoiceSource,
 } from './voiceRuntime'
@@ -21,24 +25,37 @@ import {
  * 音频映射管理（界面唯一入口）。
  *
  * **没有映射文件**：某个键该用哪个音频，完全由「脚本路径 + 键名」推导出的**对等文件**决定
- * （见 voiceMap）。所以这里不再持有键值表，只做三件事：
- * 1. 把键解析成对等文件（同目录同名去后缀优先，整根兜底）→ 四态
+ * （见 voiceMap）。对等位置上可以是：
+ * - `.ogg`：真文件 —— 导入 / 录音 / TTS 的产物；
+ * - `.ref`：**「引用资产」**，一行路径的文本文件，指向同包内的另一个音频资产。
+ *
+ * 两者同时在时 **`.ogg` 优先**（见 `resolveVoiceBindingFor`）。
+ *
+ * 所以这里不再持有键值表，只做三件事：
+ * 1. 把键解析成一次「绑定」（`.ogg` 或 `.ref`）→ 四态
  * 2. 资产清单 + IndexedDB blob 的读取
  * 3. 单流播放 / 解码缓存（时长 / 声道 / 波形）
  *
- * 四态：
- * - `missing` 对等位置（及整根兜底）都没有文件
- * - `invalid` 找到了文件，但不是**单声道 Vorbis ogg**（非 ogg / 解不开 / 多声道 / 是 Opus）
+ * 四态（引用一并适用：判的就是它引到的那份音频）：
+ * - `missing` 对等位置上既没有 `.ogg` 也没有 `.ref`
+ * - `invalid` 找到了，但不是**单声道 Vorbis ogg**；或引用解析不出来（目标缺失 / 不是音频 / 内容坏）
  * - `ready`   单声道 Vorbis ogg，可播
- * - `playing` 正在播的就是这条资产
+ * - `playing` 正在播的就是这份音频
+ *
+ * `status.path` 是**绑定文件**（`.ogg` / `.ref`：删除与改名都针对它），
+ * `status.audioPath` 才是拿去解码 / 播放的那份（引用时是目标资产）。
  */
 
 export type VoiceUnitState = 'missing' | 'invalid' | 'ready' | 'playing'
 
 export type VoiceUnitStatus = {
   state: VoiceUnitState
-  /** 解析到的资产路径；缺失时 null */
+  /** 绑定文件路径（`.ogg` / `.ref`）；缺失时 null */
   path: string | null
+  /** 实际音频路径（引用时是目标资产）；缺失或引用解析不出来时 null */
+  audioPath: string | null
+  /** 这次绑定是实文件还是引用（缺失时按"期望的是实文件"给 `file`） */
+  source: 'file' | 'ref'
   /** 缺失 / 不合法的原因（用于按钮 tooltip） */
   reason: string | null
   /** 解码后的元信息（未解码或非法时为 null） */
@@ -66,6 +83,8 @@ export type VoiceAssetLike = {
   mime: string
   size: number
   updatedAt?: number
+  /** `.ref`（「引用资产」）正文解析出的目标路径；加载 / 写入时填好 */
+  refTarget?: string | null
 }
 
 export type VoiceLibrary = {
@@ -74,7 +93,9 @@ export type VoiceLibrary = {
   readonly scriptName: string
   /** 该键的对等文件路径（固定 .ogg）——导入的写入目标 */
   targetPathOf(key: string): string
-  /** 该键当前解析到的资产路径（对等文件或其同名的其它格式）；没有 null */
+  /** 该键的引用文件路径（固定 .ref）——「引用资产」的写入目标 */
+  refPathOf(key: string): string
+  /** 该键当前**实际提供音频**的那份资产路径（引用时是它的目标）；没有音频 null */
   resolvedPathOf(key: string): string | null
   /** 键 → 四态 */
   statusOf(key: string): VoiceUnitStatus
@@ -94,6 +115,15 @@ export type VoiceLibrary = {
   inspect(path: string): VoiceDecodeResult | null
   /** 选择器用：这条资产是不是正在试听 */
   isPreviewing(path: string): boolean
+  /** 试听进度（没有在播 / 元信息未就绪时 null） */
+  previewProgress(): VoicePlaybackProgress | null
+  /** 试听暂停 / 继续（没有在播时忽略） */
+  pausePreview(): void
+  resumePreview(): void
+  /** 拖动进度条（0..1 比例） */
+  seekPreview(ratio: number): void
+  /** 进度订阅：**独立于 subscribe**（timeupdate 频率高，不能带着覆盖层重绘） */
+  subscribePreviewProgress(listener: () => void): () => void
   /**
    * 资产清单变了（导入完成 / 拖入 / 删除）时由上层调用：
    * 清掉解析缓存并广播一次，让覆盖层按钮与已打开的选择器都刷新。
@@ -135,9 +165,9 @@ export function createVoiceLibrary(options: {
 
   // 解析结果按「键」缓存；资产清单数组换了引用（工作区改动）就整表作废
   let cachedAssets: readonly VoiceAssetLike[] | null = null
-  let resolveCache = new Map<string, VoiceAssetLike | null>()
+  let resolveCache = new Map<string, VoiceBinding<VoiceAssetLike> | null>()
 
-  const resolve = (key: string): VoiceAssetLike | null => {
+  const resolve = (key: string): VoiceBinding<VoiceAssetLike> | null => {
     const list = options.assets()
     if (list !== cachedAssets) {
       cachedAssets = list
@@ -145,7 +175,7 @@ export function createVoiceLibrary(options: {
     }
     const normalized = key.trim().toLowerCase()
     if (resolveCache.has(normalized)) return resolveCache.get(normalized) ?? null
-    const hit = resolveVoiceAssetFor(scriptName, normalized, locale, list)
+    const hit = resolveVoiceBindingFor(scriptName, normalized, locale, list)
     resolveCache.set(normalized, hit)
     return hit
   }
@@ -171,24 +201,54 @@ export function createVoiceLibrary(options: {
   const statusOf = (key: string): VoiceUnitStatus => {
     const normalized = key.trim().toLowerCase()
     if (!normalized) {
-      return { state: 'missing', path: null, reason: '键名无效', info: null }
+      return {
+        state: 'missing',
+        path: null,
+        audioPath: null,
+        source: 'file',
+        reason: '键名无效',
+        info: null,
+      }
     }
     const hit = resolve(normalized)
     if (!hit) {
       return {
         state: 'missing',
         path: null,
-        reason: `没有对等配音文件（期望 ${voiceKeyAssetPath(locale, scriptName, normalized)}）`,
+        audioPath: null,
+        source: 'file',
+        reason:
+          `没有对等配音文件（期望 ${voiceKeyAssetPath(locale, scriptName, normalized)}` +
+          ` 或同名的 .${VOICE_REF_EXTENSION}）`,
         info: null,
       }
     }
-    const path = hit.path
+
+    const bindingPath = hit.path
+    const source = hit.kind
+
+    // 引用解析不出来：原因直接用 voiceMap 给的原话（目标缺失 / 不是音频 / 内容坏）
+    if (!hit.audioPath) {
+      return {
+        state: 'invalid',
+        path: bindingPath,
+        audioPath: null,
+        source,
+        reason: hit.reason ?? '引用解析不出来',
+        info: null,
+      }
+    }
+
+    // 实际音频：实文件就是它自己，引用是它指向的那份
+    const path = hit.audioPath
 
     if (runtime.isPlaying(path)) {
       const decoded = runtime.peek(path)
       return {
         state: 'playing',
-        path,
+        path: bindingPath,
+        audioPath: path,
+        source,
         reason: null,
         info: decoded && decoded.ok ? decoded.info : null,
       }
@@ -199,8 +259,13 @@ export function createVoiceLibrary(options: {
       const ext = voiceAssetExtension(path)
       return {
         state: 'invalid',
-        path,
-        reason: `只允许单通道 ogg Vorbis（当前是 ${ext || '无后缀'}）`,
+        path: bindingPath,
+        audioPath: path,
+        source,
+        reason:
+          source === 'ref'
+            ? `引用目标必须是单通道 ogg Vorbis（当前是 ${ext || '无后缀'}）`
+            : `只允许单通道 ogg Vorbis（当前是 ${ext || '无后缀'}）`,
         info: null,
       }
     }
@@ -210,16 +275,32 @@ export function createVoiceLibrary(options: {
       // 乐观：先按可用渲染（黄），解码结果回来再纠正成紫/继续黄。
       // 这里是查询路径，但解码本身幂等且带缓存，重复触发无副作用。
       void runtime.decode(path)
-      return { state: 'ready', path, reason: null, info: null }
+      return {
+        state: 'ready',
+        path: bindingPath,
+        audioPath: path,
+        source,
+        reason: null,
+        info: null,
+      }
     }
     if (!decoded.ok) {
-      return { state: 'invalid', path, reason: decoded.reason, info: null }
+      return {
+        state: 'invalid',
+        path: bindingPath,
+        audioPath: path,
+        source,
+        reason: decoded.reason,
+        info: null,
+      }
     }
     // 解码成功 ≠ 符合约定：单声道 Opus 也解得开，但引擎要的是 Vorbis
     if (decoded.info.channels !== 1) {
       return {
         state: 'invalid',
-        path,
+        path: bindingPath,
+        audioPath: path,
+        source,
         reason: `只允许单通道（当前 ${formatVoiceChannels(decoded.info.channels)}）`,
         info: null,
       }
@@ -233,12 +314,21 @@ export function createVoiceLibrary(options: {
             : '（没有容器信息）'
       return {
         state: 'invalid',
-        path,
+        path: bindingPath,
+        audioPath: path,
+        source,
         reason: `ogg 里装的是 ${codec}，按约定需要 Vorbis`,
         info: null,
       }
     }
-    return { state: 'ready', path, reason: null, info: decoded.info }
+    return {
+      state: 'ready',
+      path: bindingPath,
+      audioPath: path,
+      source,
+      reason: null,
+      info: decoded.info,
+    }
   }
 
   return {
@@ -247,7 +337,10 @@ export function createVoiceLibrary(options: {
 
     targetPathOf: (key) => voiceKeyAssetPath(locale, scriptName, key),
 
-    resolvedPathOf: (key) => resolve(key)?.path ?? null,
+    refPathOf: (key) => voiceKeyRefPath(locale, scriptName, key),
+
+    // 「实际提供音频的那份」：引用时是目标资产 —— 选择器标"当前目标"、显示"已有配音"都看它
+    resolvedPathOf: (key) => resolve(key)?.audioPath ?? null,
 
     statusOf,
 
@@ -257,8 +350,9 @@ export function createVoiceLibrary(options: {
         runtime.stop()
         return
       }
-      if (status.state === 'ready' && status.path) {
-        void runtime.play(status.path, key.trim().toLowerCase())
+      // 播的是"实际音频"：引用时是它指向的那份，不是 `.ref` 本身
+      if (status.state === 'ready' && status.audioPath) {
+        void runtime.play(status.audioPath, key.trim().toLowerCase())
       }
     },
 
@@ -305,6 +399,16 @@ export function createVoiceLibrary(options: {
     },
 
     isPreviewing: (path) => runtime.isPlaying(path),
+
+    previewProgress: () => runtime.playbackProgress(),
+
+    pausePreview: () => runtime.pause(),
+
+    resumePreview: () => runtime.resume(),
+
+    seekPreview: (ratio) => runtime.seekRatio(ratio),
+
+    subscribePreviewProgress: (listener) => runtime.subscribeProgress(listener),
 
     notifyAssetsChanged() {
       cachedAssets = null

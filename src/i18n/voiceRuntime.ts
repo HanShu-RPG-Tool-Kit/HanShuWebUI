@@ -43,7 +43,26 @@ export type VoiceSource = {
   read(path: string): Promise<Blob | null>
 }
 
-export type VoicePlayback = { path: string; key: string | null }
+export type VoicePlayback = {
+  path: string
+  key: string | null
+  /** 已暂停（仍然是"当前这条"，只是不在走） */
+  paused: boolean
+}
+
+/**
+ * 播放进度快照。
+ *
+ * **走独立订阅通道**（`subscribeProgress`）：`timeupdate` 约 4Hz，若混进主订阅，
+ * 每次都会触发编辑器覆盖层整表重绘。主订阅只留给"换/停/暂停"这类真状态变化。
+ */
+export type VoicePlaybackProgress = {
+  /** 秒 */
+  current: number
+  /** 秒；元信息还没回来时为 0 */
+  duration: number
+  paused: boolean
+}
 
 /**
  * 解码用途（结果不同，所以缓存键里也要带它）：
@@ -66,6 +85,15 @@ export type VoiceRuntime = {
   decode(path: string, mode?: VoiceDecodeMode): Promise<VoiceDecodeResult>
   /** 当前播放的资产（没有在播返回 null） */
   getPlayback(): VoicePlayback | null
+  /** 播放进度（没有在播 / 元信息未就绪时返回 null） */
+  playbackProgress(): VoicePlaybackProgress | null
+  /** 拖动进度条：按 0..1 比例跳转（没有在播时忽略） */
+  seekRatio(ratio: number): void
+  /** 暂停 / 继续（没有在播时忽略） */
+  pause(): void
+  resume(): void
+  /** 进度变化订阅（不触发主订阅，见 VoicePlaybackProgress） */
+  subscribeProgress(listener: () => void): () => void
   /** 「正在播放的就是这条资产」——按钮的播放态判据 */
   isPlaying(path: string): boolean
   /** 播放；同一时刻只有一个，换目标直接替换。返回是否真的开播 */
@@ -174,6 +202,8 @@ export function createVoiceRuntime(source: VoiceSource): VoiceRuntime {
   const cache = new Map<string, VoiceDecodeResult>()
   const inFlight = new Map<string, Promise<VoiceDecodeResult>>()
   const listeners = new Set<() => void>()
+  /** 进度订阅：与主订阅分开，见 VoicePlaybackProgress */
+  const progressListeners = new Set<() => void>()
 
   let ctx: AudioContext | null = null
   let audio: HTMLAudioElement | null = null
@@ -190,6 +220,11 @@ export function createVoiceRuntime(source: VoiceSource): VoiceRuntime {
 
   const emit = () => {
     for (const listener of listeners) listener()
+  }
+
+  /** 只通知进度订阅者（不触发覆盖层重绘） */
+  const emitProgress = () => {
+    for (const listener of progressListeners) listener()
   }
 
   const cacheKeyOf = (path: string, mode: VoiceDecodeMode): string | null => {
@@ -232,6 +267,23 @@ export function createVoiceRuntime(source: VoiceSource): VoiceRuntime {
       console.warn('[hanshu] 音频解码失败（浏览器不认这个文件）', audio?.src)
       releasePlayback()
     })
+    // 进度 / 时长：只走进度订阅（timeupdate 约 4Hz，别混进主订阅）
+    audio.addEventListener('timeupdate', emitProgress)
+    audio.addEventListener('loadedmetadata', emitProgress)
+    audio.addEventListener('durationchange', emitProgress)
+    audio.addEventListener('seeked', emitProgress)
+    // 暂停态是"真状态"（按钮要换图标），两边都通知
+    audio.addEventListener('play', () => {
+      if (playback) playback.paused = false
+      emitProgress()
+      emit()
+    })
+    audio.addEventListener('pause', () => {
+      // releasePlayback 里的 pause 会把 src 摘掉，那时不该报"暂停"
+      if (playback && audio?.src) playback.paused = true
+      emitProgress()
+      emit()
+    })
     return audio
   }
 
@@ -253,6 +305,8 @@ export function createVoiceRuntime(source: VoiceSource): VoiceRuntime {
       playback = null
       emit()
     }
+    // 停了就没有进度了：进度订阅也要收到一次（否则进度条会停在最后的位置）
+    emitProgress()
   }
 
   /** 拿一个解码槽位（超过并发上限就排队等） */
@@ -391,7 +445,7 @@ export function createVoiceRuntime(source: VoiceSource): VoiceRuntime {
     // 补类型：blob 的 type 可能是空的或 octet-stream，那样 <audio> 会拒播
     objectUrl = URL.createObjectURL(applyAudioMime(blob, name))
     el.src = objectUrl
-    playback = { path: id, key }
+    playback = { path: id, key, paused: false }
     emit()
     try {
       await el.play()
@@ -418,6 +472,46 @@ export function createVoiceRuntime(source: VoiceSource): VoiceRuntime {
 
     getPlayback() {
       return playback
+    },
+
+    playbackProgress() {
+      if (!playback || !audio) return null
+      const duration = Number.isFinite(audio.duration) ? audio.duration : 0
+      const current = Number.isFinite(audio.currentTime) ? audio.currentTime : 0
+      return { current, duration, paused: playback.paused }
+    },
+
+    seekRatio(ratio) {
+      if (!playback || !audio) return
+      if (!Number.isFinite(audio.duration) || audio.duration <= 0) return
+      const clamped = Math.max(0, Math.min(1, ratio))
+      try {
+        audio.currentTime = clamped * audio.duration
+      } catch {
+        /* 忽略：元信息还没就绪时赋值会被拒 */
+      }
+      emitProgress()
+    },
+
+    pause() {
+      if (!playback) return
+      try {
+        audio?.pause()
+      } catch {
+        /* 忽略 */
+      }
+    },
+
+    resume() {
+      if (!playback) return
+      void audio?.play().catch(() => undefined)
+    },
+
+    subscribeProgress(listener) {
+      progressListeners.add(listener)
+      return () => {
+        progressListeners.delete(listener)
+      }
     },
 
     isPlaying(path) {
@@ -450,6 +544,7 @@ export function createVoiceRuntime(source: VoiceSource): VoiceRuntime {
       token += 1
       releasePlayback()
       listeners.clear()
+      progressListeners.clear()
       inFlight.clear()
       cache.clear()
       if (ctx) {

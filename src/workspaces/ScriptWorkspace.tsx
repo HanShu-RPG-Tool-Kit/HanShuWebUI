@@ -1,5 +1,6 @@
 import {
   forwardRef,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useMemo,
@@ -39,20 +40,23 @@ import {
   ALLOWED_EXTENSIONS_LABEL,
   MANUAL_FILE_EXTENSIONS_LABEL,
   isManualFileName,
+  registerAsset,
   removeAssetMeta,
+  removeAssetFolder,
   saveWorkspace,
   toggleAssetsCollapsed,
   updateScriptContent,
-  upsertAssetMeta,
   ensureAssetFolder,
-  removeAssetFolder,
   isVoiceMapFile,
   type Workspace,
 } from '../workspace'
 import {
   createBlankOggBlob,
+  isVoiceRefPath,
   listMissingVoiceOggs,
+  parseVoiceRefContent,
 } from '../i18n/voiceMap'
+import { createVoiceOps, type VoiceOps } from '../i18n/voiceOps'
 import { voiceRootDir } from '../i18n/localeLayout'
 import {
   buildResourcePackZip,
@@ -75,6 +79,7 @@ import type { AgentHost, AgentOpResult, LangEntry } from '../agent/tools'
 import {
   COMMON_LOCALES,
   findLocale,
+  isValidLocaleTag,
   resolveLocale,
   resolveLocaleTag,
 } from '../i18n/locales'
@@ -137,6 +142,7 @@ import {
 import {
   runVoiceImport,
   formatVoiceImportSourceLabel,
+  VOICE_IMPORT_RESULT,
   type VoiceImportIo,
   type VoiceImportSource,
 } from '../i18n/voiceImport'
@@ -144,7 +150,34 @@ import { createVoiceProcessor } from '../i18n/voiceTranscode'
 import { createVoiceDiskSink } from '../project/voiceDiskSink'
 import type { DragSource } from '../drag/dragPayload'
 import { TextUnitMenu, type TextUnitMenuItem } from '../TextUnitMenu'
-import { VoicePickerModal } from '../VoicePickerModal'
+import {
+  RecordingStudio,
+  type StudioMode,
+  type StudioSourceMode,
+  type StudioTtsStatus,
+} from '../studio/RecordingStudio'
+import { TtsCredentialsModal } from '../TtsCredentialsModal'
+import { synthesizePlanLocale } from '../tts/client'
+import { createCredentialResolver, createLocalBackend } from '../tts/credentials'
+import { readVoicePlan, stringifyVoicePlan, type VoicePlan } from '../tts/plan'
+import { resolvePresets } from '../tts/providers'
+import {
+  blankServiceDefinition,
+  readServiceDefinition,
+  resolveService,
+  stringifyServiceDefinition,
+  type ResolvedService,
+} from '../tts/service'
+import {
+  characterNameOfFileName,
+  isValidServiceId,
+  planFileName,
+  serviceFileName,
+  ttsFileKindOf,
+} from '../tts/spec'
+import { TtsPlanForm } from '../tts/TtsPlanForm'
+import { TtsServiceForm } from '../tts/TtsServiceForm'
+import { createFetchTransport } from '../tts/transport'
 import { VoiceImportProgress } from '../VoiceImportProgress'
 import { VoiceToast } from '../VoiceToast'
 import {
@@ -163,6 +196,18 @@ function formatSavedAt(ts: number | null) {
   const mm = String(d.getMinutes()).padStart(2, '0')
   const ss = String(d.getSeconds()).padStart(2, '0')
   return `已记忆 ${hh}:${mm}:${ss}`
+}
+
+/**
+ * 现在的时间戳。
+ *
+ * 抽成一个函数**不是为了避免重复**：`Date.now()` 直接出现在组件体内的调用链上时，
+ * oxlint 的 react(purity) 会把它报成"渲染期调用了非纯函数"。而这条规则自己写着
+ * "React Compiler skipped optimizing this component" —— 本组件早就不在它的分析范围里，
+ * 那些报点全是误报。挪到模块作用域，报点就不再落在组件身上。
+ */
+function nowStamp(): number {
+  return Date.now()
 }
 
 type ScriptWorkspaceProps = {
@@ -215,11 +260,23 @@ export const ScriptWorkspace = forwardRef<
   })
   const splitRef = useRef<HTMLDivElement>(null)
   const draggingRef = useRef(false)
+  /** 正在拖录音棚的右把手（存按下时的横向起点与宽度） */
+  const studioDragRef = useRef<{ startX: number; startWidth: number } | null>(
+    null,
+  )
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null)
   const rolesRef = useRef(roles)
   const valueRef = useRef(value)
   const workspaceRef = useRef(workspace)
   const activeIdRef = useRef(workspace.activeScriptId)
+  /**
+   * 编辑器里这份正文**属于**哪一份文件。
+   *
+   * 它和 `activeIdRef` 本该永远相等 —— 但"换活动文件"和"换编辑器正文"是两件事，
+   * 只要有一条路径只做了前者，接下来任何"写回当前文件"的动作就会把 A 的正文写进 B。
+   * 所以写入前一律核对归属（见 `persistActiveContent`），不一致就拒写。
+   */
+  const bufferOwnerRef = useRef<string | null>(workspace.activeScriptId)
   const projectRef = useRef(project)
   rolesRef.current = roles
   valueRef.current = value
@@ -244,6 +301,47 @@ export const ScriptWorkspace = forwardRef<
     activeIdRef.current = next.activeScriptId
     setWorkspace(next)
     saveWorkspace(next)
+  }
+
+  /**
+   * 内容写回的**唯一**原语：正文 + 它属于哪一份文件。
+   *
+   * `updateScriptContent(ws, id, text)` 本身是安全的，出事的永远是"调用方拿错了 id"：
+   * 早先只有 `persistActiveContent(text)` 一个入口，目标靠 `activeIdRef.current` 现取 ——
+   * 只要有一处"换了活动文件、没换编辑器正文"，A 的正文就会落进 B。
+   * 所以这里要求调用方**明确指出**是哪一份，然后再由 `persistActiveContent` 去核对归属。
+   */
+  const writeScriptContent = (scriptId: string, text: string): boolean => {
+    if (!findScript(workspaceRef.current, scriptId)) return false
+    commitWorkspace(updateScriptContent(workspaceRef.current, scriptId, text))
+    return true
+  }
+
+  /**
+   * 换文件：正文、ref、编辑器、归属**一起换**。少换一样就会出现"看着是 A、写进 B"。
+   */
+  const loadEditorContent = (
+    scriptId: string | null,
+    content: string,
+    updatedAt?: number | null,
+  ) => {
+    bufferOwnerRef.current = scriptId
+    setValue(content)
+    valueRef.current = content
+    editorRef.current?.setValue(content)
+    setSavedAt(updatedAt ?? nowStamp())
+  }
+
+  /**
+   * 把编辑器里那份正文并回**它属于的**那一份文件（换文件、导出、写盘前都先做这一步）。
+   *
+   * 用归属而不是用 `activeScriptId`：这两个值本来相等，不相等时该听的是正文的归属 ——
+   * 按活动文件写就是把上一条正文盖到新文件上。
+   */
+  const flushEditorInto = (base: Workspace): Workspace => {
+    const id = bufferOwnerRef.current
+    if (!id || !findScript(base, id)) return base
+    return updateScriptContent(base, id, valueRef.current)
   }
 
   const [locale, setLocale] = useState(loadLocale)
@@ -273,17 +371,19 @@ export const ScriptWorkspace = forwardRef<
   const voiceLibraryRef = useRef<VoiceLibrary | null>(null)
   /** 音频映射管理的渲染态镜像（ref 给编辑器用，state 给弹窗用） */
   const [voiceRuntime, setVoiceRuntime] = useState<VoiceLibrary | null>(null)
+  /**
+   * 语言文本映射的渲染态镜像（值本身不用，只为"映射加载完了"能触发一次重渲染）。
+   *
+   * 映射是**异步**建出来的（先读资产再建 sink）：只写 `textMapRef` 的话，录音棚那边
+   * 拿到的会一直是"还没有文本"，直到碰巧有别的 state 变化 —— 录音的人不该看到这种
+   * 状态。同 `voiceRuntime`：库/映射是刚建出来的，不会引发级联渲染。
+   */
+  const [, setTextRuntime] = useState<TextMap | null>(null)
   /** 上级容器右键菜单（null = 没开） */
   const [unitMenu, setUnitMenu] = useState<{
     key: string
     x: number
     y: number
-  } | null>(null)
-  /** 音频选择器弹窗（null = 没开）。带上建它时的那个 library 实例：
-      换文件 / 换语言会重建库，身份一变弹窗自动失效，不用在 effect 里再 setState */
-  const [voicePicker, setVoicePicker] = useState<{
-    key: string
-    library: VoiceLibrary
   } | null>(null)
   /** 正在跑的音频导入（null = 没在导入）：驱动置顶进度条 */
   const [voiceImport, setVoiceImport] = useState<{
@@ -292,6 +392,21 @@ export const ScriptWorkspace = forwardRef<
     progress: number
     phase: 'process' | 'write'
   } | null>(null)
+
+  // —— 录音棚（右侧可调宽面板，与 Agent 窗口一样从底部栏唤出）——
+  const [studioOpen, setStudioOpen] = useState(false)
+  const [studioWidth, setStudioWidth] = useState(() => {
+    const saved = Number(localStorage.getItem('hanshu.studioWidth'))
+    return Number.isFinite(saved) && saved >= 280 && saved <= 760 ? saved : 420
+  })
+  const [studioMode, setStudioMode] = useState<StudioMode>('single')
+  /** 配音方式（固定音频 / TTS / 录音）：**单选与批量共用**，只是目标键集合不同 */
+  const [studioSourceMode, setStudioSourceMode] =
+    useState<StudioSourceMode>('fixed')
+  /** 录音棚里"已选中的键名"（按正文顺序）。选中动作发生在编辑器里，见 textEditor 的选择模式 */
+  const [studioSelection, setStudioSelection] = useState<string[]>([])
+  /** 编辑器里挂上 TextBinding 的轮次：挂载/重建后要把模式与选中态重新灌回去 */
+  const [textBindingSeq, setTextBindingSeq] = useState(0)
 
   /**
    * 导入结果浮窗（自动消失）。内容就是工作流要返回的那条消息，
@@ -340,14 +455,21 @@ export const ScriptWorkspace = forwardRef<
     const mime = asset.mime || TEXT_ASSET_MIME
     const blob = new Blob([content], { type: mime })
     await putAssetBlob(pkg.id, asset.path, blob)
-    const result = upsertAssetMeta(
+    const result = registerAsset(
       workspaceRef.current,
       pkg.id,
       asset.path,
       mime,
       blob.size,
+      // 手改 `.ref`（引用资产）的正文：目标路径必须跟着更新，
+      // 否则四态还按旧目标判 —— 一直错到重开工程为止
+      isVoiceRefPath(asset.path) ? parseVoiceRefContent(content) : undefined,
     )
     if (result) commitWorkspace(result.workspace)
+    if (isVoiceRefPath(asset.path)) {
+      voiceLibraryRef.current?.notifyAssetsChanged()
+      textBindingRef.current?.refreshVoice()
+    }
 
     if (textMapRef.current?.fileName.toLowerCase() === asset.path.toLowerCase()) {
       textCacheRef.current = content
@@ -371,11 +493,14 @@ export const ScriptWorkspace = forwardRef<
     // 文本缓存在组件作用域的 textCacheRef 上：资产编辑器保存后也要用它收敛
     // （见 handleSaveTextAsset）。
 
-    /** 资产路径的父目录；顶层返回 `assets` */
-    const parentDirOf = (path: string): string =>
-      path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : 'assets'
-
-    /** 旧状态清理：把误写成包内文件的那条记录移出 scripts */
+    /*
+     * 旧状态清理：把误写成包内文件的那条记录移出 scripts。
+     *
+     * **它只改结构，不动编辑器正文** —— 但可能把 `activeScriptId` 挪到另一份文件上，
+     * 而此刻编辑器里还是被移走那篇的正文。这正是"A 的正文写进 B"的经典条件，
+     * 所以写入侧一律核对正文归属（见 `persistActiveContent`）。将来真要在这里动 id，
+     * 必须同时用 `loadEditorContent` 把正文也换过去。
+     */
     const dropLegacyTextFile = (base: Workspace, scriptId: string): Workspace => ({
       ...base,
       activeScriptId:
@@ -406,13 +531,8 @@ export const ScriptWorkspace = forwardRef<
 
       const migrated = new Blob([legacy.content], { type: TEXT_ASSET_MIME })
       await putAssetBlob(hit.pkg.id, fileName, migrated)
-      const withFolder = ensureAssetFolder(
+      const withAsset = registerAsset(
         base,
-        hit.pkg.id,
-        parentDirOf(fileName),
-      )
-      const withAsset = upsertAssetMeta(
-        withFolder,
         hit.pkg.id,
         fileName,
         TEXT_ASSET_MIME,
@@ -429,19 +549,14 @@ export const ScriptWorkspace = forwardRef<
         const id = base.activeScriptId
         if (!id) return
         textCacheRef.current = content
-        // 先把编辑器里的当前正文并回 workspace，避免覆盖未保存的输入
-        const merged = updateScriptContent(base, id, valueRef.current)
+        // 先把编辑器里的当前正文并回**它属于的**那一份，避免覆盖未保存的输入
+        const merged = flushEditorInto(base)
         const hit = findScript(merged, id)
         if (!hit) return
         const blob = new Blob([content], { type: TEXT_ASSET_MIME })
         void putAssetBlob(hit.pkg.id, fileName, blob).then(() => {
-          const withFolder = ensureAssetFolder(
+          const result = registerAsset(
             workspaceRef.current,
-            hit.pkg.id,
-            parentDirOf(fileName),
-          )
-          const result = upsertAssetMeta(
-            withFolder,
             hit.pkg.id,
             fileName,
             TEXT_ASSET_MIME,
@@ -485,6 +600,8 @@ export const ScriptWorkspace = forwardRef<
       unsubscribe = map.subscribe(() => textBindingRef.current?.refresh())
       map.load()
       textBindingRef.current?.refresh()
+      // 文本已加载好：让"读 ref 的内容"（录音棚的台词）拿到它，见 setTextRuntime 的注释
+      setTextRuntime(map)
     })()
 
     return () => {
@@ -546,11 +663,19 @@ export const ScriptWorkspace = forwardRef<
     voiceLibraryRef.current?.notifyAssetsChanged()
   }, [voiceAssetSignature])
 
-  /** 打开音频选择器：内容全由音频映射管理推导，这里只记键与那个库实例 */
-  const openVoicePicker = (key: string) => {
-    const library = voiceLibraryRef.current
-    if (!library) return
-    setVoicePicker({ key, library })
+  /**
+   * 编辑某个键的音频：**打开录音棚**，并把这个键选成当前目标。
+   *
+   * 以前这里开的是"音频选择器"弹窗；它的全部职责（挑工程里的资产、拖外部文件进来、
+   * 录音、TTS 合成）录音棚都有，而且录音棚还能顺带预览与确认，所以那个弹窗被删了 ——
+   * 编辑器里所有"要给这个键配一条音频"的入口都汇到这一条路。
+   */
+  const editVoiceInStudio = (key: string) => {
+    setStudioSelection(orderKeys([key]))
+    // 固定音频是"手上有文件 / 挑了资产"的那条路；录音与 TTS 在棚里随时可切
+    setStudioSourceMode('fixed')
+    setStudioMode('single')
+    setStudioOpen(true)
   }
 
   /**
@@ -581,15 +706,13 @@ export const ScriptWorkspace = forwardRef<
         await putAssetBlob(packageId, path, blob)
         onProgress?.(0.4)
 
-        const parent = path.includes('/')
-          ? path.slice(0, path.lastIndexOf('/'))
-          : 'assets'
-        const withFolder = ensureAssetFolder(
+        const result = registerAsset(
           workspaceRef.current,
           packageId,
-          parent,
+          path,
+          mime,
+          blob.size,
         )
-        const result = upsertAssetMeta(withFolder, packageId, path, mime, blob.size)
         if (result) commitWorkspace(result.workspace)
         onProgress?.(0.6)
 
@@ -615,56 +738,122 @@ export const ScriptWorkspace = forwardRef<
   }
 
   /**
-   * 跑一次「音频导入」：源 = 资源管理器里选中的资产，或拖进来的外部文件；
-   * 目标 = 该键的对等文件。进度条由 voiceImport 状态驱动；中断（点 ×）返回 interrupted。
+   * 跑一次「音频导入」：源 = 资源管理器里选中的资产，或拖进来的外部文件 / 刚录下的字节；
+   * 目标 = 一个或多个键的对等文件。进度条由 voiceImport 状态驱动；中断（点 ×）返回 interrupted。
+   *
+   * 多个键时**串行**跑同一个工作流（源字节只读一次，但每个目标都要独立落盘），
+   * 总进度按 `(已完成的键 + 当前键的进度) / 键数` 聚合 —— 进度条不会在第二个键上跳回 0。
+   *
+   * **返回这次导入的 promise。** 批量 TTS 要一个键一个键地"先合成、再导入"，
+   * 不 await 就会同时跑起多个导入 —— 它们共用同一份进度与取消引用，进度会跳、
+   * 取消会乱。别的地方不关心返回值，照旧不等。
    */
-  const runVoiceImportFor = (key: string, source: VoiceImportSource) => {
+  const runVoiceImportForKeys = (keys: string[], source: VoiceImportSource) => {
     const library = voiceLibraryRef.current
     const packageId = activePackage()?.id
-    if (!library || !packageId) return
-    const targetPath = library.targetPathOf(key)
+    if (!library || !packageId || keys.length === 0) return Promise.resolve()
+
+    const targets = keys.map((key) => library.targetPathOf(key))
     setVoiceImportMessage(null)
     setVoiceImport({
       sourceLabel: formatVoiceImportSourceLabel(source),
-      targetPath,
+      targetPath:
+        targets.length === 1
+          ? targets[0]
+          : `${targets[0]}（共 ${targets.length} 个目标）`,
       progress: 0,
       phase: 'process',
     })
 
-    const run = runVoiceImport(
-      { source, targetPath },
-      createVoiceImportIo(packageId),
-      createVoiceProcessor(),
-      {
-        onPhase: (phase) =>
-          setVoiceImport((current) => (current ? { ...current, phase } : current)),
-        onProgress: (progress) =>
-          setVoiceImport((current) =>
-            current ? { ...current, progress } : current,
-          ),
-        // 工作流在结果落定前发出这条：先弹浮窗，稍后状态栏再留一条可点掉的记录
-        onNotice: (notice) =>
-          setVoiceToast({ id: Date.now(), message: notice.message, ok: notice.ok }),
-      },
-    )
-    voiceImportCancelRef.current = run.cancel
+    const cancelled = { value: false }
+    voiceImportCancelRef.current = () => {
+      cancelled.value = true
+    }
 
-    void run.result.then((report) => {
+    const io = createVoiceImportIo(packageId)
+    const processor = createVoiceProcessor()
+
+    return (async () => {
+      let ok = 0
+      let failed = 0
+      let lastMessage: string = VOICE_IMPORT_RESULT.interrupted
+      let lastDetail: string | undefined
+
+      for (let index = 0; index < targets.length; index += 1) {
+        if (cancelled.value) {
+          failed += targets.length - index
+          break
+        }
+        const run = runVoiceImport(
+          { source, targetPath: targets[index] },
+          io,
+          processor,
+          {
+            onPhase: (phase) =>
+              setVoiceImport((current) =>
+                current ? { ...current, phase } : current,
+              ),
+            onProgress: (ratio) =>
+              setVoiceImport((current) =>
+                current
+                  ? {
+                      ...current,
+                      progress: (index + Math.max(0, Math.min(1, ratio))) /
+                        targets.length,
+                    }
+                  : current,
+              ),
+          },
+        )
+        const report = await run.result
+        lastMessage = report.message
+        lastDetail = report.detail
+        if (report.ok) {
+          ok += 1
+          // 落成了 `.ogg`：把同基名的 `.ref` 清掉 —— 一个键只该有一个来源
+          // （否则解析按 `.ogg` 优先，用户会以为刚写的引用还在生效）
+          voiceOps().clearPeerBindingOf(keys[index], 'file')
+        } else {
+          failed += 1
+        }
+        if (report.outcome === 'interrupted') {
+          failed += targets.length - index - 1
+          break
+        }
+      }
+
       voiceImportCancelRef.current = null
       setVoiceImport(null)
-      // 常量枚举消息原样展示；技术细节只进控制台
+
+      const message =
+        targets.length === 1
+          ? lastMessage
+          : failed === 0
+            ? VOICE_IMPORT_RESULT.success
+            : ok === 0
+              ? lastMessage
+              : `${ok} 个已导入，${failed} 个失败（${lastMessage}）`
       setVoiceImportMessage({
-        message: report.message,
-        ok: report.ok,
+        message,
+        ok: failed === 0,
         // 没绑定工程文件夹时，导入只会写进应用内资源（IndexedDB）—— 说清楚，
         // 免得看到"成功"却在磁盘上找不到文件
         hint: projectRef.current?.handle
-          ? undefined          : '未绑定工程文件夹，只写入了应用内资源',
+          ? targets.length > 1
+            ? `共 ${targets.length} 个键`
+            : undefined
+          : '未绑定工程文件夹，只写入了应用内资源',
       })
-      if (!report.ok && report.detail) {
-        console.warn('[hanshu] 音频导入失败：', report.detail)
+      setVoiceToast({ id: Date.now(), message, ok: failed === 0 })
+      if (failed > 0 && lastDetail) {
+        console.warn('[hanshu] 音频导入失败：', lastDetail)
       }
-    })
+    })()
+  }
+
+  /** 单键导入（右键菜单、拖到键名上、录音棚的确认导入都走这条） */
+  const runVoiceImportFor = (key: string, source: VoiceImportSource) => {
+    runVoiceImportForKeys([key], source)
   }
 
   /** 把一个外部文件读成「文件源」（拖到键名上导入音频用；外部文件拿不到路径） */
@@ -759,54 +948,560 @@ export const ScriptWorkspace = forwardRef<
   }
 
   /**
-   * 删除某个键的配音（右键菜单 Delete Voice）。
+   * 配音资产的写 / 删 / 引用 —— 领域逻辑住在 `i18n/voiceOps.ts`，
+   * 这里只把组件才做得到的那几件事注进去（工作区读写、活动包、工程句柄、提示）。
    *
-   * 动作与删除资产一致（元数据 + blob），但**必须连磁盘那一份一起删**：
-   * 配音是写穿到工程目录的，只删应用内的话，下次打开工程又会被读回来。
-   *
-   * 两种确认文案：正常情况就是删这个文件；若它是靠"同名回落"从别的目录解析到的，
-   * 说明可能有其它脚本的键也在用它，得说清楚影响面。
+   * **在调用时才建，建完不缓存**：`createVoiceOps` 的宿主里到处是 `ref.current`
+   * 与 `Date.now()`，直接写在渲染体里会被 React 规则判成"渲染期访问 ref / 调用非纯函数"，
+   * 而它本来就只在事件处理里用得到。每次现建几个闭包对象换来的是宿主状态**必然**最新，
+   * 不会跨工程切换后还拿着旧句柄。
    */
-  const handleDeleteVoice = (key: string) => {
-    const library = voiceLibraryRef.current
-    const pkg = activePackage()
-    if (!library || !pkg) return
-    const status = library.statusOf(key)
-    const path = status.path
-    if (!path) return
+  const voiceOps = (): VoiceOps =>
+    createVoiceOps({
+      getWorkspace: () => workspaceRef.current,
+      commit: (next) => commitWorkspace(next),
+      activePackage: () => {
+        const pkg = activePackage()
+        return pkg ? { id: pkg.id, assets: pkg.assets } : null
+      },
+      projectHandle: () => projectRef.current?.handle ?? null,
+      library: () => voiceLibraryRef.current,
+      refresh: () => {
+        voiceLibraryRef.current?.notifyAssetsChanged()
+        textBindingRef.current?.refreshVoice()
+      },
+      notify: (message, ok) => setVoiceToast({ id: Date.now(), message, ok }),
+    })
 
-    const targetPath = library.targetPathOf(key)
-    if (path.toLowerCase() === targetPath.toLowerCase()) {
-      if (!window.confirm(`删除配音「${path}」？`)) return
-    } else if (
-      !window.confirm(
-        `该配音来自其它目录：${path}\n删除会影响所有引用它的键，确定删除？`,
+  // ——————————————————————————————————————————————————————————————
+  //  录音棚接线
+  // ——————————————————————————————————————————————————————————————
+
+  /** 按正文顺序整理选中集合（划框 / 多选给出的顺序不一定和正文一致） */
+  const orderKeys = (keys: string[]): string[] => {
+    const order = textBindingRef.current?.listKeys() ?? []
+    const rank = new Map(order.map((key, index) => [key, index]))
+    return [...new Set(keys.map((key) => key.trim().toLowerCase()))]
+      .filter(Boolean)
+      .sort(
+        (a, b) =>
+          (rank.get(a) ?? Number.MAX_SAFE_INTEGER) -
+          (rank.get(b) ?? Number.MAX_SAFE_INTEGER),
       )
-    ) {
+  }
+
+  /**
+   * 编辑器里左键点了键名。
+   *
+   * 语义按需求写死：**左键 = 单选配音**（把录音棚切到单选模式并只留这一个键），
+   * **按住 Shift / Ctrl / Cmd = 多选**（切到批量配音并把这个键追加进去）。
+   */
+  const handleUnitSelect = (request: { key: string; additive: boolean }) => {
+    setStudioMode(request.additive ? 'batch' : 'single')
+    setStudioSelection((prev) =>
+      orderKeys(request.additive ? [...prev, request.key] : [request.key]),
+    )
+  }
+
+  /** 编辑器里划框：keys 为空 = 点了空白处（清空选择）。Ctrl+A 走同一条 */
+  const handleMarquee = useCallback(
+    (request: { keys: string[]; additive: boolean }) => {
+      setStudioSelection((prev) => {
+        const next = orderKeys(
+          request.additive ? [...prev, ...request.keys] : request.keys,
+        )
+        // 框到多个键就是批量；只框到一个键按单选处理（等价于点了一下）
+        if (request.additive || next.length > 1) setStudioMode('batch')
+        else if (next.length === 1) setStudioMode('single')
+        return next
+      })
+    },
+    [],
+  )
+
+  /** 录音棚底部「确认导入」：把这份音频写进这些键的对等文件 */
+  const handleStudioImport = (keys: string[], source: VoiceImportSource) => {
+    runVoiceImportForKeys(orderKeys(keys), source)
+  }
+
+  /**
+   * 录音棚：「引用资产」这种配音方式 —— 把这些键的配音设成引用。
+   *
+   * 与"确认导入"的区别只有一件事：**不转码、不搬字节**。被引用的那份音频留在原处，
+   * 键的对等位置上写一个指向它的 `.ref`。所以同一份音频给多个键用也不会多出拷贝。
+   */
+  const handleStudioReference = (keys: string[], targetPath: string) => {
+    voiceOps().referenceForKeys(orderKeys(keys), targetPath)
+  }
+
+  // ===== 录音棚的 TTS =====
+  //
+  // 两级选择（配音方案 → 语言方案）是**强制**的：缺任一级 `canGenerate` 就是 false，
+  // 按钮不可用（规范 §7.4）。生成出来的字节交给 `handleStudioImport` ——
+  // 与拖进来的文件完全同一条路，转码、落盘、试听都不需要第二份实现。
+
+  const ttsPresets = useMemo(() => resolvePresets().presets, [])
+  const ttsCredentialStore = useMemo(
+    () => createCredentialResolver({ backend: createLocalBackend() }),
+    [],
+  )
+  const ttsTransport = useMemo(() => createFetchTransport(), [])
+
+  const [ttsPlanName, setTtsPlanName] = useState<string | null>(null)
+  const [ttsLocale, setTtsLocale] = useState<string | null>(null)
+  const [ttsStatus, setTtsStatus] = useState<StudioTtsStatus>({ kind: 'idle' })
+  /** 一次合成的分块进度。长文本会切成好几块，没有它就只能干等 */
+  const [ttsProgress, setTtsProgress] = useState<{ ratio: number; label: string } | null>(null)
+  const [showTtsCredentials, setShowTtsCredentials] = useState(false)
+  /**
+   * 正在跑的那一次批量生成。
+   *
+   * 它同时是"生成中"这个状态本身。**必须是 state，不能只在 ref 上判断** ——
+   * ref 变化不会触发重渲染，按钮就会一直停在"可点"的样子。
+   */
+  const [ttsRunning, setTtsRunning] = useState(false)
+  /** 当前那一次生成的中断手柄。只在事件处理器与异步流程里读，不在渲染期读 */
+  const ttsAbortRef = useRef<AbortController | null>(null)
+
+  /** 中断当前生成。已经合成好的那些仍会照常导入（见 `runStudioTts`） */
+  function cancelStudioTts() {
+    ttsAbortRef.current?.abort()
+  }
+
+  const ttsFiles = useMemo(
+    () =>
+      workspace.packages
+        .flatMap((pkg) => pkg.scripts)
+        .filter((script) => script.name.toLowerCase().endsWith('.tts')),
+    [workspace],
+  )
+
+  /** 工程里的服务定义 → 生效值（与配音方案工作区同一套推导） */
+  const ttsServices = useMemo(() => {
+    const map = new Map<string, ResolvedService>()
+    for (const pkg of workspace.packages) {
+      for (const script of pkg.scripts) {
+        if (!script.name.toLowerCase().endsWith('.ttsservice')) continue
+        const id = script.name.slice(0, script.name.length - '.ttsservice'.length).trim()
+        if (!id) continue
+        const read = readServiceDefinition(script.content, id, ttsPresets)
+        if (read.ok) map.set(id, resolveService(read.value, id, ttsPresets))
+      }
+    }
+    return map
+  }, [workspace, ttsPresets])
+
+  /** 这个工程用到的 API KEY 引用 —— 本地缓存据此列出"还缺哪几个" */
+  const ttsRequiredRefs = useMemo(
+    () => [...ttsServices.values()].flatMap((service) => service.auth.map((f) => f.value)),
+    [ttsServices],
+  )
+
+  /** 工程的语言表 —— 配音方案的语言从它里面挑，而不是手打一个工程里没有的 */
+  const ttsProjectLocales = useMemo(
+    () =>
+      listLocalesOf(workspace)
+        .map((item) => item.locale)
+        .sort((a, b) => a.localeCompare(b)),
+    [workspace],
+  )
+
+  /**
+   * 新建一个服务定义文件。**只建，不切换。**
+   *
+   * 调用方（方案设置页）紧接着要把新 id 写进方案，而那一步写的是"当前活动文件" ——
+   * 这里如果顺手切过去，方案内容就会写进那个新服务里。
+   */
+  const createTtsService = (): string | null => {
+    const raw = window.prompt('新服务的名字（也就是文件名，只用字母、数字、- 和 _）', 'my-service')
+    if (raw === null) return null
+    const id = raw.trim()
+    if (!isValidServiceId(id)) {
+      window.alert('这个名字不行 —— 只用字母、数字、- 和 _，且不能为空')
+      return null
+    }
+
+    // 新建**不切**文件，但当前那份的正文要先并回去：否则这一段写回要等自动记忆的定时器
+    const current = flushEditorInto(workspaceRef.current)
+    const fileName = serviceFileName(id)
+    if (findScriptByName(current, fileName)) {
+      window.alert(`「${fileName}」已经存在`)
+      return null
+    }
+    const pkg = findScript(current, current.activeScriptId)?.pkg ?? current.packages[0]
+    if (!pkg) return null
+
+    // 建成**能通过结构校验**的样子 —— 空壳会在方案的服务下拉里都出不来，
+    // 而那正是新建之后最需要看到它的地方
+    const script = createScript(
+      fileName,
+      stringifyServiceDefinition(
+        blankServiceDefinition(id, ttsPresets[0]?.id ?? 'template', ttsPresets),
+      ),
+    )
+    commitWorkspace({
+      ...current,
+      packages: current.packages.map((item) =>
+        item.id === pkg.id
+          ? { ...item, collapsed: false, scripts: [...item.scripts, script] }
+          : item,
+      ),
+    })
+    return id
+  }
+
+  /** 打开工程里的某个文件（按文件名）。先把当前正文落定再切，否则刚写的那笔会丢 */
+  const openScriptNamed = (fileName: string) => {
+    const hit = findScriptByName(workspaceRef.current, fileName)
+    if (!hit) return
+    /*
+     * 落盘与切换必须用**同一个 base**：先 `persistActiveContent` 再拿切换前的快照去
+     * `commitWorkspace`，第二笔会把第一笔的结果覆盖回去 —— 刚写的那一份又变回旧正文。
+     */
+    const base = flushEditorInto(workspaceRef.current)
+    commitWorkspace({ ...base, activeScriptId: hit.script.id, activeAssetId: null })
+    loadEditorContent(hit.script.id, hit.script.content, hit.script.updatedAt)
+  }
+
+  /** 打开某个服务定义的设置页 */
+  const openTtsService = (id: string) => openScriptNamed(serviceFileName(id))
+
+  /**
+   * 新建一份配音方案（`meta/voice/<说话人>.tts`）。**只建，不切换编辑器。**
+   *
+   * 从录音棚调用：建完就选中它，缺什么由那一格说出来。切走编辑器会顺带把录音棚
+   * 变成"当前文件不支持配音"，为了看一眼新文件把工作台关掉不划算。
+   *
+   * 建出来就带**一条语言**（工程语言表的第一条）与当前第一个服务 ——
+   * 空 `voices` 会是一份结构校验不通过的文件，用户打开它还得先猜要加什么。
+   */
+  const createTtsPlan = (): string | null => {
+    // 同 `createTtsService`：不切文件，但先把当前那份的正文并回去
+    const current = flushEditorInto(workspaceRef.current)
+    const taken = new Set(
+      current.packages
+        .flatMap((pkg) => pkg.scripts)
+        .map((script) => script.name.toLowerCase()),
+    )
+    // 默认名：剧本里第一个还没有方案的说话人
+    const suggested =
+      rolesRef.current
+        .map((role) => role.trim())
+        .find((role) => role && !taken.has(planFileName(role).toLowerCase())) ?? ''
+
+    const raw = window.prompt('新配音方案的说话人名（文件名就是说话人的名字）', suggested)
+    if (raw === null) return null
+    const character = raw.trim()
+    if (!isValidServiceId(character)) {
+      window.alert('这个名字不行 —— 不能为空，也不能含 \\ / : * ? " < > |')
+      return null
+    }
+
+    const fileName = planFileName(character)
+    if (findScriptByName(current, fileName)) {
+      window.alert(`「${fileName}」已经存在`)
+      return null
+    }
+    const pkg = findScript(current, current.activeScriptId)?.pkg ?? current.packages[0]
+    if (!pkg) return null
+
+    // 语言就用**编辑器当前正在编辑的那一种**：那一份 `.lang` 才是合成的文本来源，
+    // 方案的语言与它不一致时录音棚会拦着不让生成
+    const firstLocale = isValidLocaleTag(locale) ? locale : (ttsProjectLocales[0] ?? null)
+    const firstService = [...ttsServices.keys()][0] ?? ''
+    const plan: VoicePlan = {
+      version: 1,
+      // 音色**不写空串**：缺就是缺，少一个键比多一个空值干净
+      voices: firstLocale ? { [firstLocale]: { service: firstService, extra: {} } } : {},
+      extra: {},
+    }
+    const script = createScript(fileName, stringifyVoicePlan(plan))
+    commitWorkspace({
+      ...current,
+      packages: current.packages.map((item) =>
+        item.id === pkg.id
+          ? { ...item, collapsed: false, scripts: [...item.scripts, script] }
+          : item,
+      ),
+    })
+    // 选中它 —— 录音棚那一格马上就能告诉你它还缺什么
+    setTtsPlanName(fileName)
+    return fileName
+  }
+
+  /**
+   * 批量生成配音：逐键「先合成、再导入」。
+   *
+   * 三件事在这里定死，改动前先看清楚：
+   *
+   * 1. **串行**。导入共用一份进度与取消引用（见 `runVoiceImportForKeys` 的注释），
+   *    并发跑会互相覆盖进度、取消也取消不干净。
+   * 2. **译文取自当前打开的语言文件**，所以选的语音方案语言必须与它一致 ——
+   *    不一致就**不生成**（见下面的 `textLocale`）。拿中文译文配日语音色是
+   *    "成功了一条错误的配音"，比失败难发现得多。
+   * 3. **中断要能立刻停**：`AbortController` 传给 `synthesize`，
+   *    已经合成出来的那些仍然照常导入 —— 半途丢掉用户等了几分钟的成果没有道理。
+   */
+  const runStudioTts = async (
+    keys: string[],
+    planName: string | null,
+    locale: string | null,
+  ) => {
+    const targets = orderKeys(keys)
+    if (!planName || !locale || targets.length === 0) return
+    // 已经有一次在跑：再来一次会跑起第二条循环，而导入的进度/取消是共用的
+    if (ttsAbortRef.current) return
+
+    const file = ttsFiles.find((script) => script.name === planName)
+    const parsed = file ? readVoicePlan(file.content, file.name) : null
+    if (!file || !parsed?.ok) {
+      setTtsStatus({
+        kind: 'error',
+        failureKind: 'config',
+        message: '这份配音方案读不出来',
+        hint: '打开这个 .tts 看一眼，或用「以文本方式编辑」修好它',
+      })
       return
     }
 
-    // 正在播就先停掉，否则播的是已经被删掉的音频
-    if (status.state === 'playing') library.togglePlay(key)
+    const controller = new AbortController()
+    ttsAbortRef.current = controller
+    setTtsRunning(true)
+    let done = 0
 
-    const asset = pkg.assets.find(
-      (item) => item.path.toLowerCase() === path.toLowerCase(),
-    )
-    if (asset) {
-      commitWorkspace(removeAssetMeta(workspaceRef.current, asset.id))
-      void deleteAssetBlob(pkg.id, asset.path)
-    }
-    // 磁盘副本（含可能残留的 .new）：删掉才算真的删了
-    const sink = createVoiceDiskSink(
-      projectRef.current?.handle ?? null,
-      (failedPath, error) => {
-        if (error) {
-          console.warn('[hanshu] 没能删掉磁盘上的配音文件：', failedPath, error)
+    try {
+      for (const [index, key] of targets.entries()) {
+        if (controller.signal.aborted) break
+
+        setTtsProgress(null)
+        setTtsStatus({
+          kind: 'busy',
+          message: `正在生成 ${index + 1}/${targets.length} —— ${key}`,
+        })
+
+        // 没有译文的键不该拿去合成：那会生成一条念着空白的配音
+        const text = textMapRef.current?.get(key) ?? null
+        if (!text) {
+          setTtsStatus({
+            kind: 'error',
+            failureKind: 'config',
+            message: `键「${key}」还没有「${locale}」的译文`,
+            hint: '按顺序来：先写译文，再生成配音',
+          })
+          return
         }
-      },
-    )
-    void sink.remove(path)
+
+        const result = await synthesizePlanLocale(
+          { plan: parsed.value, locale, text, services: ttsServices },
+          {
+            transport: ttsTransport,
+            credential: ttsCredentialStore.resolve,
+            signal: controller.signal,
+            // 进度按"已完成几个键 + 当前键的第几块"聚合，条不会在第二个键上跳回 0
+            onProgress: (ratio, chunk) =>
+              setTtsProgress({
+                ratio: (index + ratio) / targets.length,
+                label:
+                  chunk.total > 1
+                    ? `${key} · 第 ${chunk.index}/${chunk.total} 段`
+                    : `${key} · 共 ${targets.length} 个键`,
+              }),
+          },
+        )
+
+        if (!result.ok) {
+          // 用户按了「停止生成」：不算错误，说清已经完成了多少
+          if (controller.signal.aborted) break
+          // 失败分类直接透出去：缺 API KEY、CORS、厂商拒绝各有各的下一步
+          setTtsStatus({
+            kind: 'error',
+            message: result.failure.message,
+            hint: result.failure.hint,
+            failureKind: result.failure.kind,
+          })
+          return
+        }
+
+        // 等这一次导入落定再合成下一个：导入共用一份进度与取消引用，并发跑会互相踩
+        await runVoiceImportForKeys([key], {
+          kind: 'file',
+          name: `${key}.wav`,
+          bytes: result.audio,
+        })
+        done += 1
+      }
+
+      if (controller.signal.aborted) {
+        setTtsStatus({
+          kind: 'done',
+          message:
+            done > 0
+              ? `已停止 —— 停止前完成的 ${done} 条已经导入`
+              : '已停止 —— 这一批什么都没生成',
+        })
+        return
+      }
+
+      setTtsStatus({ kind: 'done', message: `已生成并导入 ${done} 条` })
+    } finally {
+      ttsAbortRef.current = null
+      setTtsRunning(false)
+      setTtsProgress(null)
+    }
   }
+
+  /** 录音棚那一格要的东西。每次渲染重算 —— 解析一份小 JSON 比维护依赖表便宜 */
+  const studioTts = (() => {
+    const plans = ttsFiles
+      .map((script) => ({
+        name: script.name,
+        character: characterNameOfFileName(script.name) ?? script.name,
+      }))
+      .sort((a, b) => a.character.localeCompare(b.character, 'zh-CN'))
+
+    const plan = plans.find((item) => item.name === ttsPlanName) ?? plans[0] ?? null
+    const content = plan ? (ttsFiles.find((s) => s.name === plan.name)?.content ?? '') : ''
+    const parsed = plan ? readVoicePlan(content, plan.name) : null
+    /*
+     * 这份方案配了哪些语言，第②级就只有哪些 —— 选不到，而不是报错。
+     *
+     * **不看 `parsed.ok`**：一条只差音色 id 的条目仍然是"配了的语言"，把它藏起来
+     * 只会让人以为这份文件是空的。能不能生成另由 `planBlockedReason` 把关。
+     */
+    const locales = parsed ? Object.keys(parsed.value.voices).sort() : []
+    /**
+     * 第一条错误。面板直接用它说明"为什么还不能生成" —— 用的是校验器的原话，
+     * 不再自己猜是缺音色、缺服务，还是旧文件留了个废弃键。
+     */
+    const planBlockedReason =
+      parsed?.issues.find((issue) => issue.level === 'error')?.message ?? null
+    const locale = ttsLocale && locales.includes(ttsLocale) ? ttsLocale : (locales[0] ?? null)
+
+    /**
+     * 译文来自哪个语言，由**录音棚那一边自己判定** —— 它拿着的 `library.locale`
+     * 就是编辑器里那份 `.lang` 的语言。合成用的文本与语音方案的语言不一致时
+     * 不该生成（那是"用 A 语言的台词配 B 语言的音色"），而判据在录音棚手上，
+     * 所以这里不重复一遍：见 `RecordingStudio` 的 `localeMatchesText`。
+     */
+    return {
+      plans,
+      planName: plan?.name ?? null,
+      locales,
+      locale,
+      planBlockedReason,
+      status: ttsStatus,
+      busy: ttsRunning,
+      progress: ttsProgress,
+      canGenerate: Boolean(plan && locale && !planBlockedReason),
+      onPlanChange: setTtsPlanName,
+      onLocaleChange: setTtsLocale,
+      onOpenCredentials: () => setShowTtsCredentials(true),
+      onCreatePlan: () => {
+        createTtsPlan()
+      },
+      onOpenPlan: plan
+        ? () => {
+            openScriptNamed(plan.name)
+          }
+        : undefined,
+      onCancel: cancelStudioTts,
+      onGenerate: (keys: string[]) => {
+        void runStudioTts(keys, plan?.name ?? null, locale)
+      },
+    }
+  })()
+
+  /**
+   * 当前打开的是不是 TTS 的那两类文件。
+   *
+   * 判据是**编辑器里打开的文件**，不是工作区 —— `.tts` / `.ttsservice` 就在常规剧本
+   * 编辑器里编辑，下面这一格只在打开它们时出现。换成别的文件它自动消失。
+   */
+  const ttsFileKind = viewingAsset ? null : ttsFileKindOf(titleName)
+
+  /**
+   * 有谁选了"以文本方式编辑"。
+   *
+   * 记的是**文件名**而不是布尔值 —— 换到别的文件自然就不再匹配，于是自动回到表单，
+   * 不需要"换文件时重置一下"的 effect。
+   */
+  const [ttsRawEditFor, setTtsRawEditFor] = useState<string | null>(null)
+
+  /**
+   * 打开这两类文件时一律给设置页。
+   *
+   * **内容无效也算数** —— 读不出设置就从零填：读取器失败时给的本来就是一份空定义
+   * (`toServiceDefinition(null)`)，表单照着它渲染即可。早先的写法是"读不出来就
+   * 退回文本编辑"，那等于惩罚用户打开了一个坏文件。文本编辑仍然从设置页够得着。
+   */
+  const ttsUseForm = Boolean(ttsFileKind && ttsRawEditFor !== titleName)
+
+  /**
+   * 由表单写回文件：与手改走同一条路 —— 先回编辑器正文，再照常落盘。
+   *
+   * 这里**不动归属**：表单显示的就是当前打开的那份文件，正文还属于它。
+   * （表单确实是靠 `titleName` 决定显示谁的，`titleName` 又来自 `activeScriptId`。）
+   */
+  const handleTtsRewrite = (next: string) => {
+    setValue(next)
+    valueRef.current = next
+    editorRef.current?.setValue(next)
+    persistActiveContent(next)
+  }
+
+  const toggleStudio = () => {
+    setStudioOpen((open) => {
+      if (open) {
+        // 关掉时顺手清空选中：下次打开不该还挂着上次的键
+        setStudioSelection([])
+        setStudioMode('single')
+      }
+      return !open
+    })
+  }
+
+  // 录音棚开关 → 编辑器进入 / 退出"键名选择"模式（常规交互被禁用）
+  useEffect(() => {
+    textBindingRef.current?.setStudioMode(studioOpen)
+  }, [studioOpen, textBindingSeq])
+
+  /**
+   * 录音棚模式下 Ctrl / Cmd + A = **选中全部键名**。
+   *
+   * 挂在 window 上而不是编辑器上：录音棚模式会把编辑器**失焦**（正文只读，常规编辑
+   * 交互整体让位），编辑器自己收不到按键。输入框里的 Ctrl+A 是它自己的"全选"，
+   * 一律放行。选择语义与划框完全一致（走同一条 `handleMarquee`），所以它是"框住了
+   * 所有键"，单选 / 批量的切换规则也一致。
+   */
+  useEffect(() => {
+    if (!studioOpen) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!isActive || event.altKey) return
+      if (!(event.ctrlKey || event.metaKey)) return
+      if (event.key.toLowerCase() !== 'a') return
+      const target = event.target as HTMLElement | null
+      if (target?.closest?.('input, textarea, select, [contenteditable="true"]')) {
+        return
+      }
+      const keys = textBindingRef.current?.listKeys() ?? []
+      if (keys.length === 0) return
+      event.preventDefault()
+      handleMarquee({ keys, additive: false })
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [studioOpen, isActive, handleMarquee])
+
+  // 选中集合 → 覆盖层高亮
+  useEffect(() => {
+    textBindingRef.current?.setStudioSelection(studioSelection)
+  }, [studioSelection, textBindingSeq])
+
+  // 换文件（含换资产）时选中集合作废：那些键已经不在正文里了
+  useEffect(() => {
+    setStudioSelection([])
+  }, [titleName])
+
 
   /**
    * 上级容器的右键菜单条目。**可扩展**：往这里加一条就多一个功能；
@@ -826,14 +1521,14 @@ export const ScriptWorkspace = forwardRef<
     {
       id: 'edit-voice',
       label: 'Edit Voice',
-      onSelect: () => openVoicePicker(key),
+      onSelect: () => editVoiceInStudio(key),
     },
     {
       id: 'delete-voice',
       label: 'Delete Voice',
       // 没有配音文件（缺失态）就没什么可删的
       disabled: (voiceRuntime?.statusOf(key).path ?? null) == null,
-      onSelect: () => handleDeleteVoice(key),
+      onSelect: () => voiceOps().confirmAndDeleteVoice(key),
     },
     {
       id: 'delete',
@@ -861,11 +1556,8 @@ export const ScriptWorkspace = forwardRef<
     commitWorkspace(next)
     const hit = findScript(next, next.activeScriptId)
     const text = hit?.script.content ?? ''
-    setValue(text)
-    valueRef.current = text
-    editorRef.current?.setValue(text)
-    setSavedAt(hit?.script.updatedAt ?? Date.now())
-    setDiskSavedAt(Date.now())
+    loadEditorContent(hit?.script.id ?? null, text, hit?.script.updatedAt ?? null)
+    setDiskSavedAt(nowStamp())
     setAgentDiffs([])
     setDiffOpen(false)
     if (hit && isHanshuFile(hit.script.name)) {
@@ -884,14 +1576,11 @@ export const ScriptWorkspace = forwardRef<
     if (!bound) return
     setProjectBusy(true)
     try {
-      const id = activeIdRef.current
-      let ws = workspaceRef.current
-      if (id) {
-        ws = updateScriptContent(ws, id, valueRef.current)
-        workspaceRef.current = ws
-        setWorkspace(ws)
-        saveWorkspace(ws)
-      }
+      // 写盘前把编辑器那份正文并回**它属于的**文件：绑定目录的写入不该动别的文件
+      const ws = flushEditorInto(workspaceRef.current)
+      workspaceRef.current = ws
+      setWorkspace(ws)
+      saveWorkspace(ws)
       const saved = await saveProjectToDirectory(bound, ws)
       projectRef.current = saved
       setProject(saved)
@@ -902,20 +1591,32 @@ export const ScriptWorkspace = forwardRef<
     }
   }
 
+  /**
+   * 写回"当前这份正文"。**写入前核对归属**：正文不属于当前活动文件时拒写。
+   *
+   * 拒写会丢掉这一次自动记忆（下一次输入会再来一次），但比起把 A 的正文写进 B，
+   * 这是唯一可接受的失手方式。真出现了就说明还有一条换文件的路径没走
+   * `loadEditorContent` —— 控制台那条 warn 就是留给它的线索。
+   */
   const persistActiveContent = (text: string) => {
     const id = activeIdRef.current
     if (!id) return
-    const next = updateScriptContent(workspaceRef.current, id, text)
-    commitWorkspace(next)
-    setSavedAt(Date.now())
+    if (bufferOwnerRef.current !== id) {
+      console.warn('[hanshu] 跳过一次正文写回：编辑器正文不属于当前文件', {
+        owner: bufferOwnerRef.current,
+        active: id,
+      })
+      return
+    }
+    if (writeScriptContent(id, text)) setSavedAt(nowStamp())
   }
 
   const persistNow = () => {
     const text = valueRef.current
-    const id = activeIdRef.current
+    // 落点用正文的归属：Ctrl+S 保存的是"你正在看的那份"，它属于谁就写给谁
+    const id = bufferOwnerRef.current ?? activeIdRef.current
     if (!id) return
-    const name =
-      findScript(workspaceRef.current, id)?.script.name ?? ''
+    const name = findScript(workspaceRef.current, id)?.script.name ?? ''
     if (isHanshuFile(name)) syncRolesFromText(text)
 
     // 手动保存前记一版历史（.hs 尤其重要）
@@ -988,13 +1689,10 @@ export const ScriptWorkspace = forwardRef<
       )
       return
     }
-    // 先落本地缓存，再写盘
-    const text = valueRef.current
-    const id = activeIdRef.current
-    if (id) {
-      const next = updateScriptContent(workspaceRef.current, id, text)
-      commitWorkspace(next)
-      setSavedAt(Date.now())
+    // 先落本地缓存，再写盘 —— 并回编辑器正文**属于的**那一份
+    if (bufferOwnerRef.current) {
+      commitWorkspace(flushEditorInto(workspaceRef.current))
+      setSavedAt(nowStamp())
     }
     setProjectBusy(true)
     try {
@@ -1026,10 +1724,7 @@ export const ScriptWorkspace = forwardRef<
       return
     }
 
-    let base = workspaceRef.current
-    if (activeIdRef.current) {
-      base = updateScriptContent(base, activeIdRef.current, valueRef.current)
-    }
+    const base = flushEditorInto(workspaceRef.current)
     const hit = findScript(base, scriptId)
     if (!hit) return
 
@@ -1038,10 +1733,7 @@ export const ScriptWorkspace = forwardRef<
       activeScriptId: scriptId,
       activeAssetId: null,
     })
-    setValue(hit.script.content)
-    valueRef.current = hit.script.content
-    editorRef.current?.setValue(hit.script.content)
-    setSavedAt(hit.script.updatedAt)
+    loadEditorContent(hit.script.id, hit.script.content, hit.script.updatedAt)
     setRoles(createDefaultRoles())
   }
 
@@ -1049,12 +1741,8 @@ export const ScriptWorkspace = forwardRef<
     const hit = findAsset(workspaceRef.current, assetId)
     if (!hit) return
     // 先落盘当前剧本
-    let base = workspaceRef.current
-    if (activeIdRef.current) {
-      base = updateScriptContent(base, activeIdRef.current, valueRef.current)
-    }
     commitWorkspace({
-      ...base,
+      ...flushEditorInto(workspaceRef.current),
       activeAssetId: assetId,
     })
   }
@@ -1081,9 +1769,8 @@ export const ScriptWorkspace = forwardRef<
       window.alert(`文件名无效。新建允许的后缀：${MANUAL_FILE_EXTENSIONS_LABEL}`)
       return
     }
-    persistActiveContent(valueRef.current)
     const script = createScript(normalized, '')
-    const nextPackages = workspaceRef.current.packages.map((pkg) =>
+    const nextPackages = flushEditorInto(workspaceRef.current).packages.map((pkg) =>
       pkg.id === packageId
         ? { ...pkg, collapsed: false, scripts: [...pkg.scripts, script] }
         : pkg,
@@ -1094,10 +1781,7 @@ export const ScriptWorkspace = forwardRef<
       activeAssetId: null,
     }
     commitWorkspace(next)
-    setValue('')
-    valueRef.current = ''
-    editorRef.current?.setValue('')
-    setSavedAt(script.updatedAt)
+    loadEditorContent(script.id, '', script.updatedAt)
     setRoles(createDefaultRoles())
   }
 
@@ -1231,11 +1915,7 @@ export const ScriptWorkspace = forwardRef<
 
     if (wasActiveScript || wasActiveAsset) {
       const hit = findScript(next, next.activeScriptId)
-      const content = hit?.script.content ?? ''
-      setValue(content)
-      valueRef.current = content
-      editorRef.current?.setValue(content)
-      setSavedAt(hit?.script.updatedAt ?? null)
+      loadEditorContent(hit?.script.id ?? null, hit?.script.content ?? '', hit?.script.updatedAt ?? null)
       setRoles(createDefaultRoles())
     }
   }
@@ -1270,13 +1950,13 @@ export const ScriptWorkspace = forwardRef<
       activeAssetId: cleaned.workspace.activeAssetId,
     }
     commitWorkspace(next)
-    if (scriptId === activeIdRef.current) {
+    if (scriptId === bufferOwnerRef.current || scriptId === activeIdRef.current) {
       const opened = findScript(next, activeScriptId)
-      const content = opened?.script.content ?? ''
-      setValue(content)
-      valueRef.current = content
-      editorRef.current?.setValue(content)
-      setSavedAt(opened?.script.updatedAt ?? null)
+      loadEditorContent(
+        opened?.script.id ?? null,
+        opened?.script.content ?? '',
+        opened?.script.updatedAt ?? null,
+      )
       setRoles(createDefaultRoles())
     }
     return { removedAssets: cleaned.removed.length }
@@ -1297,9 +1977,9 @@ export const ScriptWorkspace = forwardRef<
     const hit = findAsset(workspaceRef.current, assetId)
     if (!hit) return
     if (!window.confirm(`删除资产「${hit.asset.path}」？`)) return
-    const next = removeAssetMeta(workspaceRef.current, assetId)
-    commitWorkspace(next)
-    void deleteAssetBlob(hit.pkg.id, hit.asset.path)
+    commitWorkspace(removeAssetMeta(workspaceRef.current, assetId))
+    // 磁盘那一份也要删：只删应用内的话，重开工程会被读回来
+    voiceOps().removeAssetEverywhere(hit.pkg.id, [hit.asset.path])
   }
 
   const handleNewAssetFolder = (packageId: string, parentPath: string) => {
@@ -1332,9 +2012,11 @@ export const ScriptWorkspace = forwardRef<
       folderPath,
     )
     commitWorkspace(next)
-    for (const asset of removed) {
-      void deleteAssetBlob(packageId, asset.path)
-    }
+    // 整个文件夹的磁盘副本一起删（同上：不删就会在下次打开工程时整批复活）
+    voiceOps().removeAssetEverywhere(
+      packageId,
+      removed.map((asset) => asset.path),
+    )
   }
 
   const handleImportAssets = async (
@@ -1363,12 +2045,7 @@ export const ScriptWorkspace = forwardRef<
       }
       try {
         await putAssetBlob(packageId, path, file)
-        // 确保父文件夹存在于树中
-        const parent = path.includes('/')
-          ? path.slice(0, path.lastIndexOf('/'))
-          : 'assets'
-        next = ensureAssetFolder(next, packageId, parent)
-        const result = upsertAssetMeta(
+        const result = registerAsset(
           next,
           packageId,
           path,
@@ -1404,10 +2081,8 @@ export const ScriptWorkspace = forwardRef<
     }
 
     let voiceContent = hit.script.content
-    if (
-      activeIdRef.current === scriptId &&
-      !workspaceRef.current.activeAssetId
-    ) {
+    // 这份文件的正文就在编辑器里（归属是它）→ 以编辑器内容为准
+    if (bufferOwnerRef.current === scriptId && !workspaceRef.current.activeAssetId) {
       voiceContent = valueRef.current
     }
 
@@ -1436,12 +2111,8 @@ export const ScriptWorkspace = forwardRef<
 
     for (const { path } of missing) {
       try {
-        const parent = path.includes('/')
-          ? path.slice(0, path.lastIndexOf('/'))
-          : 'assets'
-        next = ensureAssetFolder(next, hit.pkg.id, parent)
         await putAssetBlob(hit.pkg.id, path, blank)
-        const result = upsertAssetMeta(
+        const result = registerAsset(
           next,
           hit.pkg.id,
           path,
@@ -1470,11 +2141,21 @@ export const ScriptWorkspace = forwardRef<
   // 自动记忆当前剧本正文（看资产时不写回）
   useEffect(() => {
     if (workspace.activeAssetId) return
+    const scriptId = workspace.activeScriptId
+    // 正文不属于这一份就别排程：排了也只是等着被拒
+    if (!scriptId || bufferOwnerRef.current !== scriptId) return
     const timer = window.setTimeout(() => {
-      persistActiveContent(value)
+      /*
+       * 定时器**写的是这份正文属于的那一份**，不是"400ms 之后谁是活动文件"。
+       *
+       * 期间换过文件（例如旧格式文本文件被迁移、活动 id 跳到了另一份）时，写回原来的
+       * 那一份仍然是对的；写"当前活动的那一份"就是把上一份的正文盖到新文件上。
+       */
+      if (bufferOwnerRef.current !== scriptId) return
+      if (writeScriptContent(scriptId, value)) setSavedAt(nowStamp())
     }, 400)
     return () => window.clearTimeout(timer)
-  }, [value, workspace.activeAssetId])
+  }, [value, workspace.activeScriptId, workspace.activeAssetId])
 
   // .hs 自动历史快照（防抖，与手动/Agent 备份互补）
   useEffect(() => {
@@ -1546,6 +2227,16 @@ export const ScriptWorkspace = forwardRef<
 
   useEffect(() => {
     const onMove = (event: PointerEvent) => {
+      // 录音棚右把手：从"按下时的宽度"倒推，不依赖容器矩形
+      const studio = studioDragRef.current
+      if (studio) {
+        const next = Math.min(
+          760,
+          Math.max(280, studio.startWidth + (studio.startX - event.clientX)),
+        )
+        setStudioWidth(next)
+        return
+      }
       if (!draggingRef.current || !splitRef.current) return
       const rect = splitRef.current.getBoundingClientRect()
       if (rect.width <= 0) return
@@ -1554,6 +2245,15 @@ export const ScriptWorkspace = forwardRef<
       setAgentPercent(next)
     }
     const onUp = () => {
+      if (studioDragRef.current) {
+        studioDragRef.current = null
+        document.body.classList.remove('is-resizing')
+        setStudioWidth((current) => {
+          localStorage.setItem('hanshu.studioWidth', String(Math.round(current)))
+          return current
+        })
+        return
+      }
       if (!draggingRef.current) return
       draggingRef.current = false
       document.body.classList.remove('is-resizing')
@@ -1633,6 +2333,10 @@ export const ScriptWorkspace = forwardRef<
       setAgentOpen((open) => !open)
       return
     }
+    if (item === '录音棚') {
+      toggleStudio()
+      return
+    }
   }
 
   const handleRestoreHistory = (fileName: string, content: string) => {
@@ -1655,10 +2359,7 @@ export const ScriptWorkspace = forwardRef<
         window.alert('没有可用的包，无法恢复')
         return
       }
-      let base = workspaceRef.current
-      if (activeIdRef.current) {
-        base = updateScriptContent(base, activeIdRef.current, valueRef.current)
-      }
+      let base = flushEditorInto(workspaceRef.current)
       const script = createScript(fileName, content)
       const nextPackages = base.packages.map((pkg) =>
         pkg.id === pkgId
@@ -1670,10 +2371,7 @@ export const ScriptWorkspace = forwardRef<
         activeScriptId: script.id,
         activeAssetId: null,
       })
-      setValue(content)
-      valueRef.current = content
-      editorRef.current?.setValue(content)
-      setSavedAt(Date.now())
+      loadEditorContent(script.id, content)
       setHistoryOpen(false)
       return
     }
@@ -1682,7 +2380,7 @@ export const ScriptWorkspace = forwardRef<
       force: true,
     })
     const next = updateScriptContent(
-      workspaceRef.current,
+      flushEditorInto(workspaceRef.current),
       hit.script.id,
       content,
     )
@@ -1691,10 +2389,7 @@ export const ScriptWorkspace = forwardRef<
       activeScriptId: hit.script.id,
       activeAssetId: null,
     })
-    setValue(content)
-    valueRef.current = content
-    editorRef.current?.setValue(content)
-    setSavedAt(Date.now())
+    loadEditorContent(hit.script.id, content)
     setHistoryOpen(false)
   }
 
@@ -1787,13 +2482,6 @@ export const ScriptWorkspace = forwardRef<
     setDiffOpen(false)
   }
 
-  const applyEditorContent = (content: string, updatedAt?: number) => {
-    setValue(content)
-    valueRef.current = content
-    editorRef.current?.setValue(content)
-    setSavedAt(updatedAt ?? Date.now())
-  }
-
   /** 静默删除剧本（用于撤销 Agent 新建，不弹 confirm） */
   const removeScriptSilent = (scriptId: string) => {
     const nextPackages = workspaceRef.current.packages.map((pkg) => ({
@@ -1814,7 +2502,11 @@ export const ScriptWorkspace = forwardRef<
     commitWorkspace(next)
     if (scriptId === activeIdRef.current || !activeScriptId) {
       const opened = findScript(next, activeScriptId)
-      applyEditorContent(opened?.script.content ?? '', opened?.script.updatedAt)
+      loadEditorContent(
+        opened?.script.id ?? null,
+        opened?.script.content ?? '',
+        opened?.script.updatedAt ?? null,
+      )
       setRoles(createDefaultRoles())
     }
   }
@@ -1828,8 +2520,8 @@ export const ScriptWorkspace = forwardRef<
       content,
     )
     commitWorkspace(next)
-    if (hit.script.id === activeIdRef.current) {
-      applyEditorContent(content)
+    if (hit.script.id === bufferOwnerRef.current) {
+      loadEditorContent(hit.script.id, content)
     }
     return true
   }
@@ -1837,7 +2529,8 @@ export const ScriptWorkspace = forwardRef<
   const currentContentOf = (fileName: string) => {
     const hit = findScriptByName(workspaceRef.current, fileName)
     if (!hit) return null
-    if (hit.script.id === activeIdRef.current) return valueRef.current
+    // "当前打开的文件以编辑器内容为准" —— 判据是**正文的归属**，不是活动 id
+    if (hit.script.id === bufferOwnerRef.current) return valueRef.current
     return hit.script.content
   }
 
@@ -1910,15 +2603,13 @@ export const ScriptWorkspace = forwardRef<
   ): { file: string } | null => {
     const hit = findScript(workspaceRef.current, scriptId)
     if (!hit) return null
-    const isActive = hit.script.id === activeIdRef.current
-    const before = isActive ? valueRef.current : hit.script.content
+    // "编辑器里这份正文就是它" —— 判据是正文归属
+    const inEditor = hit.script.id === bufferOwnerRef.current
+    const before = inEditor ? valueRef.current : hit.script.content
     pushFileBackup(hit.script.name, before, tool)
     commitWorkspace(updateScriptContent(workspaceRef.current, scriptId, content))
-    if (isActive) {
-      setValue(content)
-      valueRef.current = content
-      editorRef.current?.setValue(content)
-      setSavedAt(Date.now())
+    if (inEditor) {
+      loadEditorContent(scriptId, content)
     }
     pushAgentDiff({ fileName: hit.script.name, before, after: content })
     return { file: hit.script.name }
@@ -1928,7 +2619,7 @@ export const ScriptWorkspace = forwardRef<
   const agentSourceContent = (scriptId: string): string | null => {
     const hit = findScript(workspaceRef.current, scriptId)
     if (!hit) return null
-    return hit.script.id === activeIdRef.current
+    return hit.script.id === bufferOwnerRef.current
       ? valueRef.current
       : hit.script.content
   }
@@ -2061,10 +2752,7 @@ export const ScriptWorkspace = forwardRef<
         workspaceRef.current.packages[0]?.id
       if (!pkgId) return { ok: false, error: '没有可用的包' }
 
-      let base = workspaceRef.current
-      if (activeIdRef.current) {
-        base = updateScriptContent(base, activeIdRef.current, valueRef.current)
-      }
+      let base = flushEditorInto(workspaceRef.current)
       const script = createScript(checked.name, content)
       // 新建**不切换**当前打开的文件：agent 造文件不该动用户正在看的东西
       commitWorkspace({
@@ -2458,7 +3146,20 @@ export const ScriptWorkspace = forwardRef<
       }
     },
     checkExport: async () => {
-      const pak = await buildResourcePackZip(workspaceRef.current)
+      let pak: Awaited<ReturnType<typeof buildResourcePackZip>>
+      try {
+        pak = await buildResourcePackZip(workspaceRef.current)
+      } catch (error) {
+        /*
+         * 引用解析不出来会让 PAK 导出**中止**（见 resourcePack）：预演要把这件事
+         * 当成"这份工程现在导不出 PAK"报出去，而不是让工具调用直接炸掉 ——
+         * Agent 拿到原话才能去修那条引用。
+         */
+        return {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        }
+      }
       const project = await buildProjectPackZip(workspaceRef.current)
       return {
         ok: true,
@@ -2576,7 +3277,7 @@ export const ScriptWorkspace = forwardRef<
               editingMarkdown && mdPreviewOn ? ' split-md' : ''
             }${editingHanshu && hscPreviewOn ? ' split-hsc' : ''}${
               viewingAsset ? ' asset-mode' : ''
-            }`}
+            }${ttsFileKind ? ' tts-file' : ''}`}
             style={
               agentOpen
                 ? { flex: `1 1 ${100 - agentPercent}%` }
@@ -2589,8 +3290,47 @@ export const ScriptWorkspace = forwardRef<
                 asset={activeAssetHit.asset}
                 onSaveText={handleSaveTextAsset}
               />
+            ) : ttsUseForm ? (
+              ttsFileKind === 'service' ? (
+                <TtsServiceForm
+                  /* key = 文件名：换一个文件就重挂，表单里的临时状态
+                     （正在敲的语速草稿、拉回来的音色列表、上次的验证结论、
+                     刚新建的服务名）全都不该跨文件留着 */
+                  key={titleName}
+                  fileName={titleName}
+                  text={value}
+                  onChange={handleTtsRewrite}
+                  onSwitchToRaw={() => setTtsRawEditFor(titleName)}
+                  onOpenCredentials={() => setShowTtsCredentials(true)}
+                />
+              ) : (
+                <TtsPlanForm
+                  key={titleName}
+                  fileName={titleName}
+                  text={value}
+                  services={ttsServices}
+                  projectLocales={ttsProjectLocales}
+                  createService={createTtsService}
+                  openService={openTtsService}
+                  onChange={handleTtsRewrite}
+                  onSwitchToRaw={() => setTtsRawEditFor(titleName)}
+                  onOpenCredentials={() => setShowTtsCredentials(true)}
+                />
+              )
             ) : (
               <>
+                {ttsFileKind && (
+                  <div className="tts-raw-bar">
+                    <span>按原始 JSON 编辑</span>
+                    <button
+                      type="button"
+                      className="tts-form-link"
+                      onClick={() => setTtsRawEditFor(null)}
+                    >
+                      用表单编辑
+                    </button>
+                  </div>
+                )}
                 <div className="editor-pane">
                   <Editor
                     height="100%"
@@ -2617,18 +3357,35 @@ export const ScriptWorkspace = forwardRef<
                         },
                         onUnitMenu: (request) => setUnitMenu(request),
                         onUnitDrop: (request) => handleUnitDrop(request),
-                        // 缺失 / 无效态点按钮 = 挑一个音频
-                        onVoicePick: (key) => openVoicePicker(key),
+                        // 缺失 / 无效态点按钮 = 去录音棚配一条
+                        onEditVoice: (key) => editVoiceInStudio(key),
+                        // 录音棚：左键点键名 / 划框都会走到这里
+                        onUnitSelect: (request) => handleUnitSelect(request),
+                        onMarquee: (request) => handleMarquee(request),
                       })
+                      // 绑定重建后，把录音棚的模式与选中态重新灌回去
+                      setTextBindingSeq((seq) => seq + 1)
                     }}
                     onChange={(next) => {
-                      setValue(next ?? '')
+                      const text = next ?? ''
+                      /*
+                       * ref 也要跟上：写回、导出、Ctrl+S 读的都是它。只 `setValue` 的话，
+                       * ref 会慢一拍（渲染时才同步），那期间的动作会拿到上一版正文。
+                       */
+                      valueRef.current = text
+                      setValue(text)
                     }}
                     options={{
                       fontSize: 18,
                       fontFamily:
                         'Consolas, "Courier New", "Sarasa Mono SC", monospace',
                       lineHeight: 28,
+                      /**
+                       * 录音棚打开时编辑器是**只读**的：那会儿左键点键名是"选中"、
+                       * 空白处按下是"划框"，不允许再改正文（正常交互整体让位）。
+                       */
+                      readOnly: studioOpen,
+                      domReadOnly: studioOpen,
                       minimap: { enabled: false },
                       wordWrap: 'on',
                       scrollBeyondLastLine: false,
@@ -2705,7 +3462,62 @@ export const ScriptWorkspace = forwardRef<
             </ul>
           </aside>
         )}
+
+        {studioOpen && (
+          <>
+            <div
+              className="split-handle"
+              title="拖动调整录音棚宽度"
+              onPointerDown={(event) => {
+                event.preventDefault()
+                studioDragRef.current = {
+                  startX: event.clientX,
+                  startWidth: studioWidth,
+                }
+                document.body.classList.add('is-resizing')
+              }}
+            />
+            <RecordingStudio
+              mode={studioMode}
+              sourceMode={studioSourceMode}
+              selectedKeys={studioSelection}
+              library={
+                editingHanshu ? (voiceRuntime ?? voiceLibraryRef.current) : null
+              }
+              /*
+                台词取自当前语言的文本映射（和 TTS 合成用的是同一份）：
+                录音的人要照着念的，就是编辑器里显示的那一句。
+              */
+              textFor={(key) => textMapRef.current?.get(key) ?? null}
+              onClose={() => toggleStudio()}
+              onModeChange={setStudioMode}
+              onSourceModeChange={setStudioSourceMode}
+              onClearSelection={() => setStudioSelection([])}
+              onClearVoice={(keys) => voiceOps().deleteVoices(keys)}
+              onImport={handleStudioImport}
+              onReference={handleStudioReference}
+              tts={studioTts}
+              style={{
+                flex: `0 0 ${studioWidth}px`,
+                width: `${studioWidth}px`,
+              }}
+            />
+          </>
+        )}
       </div>
+
+      {/*
+        本地缓存（API KEY）**挂在工作区这一层**，不挂在录音棚里。
+        它有三个入口：服务设置页的 API KEY 卡片、方案设置页的页头、录音棚生成失败时的
+        "填写 API KEY"。挂在 `studioOpen` 里面时，录音棚没开就只有前两个入口 ——
+        点了没反应，因为那个分支根本不渲染。
+      */}
+      {showTtsCredentials && (
+        <TtsCredentialsModal
+          onClose={() => setShowTtsCredentials(false)}
+          requiredRefs={ttsRequiredRefs}
+        />
+      )}
 
       {diffOpen && agentDiffs.length > 0 && (
         <AgentDiffModal
@@ -2778,6 +3590,20 @@ export const ScriptWorkspace = forwardRef<
             }}
           >
             Agent
+          </span>
+          <span
+            className={studioOpen ? 'status-on' : ''}
+            onClick={toggleStudio}
+            title="开关录音棚（配音工作台）"
+            role="button"
+            tabIndex={0}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                toggleStudio()
+              }
+            }}
+          >
+            录音棚
           </span>
           <span>行 {lineCount}</span>
           <span>空格: 2</span>
@@ -2882,28 +3708,6 @@ export const ScriptWorkspace = forwardRef<
           onClose={() => setUnitMenu(null)}
         />
       )}
-      {voicePicker &&
-        voiceRuntime != null &&
-        voiceRuntime === voicePicker.library && (
-          <VoicePickerModal
-            unitKey={voicePicker.key}
-            targetPath={voicePicker.library.targetPathOf(voicePicker.key)}
-            currentPath={voicePicker.library.resolvedPathOf(voicePicker.key)}
-            library={voicePicker.library}
-            onImport={(sourcePath) => {
-              const key = voicePicker.key
-              setVoicePicker(null)
-              runVoiceImportFor(key, { kind: 'asset', path: sourcePath })
-            }}
-            onImportFile={(source) => {
-              // 选择器里已经把这文件缓存在内存里了（拖入 ≠ 导入），这里只负责跑工作流
-              const key = voicePicker.key
-              setVoicePicker(null)
-              runVoiceImportFor(key, { kind: 'file', name: source.name, bytes: source.bytes })
-            }}
-            onClose={() => setVoicePicker(null)}
-          />
-        )}
       {voiceImport && (
         <VoiceImportProgress
           progress={voiceImport.progress}

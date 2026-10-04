@@ -76,6 +76,7 @@ const MENUS = [
     label: '查看',
     items: [
       'Agent 窗口',
+      '录音棚',
       '命令面板...',
       '外观',
       '编辑器布局',
@@ -102,7 +103,11 @@ const MENUS = [
 
 const WORKSPACE_IDS = APP_WORKSPACES.map((w) => w.id)
 
-function renderToolWorkspace(id: AppWorkspaceId, active: boolean, progressRef: Ref<ProgressWorkspaceHandle>) {
+function renderToolWorkspace(
+  id: AppWorkspaceId,
+  active: boolean,
+  progressRef: Ref<ProgressWorkspaceHandle>,
+) {
   switch (id) {
     case 'progress-flow':
       return <ProgressFlowWorkspace active={active} workspaceRef={progressRef} />

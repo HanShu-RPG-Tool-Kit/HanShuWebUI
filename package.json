@@ -14,7 +14,11 @@
     "desktop:dev": "tauri dev",
     "desktop:build": "tauri build",
     "test:skin-codec": "tsx scripts/verify-skin-codec.ts",
-    "test:progress": "tsx scripts/verify-progress-model.ts"
+    "test:progress": "tsx scripts/verify-progress-model.ts",
+    "test:tts": "npm run test:tts-net && npm run test:tts-protocols && npm run test:tts-voices",
+    "test:tts-net": "tsx scripts/verify-tts-net.ts",
+    "test:tts-protocols": "tsx scripts/verify-tts-protocols.ts",
+    "test:tts-voices": "tsx scripts/verify-tts-voices.ts"
   },
   "dependencies": {
     "@audio/encode-ogg": "^1.3.0",
