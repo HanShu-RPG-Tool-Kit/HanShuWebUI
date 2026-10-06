@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Field, IdField, TextField } from './Fields'
-import { documentExtOf, isKitDocument, isProgressDocument, isScriptDocument, resourceName } from './library'
+import { documentExtOf, isKitDocument, isNavigationDocument, isProgressDocument, isScriptDocument, resourceName } from './library'
 import { parseFlow, setFlowId } from './model'
 import type { FlowDocument } from './storage'
 
@@ -21,7 +21,8 @@ export function FlowDocumentProperties({ doc, onSave, onCancel }: {
   const script = isScriptDocument(doc)
   const kit = isKitDocument(doc)
   const progress = isProgressDocument(doc)
-  const plain = script || kit || progress
+  const navigation = isNavigationDocument(doc)
+  const plain = script || kit || progress || navigation
   const parsed = plain ? { flow: null, error: '' } : (() => { try { return { flow: parseFlow(doc.source), error: '' } } catch (error) { return { flow: null, error: error instanceof Error ? error.message : String(error) } } })()
   const [name, setName] = useState(doc.name)
   const [source, setSource] = useState(doc.source)
@@ -57,12 +58,16 @@ export function FlowDocumentProperties({ doc, onSave, onCancel }: {
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) }
   }
 
+  const title = kit ? '礼包属性' : navigation ? '导航点属性' : progress ? '进度属性' : script ? '脚本属性' : '流程属性'
+
   return createPortal(<dialog ref={dialog} className="flow-alert-dialog flow-properties-dialog" aria-labelledby={titleId} onCancel={(event) => { event.preventDefault(); onCancel() }}>
-    <header><strong id={titleId}>{kit ? '礼包属性' : progress ? '进度属性' : script ? '脚本属性' : '流程属性'}</strong></header>
+    <header><strong id={titleId}>{title}</strong></header>
     <div className="flow-alert-body flow-properties-body">
       <TextField label="文件名" value={name} onChange={(value) => { setName(value); setError('') }} />
       {kit ? (
         <p className="flow-hint">礼包以 `.kit`（JSON）保存在本机草稿库；内容在主区表单中修改。</p>
+      ) : navigation ? (
+        <p className="flow-hint">导航点以 `.nav`（JSON）保存在本机草稿库；内容在主区表单中修改。</p>
       ) : progress ? (
         <p className="flow-hint">进度以 `.progress`（JSON）保存在本机草稿库；内容在主区表单中修改。</p>
       ) : script ? (

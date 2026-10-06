@@ -212,6 +212,7 @@
 .flow-page-tab .is-kit { color: #c48a9a; }
 .flow-page-tab .is-python { color: #7eb8a2; }
 .flow-page-tab .is-progress { color: #c9a86c; }
+.flow-page-tab .is-navigator { color: #7a9ec4; }
 .flow-page-tab .is-document { color: #8eb0d4; }
 .flow-page-pin {
   width: calc(10px * var(--fl-s, 1.25));

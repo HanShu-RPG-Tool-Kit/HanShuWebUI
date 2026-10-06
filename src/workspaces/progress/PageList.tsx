@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent } from 'react'
 import { Icon } from './FlowExplorer'
-import { isKitDocument, isProgressDocument, isScriptDocument } from './library'
+import { isKitDocument, isNavigationDocument, isProgressDocument, isScriptDocument } from './library'
 import { NodeContextMenu, type NodeMenuItem } from './NodeContextMenu'
 import type { FlowDocument } from './storage'
 
 export const PAGE_DRAG_TYPE = 'application/x-hanshu-page'
 
-function pageIcon(doc: FlowDocument): 'kit' | 'python' | 'progress' | 'document' {
+function pageIcon(doc: FlowDocument): 'kit' | 'python' | 'progress' | 'navigator' | 'document' {
   if (isKitDocument(doc)) return 'kit'
   if (isScriptDocument(doc)) return 'python'
   if (isProgressDocument(doc)) return 'progress'
+  if (isNavigationDocument(doc)) return 'navigator'
   return 'document'
 }
 

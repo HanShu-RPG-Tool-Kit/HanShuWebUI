@@ -18,6 +18,7 @@
     "test:kit-expr": "tsx scripts/verify-kit-expr.ts",
     "test:editor-groups": "tsx scripts/verify-editor-groups.ts",
     "test:goal-definitions": "tsx scripts/verify-goal-definitions.ts",
+    "test:navigation": "tsx scripts/verify-navigation-point.ts",
     "test:tts": "npm run test:tts-net && npm run test:tts-protocols && npm run test:tts-voices",
     "test:tts-net": "tsx scripts/verify-tts-net.ts",
     "test:tts-protocols": "tsx scripts/verify-tts-protocols.ts",

@@ -26,28 +26,41 @@ export const packageAllowsFlows = (id: FlowPackageId) => id === 'story'
 export const packageAllowsScripts = (id: FlowPackageId) => id === 'script'
 export const packageAllowsKits = (id: FlowPackageId) => id === 'gift'
 export const packageAllowsProgress = (id: FlowPackageId) => id === 'progress'
+export const packageAllowsNavigation = (id: FlowPackageId) => id === 'navigator'
 export const packageAllowsDocuments = (id: FlowPackageId) =>
-  packageAllowsFlows(id) || packageAllowsScripts(id) || packageAllowsKits(id) || packageAllowsProgress(id)
+  packageAllowsFlows(id) || packageAllowsScripts(id) || packageAllowsKits(id) || packageAllowsProgress(id) || packageAllowsNavigation(id)
 export const packageAcceptsImportFile = (id: FlowPackageId, fileName: string) => {
   const lower = fileName.toLowerCase()
   if (id === 'script') return lower.endsWith('.py')
   if (id === 'gift') return lower.endsWith('.kit')
   if (id === 'progress') return lower.endsWith('.progress')
+  if (id === 'navigator') return lower.endsWith('.nav') || lower.endsWith('.json')
   if (id === 'story') return lower.endsWith('.hflow') || lower.endsWith('.json')
   return false
 }
-export type PackageDocumentExt = '.hflow' | '.py' | '.kit' | '.progress'
+export type PackageDocumentExt = '.hflow' | '.py' | '.kit' | '.progress' | '.nav'
 export const packageDocumentExt = (id: FlowPackageId): PackageDocumentExt | null =>
-  id === 'story' ? '.hflow' : id === 'script' ? '.py' : id === 'gift' ? '.kit' : id === 'progress' ? '.progress' : null
+  id === 'story' ? '.hflow'
+    : id === 'script' ? '.py'
+      : id === 'gift' ? '.kit'
+        : id === 'progress' ? '.progress'
+          : id === 'navigator' ? '.nav'
+            : null
 export const isScriptDocument = (document: { package: FlowPackageId; name: string }) =>
   document.package === 'script' || document.name.toLowerCase().endsWith('.py')
 export const isKitDocument = (document: { package: FlowPackageId; name: string }) =>
   document.package === 'gift' || document.name.toLowerCase().endsWith('.kit')
 export const isProgressDocument = (document: { package: FlowPackageId; name: string }) =>
   document.package === 'progress' || document.name.toLowerCase().endsWith('.progress')
+export const isNavigationDocument = (document: { package: FlowPackageId; name: string }) =>
+  document.package === 'navigator' || document.name.toLowerCase().endsWith('.nav')
 export function documentExtOf(document: { package: FlowPackageId; name: string }): PackageDocumentExt {
   return packageDocumentExt(document.package)
-    ?? (isProgressDocument(document) ? '.progress' : isKitDocument(document) ? '.kit' : isScriptDocument(document) ? '.py' : '.hflow')
+    ?? (isNavigationDocument(document) ? '.nav'
+      : isProgressDocument(document) ? '.progress'
+        : isKitDocument(document) ? '.kit'
+          : isScriptDocument(document) ? '.py'
+            : '.hflow')
 }
 export const packageEntry = (id: FlowPackageId): FlowEntry => ({ kind: 'package', package: id })
 export const sectionFolderKey = (pkg: FlowPackageId, sectionId: string) => `section:${pkg}:${sectionId}`
@@ -112,7 +125,7 @@ export function resourceName(value: string, documentExt: boolean | PackageDocume
   const ext = documentExt === true ? '.hflow' : documentExt
   const lower = name.toLowerCase()
   if (lower.endsWith(ext)) return name
-  if (/\.(hflow|py|json|kit|progress)$/i.test(name)) return name.replace(/\.(hflow|py|json|kit|progress)$/i, ext)
+  if (/\.(hflow|py|json|kit|progress|nav)$/i.test(name)) return name.replace(/\.(hflow|py|json|kit|progress|nav)$/i, ext)
   return `${name}${ext}`
 }
 
@@ -177,6 +190,7 @@ export function canMoveFlowEntry(state: FlowWorkspaceState, entry: FlowEntry, pk
     if (!document) return false
     if (isKitDocument(document)) return packageAllowsKits(pkg)
     if (isProgressDocument(document)) return packageAllowsProgress(pkg)
+    if (isNavigationDocument(document)) return packageAllowsNavigation(pkg)
     if (isScriptDocument(document)) return packageAllowsScripts(pkg)
     return packageAllowsFlows(pkg)
   }
@@ -210,8 +224,9 @@ export function moveFlowEntry(state: FlowWorkspaceState, entry: FlowEntry, pkg: 
     const document = state.documents.find((item) => item.key === entry.key)
     if (document && isKitDocument(document) && !packageAllowsKits(pkg)) throw new Error('礼包只能放在「礼包」分类中。')
     if (document && isProgressDocument(document) && !packageAllowsProgress(pkg)) throw new Error('进度只能放在「进度」分类中。')
+    if (document && isNavigationDocument(document) && !packageAllowsNavigation(pkg)) throw new Error('导航点只能放在「导航器」分类中。')
     if (document && isScriptDocument(document) && !packageAllowsScripts(pkg)) throw new Error('脚本只能放在「脚本」分类中。')
-    if (document && !isKitDocument(document) && !isProgressDocument(document) && !isScriptDocument(document) && !packageAllowsFlows(pkg)) throw new Error('流程只能放在「故事流程」分类中。')
+    if (document && !isKitDocument(document) && !isProgressDocument(document) && !isNavigationDocument(document) && !isScriptDocument(document) && !packageAllowsFlows(pkg)) throw new Error('流程只能放在「故事流程」分类中。')
   }
   const name = entry.kind === 'folder' ? state.folders.find((folder) => folder.key === entry.key)!.name : state.documents.find((document) => document.key === entry.key)!.name
   requireAvailableName(state, name, pkg, parent, entry.key)

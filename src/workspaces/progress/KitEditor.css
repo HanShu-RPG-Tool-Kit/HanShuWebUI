@@ -51,11 +51,27 @@
   background: var(--fl-panel, #303030);
 }
 
+.kit-name-field {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.kit-name-label {
+  flex: none;
+  color: var(--text-dim);
+  font-size: calc(12px * var(--fl-s, 1.25) / 1.1);
+  cursor: help;
+  white-space: nowrap;
+}
+
 .flow-kit-pane .kit-title {
   flex: 1;
   min-width: 0;
   height: auto;
-  margin: 0 0 0 -8px;
+  margin: 0;
   padding: 4px 8px;
   border: 1px solid transparent;
   border-radius: var(--kit-radius);

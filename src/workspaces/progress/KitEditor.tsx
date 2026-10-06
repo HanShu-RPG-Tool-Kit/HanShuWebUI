@@ -1048,7 +1048,10 @@ function KitBody({ kit, disabled, readOnly, editorPath, simulatorPools, afterHea
 
   return <>
     <header className="kit-header">
-      <input className="kit-title" value={kit.name} disabled={locked} placeholder="未命名礼包" aria-label="项目名" onChange={(event) => update({ name: event.target.value })} />
+      <label className="kit-name-field">
+        <span className="kit-name-label" title="礼包显示名称">名称</span>
+        <input className="kit-title" value={kit.name} disabled={locked} placeholder="未命名礼包" aria-label="名称" onChange={(event) => update({ name: event.target.value })} />
+      </label>
       <ExperienceField experience={kit.experience} disabled={locked} onChange={(experience) => update({ experience })} />
     </header>
 
