@@ -26,6 +26,13 @@ export const packageAllowsFlows = (id: FlowPackageId) => id === 'story'
 export const packageAllowsScripts = (id: FlowPackageId) => id === 'script'
 export const packageAllowsKits = (id: FlowPackageId) => id === 'gift'
 export const packageAllowsDocuments = (id: FlowPackageId) => packageAllowsFlows(id) || packageAllowsScripts(id) || packageAllowsKits(id)
+export const packageAcceptsImportFile = (id: FlowPackageId, fileName: string) => {
+  const lower = fileName.toLowerCase()
+  if (id === 'script') return lower.endsWith('.py')
+  if (id === 'gift') return lower.endsWith('.kit')
+  if (id === 'story') return lower.endsWith('.hflow') || lower.endsWith('.json')
+  return false
+}
 export type PackageDocumentExt = '.hflow' | '.py' | '.kit'
 export const packageDocumentExt = (id: FlowPackageId): PackageDocumentExt | null =>
   id === 'story' ? '.hflow' : id === 'script' ? '.py' : id === 'gift' ? '.kit' : null

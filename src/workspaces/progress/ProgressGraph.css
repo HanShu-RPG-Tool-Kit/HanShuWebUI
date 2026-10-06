@@ -7,24 +7,24 @@
 .flow-workspace .flow-graph button:disabled { opacity: .42; cursor: default; }
 .flow-workspace .flow-graph button:focus-visible, .flow-graph-viewport:focus-visible { outline: 1px solid var(--node-accent); outline-offset: 2px; }
 .flow-graph-toolbar {
-  display: flex; align-items: center; gap: 10px; min-height: 35px; padding: 3px 10px;
-  border-bottom: 1px solid #171717; background: #303030; font-size: 11px; flex-shrink: 0;
+  display: flex; align-items: center; gap: 8px; min-height: calc(26px * var(--fl-s, 1.25)); box-sizing: content-box; padding: 0 8px;
+  border-bottom: 1px solid var(--border, #1a1a1a); background: var(--fl-head, #383838); font-size: var(--fl-font-xs, 11px); flex-shrink: 0;
 }
-.flow-graph-editor-icon { font-size: 18px; color: #b5b5b5; line-height: 1; }
-.flow-graph-editor-name { font-weight: 500; color: #e0e0e0; white-space: nowrap; }
+.flow-graph-editor-icon { font-size: var(--fl-font, 18px); color: #b5b5b5; line-height: 1; }
+.flow-graph-editor-name { font-size: var(--fl-font-sm, 12px); color: var(--text, #e0e0e0); white-space: nowrap; }
 .flow-workspace .flow-graph-toolbar button {
-  border: 1px solid #454545; border-radius: 3px; padding: 3px 8px;
-  background: #393939; min-height: 24px; color: #d1d1d1; font-size: 11px;
+  border: 1px solid var(--border-soft, #404040); border-radius: 0; padding: 2px 8px;
+  background: var(--fl-panel-2, #232323); min-height: calc(20px * var(--fl-s, 1.25)); color: var(--text, #d1d1d1); font-size: var(--fl-font-xs, 11px);
 }
-.flow-workspace .flow-graph-toolbar button:hover:not(:disabled) { background: #494949; color: #fff; }
-.flow-workspace .flow-graph-toolbar .flow-graph-add { margin-left: 5px; background: #414141; }
-.flow-graph-count { padding-left: 10px; border-left: 1px solid #525252; color: #a0a0a0; white-space: nowrap; }
+.flow-workspace .flow-graph-toolbar button:hover:not(:disabled) { background: var(--fl-hover, #3d3d3d); color: #fff; }
+.flow-workspace .flow-graph-toolbar .flow-graph-add { margin-left: 4px; }
+.flow-graph-count { padding-left: 10px; border-left: 1px solid #4a4a4a; color: var(--text-dim, #a0a0a0); white-space: nowrap; }
 .flow-graph-sim {
   display: flex; align-items: center; gap: 6px; margin-left: 8px; padding-left: 10px;
-  border-left: 1px solid #525252; min-width: 0;
+  border-left: 1px solid #4a4a4a; min-width: 0;
 }
 .flow-graph-sim-log {
-  color: #9ab0a0; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 280px;
+  color: #9ab0a0; font-size: var(--fl-font-xs, 11px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 280px;
 }
 .flow-graph-zoom { display: flex; align-items: center; gap: 3px; margin-left: auto; }
 .flow-graph-zoom output { width: 38px; text-align: center; font-variant-numeric: tabular-nums; color: #a8a8a8; }
@@ -148,24 +148,20 @@
   max-width: calc(100vw - 16px);
   max-height: calc(100vh - 16px);
   overflow-y: auto;
-  padding: 5px;
-  border: 1px solid var(--border-soft);
-  border-radius: 6px;
-  background: var(--bg-sidebar);
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 0;
+  background: var(--fl-panel-2);
   color: var(--text);
-  font-family: inherit;
-  font-size: 13px;
+  font-family: -apple-system, 'PingFang SC', 'Segoe UI', sans-serif;
+  font-size: var(--fl-font-sm);
   line-height: 1.5;
-  box-shadow: 0 7px 24px #0006;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, .55);
 }
-.flow-node-menu-title { max-width: 250px; padding: 5px 9px 7px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 11px; color: var(--text-dim); border-bottom: 1px solid var(--border-soft); margin-bottom: 4px; }
-.flow-node-menu button { display: block; width: 100%; padding: 7px 10px; border: 0; border-radius: 3px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
-.flow-node-menu button:hover:not(:disabled), .flow-node-menu button:focus-visible { background: var(--bg-menu-hover); color: var(--text-bright); outline: none; }
+.flow-node-menu-title { max-width: 260px; padding: 4px 10px 6px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: var(--fl-font-xs); color: var(--fl-faint); border-bottom: 1px solid var(--border); margin-bottom: 4px; }
+.flow-node-menu button { display: block; width: 100%; padding: 5px 10px; border: 0; border-radius: 0; background: transparent; color: inherit; font: inherit; text-align: left; white-space: nowrap; cursor: pointer; }
+.flow-node-menu button:hover:not(:disabled), .flow-node-menu button:focus-visible { background: var(--fl-hover); color: var(--text-bright); outline: none; }
 .flow-node-menu button:disabled { opacity: .4; cursor: default; }
-
-.flow-node-menu.is-graph-menu { background: #303030; border-color: #151515; color: #ddd; border-radius: 4px; font-size: 12px; }
-.flow-node-menu.is-graph-menu .flow-node-menu-title { color: #aaa; border-color: #484848; }
-.flow-node-menu.is-graph-menu button:hover:not(:disabled), .flow-node-menu.is-graph-menu button:focus-visible { background: #4a4a4a; color: #fff; }
 
 .flow-graph-node.is-transition .flow-graph-node-header { background: #4e6862; color: #e1ece8; }
 .flow-graph-node.is-transition .flow-graph-ports { position: absolute; inset: 0; height: auto; display: block; padding: 0; }

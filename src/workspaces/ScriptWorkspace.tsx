@@ -3184,35 +3184,6 @@ export const ScriptWorkspace = forwardRef<
 
   return (
     <div className="script-workspace">
-      <div className="tabbar">
-        <div className="tab active">
-          <span>{titleName}</span>
-          <span className="tab-close" aria-hidden>
-            ×
-          </span>
-        </div>
-        {editingMarkdown && (
-          <button
-            type="button"
-            className={`tab-action${mdPreviewOn ? ' on' : ''}`}
-            onClick={() => setMdPreviewOn((on) => !on)}
-            title="切换 Markdown 预览"
-          >
-            Preview
-          </button>
-        )}
-        {editingHanshu && (
-          <button
-            type="button"
-            className={`tab-action${hscPreviewOn ? ' on' : ''}`}
-            onClick={() => setHscPreviewOn((on) => !on)}
-            title="切换编译后 .hsc 视角"
-          >
-            编译
-          </button>
-        )}
-      </div>
-
       <div className="workspace">
         <Explorer
           workspace={workspace}
@@ -3272,17 +3243,48 @@ export const ScriptWorkspace = forwardRef<
             />
           )}
 
+          <div
+            className="editor-column"
+            style={
+              agentOpen
+                ? { flex: `1 1 ${100 - agentPercent}%` }
+                : { flex: '1 1 auto' }
+            }
+          >
+          <div className="tabbar">
+            <div className="tab active">
+              <span>{titleName}</span>
+              <span className="tab-close" aria-hidden>
+                ×
+              </span>
+            </div>
+            {editingMarkdown && (
+              <button
+                type="button"
+                className={`tab-action${mdPreviewOn ? ' on' : ''}`}
+                onClick={() => setMdPreviewOn((on) => !on)}
+                title="切换 Markdown 预览"
+              >
+                Preview
+              </button>
+            )}
+            {editingHanshu && (
+              <button
+                type="button"
+                className={`tab-action${hscPreviewOn ? ' on' : ''}`}
+                onClick={() => setHscPreviewOn((on) => !on)}
+                title="切换编译后 .hsc 视角"
+              >
+                编译
+              </button>
+            )}
+          </div>
           <main
             className={`editor-shell${
               editingMarkdown && mdPreviewOn ? ' split-md' : ''
             }${editingHanshu && hscPreviewOn ? ' split-hsc' : ''}${
               viewingAsset ? ' asset-mode' : ''
             }${ttsFileKind ? ' tts-file' : ''}`}
-            style={
-              agentOpen
-                ? { flex: `1 1 ${100 - agentPercent}%` }
-                : { flex: '1 1 auto' }
-            }
           >
             {viewingAsset && activeAssetHit ? (
               <AssetPreview
@@ -3419,6 +3421,7 @@ export const ScriptWorkspace = forwardRef<
               </>
             )}
           </main>
+          </div>
         </div>
 
         {editingHanshu && (

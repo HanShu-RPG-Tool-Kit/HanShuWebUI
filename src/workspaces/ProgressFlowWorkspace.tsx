@@ -6,20 +6,35 @@ import { smartArrangeCanvas } from './progress/arrange'
 import { ProgressGraph } from './progress/ProgressGraph'
 import { FlowEditorDialog } from './progress/FlowEditorDialog'
 import { FlowDocumentProperties } from './progress/FlowDocumentProperties'
-import { FlowExplorer } from './progress/FlowExplorer'
-import { ensurePackageSections, isKitDocument, isScriptDocument, packageDocumentExt, requireAvailableName, renameFlowEntry, resourceName, uniqueDocumentName } from './progress/library'
+import { FlowExplorer, Icon } from './progress/FlowExplorer'
+import { ensurePackageSections, isKitDocument, isScriptDocument, packageAcceptsImportFile, packageAllowsDocuments, packageDocumentExt, requireAvailableName, renameFlowEntry, resourceName, uniqueDocumentName } from './progress/library'
 import { createFlowDocument, downloadFlowFile, importFlowDocument, loadFlowWorkspace, saveFlowWorkspace, stampDocument, type FlowDocument, type FlowPackageId } from './progress/storage'
 import { createKit, readKitSource, stringifyKit, parseKit } from './progress/kit'
 import { KitEditor } from './progress/KitEditor'
+import { useEditorFontSize } from './progress/editorFont'
 import Editor from '@monaco-editor/react'
 import { HANSHU_THEME_ID, registerHanshuLanguage } from '../monaco/hanshuLanguage'
 import './ProgressFlowWorkspace.css'
 
 export type ProgressWorkspaceHandle = { handleMenuAction: (item: string) => void }
+
+function EditorTabs({ label, icon, docs, activeKey, disabled, onSelect, onClose }: { label: string; icon: 'kit' | 'python'; docs: FlowDocument[]; activeKey: string; disabled: boolean; onSelect: (key: string) => void; onClose: (key: string) => void }) {
+  if (!docs.length) return null
+  return <div className="flow-kit-tabs" role="tablist" aria-label={label}>
+    {docs.map((item) => (
+      <div key={item.key} className={`flow-kit-tab${item.key === activeKey ? ' is-active' : ''}`} role="tab" aria-selected={item.key === activeKey}
+        onAuxClick={(event) => { if (event.button === 1 && !disabled) { event.preventDefault(); onClose(item.key) } }}>
+        <button type="button" className="flow-kit-tab-name" disabled={disabled} title={item.name} onClick={() => onSelect(item.key)}><Icon kind={icon} /><span>{item.name}</span></button>
+        <button type="button" className="flow-kit-tab-close" disabled={disabled} aria-label={`关闭 ${item.name}`} onClick={() => onClose(item.key)}>×</button>
+      </div>
+    ))}
+  </div>
+}
 type History = { past: string[]; future: string[]; lastEdit: number }
 
 export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolean; workspaceRef?: Ref<ProgressWorkspaceHandle> }) {
   const [initial] = useState(loadFlowWorkspace)
+  const editorFontSize = useEditorFontSize()
   const [state, setState] = useState(() => ensurePackageSections(initial.state))
   const [storageError, setStorageError] = useState(initial.error)
   const [notice, setNotice] = useState('')
@@ -47,6 +62,12 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     const keys = state.openKeys ?? []
     return keys
       .map((key) => state.documents.find((item) => item.key === key && item.package === 'gift'))
+      .filter((item): item is FlowDocument => !!item)
+  }, [state.documents, state.openKeys])
+  const scriptOpenDocs = useMemo(() => {
+    const keys = state.openKeys ?? []
+    return keys
+      .map((key) => state.documents.find((item) => item.key === key && item.package === 'script'))
       .filter((item): item is FlowDocument => !!item)
   }, [state.documents, state.openKeys])
   const issues = useMemo(() => parsed.flow ? validateFlow(parsed.flow) : [], [parsed.flow])
@@ -197,10 +218,11 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     setState((previous) => ({ ...previous, documents: previous.documents.map((item) => item.key === doc.key ? { ...item, source } : item) }))
     setSelection({ kind: 'flow' })
   }
-  function withKitOpen(previous: typeof state, key: string) {
+  function withOpenTab(previous: typeof state, key: string) {
     const openKeys = previous.openKeys ?? []
     return openKeys.includes(key) ? openKeys : [...openKeys, key]
   }
+  const isTabDocument = (item: { package: FlowPackageId } | undefined) => item?.package === 'gift' || item?.package === 'script'
   function selectDocument(key: string) {
     if (locked) return
     setState((previous) => {
@@ -208,17 +230,17 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
       return {
         ...previous,
         activeKey: key,
-        openKeys: target?.package === 'gift' ? withKitOpen(previous, key) : previous.openKeys,
+        openKeys: isTabDocument(target) ? withOpenTab(previous, key) : previous.openKeys,
       }
     })
     setSelection({ kind: 'flow' }); setNotice('')
   }
-  function closeKitTab(key: string) {
+  function closeEditorTab(key: string) {
     if (locked) return
     setState((previous) => {
       const openKeys = (previous.openKeys ?? []).filter((item) => item !== key)
       const activeKey = previous.activeKey === key
-        ? openKeys.at(-1) ?? previous.documents.find((item) => item.package !== 'gift')?.key ?? null
+        ? openKeys.at(-1) ?? previous.documents.find((item) => !isTabDocument(item))?.key ?? null
         : previous.activeKey
       return { ...previous, openKeys, activeKey }
     })
@@ -252,7 +274,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
       ...previous,
       documents: [...previous.documents, next],
       activeKey: next.key,
-      openKeys: next.package === 'gift' ? withKitOpen(previous, next.key) : previous.openKeys,
+      openKeys: isTabDocument(next) ? withOpenTab(previous, next.key) : previous.openKeys,
     }))
     setSelection({ kind: 'flow' }); setNotice('')
     return next.key
@@ -264,17 +286,26 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     input.accept = packageId === 'script' ? '.py,text/x-python' : packageId === 'gift' ? '.kit,application/json' : '.hflow,.json,application/json'
     input.click()
   }
-  async function importFiles(files: File[]) {
+  async function importFiles(files: File[], target = importFolder.current) {
     if (!files.length || locked) return
+    const pkg = target.package
+    const folderId = target.folderId
+    if (!packageAllowsDocuments(pkg)) {
+      setNotice('该分类暂不支持导入文件。')
+      return
+    }
+    const accepted = files.filter((file) => packageAcceptsImportFile(pkg, file.name))
+    const skipped = files.length - accepted.length
+    if (!accepted.length) {
+      setNotice(pkg === 'script' ? '请放入 .py 脚本。' : pkg === 'gift' ? '请放入 .kit 礼包。' : '请放入 .hflow 或 JSON 树图文档。')
+      return
+    }
     setBusy(true)
     try {
       const documents: FlowDocument[] = []
-      const pkg = importFolder.current.package
-      const folderId = importFolder.current.folderId
-      for (const file of files) {
+      for (const file of accepted) {
         if (file.size > 4 * 1024 * 1024) throw new Error(`${file.name}：文件超过 4 MB`)
         if (pkg === 'script') {
-          if (!/\.py$/i.test(file.name)) throw new Error(`${file.name}：请选择 .py 脚本`)
           const name = uniqueDocumentName({ ...state, documents: [...state.documents, ...documents] }, file.name, pkg, folderId)
           documents.push(stampDocument({
             key: crypto.randomUUID(),
@@ -286,7 +317,6 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
           continue
         }
         if (pkg === 'gift') {
-          if (!/\.kit$/i.test(file.name)) throw new Error(`${file.name}：请选择 .kit 礼包`)
           const source = await file.text()
           parseKit(source)
           const name = uniqueDocumentName({ ...state, documents: [...state.documents, ...documents] }, file.name, pkg, folderId)
@@ -299,7 +329,6 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
           }))
           continue
         }
-        if (!/\.(hflow|json)$/i.test(file.name)) throw new Error(`${file.name}：请选择 .hflow 或 JSON 树图文档`)
         const imported = importFlowDocument(file.name, await file.text(), pkg)
         imported.folderId = folderId
         imported.name = uniqueDocumentName({ ...state, documents: [...state.documents, ...documents] }, imported.name, pkg, folderId)
@@ -309,12 +338,13 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
         ...previous,
         documents: [...previous.documents, ...documents],
         activeKey: documents[0].key,
-        openKeys: pkg === 'gift'
+        openKeys: pkg === 'gift' || pkg === 'script'
           ? documents.reduce((keys, item) => keys.includes(item.key) ? keys : [...keys, item.key], previous.openKeys ?? [])
           : previous.openKeys,
       }))
       setSelection({ kind: 'flow' })
-      setNotice(pkg === 'script' ? `已导入 ${documents.length} 个脚本。` : pkg === 'gift' ? `已导入 ${documents.length} 个礼包。` : `已导入 ${documents.length} 份树图文档。`)
+      const kind = pkg === 'script' ? '个脚本' : pkg === 'gift' ? '个礼包' : '份树图文档'
+      setNotice(skipped > 0 ? `已导入 ${documents.length} ${kind}，跳过 ${skipped} 个不匹配的文件。` : `已导入 ${documents.length} ${kind}。`)
     } catch (error) { setNotice(`导入失败：${String(error)}`) }
     finally { setBusy(false) }
   }
@@ -386,7 +416,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
         return hasDoc || hasChild
       })
       const activeKey = previous.activeKey && documentSet.has(previous.activeKey) ? documents[0]?.key ?? null : previous.activeKey
-      const openKeys = (previous.openKeys ?? []).filter((key) => documents.some((item) => item.key === key && item.package === 'gift'))
+      const openKeys = (previous.openKeys ?? []).filter((key) => documents.some((item) => item.key === key && isTabDocument(item)))
       return { ...previous, documents, folders, activeKey, openKeys }
     })
     if (doc && documentSet.has(doc.key)) setSelection({ kind: 'flow' })
@@ -422,23 +452,16 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
       {!storageError && <button type="button" aria-label="关闭提示" onClick={() => setNotice('')}>×</button>}
     </div>}
     <div className="flow-layout">
-      <FlowExplorer state={state} active={active} disabled={locked || busy} onChange={setState} onSelect={selectDocument} onNew={newFlow} onImport={requestImport} onExport={exportFlow} onDownload={downloadDraft} onRemove={removeResources} onProperties={setPropertiesKey} onNotice={setNotice} />
+      <FlowExplorer state={state} active={active} disabled={locked || busy} onChange={setState} onSelect={selectDocument} onNew={newFlow} onImport={requestImport} onImportFiles={(files, folderId, packageId) => { void importFiles(files, { folderId, package: packageId }) }} onExport={exportFlow} onDownload={downloadDraft} onRemove={removeResources} onProperties={setPropertiesKey} onNotice={setNotice} />
       <main className="flow-main">
         {doc ? kitDoc && kitParsed ? (
           <div className="flow-kit-pane">
-            {kitOpenDocs.length > 0 && <div className="flow-kit-tabs" role="tablist" aria-label="已打开的礼包">
-              {kitOpenDocs.map((item) => (
-                <div key={item.key} className={`flow-kit-tab${item.key === doc.key ? ' is-active' : ''}`} role="tab" aria-selected={item.key === doc.key}>
-                  <button type="button" className="flow-kit-tab-name" disabled={locked || busy} title={item.name} onClick={() => selectDocument(item.key)}>{item.name}</button>
-                  <button type="button" className="flow-kit-tab-close" disabled={locked || busy} aria-label={`关闭 ${item.name}`} onClick={() => closeKitTab(item.key)}>×</button>
-                </div>
-              ))}
-            </div>}
+            <EditorTabs label="已打开的礼包" icon="kit" docs={kitOpenDocs} activeKey={doc.key} disabled={locked || busy} onSelect={selectDocument} onClose={closeEditorTab} />
             <KitEditor key={doc.key} kit={kitParsed.kit} error={kitParsed.error} editorPath={`progress-kit-script://${doc.key}.py`} disabled={locked || busy} onChange={(source) => { if (!locked && !busy) changeSource(source, true) }} />
           </div>
         ) : scriptDoc ? (
           <div className="flow-source-pane flow-script-pane">
-            <div className="flow-source-heading"><strong>{doc.name}</strong><span className="flow-hint">Python 脚本 · 保存在本机草稿库</span></div>
+            <EditorTabs label="已打开的脚本" icon="python" docs={scriptOpenDocs} activeKey={doc.key} disabled={locked || busy} onSelect={selectDocument} onClose={closeEditorTab} />
             <div className="flow-script-editor">
               <Editor
                 height="100%"
@@ -448,7 +471,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
                 path={`progress-script://${doc.key}/${doc.name}`}
                 beforeMount={registerHanshuLanguage}
                 onChange={(value) => { if (!locked && !busy) changeSource(value ?? '', true) }}
-                options={{ fontSize: 13, minimap: { enabled: false }, wordWrap: 'on', automaticLayout: true, scrollBeyondLastLine: false, readOnly: locked || busy }}
+                options={{ fontSize: editorFontSize, mouseWheelZoom: true, minimap: { enabled: false }, wordWrap: 'on', automaticLayout: true, scrollBeyondLastLine: false, padding: { top: 8 }, readOnly: locked || busy }}
               />
             </div>
           </div>

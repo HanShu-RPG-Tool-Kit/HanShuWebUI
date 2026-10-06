@@ -2,7 +2,6 @@ import {
   Fragment,
   useCallback,
   useEffect,
-  useMemo,
   useRef,
   useState,
   type Ref,
@@ -16,10 +15,7 @@ import { McSkinWorkspace } from './workspaces/McSkinWorkspace.tsx'
 import { ProgressFlowWorkspace, type ProgressWorkspaceHandle } from './workspaces/ProgressFlowWorkspace.tsx'
 import { McStreamWorkspace } from './workspaces/McStreamWorkspace.tsx'
 import { ScriptWorkspace } from './workspaces/ScriptWorkspace.tsx'
-import type {
-  ScriptChromeInfo,
-  ScriptWorkspaceHandle,
-} from './workspaces/scriptTypes.ts'
+import type { ScriptWorkspaceHandle } from './workspaces/scriptTypes.ts'
 import type { AppWorkspaceId } from './workspaces/types.ts'
 import {
   applyUiScale,
@@ -125,9 +121,6 @@ function App() {
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<AppWorkspaceId>(
     () => loadActiveWorkspaceId(WORKSPACE_IDS),
   )
-  const [scriptChrome, setScriptChrome] = useState<ScriptChromeInfo | null>(
-    null,
-  )
   const [uiScale, setUiScale] = useState<UiScale>(() => loadUiScale())
   const [maximized, setMaximized] = useState(false)
   const [showSplash, setShowSplash] = useState(
@@ -230,10 +223,6 @@ function App() {
     saveUiScale(scale)
   }, [])
 
-  const onChromeInfo = useCallback((info: ScriptChromeInfo) => {
-    setScriptChrome(info)
-  }, [])
-
   const selectWorkspace = (id: AppWorkspaceId) => {
     setActiveWorkspaceId(id)
     saveActiveWorkspaceId(id)
@@ -272,17 +261,6 @@ function App() {
     if (activeWorkspaceId === 'progress-flow') progressRef.current?.handleMenuAction(item)
     else if (activeWorkspaceId === 'script') scriptRef.current?.handleMenuAction(item)
   }
-
-  const titleCenter = useMemo(() => {
-    const activeDef = APP_WORKSPACES.find((w) => w.id === activeWorkspaceId)
-    if (activeWorkspaceId === 'script' && scriptChrome) {
-      const folder =
-        scriptChrome.projectFolderName ?? scriptChrome.packageName
-      const busy = scriptChrome.projectBusy ? '（读写中…）' : ''
-      return `${scriptChrome.titleName} — ${folder}${busy}`
-    }
-    return activeDef?.label ?? '汉书'
-  }, [activeWorkspaceId, scriptChrome])
 
   return (
     <div className="app">
@@ -385,9 +363,7 @@ function App() {
             ))}
           </div>
         </div>
-        <div className="titlebar-center" data-tauri-drag-region>
-          {titleCenter}
-        </div>
+        <div className="titlebar-center" data-tauri-drag-region />
         {isDesktopShell && (
           <div className="titlebar-right">
             <button
@@ -424,7 +400,7 @@ function App() {
             activeWorkspaceId === 'script' ? ' active' : ''
           }`}
         >
-          <ScriptWorkspace ref={scriptRef} onChromeInfo={onChromeInfo} isActive={activeWorkspaceId === 'script'} />
+          <ScriptWorkspace ref={scriptRef} isActive={activeWorkspaceId === 'script'} />
         </div>
         {APP_WORKSPACES.filter((w) => w.id !== 'script').map((ws) => (
           <div

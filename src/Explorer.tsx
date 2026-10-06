@@ -19,6 +19,7 @@ import {
   type AssetTreeDir,
   type AssetTreeNode,
 } from './assets/paths'
+import { ExplorerIcon, fileIconKind } from './explorerIcons'
 import {
   WORKSPACE_GROUP_ORDER,
   groupDirPrefix,
@@ -373,8 +374,8 @@ function PackageNode({
             isVoiceMapFile(script.name) ? '右键：生成空白 ogg' : '双击重命名'
           }
         >
-          <span className="explorer-icon file" aria-hidden />
-          {script.name}
+          <ExplorerIcon kind={fileIconKind(script.name)} />
+          <span className="explorer-name">{script.name}</span>
         </button>
         <div className="explorer-row-actions">
           <button
@@ -410,7 +411,7 @@ function PackageNode({
           onDoubleClick={() => onRenamePackage(pkg.id)}
           title="双击重命名；可拖入文件到包内 assets/"
         >
-          <span className="explorer-icon pkg" aria-hidden />
+          <ExplorerIcon kind="package" />
           <span className="explorer-pkg-name">{pkg.name}</span>
           {/* 本地位置：小灰字。Local Mirror = 绑定了磁盘上的工程文件夹 */}
           <span className="explorer-pkg-path" title={locationTitle}>
@@ -443,7 +444,10 @@ function PackageNode({
               if (items.length === 0) return null
               return (
                 <li key={`kind-${kind}`} className="explorer-kind">
-                  <div className="explorer-kind-row">{groupDirPrefix(kind)}</div>
+                  <div className="explorer-kind-row">
+                    <ExplorerIcon kind="group" />
+                    <span className="explorer-name">{groupDirPrefix(kind)}</span>
+                  </div>
                   <ul className="explorer-files nested">
                     {items.map(renderScriptRow)}
                   </ul>
@@ -574,8 +578,8 @@ function AssetFolderBlock({
           onClick={() => (isRoot ? onToggleRoot() : onToggleDir(dir.path))}
           title={`${dir.path} — 拖入文件到此文件夹`}
         >
-          <span className="explorer-icon folder" aria-hidden />
-          {dir.name}
+          <ExplorerIcon kind="folder" />
+          <span className="explorer-name">{dir.name}</span>
           {isRoot && (
             <span className="explorer-count">
               {countFiles(dir)}
@@ -699,8 +703,8 @@ function AssetRow({
           onClick={onOpen}
           title={asset.path}
         >
-          <span className="explorer-icon asset" aria-hidden />
-          {assetFileName(asset.path)}
+          <ExplorerIcon kind={fileIconKind(asset.path)} />
+          <span className="explorer-name">{assetFileName(asset.path)}</span>
         </button>
         <div className="explorer-row-actions">
           <button type="button" title="删除资产" onClick={onDelete}>

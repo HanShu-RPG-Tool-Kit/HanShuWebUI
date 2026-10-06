@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type MouseEvent } from 'react'
 import { NodeContextMenu, type NodeMenuItem } from './NodeContextMenu'
+import { droppedFiles, shouldAcceptDrop } from '../../drag/dragPayload'
 import {
   FLOW_PACKAGE_NAMES,
   FLOW_PACKAGE_ORDER,
@@ -12,6 +13,7 @@ import {
   isFolderEmpty,
   isSectionFolder,
   moveFlowEntry,
+  packageAllowsDocuments,
   packageAllowsFlows,
   packageAllowsKits,
   packageAllowsScripts,
@@ -27,7 +29,7 @@ import type { FlowPackageId, FlowWorkspaceState } from './storage'
 type Row = { entry: FlowEntry; name: string; depth: number; parent: string | null; pkg: FlowPackageId }
 type Edit = { mode: 'flow' | 'script' | 'kit' | 'folder' | 'rename' | 'move'; entry: FlowEntry; parent: string | null; pkg: FlowPackageId; value: string; error: string }
 
-function Icon({ kind }: { kind: 'folder' | 'document' | 'python' | 'kit' | 'new' | 'import' | 'collapse' | 'script' | 'progress' | 'story' | 'actor' | 'reputation' | 'region' | 'navigator' | 'shop' | 'gift' | 'goal-def' }) {
+export function Icon({ kind }: { kind: 'folder' | 'document' | 'python' | 'kit' | 'new' | 'import' | 'collapse' | 'script' | 'progress' | 'story' | 'actor' | 'reputation' | 'region' | 'navigator' | 'shop' | 'gift' | 'goal-def' }) {
   const paths: Record<typeof kind, string> = {
     folder: 'M2 5h6l2 2h12v12H2z',
     document: 'M5 2h9l5 5v15H5z M14 2v6h5 M8 12h8 M8 16h8',
@@ -50,6 +52,7 @@ function Icon({ kind }: { kind: 'folder' | 'document' | 'python' | 'kit' | 'new'
   return <svg className={`flow-resource-icon is-${kind}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d={paths[kind]} /></svg>
 }
 
+const TREE_INDENT = 10
 const defaultFocus = packageEntry('story')
 const sectionIconKind = (key: string): 'folder' | 'goal-def' => {
   const parsed = parseSectionFolderKey(key)
@@ -81,11 +84,12 @@ const parseSelection = (ids: Set<string>) => {
 
 const isPackageId = (value: string): value is FlowPackageId => (FLOW_PACKAGE_ORDER as string[]).includes(value)
 
-export function FlowExplorer({ state, active, disabled, onChange, onSelect, onNew, onImport, onExport, onDownload, onRemove, onProperties, onNotice }: {
+export function FlowExplorer({ state, active, disabled, onChange, onSelect, onNew, onImport, onImportFiles, onExport, onDownload, onRemove, onProperties, onNotice }: {
   state: FlowWorkspaceState; active: boolean; disabled: boolean
   onChange: (state: FlowWorkspaceState) => void; onSelect: (key: string) => void
   onNew: (name: string, folder: string | null, pkg: FlowPackageId) => string
   onImport: (folder: string | null, pkg: FlowPackageId) => void
+  onImportFiles: (files: File[], folder: string | null, pkg: FlowPackageId) => void
   onExport: (key: string) => void; onDownload: (key: string) => void
   onRemove: (selection: { documents: string[]; folders: string[] }) => void
   onProperties: (key: string) => void; onNotice: (message: string) => void
@@ -337,6 +341,80 @@ export function FlowExplorer({ state, active, disabled, onChange, onSelect, onNe
     if (entry.kind === 'folder') return { pkg, parent: entry.key }
     return { pkg, parent: null }
   }
+  /** 外部文件导入落点：文档行落到其所在文件夹 */
+  function importDropTarget(entry: FlowEntry, pkg: FlowPackageId): { pkg: FlowPackageId; parent: string | null } {
+    if (entry.kind === 'document') {
+      const document = state.documents.find((item) => item.key === entry.key)
+      return { pkg: document?.package ?? pkg, parent: document?.folderId ?? null }
+    }
+    return dropTargetParent(entry, pkg)
+  }
+  function canImportInto(entry: FlowEntry, pkg: FlowPackageId) {
+    return packageAllowsDocuments(importDropTarget(entry, pkg).pkg)
+  }
+  function importExternalFiles(files: File[], entry: FlowEntry, pkg: FlowPackageId) {
+    if (!files.length) return
+    const target = importDropTarget(entry, pkg)
+    if (!packageAllowsDocuments(target.pkg)) {
+      onNotice('该分类暂不支持导入文件。')
+      return
+    }
+    onImportFiles(files, target.parent, target.pkg)
+    const expandId = target.parent ? `folder:${target.parent}` : entryId(packageEntry(target.pkg))
+    setExpanded((previous) => new Set(previous).add(expandId).add(entryId(packageEntry(target.pkg))))
+  }
+  function onRowDragOver(event: DragEvent<HTMLDivElement>, row: Row) {
+    if (disabled || edit) return
+    const id = entryId(row.entry)
+    if (dragging.current && row.entry.kind !== 'document') {
+      const target = dropTargetParent(row.entry, row.pkg)
+      if (canMoveFlowEntry(state, dragging.current, target.pkg, target.parent)) {
+        event.preventDefault()
+        event.dataTransfer.dropEffect = 'move'
+        setDropTarget(id)
+      }
+      return
+    }
+    if (!dragging.current && shouldAcceptDrop(event.dataTransfer)) {
+      // 必须 preventDefault，否则 WebView2/浏览器不允许投放，drop 不会触发
+      event.preventDefault()
+      if (canImportInto(row.entry, row.pkg)) {
+        event.dataTransfer.dropEffect = 'copy'
+        setDropTarget(id)
+      } else {
+        event.dataTransfer.dropEffect = 'none'
+      }
+    }
+  }
+  function onRowDrop(event: DragEvent<HTMLDivElement>, row: Row) {
+    event.preventDefault()
+    setDropTarget(null)
+    if (disabled || edit) return
+    if (dragging.current) {
+      if (row.entry.kind === 'document') return
+      const target = dropTargetParent(row.entry, row.pkg)
+      try {
+        onChange(moveFlowEntry(state, dragging.current, target.pkg, target.parent))
+        setExpanded((previous) => new Set(previous).add(entryId(row.entry)))
+      } catch (error) { onNotice(String(error)) }
+      dragging.current = null
+      return
+    }
+    const files = droppedFiles(event.dataTransfer)
+    if (!files.length) return
+    if (!canImportInto(row.entry, row.pkg)) {
+      onNotice('该分类暂不支持导入文件。')
+      return
+    }
+    importExternalFiles(files, row.entry, row.pkg)
+  }
+  function onTreePaste(event: ClipboardEvent<HTMLDivElement>) {
+    if (disabled || edit) return
+    const files = Array.from(event.clipboardData?.files ?? [])
+    if (!files.length) return
+    event.preventDefault()
+    importExternalFiles(files, focus, entryPackage(state, focus))
+  }
   function keyDown(event: KeyboardEvent<HTMLDivElement>, row: Row, index: number) {
     if (event.target !== event.currentTarget || disabled) return
     if (edit) { if (event.key === 'Escape') { event.preventDefault(); cancelEdit() } return }
@@ -449,7 +527,7 @@ export function FlowExplorer({ state, active, disabled, onChange, onSelect, onNe
       <button type="button" title="折叠文件夹" aria-label="折叠文件夹" disabled={!!edit} onClick={() => { setExpanded(new Set([...FLOW_PACKAGE_ORDER.map((pkg) => entryId(packageEntry(pkg))), ...allSectionEntryIds()])); selectOnly(defaultFocus); setSearch('') }}><Icon kind="collapse" /></button>
     </div></div>
     <input className="flow-search" placeholder="筛选资源…" aria-label="筛选资源" value={search} disabled={!!edit} onChange={(event) => setSearch(event.target.value)} />
-    <div className="flow-resource-tree" role="tree" aria-label="故事流程文件树" aria-multiselectable="true" onContextMenu={(event) => showMenu(event, defaultFocus)}>
+    <div className="flow-resource-tree" role="tree" aria-label="故事流程文件树" aria-multiselectable="true" onContextMenu={(event) => showMenu(event, defaultFocus)} onPaste={onTreePaste}>
       {rows.map((row, index) => {
         const id = entryId(row.entry), folder = row.entry.kind !== 'document', isSelected = selectedIds.has(id), isFocused = id === entryId(focus), isEditing = edit && entryId(edit.entry) === id
         const section = row.entry.kind === 'folder' && isSectionFolder(row.entry.key)
@@ -459,31 +537,21 @@ export function FlowExplorer({ state, active, disabled, onChange, onSelect, onNe
         const kitDoc = !!document && (document.package === 'gift' || row.name.toLowerCase().endsWith('.kit'))
         const iconKind = row.entry.kind === 'package' ? row.entry.package : section ? sectionIconKind(row.entry.key) : kitDoc ? 'kit' : pythonDoc ? 'python' : folder ? 'folder' : 'document'
         return <div key={id} role="none">
-          <div ref={(element) => { if (element) elements.current.set(id, element); else elements.current.delete(id) }} className={`flow-resource-row${isSelected ? ' selected' : ''}${row.entry.kind === 'document' && row.entry.key === state.activeKey ? ' is-open' : ''}${dropTarget === id ? ' drop-target' : ''}`} role="treeitem" aria-level={row.depth + 1} aria-selected={isSelected} aria-expanded={folder ? !!search || expanded.has(id) : undefined} aria-disabled={disabled} tabIndex={isFocused || (!rows.some((r) => entryId(r.entry) === entryId(focus)) && index === 0) ? 0 : -1} style={{ paddingLeft: 8 + row.depth * 16 }} title={row.name}
+          <div ref={(element) => { if (element) elements.current.set(id, element); else elements.current.delete(id) }} className={`flow-resource-row${isSelected ? ' selected' : ''}${row.entry.kind === 'document' && row.entry.key === state.activeKey ? ' is-open' : ''}${dropTarget === id ? ' drop-target' : ''}`} role="treeitem" aria-level={row.depth + 1} aria-selected={isSelected} aria-expanded={folder ? !!search || expanded.has(id) : undefined} aria-disabled={disabled} tabIndex={isFocused || (!rows.some((r) => entryId(r.entry) === entryId(focus)) && index === 0) ? 0 : -1} style={{ paddingLeft: 6 + row.depth * TREE_INDENT }} title={row.name}
             onClick={(event) => clickRow(event, row.entry)}
             onFocus={(event) => { if (event.target === event.currentTarget) setFocus(row.entry) }} onKeyDown={(event) => keyDown(event, row, index)} onContextMenu={(event) => showMenu(event, row.entry)} draggable={!disabled && !edit && row.entry.kind !== 'package' && !section && multiCount <= 1}
             onDragStart={(event) => { dragging.current = row.entry; event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('application/x-hanshu-progress-entry', id) }}
             onDragEnd={() => { dragging.current = null; setDropTarget(null) }}
-            onDragOver={(event) => {
-              if (!disabled && !edit && folder && dragging.current) {
-                const target = dropTargetParent(row.entry, row.pkg)
-                if (canMoveFlowEntry(state, dragging.current, target.pkg, target.parent)) { event.preventDefault(); event.dataTransfer.dropEffect = 'move'; setDropTarget(id) }
-              }
-            }}
-            onDragLeave={() => setDropTarget(null)} onDrop={(event) => {
-              event.preventDefault(); setDropTarget(null); if (disabled || edit || !folder || !dragging.current) return
-              const target = dropTargetParent(row.entry, row.pkg)
-              try { onChange(moveFlowEntry(state, dragging.current, target.pkg, target.parent)); setExpanded((previous) => new Set(previous).add(id)) } catch (error) { onNotice(String(error)) }
-              dragging.current = null
-            }}>
+            onDragOver={(event) => onRowDragOver(event, row)}
+            onDragLeave={() => setDropTarget(null)} onDrop={(event) => onRowDrop(event, row)}>
             <span className="flow-resource-twist" aria-hidden>{folder ? !!search || expanded.has(id) ? '▾' : '▸' : ''}</span><Icon kind={iconKind} />
             {isEditing && edit.mode === 'rename' ? <form className="flow-resource-edit" onSubmit={(event) => { event.preventDefault(); submitEdit() }} onClick={(event) => event.stopPropagation()}><input ref={editInput} aria-label="资源名称" value={edit.value} onChange={(event) => setEdit({ ...edit, value: event.target.value, error: '' })} onKeyDown={(event) => { event.stopPropagation(); if (event.key === 'Escape') cancelEdit() }} /></form> : <span className="flow-resource-name">{row.name}</span>}
           </div>
-          {isEditing && (edit.mode === 'flow' || edit.mode === 'script' || edit.mode === 'kit' || edit.mode === 'folder') && <form className="flow-resource-new" style={{ paddingLeft: 8 + (row.depth + 1) * 16 }} onSubmit={(event) => { event.preventDefault(); submitEdit() }}><span className="flow-resource-twist" /><Icon kind={edit.mode === 'folder' ? 'folder' : edit.mode === 'script' ? 'python' : edit.mode === 'kit' ? 'kit' : 'document'} /><input ref={editInput} aria-label={edit.mode === 'folder' ? '新文件夹名称' : edit.mode === 'script' ? '新脚本名称' : edit.mode === 'kit' ? '新礼包名称' : '新流程名称'} value={edit.value} onChange={(event) => setEdit({ ...edit, value: event.target.value, error: '' })} onKeyDown={(event) => { if (event.key === 'Escape') cancelEdit() }} /></form>}
+          {isEditing && (edit.mode === 'flow' || edit.mode === 'script' || edit.mode === 'kit' || edit.mode === 'folder') && <form className="flow-resource-new" style={{ paddingLeft: 6 + (row.depth + 1) * TREE_INDENT }} onSubmit={(event) => { event.preventDefault(); submitEdit() }}><span className="flow-resource-twist" /><Icon kind={edit.mode === 'folder' ? 'folder' : edit.mode === 'script' ? 'python' : edit.mode === 'kit' ? 'kit' : 'document'} /><input ref={editInput} aria-label={edit.mode === 'folder' ? '新文件夹名称' : edit.mode === 'script' ? '新脚本名称' : edit.mode === 'kit' ? '新礼包名称' : '新流程名称'} value={edit.value} onChange={(event) => setEdit({ ...edit, value: event.target.value, error: '' })} onKeyDown={(event) => { if (event.key === 'Escape') cancelEdit() }} /></form>}
         </div>
       })}
       {search && rows.length === FLOW_PACKAGE_ORDER.length && <p className="flow-explorer-empty">没有匹配的资源</p>}
-      {!search && !hasAnyResource && !edit && <p className="flow-explorer-empty">在「故事流程」下新建 .hflow；「脚本」下新建 .py；「礼包」下新建 .kit；其他分类可先建文件夹占位。</p>}
+      {!search && !hasAnyResource && !edit && <p className="flow-explorer-empty">在「故事流程」下新建或拖入 .hflow；「脚本」下新建或拖入 .py；「礼包」下新建或拖入 .kit；其他分类可先建文件夹占位。</p>}
     </div>
     {edit && <div className="flow-explorer-edit-panel" onKeyDown={(event) => { if (event.key === 'Escape') cancelEdit() }}>
       {edit.mode === 'move' ? <><label>移动到<select aria-label="目标文件夹" value={moveSelectValue} onChange={(event) => {
@@ -494,7 +562,7 @@ export function FlowExplorer({ state, active, disabled, onChange, onSelect, onNe
       {edit.error && <p className="flow-error" role="alert">{edit.error}</p>}
       <div><button type="button" onClick={submitEdit}>确认</button><button type="button" onClick={cancelEdit}>取消</button></div>
     </div>}
-    <div className="flow-library-footer">{multiCount > 1 ? `已选 ${multiCount} 项 · ` : ''}{FLOW_PACKAGE_ORDER.length} 个分类 · {storyDocCount} 个故事流程 · {scriptDocCount} 个脚本 · {kitDocCount} 个礼包 · Ctrl 多选 · Delete 删除</div>
+    <div className="flow-library-footer">{multiCount > 1 ? `已选 ${multiCount} 项 · ` : ''}{FLOW_PACKAGE_ORDER.length} 个分类 · {storyDocCount} 个故事流程 · {scriptDocCount} 个脚本 · {kitDocCount} 个礼包 · 拖入/粘贴导入 · Ctrl 多选 · Delete 删除</div>
     {menu && menu.state === state && active && !disabled && <NodeContextMenu x={menu.x} y={menu.y} title={menu.multi ? `已选择 ${multiCount} 项` : entryName(state, menu.entry)} label="资源操作" items={menuItems} onClose={(restore = true) => { setMenu(null); if (restore) elements.current.get(entryId(menu.entry))?.focus() }} />}
   </aside>
 }

@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import Editor from '@monaco-editor/react'
 import { HANSHU_THEME_ID, registerHanshuLanguage } from '../../monaco/hanshuLanguage'
 import { parseJsonValue } from '../../utils/strictJson'
+import { useEditorFontSize } from './editorFont'
 import { isObject } from './model'
 import type { KitDocument, KitEffect, KitExperienceKind, KitFeedback, KitItem, KitPool, KitPoolEntry, KitPoolHit } from './kit'
 import { createKitEffect, createKitItem, createKitPool, createKitPoolEntry, rollKitPools, stringifyKit } from './kit'
@@ -606,6 +607,7 @@ export function KitEditor({ kit, error, disabled, editorPath, onChange }: {
   onChange: (source: string) => void
 }) {
   const update = (patch: Partial<KitDocument>) => onChange(stringifyKit({ ...kit, ...patch }))
+  const fontSize = useEditorFontSize()
 
   return <div className="kit-editor">
     <div className="kit-page">
@@ -678,7 +680,8 @@ export function KitEditor({ kit, error, disabled, editorPath, onChange }: {
                 beforeMount={registerHanshuLanguage}
                 onChange={(value) => { if (!disabled) update({ script: value ?? '' }) }}
                 options={{
-                  fontSize: 13,
+                  fontSize,
+                  mouseWheelZoom: true,
                   minimap: { enabled: false },
                   wordWrap: 'on',
                   automaticLayout: true,

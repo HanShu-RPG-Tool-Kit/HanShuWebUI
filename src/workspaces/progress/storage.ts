@@ -67,8 +67,10 @@ function readState(raw: string): FlowWorkspaceState {
   })) throw new Error('流程分类与文件夹不一致')
   const activeKey = documents.some((d) => d.key === state.activeKey) ? state.activeKey as string : documents[0]?.key ?? null
   const openRaw = Array.isArray(state.openKeys) ? state.openKeys.filter((key): key is string => typeof key === 'string') : []
-  const openKeys = [...new Set(openRaw.filter((key) => documents.some((document) => document.key === key && document.package === 'gift')))]
-  if (activeKey && documents.find((document) => document.key === activeKey)?.package === 'gift' && !openKeys.includes(activeKey)) openKeys.push(activeKey)
+  const isTabPackage = (pkg: FlowPackageId) => pkg === 'gift' || pkg === 'script'
+  const openKeys = [...new Set(openRaw.filter((key) => documents.some((document) => document.key === key && isTabPackage(document.package))))]
+  const activeDoc = activeKey ? documents.find((document) => document.key === activeKey) : undefined
+  if (activeDoc && isTabPackage(activeDoc.package) && !openKeys.includes(activeKey!)) openKeys.push(activeKey!)
   return { documents, folders: typedFolders, activeKey, openKeys }
 }
 
