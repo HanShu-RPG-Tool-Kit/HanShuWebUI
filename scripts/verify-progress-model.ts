@@ -6,6 +6,7 @@ import { addNextCheckpoint, createCanvasNote, removeCanvasItems, updateCanvasNot
 import { smartArrangeCanvas } from '../src/workspaces/progress/arrange.ts'
 import { MAX_CANVAS_ZOOM, MIN_CANVAS_ZOOM, worldPoint, zoomCamera } from '../src/workspaces/progress/camera.ts'
 import { CKPT_STATES, GOAL_STATES, PREDICATE_STATES, ckptState, createSimState, fireCkptTransition, fireGoalComplete, fireGoalNo, fireGoalYes, firePredicateComplete, fireStart, goalState, mergeSim, outgoingSignalTargets, predicateState, propagateSignals, resetSimState, syncSimState } from '../src/workspaces/progress/signals.ts'
+import { createKit, createKitItem, flattenKit, mergeKitLayer, parseKit, stringifyKit } from '../src/workspaces/progress/kit.ts'
 
 let passed = 0
 function test(name: string, check: () => void) { check(); passed++; console.log(`[OK] ${name}`) }
@@ -321,7 +322,11 @@ test('Raw incomplete source and an empty library survive reload', () => {
   saveFlowWorkspace({ documents: [doc], folders: [], activeKey: doc.key })
   assert.equal(loadFlowWorkspace().state.documents[0].source, doc.source)
   saveFlowWorkspace({ documents: [], folders: [], activeKey: null })
-  assert.deepEqual(loadFlowWorkspace().state, { documents: [], folders: [], activeKey: null })
+  const empty = loadFlowWorkspace().state
+  assert.deepEqual(empty.documents, [])
+  assert.equal(empty.activeKey, null)
+  assert.equal(empty.split, null)
+  assert(empty.folders.every((folder) => folder.key.startsWith('section:')))
 })
 test('Corrupt storage is reported without modifying the stored bytes', () => {
   store.set(FLOW_STORAGE_KEY, '{bad}')
@@ -344,7 +349,10 @@ test('Nested resource folders persist without changing flow content or active id
   assert.equal(renamed.documents[0].name, '驿站.hflow')
   assert.equal(renamed.activeKey, doc.key)
   saveFlowWorkspace(renamed)
-  assert.deepEqual(loadFlowWorkspace().state, renamed)
+  const reloaded = loadFlowWorkspace().state
+  assert.deepEqual(reloaded.documents, renamed.documents)
+  assert.deepEqual(reloaded.folders.filter((folder) => !folder.key.startsWith('section:')), renamed.folders)
+  assert.equal(reloaded.activeKey, renamed.activeKey)
   assert.throws(() => moveFlowEntry(renamed, { kind: 'folder', key: chapter.folder.key }, 'story', story.folder.key), /子文件夹/)
   assert.equal(moveFlowEntry(renamed, entry, 'story', null).documents[0].folderId, null)
 })
@@ -1055,6 +1063,94 @@ test('Predicate cannot emit P before subscribe; out is single-wire', () => {
   let sim = createSimState(flow)
   sim = firePredicateComplete(flow, sim, first.id)
   assert.ok(sim.log.some(item => item.from === first.id && item.signal.kind === 'predicate-complete' && !item.accepted))
+})
+
+test('Kit extends overlays by card; includes still concatenate', () => {
+  const base = createKit('基础')
+  base.items = [createKitItem('minecraft:stick', 1), createKitItem('minecraft:wooden_sword', 1)]
+  base.effects = [{ id: 'minecraft:speed', amplifier: 0, duration: 30, particles: true }]
+  base.experience = { kind: 'points', amount: 10 }
+  base.feedback = { message: '基础', title: '欢迎', subtitle: '', sound: '' }
+  base.commands = ['say hi']
+
+  const food = createKit('食物')
+  food.items = [createKitItem('minecraft:bread', 8)]
+  food.experience = { kind: 'points', amount: 5 }
+
+  const child = createKit('进阶')
+  child.extends = 'base'
+  child.includes = ['food']
+  // 只改物品卡与反馈/经验卡：整卡替换；效果/指令空 → 继承
+  child.items = [createKitItem('minecraft:iron_sword', 1)]
+  child.experience = { kind: 'levels', amount: 3 }
+  child.feedback = { message: '', title: '进阶', subtitle: '', sound: '' }
+
+  const catalog = new Map([['base', base], ['food', food]])
+  const flat = flattenKit(child, 'advanced', catalog)
+  assert.equal(flat.errors.length, 0)
+  // 先卡片覆盖物品为铁剑，再组合追加面包；食物包的经验不并入
+  assert.deepEqual(flat.kit.items.map((item) => `${item.id}×${item.count}`), [
+    'minecraft:iron_sword×1',
+    'minecraft:bread×8',
+  ])
+  assert.equal(flat.kit.effects.length, 1)
+  assert.equal(flat.kit.effects[0]?.id, 'minecraft:speed')
+  assert.deepEqual(flat.kit.commands, ['say hi'])
+  assert.equal(flat.kit.experience.kind, 'levels')
+  assert.equal(flat.kit.experience.amount, 3)
+  assert.equal(flat.kit.feedback.message, '')
+  assert.equal(flat.kit.feedback.title, '进阶')
+})
+
+test('Kit empty overlay cards keep base; includes append content only', () => {
+  const parent = createKit('P')
+  parent.items = [createKitItem('minecraft:apple', 1)]
+  parent.effects = [{ id: 'minecraft:speed', amplifier: 0, duration: 30, particles: true }]
+  parent.experience = { kind: 'points', amount: 2 }
+
+  const mod = createKit('M')
+  mod.items = [createKitItem('minecraft:apple', 3)]
+  mod.experience = { kind: 'points', amount: 4 }
+
+  const child = createKit('C')
+  child.extends = 'p'
+  child.includes = ['m']
+
+  const flat = flattenKit(child, 'c', new Map([['p', parent], ['m', mod]]))
+  assert.deepEqual(flat.kit.items.map((item) => `${item.id}×${item.count}`), [
+    'minecraft:apple×1',
+    'minecraft:apple×3',
+  ])
+  assert.equal(flat.kit.effects.length, 1)
+  assert.equal(flat.kit.experience.amount, 2)
+})
+
+test('Kit cycle and missing refs are reported without throwing', () => {
+  const a = createKit('A')
+  a.extends = 'b'
+  const b = createKit('B')
+  b.extends = 'a'
+  const flat = flattenKit(a, 'a', new Map([['b', b]]))
+  assert.ok(flat.errors.some((error) => error.includes('成环')))
+
+  const orphan = createKit('孤')
+  orphan.includes = ['missing']
+  const miss = flattenKit(orphan, 'orphan', new Map())
+  assert.ok(miss.errors.some((error) => error.includes('找不到')))
+})
+
+test('Kit stringify/parse keeps extends and includes', () => {
+  const kit = createKit('往返')
+  kit.extends = 'base.kit'
+  kit.includes = ['food', 'extra.kit']
+  kit.items = [createKitItem('minecraft:apple', 2)]
+  const again = parseKit(stringifyKit(kit))
+  assert.equal(again.extends, 'base')
+  assert.deepEqual(again.includes, ['food', 'extra'])
+  assert.equal(again.items[0]?.count, 2)
+  const merged = mergeKitLayer(createKit('x'), again)
+  assert.equal(merged.extends, '')
+  assert.equal(merged.includes.length, 0)
 })
 
 console.log(`Progress model: ${passed} checks passed.`)

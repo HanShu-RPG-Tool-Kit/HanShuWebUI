@@ -1,0 +1,356 @@
+.help-backdrop {
+  --help-s: var(--app-ui-scale, 1.25);
+  --help-bg: #262624;
+  --help-nav-bg: #1f1f1e;
+  --help-text: #d6d3cc;
+  --help-dim: #9a968e;
+  --help-strong: #ece9e2;
+  --help-line: rgba(255, 255, 255, 0.07);
+  --help-accent: #8fb0e6;
+  --help-mono: 'Cascadia Mono', 'JetBrains Mono', Consolas, monospace;
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2vh 2vw;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.help-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(1280px, 94vw);
+  height: min(900px, 92vh);
+  overflow: hidden;
+  border: 1px solid #111;
+  background: var(--help-bg);
+  color: var(--help-text);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, 0.6);
+  font-family: -apple-system, 'PingFang SC', 'Microsoft YaHei UI', 'Segoe UI', sans-serif;
+}
+
+.help-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: none;
+  height: calc(34px * var(--help-s));
+  padding: 0 6px 0 16px;
+  border-bottom: 1px solid #151515;
+  background: #333331;
+}
+
+.help-header strong {
+  color: var(--help-strong);
+  font-size: calc(13px * var(--help-s));
+  font-weight: 600;
+}
+
+.help-header-topic {
+  color: var(--help-dim);
+  font-size: calc(12px * var(--help-s));
+}
+
+.help-header-topic::before {
+  content: '/';
+  margin-right: 12px;
+  opacity: 0.5;
+}
+
+.help-close {
+  appearance: none;
+  display: grid;
+  place-items: center;
+  width: calc(28px * var(--help-s));
+  height: calc(28px * var(--help-s));
+  margin: 0 0 0 auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--help-dim);
+  cursor: pointer;
+}
+
+.help-close svg {
+  width: calc(12px * var(--help-s));
+  height: calc(12px * var(--help-s));
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-width: 1.6;
+}
+
+.help-close:hover {
+  background: rgba(224, 108, 117, 0.16);
+  color: #f0a0a6;
+}
+
+.help-layout {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+/* ---------- 目录 ---------- */
+
+.help-nav {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 calc(200px * var(--help-s));
+  gap: 14px;
+  padding: 16px 10px;
+  border-right: 1px solid #151515;
+  background: var(--help-nav-bg);
+  overflow: auto;
+}
+
+.help-nav-heading {
+  padding: 0 10px 6px;
+  color: var(--help-dim);
+  font-size: calc(11px * var(--help-s));
+  letter-spacing: 0.08em;
+  opacity: 0.75;
+}
+
+.help-nav-item {
+  appearance: none;
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: calc(6px * var(--help-s)) 10px;
+  border: 0;
+  border-left: 2px solid transparent;
+  background: transparent;
+  color: var(--help-text);
+  font: inherit;
+  font-size: calc(13px * var(--help-s));
+  text-align: left;
+  cursor: pointer;
+}
+
+.help-nav-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--help-strong);
+}
+
+.help-nav-item.is-active {
+  border-left-color: var(--help-accent);
+  background: rgba(143, 176, 230, 0.12);
+  color: var(--help-strong);
+}
+
+.help-toc {
+  margin: 4px 0 6px;
+  padding: 0 0 0 14px;
+  list-style: none;
+}
+
+.help-toc button {
+  appearance: none;
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 3px 8px;
+  overflow: hidden;
+  border: 0;
+  border-left: 1px solid var(--help-line);
+  background: transparent;
+  color: var(--help-dim);
+  font: inherit;
+  font-size: calc(11.5px * var(--help-s));
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.help-toc button:hover {
+  border-left-color: var(--help-accent);
+  color: var(--help-strong);
+}
+
+/* ---------- 正文 ---------- */
+
+.help-article {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  scroll-padding-top: 16px;
+}
+
+.help-md {
+  box-sizing: border-box;
+  max-width: calc(760px * var(--help-s));
+  margin: 0 auto;
+  padding: 28px 40px 64px;
+  font-size: calc(14px * var(--help-s));
+  line-height: 1.8;
+  overflow-wrap: anywhere;
+}
+
+.help-md > :first-child {
+  margin-top: 0;
+}
+
+.help-md h1 {
+  margin: 0 0 18px;
+  color: var(--help-strong);
+  font-size: 1.85em;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.help-md h2 {
+  margin: 2.2em 0 0.7em;
+  padding-bottom: 0.35em;
+  border-bottom: 1px solid var(--help-line);
+  color: var(--help-strong);
+  font-size: 1.35em;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.help-md h3 {
+  margin: 1.6em 0 0.5em;
+  color: var(--help-strong);
+  font-size: 1.1em;
+  font-weight: 600;
+}
+
+.help-md h4 {
+  margin: 1.3em 0 0.4em;
+  color: var(--help-text);
+  font-size: 1em;
+  font-weight: 600;
+}
+
+.help-md p,
+.help-md ul,
+.help-md ol,
+.help-md table,
+.help-md pre,
+.help-md blockquote {
+  margin: 0 0 1em;
+}
+
+.help-md ul,
+.help-md ol {
+  padding-left: 1.5em;
+}
+
+.help-md li {
+  margin: 0.3em 0;
+}
+
+.help-md li::marker {
+  color: var(--help-dim);
+}
+
+.help-md strong {
+  color: var(--help-strong);
+  font-weight: 600;
+}
+
+.help-md a {
+  color: var(--help-accent);
+  text-decoration: none;
+  border-bottom: 1px solid rgba(143, 176, 230, 0.35);
+  cursor: pointer;
+}
+
+.help-md a:hover {
+  border-bottom-color: var(--help-accent);
+}
+
+.help-md hr {
+  margin: 2em 0;
+  border: 0;
+  border-top: 1px solid var(--help-line);
+}
+
+.help-md code {
+  padding: 0.1em 0.4em;
+  background: rgba(255, 255, 255, 0.07);
+  color: #e8d3a8;
+  font-family: var(--help-mono);
+  font-size: 0.88em;
+}
+
+.help-md pre {
+  padding: 14px 18px;
+  overflow: auto;
+  border: 1px solid var(--help-line);
+  border-left: 3px solid rgba(143, 176, 230, 0.45);
+  background: #1c1c1b;
+  line-height: 1.6;
+}
+
+.help-md pre code {
+  padding: 0;
+  background: transparent;
+  color: #d9d6cf;
+  font-size: 0.88em;
+}
+
+.help-md blockquote {
+  padding: 10px 16px;
+  border-left: 3px solid #c9a35a;
+  background: rgba(201, 163, 90, 0.08);
+  color: var(--help-text);
+}
+
+.help-md blockquote > :last-child {
+  margin-bottom: 0;
+}
+
+.help-md table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.93em;
+  line-height: 1.6;
+}
+
+.help-md th,
+.help-md td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--help-line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.help-md th {
+  border-bottom-color: rgba(255, 255, 255, 0.16);
+  color: var(--help-dim);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.help-md tbody tr:hover {
+  background: rgba(255, 255, 255, 0.025);
+}
+
+@media (max-width: 760px) {
+  .help-layout {
+    flex-direction: column;
+  }
+
+  .help-nav {
+    flex: none;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 4px;
+    border-right: 0;
+    border-bottom: 1px solid #151515;
+  }
+
+  .help-nav-heading,
+  .help-toc {
+    display: none;
+  }
+
+  .help-md {
+    padding: 20px 18px 40px;
+  }
+}

@@ -1,4 +1,5 @@
 import { ensurePackageSections } from './library'
+import { normalizeGroups } from './editorGroups'
 import { createFlow, isObject, parseFlow } from './model'
 import { parseJsonValue } from '../../utils/strictJson'
 
@@ -14,7 +15,32 @@ export type FlowDocument = {
   updatedAt?: string
 }
 export type FlowFolder = { key: string; name: string; parentId: string | null; package: FlowPackageId }
-export type FlowWorkspaceState = { documents: FlowDocument[]; folders: FlowFolder[]; activeKey: string | null; openKeys?: string[] }
+export type FlowSplitDirection = 'horizontal' | 'vertical'
+
+/** 编辑组：一条页条及其当前页。 */
+export type FlowEditorGroup = { openKeys: string[]; activeKey: string | null; pinnedKeys: string[] }
+
+/** 第二个编辑组（右侧 / 下方）；`focus` 为当前焦点组，0 为根上的主组。 */
+export type FlowEditorSplit = {
+  group: FlowEditorGroup
+  /** horizontal = 左右，vertical = 上下 */
+  direction: FlowSplitDirection
+  /** 主组占比 0.2–0.8 */
+  ratio: number
+  focus: 0 | 1
+}
+
+export type FlowWorkspaceState = {
+  documents: FlowDocument[]
+  folders: FlowFolder[]
+  /** 主组（左侧 / 上侧）当前页 */
+  activeKey: string | null
+  /** 主组页条，顺序即显示顺序；含流程 / 脚本 / 礼包。 */
+  openKeys?: string[]
+  /** 主组固定页；关闭操作会跳过，须先取消固定。 */
+  pinnedKeys?: string[]
+  split?: FlowEditorSplit | null
+}
 
 const PACKAGE_IDS = new Set<FlowPackageId>(['script', 'progress', 'story', 'actor', 'reputation', 'region', 'navigator', 'shop', 'gift'])
 const readPackage = (value: unknown): FlowPackageId => typeof value === 'string' && PACKAGE_IDS.has(value as FlowPackageId) ? value as FlowPackageId : 'story'
@@ -66,12 +92,41 @@ function readState(raw: string): FlowWorkspaceState {
     return !folder || folder.package !== d.package
   })) throw new Error('流程分类与文件夹不一致')
   const activeKey = documents.some((d) => d.key === state.activeKey) ? state.activeKey as string : documents[0]?.key ?? null
+  const docKeys = new Set(documents.map((document) => document.key))
   const openRaw = Array.isArray(state.openKeys) ? state.openKeys.filter((key): key is string => typeof key === 'string') : []
-  const isTabPackage = (pkg: FlowPackageId) => pkg === 'gift' || pkg === 'script'
-  const openKeys = [...new Set(openRaw.filter((key) => documents.some((document) => document.key === key && isTabPackage(document.package))))]
-  const activeDoc = activeKey ? documents.find((document) => document.key === activeKey) : undefined
-  if (activeDoc && isTabPackage(activeDoc.package) && !openKeys.includes(activeKey!)) openKeys.push(activeKey!)
-  return { documents, folders: typedFolders, activeKey, openKeys }
+  const openKeys = [...new Set(openRaw.filter((key) => docKeys.has(key)))]
+  if (activeKey && !openKeys.includes(activeKey)) openKeys.push(activeKey)
+  const pinnedRaw = Array.isArray(state.pinnedKeys) ? state.pinnedKeys.filter((key): key is string => typeof key === 'string') : []
+  const pinnedKeys = [...new Set(pinnedRaw.filter((key) => openKeys.includes(key)))]
+  return normalizeGroups({ documents, folders: typedFolders, activeKey, openKeys, pinnedKeys, split: readSplit(state) })
+}
+
+const readStrings = (value: unknown) => Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+
+function readSplit(state: Record<string, unknown>): FlowEditorSplit | null {
+  const raw = state.split
+  if (isObject(raw) && isObject(raw.group)) {
+    return {
+      group: {
+        openKeys: readStrings(raw.group.openKeys),
+        activeKey: typeof raw.group.activeKey === 'string' ? raw.group.activeKey : null,
+        pinnedKeys: readStrings(raw.group.pinnedKeys),
+      },
+      direction: raw.direction === 'vertical' ? 'vertical' : 'horizontal',
+      ratio: typeof raw.ratio === 'number' ? raw.ratio : 0.5,
+      focus: raw.focus === 1 ? 1 : 0,
+    }
+  }
+  // 早期草稿只记了副格的单个文档
+  if (typeof state.splitKey === 'string') {
+    return {
+      group: { openKeys: [state.splitKey], activeKey: state.splitKey, pinnedKeys: [] },
+      direction: state.splitDirection === 'vertical' ? 'vertical' : 'horizontal',
+      ratio: typeof state.splitRatio === 'number' ? state.splitRatio : 0.5,
+      focus: state.splitFocus === 'secondary' ? 1 : 0,
+    }
+  }
+  return null
 }
 
 export function loadFlowWorkspace(): { state: FlowWorkspaceState; error: string } {
@@ -79,7 +134,7 @@ export function loadFlowWorkspace(): { state: FlowWorkspaceState; error: string 
     const raw = localStorage.getItem(FLOW_STORAGE_KEY)
     if (raw !== null) return { state: ensurePackageSections(readState(raw)), error: '' }
     const doc = createFlowDocument()
-    return { state: ensurePackageSections({ documents: [doc], folders: [], activeKey: doc.key }), error: '' }
+    return { state: ensurePackageSections({ documents: [doc], folders: [], activeKey: doc.key, openKeys: [doc.key], pinnedKeys: [] }), error: '' }
   } catch (error) { return { state: ensurePackageSections({ documents: [], folders: [], activeKey: null }), error: `无法读取草稿；原始存储未覆盖。${String(error)}` } }
 }
 export function saveFlowWorkspace(state: FlowWorkspaceState) { localStorage.setItem(FLOW_STORAGE_KEY, JSON.stringify(state)) }

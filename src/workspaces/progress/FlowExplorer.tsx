@@ -16,6 +16,7 @@ import {
   packageAllowsDocuments,
   packageAllowsFlows,
   packageAllowsKits,
+  packageAllowsProgress,
   packageAllowsScripts,
   packageEntry,
   parseSectionFolderKey,
@@ -27,7 +28,7 @@ import {
 import type { FlowPackageId, FlowWorkspaceState } from './storage'
 
 type Row = { entry: FlowEntry; name: string; depth: number; parent: string | null; pkg: FlowPackageId }
-type Edit = { mode: 'flow' | 'script' | 'kit' | 'folder' | 'rename' | 'move'; entry: FlowEntry; parent: string | null; pkg: FlowPackageId; value: string; error: string }
+type Edit = { mode: 'flow' | 'script' | 'kit' | 'progress' | 'folder' | 'rename' | 'move'; entry: FlowEntry; parent: string | null; pkg: FlowPackageId; value: string; error: string }
 
 export function Icon({ kind }: { kind: 'folder' | 'document' | 'python' | 'kit' | 'new' | 'import' | 'collapse' | 'script' | 'progress' | 'story' | 'actor' | 'reputation' | 'region' | 'navigator' | 'shop' | 'gift' | 'goal-def' }) {
   const paths: Record<typeof kind, string> = {
@@ -112,10 +113,11 @@ export function FlowExplorer({ state, active, disabled, onChange, onSelect, onNe
   const allowsFlows = packageAllowsFlows(currentPkg)
   const allowsScripts = packageAllowsScripts(currentPkg)
   const allowsKits = packageAllowsKits(currentPkg)
-  const allowsDocuments = allowsFlows || allowsScripts || allowsKits
-  const newDocumentMode: 'flow' | 'script' | 'kit' | null = allowsFlows ? 'flow' : allowsScripts ? 'script' : allowsKits ? 'kit' : null
-  const newLabel = allowsKits ? '新建礼包' : allowsScripts ? '新建脚本' : '新建流程'
-  const importLabel = allowsKits ? '导入礼包' : allowsScripts ? '导入脚本' : '导入树图'
+  const allowsProgress = packageAllowsProgress(currentPkg)
+  const allowsDocuments = allowsFlows || allowsScripts || allowsKits || allowsProgress
+  const newDocumentMode: 'flow' | 'script' | 'kit' | 'progress' | null = allowsFlows ? 'flow' : allowsScripts ? 'script' : allowsKits ? 'kit' : allowsProgress ? 'progress' : null
+  const newLabel = allowsProgress ? '新建进度' : allowsKits ? '新建礼包' : allowsScripts ? '新建脚本' : '新建流程'
+  const importLabel = allowsProgress ? '导入进度' : allowsKits ? '导入礼包' : allowsScripts ? '导入脚本' : '导入树图'
 
   useEffect(() => {
     // eslint-disable-next-line react/set-state-in-effect
@@ -276,16 +278,25 @@ export function FlowExplorer({ state, active, disabled, onChange, onSelect, onNe
       onNotice('礼包只能建在「礼包」分类中。')
       return
     }
+    if (mode === 'progress' && !packageAllowsProgress(pkg)) {
+      onNotice('进度只能建在「进度」分类中。')
+      return
+    }
     const parent = mode === 'move' ? entryParentId(entry) : entry.kind === 'package' ? null : entryFolder(state, entry)
     setSearch('')
     revealEntry(entry)
     selectOnly(entry)
     setEdit({
       mode,
-      entry: mode === 'flow' || mode === 'script' || mode === 'kit' || mode === 'folder' ? containerFor(entry) : entry,
+      entry: mode === 'flow' || mode === 'script' || mode === 'kit' || mode === 'progress' || mode === 'folder' ? containerFor(entry) : entry,
       parent,
       pkg,
-      value: mode === 'rename' ? entryName(state, entry) : mode === 'folder' ? '新建文件夹' : mode === 'script' ? '新建脚本.py' : mode === 'kit' ? '新建礼包.kit' : '新建流程',
+      value: mode === 'rename' ? entryName(state, entry)
+        : mode === 'folder' ? '新建文件夹'
+          : mode === 'script' ? '新建脚本.py'
+            : mode === 'kit' ? '新建礼包.kit'
+              : mode === 'progress' ? '新建委托.progress'
+                : '新建流程',
       error: '',
     })
   }
@@ -293,7 +304,7 @@ export function FlowExplorer({ state, active, disabled, onChange, onSelect, onNe
     if (!edit || disabled) return
     try {
       let nextEntry = edit.entry
-      if (edit.mode === 'flow' || edit.mode === 'script' || edit.mode === 'kit') { const key = onNew(edit.value, edit.parent, edit.pkg); nextEntry = { kind: 'document', key } }
+      if (edit.mode === 'flow' || edit.mode === 'script' || edit.mode === 'kit' || edit.mode === 'progress') { const key = onNew(edit.value, edit.parent, edit.pkg); nextEntry = { kind: 'document', key } }
       if (edit.mode === 'folder') { const result = addFlowFolder(state, edit.value, edit.pkg, edit.parent); onChange(result.state); nextEntry = { kind: 'folder', key: result.folder.key }; setExpanded((previous) => new Set(previous).add(`folder:${result.folder.key}`)) }
       if (edit.mode === 'rename') onChange(renameFlowEntry(state, edit.entry, edit.value))
       if (edit.mode === 'move') { onChange(moveFlowEntry(state, edit.entry, edit.pkg, edit.parent)); revealEntry(edit.entry) }
@@ -480,14 +491,18 @@ export function FlowExplorer({ state, active, disabled, onChange, onSelect, onNe
       const document = state.documents.find((d) => d.key === entry.key)
       const script = document?.package === 'script'
       const kit = document?.package === 'gift'
+      const progress = document?.package === 'progress'
+      const openLabel = kit ? '打开礼包' : progress ? '打开进度' : script ? '打开脚本' : '打开流程'
+      const downloadLabel = kit ? '下载礼包' : progress ? '下载进度' : script ? '下载脚本' : '下载草稿'
+      const removeLabel = kit ? '移除礼包…' : progress ? '移除进度…' : script ? '移除脚本…' : '移除流程…'
       return [
-        { label: kit ? '打开礼包' : script ? '打开脚本' : '打开流程', action: () => onSelect(entry.key) },
+        { label: openLabel, action: () => onSelect(entry.key) },
         { label: '属性…', action: () => onProperties(entry.key) },
         { label: '重命名', action: () => startEdit('rename', entry) },
         { label: '移动到…', action: () => startEdit('move', entry) },
-        ...(script || kit ? [] : [{ label: '导出树图', action: () => onExport(entry.key) }]),
-        { label: kit ? '下载礼包' : script ? '下载脚本' : '下载草稿', action: () => onDownload(entry.key) },
-        { label: kit ? '移除礼包…' : script ? '移除脚本…' : '移除流程…', action: () => onRemove({ documents: [entry.key], folders: [] }) },
+        ...(script || kit || progress ? [] : [{ label: '导出树图', action: () => onExport(entry.key) }]),
+        { label: downloadLabel, action: () => onDownload(entry.key) },
+        { label: removeLabel, action: () => onRemove({ documents: [entry.key], folders: [] }) },
       ]
     }
     const items: NodeMenuItem[] = [{ label: '新建文件夹', action: () => startEdit('folder', entry) }]
@@ -503,6 +518,10 @@ export function FlowExplorer({ state, active, disabled, onChange, onSelect, onNe
       items.unshift({ label: '新建礼包', action: () => startEdit('kit', entry) })
       items.push({ label: '导入礼包…', action: () => onImport(folder, pkg) })
     }
+    if (packageAllowsProgress(pkg)) {
+      items.unshift({ label: '新建进度', action: () => startEdit('progress', entry) })
+      items.push({ label: '导入进度…', action: () => onImport(folder, pkg) })
+    }
     if (entry.kind === 'folder') {
       if (isSectionFolder(entry.key)) return items
       items.push(
@@ -517,6 +536,7 @@ export function FlowExplorer({ state, active, disabled, onChange, onSelect, onNe
   const storyDocCount = state.documents.filter((d) => d.package === 'story').length
   const scriptDocCount = state.documents.filter((d) => d.package === 'script').length
   const kitDocCount = state.documents.filter((d) => d.package === 'gift').length
+  const progressDocCount = state.documents.filter((d) => d.package === 'progress').length
   const hasAnyResource = state.documents.length > 0 || state.folders.some((folder) => !isSectionFolder(folder.key))
 
   return <aside className="flow-library" aria-label="故事流程资源管理器">
@@ -535,7 +555,8 @@ export function FlowExplorer({ state, active, disabled, onChange, onSelect, onNe
         const document = docKey ? state.documents.find((d) => d.key === docKey) : undefined
         const pythonDoc = !!document && (document.package === 'script' || row.name.toLowerCase().endsWith('.py'))
         const kitDoc = !!document && (document.package === 'gift' || row.name.toLowerCase().endsWith('.kit'))
-        const iconKind = row.entry.kind === 'package' ? row.entry.package : section ? sectionIconKind(row.entry.key) : kitDoc ? 'kit' : pythonDoc ? 'python' : folder ? 'folder' : 'document'
+        const progressDoc = !!document && (document.package === 'progress' || row.name.toLowerCase().endsWith('.progress'))
+        const iconKind = row.entry.kind === 'package' ? row.entry.package : section ? sectionIconKind(row.entry.key) : kitDoc ? 'kit' : progressDoc ? 'progress' : pythonDoc ? 'python' : folder ? 'folder' : 'document'
         return <div key={id} role="none">
           <div ref={(element) => { if (element) elements.current.set(id, element); else elements.current.delete(id) }} className={`flow-resource-row${isSelected ? ' selected' : ''}${row.entry.kind === 'document' && row.entry.key === state.activeKey ? ' is-open' : ''}${dropTarget === id ? ' drop-target' : ''}`} role="treeitem" aria-level={row.depth + 1} aria-selected={isSelected} aria-expanded={folder ? !!search || expanded.has(id) : undefined} aria-disabled={disabled} tabIndex={isFocused || (!rows.some((r) => entryId(r.entry) === entryId(focus)) && index === 0) ? 0 : -1} style={{ paddingLeft: 6 + row.depth * TREE_INDENT }} title={row.name}
             onClick={(event) => clickRow(event, row.entry)}
@@ -547,11 +568,11 @@ export function FlowExplorer({ state, active, disabled, onChange, onSelect, onNe
             <span className="flow-resource-twist" aria-hidden>{folder ? !!search || expanded.has(id) ? '▾' : '▸' : ''}</span><Icon kind={iconKind} />
             {isEditing && edit.mode === 'rename' ? <form className="flow-resource-edit" onSubmit={(event) => { event.preventDefault(); submitEdit() }} onClick={(event) => event.stopPropagation()}><input ref={editInput} aria-label="资源名称" value={edit.value} onChange={(event) => setEdit({ ...edit, value: event.target.value, error: '' })} onKeyDown={(event) => { event.stopPropagation(); if (event.key === 'Escape') cancelEdit() }} /></form> : <span className="flow-resource-name">{row.name}</span>}
           </div>
-          {isEditing && (edit.mode === 'flow' || edit.mode === 'script' || edit.mode === 'kit' || edit.mode === 'folder') && <form className="flow-resource-new" style={{ paddingLeft: 6 + (row.depth + 1) * TREE_INDENT }} onSubmit={(event) => { event.preventDefault(); submitEdit() }}><span className="flow-resource-twist" /><Icon kind={edit.mode === 'folder' ? 'folder' : edit.mode === 'script' ? 'python' : edit.mode === 'kit' ? 'kit' : 'document'} /><input ref={editInput} aria-label={edit.mode === 'folder' ? '新文件夹名称' : edit.mode === 'script' ? '新脚本名称' : edit.mode === 'kit' ? '新礼包名称' : '新流程名称'} value={edit.value} onChange={(event) => setEdit({ ...edit, value: event.target.value, error: '' })} onKeyDown={(event) => { if (event.key === 'Escape') cancelEdit() }} /></form>}
+          {isEditing && (edit.mode === 'flow' || edit.mode === 'script' || edit.mode === 'kit' || edit.mode === 'progress' || edit.mode === 'folder') && <form className="flow-resource-new" style={{ paddingLeft: 6 + (row.depth + 1) * TREE_INDENT }} onSubmit={(event) => { event.preventDefault(); submitEdit() }}><span className="flow-resource-twist" /><Icon kind={edit.mode === 'folder' ? 'folder' : edit.mode === 'script' ? 'python' : edit.mode === 'kit' ? 'kit' : edit.mode === 'progress' ? 'progress' : 'document'} /><input ref={editInput} aria-label={edit.mode === 'folder' ? '新文件夹名称' : edit.mode === 'script' ? '新脚本名称' : edit.mode === 'kit' ? '新礼包名称' : edit.mode === 'progress' ? '新进度名称' : '新流程名称'} value={edit.value} onChange={(event) => setEdit({ ...edit, value: event.target.value, error: '' })} onKeyDown={(event) => { if (event.key === 'Escape') cancelEdit() }} /></form>}
         </div>
       })}
       {search && rows.length === FLOW_PACKAGE_ORDER.length && <p className="flow-explorer-empty">没有匹配的资源</p>}
-      {!search && !hasAnyResource && !edit && <p className="flow-explorer-empty">在「故事流程」下新建或拖入 .hflow；「脚本」下新建或拖入 .py；「礼包」下新建或拖入 .kit；其他分类可先建文件夹占位。</p>}
+      {!search && !hasAnyResource && !edit && <p className="flow-explorer-empty">在「故事流程」下新建或拖入 .hflow；「脚本」下新建或拖入 .py；「进度」下新建或拖入 .progress；「礼包」下新建或拖入 .kit；其他分类可先建文件夹占位。</p>}
     </div>
     {edit && <div className="flow-explorer-edit-panel" onKeyDown={(event) => { if (event.key === 'Escape') cancelEdit() }}>
       {edit.mode === 'move' ? <><label>移动到<select aria-label="目标文件夹" value={moveSelectValue} onChange={(event) => {
@@ -562,7 +583,7 @@ export function FlowExplorer({ state, active, disabled, onChange, onSelect, onNe
       {edit.error && <p className="flow-error" role="alert">{edit.error}</p>}
       <div><button type="button" onClick={submitEdit}>确认</button><button type="button" onClick={cancelEdit}>取消</button></div>
     </div>}
-    <div className="flow-library-footer">{multiCount > 1 ? `已选 ${multiCount} 项 · ` : ''}{FLOW_PACKAGE_ORDER.length} 个分类 · {storyDocCount} 个故事流程 · {scriptDocCount} 个脚本 · {kitDocCount} 个礼包 · 拖入/粘贴导入 · Ctrl 多选 · Delete 删除</div>
+    <div className="flow-library-footer">{multiCount > 1 ? `已选 ${multiCount} 项 · ` : ''}{FLOW_PACKAGE_ORDER.length} 个分类 · {storyDocCount} 个故事流程 · {scriptDocCount} 个脚本 · {progressDocCount} 个进度 · {kitDocCount} 个礼包 · 拖入/粘贴导入 · Ctrl 多选 · Delete 删除</div>
     {menu && menu.state === state && active && !disabled && <NodeContextMenu x={menu.x} y={menu.y} title={menu.multi ? `已选择 ${multiCount} 项` : entryName(state, menu.entry)} label="资源操作" items={menuItems} onClose={(restore = true) => { setMenu(null); if (restore) elements.current.get(entryId(menu.entry))?.focus() }} />}
   </aside>
 }

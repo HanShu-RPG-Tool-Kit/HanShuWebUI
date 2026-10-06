@@ -16,6 +16,8 @@ import { ProgressFlowWorkspace, type ProgressWorkspaceHandle } from './workspace
 import { McStreamWorkspace } from './workspaces/McStreamWorkspace.tsx'
 import { ScriptWorkspace } from './workspaces/ScriptWorkspace.tsx'
 import type { ScriptWorkspaceHandle } from './workspaces/scriptTypes.ts'
+import { HelpModal } from './help/HelpModal.tsx'
+import type { HelpTopicId } from './help/topics.ts'
 import type { AppWorkspaceId } from './workspaces/types.ts'
 import {
   applyUiScale,
@@ -99,6 +101,22 @@ const MENUS = [
 
 const WORKSPACE_IDS = APP_WORKSPACES.map((w) => w.id)
 
+const HELP_MENU_ITEMS = new Set(['欢迎', '文档', '关于汉书'])
+const HELP_MENU_TOPIC: Record<string, HelpTopicId> = {
+  欢迎: 'welcome',
+  文档: 'docs',
+  关于汉书: 'about',
+}
+
+function isAlwaysEnabledMenuItem(item: string) {
+  return (
+    HELP_MENU_ITEMS.has(item) ||
+    item.startsWith('界面比例 ') ||
+    item === '恢复推荐大小（125%）' ||
+    item === '退出'
+  )
+}
+
 function renderToolWorkspace(
   id: AppWorkspaceId,
   active: boolean,
@@ -122,6 +140,7 @@ function App() {
     () => loadActiveWorkspaceId(WORKSPACE_IDS),
   )
   const [uiScale, setUiScale] = useState<UiScale>(() => loadUiScale())
+  const [helpTopicId, setHelpTopicId] = useState<HelpTopicId | null>(null)
   const [maximized, setMaximized] = useState(false)
   const [showSplash, setShowSplash] = useState(
     () => isDesktopShell && shouldShowSplash(),
@@ -244,6 +263,11 @@ function App() {
 
   const handleMenuAction = (item: string) => {
     setOpenMenu(null)
+    const helpTopic = HELP_MENU_TOPIC[item]
+    if (helpTopic) {
+      setHelpTopicId(helpTopic)
+      return
+    }
     const scaleMatch = /^界面比例 (\d+)%$/.exec(item)
     if (scaleMatch) {
       const scale = Number.parseInt(scaleMatch[1], 10) as UiScale
@@ -316,8 +340,8 @@ function App() {
                             type="button"
                             role="menuitem"
                             disabled={activeWorkspaceId === 'progress-flow' &&
-                              !['保存', '撤销', '重做', '恢复推荐大小（125%）'].includes(menuItem) &&
-                              !menuItem.startsWith('界面比例 ')}
+                              !['保存', '撤销', '重做'].includes(menuItem) &&
+                              !isAlwaysEnabledMenuItem(menuItem)}
                             aria-checked={
                               menu.label === '查看' &&
                               UI_SCALES.some(
@@ -413,6 +437,13 @@ function App() {
           </div>
         ))}
       </div>
+      {helpTopicId && (
+        <HelpModal
+          topicId={helpTopicId}
+          onClose={() => setHelpTopicId(null)}
+          onOpenTopic={setHelpTopicId}
+        />
+      )}
       </Fragment>
       )}
     </div>

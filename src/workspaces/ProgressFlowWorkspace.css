@@ -59,6 +59,178 @@
 .flow-layout { display: flex; flex: 1; gap: 2px; padding: 2px; min-height: 0; min-width: 0; overflow: auto; background: var(--border); }
 .flow-library { flex: 0 0 280px; width: 280px; display: flex; flex-direction: column; min-height: 0; overflow: hidden; background: var(--fl-panel); }
 .flow-main { flex: 1; display: flex; flex-direction: column; min-width: 260px; min-height: 0; overflow: hidden; background: var(--fl-panel); }
+.flow-split {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.flow-split.is-horizontal { flex-direction: row; }
+.flow-split.is-vertical { flex-direction: column; }
+.flow-split-pane {
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+/* 可见 1px，热区由伪元素向两侧各扩 3px，压在相邻组之上 */
+.flow-split-sash {
+  position: relative;
+  z-index: 5;
+  flex: none;
+  background: var(--border);
+  touch-action: none;
+}
+.flow-split-sash::before { content: ''; position: absolute; }
+.flow-split.is-horizontal > .flow-split-sash { width: 1px; cursor: col-resize; }
+.flow-split.is-horizontal > .flow-split-sash::before { top: 0; bottom: 0; left: -3px; right: -3px; }
+.flow-split.is-vertical > .flow-split-sash { height: 1px; cursor: row-resize; }
+.flow-split.is-vertical > .flow-split-sash::before { left: 0; right: 0; top: -3px; bottom: -3px; }
+.flow-split-sash::after {
+  content: ''; position: absolute; inset: 0;
+  background: var(--accent); opacity: 0; pointer-events: none;
+  transition: opacity 0.1s 0s;
+}
+.flow-split.is-horizontal > .flow-split-sash::after { left: -1px; right: -1px; }
+.flow-split.is-vertical > .flow-split-sash::after { top: -1px; bottom: -1px; }
+.flow-split-sash:hover::after { opacity: 1; transition-delay: 0.3s; }
+.flow-split.is-resizing > .flow-split-sash::after { opacity: 1; transition-delay: 0s; }
+.flow-split.is-resizing { user-select: none; }
+.flow-split.is-resizing.is-horizontal { cursor: col-resize; }
+.flow-split.is-resizing.is-vertical { cursor: row-resize; }
+.flow-split.is-resizing .flow-split-pane { pointer-events: none; }
+
+/* ---- 编辑组：页条 + 内容 ---- */
+.flow-group { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+.flow-group-body { position: relative; flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+.flow-drop-target { position: absolute; inset: 0; z-index: 20; }
+.flow-drop-hint {
+  position: absolute; inset: 0;
+  background: rgba(71, 114, 179, 0.22);
+  outline: 1px solid rgba(71, 114, 179, 0.6);
+  outline-offset: -1px;
+  pointer-events: none;
+  transition: inset 0.08s ease-out;
+}
+.flow-drop-hint.is-left { right: 50%; }
+.flow-drop-hint.is-right { left: 50%; }
+.flow-drop-hint.is-top { bottom: 50%; }
+.flow-drop-hint.is-bottom { top: 50%; }
+
+.flow-empty.is-pane {
+  justify-content: center;
+  min-height: 0;
+  height: 100%;
+}
+
+/* ---- 统一文档页条：原生滚动条隐藏，底部覆盖式细条自动显隐 ---- */
+.flow-page-list {
+  position: relative;
+  flex-shrink: 0;
+  height: calc(26px * var(--fl-s, 1.25));
+  background: var(--fl-panel-2, #232323);
+  border-bottom: 1px solid var(--border);
+  overflow: hidden;
+}
+.flow-page-list-scroll {
+  display: flex;
+  height: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.flow-page-list-scroll::-webkit-scrollbar { display: none; width: 0; height: 0; }
+.flow-page-scroll {
+  position: absolute;
+  left: 2px;
+  right: 2px;
+  bottom: 1px;
+  height: 3px;
+  z-index: 2;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.18s ease;
+}
+.flow-page-scroll.is-visible {
+  opacity: 1;
+}
+.flow-page-scroll.is-visible .flow-page-scroll-thumb {
+  pointer-events: auto;
+}
+.flow-page-scroll-thumb {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  min-width: 24px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.28);
+  cursor: grab;
+  touch-action: none;
+}
+.flow-page-scroll-thumb:active { cursor: grabbing; background: rgba(255, 255, 255, 0.38); }
+.flow-page-tab {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  height: 100%;
+  max-width: 240px;
+  border-right: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: var(--fl-font-sm, 13px);
+}
+.flow-page-tab:hover { background: var(--fl-hover, #3d3d3d); color: var(--text); }
+.flow-page-tab.is-active { background: var(--fl-head, #383838); color: var(--text-bright); }
+.flow-page-list:not(.is-focused) .flow-page-tab.is-active { color: var(--text); }
+.flow-page-list-rest { flex: 1 0 24px; }
+.flow-page-list-rest.is-drop { box-shadow: inset 2px 0 0 var(--accent); }
+.flow-page-list.is-focused .flow-page-tab.is-active::after {
+  content: '';
+  position: absolute; right: 0; bottom: -1px; left: 0;
+  height: 2px; background: var(--accent); pointer-events: none;
+}
+.flow-page-tab.is-dragging { opacity: 0.45; }
+.flow-page-tab.is-drop { box-shadow: inset 2px 0 0 var(--accent); }
+.flow-workspace .flow-page-tab button {
+  appearance: none; height: 100%; margin: 0; border: 0; border-radius: 0;
+  background: transparent; color: inherit; font: inherit; cursor: pointer;
+}
+.flow-workspace .flow-page-tab button:hover:not(:disabled) { background: transparent; }
+.flow-workspace .flow-page-tab-name {
+  display: flex; align-items: center; gap: 6px; min-width: 0; padding: 0 2px 0 10px;
+}
+.flow-page-tab.is-pinned .flow-page-tab-name { padding-right: 10px; }
+.flow-page-tab-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flow-page-tab .flow-resource-icon {
+  width: calc(14px * var(--fl-s, 1.25));
+  height: calc(14px * var(--fl-s, 1.25));
+  opacity: 0.85;
+}
+.flow-page-tab .is-kit { color: #c48a9a; }
+.flow-page-tab .is-python { color: #7eb8a2; }
+.flow-page-tab .is-progress { color: #c9a86c; }
+.flow-page-tab .is-document { color: #8eb0d4; }
+.flow-page-pin {
+  width: calc(10px * var(--fl-s, 1.25));
+  height: calc(10px * var(--fl-s, 1.25));
+  flex-shrink: 0;
+  color: var(--fl-faint);
+  transform: rotate(45deg);
+}
+.flow-page-tab.is-active .flow-page-pin { color: var(--accent); }
+.flow-workspace .flow-page-tab-close {
+  display: grid; place-items: center;
+  width: calc(20px * var(--fl-s, 1.25));
+  margin-right: 4px; padding: 0; line-height: 1; opacity: 0;
+}
+.flow-page-tab:hover .flow-page-tab-close,
+.flow-page-tab.is-active .flow-page-tab-close { opacity: 0.55; }
+.flow-workspace .flow-page-tab .flow-page-tab-close:hover:not(:disabled) {
+  opacity: 1; color: var(--text-bright); background: rgba(255, 255, 255, 0.08);
+}
 
 /* ---- 资源管理器 ---- */
 .flow-explorer-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: calc(26px * var(--fl-s)); box-sizing: content-box; padding: 0 6px 0 8px; background: var(--fl-head); border-bottom: 1px solid var(--border); flex-shrink: 0; }
@@ -84,6 +256,7 @@
 .flow-resource-row .is-goal-def { color: #c4b06a; }
 .flow-resource-row .is-python { color: #7eb8a2; }
 .flow-resource-row .is-kit { color: #c48a9a; }
+.flow-resource-row .is-progress { color: #c9a86c; }
 
 .flow-resource-tree { flex: 1; overflow: auto; padding: 0 0 12px; }
 .flow-resource-row, .flow-resource-new { display: flex; align-items: center; gap: 4px; min-height: calc(24px * var(--fl-s)); padding-right: 8px; cursor: pointer; white-space: nowrap; font-size: var(--fl-font-sm); }
