@@ -1,5 +1,5 @@
 import { IdField, TextField } from './Fields'
-import { clone, disconnectLink, displayText, getNode, parseFlow, removeNode, renameNode, type FlowSelection, type FlowText, type ProgressFlow } from './model'
+import { clone, disconnectLink, getNode, parseFlow, removeNode, renameNode, type FlowSelection, type FlowText, type ProgressFlow } from './model'
 import { withCanvasPositions } from './canvas'
 
 export function FlowEditorForm({ flow, selection, onChange, onSelect, onPending, onNotice, locked }: {

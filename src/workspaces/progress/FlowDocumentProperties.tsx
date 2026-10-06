@@ -72,7 +72,7 @@ export function FlowDocumentProperties({ doc, onSave, onCancel }: {
       ) : (
         <p className="flow-error" role="alert">{parsed.error || '草稿无法解析，暂不能改文档 ID。'}</p>
       )}
-      {!script && !kit && <p className="flow-hint">文档 ID 是 `.hflow` 内的稳定身份，可按作者需要修改；不会改写图内节点引用。资源树中的文件键与文件名是另一套标识。</p>}
+      {!plain && <p className="flow-hint">文档 ID 是 `.hflow` 内的稳定身份，可按作者需要修改；不会改写图内节点引用。资源树中的文件键与文件名是另一套标识。</p>}
       <Field label="创建时间"><input value={formatStamp(doc.createdAt)} disabled readOnly /></Field>
       <Field label="修改时间"><input value={formatStamp(doc.updatedAt)} disabled readOnly /></Field>
       {error && <p className="flow-error" role="alert">{error}</p>}

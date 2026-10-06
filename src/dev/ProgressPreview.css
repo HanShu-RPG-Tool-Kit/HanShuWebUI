@@ -1,0 +1,22 @@
+html, body, #root { height: 100%; margin: 0; }
+body { background: #1e1f21; color: #d9d9dc; font: 12px 'Segoe UI', 'Microsoft YaHei', sans-serif; }
+.progress-preview-shell { height: 100%; display: flex; flex-direction: column; }
+.preview-app-header { min-height: 48px; background: #1c1d1f; border-bottom: 1px solid #404145; display: flex; align-items: center; gap: 38px; padding: 0 22px; }
+.preview-app-header strong { color: #f4f0e9; font-size: 16px; font-weight: 600; letter-spacing: .4px; }
+.preview-app-header strong span { color: #81858c; font-size: 10px; font-weight: 400; margin-left: 8px; }
+.preview-app-header > span { font-size: 11px; color: #afb1b8; }
+.preview-app-header i { margin: 0 12px; font-style: normal; color: #606571; }
+.preview-app-header button { margin-left: auto; background: none; color: #b5c7de; border: 1px solid #494d54; padding: 5px 10px; border-radius: 3px; font: inherit; cursor: pointer; }
+.preview-app-body { display: flex; flex: 1; min-height: 0; }
+.preview-app-sidebar { flex: 0 0 215px; background: #222325; border-right: 1px solid #17181a; padding: 16px 0; overflow: auto; }
+.preview-sidebar-title { color: #979ba3; font-size: 11px; margin: 0 18px 23px; }
+.preview-app-sidebar p { color: #bcbfc6; font-size: 11px; margin: 20px 16px 8px; }
+.preview-app-sidebar > span { display: block; color: #858b96; padding: 6px 18px; font-size: 11px; }
+.preview-app-sidebar .preview-file-active { width: 100%; background: #333b49; color: #c4d3e8; border: 0; border-left: 2px solid #88a7cf; padding: 10px 12px; text-align: left; font: 11px 'Segoe UI', sans-serif; cursor: pointer; }
+.preview-sidebar-actions { margin: 35px 16px 0; padding-top: 15px; border-top: 1px solid #35373b; display: flex; flex-direction: column; gap: 7px; }
+.preview-sidebar-actions button { border: 0; background: transparent; color: #9da9b9; text-align: left; cursor: pointer; font: inherit; padding: 6px 0; }
+.preview-file-tab { font: 12px/1.5 'Segoe UI', 'Microsoft YaHei', sans-serif; padding: 11px 23px; background: #2d2e31; border-bottom: 1px solid #17181a; color: #c6cbd3; }
+.preview-file-tab span { color: #858b96; margin-left: 15px; font-size: 10px; }
+.preview-app-footer { display: flex; justify-content: space-between; gap: 20px; padding: 5px 17px; border-top: 1px solid #43454a; font-size: 10px; color: #969ba5; background: #242629; }
+.preview-source { flex: 1; overflow: auto; padding: 20px; font: 12px/1.7 Consolas, monospace; }
+@media(max-width: 760px) { .preview-app-sidebar { display: none; } .preview-app-header { gap: 12px; padding: 0 14px; } .preview-app-header > span, .preview-app-header strong span, .preview-app-footer span:last-child { display: none; } }

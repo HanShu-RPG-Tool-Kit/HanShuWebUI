@@ -14,7 +14,7 @@ import { ensurePackageSections, isKitDocument, isProgressDocument, isScriptDocum
 import { createFlowDocument, downloadFlowFile, importFlowDocument, loadFlowWorkspace, saveFlowWorkspace, stampDocument, type FlowDocument, type FlowPackageId, type FlowWorkspaceState } from './progress/storage'
 import { createKit, kitRefFromFileName, readKitSource, stringifyKit, parseKit } from './progress/kit'
 import { createProgress, readProgressSource, stringifyProgress, parseProgress } from './progress/progressDoc'
-import { buildGoalDefinitionCatalog, ensureBuiltinGoalDefinitions } from './progress/goalDefinitions'
+import { buildGoalDefinitionCatalog } from './progress/goalDefinitions'
 import { KitEditor } from './progress/KitEditor'
 import { ProgressEditor } from './progress/ProgressEditor'
 import { useEditorFontSize } from './progress/editorFont'
@@ -41,7 +41,7 @@ function dropZoneAt(event: DragEvent, splitOn: boolean): DropZone {
 export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolean; workspaceRef?: Ref<ProgressWorkspaceHandle> }) {
   const [initial] = useState(loadFlowWorkspace)
   const editorFontSize = useEditorFontSize()
-  const [state, setState] = useState(() => ensureBuiltinGoalDefinitions(ensurePackageSections(initial.state)))
+  const [state, setState] = useState(() => ensurePackageSections(initial.state))
   const [storageError, setStorageError] = useState(initial.error)
   const [notice, setNotice] = useState('')
   const [selection, setSelection] = useState<FlowSelection>({ kind: 'flow' })
@@ -511,14 +511,16 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     const disabledPane = locked || busy
 
     if (paneProgress && paneProgressParsed) {
+      if (!paneProgressParsed.doc) return <ProgressSourceRepair key={paneDoc.key} source={paneDoc.source} error={paneProgressParsed.error} disabled={disabledPane}
+        onApply={source => { if (!disabledPane) changeSource(source, false, paneDoc.key) }} />
       return <div className="flow-kit-pane">
         <ProgressEditor
           key={paneDoc.key}
           doc={paneProgressParsed.doc}
-          error={paneProgressParsed.error}
           goalCatalog={goalCatalog}
+          kitOptions={kitCatalog.options}
           disabled={disabledPane}
-          onChange={(source) => { if (!disabledPane) changeSource(source, true, paneDoc.key) }}
+          onChange={(source, discrete) => { if (!disabledPane) changeSource(source, !discrete, paneDoc.key) }}
         />
       </div>
     }
@@ -698,5 +700,15 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
       </footer>
     </dialog>, document.body)}
   </section>
+}
+
+function ProgressSourceRepair({ source, error, disabled, onApply }: { source: string; error: string; disabled: boolean; onApply: (source: string) => void }) {
+  const [draft, setDraft] = useState(source)
+  const [message, setMessage] = useState(error)
+  return <div className="progress-source-repair"><h3>进度文件需要修复</h3><p role="alert">{message}</p>
+    <span>原始文件已保留。修复并通过校验后才会应用，不会以默认文档覆盖原文。</span>
+    <textarea aria-label="进度源码修复" spellCheck={false} value={draft} disabled={disabled} onChange={event => setDraft(event.target.value)} />
+    <button type="button" disabled={disabled} onClick={() => { try { parseProgress(draft); onApply(draft) } catch (cause) { setMessage(cause instanceof Error ? cause.message : String(cause)) } }}>校验并应用修复</button>
+  </div>
 }
 

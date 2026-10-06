@@ -51,8 +51,8 @@ export function parseGoalDefinitionsFromSource(source: string, meta: { sourceKey
   while ((match = goalRe.exec(text))) {
     const kind = match[2]!.trim()
     if (!kind) continue
-    const after = text.slice(match.index + match[0].length)
-    const fields = parseConfigBlock(after)
+    const after = text.slice(match.index + match[0].length).split(/@goal\s*\(/, 1)[0]!
+    const fields = parseConfigBlock(after.split(/\bclass\s+/, 1)[0]!)
     const className = /^[\s\S]*?\bclass\s+([A-Za-z_][\w]*)/.exec(after)?.[1]
     const label = className
       ? className.replace(/Goal$/, '').replace(/([a-z])([A-Z])/g, '$1 $2')
@@ -70,7 +70,7 @@ export function parseGoalDefinitionsFromSource(source: string, meta: { sourceKey
 
 function parseConfigBlock(afterGoal: string): GoalConfigField[] {
   const configMatch = /@config\(\s*([\s\S]*?)\n\s*\)/.exec(afterGoal)
-    ?? /@config\(\s*([\s\S]*?)\)\s*(?:@|\bclass\b)/.exec(afterGoal)
+    ?? /@config\(\s*([\s\S]*?)\)\s*(?:@|$)/.exec(afterGoal)
   if (!configMatch) return []
   const body = configMatch[1] ?? ''
   const fields: GoalConfigField[] = []

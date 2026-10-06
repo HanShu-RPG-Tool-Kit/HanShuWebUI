@@ -1,434 +1,256 @@
-import { useId, useState, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type PointerEvent } from 'react'
 import {
-  PROGRESS_GROUP_LABELS,
-  PROGRESS_REPEAT_LABELS,
-  createProgressGoal,
-  createProgressGroup,
-  defaultConfigForKind,
-  goalLabel,
-  removeGoalAt,
-  stringifyProgress,
-  summarizeProgress,
-  type ProgressCondition,
-  type ProgressConfigField,
-  type ProgressConfigValue,
-  type ProgressDocument,
-  type ProgressGoal,
-  type ProgressGoalGroup,
-  type ProgressGroupKind,
+  createProgressGoal, duplicateProgressGoal, goalConfigSummary,
+  goalLabel, moveProgressGoal, progressIssues, PROGRESS_REPEAT_LABELS, stringifyProgress,
+  TASK_VISIBILITY_STATES, DIALOGUE_VISIBILITY_STATES,
+  type ProgressConditionRule, type ProgressConfigValue, type ProgressDocument, type ProgressGoal,
   type ProgressRepeatKind,
 } from './progressDoc'
-import type { GoalDefinition, GoalDefinitionCatalog } from './goalDefinitions'
+import type { GoalConfigField, GoalDefinition, GoalDefinitionCatalog } from './goalDefinitions'
 import './ProgressEditor.css'
-import './KitEditor.css'
 
-const replaceAt = <T,>(list: T[], index: number, value: T) => list.map((item, i) => i === index ? value : item)
-const removeAt = <T,>(list: T[], index: number) => list.filter((_, i) => i !== index)
+type KitOption = { ref: string; label: string }
 
-function Panel({ title, subtitle, count, action, children }: {
-  title: string
-  subtitle?: string
-  count?: number
-  action?: ReactNode
-  children: ReactNode
+function NumberInput({ value, onChange, label, integer = false, min, allowUnset = false }: {
+  value: number | undefined; onChange: (value: number | undefined) => void; label: string; integer?: boolean; min?: number; allowUnset?: boolean
 }) {
-  return <section className="kit-panel">
-    <header className="kit-panel-head">
-      <h3>{title}</h3>
-      {count !== undefined && <span className="kit-badge">{count}</span>}
-      {subtitle && <span className="kit-panel-sub">{subtitle}</span>}
-      <div className="kit-panel-actions">{action}</div>
-    </header>
-    {children}
-  </section>
-}
-
-function TagField({ tags, disabled, onChange }: { tags: string[]; disabled?: boolean; onChange: (tags: string[]) => void }) {
-  const [draft, setDraft] = useState('')
-  function add(raw: string) {
-    const parts = raw.split(/[,，]/).map((item) => item.trim().normalize('NFC')).filter(Boolean)
-    if (!parts.length) return
-    const seen = new Set(tags.map((tag) => tag.toLocaleLowerCase()))
-    const next = [...tags]
-    for (const part of parts) {
-      const key = part.toLocaleLowerCase()
-      if (seen.has(key)) continue
-      seen.add(key)
-      next.push(part)
-    }
-    onChange(next)
-    setDraft('')
+  const [draft, setDraft] = useState<string | null>(null)
+  const [error, setError] = useState(false)
+  useEffect(() => { setDraft(null); setError(false) }, [value])
+  const valid = (text: string) => text.trim() !== '' && Number.isFinite(Number(text)) && (!integer || Number.isInteger(Number(text))) && (min === undefined || Number(text) >= min)
+  function commit() {
+    if (draft === null) return
+    if (error) return
+    if (draft === '' && allowUnset) { onChange(undefined); setDraft(null); setError(false); return }
+    if (!valid(draft)) { setError(true); return }
+    onChange(Number(draft)); setDraft(null); setError(false)
   }
-  return <div className="kit-tags-row">
-    <span className="kit-tags-label" title="游戏标签，便于筛选与系统查询">标签</span>
-    <div className={`kit-tag-picker${disabled ? ' is-disabled' : ''}`}>
-      {tags.map((tag) => <span key={tag} className="kit-tag-chip">
-        <span className="kit-tag-chip-label">{tag}</span>
-        {!disabled && (
-          <button type="button" className="kit-tag-chip-remove" aria-label={`移除 ${tag}`} onClick={() => onChange(tags.filter((item) => item !== tag))}>×</button>
-        )}
-      </span>)}
-      {!disabled && <input
-        className="kit-tag-input"
-        value={draft}
-        placeholder={tags.length ? '' : '如 daily、main'}
-        onChange={(event) => setDraft(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === 'Enter' || event.key === ',') { event.preventDefault(); add(draft) }
-          if (event.key === 'Backspace' && !draft && tags.length) onChange(tags.slice(0, -1))
-        }}
-        onBlur={() => { if (draft.trim()) add(draft) }}
-      />}
-    </div>
-  </div>
+  return <span className="progress-number">
+    <input type="number" step={integer ? 1 : 'any'} min={min} inputMode={integer ? 'numeric' : 'decimal'} aria-label={label} aria-invalid={error}
+      value={draft ?? (value === undefined ? '' : String(value))} onChange={event => { setDraft(event.target.value); setError(event.target.validity.badInput) }}
+      onBlur={commit} onKeyDown={event => {
+        if (event.key === 'Enter') { event.preventDefault(); commit() }
+        if (event.key === 'Escape') { setDraft(null); setError(false) }
+      }} />
+    {error && <small role="alert">请输入{min !== undefined ? ` ≥ ${min} 的` : ''}{integer ? '整数' : '数值'}；尚未保存，Esc 撤销</small>}
+  </span>
 }
 
-function ConditionField({ label, hint, value, disabled, onChange }: {
-  label: string
-  hint: string
-  value: ProgressCondition
-  disabled?: boolean
-  onChange: (value: ProgressCondition) => void
+function Parameter({ field, value, onChange }: {
+  field: GoalConfigField; value: ProgressConfigValue | undefined; onChange: (value: ProgressConfigValue | undefined) => void
 }) {
-  const name = useId()
-  return <div className="prog-cond">
-    <div className="prog-cond-head">
-      <strong>{label}</strong>
-      <label className="prog-seg">
-        <input type="radio" name={name} checked={value.mode === 'default'} disabled={disabled} onChange={() => onChange({ ...value, mode: 'default' })} />
-        默认
-      </label>
-      <label className="prog-seg">
-        <input type="radio" name={name} checked={value.mode === 'expr'} disabled={disabled} onChange={() => onChange({ ...value, mode: 'expr' })} />
-        条件表达式
-      </label>
-    </div>
-    <p className="prog-hint">{hint}</p>
-    {value.mode === 'expr' && (
-      <textarea
-        className="prog-expr"
-        spellCheck={false}
-        disabled={disabled}
-        rows={3}
-        placeholder="例如 level >= 10 && flag.after_intro"
-        value={value.expr}
-        onChange={(event) => onChange({ ...value, expr: event.target.value })}
-      />
-    )}
-  </div>
-}
-
-function ConfigFieldCard({ field, value, disabled, onChange }: {
-  field: ProgressConfigField
-  value: ProgressConfigValue | undefined
-  disabled?: boolean
-  onChange: (value: ProgressConfigValue) => void
-}) {
-  const current = value ?? field.default ?? (field.type === 'bool' ? false : field.type === 'string' ? '' : 0)
-  return <label className={`prog-config-card${field.required ? ' is-required' : ''}`}>
-    <span className="prog-config-label">
-      {field.label || field.key}
-      {field.required && <i>*</i>}
-      {field.hint && <em>{field.hint}</em>}
-    </span>
-    {field.type === 'bool' ? (
-      <input type="checkbox" disabled={disabled} checked={Boolean(current)} onChange={(event) => onChange(event.target.checked)} />
-    ) : field.type === 'int' || field.type === 'float' ? (
-      <input
-        type="number"
-        step={field.type === 'int' ? 1 : 'any'}
-        disabled={disabled}
-        value={typeof current === 'number' ? current : Number(current) || 0}
-        onChange={(event) => {
-          const next = field.type === 'int' ? Math.floor(Number(event.target.value) || 0) : Number(event.target.value)
-          onChange(Number.isFinite(next) ? next : 0)
-        }}
-      />
-    ) : (
-      <input
-        type="text"
-        disabled={disabled}
-        value={String(current ?? '')}
-        placeholder={field.hint || field.key}
-        onChange={(event) => onChange(event.target.value)}
-      />
-    )}
-  </label>
-}
-
-function GoalCard({ index, goal, definitions, disabled, onChange, onRemove }: {
-  index: number
-  goal: ProgressGoal
-  definitions: readonly GoalDefinition[]
-  disabled?: boolean
-  onChange: (goal: ProgressGoal) => void
-  onRemove: () => void
-}) {
-  const schema = definitions.find((item) => item.kind === goal.kind)
-  const known = Boolean(schema)
-  const fields = schema?.fields ?? []
-  const extraKeys = Object.keys(goal.config).filter((key) => !fields.some((field) => field.key === key))
-
-  function setKind(kind: string) {
-    onChange({ kind, config: defaultConfigForKind(kind, definitions) })
-  }
-
-  function setConfig(key: string, value: ProgressConfigValue) {
-    onChange({ ...goal, config: { ...goal.config, [key]: value } })
-  }
-
-  return <article className="prog-goal-card">
-    <header className="prog-goal-card-head">
-      <span className="prog-goal-index" title="目标下标">#{index}</span>
-      <select
-        disabled={disabled || definitions.length === 0}
-        value={known ? goal.kind : goal.kind || ''}
-        aria-label={`目标 ${index} 种类`}
-        onChange={(event) => setKind(event.target.value)}
-      >
-        {!known && <option value={goal.kind || ''}>{goal.kind ? `${goal.kind}（未在目标定义中找到）` : '请选择种类'}</option>}
-        {definitions.map((item) => <option key={item.kind} value={item.kind}>{item.label} · {item.kind}</option>)}
-      </select>
-      <code className="prog-goal-kind">{goal.kind || '—'}</code>
-      <button type="button" className="prog-icon-btn" disabled={disabled} aria-label={`移除目标 ${index}`} onClick={onRemove}>×</button>
-    </header>
-    {fields.length > 0 ? (
-      <div className="prog-config-grid">
-        {fields.map((field) => (
-          <ConfigFieldCard
-            key={field.key}
-            field={field}
-            value={goal.config[field.key]}
-            disabled={disabled}
-            onChange={(value) => setConfig(field.key, value)}
-          />
-        ))}
+  const name = field.label || field.key
+  const current = value ?? field.default
+  const options = field.type === 'string' && field.hint?.startsWith('enum:') ? field.hint.slice(5).split('|').filter(Boolean) : null
+  const inherited = value === undefined
+  return <div className={`progress-parameter${inherited ? ' is-default' : ' is-explicit'}`}>
+    <span className="progress-parameter-name">{name}{field.required && <sup>*</sup>}</span>
+    <div className="progress-parameter-control">
+      <div className="progress-parameter-input">
+        {field.type === 'bool' ? <label className="progress-bool"><input type="checkbox" role="switch" aria-label={name} checked={Boolean(current)} onChange={event => onChange(event.target.checked)} /><span>{current ? '开启' : '关闭'}</span></label>
+          : field.type === 'int' || field.type === 'float'
+            ? <NumberInput label={name} value={typeof current === 'number' ? current : undefined} integer={field.type === 'int'} allowUnset onChange={onChange} />
+            : options ? <select aria-label={name} value={String(current ?? '')} onChange={event => onChange(event.target.value)}><option value="" disabled>请选择</option>{current !== undefined && !options.includes(String(current)) && current !== '' && <option value={String(current)}>{String(current)}（无效）</option>}{options.map(option => <option key={option} value={option}>{option}</option>)}</select>
+              : <input aria-label={name} value={String(current ?? '')} placeholder="请输入" onChange={event => onChange(event.target.value)} />}
       </div>
-    ) : known ? (
-      <p className="prog-hint">此种类无需 config。</p>
-    ) : (
-      <p className="prog-hint">种类不在「脚本 → 目标定义」中；请先添加带 @goal 的 py，或改选已有种类。</p>
-    )}
-    {extraKeys.length > 0 && (
-      <div className="prog-config-grid">
-        {extraKeys.map((key) => (
-          <ConfigFieldCard
-            key={key}
-            field={{ key, type: typeof goal.config[key] === 'boolean' ? 'bool' : typeof goal.config[key] === 'number' ? 'float' : 'string', required: false, label: key }}
-            value={goal.config[key]}
-            disabled={disabled}
-            onChange={(value) => setConfig(key, value)}
-          />
-        ))}
-      </div>
-    )}
-  </article>
-}
-
-function GroupCard({ group, goals, definitions, disabled, onChange, onRemove }: {
-  group: ProgressGoalGroup
-  goals: ProgressGoal[]
-  definitions: readonly GoalDefinition[]
-  disabled?: boolean
-  onChange: (group: ProgressGoalGroup) => void
-  onRemove: () => void
-}) {
-  function toggleGoal(index: number) {
-    const has = group.goals.includes(index)
-    onChange({
-      ...group,
-      goals: has ? group.goals.filter((item) => item !== index) : [...group.goals, index].sort((a, b) => a - b),
-    })
-  }
-  return <div className="prog-group">
-    <div className="prog-group-head">
-      <input disabled={disabled} value={group.title} placeholder="组名称" onChange={(event) => onChange({ ...group, title: event.target.value })} />
-      <select disabled={disabled} value={group.kind} onChange={(event) => onChange({ ...group, kind: event.target.value as ProgressGroupKind })}>
-        {(Object.keys(PROGRESS_GROUP_LABELS) as ProgressGroupKind[]).map((kind) => (
-          <option key={kind} value={kind}>{PROGRESS_GROUP_LABELS[kind]}</option>
-        ))}
-      </select>
-      {group.kind === 'choose_n' && (
-        <label className="prog-inline">
-          n
-          <input type="number" min={1} disabled={disabled} value={group.count} onChange={(event) => onChange({ ...group, count: Math.max(1, Math.floor(Number(event.target.value) || 1)) })} />
-        </label>
-      )}
-      <button type="button" className="prog-icon-btn" disabled={disabled} aria-label="移除组" onClick={onRemove}>×</button>
-    </div>
-    <div className="prog-group-goals">
-      {goals.length === 0 && <span className="prog-hint">先在上方添加目标</span>}
-      {goals.map((goal, index) => (
-        <label key={index} className="prog-check">
-          <input type="checkbox" disabled={disabled} checked={group.goals.includes(index)} onChange={() => toggleGoal(index)} />
-          <span>{goalLabel(goal, index, definitions)}</span>
-        </label>
-      ))}
+      <span className="progress-value-origin">{inherited ? (field.default === undefined ? '未填写' : '默认') : '已填写'}</span>
+      <button type="button" className="progress-reset-value" disabled={inherited} aria-label={`${name}：${field.default === undefined ? '清除填写' : '恢复默认值'}`} title={field.default === undefined ? '清除填写' : `恢复默认值：${String(field.default)}`} onClick={() => onChange(undefined)}>↶</button>
     </div>
   </div>
 }
 
-export function ProgressEditor({ doc, error, goalCatalog, disabled, onChange }: {
-  doc: ProgressDocument
-  error?: string
-  goalCatalog: GoalDefinitionCatalog
-  disabled?: boolean
-  onChange: (source: string) => void
+function GoalPicker({ definitions, current, onChoose, onClose }: {
+  definitions: readonly GoalDefinition[]; current?: string; onChoose: (kind: string) => void; onClose: () => void
+}) {
+  const ref = useRef<HTMLDialogElement>(null)
+  const titleId = useId()
+  const [query, setQuery] = useState('')
+  const [selected, setSelected] = useState('')
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null
+    const dialog = ref.current!; dialog.showModal()
+    dialog.querySelector<HTMLInputElement>('input')?.focus()
+    return () => { dialog.close(); previous?.focus() }
+  }, [])
+  const choices = definitions.filter(item => `${item.label} ${item.kind} ${item.sourceName}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()))
+  return <dialog ref={ref} className="progress-picker" aria-labelledby={titleId} onCancel={event => { event.preventDefault(); onClose() }}>
+    <header><div><small>目标目录</small><h2 id={titleId}>{current ? '更换目标类型' : '添加一个目标'}</h2></div><button type="button" aria-label="关闭目标选择器" onClick={onClose}>×</button></header>
+    <input className="progress-search" placeholder="搜索名称、类型或来源…" aria-label="搜索目标类型" value={query} onChange={event => setQuery(event.target.value)} />
+    <div className="progress-picker-list">
+      {choices.map(item => <button key={item.kind} type="button" className={selected === item.kind ? 'is-selected' : ''} aria-pressed={selected === item.kind}
+        onClick={() => current ? setSelected(item.kind) : onChoose(item.kind)}>
+        <span className="progress-type-mark">◇</span><span><strong>{item.label}</strong><small>{item.fields.length} 个参数</small></span><span className="progress-picker-arrow">{current === item.kind ? '当前' : '＋'}</span>
+      </button>)}
+      {!choices.length && <p className="progress-empty">{definitions.length ? '没有匹配的目标类型。' : '目标目录为空，请先在「脚本 → 目标定义」中添加定义。'}</p>}
+    </div>
+    {current && <footer><p>更换类型会替换当前参数。切换回原类型可恢复本次编辑中的参数，也可以撤销。</p><button className="progress-primary" type="button" disabled={!selected || selected === current} onClick={() => onChoose(selected)}>替换类型与参数</button></footer>}
+  </dialog>
+}
+
+export function ProgressEditor({ doc, goalCatalog, kitOptions = [], disabled, onChange }: {
+  doc: ProgressDocument; goalCatalog: GoalDefinitionCatalog; kitOptions?: KitOption[]; disabled?: boolean; onChange: (source: string, discrete?: boolean) => void
 }) {
   const definitions = goalCatalog.definitions
-  const update = (patch: Partial<ProgressDocument>) => onChange(stringifyProgress({ ...doc, ...patch }))
-  const summary = summarizeProgress(doc, definitions)
-
-  return <div className="kit-editor prog-editor">
-    <div className="kit-page">
-      {error && <p className="kit-banner" role="alert">无法完整解析进度草稿，已显示可编辑兜底。{error}</p>}
-      {goalCatalog.errors.length > 0 && (
-        <p className="kit-banner" role="status">
-          目标定义解析有提示：{goalCatalog.errors.map((item) => `${item.sourceName}：${item.message}`).join('；')}
-        </p>
-      )}
-      {definitions.length === 0 && (
-        <p className="kit-banner" role="status">
-          还没有可用的 goal 种类。请在「脚本 → 目标定义」中添加带 @goal / @config 的 py。
-        </p>
-      )}
-
-      <header className="kit-header">
-        <input
-          className="kit-title"
-          disabled={disabled}
-          value={doc.name}
-          placeholder="委托名称"
-          aria-label="委托名称"
-          onChange={(event) => update({ name: event.target.value })}
-        />
+  const [collapsed, setCollapsed] = useState(() => new Set<string>())
+  const openGoal = (id: string) => setCollapsed(previous => { const next = new Set(previous); next.delete(id); return next })
+  const toggleGoal = (id: string) => setCollapsed(previous => { const next = new Set(previous); if (next.has(id)) next.delete(id); else next.add(id); return next })
+  const [picker, setPicker] = useState<{ goalId?: string } | null>(null)
+  const [dragging, setDragging] = useState<string | null>(null)
+  const [dropKey, setDropKey] = useState<number | null>(null)
+  const pointerDrag = useRef<{ id: string; startY: number; active: boolean; index: number } | null>(null)
+  const [notice, setNotice] = useState('')
+  const typeDrafts = useRef(new Map<string, ProgressGoal['config']>())
+  const update = (patch: Partial<ProgressDocument>) => {
+    const identity = (goals: ProgressGoal[]) => goals.map(goal => [goal.id, goal.kind])
+    const discrete = patch.completion !== undefined || (!!patch.goals && JSON.stringify(identity(patch.goals)) !== JSON.stringify(identity(doc.goals)))
+    if (!disabled) onChange(stringifyProgress({ ...doc, ...patch }), discrete)
+  }
+  const changeGoal = (goal: ProgressGoal) => update({ goals: doc.goals.map(item => item.id === goal.id ? goal : item) })
+  const issues = progressIssues(doc, definitions)
+  const count = doc.goals.length
+  const pickerGoal = doc.goals.find(goal => goal.id === picker?.goalId)
+  const availableKits = kitOptions.filter(item => !doc.rewardKits.includes(item.ref))
+  function choose(kind: string) {
+    if (!picker || disabled || !goalCatalog.byKind.has(kind)) return
+    if (pickerGoal) {
+      typeDrafts.current.set(`${pickerGoal.id}:${pickerGoal.kind}`, { ...pickerGoal.config })
+      changeGoal({ ...pickerGoal, kind, config: typeDrafts.current.get(`${pickerGoal.id}:${kind}`) ?? {} })
+      openGoal(pickerGoal.id)
+    } else {
+      const goal = createProgressGoal(kind, definitions)
+      update({ goals: [...doc.goals, goal] }); openGoal(goal.id)
+    }
+    setPicker(null)
+  }
+  function move(goal: ProgressGoal, index: number) {
+    if (disabled) return
+    onChange(stringifyProgress(moveProgressGoal(doc, goal.id, index)), true)
+    setNotice('已调整目标顺序。')
+  }
+  const cancelDrag = () => { pointerDrag.current = null; setDragging(null); setDropKey(null) }
+  const dragProps = (goal: ProgressGoal, index: number) => ({
+    onPointerDown: (event: PointerEvent<HTMLSpanElement>) => {
+      if (disabled || event.button !== 0) return
+      event.preventDefault()
+      pointerDrag.current = { id: goal.id, startY: event.clientY, active: false, index }
+      event.currentTarget.setPointerCapture(event.pointerId)
+    },
+    onPointerMove: (event: PointerEvent<HTMLSpanElement>) => {
+      const drag = pointerDrag.current
+      if (!drag || (!drag.active && Math.abs(event.clientY - drag.startY) < 5)) return
+      drag.active = true
+      setDragging(drag.id)
+      const items = event.currentTarget.closest('.progress-goals')?.querySelectorAll('.progress-goal')
+      if (!items) return
+      const next = Array.from(items).findIndex(item => { const rect = item.getBoundingClientRect(); return event.clientY < rect.top + rect.height / 2 })
+      drag.index = next < 0 ? doc.goals.length : next
+      setDropKey(drag.index)
+    },
+    onPointerUp: (event: PointerEvent<HTMLSpanElement>) => {
+      const drag = pointerDrag.current
+      if (drag?.active) move(goal, drag.index)
+      cancelDrag()
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+    },
+    onPointerCancel: cancelDrag,
+    onLostPointerCapture: cancelDrag,
+  })
+  return <div className="progress-editor" onClick={event => {
+    if (event.target instanceof Element && event.target.closest('button')) event.target.closest('.progress-menu')?.removeAttribute('open')
+  }}>
+    <fieldset disabled={disabled} className="progress-page">
+      <header className="progress-document-head">
+        <section className="progress-info-card progress-main-info" aria-label="标题与描述">
+        <label className="progress-document-field"><span className="progress-document-field-label">标题</span>
+          <input className="progress-title" aria-label="进度标题" placeholder="为这项进度命名…" value={doc.name} onChange={event => update({ name: event.target.value })} />
+        </label>
+        <label className="progress-document-field"><span className="progress-document-field-label">描述 <span>向玩家展示</span></span>
+          <textarea className="progress-description" aria-label="进度描述" rows={3} placeholder="填写这项进度的故事与要求…" value={doc.description} onChange={event => update({ description: event.target.value })} />
+        </label>
+        </section>
+        <section className="progress-info-card progress-extra-info" aria-label="文档信息">
+            <label className="progress-field"><span>文档 ID</span><input aria-label="文档 ID" className="progress-document-id" readOnly value={doc.id} /></label>
+            <label className="progress-field"><span>标签</span><input aria-label="标签" placeholder="用逗号分隔" key={doc.tags.join(',')} defaultValue={doc.tags.join(', ')} onBlur={event => update({ tags: [...new Set(event.target.value.split(/[,，]/).map(tag => tag.trim()).filter(Boolean))] })} /></label>
+            <label className="progress-field"><span>作者备注 <small>不向玩家展示</small></span><textarea rows={2} value={doc.authorNotes} onChange={event => update({ authorNotes: event.target.value })} /></label>
+        </section>
       </header>
 
-      <TagField tags={doc.tags} disabled={disabled} onChange={(tags) => update({ tags })} />
+      <div className="progress-summary-grid">
+        <section className="progress-card progress-reward-section" aria-label="完成奖励">
+          <header className="progress-card-head"><h2>完成奖励</h2><span className="progress-card-count">{doc.rewardKits.length}</span></header>
+          <div className="progress-card-body">
+            {doc.rewardKits.map(ref => <div className="progress-reward-row" key={ref}><span>{kitOptions.find(item => item.ref === ref)?.label || `${ref}（未找到）`}</span><button type="button" className="progress-remove" aria-label={`移除礼包 ${ref}`} onClick={() => update({ rewardKits: doc.rewardKits.filter(item => item !== ref) })}>×</button></div>)}
+            <select aria-label="添加奖励礼包" value="" disabled={!availableKits.length} onChange={event => { if (event.target.value) update({ rewardKits: [...doc.rewardKits, event.target.value] }) }}><option value="">{availableKits.length ? '＋ 添加礼包' : kitOptions.length ? '所有礼包已添加' : '暂无可用礼包'}</option>{availableKits.map(item => <option key={item.ref} value={item.ref}>{item.label}</option>)}</select>
+          </div>
+        </section>
+        <section className="progress-card" aria-label="周期"><header className="progress-card-head"><h2>周期</h2></header>
+          <div className="progress-card-body progress-lifecycle"><label className="progress-field"><span>重复方式</span><select aria-label="重复方式" value={doc.repeat.kind} onChange={event => update({ repeat: { ...doc.repeat, kind: event.target.value as ProgressRepeatKind } })}>{Object.entries(PROGRESS_REPEAT_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+              {doc.repeat.kind === 'duration' && <label className="progress-field"><span>间隔（小时）</span><NumberInput label="重复间隔小时" min={0.01} value={doc.repeat.hours} onChange={hours => { if (hours !== undefined) update({ repeat: { ...doc.repeat, hours } }) }} /></label>}
+              <label className="progress-abandon-switch"><span>可放弃</span><input type="checkbox" role="switch" aria-label="可放弃" checked={doc.abandonable} onChange={event => update({ abandonable: event.target.checked })} /></label>
+          </div>
+        </section>
+      </div>
 
-      <textarea
-        className="prog-desc"
-        disabled={disabled}
-        rows={2}
-        placeholder="简介（给玩家或作者看）"
-        value={doc.description}
-        onChange={(event) => update({ description: event.target.value })}
-      />
-
-      <Panel
-        title="目标"
-        subtitle="种类唯一来源：脚本 → 目标定义"
-        count={doc.goals.length}
-        action={!disabled && <button type="button" disabled={definitions.length === 0} onClick={() => update({ goals: [...doc.goals, createProgressGoal(definitions[0]?.kind ?? '', definitions)] })}>添加目标</button>}
-      >
-        {doc.goals.length === 0 && <p className="prog-hint">还没有目标。</p>}
-        <div className="prog-goal-list">
-          {doc.goals.map((goal, index) => (
-            <GoalCard
-              key={index}
-              index={index}
-              goal={goal}
-              definitions={definitions}
-              disabled={disabled}
-              onChange={(next) => update({ goals: replaceAt(doc.goals, index, next) })}
-              onRemove={() => onChange(stringifyProgress(removeGoalAt(doc, index)))}
-            />
-          ))}
+      <section className="progress-card progress-objectives" aria-label="目标要求">
+        <div className="progress-section-head progress-card-head"><div><h2>目标 <span>{count}</span></h2></div>
+          <div className="progress-completion-switch" role="group" aria-label="目标完成规则">
+            <button type="button" aria-pressed={doc.completion === 'all'} onClick={() => update({ completion: 'all' })}>完成全部</button>
+            <button type="button" aria-pressed={doc.completion === 'any'} onClick={() => update({ completion: 'any' })}>完成任一</button>
+          </div>
         </div>
-      </Panel>
+        <div className="progress-goals">
+            {doc.goals.map((goal, index) => {
+              const definition = definitions.find(item => item.kind === goal.kind)
+              const fields = definition?.fields ?? []
+              const open = !collapsed.has(goal.id)
+              return <article key={goal.id} aria-label={`目标 ${goalLabel(goal, definitions)}`} className={`progress-goal${open ? ' is-expanded' : ''}${dragging === goal.id ? ' is-dragging' : ''}${dropKey === index ? ' is-drop' : ''}`}>
+                <div className="progress-goal-row">
+                  <span className="progress-drag" title="上下拖动排序；也可使用右侧菜单" aria-hidden="true" {...dragProps(goal, index)}>⠿</span>
+                  <button type="button" className="progress-goal-open" aria-expanded={open} aria-label={`${open ? '收起' : '展开'}目标 ${goalLabel(goal, definitions)}`} onClick={() => toggleGoal(goal.id)}><span className="progress-chevron" aria-hidden="true">{open ? '▾' : '▸'}</span><strong>{goalLabel(goal, definitions)}</strong><span className="progress-node-kind">GOAL</span></button>
+                  <details className="progress-menu"><summary aria-label={`${goalLabel(goal, definitions)}操作`}>⋯</summary><div>
+                    <button type="button" disabled={index === 0} onClick={() => move(goal, index - 1)}>上移</button>
+                    <button type="button" disabled={index === doc.goals.length - 1} onClick={() => move(goal, index + 2)}>下移</button>
+                    <button type="button" onClick={() => { const copy = duplicateProgressGoal(goal); const goals = [...doc.goals]; goals.splice(index + 1, 0, copy); update({ goals }); openGoal(copy.id) }}>复制目标</button>
+                    <button type="button" onClick={() => setPicker({ goalId: goal.id })}>更换类型</button>
+                    <button type="button" className="progress-danger" onClick={() => { update({ goals: doc.goals.filter(item => item.id !== goal.id) }); setNotice('已删除目标，可用 Ctrl / ⌘ + Z 撤销。') }}>删除目标</button>
+                  </div></details>
+                </div>
+                {open && <div className="progress-goal-body">
+                  {!definition && <p className="progress-inline-warning">请在「脚本 → 目标定义」中恢复此类型的定义脚本，或更换类型。原参数已保留。</p>}
+                  {definition && Object.keys(goal.config).some(key => !fields.some(field => field.key === key)) && <p className="progress-inline-warning">已保留脚本中不再声明的旧参数；可编辑字段仅来自定义脚本。</p>}
+                  <div className="progress-parameters">{fields.map(field => <Parameter key={`${goal.kind}:${field.key}`} field={field} value={goal.config[field.key]} onChange={value => {
+                    const config = { ...goal.config }
+                    if (value === undefined) delete config[field.key]
+                    else config[field.key] = value
+                    changeGoal({ ...goal, config })
+                  }} />)}</div>
+                  {definition && !fields.length && <p className="progress-node-empty">此目标无需配置参数</p>}
+                </div>}
+                {!open && <p className="progress-node-summary">{goalConfigSummary(goal, definitions) || (definition ? (fields.length ? '填写目标参数' : '无需配置参数') : '未找到定义脚本')}</p>}
+              </article>
+            })}
+            <div className={`progress-add-row${dropKey === doc.goals.length ? ' is-drop' : ''}`}>
+              <button type="button" onClick={() => setPicker({})}>＋ 添加目标</button>{doc.goals.length === 0 && <span>先选择一种目标，再填写参数</span>}
+            </div>
+          </div>
+      </section>
 
-      <Panel
-        title="目标组"
-        subtitle="必修 / 选必修 / 多完成方式 / 选修"
-        count={doc.groups.length}
-        action={!disabled && <button type="button" onClick={() => update({ groups: [...doc.groups, createProgressGroup(`组 ${doc.groups.length + 1}`)] })}>添加组</button>}
-      >
-        <div className="prog-group-list">
-          {doc.groups.map((group, index) => (
-            <GroupCard
-              key={group.id}
-              group={group}
-              goals={doc.goals}
-              definitions={definitions}
-              disabled={disabled}
-              onChange={(next) => update({ groups: replaceAt(doc.groups, index, next) })}
-              onRemove={() => update({ groups: removeAt(doc.groups, index) })}
-            />
-          ))}
+      {([['visibility', '可见性条件'], ['acceptance', '可承接条件']] as const).map(([field, title]) => <section key={field} className="progress-card progress-rules" aria-label={title}><header className="progress-card-head"><h2>{title}</h2><span className="progress-card-count">{doc[field].length}</span><small className="progress-card-note">全部满足</small></header>
+        <div className="progress-card-body">
+          {doc[field].map((rule, index) => <div className="progress-visibility-row" key={index}>
+            <select aria-label={`${title} ${index + 1} 对象类型`} value={rule.kind} onChange={event => update({ [field]: doc[field].map((item, i) => i !== index ? item : event.target.value === 'task' ? { kind: 'task', state: 'succeeded', target: '' } : { kind: 'dialogue', state: 'after', target: '' }) })}><option value="task">任务</option><option value="dialogue">对话</option></select>
+            <select aria-label={`${title} ${index + 1} 状态`} value={rule.state} onChange={event => update({ [field]: doc[field].map((item, i) => i !== index ? item : { ...rule, state: event.target.value } as ProgressConditionRule) })}>{Object.entries(rule.kind === 'task' ? TASK_VISIBILITY_STATES : DIALOGUE_VISIBILITY_STATES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+            <input aria-label={`${title} ${index + 1} 对象`} placeholder={rule.kind === 'task' ? '任务对象' : '对话对象'} value={rule.target} onChange={event => update({ [field]: doc[field].map((item, i) => i !== index ? item : { ...rule, target: event.target.value }) })} />
+            <button type="button" className="progress-remove" aria-label={`删除${title} ${index + 1}`} onClick={() => update({ [field]: doc[field].filter((_, i) => i !== index) })}>×</button>
+          </div>)}
+          {!doc[field].length && <p className="progress-card-empty">没有条件，直接满足。</p>}
+          <button type="button" className="progress-card-add" aria-label={`添加${title}`} onClick={() => update({ [field]: [...doc[field], { kind: 'task', state: 'succeeded', target: '' }] })}>＋ 添加条件</button>
         </div>
-      </Panel>
+      </section>)}
 
-      <Panel title="条件" subtitle="留空默认；特例写 Aviator 表达式">
-        <ConditionField
-          label="可接取"
-          hint="默认：冷却结束等引擎约定门槛。"
-          value={doc.accept}
-          disabled={disabled}
-          onChange={(accept) => update({ accept })}
-        />
-        <ConditionField
-          label="可交付"
-          hint="默认：非选修目标组均已满足。"
-          value={doc.deliver}
-          disabled={disabled}
-          onChange={(deliver) => update({ deliver })}
-        />
-        <ConditionField
-          label="失败"
-          hint="默认：无自动失败。填写表达式则满足时失败。"
-          value={doc.fail}
-          disabled={disabled}
-          onChange={(fail) => update({ fail })}
-        />
-        <label className="prog-check prog-abandon">
-          <input type="checkbox" disabled={disabled} checked={doc.abandonable} onChange={(event) => update({ abandonable: event.target.checked })} />
-          允许玩家放弃
-        </label>
-      </Panel>
-
-      <Panel title="重复与冷却">
-        <div className="prog-repeat">
-          <select
-            disabled={disabled}
-            value={doc.repeat.kind}
-            onChange={(event) => update({ repeat: { ...doc.repeat, kind: event.target.value as ProgressRepeatKind } })}
-          >
-            {(Object.keys(PROGRESS_REPEAT_LABELS) as ProgressRepeatKind[]).map((kind) => (
-              <option key={kind} value={kind}>{PROGRESS_REPEAT_LABELS[kind]}</option>
-            ))}
-          </select>
-          {doc.repeat.kind === 'duration' && (
-            <label className="prog-inline">
-              间隔（小时）
-              <input
-                type="number"
-                min={1}
-                disabled={disabled}
-                value={doc.repeat.hours}
-                onChange={(event) => update({ repeat: { ...doc.repeat, hours: Math.max(1, Number(event.target.value) || 1) } })}
-              />
-            </label>
-          )}
-        </div>
-      </Panel>
-
-      <Panel title="奖励" subtitle="引用礼包，不在此内联掉落">
-        <label className="prog-inline prog-reward">
-          礼包引用
-          <input
-            disabled={disabled}
-            value={doc.rewardKit}
-            placeholder="文件名去掉 .kit，如 daily_guard"
-            onChange={(event) => update({ rewardKit: event.target.value })}
-          />
-        </label>
-      </Panel>
-
-      <Panel title="摘要" subtitle="只读，对照当前配置">
-        <ul className="prog-summary">
-          {summary.map((line) => <li key={line}>{line}</li>)}
-        </ul>
-      </Panel>
-    </div>
+      {(issues.length > 0 || goalCatalog.errors.length > 0) && <section className="progress-card progress-validation"><header className="progress-card-head"><h2>{issues.length + goalCatalog.errors.length} 项待完善</h2></header><ul>{issues.map((issue, index) => <li key={index}>{issue}</li>)}{goalCatalog.errors.map((issue, index) => <li key={`catalog-${index}`}>{issue.sourceName}：{issue.message}</li>)}</ul></section>}
+      <p className="progress-notice" role="status">{notice || '拖动手柄排序，更多操作在行末菜单'}</p>
+      {picker && <GoalPicker definitions={definitions} current={pickerGoal?.kind} onChoose={choose} onClose={() => setPicker(null)} />}
+    </fieldset>
   </div>
 }

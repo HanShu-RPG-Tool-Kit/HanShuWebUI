@@ -224,7 +224,7 @@ function incomingSources(flow: ProgressFlow, id: string, port: FlowInputPort = '
   return (flow.logic?.links ?? []).filter(link => link.to === id && link.port === port).map(link => link.from)
 }
 
-function deliverCkpt(flow: ProgressFlow, sim: FlowSimState, from: string | null, to: string, port: FlowPort, signal: FlowSignal) {
+function deliverCkpt(_flow: ProgressFlow, sim: FlowSimState, from: string | null, to: string, port: FlowPort, signal: FlowSignal) {
   // Query C arrives on the ckpt output socket (reverse wire from 合并变迁).
   if (signal.kind === 'query') {
     if (port !== 'output') return reject(sim, from, to, port, signal, '查询信号 C 应到达 checkpoint 出点')
@@ -413,7 +413,7 @@ function deliverSwap(flow: ProgressFlow, sim: FlowSimState, from: string | null,
   return reject(sim, from, to, port, signal, '未知的交换变迁端口')
 }
 
-function deliverDiff(flow: ProgressFlow, sim: FlowSimState, from: string | null, to: string, port: FlowPort, signal: FlowSignal) {
+function deliverDiff(_flow: ProgressFlow, sim: FlowSimState, from: string | null, to: string, port: FlowPort, signal: FlowSignal) {
   // 成功/失败出点收到 S-C → 转发到 Parent，并对 Goal 发 D
   if (signal.kind === 'cancel-cascade') {
     if (port !== 'output' && port !== 'output2') return reject(sim, from, to, port, signal, '差分变迁从成功/失败出点接收 S-C')

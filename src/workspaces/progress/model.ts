@@ -106,7 +106,7 @@ export const outputPorts = (flow: ProgressFlow, id: string): FlowOutputPort[] =>
   return []
 }
 /** Which output socket a stored link leaves from (差分失败口 / swap 存 fromPort). */
-export const linkSourcePort = (flow: ProgressFlow, from: string, to: string, port: FlowInputPort, fromPort?: FlowOutputPort): FlowOutputPort => {
+export const linkSourcePort = (_flow: ProgressFlow, _from: string, _to: string, _port: FlowInputPort, fromPort?: FlowOutputPort): FlowOutputPort => {
   if (fromPort) return fromPort
   return 'output'
 }

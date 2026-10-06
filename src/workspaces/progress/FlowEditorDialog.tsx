@@ -17,7 +17,7 @@ export function FlowEditorDialog({ flow, initialSelection, origin, onComplete, o
   const locked = Object.values(pending).some(Boolean)
   const dirty = locked || JSON.stringify(draft) !== JSON.stringify(flow)
   const isEntry = selection.kind === 'entry' || selection.kind === 'entry-link'
-  const kind = isEntry ? '开始节点' : selection.kind === 'node' ? '阶段' : selection.kind === 'entry-link' ? '起点连接' : '画布'
+  const kind = isEntry ? '开始节点' : selection.kind === 'node' ? '阶段' : '画布'
   const title = isEntry
     ? (displayText(draft.entry.title) || '未命名流程')
     : selection.kind === 'node'
