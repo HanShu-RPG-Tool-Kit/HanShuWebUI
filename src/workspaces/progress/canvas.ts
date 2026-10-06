@@ -1,4 +1,4 @@
-import { addNode, branches, clone, connectNodes, getCanvasNote, getNode, hasCanvasItem, NOTE_COLORS, getGoalNode, getPredicateNode, getTransitionNode, getConditionalNode, getDiffNode, getMergeNode, getSwapNode, hasContentNode, makeNode, removeNode, text, type FlowCanvasNote, type FlowPort, type FlowPosition, type ProgressFlow } from './model'
+import { addNode, clone, connectNodes, getCanvasNote, getEndNode, getNode, hasCanvasItem, NOTE_COLORS, getGoalNode, getPredicateNode, getTransitionNode, getConditionalNode, getDiffNode, getMergeNode, getSwapNode, hasContentNode, makeNode, removeNode, text, type FlowCanvasNote, type FlowPort, type FlowPosition, type ProgressFlow } from './model'
 
 export const NODE_WIDTH = 216
 export const NODE_HEIGHT = 108
@@ -24,7 +24,7 @@ export function socketOffset(flow: ProgressFlow, id: string, port: FlowPort): Fl
 export function nodeMetrics(flow: ProgressFlow, id: string) {
   const note = getCanvasNote(flow, id)
   if (note) return { width: note.width, height: note.height, socketY: 0 }
-  if (id === flow.entry.id) return { width: 156, height: ENTRY_HEIGHT, socketY: 44 }
+  if (id === flow.entry.id || getEndNode(flow, id)) return { width: 156, height: ENTRY_HEIGHT, socketY: 44 }
   if (getSwapNode(flow, id)) {
     const entries = getSwapNode(flow, id)!.entries
     const height = SWAP_HEADER + entries * SWAP_ENTRY_ROW + 12
@@ -36,8 +36,8 @@ export function nodeMetrics(flow: ProgressFlow, id: string) {
 
 /** Initial arrangement only. Once edited, saved positions keep unrelated nodes still. */
 export function layoutCanvas(flow: ProgressFlow) {
-  const ids = [flow.entry.id, ...Object.keys(flow.nodes), ...Object.keys(flow.goals ?? {}), ...Object.keys(flow.predicates ?? {}), ...Object.keys(flow.transitions ?? {}), ...Object.keys(flow.conditionals ?? {}), ...Object.keys(flow.diffs ?? {}), ...Object.keys(flow.merges ?? {}), ...Object.keys(flow.swaps ?? {}), ...Object.keys(flow.layout?.notes ?? {})], known = new Set(ids)
-  const edges = branches(flow).map(({ parent, branch }) => ({ parent, target: branch.target }))
+  const ids = [flow.entry.id, ...Object.keys(flow.nodes), ...Object.keys(flow.goals ?? {}), ...Object.keys(flow.predicates ?? {}), ...Object.keys(flow.transitions ?? {}), ...Object.keys(flow.conditionals ?? {}), ...Object.keys(flow.diffs ?? {}), ...Object.keys(flow.merges ?? {}), ...Object.keys(flow.swaps ?? {}), ...Object.keys(flow.ends ?? {}), ...Object.keys(flow.layout?.notes ?? {})], known = new Set(ids)
+  const edges: { parent: string; target: string }[] = []
   for (const link of flow.logic?.links ?? []) edges.push({ parent: link.from, target: link.to })
   if (flow.entry.target !== null) edges.unshift({ parent: flow.entry.id, target: flow.entry.target })
   const outgoing = new Map(ids.map((id) => [id, [] as number[]]))
@@ -150,6 +150,17 @@ export function createMergeNode(flow: ProgressFlow, position: FlowPosition) {
   return { flow: next, id }
 }
 
+export function createEndNode(flow: ProgressFlow, position: FlowPosition) {
+  requirePosition(position)
+  const next = withCanvasPositions(flow)
+  let id: string
+  do { id = `end_${crypto.randomUUID()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
+  next.ends ??= {}
+  next.ends[id] = {}
+  next.layout!.positions[id] = { ...position }
+  return { flow: next, id }
+}
+
 export function createSwapNode(flow: ProgressFlow, position: FlowPosition) {
   requirePosition(position)
   const next = withCanvasPositions(flow)
@@ -245,7 +256,7 @@ export function addNextCheckpoint(flow: ProgressFlow, parent: string) {
     result.flow.layout!.positions[result.id] = place({ x: p.x + COLUMN_WIDTH, y: p.y }, result.flow.layout!.positions)
     return result
   }
-  if (!getNode(flow, parent) || flow.nodes[parent].completion === 'finish') throw new Error('请选择可继续推进的 checkpoint。')
+  if (!getNode(flow, parent)) throw new Error('请选择可继续推进的 checkpoint。')
   const transition = createTransitionNode(base, place({ x: p.x + COLUMN_WIDTH * 0.55, y: p.y }, base.layout!.positions))
   const checkpoint = createCheckpoint(transition.flow, place({ x: p.x + COLUMN_WIDTH, y: p.y }, transition.flow.layout!.positions))
   let next = connectNodes(checkpoint.flow, parent, transition.id, 'input2').flow

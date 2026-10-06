@@ -1,4 +1,4 @@
-import { getConditionalNode, getDiffNode, getGoalNode, getMergeNode, getNode, getPredicateNode, getSwapNode, getTransitionNode, isOutputPort, linkSourcePort, parseSwapInIndex, parseSwapOutIndex, swapInPort, swapOutPort, type FlowInputPort, type FlowPort, type ProgressFlow } from './model'
+import { getConditionalNode, getDiffNode, getEndNode, getGoalNode, getMergeNode, getNode, getPredicateNode, getSwapNode, getTransitionNode, isOutputPort, linkSourcePort, parseSwapInIndex, parseSwapOutIndex, swapInPort, swapOutPort, type FlowInputPort, type FlowPort, type ProgressFlow } from './model'
 
 /** Checkpoint runtime states. Authoring document does not store these. */
 export const CKPT_STATES = {
@@ -183,9 +183,7 @@ export function emitTargets(flow: ProgressFlow, from: string, via: FlowPort, sig
       return [{ from, to: flow.entry.target, port: flow.entry.port ?? 'input', signal }]
     }
     const seeds: SignalSeed[] = []
-    for (const branch of getNode(flow, from)?.children ?? []) {
-      if (via === 'output') seeds.push({ from, to: branch.target, port: 'input', signal })
-    }
+    
     for (const link of flow.logic?.links ?? []) {
       if (link.from === from && linkSourcePort(flow, link.from, link.to, link.port, link.fromPort) === via) {
         seeds.push({ from, to: link.to, port: link.port, signal })
@@ -487,8 +485,16 @@ function deliverConditional(flow: ProgressFlow, sim: FlowSimState, from: string 
   return reject(sim, from, to, port, signal, '未知的条件变迁端口')
 }
 
+function deliverEnd(sim: FlowSimState, from: string | null, to: string, port: FlowPort, signal: FlowSignal): { sim: FlowSimState; emit: Emit[] } {
+  if (signal.kind === 'activation' || signal.kind === 'ckpt-transition' || signal.kind === 'cancel-cascade') {
+    return accept(sim, from, to, port, signal, {}, [])
+  }
+  return reject(sim, from, to, port, signal, '结束节点只吸收激活、状态转移与 S-C 信号')
+}
+
 function deliverOne(flow: ProgressFlow, sim: FlowSimState, seed: SignalSeed): { sim: FlowSimState; emit: Emit[] } {
   const { from, to, port, signal } = seed
+  if (getEndNode(flow, to)) return deliverEnd(sim, from, to, port, signal)
   if (getNode(flow, to)) return deliverCkpt(flow, sim, from, to, port, signal)
   if (getGoalNode(flow, to)) return deliverGoal(sim, from, to, port, signal)
   if (getPredicateNode(flow, to)) return deliverPredicate(sim, from, to, port, signal)
@@ -504,7 +510,7 @@ function deliverOne(flow: ProgressFlow, sim: FlowSimState, seed: SignalSeed): { 
 export function propagateSignals(flow: ProgressFlow, sim: FlowSimState, seeds: SignalSeed[]): FlowSimState {
   let next: FlowSimState = { ...sim, log: [...sim.log], ckpt: { ...sim.ckpt }, goals: { ...sim.goals }, predicates: { ...sim.predicates }, merges: { ...sim.merges }, transitions: { ...sim.transitions }, pulse: sim.pulse + 1 }
   const queue = [...seeds]
-  const nodeCount = Object.keys(flow.nodes).length + Object.keys(flow.goals ?? {}).length + Object.keys(flow.predicates ?? {}).length + Object.keys(flow.transitions ?? {}).length + Object.keys(flow.conditionals ?? {}).length + Object.keys(flow.diffs ?? {}).length + Object.keys(flow.merges ?? {}).length + Object.keys(flow.swaps ?? {}).length
+  const nodeCount = Object.keys(flow.nodes).length + Object.keys(flow.goals ?? {}).length + Object.keys(flow.predicates ?? {}).length + Object.keys(flow.transitions ?? {}).length + Object.keys(flow.conditionals ?? {}).length + Object.keys(flow.diffs ?? {}).length + Object.keys(flow.merges ?? {}).length + Object.keys(flow.swaps ?? {}).length + Object.keys(flow.ends ?? {}).length
   const guard = Math.max(64, nodeCount * 16 + 16)
   for (let i = 0; i < queue.length && i < guard; i++) {
     const result = deliverOne(flow, next, queue[i])

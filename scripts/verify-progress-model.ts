@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
-import { addNode, canConnectNodes, clone, connectEntry, connectNodes, createFlow, descendants, disconnectLink, findCanvasCycle, getCanvasNote, hasContentNode, inputPorts, linkSourcePort, makeNode, moveNode, outgoingCount, outputPorts, parseFlow, portKind, removeNode, renameNode, reorderBranch, swapInPort, swapOutPort, text, validateFlow, type ProgressFlow } from '../src/workspaces/progress/model.ts'
+import { addNode, canConnectNodes, clone, connectEntry, connectNodes, createFlow, disconnectLink, findCanvasCycle, getCanvasNote, hasContentNode, inputPorts, linkSourcePort, makeNode, outgoingCount, outputPorts, parseFlow, portKind, removeNode, renameNode, swapInPort, swapOutPort, text, validateFlow, type ProgressFlow } from '../src/workspaces/progress/model.ts'
 import { FLOW_STORAGE_KEY, createFlowDocument, importFlowDocument, loadFlowWorkspace, saveFlowWorkspace } from '../src/workspaces/progress/storage.ts'
 import { addFlowFolder, moveFlowEntry, renameFlowEntry, uniqueDocumentName } from '../src/workspaces/progress/library.ts'
-import { addNextCheckpoint, createCanvasNote, removeCanvasItems, updateCanvasNote, removeCanvasNote, groupCanvasNodes, moveCanvasNodes, nodeMetrics, createCheckpoint, createGoalNode, createPredicateNode, createTransitionNode, createConditionalNode, createDiffNode, createMergeNode, createSwapNode, layoutCanvas, moveCheckpoint, socketOffset, withCanvasPositions } from '../src/workspaces/progress/canvas.ts'
+import { addNextCheckpoint, createCanvasNote, removeCanvasItems, updateCanvasNote, removeCanvasNote, groupCanvasNodes, moveCanvasNodes, nodeMetrics, createCheckpoint, createEndNode, createGoalNode, createPredicateNode, createTransitionNode, createConditionalNode, createDiffNode, createMergeNode, createSwapNode, layoutCanvas, moveCheckpoint, socketOffset, withCanvasPositions } from '../src/workspaces/progress/canvas.ts'
 import { smartArrangeCanvas } from '../src/workspaces/progress/arrange.ts'
 import { MAX_CANVAS_ZOOM, MIN_CANVAS_ZOOM, worldPoint, zoomCamera } from '../src/workspaces/progress/camera.ts'
 import { CKPT_STATES, GOAL_STATES, PREDICATE_STATES, ckptState, createSimState, fireCkptTransition, fireGoalComplete, fireGoalNo, fireGoalYes, firePredicateComplete, fireStart, goalState, mergeSim, outgoingSignalTargets, predicateState, propagateSignals, resetSimState, syncSimState } from '../src/workspaces/progress/signals.ts'
@@ -14,8 +14,8 @@ function fixture() {
   const flow = createFlow('story-progress', '驿站的约定')
   flow.nodes.start = makeNode('收到委托'); flow.entry.target = 'start'
   flow.nodes.node_1 = makeNode('阶段 1')
-  flow.nodes.node_2 = makeNode('阶段 2'); flow.nodes.node_2.completion = 'finish'
-  flow.nodes.node_3 = makeNode('阶段 3'); flow.nodes.node_3.completion = 'finish'
+  flow.nodes.node_2 = makeNode('阶段 2')
+  flow.nodes.node_3 = makeNode('阶段 3')
   return flow
 }
 function linkViaTransition(flow: ProgressFlow, fromCkpt: string, toCkpt: string) {
@@ -24,24 +24,26 @@ function linkViaTransition(flow: ProgressFlow, fromCkpt: string, toCkpt: string)
   next = connectNodes(next, added.id, toCkpt).flow
   return { flow: next, id: added.id }
 }
-const strayBranch = (id: string, target: string, items: ProgressFlow['nodes'][string]['children'][number]['conditions']['items'] = []) => ({
-  id, target, title: text(), trigger: 'automatic' as const, conditions: { mode: 'all' as const, items },
-})
-
-test('A portable flow has empty children and no game fields; routing uses transitions', () => {
+test('A portable flow has lean checkpoints; routing uses transitions', () => {
   const flow = fixture()
   assert.equal(errors(flow).length, 0)
-  for (const node of Object.values(flow.nodes)) assert.deepEqual(node.children, [])
+  for (const node of Object.values(flow.nodes)) {
+    assert.deepEqual(Object.keys(node).sort(), ['description', 'title'])
+  }
+  assert.equal(flow.entry.title.text, '驿站的约定')
   const linked = linkViaTransition(flow, 'start', 'node_1')
   assert.equal(linked.flow.logic!.links.length, 2)
   assert.equal(errors(linked.flow).length, 0)
+  assert.equal(Object.hasOwn(flow, 'title'), false)
+  assert.equal(Object.hasOwn(flow, 'kind'), false)
+  assert.equal(Object.hasOwn(flow.entry, 'kind'), false)
   assert.equal(Object.hasOwn(flow, 'edges'), false)
-  assert.equal(Object.hasOwn(flow, 'format_version'), false)
-  assert.equal(Object.hasOwn(flow, 'checkpoints'), false)
 })
-test('Native document roundtrip keeps text keys and extension data', () => {
-  const flow = fixture(); flow.title = { text: '原文', key: 'story.title' }; flow.extensions = { designer: { note: 'keep' } }
+test('Native document roundtrip keeps extension data; FlowText has no key field', () => {
+  const flow = fixture(); flow.extensions = { designer: { note: 'keep' } }
   assert.deepEqual(parseFlow(JSON.stringify(flow)), flow)
+  assert.throws(() => parseFlow(JSON.stringify({ ...flow, entry: { ...flow.entry, title: { text: '原文', key: 'story.title' } } })), /entry.title/)
+  assert.throws(() => parseFlow(JSON.stringify({ ...flow, nodes: { start: { ...flow.nodes.start, completion: 'finish' } } })), /旧草稿/)
 })
 test('Mod quest JSON and unknown document versions are rejected', () => {
   assert.throws(() => parseFlow('{"format_version":1,"id":"demo:task","checkpoints":{},"edges":[]}'), /格式或版本/)
@@ -50,25 +52,6 @@ test('Mod quest JSON and unknown document versions are rejected', () => {
 test('Duplicate JSON keys cannot silently discard author content', () => {
   assert.throws(() => parseFlow('{"format":"hanshu.progress-tree","format":"other"}'), /重复/)
 })
-test('Malformed branch containers are rejected before a view uses them', () => {
-  const v = clone(fixture()) as unknown as { nodes: { start: { children: unknown } } }
-  v.nodes.start.children = null
-  assert.throws(() => parseFlow(JSON.stringify(v)), /结构/)
-})
-test('Direct children fail validation; shared targets and cycles via transitions remain editable', () => {
-  const missing = fixture(); missing.nodes.start.children = [strayBranch('branch_1', 'missing')]
-  assert(errors(missing).some((i) => i.message.includes('直连')))
-  assert(errors(missing).some((i) => i.message.includes('不存在')))
-  const shared = linkViaTransition(linkViaTransition(fixture(), 'start', 'node_1').flow, 'start', 'node_1')
-  assert.equal(errors(shared.flow).length, 0)
-  assert.equal(shared.flow.logic!.links.filter(link => link.to === 'node_1').length, 2)
-  const cycle = linkViaTransition(fixture(), 'start', 'start')
-  assert.equal(errors(cycle.flow).length, 0)
-  assert.ok(validateFlow(cycle.flow).some(i => i.severity === 'warning' && i.path === 'graph' && i.message.includes('环')))
-  assert.ok(findCanvasCycle(cycle.flow)?.includes('start'))
-  assert.equal(layoutCanvas(cycle.flow).positions.size, Object.keys(cycle.flow.nodes).length + Object.keys(cycle.flow.transitions!).length + 1)
-})
-
 test('Canvas wire DAG warning reports one cycle; acyclic graphs stay clean', () => {
   const dag = linkViaTransition(fixture(), 'start', 'node_1')
   assert.equal(findCanvasCycle(dag.flow), null)
@@ -83,7 +66,7 @@ test('Canvas wire DAG warning reports one cycle; acyclic graphs stay clean', () 
   assert.ok(path!.includes('start') && path!.includes('node_1'))
   assert.ok(validateFlow(flow).some(i => i.severity === 'warning' && i.message.includes(path!.join(' → '))))
 })
-test('An independent checkpoint is a valid draft without a finish marker', () => {
+test('An independent checkpoint is a valid draft without an end node', () => {
   const flow = createFlow('draft')
   assert.equal(errors(flow).length, 0)
   assert.equal(validateFlow(flow).length, 0)
@@ -99,40 +82,13 @@ test('Renaming the first checkpoint updates the independent entry connection and
   assert.equal(errors(after).length, 0)
 })
 test('Renaming a node updates transition endpoints and preserves resources', () => {
-  const flow = fixture(); flow.nodes.node_1.onEnter = [{ id: 'intro', reference: 'dialogue.intro', params: { speaker: 'guide' } }]
+  const flow = fixture()
   const linked = linkViaTransition(flow, 'start', 'node_1')
   const next = renameNode(linked.flow, 'node_1', 'prepare')
   assert.equal(next.logic!.links.find(link => link.to === 'prepare')!.to, 'prepare')
-  assert.deepEqual(next.nodes.prepare.onEnter, flow.nodes.node_1.onEnter)
+  assert.equal(next.nodes.prepare.title.text, flow.nodes.node_1.title.text)
   assert.throws(() => renameNode(next, 'prepare', 'constructor'))
   assert.throws(() => renameNode(next, 'prepare', 'node_2'))
-})
-test('Direct checkpoint children fail validation while moveNode can still mutate them', () => {
-  const flow = fixture(); flow.nodes.node_2.completion = 'continue'
-  const branch = strayBranch('branch_1', 'node_1')
-  flow.nodes.start.children = [clone(branch)]
-  assert(errors(flow).some((i) => i.message.includes('直连')))
-  const moved = moveNode(flow, 'node_1', 'node_2')
-  assert.deepEqual(moved.nodes.node_2.children[0], branch)
-  assert.deepEqual([...descendants(moved, 'node_1')], ['node_1'])
-  assert(errors(moved).some((i) => i.message.includes('直连')))
-  assert.equal(flow.nodes.start.children.length, 1)
-})
-test('The entry is not a checkpoint; moves cannot create cycles or use finish parents', () => {
-  const flow = fixture()
-  flow.nodes.start.children = [strayBranch('b1', 'node_1')]
-  flow.nodes.node_1.children = [strayBranch('b2', 'node_3')]
-  assert.throws(() => moveNode(flow, flow.entry.id, 'node_1'))
-  assert.throws(() => moveNode(flow, 'node_1', 'node_3'))
-  assert.throws(() => moveNode(flow, 'node_1', 'node_2'))
-})
-test('Reordering mutates children even though direct links are invalid', () => {
-  const flow = fixture()
-  flow.nodes.start.children = [strayBranch('branch_1', 'node_1'), strayBranch('branch_2', 'node_2')]
-  const next = reorderBranch(flow, 'start', 'branch_1', 1)
-  assert.deepEqual(next.nodes.start.children.map((b) => b.id), ['branch_2', 'branch_1'])
-  assert.deepEqual(flow.nodes.start.children.map((b) => b.id), ['branch_1', 'branch_2'])
-  assert(errors(next).some((i) => i.message.includes('直连')))
 })
 test('Canvas connections via transition preserve checkpoint content and reject 直连', () => {
   const before = withCanvasPositions(fixture()), original = clone(before)
@@ -170,16 +126,27 @@ test('Disconnecting a transition link removes only that connection', () => {
   assert.deepEqual(result.entry, linked.flow.entry)
   assert.equal(disconnectLink(result, { kind: 'logic-link', id: parentLink.id }), result)
 })
-test('Connections reject missing endpoints, entry inputs, finish outputs and checkpoint直连', () => {
+test('Connections reject missing endpoints, entry inputs, end outputs and checkpoint直连', () => {
   const flow = fixture()
+  const end = createEndNode(flow, { x: 400, y: 0 })
   assert.throws(() => connectNodes(flow, 'missing', 'start'), /端口/)
   assert.throws(() => connectNodes(flow, 'start', 'missing'), /连接目标/)
   assert.throws(() => connectNodes(flow, 'start', flow.entry.id), /连接目标/)
   assert.throws(() => connectNodes(flow, 'node_2', 'start'), /直连/)
   assert.throws(() => connectNodes(flow, 'node_1', 'node_1'), /直连/)
+  assert.deepEqual(outputPorts(end.flow, end.id), [])
+  assert.ok(canConnectNodes(end.flow, 'start', end.id, 'input'))
+  assert.throws(() => connectNodes(end.flow, end.id, 'node_1'))
+  let linked = connectNodes(end.flow, 'start', end.id).flow
+  linked = connectNodes(linked, 'node_1', end.id).flow
+  assert.equal(linked.logic!.links.filter(link => link.to === end.id).length, 2)
+  assert.equal(errors(linked).length, 0)
+  const transition = createTransitionNode(linked, { x: 0, y: 0 })
+  assert.throws(() => connectNodes(transition.flow, transition.id, end.id))
   const loop = linkViaTransition(flow, 'start', 'start')
   assert.equal(errors(loop.flow).length, 0)
   assert.equal(layoutCanvas(loop.flow).positions.size, Object.keys(loop.flow.nodes).length + Object.keys(loop.flow.transitions!).length + 1)
+  assert.deepEqual(nodeMetrics(end.flow, end.id), { width: 156, height: 62, socketY: 44 })
 })
 test('Deleting one checkpoint clears its references without removing unrelated nodes', () => {
   const flow = fixture()
@@ -193,15 +160,14 @@ test('Deleting one checkpoint clears its references without removing unrelated n
   assert.equal(errors(next).length, 0)
   assert.equal(Object.keys(flow.nodes).length, 4)
 })
-test('Deleting a referenced checkpoint surfaces an emptied wait condition', () => {
-  const flow = fixture()
-  flow.nodes.start.children = [strayBranch('branch_1', 'node_2', [{ id: 'wait', kind: 'nodes', title: text(), params: {}, nodeRefs: ['node_1'] }])]
-  assert(errors(removeNode(flow, 'node_1')).some((i) => i.message.includes('至少一个')))
-})
 test('A new canvas has one immutable entry and freely created checkpoints', () => {
   const empty = createFlow('empty')
   assert.equal(removeNode(empty, empty.entry.id), empty)
-  assert.deepEqual(empty.entry, { id: 'entry', target: null })
+  assert.equal(empty.entry.id, 'entry')
+  assert.equal(empty.entry.target, null)
+  assert.equal(Object.hasOwn(empty.entry, 'kind'), false)
+  assert.equal(empty.entry.title.text, createFlow().entry.title.text)
+  assert.equal(empty.entry.description.text, '')
   assert.deepEqual(empty.nodes, {})
   assert.equal(layoutCanvas(empty).positions.size, 1)
   assert.equal(errors(parseFlow(JSON.stringify(empty))).length, 0)
@@ -252,7 +218,7 @@ test('Missing entries and duplicate canvas identities cannot silently erase an e
   const flow = createFlow('shape')
   assert.throws(() => parseFlow(JSON.stringify({ ...flow, entry: undefined })), /entry/)
   assert.throws(() => parseFlow(JSON.stringify({ ...flow, nodes: { [flow.entry.id]: makeNode() } })), /entry.id/)
-  assert.throws(() => parseFlow(JSON.stringify({ ...flow, root: null })), /entry/)
+  assert.throws(() => parseFlow(JSON.stringify({ ...flow, root: null })), /旧草稿/)
 })
 test('Free creation, dragging and deletion preserve other positions and node content', () => {
   const original = fixture(), fixed = withCanvasPositions(original)
@@ -301,32 +267,30 @@ test('Cursor-centered zoom keeps its world point fixed across scale limits and n
     }
   }
 })
-test('Bad condition declarations and resource references are reported', () => {
-  const flow = fixture()
-  flow.nodes.start.children = [strayBranch('branch_1', 'node_1', [{ id: 'count', kind: 'counter', title: text(), params: { event: '', target: 0 }, nodeRefs: [] }])]
-  flow.nodes.node_1.onEnter = [{ id: 'action', reference: '', params: {} }]
-  assert(errors(flow).some((i) => i.message.includes('直连')))
-  assert(errors(flow).some((i) => i.message.includes('目标值')))
-  assert(errors(flow).some((i) => i.message.includes('事件引用')))
-  assert(errors(flow).some((i) => i.message.includes('资源引用')))
-})
 
-test('Legacy AND/OR logic.nodes are stripped on parse with dangling links cleaned', () => {
-  const added = createTransitionNode(fixture(), { x: 400, y: 100 })
-  const raw = clone(added.flow) as ProgressFlow & { logic?: { nodes?: Record<string, unknown>; links: { id: string; from: string; to: string; port: string }[] } }
-  raw.logic = {
-    nodes: { logic_old: { operator: 'or', title: text('A ∨ B'), description: text() } },
-    links: [
-      { id: 'link_keep', from: 'start', to: added.id, port: 'input2' },
-      { id: 'link_dead', from: 'logic_old', to: 'node_1', port: 'input' },
-    ],
-  }
-  raw.layout = { positions: { ...(raw.layout?.positions ?? {}), logic_old: { x: 1, y: 2 } } }
-  const parsed = parseFlow(JSON.stringify(raw))
-  assert.equal(Object.hasOwn(parsed.logic as object, 'nodes'), false)
-  assert.deepEqual(parsed.logic!.links.map(link => link.id), ['link_keep'])
-  assert.equal(parsed.layout!.positions.logic_old, undefined)
-  assert.equal(errors(parsed).length, 0)
+test('Rejected legacy draft fields fail parse without migration', () => {
+  assert.throws(() => parseFlow(JSON.stringify({
+    format: 'hanshu.progress-tree', version: 1, id: 'legacy',
+    title: { text: '旧标题' }, description: { text: '旧说明' }, kind: 'chapter',
+    entry: { id: 'entry', target: 'a', title: { text: '图' }, description: { text: '' } },
+    nodes: { a: { title: { text: 'A' }, description: { text: '' }, completion: 'continue' } },
+  })), /旧草稿/)
+  assert.throws(() => parseFlow(JSON.stringify({
+    format: 'hanshu.progress-tree', version: 1, id: 'legacy',
+    entry: { id: 'entry', target: 'a', kind: 'task', title: { text: '图' }, description: { text: '' } },
+    nodes: { a: { title: { text: 'A' }, description: { text: '' }, completion: 'continue' } },
+  })), /旧草稿/)
+  assert.throws(() => parseFlow(JSON.stringify({
+    format: 'hanshu.progress-tree', version: 1, id: 'legacy',
+    entry: { id: 'entry', target: 'a', title: { text: '图' }, description: { text: '' } },
+    nodes: { a: { title: { text: 'A' }, description: { text: '' }, completion: 'continue', children: [] } },
+  })), /旧草稿/)
+  assert.throws(() => parseFlow(JSON.stringify({
+    format: 'hanshu.progress-tree', version: 1, id: 'legacy',
+    entry: { id: 'entry', target: 'a', title: { text: '图' }, description: { text: '' } },
+    nodes: { a: { title: { text: 'A' }, description: { text: '' }, completion: 'continue' } },
+    logic: { nodes: { logic_old: { operator: 'or' } }, links: [] },
+  })), /logic/)
 })
 
 test('Flat storage supports long transition chains without deeply nested document JSON', () => {
@@ -371,25 +335,26 @@ test('Native import preserves authored text and accepts UTF-8 BOM', () => {
 })
 test('Nested resource folders persist without changing flow content or active identity', () => {
   const doc = createFlowDocument(fixture()), empty = { documents: [doc], folders: [], activeKey: doc.key }
-  const chapter = addFlowFolder(empty, '第一章', null), story = addFlowFolder(chapter.state, '支线', chapter.folder.key)
+  const chapter = addFlowFolder(empty, '第一章', 'story', null), story = addFlowFolder(chapter.state, '支线', 'story', chapter.folder.key)
   const entry = { kind: 'document' as const, key: doc.key }
-  const moved = moveFlowEntry(story.state, entry, story.folder.key), renamed = renameFlowEntry(moved, entry, '驿站')
+  const moved = moveFlowEntry(story.state, entry, 'story', story.folder.key), renamed = renameFlowEntry(moved, entry, '驿站')
+  assert.equal(doc.package, 'story')
   assert.equal(empty.documents[0].folderId, undefined)
   assert.equal(renamed.documents[0].source, doc.source)
   assert.equal(renamed.documents[0].name, '驿站.hflow')
   assert.equal(renamed.activeKey, doc.key)
   saveFlowWorkspace(renamed)
   assert.deepEqual(loadFlowWorkspace().state, renamed)
-  assert.throws(() => moveFlowEntry(renamed, { kind: 'folder', key: chapter.folder.key }, story.folder.key), /子文件夹/)
-  assert.equal(moveFlowEntry(renamed, entry, null).documents[0].folderId, null)
+  assert.throws(() => moveFlowEntry(renamed, { kind: 'folder', key: chapter.folder.key }, 'story', story.folder.key), /子文件夹/)
+  assert.equal(moveFlowEntry(renamed, entry, 'story', null).documents[0].folderId, null)
 })
 test('Resource name collisions are rejected and repeated imports receive distinct names', () => {
   const doc = { ...createFlowDocument(), name: '故事.hflow' }, state = { documents: [doc], folders: [], activeKey: doc.key }
-  assert.throws(() => addFlowFolder(state, '故事.hflow', null), /同名/)
+  assert.throws(() => addFlowFolder(state, '故事.hflow', 'story', null), /同名/)
   assert.throws(() => renameFlowEntry(state, { kind: 'document', key: doc.key }, '../故事'), /有效名称/)
-  assert.equal(uniqueDocumentName(state, '故事.hflow', null), '故事 (2).hflow')
-  const folder = addFlowFolder(state, '章节', null)
-  assert.equal(uniqueDocumentName(folder.state, '故事.hflow', folder.folder.key), '故事.hflow')
+  assert.equal(uniqueDocumentName(state, '故事.hflow', 'story', null), '故事 (2).hflow')
+  const folder = addFlowFolder(state, '章节', 'story', null)
+  assert.equal(uniqueDocumentName(folder.state, '故事.hflow', 'story', folder.folder.key), '故事.hflow')
 })
 test('Broken folder references and cycles cannot silently hide saved documents', () => {
   const doc = { ...createFlowDocument(), folderId: 'missing' }
@@ -611,7 +576,6 @@ test('Checkpoints keep multi in/out while entry and transition Parent/Next stay 
   flow = connectNodes(flow, first.id, 'node_1').flow
   flow = connectNodes(flow, second.id, 'node_1').flow
   assert.equal(flow.logic!.links.filter(link => link.to === 'node_1').length, 2)
-  assert.equal(flow.nodes.start.children.length, 0)
   assert.equal(errors(flow).length, 0)
   const replaced = connectNodes(flow, flow.entry.id, 'node_2').flow
   assert.equal(replaced.entry.target, 'node_2')

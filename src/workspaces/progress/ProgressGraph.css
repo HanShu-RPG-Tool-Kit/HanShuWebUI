@@ -81,7 +81,8 @@
 .flow-graph-node.is-goal-subscribed .flow-graph-node-header { background: #8a6b2e; color: #f7ecd4; }
 .flow-graph-node.is-goal-closed .flow-graph-node-header { background: #4a4540; color: #cfc8bf; }
 .flow-graph-node.is-signal-source.is-goal-subscribed { box-shadow: 0 0 0 1px #d0ad7288; }
-.flow-graph-node.is-terminal .flow-graph-node-header { background: #5d5550; }
+.flow-graph-node.is-end .flow-graph-node-header { background: #8b4545; }
+.flow-graph-node.is-end .flow-graph-node-symbol { color: #f0d4d4; }
 .flow-graph-node-symbol { color: #ffffffb0; font-size: 15px; }
 .flow-graph-lock { width: 13px; height: 13px; margin-left: auto; fill: none; stroke: #d7e6cf; stroke-width: 1.3px; }
 .flow-graph-header-tag { margin-left: auto; font-size: 10px; font-weight: 400; color: #d6c9bb; }
@@ -201,3 +202,4 @@
 .flow-swap-entry-in { left: 11px; }
 .flow-swap-entry-out { right: 11px; }
 .flow-graph-legend i.is-swap { background: #a89070; }
+.flow-graph-legend i.is-end { background: #8b4545; }

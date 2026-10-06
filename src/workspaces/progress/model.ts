@@ -2,8 +2,8 @@ import { parseJsonValue } from '../../utils/strictJson'
 
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json }
 export type Data = { [key: string]: Json }
-/** Author text stays separate from a localization key. Rendering belongs to the consumer. */
-export type FlowText = { text: string; key?: string }
+/** Plain author-facing copy on the canvas / forms. No localization keys. */
+export type FlowText = { text: string }
 export type FlowCondition = {
   id: string
   kind: 'manual' | 'counter' | 'signal' | 'nodes' | 'external'
@@ -12,28 +12,14 @@ export type FlowCondition = {
   nodeRefs: string[]
   extensions?: Data
 }
-export type FlowResource = { id: string; reference: string; params: Data; extensions?: Data }
-export type FlowBranch = {
+export type FlowPosition = { x: number; y: number }
+export type FlowEntry = {
   id: string
-  target: string
-  title: FlowText
-  trigger: 'automatic' | 'confirm'
-  conditions: { mode: 'all' | 'any'; items: FlowCondition[] }
-  extensions?: Data
-}
-export type FlowNode = {
+  target: string | null
+  port?: FlowInputPort
   title: FlowText
   description: FlowText
-  branching: 'parallel' | 'choice' | 'priority'
-  completion: 'continue' | 'finish'
-  children: FlowBranch[]
-  onEnter: FlowResource[]
-  onFinish: FlowResource[]
-  rewards: FlowResource[]
-  extensions?: Data
 }
-export type FlowPosition = { x: number; y: number }
-export type FlowEntry = { id: string; target: string | null; port?: FlowInputPort }
 export type FlowInputPort = 'input' | 'input2' | `in${number}`
 export type FlowOutputPort = 'output' | 'output2' | `out${number}`
 export type FlowPort = FlowInputPort | FlowOutputPort
@@ -48,9 +34,16 @@ export type FlowMergeNode = { title: FlowText; description: FlowText }
 export type FlowSwapNode = { title: FlowText; description: FlowText; entries: number }
 export type FlowGoalNode = Omit<FlowCondition, 'id'> & { description: FlowText }
 export type FlowPredicateNode = Omit<FlowCondition, 'id'> & { description: FlowText }
+export type FlowNode = {
+  title: FlowText
+  description: FlowText
+  extensions?: Data
+}
+/** Terminal sink: one input, unlimited fan-in from checkpoint outputs. */
+export type FlowEndNode = { extensions?: Data }
 export const NOTE_COLORS = { slate: '灰蓝', sand: '暖灰', sage: '灰绿', mauve: '灰紫' } as const
 export type FlowCanvasNote = { title: string; text: string; width: number; height: number; color: keyof typeof NOTE_COLORS }
-export type CanvasNodeType = 'goal' | 'predicate' | 'note' | 'transition' | 'conditional' | 'diff' | 'merge' | 'swap'
+export type CanvasNodeType = 'goal' | 'predicate' | 'note' | 'transition' | 'conditional' | 'diff' | 'merge' | 'swap' | 'end'
 export const GOAL_NAMES: Record<FlowCondition['kind'], string> = { manual: '人工标记', counter: '累计事件', signal: '等待信号', nodes: '等待阶段', external: '外部条件' }
 export const PREDICATE_NAMES = GOAL_NAMES
 export const isOutputPort = (port: FlowPort): port is FlowOutputPort => port === 'output' || port === 'output2' || /^out\d+$/.test(port)
@@ -64,9 +57,6 @@ export type ProgressFlow = {
   format: 'hanshu.progress-tree'
   version: 1
   id: string
-  kind: 'task' | 'chapter' | 'exploration' | 'custom'
-  title: FlowText
-  description: FlowText
   entry: FlowEntry
   nodes: Record<string, FlowNode>
   /** Canvas wires among Goal / Predicate / transitions (not checkpoint branches). */
@@ -78,13 +68,15 @@ export type ProgressFlow = {
   diffs?: Record<string, FlowDiffNode>
   merges?: Record<string, FlowMergeNode>
   swaps?: Record<string, FlowSwapNode>
+  ends?: Record<string, FlowEndNode>
   layout?: { positions: Record<string, FlowPosition>; notes?: Record<string, FlowCanvasNote>; groups?: Record<string, { name?: string; nodes: string[] }> }
   extensions?: Data
 }
-export type FlowSelection = { kind: 'flow' } | { kind: 'entry' } | { kind: 'entry-link' } | { kind: 'node'; id: string } | { kind: 'goal'; id: string } | { kind: 'predicate'; id: string } | { kind: 'logic-link'; id: string } | { kind: 'note'; id: string } | { kind: 'transition'; id: string } | { kind: 'conditional'; id: string } | { kind: 'diff'; id: string } | { kind: 'merge'; id: string } | { kind: 'swap'; id: string } | { kind: 'branch'; parent: string; id: string }
+/** `flow` = canvas / multi-select (no dedicated document form). Graph metadata lives on `entry`. */
+export type FlowSelection = { kind: 'flow' } | { kind: 'entry' } | { kind: 'entry-link' } | { kind: 'node'; id: string } | { kind: 'goal'; id: string } | { kind: 'predicate'; id: string } | { kind: 'logic-link'; id: string } | { kind: 'note'; id: string } | { kind: 'transition'; id: string } | { kind: 'conditional'; id: string } | { kind: 'diff'; id: string } | { kind: 'merge'; id: string } | { kind: 'swap'; id: string } | { kind: 'end'; id: string }
 export type FlowIssue = { severity: 'error' | 'warning'; path: string; message: string }
 export const text = (value = ''): FlowText => ({ text: value })
-export const displayText = (value: FlowText) => value.text || value.key || ''
+export const displayText = (value: FlowText) => value.text
 export const clone = <T,>(value: T): T => structuredClone(value)
 export const isObject = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
 const safeId = (value: string) => value.trim().length > 0 && value.length <= 200 && !['__proto__', 'prototype', 'constructor'].includes(value)
@@ -96,7 +88,8 @@ export const getConditionalNode = (flow: ProgressFlow, id: string) => flow.condi
 export const getDiffNode = (flow: ProgressFlow, id: string) => flow.diffs && Object.hasOwn(flow.diffs, id) ? flow.diffs[id] : undefined
 export const getMergeNode = (flow: ProgressFlow, id: string) => flow.merges && Object.hasOwn(flow.merges, id) ? flow.merges[id] : undefined
 export const getSwapNode = (flow: ProgressFlow, id: string) => flow.swaps && Object.hasOwn(flow.swaps, id) ? flow.swaps[id] : undefined
-export const hasContentNode = (flow: ProgressFlow, id: string) => !!getNode(flow, id) || !!getGoalNode(flow, id) || !!getPredicateNode(flow, id) || !!getTransitionNode(flow, id) || !!getConditionalNode(flow, id) || !!getDiffNode(flow, id) || !!getMergeNode(flow, id) || !!getSwapNode(flow, id)
+export const getEndNode = (flow: ProgressFlow, id: string) => flow.ends && Object.hasOwn(flow.ends, id) ? flow.ends[id] : undefined
+export const hasContentNode = (flow: ProgressFlow, id: string) => !!getNode(flow, id) || !!getGoalNode(flow, id) || !!getPredicateNode(flow, id) || !!getTransitionNode(flow, id) || !!getConditionalNode(flow, id) || !!getDiffNode(flow, id) || !!getMergeNode(flow, id) || !!getSwapNode(flow, id) || !!getEndNode(flow, id)
 export const getCanvasNote = (flow: ProgressFlow, id: string) => flow.layout?.notes && Object.hasOwn(flow.layout.notes, id) ? flow.layout.notes[id] : undefined
 export const hasCanvasItem = (flow: ProgressFlow, id: string) => hasContentNode(flow, id) || !!getCanvasNote(flow, id)
 export const inputPorts = (flow: ProgressFlow, id: string): FlowInputPort[] => {
@@ -106,10 +99,10 @@ export const inputPorts = (flow: ProgressFlow, id: string): FlowInputPort[] => {
   return hasContentNode(flow, id) ? ['input'] : []
 }
 export const outputPorts = (flow: ProgressFlow, id: string): FlowOutputPort[] => {
+  if (getEndNode(flow, id)) return []
   if (getSwapNode(flow, id)) return Array.from({ length: getSwapNode(flow, id)!.entries }, (_, i) => swapOutPort(i))
   if (getDiffNode(flow, id)) return ['output', 'output2']
-  if (id === flow.entry.id || getGoalNode(flow, id) || getPredicateNode(flow, id) || getTransitionNode(flow, id) || getConditionalNode(flow, id) || getMergeNode(flow, id)) return ['output']
-  if (getNode(flow, id)) return flow.nodes[id].completion === 'finish' ? [] : ['output']
+  if (id === flow.entry.id || getGoalNode(flow, id) || getPredicateNode(flow, id) || getTransitionNode(flow, id) || getConditionalNode(flow, id) || getMergeNode(flow, id) || getNode(flow, id)) return ['output']
   return []
 }
 /** Which output socket a stored link leaves from (差分失败口 / swap 存 fromPort). */
@@ -153,36 +146,39 @@ export const portKind = (flow: ProgressFlow, id: string, port: FlowPort): FlowPo
  * - 合并变迁: 入←ckpt A(多); Next→ckpt S(1)
  * - 交换变迁: 每条目 inN←ckpt A(1); outN→ckpt S(1); 用尽末槽自动扩容
  * - Entry ≡ Next → ckpt
+ * - End ← ckpt output only (multi)
  * - Goal / Predicate: single outgoing wire
  */
 export const canConnectNodes = (flow: ProgressFlow, from: string, to: string, port: FlowInputPort, fromPort: FlowPort = 'output') => {
   if (!inputPorts(flow, to).includes(port)) return false
   if (from === flow.entry.id) return fromPort === 'output' && port === 'input' && !!getNode(flow, to)
+  if (getEndNode(flow, to)) return port === 'input' && fromPort === 'output' && !!getNode(flow, from)
+  if (getEndNode(flow, from)) return false
   if (getSwapNode(flow, to)) {
     const index = parseSwapInIndex(port)
-    return index !== null && fromPort === 'output' && !!getNode(flow, from) && flow.nodes[from].completion !== 'finish'
+    return index !== null && fromPort === 'output' && !!getNode(flow, from)
   }
   if (getSwapNode(flow, from)) {
     const index = parseSwapOutIndex(fromPort)
     return index !== null && !!getNode(flow, to) && port === 'input'
   }
   if (getMergeNode(flow, to)) {
-    return port === 'input' && fromPort === 'output' && !!getNode(flow, from) && flow.nodes[from].completion !== 'finish'
+    return port === 'input' && fromPort === 'output' && !!getNode(flow, from)
   }
   if (getMergeNode(flow, from)) return fromPort === 'output' && !!getNode(flow, to) && port === 'input'
   if (getDiffNode(flow, to)) {
     if (port === 'input') return !!getGoalNode(flow, from) && fromPort === 'output'
-    return fromPort === 'output' && !!getNode(flow, from) && flow.nodes[from].completion !== 'finish'
+    return fromPort === 'output' && !!getNode(flow, from)
   }
   if (getDiffNode(flow, from)) return (fromPort === 'output' || fromPort === 'output2') && !!getNode(flow, to) && port === 'input'
   if (getConditionalNode(flow, to)) {
     if (port === 'input') return !!getPredicateNode(flow, from) && fromPort === 'output'
-    return fromPort === 'output' && !!getNode(flow, from) && flow.nodes[from].completion !== 'finish'
+    return fromPort === 'output' && !!getNode(flow, from)
   }
   if (getConditionalNode(flow, from)) return fromPort === 'output' && !!getNode(flow, to) && port === 'input'
   if (getTransitionNode(flow, to)) {
     if (port === 'input') return !!getGoalNode(flow, from) && fromPort === 'output'
-    return fromPort === 'output' && !!getNode(flow, from) && flow.nodes[from].completion !== 'finish'
+    return fromPort === 'output' && !!getNode(flow, from)
   }
   if (getTransitionNode(flow, from)) return fromPort === 'output' && !!getNode(flow, to) && port === 'input'
   if (getNode(flow, from) && getNode(flow, to)) return false
@@ -192,17 +188,32 @@ export const canConnectNodes = (flow: ProgressFlow, from: string, to: string, po
   if (getPredicateNode(flow, from)) return fromPort === 'output' && !!getConditionalNode(flow, to) && port === 'input'
   return false
 }
-const usesLogicLink = (flow: ProgressFlow, from: string, to: string) => !!(getGoalNode(flow, from) || getGoalNode(flow, to) || getPredicateNode(flow, from) || getPredicateNode(flow, to) || getTransitionNode(flow, from) || getTransitionNode(flow, to) || getConditionalNode(flow, from) || getConditionalNode(flow, to) || getDiffNode(flow, from) || getDiffNode(flow, to) || getMergeNode(flow, from) || getMergeNode(flow, to) || getSwapNode(flow, from) || getSwapNode(flow, to))
-const freeCanvasId = (f: Record<string, unknown>, entryId: string, id: string, skip?: 'transitions' | 'conditionals' | 'diffs' | 'merges' | 'swaps') => safeId(id) && id !== entryId && !Object.hasOwn(f.nodes as object, id) && !(f.goals && Object.hasOwn(f.goals as object, id)) && !(f.predicates && Object.hasOwn(f.predicates as object, id)) && (skip === 'transitions' || !(f.transitions && Object.hasOwn(f.transitions as object, id))) && (skip === 'conditionals' || !(f.conditionals && Object.hasOwn(f.conditionals as object, id))) && (skip === 'diffs' || !(f.diffs && Object.hasOwn(f.diffs as object, id))) && (skip === 'merges' || !(f.merges && Object.hasOwn(f.merges as object, id))) && (skip === 'swaps' || !(f.swaps && Object.hasOwn(f.swaps as object, id)))
-/** Count edges leaving a node: entry target, checkpoint branches, and logic links. */
+const usesLogicLink = (flow: ProgressFlow, from: string, to: string) => !!(getGoalNode(flow, from) || getGoalNode(flow, to) || getPredicateNode(flow, from) || getPredicateNode(flow, to) || getTransitionNode(flow, from) || getTransitionNode(flow, to) || getConditionalNode(flow, from) || getConditionalNode(flow, to) || getDiffNode(flow, from) || getDiffNode(flow, to) || getMergeNode(flow, from) || getMergeNode(flow, to) || getSwapNode(flow, from) || getSwapNode(flow, to) || getEndNode(flow, from) || getEndNode(flow, to))
+const freeCanvasId = (f: Record<string, unknown>, entryId: string, id: string, skip?: 'transitions' | 'conditionals' | 'diffs' | 'merges' | 'swaps' | 'ends') => safeId(id) && id !== entryId && !Object.hasOwn(f.nodes as object, id) && !(f.goals && Object.hasOwn(f.goals as object, id)) && !(f.predicates && Object.hasOwn(f.predicates as object, id)) && (skip === 'transitions' || !(f.transitions && Object.hasOwn(f.transitions as object, id))) && (skip === 'conditionals' || !(f.conditionals && Object.hasOwn(f.conditionals as object, id))) && (skip === 'diffs' || !(f.diffs && Object.hasOwn(f.diffs as object, id))) && (skip === 'merges' || !(f.merges && Object.hasOwn(f.merges as object, id))) && (skip === 'swaps' || !(f.swaps && Object.hasOwn(f.swaps as object, id))) && (skip === 'ends' || !(f.ends && Object.hasOwn(f.ends as object, id)))
+/** Count edges leaving a node: entry target or logic.links. */
 export const outgoingCount = (flow: ProgressFlow, id: string) => {
   if (id === flow.entry.id) return flow.entry.target === null ? 0 : 1
-  return (getNode(flow, id)?.children.length ?? 0) + (flow.logic?.links.filter(link => link.from === id).length ?? 0)
+  return flow.logic?.links.filter(link => link.from === id).length ?? 0
 }
-export const branches = (flow: ProgressFlow) => Object.entries(flow.nodes).flatMap(([parent, node]) => node.children.map((branch) => ({ parent, branch })))
-export const makeNode = (title = '新阶段'): FlowNode => ({ title: text(title), description: text(), branching: 'parallel', completion: 'continue', children: [], onEnter: [], onFinish: [], rewards: [] })
+export const makeNode = (title = '新阶段'): FlowNode => ({ title: text(title), description: text() })
 export function createFlow(id = crypto.randomUUID(), title = '新的进度流程'): ProgressFlow {
-  return { format: 'hanshu.progress-tree', version: 1, id, kind: 'task', title: text(title), description: text(), entry: { id: 'entry', target: null }, nodes: {} }
+  return {
+    format: 'hanshu.progress-tree',
+    version: 1,
+    id,
+    entry: { id: 'entry', target: null, title: text(title), description: text() },
+    nodes: {},
+  }
+}
+
+/** Document id is author-owned identity inside the .hflow; changing it does not rewrite graph refs. */
+export function setFlowId(flow: ProgressFlow, id: string): ProgressFlow {
+  const nextId = id.trim()
+  if (!safeId(nextId)) throw new Error('文档 ID 不能为空，长度不超过 200，且不可使用保留名称。')
+  if (nextId === flow.id) return flow
+  const next = clone(flow)
+  next.id = nextId
+  return next
 }
 
 /** Shape checks protect views; semantic errors remain editable and appear in validation. */
@@ -210,28 +221,23 @@ export function parseFlow(source: string): ProgressFlow {
   const v = parseJsonValue(source)
   const require = (ok: unknown, path: string): void => { if (!ok) throw new Error(`${path}：树图文档结构不正确`) }
   const checkExtensions = (v: Record<string, unknown>, path: string) => require(v.extensions === undefined || isObject(v.extensions), `${path}.extensions`)
-  const checkText = (v: unknown, path: string) => require(isObject(v) && typeof v.text === 'string' && (v.key === undefined || typeof v.key === 'string'), path)
-  const checkResources = (v: unknown, path: string) => {
-    require(Array.isArray(v), path)
-    for (const r of v as unknown[]) {
-      require(isObject(r) && typeof r.id === 'string' && typeof r.reference === 'string' && isObject(r.params), path)
-      checkExtensions(r as Record<string, unknown>, path)
-    }
-  }
+  const checkText = (v: unknown, path: string) => require(isObject(v) && typeof v.text === 'string' && !Object.hasOwn(v, 'key'), path)
   require(isObject(v), '$')
   const f = v as Record<string, unknown>
   checkExtensions(f, '$')
   if (f.format !== 'hanshu.progress-tree' || f.version !== 1) throw new Error('不支持的树图文档格式或版本；需要 hanshu.progress-tree v1')
-  for (const key of ['id', 'kind']) require(typeof f[key] === 'string', key)
+  require(typeof f.id === 'string', 'id')
   require(isObject(f.entry) && typeof f.entry.id === 'string' && safeId(f.entry.id) && (f.entry.target === null || typeof f.entry.target === 'string') && (f.entry.port === undefined || f.entry.port === 'input' || f.entry.port === 'input2'), 'entry')
-  require(!Object.hasOwn(f, 'root'), 'entry（起点现在是独立节点）')
+  require(!Object.hasOwn(f, 'root') && !Object.hasOwn(f, 'title') && !Object.hasOwn(f, 'description') && !Object.hasOwn(f, 'kind') && !Object.hasOwn(f, 'hubs') && !Object.hasOwn(f, 'gateways'), '$（不支持旧草稿字段）')
+  const entry = f.entry as Record<string, unknown>
+  require(!Object.hasOwn(entry, 'kind'), 'entry（不支持旧草稿字段）')
+  checkText(entry.title, 'entry.title'); checkText(entry.description, 'entry.description')
   if (f.layout !== undefined) {
     require(isObject(f.layout) && isObject(f.layout.positions), 'layout.positions')
     for (const [id, p] of Object.entries((f.layout as { positions: Record<string, unknown> }).positions)) {
       require(safeId(id) && isObject(p) && typeof p.x === 'number' && Number.isFinite(p.x) && typeof p.y === 'number' && Number.isFinite(p.y), `layout.positions.${id}`)
     }
   }
-  checkText(f.title, 'title'); checkText(f.description, 'description')
   const groups = (f.layout as ProgressFlow['layout'])?.groups
   if (groups !== undefined) {
     require(isObject(groups), 'layout.groups')
@@ -240,7 +246,7 @@ export function parseFlow(source: string): ProgressFlow {
   require(isObject(f.nodes), 'nodes')
   require(!Object.hasOwn(f.nodes as object, (f.entry as FlowEntry).id), 'entry.id（不能与 checkpoint 重复）')
   if (f.logic !== undefined) {
-    require(isObject(f.logic) && Array.isArray(f.logic.links), 'logic')
+    require(isObject(f.logic) && Array.isArray(f.logic.links) && !Object.hasOwn(f.logic, 'nodes'), 'logic')
     for (const link of (f.logic as { links: unknown[] }).links) {
       require(isObject(link) && typeof link.id === 'string' && typeof link.from === 'string' && typeof link.to === 'string'
         && (link.port === 'input' || link.port === 'input2' || (typeof link.port === 'string' && /^in\d+$/.test(link.port)))
@@ -306,6 +312,13 @@ export function parseFlow(source: string): ProgressFlow {
       checkText(swap.title, `swaps.${id}.title`); checkText(swap.description, `swaps.${id}.description`)
     }
   }
+  if (f.ends !== undefined) {
+    require(isObject(f.ends), 'ends')
+    for (const [id, value] of Object.entries(f.ends as Record<string, unknown>)) {
+      require(freeCanvasId(f, (f.entry as FlowEntry).id, id, 'ends') && isObject(value), `ends.${id}`)
+      checkExtensions(value as Record<string, unknown>, `ends.${id}`)
+    }
+  }
   const notes = (f.layout as ProgressFlow['layout'])?.notes
   if (notes !== undefined) {
     require(isObject(notes), 'layout.notes')
@@ -320,41 +333,7 @@ export function parseFlow(source: string): ProgressFlow {
     const node = n as Record<string, unknown>
     checkExtensions(node, id)
     checkText(node.title, `${id}.title`); checkText(node.description, `${id}.description`)
-    require(typeof node.branching === 'string' && typeof node.completion === 'string' && Array.isArray(node.children), id)
-    for (const key of ['onEnter', 'onFinish', 'rewards']) checkResources(node[key], `${id}.${key}`)
-    for (const b of node.children as unknown[]) {
-      require(isObject(b), `${id}.children`)
-      const branch = b as Record<string, unknown>
-      checkExtensions(branch, `${id}.children`)
-      require(typeof branch.id === 'string' && typeof branch.target === 'string' && typeof branch.trigger === 'string', `${id}.children`)
-      checkText(branch.title, `${id}.branch.title`)
-      require(isObject(branch.conditions) && typeof branch.conditions.mode === 'string' && Array.isArray(branch.conditions.items), `${id}.conditions`)
-      for (const c of (branch.conditions as { items: unknown[] }).items) {
-        require(isObject(c) && typeof c.id === 'string' && typeof c.kind === 'string' && isObject(c.params) && Array.isArray(c.nodeRefs) && c.nodeRefs.every((r) => typeof r === 'string'), `${id}.conditions.items`)
-        checkText((c as Record<string, unknown>).title, `${id}.condition.title`)
-        checkExtensions(c as Record<string, unknown>, `${id}.condition`)
-      }
-    }
-  }
-  // Drop removed node kinds from older drafts so IDs stay reusable.
-  delete f.hubs
-  delete f.gateways
-  if (isObject(f.logic)) {
-    const dead = new Set(Object.keys(isObject(f.logic.nodes) ? f.logic.nodes as object : {}))
-    if (dead.size > 0) {
-      if (Array.isArray(f.logic.links)) {
-        f.logic.links = (f.logic.links as { from?: unknown; to?: unknown }[]).filter(link => isObject(link) && !dead.has(String(link.from)) && !dead.has(String(link.to)))
-      }
-      const positions = isObject(f.layout) && isObject(f.layout.positions) ? f.layout.positions as Record<string, unknown> : undefined
-      if (positions) for (const id of dead) delete positions[id]
-      const groups = isObject(f.layout) && isObject(f.layout.groups) ? f.layout.groups as Record<string, { nodes?: unknown }> : undefined
-      if (groups) {
-        for (const group of Object.values(groups)) {
-          if (isObject(group) && Array.isArray(group.nodes)) group.nodes = group.nodes.filter(node => typeof node === 'string' && !dead.has(node))
-        }
-      }
-    }
-    delete f.logic.nodes
+    require(!Object.hasOwn(node, 'completion') && !Object.hasOwn(node, 'branching') && !Object.hasOwn(node, 'children') && !Object.hasOwn(node, 'onEnter') && !Object.hasOwn(node, 'onFinish') && !Object.hasOwn(node, 'rewards'), `${id}（不支持旧草稿字段）`)
   }
   return v as ProgressFlow
 }
@@ -364,8 +343,7 @@ export function validateFlow(flow: ProgressFlow): FlowIssue[] {
   const error = (path: string, message: string) => issues.push({ severity: 'error', path, message })
   const warning = (path: string, message: string) => issues.push({ severity: 'warning', path, message })
   if (!safeId(flow.id)) error('id', '请填写稳定的文档 ID。')
-  if (!['task', 'chapter', 'exploration', 'custom'].includes(flow.kind)) error('kind', '未知的流程类别。')
-  if (!displayText(flow.title).trim()) warning('title', '还没有为流程命名。')
+  if (!displayText(flow.entry.title).trim()) warning('entry.title', '还没有为流程命名。')
   if (flow.entry.target !== null && !canConnectNodes(flow, flow.entry.id, flow.entry.target, flow.entry.port ?? 'input')) error('entry.target', '起点连接的节点不存在或没有输入端口。')
   const ids = new Set<string>()
   const grouped = new Set<string>()
@@ -376,38 +354,8 @@ export function validateFlow(flow: ProgressFlow): FlowIssue[] {
       grouped.add(node)
     }
   }
-  for (const [id, node] of Object.entries(flow.nodes)) {
-    if (!['parallel', 'choice', 'priority'].includes(node.branching)) error(id, '未知的分支方式。')
-    if (!['continue', 'finish'].includes(node.completion)) error(id, '未知的完成方式。')
-    if (node.completion === 'finish' && node.children.length) error(id, '结束节点不能再有后续分支。')
-    if (node.children.length) error(id, 'Checkpoint 之间不能直连，请经转移节点连接。')
-    for (const key of ['onEnter', 'onFinish', 'rewards'] as const) {
-      const resourceIds = new Set<string>()
-      for (const resource of node[key]) {
-        if (!safeId(resource.id) || resourceIds.has(resource.id)) error(`${id}.${key}`, '资源项 ID 必须有效且在列表内唯一。')
-        resourceIds.add(resource.id)
-        if (!resource.reference.trim()) error(`${id}.${key}`, '资源引用不能为空。')
-      }
-    }
-    for (const branch of node.children) {
-      const path = `${id}.children.${branch.id}`
-      if (!safeId(branch.id) || ids.has(branch.id)) error(path, '分支 ID 必须有效且在文档内唯一。')
-      ids.add(branch.id)
-      if (!getNode(flow, branch.target)) error(path, `后续节点「${branch.target}」不存在。`)
-      if (!['automatic', 'confirm'].includes(branch.trigger)) error(path, '未知的推进方式。')
-      if (!['all', 'any'].includes(branch.conditions.mode)) error(path, '条件组合应为全部或任一满足。')
-      const conditionIds = new Set<string>()
-      for (const c of branch.conditions.items) {
-        if (!safeId(c.id) || conditionIds.has(c.id)) error(path, '条件 ID 必须有效且在分支内唯一。')
-        conditionIds.add(c.id)
-        if (!['manual', 'counter', 'signal', 'nodes', 'external'].includes(c.kind)) error(path, `未知条件类型「${c.kind}」。`)
-        if (c.kind === 'counter' && (typeof c.params.target !== 'number' || !Number.isFinite(c.params.target) || c.params.target <= 0)) error(path, '计数条件的目标值必须大于零。')
-        if (['counter', 'signal'].includes(c.kind) && (typeof c.params.event !== 'string' || !c.params.event.trim())) error(path, '请指定事件引用。')
-        if (c.kind === 'external' && (typeof c.params.reference !== 'string' || !c.params.reference.trim() || !isObject(c.params.args))) error(path, '外部条件需要引用和参数对象。')
-        if (c.kind === 'nodes' && !c.nodeRefs.length) error(path, '请选择至少一个要等待的节点。')
-        for (const ref of c.nodeRefs) if (!getNode(flow, ref)) error(path, `引用的节点「${ref}」不存在。`)
-      }
-    }
+  for (const id of Object.keys(flow.ends ?? {})) {
+    if ((flow.logic?.links ?? []).some(link => link.from === id)) error(id, '结束节点不能有出线。')
   }
   for (const link of flow.logic?.links ?? []) {
     if (!safeId(link.id) || ids.has(link.id)) error(`logic.links.${link.id}`, '连接 ID 必须有效且在文档内唯一。')
@@ -537,20 +485,12 @@ export function findCanvasCycle(flow: ProgressFlow): string[] | null {
   return cycle
 }
 
-export function descendants(flow: ProgressFlow, id: string): Set<string> {
-  const found = new Set<string>(), queue = [id]
-  for (let i = 0; i < queue.length; i++) {
-    if (found.has(queue[i])) continue
-    found.add(queue[i]); queue.push(...(getNode(flow, queue[i])?.children.map((b) => b.target) ?? []))
-  }
-  return found
-}
 export function addNode(flow: ProgressFlow, parent: string): { flow: ProgressFlow; id: string } {
   if (parent !== flow.entry.id) throw new Error('Checkpoint 之间不能直连，请经线性变迁连接。')
   if (flow.entry.target !== null) throw new Error('请选择没有连接的起点。')
-  const next = clone(flow), existing = new Set(branches(flow).map(({ branch }) => branch.id))
+  const next = clone(flow), ids = new Set(flow.logic?.links.map(link => link.id) ?? [])
   let n = 1
-  while (hasCanvasItem(flow, `node_${n}`) || flow.entry.id === `node_${n}` || existing.has(`branch_${n}`) || flow.logic?.links.some(link => link.id === `branch_${n}`)) n++
+  while (hasCanvasItem(flow, `node_${n}`) || flow.entry.id === `node_${n}` || ids.has(`branch_${n}`) || flow.logic?.links.some(link => link.id === `branch_${n}`)) n++
   const id = `node_${n}`
   next.nodes[id] = makeNode(`阶段 ${n}`)
   next.entry.target = id
@@ -565,10 +505,6 @@ export function renameNode(flow: ProgressFlow, id: string, name: string): Progre
   if (next.entry.target === id) next.entry.target = name
   if (next.layout && Object.hasOwn(next.layout.positions, id)) {
     next.layout.positions = Object.fromEntries(Object.entries(next.layout.positions).map(([key, position]) => [key === id ? name : key, position]))
-  }
-  for (const { branch } of branches(next)) {
-    if (branch.target === id) branch.target = name
-    for (const c of branch.conditions.items) c.nodeRefs = c.nodeRefs.map((ref) => ref === id ? name : ref)
   }
   for (const link of next.logic?.links ?? []) { if (link.from === id) link.from = name; if (link.to === id) link.to = name }
   for (const goal of Object.values(next.goals ?? {})) goal.nodeRefs = goal.nodeRefs.map(ref => ref === id ? name : ref)
@@ -588,27 +524,13 @@ export function removeNode(flow: ProgressFlow, id: string): ProgressFlow {
   if (next.diffs) delete next.diffs[id]
   if (next.merges) delete next.merges[id]
   if (next.swaps) delete next.swaps[id]
+  if (next.ends) delete next.ends[id]
   if (next.logic) next.logic.links = next.logic.links.filter(link => link.from !== id && link.to !== id)
   if (next.entry.target === id) { next.entry.target = null; delete next.entry.port }
   if (next.layout) delete next.layout.positions[id]
   if (next.layout?.groups) next.layout.groups = Object.fromEntries(Object.entries(next.layout.groups).map(([key, group]) => [key, { ...group, nodes: group.nodes.filter(ref => ref !== id) }] as const).filter(([, group]) => group.nodes.length >= 2))
   for (const goal of Object.values(next.goals ?? {})) goal.nodeRefs = goal.nodeRefs.filter(ref => ref !== id)
   for (const predicate of Object.values(next.predicates ?? {})) predicate.nodeRefs = predicate.nodeRefs.filter(ref => ref !== id)
-  for (const node of Object.values(next.nodes)) {
-    node.children = node.children.filter((b) => b.target !== id)
-    for (const b of node.children) for (const c of b.conditions.items) c.nodeRefs = c.nodeRefs.filter((r) => r !== id)
-  }
-  return next
-}
-export function moveNode(flow: ProgressFlow, id: string, parent: string): ProgressFlow {
-  if (!getNode(flow, id) || !getNode(flow, parent) || descendants(flow, id).has(parent)) throw new Error('不能将节点移到自身或自己的后代下。')
-  if (flow.nodes[parent].completion === 'finish') throw new Error('结束节点不能添加后续分支。')
-  const matches = branches(flow).filter(({ branch }) => branch.target === id)
-  if (matches.length !== 1) throw new Error('请先修复该节点的父子关系。')
-  const next = clone(flow), old = matches[0]
-  const index = next.nodes[old.parent].children.findIndex((b) => b.id === old.branch.id)
-  const [branch] = next.nodes[old.parent].children.splice(index, 1)
-  next.nodes[parent].children.push(branch)
   return next
 }
 export function connectEntry(flow: ProgressFlow, target: string | null, port: FlowInputPort = 'input'): ProgressFlow {
@@ -626,7 +548,7 @@ export function connectNodes(flow: ProgressFlow, from: string, to: string, port:
   if (usesLogicLink(flow, from, to)) {
     const existing = flow.logic?.links.find(link => link.from === from && link.to === to && link.port === port && linkSourcePort(flow, link.from, link.to, link.port, link.fromPort) === fromPort)
     if (existing) return { flow, selection: { kind: 'logic-link', id: existing.id } }
-    const next = clone(flow), ids = new Set([...branches(flow).map(({ branch }) => branch.id), ...(flow.logic?.links.map(link => link.id) ?? [])])
+    const next = clone(flow), ids = new Set(flow.logic?.links.map(link => link.id) ?? [])
     let n = 1; while (ids.has(`link_${n}`)) n++
     next.logic ??= { links: [] }
     // 线性变迁 Parent / Next 单线；Goal 口允许多线合取。
@@ -654,24 +576,11 @@ export function connectNodes(flow: ProgressFlow, from: string, to: string, port:
 }
 export function disconnectLink(flow: ProgressFlow, selection: FlowSelection): ProgressFlow {
   if (selection.kind === 'entry-link') return connectEntry(flow, null)
-  if (selection.kind === 'logic-link') {
-    const link = flow.logic?.links.find(item => item.id === selection.id)
-    if (!link) return flow
-    const next = clone(flow); next.logic!.links = next.logic!.links.filter(item => item.id !== selection.id)
-    if (getSwapNode(next, link.from)) syncSwapEntries(next, link.from)
-    if (getSwapNode(next, link.to)) syncSwapEntries(next, link.to)
-    return next
-  }
-  if (selection.kind !== 'branch' || !getNode(flow, selection.parent)?.children.some(branch => branch.id === selection.id)) return flow
-  const next = clone(flow)
-  next.nodes[selection.parent].children = next.nodes[selection.parent].children.filter(branch => branch.id !== selection.id)
-  return next
-}
-export function reorderBranch(flow: ProgressFlow, parent: string, id: string, delta: number): ProgressFlow {
-  const next = clone(flow), children = getNode(next, parent)?.children
-  if (!children) return flow
-  const index = children.findIndex((b) => b.id === id), target = index + delta
-  if (index < 0 || target < 0 || target >= children.length) return flow
-  const [branch] = children.splice(index, 1); children.splice(target, 0, branch)
+  if (selection.kind !== 'logic-link') return flow
+  const link = flow.logic?.links.find(item => item.id === selection.id)
+  if (!link) return flow
+  const next = clone(flow); next.logic!.links = next.logic!.links.filter(item => item.id !== selection.id)
+  if (getSwapNode(next, link.from)) syncSwapEntries(next, link.from)
+  if (getSwapNode(next, link.to)) syncSwapEntries(next, link.to)
   return next
 }

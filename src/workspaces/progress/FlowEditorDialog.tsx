@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { FlowEditorForm } from './FlowEditorForm'
-import { clone, displayText, getGoalNode, getPredicateNode, getTransitionNode, getConditionalNode, getDiffNode, getMergeNode, getSwapNode, getNode, parseFlow, removeNode, validateFlow, type FlowSelection, type ProgressFlow } from './model'
+import { clone, displayText, getNode, parseFlow, removeNode, validateFlow, type FlowSelection, type ProgressFlow } from './model'
 import './FlowEditorDialog.css'
 
 export function FlowEditorDialog({ flow, initialSelection, origin, onComplete, onCancel }: {
@@ -17,8 +17,12 @@ export function FlowEditorDialog({ flow, initialSelection, origin, onComplete, o
   const locked = Object.values(pending).some(Boolean)
   const dirty = locked || JSON.stringify(draft) !== JSON.stringify(flow)
   const isEntry = selection.kind === 'entry' || selection.kind === 'entry-link'
-  const kind = isEntry ? '起点' : selection.kind === 'node' ? '阶段' : selection.kind === 'transition' ? '线性变迁' : selection.kind === 'conditional' ? '条件变迁' : selection.kind === 'diff' ? '差分变迁' : selection.kind === 'merge' ? '合并变迁' : selection.kind === 'swap' ? '交换变迁' : selection.kind === 'goal' ? 'Goal' : selection.kind === 'predicate' ? 'Predicate' : selection.kind === 'logic-link' ? '连接' : selection.kind === 'branch' ? '推进分支' : '流程信息'
-  const title = isEntry ? '选择流程开始的节点' : selection.kind === 'node' || selection.kind === 'goal' || selection.kind === 'predicate' || selection.kind === 'transition' || selection.kind === 'conditional' || selection.kind === 'diff' || selection.kind === 'merge' || selection.kind === 'swap' ? displayText((getNode(draft, selection.id) ?? getGoalNode(draft, selection.id) ?? getPredicateNode(draft, selection.id) ?? getTransitionNode(draft, selection.id) ?? getConditionalNode(draft, selection.id) ?? getDiffNode(draft, selection.id) ?? getMergeNode(draft, selection.id) ?? getSwapNode(draft, selection.id))?.title ?? { text: '' }) : selection.kind === 'flow' ? displayText(draft.title) : ''
+  const kind = isEntry ? '开始节点' : selection.kind === 'node' ? '阶段' : selection.kind === 'entry-link' ? '起点连接' : '画布'
+  const title = isEntry
+    ? (displayText(draft.entry.title) || '未命名流程')
+    : selection.kind === 'node'
+      ? displayText(getNode(draft, selection.id)?.title ?? { text: '' })
+      : ''
 
   useEffect(() => {
     const element = dialog.current
@@ -47,7 +51,6 @@ export function FlowEditorDialog({ flow, initialSelection, origin, onComplete, o
     if (locked) { setError('请先应用或放弃尚未应用的修改。'); return }
     try {
       const next = parseFlow(JSON.stringify(draft))
-      // Deletion may empty a wait condition. Preserve that repairable draft just as canvas deletion does.
       const baseline = Object.keys(flow.nodes).reduce((value, id) => getNode(next, id) ? value : removeNode(value, id), flow)
       const previous = new Set(validateFlow(baseline).filter((issue) => issue.severity === 'error').map((issue) => `${issue.path}:${issue.message}`))
       const added = validateFlow(next).filter((issue) => issue.severity === 'error' && !previous.has(`${issue.path}:${issue.message}`))
@@ -61,7 +64,7 @@ export function FlowEditorDialog({ flow, initialSelection, origin, onComplete, o
   }}>
     <header className="flow-editor-header"><div><h2 id={titleId}>编辑{kind}</h2><p id={hintId}>{title || '填写内容，完成后应用到流程。'}</p></div><button type="button" className="flow-editor-close" aria-label="取消并关闭编辑" onClick={onCancel}>×</button></header>
     <div className="flow-editor-body">
-      <FlowEditorForm key={selection.kind === 'node' || selection.kind === 'goal' || selection.kind === 'transition' || selection.kind === 'merge' || selection.kind === 'logic-link' ? `${selection.kind}:${selection.id}` : selection.kind === 'branch' ? `branch:${selection.parent}:${selection.id}` : selection.kind} flow={draft} selection={selection} onChange={(next) => { setDraft(next); setError('') }} onSelect={setSelection} onPending={(label, value) => setPending((previous) => ({ ...previous, [label]: value }))} onNotice={setError} locked={locked} />
+      <FlowEditorForm key={selection.kind === 'node' ? `node:${selection.id}` : selection.kind === 'logic-link' ? `logic-link:${selection.id}` : selection.kind} flow={draft} selection={selection} onChange={(next) => { setDraft(next); setError('') }} onSelect={setSelection} onPending={(label, value) => setPending((previous) => ({ ...previous, [label]: value }))} onNotice={setError} locked={locked} />
     </div>
     <footer className="flow-editor-footer"><div aria-live="polite">{error ? <p className="flow-error" role="alert">{error}</p> : <span>{locked ? '请先应用或放弃字段修改' : '完成后保存 · Ctrl+Enter 确认'}</span>}</div><button type="button" onClick={onCancel}>取消</button><button type="button" className="flow-primary" disabled={locked} onClick={complete}>完成</button></footer>
   </dialog>, document.body)
