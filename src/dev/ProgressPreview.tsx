@@ -6,6 +6,7 @@ import { buildGoalDefinitionCatalog, type GoalDefinitionCatalog } from '../works
 import { loadFlowWorkspace } from '../workspaces/progress/storage'
 import { isKitDocument } from '../workspaces/progress/library'
 import { kitRefFromFileName, readKitSource } from '../workspaces/progress/kit'
+import { isProgressLocaleKey } from '../workspaces/progress/progressLocale'
 import '../workspaces/ProgressFlowWorkspace.css'
 import './ProgressPreview.css'
 
@@ -16,7 +17,9 @@ function loadCatalogs() {
   const kits = state.documents.filter(isKitDocument).flatMap(document => {
     const ref = kitRefFromFileName(document.name)
     const result = readKitSource(document.source)
-    return ref && !result.error ? [{ ref, label: result.kit.name || ref }] : []
+    const title = result.kit.name.trim()
+    const showTitle = title && title !== ref && !isProgressLocaleKey(title)
+    return ref && !result.error ? [{ ref, label: showTitle ? `${ref}（${title}）` : ref }] : []
   })
   return { goals, kits, error }
 }

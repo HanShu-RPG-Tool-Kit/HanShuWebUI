@@ -1,6 +1,7 @@
 /**
  * 文件夹工程：打开 / 新建 / 保存
- * 一个目录 = 一个 ScriptPackage；文本在 `src/`（源）与 `meta/`（创作资料），二进制在 `assets/`
+ * 一个目录 = 一个 Project；文本在 `src/`（源）与 `meta/`（创作资料），二进制在 `assets/`
+ * 不再兼容包根平铺的旧布局。
  */
 
 import {
@@ -9,13 +10,13 @@ import {
   putAssetBlob,
 } from '../assets/idb'
 import { normalizeAssetPath, normalizeFolderPath } from '../assets/paths'
-import { isVoiceRefPath, parseVoiceRefContent } from '../i18n/voiceMap'
+import { isVoiceRefPath, parseVoiceRefContent, voiceAssetDir } from '../i18n/voiceMap'
+import { sourceExtension, textAssetPath } from '../i18n/localeLayout'
 import {
   ALLOWED_EXTENSIONS,
   FILE_DIRS,
   createPackage,
   createScript,
-  fileDir,
   findScript,
   getExtension,
   isAllowedExtension,
@@ -32,7 +33,9 @@ import {
   pickProjectDirectory,
   readFileAtPath,
   readTextFile,
+  removeDirectoryAtPath,
   removeEntryIfExists,
+  removeFileAtPath,
   supportsDirectoryPicker,
   writeFileAtPath,
   writeTextFile,
@@ -207,8 +210,7 @@ async function readPackageFromDirectory(
   // 换工程前清掉同 id 的旧 blob，避免脏数据（id 稳定时是覆盖写入）
   await deletePackageAssetBlobs(manifest.id)
 
-  // 源文件在 `src/<kind>/`、创作资料在 `meta/` 下。
-  // 老工程的 `.md` 等仍平铺在包根：两处都读，保存时会统一归位。
+  // 源文件只认 `src/<kind>/` 与 `meta/`，不再兼容包根平铺。
   const scripts = []
   const seen = new Set<string>()
   const addScript = async (name: string, path: string) => {
@@ -219,14 +221,6 @@ async function readPackageFromDirectory(
     scripts.push(createScript(name, await file.text()))
   }
 
-  const children = await listChildren(root)
-  for (const entry of children) {
-    if (entry.kind !== 'file') continue
-    // 写盘层的 `.new` 中间文件：万一崩溃残留，别把它当成脚本收进工作区
-    if (entry.name.toLowerCase().endsWith('.new')) continue
-    if (!isProjectLoadableFile(entry.name)) continue
-    await addScript(entry.name, entry.name)
-  }
   for (const dirName of TEXT_ROOT_DIRS) {
     try {
       const dir = await root.getDirectoryHandle(dirName)
@@ -237,7 +231,7 @@ async function readPackageFromDirectory(
         await addScript(name, `${dirName}/${path}`)
       }
     } catch {
-      // 还没有这个目录（旧平铺工程，或尚未创建）
+      // 还没有这个目录
     }
   }
 
@@ -443,20 +437,11 @@ export async function saveProjectToDirectory(
   // 1) project.json
   await writeTextFile(root, PROJECT_FILE, serializeManifest(manifest))
 
-  // 2) 文本文件：按规范归位（`src/<kind>/` 与 `meta/`）；再清掉根目录旧平铺副本与错位残留
+  // 2) 文本文件：按规范写入 `src/<kind>/` 与 `meta/`；清理目录内多余/错位文件
   const wanted = new Set(pkg.scripts.map((s) => s.name.toLowerCase()))
   for (const script of pkg.scripts) {
     await writeFileAtPath(root, sourceRelativePath(script.name), script.content)
   }
-  // 旧布局把文本平铺在根目录：凡有归位目录的后缀一律搬走，别留重复副本
-  // （`.lang` / 旧 `*.voice` 没有归位目录，仍留在包根，这里不碰）
-  for (const entry of await listChildren(root)) {
-    if (entry.kind !== 'file') continue
-    if (!isScriptFileName(entry.name)) continue
-    if (!fileDir(entry.name)) continue
-    await removeEntryIfExists(root, entry.name)
-  }
-  // `src/` 与 `meta/`：删掉已不存在的文件，以及路径不合归位的错位副本
   for (const dirName of TEXT_ROOT_DIRS) {
     try {
       const dir = await root.getDirectoryHandle(dirName)
@@ -555,6 +540,96 @@ export async function saveProjectAsToPicker(
 
 export async function unbindProject(): Promise<void> {
   await clearLastDirectoryHandle()
+}
+
+/** `assets/` 下已有的语言标签目录名 */
+async function listDiskLocales(
+  root: FileSystemDirectoryHandle,
+): Promise<string[]> {
+  try {
+    const assets = await root.getDirectoryHandle('assets')
+    const locales: string[] = []
+    for (const entry of await listChildren(assets)) {
+      if (entry.kind === 'directory') locales.push(entry.name)
+    }
+    return locales
+  } catch {
+    return []
+  }
+}
+
+/**
+ * 立刻从工程目录删掉某个源文件及其各语言 lang / voice 产物。
+ * 改名、删除不应只改内存、等整包保存才清磁盘 —— 否则重开工程旧文件会回来。
+ */
+export async function removeSourceFromDisk(
+  handle: FileSystemDirectoryHandle,
+  sourceName: string,
+): Promise<void> {
+  const ok = await ensureReadWritePermission(handle)
+  if (!ok) throw new Error('未获得文件夹读写权限')
+
+  await removeFileAtPath(handle, sourceRelativePath(sourceName))
+  const ext = sourceExtension(sourceName)
+  for (const locale of await listDiskLocales(handle)) {
+    await removeFileAtPath(handle, textAssetPath(locale, sourceName))
+    if (ext) {
+      await removeDirectoryAtPath(handle, voiceAssetDir(locale, sourceName, ext))
+    }
+  }
+}
+
+/**
+ * 立刻在工程目录完成源文件改名：写新路径、删旧路径，并搬迁已登记的语言资产。
+ */
+export async function renameSourceOnDisk(
+  handle: FileSystemDirectoryHandle,
+  oldName: string,
+  newName: string,
+  content: string,
+  assetMoves: Array<{ fromPath: string; toPath: string }> = [],
+): Promise<void> {
+  const ok = await ensureReadWritePermission(handle)
+  if (!ok) throw new Error('未获得文件夹读写权限')
+
+  const oldSource = sourceRelativePath(oldName)
+  const newSource = sourceRelativePath(newName)
+  await writeFileAtPath(handle, newSource, content)
+  if (oldSource.toLowerCase() !== newSource.toLowerCase()) {
+    await removeFileAtPath(handle, oldSource)
+  }
+
+  const kept = new Set(
+    assetMoves.map((move) => move.toPath.replace(/\\/g, '/').toLowerCase()),
+  )
+  kept.add(newSource.toLowerCase())
+
+  for (const move of assetMoves) {
+    if (move.fromPath.toLowerCase() === move.toPath.toLowerCase()) continue
+    const data = await readFileAtPath(handle, move.fromPath)
+    if (data) {
+      await writeFileAtPath(handle, move.toPath, data)
+    }
+    if (!kept.has(move.fromPath.replace(/\\/g, '/').toLowerCase())) {
+      await removeFileAtPath(handle, move.fromPath)
+    }
+  }
+
+  // 旧名下可能还有未进工作区元数据的语音目录 / lang，一并清掉（避开新路径）
+  const oldExt = sourceExtension(oldName)
+  for (const locale of await listDiskLocales(handle)) {
+    const oldLang = textAssetPath(locale, oldName)
+    if (!kept.has(oldLang.toLowerCase())) {
+      await removeFileAtPath(handle, oldLang)
+    }
+    if (oldExt) {
+      const oldVoice = voiceAssetDir(locale, oldName, oldExt)
+      const newVoice = voiceAssetDir(locale, newName, sourceExtension(newName) || oldExt)
+      if (oldVoice.toLowerCase() !== newVoice.toLowerCase()) {
+        await removeDirectoryAtPath(handle, oldVoice)
+      }
+    }
+  }
 }
 
 /** 供 UI 展示：允许的脚本后缀 */

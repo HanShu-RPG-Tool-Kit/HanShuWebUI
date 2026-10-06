@@ -10,16 +10,47 @@ import { FlowExplorer } from './progress/FlowExplorer'
 import { PageList } from './progress/PageList'
 import { EditorSplit } from './progress/EditorSplit'
 import { closeAllInGroup, closeInGroup, closeOthersInGroup, closeRightInGroup, focusedGroupId, focusGroup, joinGroups, moveTab, normalizeGroups, openInGroup, readGroup, setSplitRatio, splitTab, togglePinInGroup, type GroupId, type SplitZone } from './progress/editorGroups'
-import { ensurePackageSections, isKitDocument, isNavigationDocument, isProgressDocument, isScriptDocument, packageAcceptsImportFile, packageAllowsDocuments, packageDocumentExt, requireAvailableName, renameFlowEntry, resourceName, uniqueDocumentName } from './progress/library'
-import { createFlowDocument, downloadFlowFile, importFlowDocument, loadFlowWorkspace, saveFlowWorkspace, stampDocument, type FlowDocument, type FlowPackageId, type FlowWorkspaceState } from './progress/storage'
+import { ensurePackageSections, isBuiltinGoalFolder, isKitDocument, isNavigationDocument, isProgressDocument, isScriptDocument, isSectionFolder, packageAcceptsImportFile, packageAllowsDocuments, packageDocumentExt, requireAvailableName, renameFlowEntry, resourceName, uniqueDocumentName } from './progress/library'
+import { createFlowDocument, downloadFlowFile, importFlowDocument, stampDocument, type FlowDocument, type FlowPackageId, type FlowWorkspaceState } from './progress/storage'
 import { createKit, kitRefFromFileName, readKitSource, stringifyKit, parseKit } from './progress/kit'
-import { createProgress, readProgressSource, stringifyProgress, parseProgress } from './progress/progressDoc'
+import { createProgress, createProgressLocaleSeeds, readProgressSource, stringifyProgress, parseProgress } from './progress/progressDoc'
 import { createNavigationPoint, readNavigationSource, stringifyNavigationPoint, parseNavigationPoint } from './progress/navigationPoint'
-import { buildGoalDefinitionCatalog } from './progress/goalDefinitions'
+import { buildGoalDefinitionCatalog, isBuiltinGoalDocumentKey, stripBuiltinGoalDefinitions, withBuiltinGoalDefinitions } from './progress/goalDefinitions'
 import { KitEditor } from './progress/KitEditor'
 import { ProgressEditor } from './progress/ProgressEditor'
 import { NavigationEditor } from './progress/NavigationEditor'
 import { useEditorFontSize } from './progress/editorFont'
+import {
+  defaultFlowLocaleSeeds,
+  defaultKitLocaleSeeds,
+  defaultNavLocaleSeeds,
+  ensureFlowLocaleKeys,
+  ensureKitLocaleKeys,
+  ensureNavLocaleKeys,
+  ensureProgressLocaleKeys,
+  isProgressLocaleKey,
+} from './progress/progressLocale'
+import {
+  applyProgressDocumentsToWorkspace,
+  documentFoldersFromDocuments,
+  getProjectSession,
+  isProgressSourceName,
+  loadProgressUiState,
+  saveProgressUiState,
+  setProjectSession,
+  sourcesToProgressDocuments,
+  useProjectSession,
+} from '../project/projectSession'
+import { setBoundProject } from '../project/bindingBus'
+import { removeSourceFromDisk, renameSourceOnDisk, saveProjectToDirectory } from '../project/projectFs'
+import { renameScriptAssets } from '../workspaceMove'
+import { registerAsset, saveWorkspace } from '../workspace'
+import { deleteAssetBlob, getAssetBlob, putAssetBlob } from '../assets/idb'
+import { TextMap, TEXT_ASSET_MIME, type TextSink } from '../i18n/textMap'
+import { textAssetPath } from '../i18n/localeLayout'
+import { createTextSink } from '../i18n/textSink'
+import { loadLocale, saveLocale } from '../storage'
+import { LocaleSelect } from '../LocaleSelect'
 import Editor from '@monaco-editor/react'
 import { HANSHU_THEME_ID, registerHanshuLanguage } from '../monaco/hanshuLanguage'
 import './ProgressFlowWorkspace.css'
@@ -41,10 +72,115 @@ function dropZoneAt(event: DragEvent, splitOn: boolean): DropZone {
 }
 
 export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolean; workspaceRef?: Ref<ProgressWorkspaceHandle> }) {
-  const [initial] = useState(loadFlowWorkspace)
+  const session = useProjectSession()
+  const projectBound = Boolean(session.binding)
   const editorFontSize = useEditorFontSize()
-  const [state, setState] = useState(() => ensurePackageSections(initial.state))
-  const [storageError, setStorageError] = useState(initial.error)
+  const [ui, setUi] = useState(loadProgressUiState)
+  const [locale, setLocale] = useState(loadLocale)
+  const [localeTick, setLocaleTick] = useState(0)
+  const textMapRef = useRef<TextMap | null>(null)
+  const textDocKeyRef = useRef<string | null>(null)
+  const textCacheRef = useRef<string | null>(null)
+  const pendingSeedsRef = useRef(new Map<string, Record<string, string>>())
+  const migratedKeysRef = useRef(new Set<string>())
+  const documents = useMemo(() => {
+    const folders = ui.folders ?? []
+    const folderKeys = new Set(folders.map((folder) => folder.key))
+    return sourcesToProgressDocuments(
+      session.workspace.packages[0]?.scripts ?? [],
+      ui.documentFolders,
+    ).map((doc) => {
+      const folderId = doc.folderId && folderKeys.has(doc.folderId) ? doc.folderId : null
+      return folderId === (doc.folderId ?? null) ? doc : { ...doc, folderId }
+    })
+  }, [session.workspace, ui.documentFolders, ui.folders])
+  const baseState = useMemo(
+    () => ensurePackageSections({
+      documents,
+      folders: ui.folders ?? [],
+      openKeys: ui.openKeys ?? [],
+      activeKey: ui.activeKey ?? null,
+      pinnedKeys: ui.pinnedKeys ?? [],
+      split: ui.split,
+    }),
+    [documents, ui],
+  )
+  /** 先叠虚拟内置文档，再清理页条——否则内置页会被当成失效键清掉 */
+  const state = useMemo(
+    () => normalizeGroups(withBuiltinGoalDefinitions(baseState)),
+    [baseState],
+  )
+  const stateRef = useRef(state)
+  stateRef.current = state
+
+  const setState = (change: FlowWorkspaceState | ((previous: FlowWorkspaceState) => FlowWorkspaceState)) => {
+    const previous = stateRef.current
+    const next = stripBuiltinGoalDefinitions(typeof change === 'function' ? change(previous) : change)
+    const nextUi = {
+      openKeys: next.openKeys ?? [],
+      activeKey: next.activeKey ?? null,
+      pinnedKeys: next.pinnedKeys ?? [],
+      split: next.split,
+      folders: next.folders ?? [],
+      documentFolders: documentFoldersFromDocuments(next.documents),
+    }
+    setUi(nextUi)
+    saveProgressUiState(nextUi)
+    const live = getProjectSession()
+    if (live.binding) {
+      let workspace = live.workspace
+      const prevScripts = workspace.packages[0]?.scripts ?? []
+      const diskJobs: Array<Promise<void>> = []
+      for (const doc of next.documents) {
+        const old = prevScripts.find((script) => script.id === doc.key)
+        if (!old || old.name === doc.name) continue
+        const renamed = renameScriptAssets(workspace, doc.key, doc.name)
+        if (renamed.kind === 'blocked') {
+          setNotice(`语言文件无法随改名搬迁：${renamed.path} 已存在`)
+          continue
+        }
+        const assetMoves = renamed.kind === 'moved' ? renamed.moves : []
+        if (renamed.kind === 'moved') {
+          workspace = renamed.workspace
+          const packageId = workspace.packages[0]?.id
+          if (packageId) {
+            diskJobs.push((async () => {
+              for (const move of assetMoves) {
+                const blob = await getAssetBlob(packageId, move.fromPath)
+                if (!blob) continue
+                await putAssetBlob(packageId, move.toPath, blob)
+                await deleteAssetBlob(packageId, move.fromPath)
+              }
+            })())
+          }
+        }
+        const binding = live.binding
+        diskJobs.push(
+          renameSourceOnDisk(binding.handle, old.name, doc.name, doc.source, assetMoves).catch((error) => {
+            setNotice(`工作区已改名，但写入工程目录失败：${error instanceof Error ? error.message : String(error)}`)
+          }),
+        )
+      }
+      // 进度区 documents 只有 .progress/.hflow/…；绝不能把 .hs 等剧本源当成「已删除」去清磁盘
+      const removed = prevScripts.filter(
+        (script) =>
+          isProgressSourceName(script.name) &&
+          !next.documents.some((doc) => doc.key === script.id),
+      )
+      for (const script of removed) {
+        const binding = live.binding
+        diskJobs.push(
+          removeSourceFromDisk(binding.handle, script.name).catch((error) => {
+            setNotice(`工作区已删除，但清理工程目录失败：${error instanceof Error ? error.message : String(error)}`)
+          }),
+        )
+      }
+      if (diskJobs.length) void Promise.all(diskJobs)
+      setProjectSession({ workspace: applyProgressDocumentsToWorkspace(workspace, next.documents) })
+    }
+  }
+
+  const [storageError, setStorageError] = useState('')
   const [notice, setNotice] = useState('')
   const [selection, setSelection] = useState<FlowSelection>({ kind: 'flow' })
   const [editor, setEditor] = useState<{ key: string; flow: ProgressFlow; selection: FlowSelection; origin: HTMLElement | null } | null>(null)
@@ -59,6 +195,39 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
   const cycleDialog = useRef<HTMLDialogElement>(null)
   const [pageDrag, setPageDrag] = useState<{ key: string; group: GroupId } | null>(null)
   const [dropTarget, setDropTarget] = useState<{ group: GroupId; zone: DropZone } | null>(null)
+
+  useEffect(() => {
+    setStorageError(projectBound ? '' : '请先在剧本工作区打开或新建工程；进度文件与剧本共用同一工程目录。')
+    if (!projectBound) setNotice('')
+  }, [projectBound])
+
+  function queueLocaleSeeds(docKey: string, seeds: Record<string, string>) {
+    if (!Object.keys(seeds).length) return
+    const previous = pendingSeedsRef.current.get(docKey) ?? {}
+    pendingSeedsRef.current.set(docKey, { ...previous, ...seeds })
+    if (textMapRef.current && textDocKeyRef.current === docKey) {
+      textMapRef.current.setMissing(Object.entries(seeds))
+      setLocaleTick((value) => value + 1)
+    }
+  }
+
+  function resolveLocaleText(key: string): string {
+    void localeTick
+    return textMapRef.current?.get(key) ?? ''
+  }
+
+  function setLocaleText(key: string, value: string) {
+    textMapRef.current?.set(key, value)
+    setLocaleTick((tick) => tick + 1)
+  }
+
+  function renameLocaleKeys(moves: Array<[string, string]>) {
+    const map = textMapRef.current
+    if (!map) return
+    for (const [from, to] of moves) map.renameKey(from, to)
+    setLocaleTick((tick) => tick + 1)
+  }
+
   const splitOn = Boolean(state.split)
   const focusedGroup = focusedGroupId(state)
   const focusedKey = readGroup(state, focusedGroup).activeKey
@@ -79,7 +248,8 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
       if (parsedKit.error) continue
       map.set(ref, parsedKit.kit)
       const title = parsedKit.kit.name.trim()
-      options.push({ ref, label: title && title !== ref ? `${ref}（${title}）` : ref })
+      const showTitle = title && title !== ref && !isProgressLocaleKey(title)
+      options.push({ ref, label: showTitle ? `${ref}（${title}）` : ref })
     }
     options.sort((a, b) => a.ref.localeCompare(b.ref, 'zh-CN'))
     return { map, options }
@@ -93,8 +263,162 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
   const explorerState = useMemo(() => ({ ...state, activeKey: focusedKey }), [state, focusedKey])
   const issues = useMemo(() => parsed.flow ? validateFlow(parsed.flow) : [], [parsed.flow])
   const cycleWarning = issues.find(issue => issue.path === 'graph' && issue.message.includes('环'))
-  const locked = editor !== null || propertiesKey !== null
+  const locked = !projectBound || editor !== null || propertiesKey !== null
   const propertiesDoc = propertiesKey ? state.documents.find((item) => item.key === propertiesKey) ?? null : null
+  const flowLocalizable = Boolean(doc && !scriptDoc && !kitDoc && !progressDoc && !navigationDoc)
+  const localeDoc = Boolean(doc && (progressDoc || flowLocalizable || kitDoc || navigationDoc))
+
+  // 当前焦点文档的语义键 TextMap（literal）
+  useEffect(() => {
+    const sourceDoc = localeDoc ? doc : null
+    if (!sourceDoc || !projectBound) {
+      textMapRef.current = null
+      textDocKeyRef.current = null
+      textCacheRef.current = null
+      return
+    }
+
+    const fileName = textAssetPath(locale, sourceDoc.name)
+    const packageId = session.workspace.packages[0]?.id
+    if (!packageId) return
+
+    const virtualSink: TextSink = {
+      read: () => textCacheRef.current,
+      write: (content: string) => {
+        textCacheRef.current = content
+        const live = getProjectSession()
+        const pkg = live.workspace.packages[0]
+        if (!pkg) return
+        const blob = new Blob([content], { type: TEXT_ASSET_MIME })
+        void putAssetBlob(pkg.id, fileName, blob).then(() => {
+          const result = registerAsset(
+            getProjectSession().workspace,
+            pkg.id,
+            fileName,
+            TEXT_ASSET_MIME,
+            blob.size,
+          )
+          if (result) setProjectSession({ workspace: result.workspace })
+        })
+      },
+    }
+
+    let cancelled = false
+    let unsubscribe: (() => void) | null = null
+    let created: TextMap | null = null
+
+    void (async () => {
+      const blob = await getAssetBlob(packageId, fileName)
+      textCacheRef.current = blob ? await blob.text() : null
+      const sink = await createTextSink({
+        project: getProjectSession().binding,
+        fileName,
+        virtual: virtualSink,
+      })
+      if (cancelled) return
+      const map = new TextMap({ fileName, locale, sink, keyStyle: 'literal' })
+      created = map
+      textMapRef.current = map
+      textDocKeyRef.current = sourceDoc.key
+      unsubscribe = map.subscribe(() => setLocaleTick((tick) => tick + 1))
+      map.load()
+      const pending = pendingSeedsRef.current.get(sourceDoc.key)
+      if (pending) {
+        map.setMissing(Object.entries(pending))
+        pendingSeedsRef.current.delete(sourceDoc.key)
+      }
+      setLocaleTick((tick) => tick + 1)
+    })()
+
+    return () => {
+      cancelled = true
+      unsubscribe?.()
+      if (textMapRef.current === created) {
+        textMapRef.current = null
+        textDocKeyRef.current = null
+      }
+    }
+  }, [doc?.key, doc?.name, locale, projectBound, localeDoc, session.workspace.packages[0]?.id])
+
+  // 打开旧明文文档时迁移为语义键并灌默认语种子
+  useEffect(() => {
+    if (!doc || !projectBound || migratedKeysRef.current.has(`${doc.key}:${locale}`)) return
+    if (progressDoc) {
+      const parsedDoc = readProgressSource(doc.source).doc
+      if (!parsedDoc) return
+      const { doc: next, seeds } = ensureProgressLocaleKeys(parsedDoc)
+      migratedKeysRef.current.add(`${doc.key}:${locale}`)
+      if (stringifyProgress(next) !== doc.source) {
+        setState((previous) => ({
+          ...previous,
+          documents: previous.documents.map((item) =>
+            item.key === doc.key ? stampDocument({ ...item, source: stringifyProgress(next) }) : item,
+          ),
+        }))
+      }
+      queueLocaleSeeds(doc.key, seeds)
+      return
+    }
+    if (navigationDoc) {
+      const parsedNav = readNavigationSource(doc.source)
+      if (parsedNav.error) {
+        migratedKeysRef.current.add(`${doc.key}:${locale}`)
+        return
+      }
+      const { point: next, seeds } = ensureNavLocaleKeys(parsedNav.point)
+      migratedKeysRef.current.add(`${doc.key}:${locale}`)
+      const source = stringifyNavigationPoint(next)
+      if (source !== doc.source) {
+        setState((previous) => ({
+          ...previous,
+          documents: previous.documents.map((item) =>
+            item.key === doc.key ? stampDocument({ ...item, source }) : item,
+          ),
+        }))
+      }
+      queueLocaleSeeds(doc.key, seeds)
+      return
+    }
+    if (kitDoc) {
+      const parsedKit = readKitSource(doc.source)
+      if (parsedKit.error) {
+        migratedKeysRef.current.add(`${doc.key}:${locale}`)
+        return
+      }
+      const { kit: next, seeds } = ensureKitLocaleKeys(parsedKit.kit)
+      migratedKeysRef.current.add(`${doc.key}:${locale}`)
+      const source = stringifyKit(next)
+      if (source !== doc.source) {
+        setState((previous) => ({
+          ...previous,
+          documents: previous.documents.map((item) =>
+            item.key === doc.key ? stampDocument({ ...item, source }) : item,
+          ),
+        }))
+      }
+      queueLocaleSeeds(doc.key, seeds)
+      return
+    }
+    if (flowLocalizable) {
+      try {
+        const flow = parseFlow(doc.source)
+        const { flow: next, seeds } = ensureFlowLocaleKeys(flow)
+        migratedKeysRef.current.add(`${doc.key}:${locale}`)
+        const source = JSON.stringify(next, null, 2) + '\n'
+        if (source !== doc.source) {
+          setState((previous) => ({
+            ...previous,
+            documents: previous.documents.map((item) =>
+              item.key === doc.key ? stampDocument({ ...item, source }) : item,
+            ),
+          }))
+        }
+        queueLocaleSeeds(doc.key, seeds)
+      } catch {
+        migratedKeysRef.current.add(`${doc.key}:${locale}`)
+      }
+    }
+  }, [doc?.key, doc?.source, locale, projectBound, progressDoc, navigationDoc, kitDoc, flowLocalizable])
 
   useEffect(() => {
     if (!pageDrag) return
@@ -131,21 +455,14 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
   }, [cycleAlert])
 
   useEffect(() => {
-    if (initial.error) return
-    // Storage is external and may fail (e.g. quota); surface the failure to the author.
-    // eslint-disable-next-line react/set-state-in-effect
-    try { saveFlowWorkspace(state); setStorageError('') }
-    catch (error) { setStorageError(`本地保存失败，请从资源管理器导出保留修改。${String(error)}`) }
-  }, [state, initial.error])
-  useEffect(() => {
-    if (!storageError) return
+    if (!storageError || projectBound) return
     const preventLoss = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = '' }
     window.addEventListener('beforeunload', preventLoss)
     return () => window.removeEventListener('beforeunload', preventLoss)
-  }, [storageError])
+  }, [storageError, projectBound])
 
   function changeSource(source: string, group = false, key = doc?.key) {
-    if (!key) return
+    if (!key || isBuiltinGoalDocumentKey(key)) return
     const current = state.documents.find((item) => item.key === key)
     if (!current || source === current.source) return
     const previous = history.get(key)
@@ -170,12 +487,18 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     try {
       const result = addNextCheckpoint(parsed.flow, parent)
       changeFlow(result.flow); setSelection({ kind: 'node', id: result.id })
+      if (doc && 'localeSeeds' in result && result.localeSeeds) {
+        queueLocaleSeeds(doc.key, result.localeSeeds as Record<string, string>)
+      }
     } catch (error) { setNotice(String(error)) }
   }
   function createNode(position: FlowPosition, operator?: CanvasNodeType) {
     if (!parsed.flow || locked || busy) return
     const result = operator === 'end' ? createEndNode(parsed.flow, position) : operator === 'transition' ? createTransitionNode(parsed.flow, position) : operator === 'conditional' ? createConditionalNode(parsed.flow, position) : operator === 'diff' ? createDiffNode(parsed.flow, position) : operator === 'merge' ? createMergeNode(parsed.flow, position) : operator === 'swap' ? createSwapNode(parsed.flow, position) : operator === 'note' ? createCanvasNote(parsed.flow, position) : operator === 'goal' ? createGoalNode(parsed.flow, position) : operator === 'predicate' ? createPredicateNode(parsed.flow, position) : createCheckpoint(parsed.flow, position)
     changeFlow(result.flow); setSelection({ kind: operator === 'end' ? 'end' : operator === 'transition' ? 'transition' : operator === 'conditional' ? 'conditional' : operator === 'diff' ? 'diff' : operator === 'merge' ? 'merge' : operator === 'swap' ? 'swap' : operator === 'note' ? 'note' : operator === 'goal' ? 'goal' : operator === 'predicate' ? 'predicate' : 'node', id: result.id })
+    if (doc && 'localeSeeds' in result && result.localeSeeds) {
+      queueLocaleSeeds(doc.key, result.localeSeeds as Record<string, string>)
+    }
   }
   function moveCanvasSelection(positions: Record<string, FlowPosition>) {
     if (!parsed.flow || locked || busy) return
@@ -278,7 +601,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     const ext = packageDocumentExt(packageId)
     if (!ext) throw new Error('此分类不支持文件。')
     const name = resourceName(value, ext)
-    requireAvailableName(state, name, packageId, folderId)
+    requireAvailableName(state, name, packageId, folderId, undefined, 'document')
     const title = name.slice(0, -ext.length)
     const next = ext === '.py'
       ? stampDocument({
@@ -313,6 +636,10 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
               folderId,
             })
         : { ...createFlowDocument(createFlow(undefined, title), packageId), name, folderId, package: packageId }
+    if (ext === '.progress') queueLocaleSeeds(next.key, createProgressLocaleSeeds(title))
+    else if (ext === '.hflow') queueLocaleSeeds(next.key, defaultFlowLocaleSeeds(title))
+    else if (ext === '.nav') queueLocaleSeeds(next.key, defaultNavLocaleSeeds(title))
+    else if (ext === '.kit') queueLocaleSeeds(next.key, defaultKitLocaleSeeds(title))
     setState((previous) => openInGroup({ ...previous, documents: [...previous.documents, next] }, focusedGroupId(previous), next.key))
     setSelection({ kind: 'flow' }); setNotice('')
     return next.key
@@ -458,23 +785,25 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     setNotice('已更新流程属性。')
   }
   function removeResources({ documents: documentKeys, folders: folderKeys }: { documents: string[]; folders: string[] }) {
-    if (locked || busy || (!documentKeys.length && !folderKeys.length)) return
+    const docs = documentKeys.filter((key) => !isBuiltinGoalDocumentKey(key))
+    const foldersToRemove = folderKeys.filter((key) => !isBuiltinGoalFolder(key) && !isSectionFolder(key))
+    if (locked || busy || (!docs.length && !foldersToRemove.length)) return
     const parts = [
-      documentKeys.length ? `${documentKeys.length} 个流程` : '',
-      folderKeys.length ? `${folderKeys.length} 个文件夹` : '',
+      docs.length ? `${docs.length} 个流程` : '',
+      foldersToRemove.length ? `${foldersToRemove.length} 个文件夹` : '',
     ].filter(Boolean)
     if (!window.confirm(`从本机资源中移除 ${parts.join('、')}？`)) return
-    const documentSet = new Set(documentKeys)
-    const folderSet = new Set(folderKeys)
+    const documentSet = new Set(docs)
+    const folderSet = new Set(foldersToRemove)
     setHistory((previous) => {
       const next = new Map(previous)
-      for (const key of documentKeys) next.delete(key)
+      for (const key of docs) next.delete(key)
       return next
     })
     setState((previous) => {
       const documents = previous.documents.filter((item) => !documentSet.has(item.key))
       const folders = previous.folders.filter((folder) => {
-        if (folder.key.startsWith('section:')) return true
+        if (folder.key.startsWith('section:') || isBuiltinGoalFolder(folder.key)) return true
         if (!folderSet.has(folder.key)) return true
         const hasDoc = documents.some((item) => item.folderId === folder.key)
         const hasChild = previous.folders.some((child) => child.parentId === folder.key && !folderSet.has(child.key))
@@ -484,14 +813,31 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     })
     if (doc && documentSet.has(doc.key)) setSelection({ kind: 'flow' })
   }
-  function saveDraft() {
-    if (locked) return
-    if (initial.error) { setNotice('原有存储读取失败。请先导出或下载草稿保留当前文档。'); return }
-    try { saveFlowWorkspace(state); setStorageError(''); setNotice('流程草稿已保存到本机浏览器。') }
-    catch (error) { setStorageError(`保存失败：${String(error)}`) }
+  async function saveDraft() {
+    if (locked || busy) return
+    const live = getProjectSession()
+    if (!live.binding) {
+      setNotice('请先打开工程；进度文件会写入工程目录。')
+      return
+    }
+    setBusy(true)
+    try {
+      saveWorkspace(live.workspace)
+      const saved = await saveProjectToDirectory(live.binding, live.workspace)
+      setProjectSession({ binding: saved })
+      setBoundProject(saved)
+      setStorageError('')
+      setNotice('')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      setStorageError(message)
+      setNotice(`保存失败：${message}`)
+    } finally {
+      setBusy(false)
+    }
   }
   useImperativeHandle(workspaceRef, () => ({ handleMenuAction(item) {
-    if (item === '保存') saveDraft()
+    if (item === '保存') void saveDraft()
     if (item === '撤销') undo()
     if (item === '重做') undo(true)
   } }))
@@ -499,7 +845,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     if (!active) return
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || locked) return
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); saveDraft() }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); void saveDraft() }
       const target = event.target as HTMLElement
       if (target.closest('input, textarea, select, [contenteditable="true"]')) return
       if ((event.ctrlKey || event.metaKey) && (event.key.toLowerCase() === 'z' || event.key.toLowerCase() === 'y')) { event.preventDefault(); undo(event.shiftKey || event.key.toLowerCase() === 'y') }
@@ -526,8 +872,13 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     let paneFlow: ProgressFlow | null = null
     let paneError = ''
     if (!paneScript && !paneKit && !paneProgress && !paneNavigation) {
-      try { paneFlow = parseFlow(paneDoc.source) }
-      catch (error) { paneError = error instanceof Error ? error.message : String(error) }
+      // 焦点文档复用 memo 过的 parse，避免父级重渲染换掉 flow 引用打断拖拽
+      if (paneDoc.key === focusedKey && parsed.flow) paneFlow = parsed.flow
+      else {
+        try { paneFlow = parseFlow(paneDoc.source) }
+        catch (error) { paneError = error instanceof Error ? error.message : String(error) }
+      }
+      if (paneDoc.key === focusedKey && parsed.error) paneError = parsed.error
     }
     const paneIssues = paneFlow ? validateFlow(paneFlow) : []
     const paneErrors = paneIssues.filter((issue) => issue.severity === 'error').length + (paneError ? 1 : 0)
@@ -547,6 +898,8 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
           goalCatalog={goalCatalog}
           kitOptions={kitCatalog.options}
           disabled={disabledPane}
+          resolveText={paneDoc.key === focusedKey ? resolveLocaleText : undefined}
+          setText={paneDoc.key === focusedKey ? setLocaleText : undefined}
           onChange={(source, discrete) => { if (!disabledPane) changeSource(source, !discrete, paneDoc.key) }}
         />
       </div>
@@ -558,6 +911,8 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
           point={paneNavigationParsed.point}
           error={paneNavigationParsed.error}
           disabled={disabledPane}
+          resolveText={paneDoc.key === focusedKey ? resolveLocaleText : undefined}
+          setText={paneDoc.key === focusedKey ? setLocaleText : undefined}
           onChange={(source) => { if (!disabledPane) changeSource(source, true, paneDoc.key) }}
         />
       </div>
@@ -573,12 +928,16 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
           catalog={paneCatalog}
           catalogOptions={paneCatalogOptions}
           disabled={disabledPane}
+          resolveText={paneDoc.key === focusedKey ? resolveLocaleText : undefined}
+          setText={paneDoc.key === focusedKey ? setLocaleText : undefined}
           onChange={(source) => { if (!disabledPane) changeSource(source, true, paneDoc.key) }}
         />
       </div>
     }
     if (paneScript) {
+      const builtinScript = isBuiltinGoalDocumentKey(paneDoc.key)
       return <div className="flow-source-pane flow-script-pane">
+        {builtinScript && <p className="flow-banner is-info" role="status">内置目标定义（只读）</p>}
         <div className="flow-script-editor">
           <Editor
             height="100%"
@@ -587,8 +946,8 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
             value={paneDoc.source}
             path={`progress-script://g${group}/${paneDoc.key}/${paneDoc.name}`}
             beforeMount={registerHanshuLanguage}
-            onChange={(value) => { if (!disabledPane) changeSource(value ?? '', true, paneDoc.key) }}
-            options={{ fontSize: editorFontSize, mouseWheelZoom: true, minimap: { enabled: false }, wordWrap: 'on', automaticLayout: true, scrollBeyondLastLine: false, padding: { top: 8 }, readOnly: disabledPane }}
+            onChange={(value) => { if (!disabledPane && !builtinScript) changeSource(value ?? '', true, paneDoc.key) }}
+            options={{ fontSize: editorFontSize, mouseWheelZoom: true, minimap: { enabled: false }, wordWrap: 'on', automaticLayout: true, scrollBeyondLastLine: false, padding: { top: 8 }, readOnly: disabledPane || builtinScript }}
           />
         </div>
       </div>
@@ -612,6 +971,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
           onArrange={graphLive ? arrangeSelection : () => undefined}
           onUpdateNote={graphLive ? updateNote : () => undefined}
           onConnectEntry={graphLive ? setEntryTarget : () => undefined}
+          resolveText={paneDoc.key === focusedKey ? (key) => textMapRef.current?.get(key) ?? null : undefined}
           onConnect={graphLive ? connectCanvasNodes : () => undefined}
           onDisconnect={graphLive ? disconnectCanvasLink : () => undefined}
           onCut={graphLive ? disconnectCanvasLinks : () => undefined}
@@ -723,9 +1083,31 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
         )}
       </main>
     </div>
-    <footer className="flow-statusbar"><span>{storageError ? '本地保存异常' : '草稿自动保存'}{locked ? ' · 正在编辑' : ''}{splitOn ? ' · 二分编辑' : ''}</span><span>{navigationDoc ? '导航点 · .nav' : progressDoc ? '进度 · .progress' : kitDoc ? '礼包 · .kit' : scriptDoc ? '脚本 · Python' : '故事流程 · 原型草稿'}</span></footer>
-    {editor && active && <FlowEditorDialog key={editor.key} flow={editor.flow} initialSelection={editor.selection} origin={editor.origin} onComplete={(flow, nextSelection) => { changeFlow(flow, editor.key); setSelection(nextSelection); setEditor(null) }} onCancel={() => setEditor(null)} />}
-    {propertiesDoc && active && <FlowDocumentProperties key={propertiesDoc.key} doc={propertiesDoc} onSave={(next) => saveProperties(propertiesDoc.key, next)} onCancel={() => setPropertiesKey(null)} />}
+    <footer className="flow-statusbar">
+      <span>{storageError ? (projectBound ? '保存异常' : '未打开工程') : projectBound ? (busy ? '正在保存…' : 'Ctrl+S 保存到工程目录') : '需要工程目录'}{locked && projectBound ? ' · 正在编辑' : ''}{splitOn ? ' · 二分编辑' : ''}</span>
+      <span className="flow-statusbar-right">
+        {(progressDoc || flowLocalizable || kitDoc || navigationDoc) && (
+          <LocaleSelect
+            value={locale}
+            onChange={(tag) => { setLocale(tag); saveLocale(tag) }}
+          />
+        )}
+        <span className="flow-statusbar-type">{navigationDoc ? '导航点 · .nav' : progressDoc ? '进度 · .progress' : kitDoc ? '礼包 · .kit' : scriptDoc ? '脚本 · Python' : '故事流程 · 原型草稿'}</span>
+      </span>
+    </footer>
+    {editor && active && (
+      <FlowEditorDialog
+        key={editor.key}
+        flow={editor.flow}
+        initialSelection={editor.selection}
+        origin={editor.origin}
+        resolveText={resolveLocaleText}
+        setText={setLocaleText}
+        renameLocaleKeys={renameLocaleKeys}
+        onComplete={(flow, nextSelection) => { changeFlow(flow, editor.key); setSelection(nextSelection); setEditor(null) }}
+        onCancel={() => setEditor(null)}
+      />
+    )}    {propertiesDoc && active && <FlowDocumentProperties key={propertiesDoc.key} doc={propertiesDoc} onSave={(next) => saveProperties(propertiesDoc.key, next)} onCancel={() => setPropertiesKey(null)} />}
     {createPortal(<dialog ref={cycleDialog} className="flow-alert-dialog" aria-labelledby="flow-cycle-alert-title" onCancel={(event) => { event.preventDefault(); setCycleAlert(null) }}>
       <header><strong id="flow-cycle-alert-title">画布连线成环</strong></header>
       <div className="flow-alert-body">

@@ -65,13 +65,13 @@ export function FlowDocumentProperties({ doc, onSave, onCancel }: {
     <div className="flow-alert-body flow-properties-body">
       <TextField label="文件名" value={name} onChange={(value) => { setName(value); setError('') }} />
       {kit ? (
-        <p className="flow-hint">礼包以 `.kit`（JSON）保存在本机草稿库；内容在主区表单中修改。</p>
+        <p className="flow-hint">礼包以 `.kit`（JSON）写入工程目录；内容在主区表单中修改。</p>
       ) : navigation ? (
-        <p className="flow-hint">导航点以 `.nav`（JSON）保存在本机草稿库；内容在主区表单中修改。</p>
+        <p className="flow-hint">导航点以 `.nav`（JSON）写入工程目录；内容在主区表单中修改。</p>
       ) : progress ? (
-        <p className="flow-hint">进度以 `.progress`（JSON）保存在本机草稿库；内容在主区表单中修改。</p>
+        <p className="flow-hint">进度以 `.progress`（JSON）写入工程目录；内容在主区表单中修改。</p>
       ) : script ? (
-        <p className="flow-hint">脚本以 `.py` 保存在本机草稿库；内容在主编辑区修改。</p>
+        <p className="flow-hint">脚本以 `.py` 写入工程目录；内容在主编辑区修改。</p>
       ) : parsed.flow || currentId ? (
         <IdField key={currentId || flowId} label="文档 ID" value={currentId || flowId} disabled={false} onPending={(_, pending) => setPendingId(pending)} onApply={(value) => { applyId(value); setError('') }} />
       ) : (

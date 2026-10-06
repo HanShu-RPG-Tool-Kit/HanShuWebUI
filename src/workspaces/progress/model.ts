@@ -76,7 +76,16 @@ export type ProgressFlow = {
 export type FlowSelection = { kind: 'flow' } | { kind: 'entry' } | { kind: 'entry-link' } | { kind: 'node'; id: string } | { kind: 'goal'; id: string } | { kind: 'predicate'; id: string } | { kind: 'logic-link'; id: string } | { kind: 'note'; id: string } | { kind: 'transition'; id: string } | { kind: 'conditional'; id: string } | { kind: 'diff'; id: string } | { kind: 'merge'; id: string } | { kind: 'swap'; id: string } | { kind: 'end'; id: string }
 export type FlowIssue = { severity: 'error' | 'warning'; path: string; message: string }
 export const text = (value = ''): FlowText => ({ text: value })
-export const displayText = (value: FlowText) => value.text
+export const displayText = (
+  value: FlowText,
+  resolve?: ((key: string) => string | null) | null,
+) => {
+  if (!resolve) return value.text
+  const hit = resolve(value.text)
+  if (hit !== null) return hit
+  // 语义键尚未写入 .lang 时显示空；遗留明文仍原样显示
+  return /^[a-z][a-z0-9_-]*(\.[a-z0-9_-]+)*$/i.test(value.text) ? '' : value.text
+}
 export const clone = <T,>(value: T): T => structuredClone(value)
 export const isObject = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value)
 const safeId = (value: string) => value.trim().length > 0 && value.length <= 200 && !['__proto__', 'prototype', 'constructor'].includes(value)
@@ -195,13 +204,21 @@ export const outgoingCount = (flow: ProgressFlow, id: string) => {
   if (id === flow.entry.id) return flow.entry.target === null ? 0 : 1
   return flow.logic?.links.filter(link => link.from === id).length ?? 0
 }
-export const makeNode = (title = '新阶段'): FlowNode => ({ title: text(title), description: text() })
-export function createFlow(id = crypto.randomUUID(), title = '新的进度流程'): ProgressFlow {
+export const makeNode = (id: string, _title = '新阶段'): FlowNode => ({
+  title: text(`nodes.${id}.title`),
+  description: text(`nodes.${id}.description`),
+})
+export function createFlow(id = crypto.randomUUID(), _title = '新的进度流程'): ProgressFlow {
   return {
     format: 'hanshu.progress-tree',
     version: 1,
     id,
-    entry: { id: 'entry', target: null, title: text(title), description: text() },
+    entry: {
+      id: 'entry',
+      target: null,
+      title: text('entry.title'),
+      description: text('entry.description'),
+    },
     nodes: {},
   }
 }
@@ -485,23 +502,41 @@ export function findCanvasCycle(flow: ProgressFlow): string[] | null {
   return cycle
 }
 
-export function addNode(flow: ProgressFlow, parent: string): { flow: ProgressFlow; id: string } {
+export function addNode(flow: ProgressFlow, parent: string): {
+  flow: ProgressFlow
+  id: string
+  localeSeeds: Record<string, string>
+} {
   if (parent !== flow.entry.id) throw new Error('Checkpoint 之间不能直连，请经线性变迁连接。')
   if (flow.entry.target !== null) throw new Error('请选择没有连接的起点。')
   const next = clone(flow), ids = new Set(flow.logic?.links.map(link => link.id) ?? [])
   let n = 1
   while (hasCanvasItem(flow, `node_${n}`) || flow.entry.id === `node_${n}` || ids.has(`branch_${n}`) || flow.logic?.links.some(link => link.id === `branch_${n}`)) n++
   const id = `node_${n}`
-  next.nodes[id] = makeNode(`阶段 ${n}`)
+  next.nodes[id] = makeNode(id, `阶段 ${n}`)
   next.entry.target = id
   delete next.entry.port
-  return { flow: next, id }
+  return {
+    flow: next,
+    id,
+    localeSeeds: {
+      [`nodes.${id}.title`]: `阶段 ${n}`,
+      [`nodes.${id}.description`]: '',
+    },
+  }
 }
 export function renameNode(flow: ProgressFlow, id: string, name: string): ProgressFlow {
   if (id === name) return flow
   if (!safeId(name) || name === flow.entry.id || hasCanvasItem(flow, name) || !getNode(flow, id)) throw new Error('节点 ID 不能为空、重复或使用保留名称。')
   const next = clone(flow)
-  next.nodes = Object.fromEntries(Object.entries(next.nodes).map(([key, node]) => [key === id ? name : key, node]))
+  next.nodes = Object.fromEntries(Object.entries(next.nodes).map(([key, node]) => {
+    if (key !== id) return [key, node]
+    return [name, {
+      ...node,
+      title: text(`nodes.${name}.title`),
+      description: text(`nodes.${name}.description`),
+    }]
+  }))
   if (next.entry.target === id) next.entry.target = name
   if (next.layout && Object.hasOwn(next.layout.positions, id)) {
     next.layout.positions = Object.fromEntries(Object.entries(next.layout.positions).map(([key, position]) => [key === id ? name : key, position]))

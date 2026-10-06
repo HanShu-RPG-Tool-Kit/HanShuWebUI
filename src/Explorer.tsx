@@ -21,7 +21,7 @@ import {
 } from './assets/paths'
 import { ExplorerIcon, fileIconKind } from './explorerIcons'
 import {
-  WORKSPACE_GROUP_ORDER,
+  SCRIPT_WORKSPACE_GROUP_ORDER,
   groupDirPrefix,
   sourceKindOf,
 } from './workspace'
@@ -250,7 +250,7 @@ function PackageNode({
   pkg: ScriptPackage
   activeScriptId: string | null
   activeAssetId: string | null
-  /** 这个包的本地位置标签（小灰字：Local Mirror / Virtual Cache） */
+  /** 这个工程的本地位置标签（小灰字：本地工程） */
   locationLabel: string
   /** 标签的说明（tooltip） */
   locationTitle: string
@@ -321,16 +321,19 @@ function PackageNode({
     onPayload: (source) => onDropIntoFolder(pkg.id, 'assets', source),
   })
 
-  // 源文件按 `src/<kind>/` 分组、创作资料归 `meta/`；旧 `*.voice` 等留在包根
+  // 源文件按 `src/<kind>/` 分组、创作资料归 `meta/`；进度专属目录由进度工作区展示
   const grouped = useMemo(() => {
     const byKind = new Map<string, Array<(typeof pkg.scripts)[number]>>(
-      WORKSPACE_GROUP_ORDER.map((kind) => [kind, []]),
+      SCRIPT_WORKSPACE_GROUP_ORDER.map((kind) => [kind, []]),
     )
     const root: Array<(typeof pkg.scripts)[number]> = []
     for (const script of pkg.scripts) {
-      const bucket = byKind.get(sourceKindOf(script.name))
-      if (bucket) bucket.push(script)
-      else root.push(script)
+      const kind = sourceKindOf(script.name)
+      if (!SCRIPT_WORKSPACE_GROUP_ORDER.includes(kind as (typeof SCRIPT_WORKSPACE_GROUP_ORDER)[number])) {
+        if (kind === 'root') root.push(script)
+        continue
+      }
+      byKind.get(kind)!.push(script)
     }
     return { byKind, root }
   }, [pkg.scripts])
@@ -439,7 +442,7 @@ function PackageNode({
       {!pkg.collapsed && (
         <>
           <ul className="explorer-files">
-            {WORKSPACE_GROUP_ORDER.map((kind) => {
+            {SCRIPT_WORKSPACE_GROUP_ORDER.map((kind) => {
               const items = grouped.byKind.get(kind) ?? []
               if (items.length === 0) return null
               return (

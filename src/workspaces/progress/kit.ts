@@ -288,9 +288,11 @@ export function rollKitPools(pools: KitPool[], random: () => number = Math.rando
 
 const emptyFeedback = (): KitFeedback => ({ message: '', title: '', subtitle: '', sound: '' })
 
-export function createKit(name = '新礼包'): KitDocument {
+export function createKit(_name = '新礼包'): KitDocument {
+  void _name
   return {
-    name,
+    /** 语义键；译文在 lang_kit */
+    name: 'name',
     extends: '',
     includes: [],
     tags: [],

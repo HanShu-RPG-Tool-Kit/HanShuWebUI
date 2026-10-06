@@ -1,5 +1,11 @@
 import assert from 'node:assert/strict'
-import { BUILTIN_GOAL_DEFINITION_SCRIPTS, buildGoalDefinitionCatalog, parseGoalDefinitionsFromSource } from '../src/workspaces/progress/goalDefinitions.ts'
+import {
+  BUILTIN_GOAL_DEFINITION_SCRIPTS,
+  buildGoalDefinitionCatalog,
+  isBuiltinGoalDocumentKey,
+  parseGoalDefinitionsFromSource,
+  withBuiltinGoalDefinitions,
+} from '../src/workspaces/progress/goalDefinitions.ts'
 import { ensurePackageSections, sectionFolderKey } from '../src/workspaces/progress/library.ts'
 
 let passed = 0
@@ -33,19 +39,33 @@ test('parses counter defaults', () => {
   assert.equal(target?.default, 1)
 })
 
-test('catalog comes only from goal-definition scripts and follows edits/deletion', () => {
+test('empty workspace still exposes virtual builtin goal definitions', () => {
   const state = ensurePackageSections({ documents: [], folders: [], activeKey: null })
-  assert.equal(buildGoalDefinitionCatalog(state).definitions.length, 0)
-  const source = '@goal("custom:only")\n@config(field("value", "int", default=7))\nclass OnlyGoal(BaseGoalPy):\n    pass'
+  const catalog = buildGoalDefinitionCatalog(state)
+  assert.deepEqual(catalog.definitions.map((item) => item.kind).sort(), [
+    'core:counter',
+    'core:dialogue_choice',
+    'core:manual',
+  ])
+  assert.ok(catalog.definitions.every((item) => item.sourceKey && isBuiltinGoalDocumentKey(item.sourceKey)))
+  const view = withBuiltinGoalDefinitions(state)
+  assert.equal(view.folders.some((folder) => folder.name === '内置'), true)
+  assert.equal(view.documents.filter((doc) => isBuiltinGoalDocumentKey(doc.key)).length, 3)
+  assert.equal(state.documents.length, 0, 'builtins must not mutate the base state')
+})
+
+test('project scripts override builtin kinds; custom kinds append', () => {
+  const state = ensurePackageSections({ documents: [], folders: [], activeKey: null })
+  const source = '@goal("core:manual")\n@config(field("note", "string", default="x"))\nclass OverrideManual(BaseGoalPy):\n    pass\n@goal("custom:only")\n@config(field("value", "int", default=7))\nclass OnlyGoal(BaseGoalPy):\n    pass'
   state.documents.push({ key: 'script', name: 'only.py', source, package: 'script', folderId: sectionFolderKey('script', 'goal-def') })
   state.documents.push({ key: 'ordinary', name: 'not_definition.py', source: source.replace('custom:only', 'custom:outside'), package: 'script', folderId: null })
-  assert.deepEqual(buildGoalDefinitionCatalog(state).definitions.map(item => item.kind), ['custom:only'])
-  assert.equal(buildGoalDefinitionCatalog(state).definitions[0]!.fields[0]!.default, 7)
-  state.documents[0]!.source = source.replace('custom:only', 'custom:renamed').replace('default=7', 'default=12')
-  assert.equal(buildGoalDefinitionCatalog(state).definitions[0]!.kind, 'custom:renamed')
-  assert.equal(buildGoalDefinitionCatalog(state).definitions[0]!.fields[0]!.default, 12)
-  state.documents.splice(0, 1)
-  assert.equal(buildGoalDefinitionCatalog(state).definitions.length, 0)
+  const catalog = buildGoalDefinitionCatalog(state)
+  assert.ok(catalog.definitions.some((item) => item.kind === 'custom:only'))
+  assert.ok(!catalog.definitions.some((item) => item.kind === 'custom:outside'))
+  const manual = catalog.byKind.get('core:manual')!
+  assert.equal(manual.sourceKey, 'script')
+  assert.equal(manual.fields[0]!.key, 'note')
+  assert.equal(catalog.byKind.get('custom:only')!.fields[0]!.default, 7)
 })
 
 test('multiple goals cannot borrow the next class config', () => {

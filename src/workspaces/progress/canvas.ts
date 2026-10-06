@@ -101,9 +101,9 @@ export function createCheckpoint(flow: ProgressFlow, position: FlowPosition) {
   const next = withCanvasPositions(flow)
   let id: string
   do { id = `ckpt_${crypto.randomUUID()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
-  next.nodes[id] = makeNode('新 checkpoint')
+  next.nodes[id] = makeNode(id, '新 checkpoint')
   next.layout!.positions[id] = { ...position }
-  return { flow: next, id }
+  return { flow: next, id, localeSeeds: { [`nodes.${id}.title`]: '新 checkpoint', [`nodes.${id}.description`]: '' } }
 }
 
 export function createTransitionNode(flow: ProgressFlow, position: FlowPosition) {
@@ -112,9 +112,12 @@ export function createTransitionNode(flow: ProgressFlow, position: FlowPosition)
   let id: string
   do { id = `transition_${crypto.randomUUID()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
   next.transitions ??= {}
-  next.transitions[id] = { title: text('线性变迁'), description: text() }
+  next.transitions[id] = {
+    title: text(`transitions.${id}.title`),
+    description: text(`transitions.${id}.description`),
+  }
   next.layout!.positions[id] = { ...position }
-  return { flow: next, id }
+  return { flow: next, id, localeSeeds: { [`transitions.${id}.title`]: '线性变迁', [`transitions.${id}.description`]: '' } }
 }
 
 export function createConditionalNode(flow: ProgressFlow, position: FlowPosition) {
@@ -123,9 +126,12 @@ export function createConditionalNode(flow: ProgressFlow, position: FlowPosition
   let id: string
   do { id = `conditional_${crypto.randomUUID()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
   next.conditionals ??= {}
-  next.conditionals[id] = { title: text('条件变迁'), description: text() }
+  next.conditionals[id] = {
+    title: text(`conditionals.${id}.title`),
+    description: text(`conditionals.${id}.description`),
+  }
   next.layout!.positions[id] = { ...position }
-  return { flow: next, id }
+  return { flow: next, id, localeSeeds: { [`conditionals.${id}.title`]: '条件变迁', [`conditionals.${id}.description`]: '' } }
 }
 
 export function createDiffNode(flow: ProgressFlow, position: FlowPosition) {
@@ -134,9 +140,12 @@ export function createDiffNode(flow: ProgressFlow, position: FlowPosition) {
   let id: string
   do { id = `diff_${crypto.randomUUID()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
   next.diffs ??= {}
-  next.diffs[id] = { title: text('差分变迁'), description: text() }
+  next.diffs[id] = {
+    title: text(`diffs.${id}.title`),
+    description: text(`diffs.${id}.description`),
+  }
   next.layout!.positions[id] = { ...position }
-  return { flow: next, id }
+  return { flow: next, id, localeSeeds: { [`diffs.${id}.title`]: '差分变迁', [`diffs.${id}.description`]: '' } }
 }
 
 export function createMergeNode(flow: ProgressFlow, position: FlowPosition) {
@@ -145,9 +154,12 @@ export function createMergeNode(flow: ProgressFlow, position: FlowPosition) {
   let id: string
   do { id = `merge_${crypto.randomUUID()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
   next.merges ??= {}
-  next.merges[id] = { title: text('合并变迁'), description: text() }
+  next.merges[id] = {
+    title: text(`merges.${id}.title`),
+    description: text(`merges.${id}.description`),
+  }
   next.layout!.positions[id] = { ...position }
-  return { flow: next, id }
+  return { flow: next, id, localeSeeds: { [`merges.${id}.title`]: '合并变迁', [`merges.${id}.description`]: '' } }
 }
 
 export function createEndNode(flow: ProgressFlow, position: FlowPosition) {
@@ -167,9 +179,13 @@ export function createSwapNode(flow: ProgressFlow, position: FlowPosition) {
   let id: string
   do { id = `swap_${crypto.randomUUID()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
   next.swaps ??= {}
-  next.swaps[id] = { title: text('交换变迁'), description: text(), entries: 1 }
+  next.swaps[id] = {
+    title: text(`swaps.${id}.title`),
+    description: text(`swaps.${id}.description`),
+    entries: 1,
+  }
   next.layout!.positions[id] = { ...position }
-  return { flow: next, id }
+  return { flow: next, id, localeSeeds: { [`swaps.${id}.title`]: '交换变迁', [`swaps.${id}.description`]: '' } }
 }
 
 
@@ -179,9 +195,15 @@ export function createGoalNode(flow: ProgressFlow, position: FlowPosition) {
   let id: string
   do { id = `goal_${crypto.randomUUID()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
   next.goals ??= {}
-  next.goals[id] = { kind: 'manual', title: text('新目标'), description: text(), params: {}, nodeRefs: [] }
+  next.goals[id] = {
+    kind: 'manual',
+    title: text(`goals.${id}.title`),
+    description: text(`goals.${id}.description`),
+    params: {},
+    nodeRefs: [],
+  }
   next.layout!.positions[id] = { ...position }
-  return { flow: next, id }
+  return { flow: next, id, localeSeeds: { [`goals.${id}.title`]: '新目标', [`goals.${id}.description`]: '' } }
 }
 
 export function createPredicateNode(flow: ProgressFlow, position: FlowPosition) {
@@ -190,9 +212,15 @@ export function createPredicateNode(flow: ProgressFlow, position: FlowPosition) 
   let id: string
   do { id = `predicate_${crypto.randomUUID()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
   next.predicates ??= {}
-  next.predicates[id] = { kind: 'manual', title: text('新谓词'), description: text(), params: {}, nodeRefs: [] }
+  next.predicates[id] = {
+    kind: 'manual',
+    title: text(`predicates.${id}.title`),
+    description: text(`predicates.${id}.description`),
+    params: {},
+    nodeRefs: [],
+  }
   next.layout!.positions[id] = { ...position }
-  return { flow: next, id }
+  return { flow: next, id, localeSeeds: { [`predicates.${id}.title`]: '新谓词', [`predicates.${id}.description`]: '' } }
 }
 
 /** Notes belong only to the canvas layout; they never expose graph ports. */
@@ -261,7 +289,11 @@ export function addNextCheckpoint(flow: ProgressFlow, parent: string) {
   const checkpoint = createCheckpoint(transition.flow, place({ x: p.x + COLUMN_WIDTH, y: p.y }, transition.flow.layout!.positions))
   let next = connectNodes(checkpoint.flow, parent, transition.id, 'input2').flow
   next = connectNodes(next, transition.id, checkpoint.id).flow
-  return { flow: next, id: checkpoint.id }
+  return {
+    flow: next,
+    id: checkpoint.id,
+    localeSeeds: { ...transition.localeSeeds, ...checkpoint.localeSeeds },
+  }
 }
 
 export function moveCanvasNodes(flow: ProgressFlow, positions: Record<string, FlowPosition>) {

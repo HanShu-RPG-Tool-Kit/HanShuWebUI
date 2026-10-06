@@ -63,7 +63,7 @@ function segmentsCross(a: FlowPosition, b: FlowPosition, c: FlowPosition, d: Flo
   return side(a, b, c) * side(a, b, d) <= 0 && side(c, d, a) * side(c, d, b) <= 0
 }
 
-export function ProgressGraph({ flow, selection, onSelect, onEdit, onAddNext, onCreate, onMove, onGroup, onUngroup, onRenameGroup, onDelete, onDeleteMany, onArrange, onUpdateNote, onConnectEntry, onConnect, onDisconnect, onCut, active, disabled = false }: {
+export function ProgressGraph({ flow, selection, onSelect, onEdit, onAddNext, onCreate, onMove, onGroup, onUngroup, onRenameGroup, onDelete, onDeleteMany, onArrange, onUpdateNote, onConnectEntry, onConnect, onDisconnect, onCut, active, disabled = false, resolveText }: {
   flow: ProgressFlow; selection: FlowSelection; onSelect: (selection: FlowSelection) => void; onEdit: (selection: FlowSelection) => void
   onAddNext: (parent: string) => void; onCreate: (position: FlowPosition, operator?: CanvasNodeType) => void; onMove: (positions: Record<string, FlowPosition>) => void
   onGroup: (ids: string[]) => string | null; onUngroup: (id: string) => void; onRenameGroup: (id: string, name: string) => void
@@ -72,6 +72,7 @@ export function ProgressGraph({ flow, selection, onSelect, onEdit, onAddNext, on
   onDelete: (id: string) => void; onConnectEntry: (id: string | null) => void
   onConnect: (from: string, to: string, port: FlowInputPort, fromPort?: FlowPort) => void; onDisconnect: (selection: FlowSelection) => void; onCut: (selections: FlowSelection[]) => void
   active: boolean; disabled?: boolean
+  resolveText?: (key: string) => string | null
 }) {
   const baseLayout = useMemo(() => layoutCanvas(flow), [flow])
   const links = useMemo(() => {
@@ -101,13 +102,14 @@ export function ProgressGraph({ flow, selection, onSelect, onEdit, onAddNext, on
   const [sim, setSim] = useState<FlowSimState>(() => createSimState(flow))
   const lastAccepted = sim.log.length ? [...sim.log].reverse().find(item => item.accepted) : undefined
   const layout = useMemo(() => {
-    if (!preview || preview.flow !== flow) return baseLayout
+    if (!preview || preview.flow.id !== flow.id) return baseLayout
     const positions = new Map(baseLayout.positions), moved = Object.entries(preview.positions)
     for (const [id, position] of moved) positions.set(id, position)
     return { ...baseLayout, positions, width: Math.max(baseLayout.width, ...moved.map(([, p]) => p.x + NODE_WIDTH + 160)), height: Math.max(baseLayout.height, ...moved.map(([, p]) => p.y + NODE_HEIGHT + 160)) }
   }, [baseLayout, flow, preview])
+  const sameFlow = (other: ProgressFlow | null | undefined) => Boolean(other && other.id === flow.id)
   const missingEdges = links.filter(link => !layout.positions.has(link.from) || !layout.positions.has(link.to))
-  const menuContext = active && !disabled && context?.flow === flow ? context : null
+  const menuContext = active && !disabled && sameFlow(context?.flow) ? context : null
   const menuId = menuContext?.id ?? null, menuNode = menuId !== null ? flow.nodes[menuId] : undefined
   const menuNote = menuId !== null ? getCanvasNote(flow, menuId) : undefined
   const menuTransition = menuId !== null ? getTransitionNode(flow, menuId) : undefined
@@ -120,7 +122,7 @@ export function ProgressGraph({ flow, selection, onSelect, onEdit, onAddNext, on
   const menuEnd = menuId !== null ? getEndNode(flow, menuId) : undefined
   const menuGroup = menuContext?.groupId
   const menuEntry = menuId === flow.entry.id
-  const connecting = active && !disabled && wirePreview?.flow === flow ? wirePreview : null
+  const connecting = active && !disabled && sameFlow(wirePreview?.flow) ? wirePreview : null
   const menuLink = menuContext?.link
   const selectedIds = selection.kind === 'flow' ? (multi.flowId === flow.id ? multi.ids.filter(id => layout.positions.has(id)) : []) : selection.kind === 'entry' ? [flow.entry.id] : selection.kind === 'node' || selection.kind === 'goal' || selection.kind === 'predicate' || selection.kind === 'note' || selection.kind === 'transition' || selection.kind === 'conditional' || selection.kind === 'diff' || selection.kind === 'merge' || selection.kind === 'swap' || selection.kind === 'end' ? [selection.id] : []
   const selectedLinks = selection.kind === 'flow' ? (multi.flowId === flow.id ? multi.links.filter(link => links.some(item => sameLink(item.selection, link))) : []) : isLinkSelection(selection) ? [selection] : []
@@ -135,14 +137,14 @@ export function ProgressGraph({ flow, selection, onSelect, onEdit, onAddNext, on
   const goalLinksDiff = (id: string) => (flow.logic?.links ?? []).some(link => link.from === id && !!getDiffNode(flow, link.to))
 
   const editingNote = active && !disabled && noteDraft?.flowId === flow.id && getCanvasNote(flow, noteDraft.id) ? noteDraft : null
-  const metricsFor = (id: string) => noteSize?.flow === flow && noteSize.id === id ? { ...nodeMetrics(flow, id), width: noteSize.width, height: noteSize.height } : nodeMetrics(flow, id)
+  const metricsFor = (id: string) => noteSize && sameFlow(noteSize.flow) && noteSize.id === id ? { ...nodeMetrics(flow, id), width: noteSize.width, height: noteSize.height } : nodeMetrics(flow, id)
   const linkSelected = (link: GraphLink) => selectedLinks.some(item => sameLink(item, link.selection))
   const socketPosition = (id: string, port: FlowPort): FlowPosition => { const p = layout.positions.get(id)!, offset = socketOffset(flow, id, port); return { x: p.x + offset.x, y: p.y + offset.y } }
   const wireFixed = connecting ? socketPosition(connecting.id, connecting.port) : null
   const wireFree = connecting ? (connecting.hover ? socketPosition(connecting.hover.id, connecting.hover.port) : connecting.point) : null
   const previewPath = connecting && wireFixed && wireFree ? wirePath(isOutputPort(connecting.port) ? wireFixed : wireFree, isOutputPort(connecting.port) ? wireFree : wireFixed, connecting.hover?.id === connecting.id) : ''
-  const selectingBox = active && !disabled && boxPreview?.flow === flow ? boxPreview : null
-  const cutting = active && !disabled && knifePreview?.flow === flow ? knifePreview : null
+  const selectingBox = active && !disabled && sameFlow(boxPreview?.flow) ? boxPreview : null
+  const cutting = active && !disabled && sameFlow(knifePreview?.flow) ? knifePreview : null
   const boxRect = selectingBox ? { x: Math.min(selectingBox.start.x, selectingBox.point.x), y: Math.min(selectingBox.start.y, selectingBox.point.y), width: Math.abs(selectingBox.start.x - selectingBox.point.x), height: Math.abs(selectingBox.start.y - selectingBox.point.y) } : null
 
   useEffect(() => {
@@ -347,7 +349,7 @@ export function ProgressGraph({ flow, selection, onSelect, onEdit, onAddNext, on
     if (current?.pointer !== null && current?.pointer !== undefined && current.origin.hasPointerCapture(current.pointer)) current.origin.releasePointerCapture(current.pointer)
   }
   function finishWire(current: Wire, endpoint: SocketEndpoint) {
-    if (current.flow !== flow || disabled || !active) return
+    if (!sameFlow(current.flow) || disabled || !active) return
     const fromOut = isOutputPort(current.port)
     onConnect(fromOut ? current.id : endpoint.id, fromOut ? endpoint.id : current.id, (fromOut ? endpoint.port : current.port) as FlowInputPort, fromOut ? current.port : endpoint.port)
     viewport.current?.focus({ preventScroll: true })
@@ -363,7 +365,7 @@ export function ProgressGraph({ flow, selection, onSelect, onEdit, onAddNext, on
   }
   function socketMove(event: ReactPointerEvent<HTMLButtonElement>) {
     const current = wire.current
-    if (!current || current.pointer !== event.pointerId || current.flow !== flow || disabled || !active) return
+    if (!current || current.pointer !== event.pointerId || !sameFlow(current.flow) || disabled || !active) return
     event.stopPropagation()
     const next = { ...current, point: canvasPoint(event.clientX, event.clientY), hover: hoveredSocket(event.clientX, event.clientY, current) }
     wire.current = next; setWirePreview(next)
@@ -379,7 +381,7 @@ export function ProgressGraph({ flow, selection, onSelect, onEdit, onAddNext, on
   function keyboardSocket(element: HTMLButtonElement, id: string, port: FlowPort) {
     if (disabled || !active) return
     const current = wire.current
-    if (current?.flow === flow && validSocket(id, port, current)) { cancelWire(); finishWire(current, { id, port }); return }
+    if (current?.flow && sameFlow(current.flow) && validSocket(id, port, current)) { cancelWire(); finishWire(current, { id, port }); return }
     cancelWire()
     const next: Wire = { flow, id, port, pointer: null, origin: element, point: socketPosition(id, port), hover: null }
     wire.current = next; setWirePreview(next)
@@ -397,7 +399,7 @@ export function ProgressGraph({ flow, selection, onSelect, onEdit, onAddNext, on
     const label = port === 'output2' ? '失败' : parseSwapOutIndex(port) !== null ? `S${parseSwapOutIndex(port)! + 1}` : port === 'output' ? (getDiffNode(flow, id) ? '成功' : getTransitionNode(flow, id) || getConditionalNode(flow, id) || getMergeNode(flow, id) ? 'Next' : getGoalNode(flow, id) ? 'G 出' : getPredicateNode(flow, id) ? 'P 出' : '输出') : parseSwapInIndex(port) !== null ? `A${parseSwapInIndex(port)! + 1}` : getTransitionNode(flow, id) || getDiffNode(flow, id) ? port === 'input2' ? 'Parent' : 'Goal' : getConditionalNode(flow, id) ? port === 'input2' ? 'Parent' : 'Predicate' : getMergeNode(flow, id) ? '汇入 A' : '输入'
     return <button type="button" className={`flow-graph-socket is-${isOutputPort(port) ? 'output' : 'input'} is-kind-${kind}${connected ? ' is-connected' : ''}${compatible ? ' is-compatible' : ''}${hovered ? ' is-target' : ''}`} style={{ top: socketOffset(flow, id, port).y - 11 }} data-flow-socket={port} data-node-id={id} disabled={disabled || !active} aria-label={`${title}，${label}端口`} title="拖动到另一节点的端口连线；也可依次聚焦两个端口按 Enter" onPointerDown={event => socketDown(event, id, port)} onPointerMove={socketMove} onPointerUp={socketUp} onPointerCancel={cancelWire} onLostPointerCapture={event => { if (wire.current?.pointer === event.pointerId) cancelWire() }} onClick={event => { event.stopPropagation(); if (event.detail === 0) keyboardSocket(event.currentTarget, id, port) }} onDoubleClick={event => event.stopPropagation()} onContextMenu={event => { event.preventDefault(); event.stopPropagation(); cancelWire(); const origin = nodeElements.current.get(id); if (origin) openNodeMenu(id, origin, event.clientX, event.clientY) }} onFocus={() => {
       const current = wire.current
-      if (current?.pointer !== null || current?.flow !== flow) return
+      if (current?.pointer !== null || !current || !sameFlow(current.flow)) return
       const next = { ...current, hover: validSocket(id, port, current) ? { id, port } : null }
       wire.current = next; setWirePreview(next)
     }}><span aria-hidden="true" /></button>
@@ -453,7 +455,7 @@ export function ProgressGraph({ flow, selection, onSelect, onEdit, onAddNext, on
   }
   function pointerMove(event: ReactPointerEvent<HTMLButtonElement>) {
     const current = drag.current
-    if (!current || current.flow !== flow || current.pointer !== event.pointerId || disabled || !active) return
+    if (!current || !sameFlow(current.flow) || current.pointer !== event.pointerId || disabled || !active) return
     const dx = event.clientX - current.client.x, dy = event.clientY - current.client.y
     if (!current.moved && Math.hypot(dx, dy) < 4) return
     current.moved = true
@@ -469,7 +471,7 @@ export function ProgressGraph({ flow, selection, onSelect, onEdit, onAddNext, on
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
     if (current.moved) {
       suppressedClick.current = current.id
-      if (!cancel && current.flow === flow && active && !disabled && Object.keys(current.starts).some(id => current.positions[id].x !== current.starts[id].x || current.positions[id].y !== current.starts[id].y)) onMove(current.positions)
+      if (!cancel && sameFlow(current.flow) && active && !disabled && Object.keys(current.starts).some(id => current.positions[id].x !== current.starts[id].x || current.positions[id].y !== current.starts[id].y)) onMove(current.positions)
     }
   }
   function boxDown(event: ReactPointerEvent<HTMLDivElement>) {
@@ -494,7 +496,7 @@ export function ProgressGraph({ flow, selection, onSelect, onEdit, onAddNext, on
   }
   function boxMove(event: ReactPointerEvent<HTMLDivElement>) {
     const current = box.current
-    if (!current || current.pointer !== event.pointerId || current.flow !== flow) return
+    if (!current || current.pointer !== event.pointerId || !sameFlow(current.flow)) return
     const point = canvasPoint(event.clientX, event.clientY), next = { ...current, point, moved: current.moved || Math.hypot(event.clientX - current.client.x, event.clientY - current.client.y) >= 3 }
     box.current = next; setBoxPreview(next)
     const left = Math.min(current.start.x, point.x), right = Math.max(current.start.x, point.x), top = Math.min(current.start.y, point.y), bottom = Math.max(current.start.y, point.y)
@@ -520,7 +522,7 @@ export function ProgressGraph({ flow, selection, onSelect, onEdit, onAddNext, on
   }
   function knifeMove(event: ReactPointerEvent<HTMLDivElement>) {
     const current = knife.current
-    if (!current || current.pointer !== event.pointerId || current.flow !== flow || disabled || !active) return
+    if (!current || current.pointer !== event.pointerId || !sameFlow(current.flow) || disabled || !active) return
     const events = event.nativeEvent.getCoalescedEvents?.() ?? [], points = [...current.points], cuts = new Set(current.cuts)
     for (const sample of events.length ? events : [event]) {
       const point = canvasPoint(sample.clientX, sample.clientY), last = points[points.length - 1]
@@ -540,7 +542,7 @@ export function ProgressGraph({ flow, selection, onSelect, onEdit, onAddNext, on
     const current = knife.current!
     knife.current = null; setKnifePreview(null); blankClick.current = null
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
-    if (!cancel && current.flow === flow && active && !disabled && current.cuts.length) onCut(current.cuts.map(index => links[index].selection))
+    if (!cancel && sameFlow(current.flow) && active && !disabled && current.cuts.length) onCut(current.cuts.map(index => links[index].selection))
   }
   function locateEntry() {
     const element = viewport.current!, entry = layout.positions.get(flow.entry.id)!, metrics = nodeMetrics(flow, flow.entry.id)
@@ -613,7 +615,7 @@ export function ProgressGraph({ flow, selection, onSelect, onEdit, onAddNext, on
       <div className="flow-graph-size">
         <div ref={canvas} className="flow-graph-canvas" style={{ width: layout.width, height: layout.height, transform: `translate(${camera.x}px, ${camera.y}px) scale(${zoom})` }}>
           {groups.map(group => {
-            const bounds = groupBounds(group.nodes), moving = preview?.flow === flow && group.nodes.some(id => Object.hasOwn(preview.positions, id))
+            const bounds = groupBounds(group.nodes), moving = Boolean(preview && sameFlow(preview.flow) && group.nodes.some(id => Object.hasOwn(preview.positions, id)))
             return <div key={group.id} className={`flow-graph-group${selectedGroup?.id === group.id ? ' is-selected' : ''}${moving ? ' is-moving' : ''}`} style={{ left: bounds.x, top: bounds.y, width: bounds.width, height: bounds.height }}>
               {editingGroup?.id === group.id ? <input ref={groupNameInput} className="flow-graph-group-name-input" style={{ width: Math.min(280, bounds.width - 24) }} aria-label="Group 名称" value={editingGroup.value} onChange={event => setGroupRename({ ...editingGroup, value: event.target.value })} onBlur={() => finishGroupRename(true, false)} onPointerDown={event => event.stopPropagation()} onContextMenu={event => event.stopPropagation()} onKeyDown={event => {
                 event.stopPropagation()
@@ -651,7 +653,7 @@ export function ProgressGraph({ flow, selection, onSelect, onEdit, onAddNext, on
           </svg>
           {layout.ids.map(id => {
             const note = getCanvasNote(flow, id)
-            if (note) return <CanvasNote key={id} id={id} note={note} position={layout.positions.get(id)!} zoom={zoom} selected={selectedNode(id)} dragging={preview?.flow === flow && Object.hasOwn(preview.positions, id)} disabled={disabled || !active}
+            if (note) return <CanvasNote key={id} id={id} note={note} position={layout.positions.get(id)!} zoom={zoom} selected={selectedNode(id)} dragging={Boolean(preview && sameFlow(preview.flow) && Object.hasOwn(preview.positions, id))} disabled={disabled || !active}
               draft={editingNote?.id === id ? editingNote.value : null} bodyRef={element => { if (element) nodeElements.current.set(id, element); else nodeElements.current.delete(id) }}
               onEdit={() => beginNoteEdit(id)} onDraft={value => setNoteDraft({ flowId: flow.id, id, value })} onFinish={finishNoteEdit} onSelect={() => selectNode(id)} onDelete={() => onDelete(id)} onUpdate={patch => onUpdateNote(id, patch)} onSizePreview={size => setNoteSize(size ? { flow, id, ...size } : null)}
               onPointerDown={event => { cancelWire(); pointerDown(event, id) }} onPointerMove={pointerMove} onPointerUp={pointerUp} onContextMenu={(origin, x, y) => openNodeMenu(id, origin, x, y)} />
@@ -659,7 +661,7 @@ export function ProgressGraph({ flow, selection, onSelect, onEdit, onAddNext, on
             if (end) {
               const position = layout.positions.get(id)!, metrics = nodeMetrics(flow, id), selected = selectedNode(id)
               const incomingCount = links.filter(link => link.to === id).length
-              return <div key={id} data-canvas-node={id} className={`flow-graph-node is-end${selected ? ' is-selected' : ''}${preview?.flow === flow && Object.hasOwn(preview.positions, id) ? ' is-dragging' : ''}`} style={{ left: position.x, top: position.y, width: metrics.width, height: metrics.height }}>
+              return <div key={id} data-canvas-node={id} className={`flow-graph-node is-end${selected ? ' is-selected' : ''}${Boolean(preview && sameFlow(preview.flow) && Object.hasOwn(preview.positions, id)) ? ' is-dragging' : ''}`} style={{ left: position.x, top: position.y, width: metrics.width, height: metrics.height }}>
                 <button type="button" ref={element => { if (element) nodeElements.current.set(id, element); else nodeElements.current.delete(id) }} className="flow-graph-node-body" disabled={disabled} aria-pressed={selected} aria-haspopup="menu" aria-expanded={!menuLink && menuId === id} aria-label={`结束节点 ${id}`} title={`${id}\n流程终点 · 仅输入\n拖动调整位置 · Delete 删除`} onPointerDown={event => { cancelWire(); pointerDown(event, id) }} onPointerMove={pointerMove} onPointerUp={event => pointerUp(event)} onPointerCancel={event => pointerUp(event, true)} onLostPointerCapture={event => pointerUp(event, true)} onClick={event => {
                   if (suppressedClick.current === id) { suppressedClick.current = null; return }
                   if (event.detail === 0) selectNode(id)
@@ -694,16 +696,16 @@ export function ProgressGraph({ flow, selection, onSelect, onEdit, onAddNext, on
             const transitionAwait = transitionQuery?.awaiting.length ?? 0
             const transitionReported = transitionQuery?.reported.length ?? 0
             const goalIncoming = transition ? links.filter(link => link.to === id && link.port === 'input').length : 0
-            const title = isEntry ? '开始' : displayText((swap ?? merge ?? diff ?? conditional ?? transition ?? predicate ?? goal ?? node)!.title) || (swap ? '交换变迁' : merge ? '合并变迁' : diff ? '差分变迁' : conditional ? '条件变迁' : transition ? '线性变迁' : predicate ? '未命名谓词' : goal ? '未命名目标' : '未命名阶段')
+            const title = isEntry ? '开始' : displayText((swap ?? merge ?? diff ?? conditional ?? transition ?? predicate ?? goal ?? node)!.title, resolveText) || (swap ? '交换变迁' : merge ? '合并变迁' : diff ? '差分变迁' : conditional ? '条件变迁' : transition ? '线性变迁' : predicate ? '未命名谓词' : goal ? '未命名目标' : '未命名阶段')
             const outgoingCount = links.filter(link => link.from === id && linkSourcePort(flow, link.from, link.to, link.port, link.fromPort) === 'output').length
             const incomingCount = links.filter(link => link.to === id).length
             const bridgeOut = links.some(link => link.from === id && linkSourcePort(flow, link.from, link.to, link.port, link.fromPort) === 'output2')
-            const description = node ? displayText(node.description) : goal ? goal.kind === 'counter' ? `${GOAL_NAMES[goal.kind]} · ${goal.params.target ?? 1}` : GOAL_NAMES[goal.kind] : predicate ? predicate.kind === 'counter' ? `${PREDICATE_NAMES[predicate.kind]} · ${predicate.params.target ?? 1}` : PREDICATE_NAMES[predicate.kind] : ''
+            const description = node ? displayText(node.description, resolveText) : goal ? goal.kind === 'counter' ? `${GOAL_NAMES[goal.kind]} · ${goal.params.target ?? 1}` : GOAL_NAMES[goal.kind] : predicate ? predicate.kind === 'counter' ? `${PREDICATE_NAMES[predicate.kind]} · ${predicate.params.target ?? 1}` : PREDICATE_NAMES[predicate.kind] : ''
             const pulsed = lastAccepted && (lastAccepted.to === id || lastAccepted.from === id) && sim.pulse > 0
             const isSignalSource = isEntry || (goal && goalRuntime === 'subscribed') || (predicate && predicateRuntime === 'subscribed')
             const goalDiff = goal ? goalLinksDiff(id) : false
             const kindLabel = swap ? '交换变迁' : merge ? '合并变迁' : diff ? '差分变迁' : conditional ? '条件变迁' : transition ? '线性变迁' : predicate ? `Predicate · ${PREDICATE_STATES[predicateRuntime!]}${predicateRuntime === 'subscribed' ? '；Ctrl+点击发出 P' : ''}` : goal ? `Goal · ${GOAL_STATES[goalRuntime!]}${goalRuntime === 'subscribed' ? (goalDiff ? '；Ctrl+G-Y · Ctrl+Shift+G-N' : '；Ctrl+点击发出 G') : ''}` : `checkpoint · ${CKPT_STATES[runtime!]}`
-            return <div key={id} data-canvas-node={id} data-ckpt-state={runtime ?? undefined} data-goal-state={goalRuntime ?? undefined} data-predicate-state={predicateRuntime ?? undefined} className={`flow-graph-node${isEntry ? ' is-entry' : ''}${isSignalSource ? ' is-signal-source' : ''}${goal ? ` is-goal is-goal-${goalRuntime}` : ''}${predicate ? ` is-predicate is-predicate-${predicateRuntime}` : ''}${transition ? ' is-transition' : ''}${conditional ? ' is-conditional' : ''}${diff ? ' is-diff' : ''}${merge ? ' is-merge' : ''}${swap ? ' is-swap' : ''}${node ? ` is-ckpt is-ckpt-${runtime}` : ''}${selected ? ' is-selected' : ''}${pulsed ? ' is-sim-pulse' : ''}${preview?.flow === flow && Object.hasOwn(preview.positions, id) ? ' is-dragging' : ''}`} style={{ left: position.x, top: position.y, width: metrics.width, height: metrics.height }}>
+            return <div key={id} data-canvas-node={id} data-ckpt-state={runtime ?? undefined} data-goal-state={goalRuntime ?? undefined} data-predicate-state={predicateRuntime ?? undefined} className={`flow-graph-node${isEntry ? ' is-entry' : ''}${isSignalSource ? ' is-signal-source' : ''}${goal ? ` is-goal is-goal-${goalRuntime}` : ''}${predicate ? ` is-predicate is-predicate-${predicateRuntime}` : ''}${transition ? ' is-transition' : ''}${conditional ? ' is-conditional' : ''}${diff ? ' is-diff' : ''}${merge ? ' is-merge' : ''}${swap ? ' is-swap' : ''}${node ? ` is-ckpt is-ckpt-${runtime}` : ''}${selected ? ' is-selected' : ''}${pulsed ? ' is-sim-pulse' : ''}${Boolean(preview && sameFlow(preview.flow) && Object.hasOwn(preview.positions, id)) ? ' is-dragging' : ''}`} style={{ left: position.x, top: position.y, width: metrics.width, height: metrics.height }}>
               <button type="button" ref={element => { if (element) nodeElements.current.set(id, element); else nodeElements.current.delete(id) }} className="flow-graph-node-body" disabled={disabled} aria-pressed={selected} aria-haspopup="menu" aria-expanded={!menuLink && menuId === id} aria-label={isEntry ? '开始节点（信号源），不可删除；Ctrl+点击发出 S(未激活 → 已激活)' : `${title}，${kindLabel} ${id}`} title={isEntry ? '开始节点 · 信号源\nCtrl+点击发出 S(未激活 → 已激活)\n可自由移动，不可删除' : goal ? `${id}\n状态：${GOAL_STATES[goalRuntime!]}\n${goalRuntime === 'subscribed' ? (goalDiff ? 'Ctrl+点击发出 G-Y\nCtrl+Shift+点击发出 G-N\n' : 'Ctrl+点击发出 G\n') : ''}拖动调整位置 · Delete 删除` : predicate ? `${id}\n状态：${PREDICATE_STATES[predicateRuntime!]}\n${predicateRuntime === 'subscribed' ? 'Ctrl+点击发出 P\n' : ''}拖动调整位置 · Delete 删除` : node ? `${id}\n${runtime ? `状态：${CKPT_STATES[runtime]}\n` : ''}拖动调整位置 · 双击编辑 · Delete 删除` : `${id}\n${merge ? `查询回报 ${mergeReported}/${mergeAwait || incomingCount}\n` : ''}${swap ? `条目 ${swap.entries}（末槽空闲自动扩容）\n` : ''}拖动调整位置 · Delete 删除`} onPointerDown={event => { cancelWire(); pointerDown(event, id) }} onPointerMove={pointerMove} onPointerUp={event => pointerUp(event)} onPointerCancel={event => pointerUp(event, true)} onLostPointerCapture={event => pointerUp(event, true)} onClick={event => {
               if (suppressedClick.current === id) { suppressedClick.current = null; return }
               if (event.detail === 0) selectNode(id)
@@ -741,7 +743,7 @@ export function ProgressGraph({ flow, selection, onSelect, onEdit, onAddNext, on
     </div>
     {missingEdges.length > 0 && <div className="flow-graph-extra" aria-label="需要检查的连接"><span>端点不存在的连接</span>{missingEdges.map((link, index) => <button key={index} type="button" disabled={disabled} onClick={() => onEdit(link.selection)}>{link.from} → {link.to}</button>)}</div>}
     <div className="flow-graph-legend"><span><i className="is-entry" />开始 · 信号源</span><span><i className="is-checkpoint" />Checkpoint</span><span><i className="is-end" />结束</span><span><i className="is-goal" />Goal</span><span><i className="is-predicate" />Predicate</span><span><i className="is-transition" />线性变迁</span><span><i className="is-conditional" />条件变迁</span><span><i className="is-diff" />差分变迁</span><span><i className="is-merge" />合并变迁</span><span><i className="is-swap" />交换变迁</span><span role="status">{panning ? '右键拖动画布 · 松开结束' : cutting ? `小刀 · ${cutting.cuts.length} 条连线待切割 · 松开确认 · Esc 取消` : connecting ? connecting.pointer === null ? '聚焦另一高亮端口，按 Enter 完成 · Esc 取消' : '松开到高亮端口完成连线 · Esc 取消' : selectionCount > 1 ? `${selectedIds.length ? `${selectedIds.length} 节点` : ''}${selectedIds.length && selectedLinks.length ? ' · ' : ''}${selectedLinks.length ? `${selectedLinks.length} 连线` : ''}已选 · Delete 删除/断开` : 'Ctrl+点击信号源发信号 · 右键拖动平移 · 滚轮缩放'}</span></div>
-    {menuContext && <NodeContextMenu className="is-graph-menu" x={menuContext.x} y={menuContext.y} title={menuMulti ? `已选择 ${selectionCount} 项` : menuGroup ? groups.find(group => group.id === menuGroup)?.name || 'Group' : menuLink ? `${menuLink.from} → ${menuLink.to}` : menuEntry ? '开始' : menuEnd ? '结束' : menuNode ? displayText(menuNode.title) || menuId! : menuSwap ? displayText(menuSwap.title) || '交换变迁' : menuMerge ? displayText(menuMerge.title) || '合并变迁' : menuDiff ? displayText(menuDiff.title) || '差分变迁' : menuConditional ? displayText(menuConditional.title) || '条件变迁' : menuTransition ? displayText(menuTransition.title) || '线性变迁' : menuPredicate ? displayText(menuPredicate.title) || 'Predicate' : menuGoal ? displayText(menuGoal.title) || 'Goal' : menuNote ? menuNote.title || '注释' : '节点画布'} label={menuMulti ? '多选操作' : menuLink ? '连接操作' : menuGroup ? 'Group 操作' : menuId === null ? '画布操作' : '节点操作'} onClose={closeMenu} items={menuMulti ? [
+    {menuContext && <NodeContextMenu className="is-graph-menu" x={menuContext.x} y={menuContext.y} title={menuMulti ? `已选择 ${selectionCount} 项` : menuGroup ? groups.find(group => group.id === menuGroup)?.name || 'Group' : menuLink ? `${menuLink.from} → ${menuLink.to}` : menuEntry ? '开始' : menuEnd ? '结束' : menuNode ? displayText(menuNode.title, resolveText) || menuId! : menuSwap ? displayText(menuSwap.title, resolveText) || '交换变迁' : menuMerge ? displayText(menuMerge.title, resolveText) || '合并变迁' : menuDiff ? displayText(menuDiff.title, resolveText) || '差分变迁' : menuConditional ? displayText(menuConditional.title, resolveText) || '条件变迁' : menuTransition ? displayText(menuTransition.title, resolveText) || '线性变迁' : menuPredicate ? displayText(menuPredicate.title, resolveText) || 'Predicate' : menuGoal ? displayText(menuGoal.title, resolveText) || 'Goal' : menuNote ? menuNote.title || '注释' : '节点画布'} label={menuMulti ? '多选操作' : menuLink ? '连接操作' : menuGroup ? 'Group 操作' : menuId === null ? '画布操作' : '节点操作'} onClose={closeMenu} items={menuMulti ? [
       ...(selectedIds.length > 1 ? [{ label: '智能排版', hint: '微调现有行列对齐和接近等距的间距，保留整体布局', action: arrangeSelection }] : []),
       ...(selectedIds.length > 1 ? (selectedGroup ? [{ label: '重命名 Group…', action: () => beginGroupRename(selectedGroup.id) }, { label: '解除 Group', action: () => ungroupSelection(selectedGroup.id) }] : [{ label: `Group · ${selectedIds.length} 项`, action: groupSelection, disabled: selectedIds.length < 2 }]) : []),
       ...(selectedLinks.length ? [{ label: `断开所选连接（${selectedLinks.length}）`, hint: '仅移除这些连接，节点原地保留', action: disconnectSelectedLinks }] : []),

@@ -1,6 +1,25 @@
 import { isObject } from './model'
-import { isScriptDocument, parseSectionFolderKey, sectionFolderKey, ensurePackageSections } from './library'
-import { stampDocument, type FlowDocument, type FlowWorkspaceState } from './storage'
+import {
+  isScriptDocument,
+  parseSectionFolderKey,
+  sectionFolderKey,
+  ensurePackageSections,
+  BUILTIN_GOAL_FOLDER_KEY,
+  builtinGoalDocumentKey,
+  isBuiltinGoalDocumentKey,
+  isBuiltinGoalFolder,
+} from './library'
+import { stampDocument, type FlowDocument, type FlowFolder, type FlowWorkspaceState } from './storage'
+import { BUILTIN_GOAL_DEFINITION_SCRIPTS } from './builtinGoals'
+
+export {
+  BUILTIN_GOAL_FOLDER_KEY,
+  builtinGoalDocumentKey,
+  isBuiltinGoalDocumentKey,
+  isBuiltinGoalFolder,
+} from './library'
+
+export { BUILTIN_GOAL_DEFINITION_SCRIPTS } from './builtinGoals'
 
 export type GoalConfigFieldType = 'string' | 'int' | 'float' | 'bool'
 export type GoalConfigValue = string | number | boolean
@@ -139,17 +158,62 @@ export function isGoalDefinitionDocument(state: FlowWorkspaceState, document: Fl
   return false
 }
 
+/** 「目标定义 / 内置」虚拟文件夹（稳定键，不进 UI 持久化）。 */
+export function builtinGoalDefinitionFolder(): FlowFolder {
+  return {
+    key: BUILTIN_GOAL_FOLDER_KEY,
+    name: '内置',
+    parentId: sectionFolderKey('script', 'goal-def'),
+    package: 'script',
+  }
+}
+
+export function builtinGoalDefinitionDocuments(): FlowDocument[] {
+  return BUILTIN_GOAL_DEFINITION_SCRIPTS.map((item) => stampDocument({
+    key: builtinGoalDocumentKey(item.name),
+    name: item.name,
+    source: item.source,
+    package: 'script',
+    folderId: BUILTIN_GOAL_FOLDER_KEY,
+  }))
+}
+
+/** 把虚拟内置文件夹与脚本叠进工作区视图（不落盘）。 */
+export function withBuiltinGoalDefinitions(state: FlowWorkspaceState): FlowWorkspaceState {
+  const next = ensurePackageSections(state)
+  const folder = builtinGoalDefinitionFolder()
+  const builtins = builtinGoalDefinitionDocuments()
+  const folders = next.folders.some((item) => item.key === folder.key)
+    ? next.folders
+    : [...next.folders, folder]
+  const existing = new Set(next.documents.map((document) => document.key))
+  const documents = [
+    ...next.documents,
+    ...builtins.filter((document) => !existing.has(document.key)),
+  ]
+  return { ...next, folders, documents }
+}
+
+/** 去掉虚拟内置项，避免写入工程 / UI 状态。 */
+export function stripBuiltinGoalDefinitions(state: FlowWorkspaceState): FlowWorkspaceState {
+  return {
+    ...state,
+    documents: state.documents.filter((document) => !isBuiltinGoalDocumentKey(document.key)),
+    folders: state.folders.filter((folder) => !isBuiltinGoalFolder(folder.key)),
+  }
+}
+
 /**
- * 目标定义管理器：扫描工作区「目标定义」下的 .py，解析为 kind 目录。
- * 同 kind 后者覆盖前者，并记一条错误。
+ * 目标定义管理器：扫描「目标定义」下的 .py（含虚拟内置），解析为 kind 目录。
+ * 先收内置，再收工程脚本 —— 同 kind 时工程侧覆盖内置。
  */
 export function buildGoalDefinitionCatalog(state: FlowWorkspaceState): GoalDefinitionCatalog {
+  const view = withBuiltinGoalDefinitions(state)
   const definitions: GoalDefinition[] = []
   const errors: GoalDefinitionCatalog['errors'] = []
   const byKind = new Map<string, GoalDefinition>()
 
-  for (const document of state.documents) {
-    if (!isGoalDefinitionDocument(state, document)) continue
+  const ingest = (document: FlowDocument) => {
     try {
       const parsed = parseGoalDefinitionsFromSource(document.source, {
         sourceKey: document.key,
@@ -157,10 +221,10 @@ export function buildGoalDefinitionCatalog(state: FlowWorkspaceState): GoalDefin
       })
       if (!parsed.length) {
         errors.push({ sourceKey: document.key, sourceName: document.name, message: '未找到 @goal(…) 声明' })
-        continue
+        return
       }
       for (const def of parsed) {
-        if (byKind.has(def.kind)) {
+        if (byKind.has(def.kind) && !isBuiltinGoalDocumentKey(document.key)) {
           errors.push({
             sourceKey: document.key,
             sourceName: document.name,
@@ -178,6 +242,18 @@ export function buildGoalDefinitionCatalog(state: FlowWorkspaceState): GoalDefin
     }
   }
 
+  // 内置先入；工程脚本后入以覆盖同 kind
+  for (const document of view.documents) {
+    if (!isBuiltinGoalDocumentKey(document.key)) continue
+    if (!isGoalDefinitionDocument(view, document)) continue
+    ingest(document)
+  }
+  for (const document of view.documents) {
+    if (isBuiltinGoalDocumentKey(document.key)) continue
+    if (!isGoalDefinitionDocument(view, document)) continue
+    ingest(document)
+  }
+
   for (const def of byKind.values()) definitions.push(def)
   definitions.sort((a, b) => a.kind.localeCompare(b.kind, 'en'))
   return { definitions, byKind, errors }
@@ -185,89 +261,6 @@ export function buildGoalDefinitionCatalog(state: FlowWorkspaceState): GoalDefin
 
 export function lookupGoalDefinition(catalog: GoalDefinitionCatalog, kind: string): GoalDefinition | undefined {
   return catalog.byKind.get(kind)
-}
-
-/** 内置样例脚本：仅在「目标定义」下还没有任何 .py 时写入，可改可删。 */
-export const BUILTIN_GOAL_DEFINITION_SCRIPTS: { name: string; source: string }[] = [
-  {
-    name: 'core_dialogue_choice.py',
-    source: `# core:dialogue_choice — satisfy when a specific dialogue choice id is accepted.
-PlayerDialogueEvent = java_type("mchhui.rpgtoolkit.feature.talk.PlayerDialogueEvent")
-ServerPlayer = java_type("net.minecraft.server.level.ServerPlayer")
-
-
-@goal("core:dialogue_choice")
-@config(
-    field("choice", "string", required=True, hint="dialogue_choice"),
-    field("node", "string", default="", hint="dialogue_node"),
-)
-@state(
-    field("have", "int", default=0),
-)
-class DialogueChoiceGoal(BaseGoalPy):
-    @subscribe(PlayerDialogueEvent)
-    def on_dialogue(self, instance, event):
-        p = event.getPlayer()
-        if not instanceof(p, ServerPlayer) or not instance.isOwner(p):
-            return
-        if str(cfg.choice) != str(event.getChoiceId()):
-            return
-        if cfg.node and str(cfg.node) != str(event.getNodeId()):
-            return
-        st.have = 1
-
-    def update_state(self, instance):
-        self.update_satisfied_state(instance, st.have >= 1)
-`,
-  },
-  {
-    name: 'core_manual.py',
-    source: `# core:manual — author / GM marks satisfied.
-
-@goal("core:manual")
-@config()
-class ManualGoal(BaseGoalPy):
-    def update_state(self, instance):
-        self.update_satisfied_state(instance, False)
-`,
-  },
-  {
-    name: 'core_counter.py',
-    source: `# core:counter — reach a numeric target (event wiring is engine-side).
-
-@goal("core:counter")
-@config(
-    field("event", "string", required=True, hint="event_id"),
-    field("target", "int", default=1),
-)
-@state(
-    field("count", "int", default=0),
-)
-class CounterGoal(BaseGoalPy):
-    def update_state(self, instance):
-        self.update_satisfied_state(instance, st.count >= int(cfg.target))
-`,
-  },
-]
-
-/** 若目标定义分区下尚无脚本，生成内置样例（写入本机草稿库）。 */
-export function ensureBuiltinGoalDefinitions(state: FlowWorkspaceState): FlowWorkspaceState {
-  const next = ensurePackageSections(state)
-  const section = sectionFolderKey('script', 'goal-def')
-  const hasGoalScript = next.documents.some((document) => isGoalDefinitionDocument(next, document))
-  if (hasGoalScript) return next
-  const documents = [...next.documents]
-  for (const item of BUILTIN_GOAL_DEFINITION_SCRIPTS) {
-    if (documents.some((document) => document.package === 'script' && document.name === item.name)) continue
-    documents.push(stampDocument({
-      key: crypto.randomUUID(),
-      name: item.name,
-      source: item.source,
-      package: 'script',
-      folderId: section,
-    }))
-  }
-  return { ...next, documents }
 }
 
 export function isGoalDefinitionCatalog(value: unknown): value is GoalDefinitionCatalog {

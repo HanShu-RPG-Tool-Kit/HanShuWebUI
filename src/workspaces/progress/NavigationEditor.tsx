@@ -43,13 +43,21 @@ function Field({ label, hint, wide, children }: { label: string; hint?: string; 
   </label>
 }
 
-export function NavigationEditor({ point, error, disabled, onChange }: {
+export function NavigationEditor({ point, error, disabled, onChange, resolveText, setText }: {
   point: NavigationPoint
   error?: string
   disabled?: boolean
   onChange: (source: string) => void
+  resolveText?: (key: string) => string
+  setText?: (key: string, value: string) => void
 }) {
   const update = (patch: Partial<NavigationPoint>) => onChange(stringifyNavigationPoint({ ...point, ...patch }))
+  const readText = (key: string) => resolveText?.(key) ?? key
+  const writeLabel = (value: string) => {
+    if (disabled) return
+    if (setText) setText(point.label, value)
+    else update({ label: value })
+  }
   const issues = validateNavigationPoint(point)
   const preview = stringifyNavigationPoint(point).trimEnd()
   const isPosition = point.type === 'position'
@@ -68,11 +76,11 @@ export function NavigationEditor({ point, error, disabled, onChange }: {
             <input
               type="text"
               disabled={disabled}
-              value={point.label}
+              value={readText(point.label)}
               maxLength={NAV_LABEL_MAX}
               placeholder="例如：旧塔"
               aria-label="label"
-              onChange={(event) => update({ label: event.target.value })}
+              onChange={(event) => writeLabel(event.target.value)}
             />
           </Field>
           <Field label="追踪类型" hint="可扩展">

@@ -37,11 +37,18 @@ export function createProgressGoal(kind: string, _definitions: readonly GoalDefi
   return { id: uid(), kind, config: {} }
 }
 export function createProgress(name = '新建进度', _definitions: readonly GoalDefinition[] = []): ProgressDocument {
+  void name
   return {
-    format: PROGRESS_FORMAT, version: 1, id: uid(), name, description: '', authorNotes: '', tags: [],
+    format: PROGRESS_FORMAT, version: 1, id: uid(),
+    name: 'name', description: 'description', authorNotes: '', tags: [],
     completion: 'all', goals: [], visibility: [], acceptance: [],
     abandonable: true, repeat: { kind: 'once', hours: 24 }, rewardKits: [],
   }
+}
+
+/** 新建进度时写入默认语的文案种子（文档字段已是语义键） */
+export function createProgressLocaleSeeds(name = '新建进度'): Record<string, string> {
+  return { name: name.trim() || '新建进度', description: '' }
 }
 export function goalLabel(goal: ProgressGoal, definitions: readonly GoalDefinition[] = []) {
   return definitions.find(item => item.kind === goal.kind)?.label || goal.kind || '未选择目标类型'
@@ -132,9 +139,17 @@ export function moveProgressGoal(doc: ProgressDocument, goalId: string, targetIn
 export function duplicateProgressGoal(goal: ProgressGoal): ProgressGoal {
   return { ...goal, id: uid(), config: { ...goal.config } }
 }
-export function progressIssues(doc: ProgressDocument, definitions: readonly GoalDefinition[]): string[] {
+export function progressIssues(
+  doc: ProgressDocument,
+  definitions: readonly GoalDefinition[],
+  resolveText?: ((key: string) => string | null) | null,
+): string[] {
   const issues: string[] = []
-  if (!doc.name.trim()) issues.push('请填写进度名称')
+  if (resolveText) {
+    if (!(resolveText(doc.name) ?? '').trim()) issues.push('请填写进度名称')
+  } else if (doc.name !== 'name' && !doc.name.trim()) {
+    issues.push('请填写进度名称')
+  }
   if (!doc.goals.length) issues.push('添加至少一个目标')
   for (const goal of doc.goals) {
       const definition = definitions.find(item => item.kind === goal.kind)

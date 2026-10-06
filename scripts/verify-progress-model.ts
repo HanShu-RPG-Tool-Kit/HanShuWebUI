@@ -13,10 +13,10 @@ function test(name: string, check: () => void) { check(); passed++; console.log(
 const errors = (f: ProgressFlow) => validateFlow(f).filter((i) => i.severity === 'error')
 function fixture() {
   const flow = createFlow('story-progress', '驿站的约定')
-  flow.nodes.start = makeNode('收到委托'); flow.entry.target = 'start'
-  flow.nodes.node_1 = makeNode('阶段 1')
-  flow.nodes.node_2 = makeNode('阶段 2')
-  flow.nodes.node_3 = makeNode('阶段 3')
+  flow.nodes.start = makeNode('start'); flow.entry.target = 'start'
+  flow.nodes.node_1 = makeNode('node_1')
+  flow.nodes.node_2 = makeNode('node_2')
+  flow.nodes.node_3 = makeNode('node_3')
   return flow
 }
 function linkViaTransition(flow: ProgressFlow, fromCkpt: string, toCkpt: string) {
@@ -31,7 +31,8 @@ test('A portable flow has lean checkpoints; routing uses transitions', () => {
   for (const node of Object.values(flow.nodes)) {
     assert.deepEqual(Object.keys(node).sort(), ['description', 'title'])
   }
-  assert.equal(flow.entry.title.text, '驿站的约定')
+  assert.equal(flow.entry.title.text, 'entry.title')
+  assert.equal(flow.entry.description.text, 'entry.description')
   const linked = linkViaTransition(flow, 'start', 'node_1')
   assert.equal(linked.flow.logic!.links.length, 2)
   assert.equal(errors(linked.flow).length, 0)
@@ -87,7 +88,8 @@ test('Renaming a node updates transition endpoints and preserves resources', () 
   const linked = linkViaTransition(flow, 'start', 'node_1')
   const next = renameNode(linked.flow, 'node_1', 'prepare')
   assert.equal(next.logic!.links.find(link => link.to === 'prepare')!.to, 'prepare')
-  assert.equal(next.nodes.prepare.title.text, flow.nodes.node_1.title.text)
+  assert.equal(next.nodes.prepare.title.text, 'nodes.prepare.title')
+  assert.equal(next.nodes.prepare.description.text, 'nodes.prepare.description')
   assert.throws(() => renameNode(next, 'prepare', 'constructor'))
   assert.throws(() => renameNode(next, 'prepare', 'node_2'))
 })
@@ -168,7 +170,7 @@ test('A new canvas has one immutable entry and freely created checkpoints', () =
   assert.equal(empty.entry.target, null)
   assert.equal(Object.hasOwn(empty.entry, 'kind'), false)
   assert.equal(empty.entry.title.text, createFlow().entry.title.text)
-  assert.equal(empty.entry.description.text, '')
+  assert.equal(empty.entry.description.text, 'entry.description')
   assert.deepEqual(empty.nodes, {})
   assert.equal(layoutCanvas(empty).positions.size, 1)
   assert.equal(errors(parseFlow(JSON.stringify(empty))).length, 0)
@@ -358,11 +360,12 @@ test('Nested resource folders persist without changing flow content or active id
 })
 test('Resource name collisions are rejected and repeated imports receive distinct names', () => {
   const doc = { ...createFlowDocument(), name: '故事.hflow' }, state = { documents: [doc], folders: [], activeKey: doc.key }
-  assert.throws(() => addFlowFolder(state, '故事.hflow', 'story', null), /同名/)
+  // 文件夹只与同级文件夹比名；文档在分类内全局唯一（跨文件夹也不许重名）
+  const folder = addFlowFolder(state, '章节', 'story', null)
+  assert.throws(() => addFlowFolder(folder.state, '章节', 'story', null), /同名/)
   assert.throws(() => renameFlowEntry(state, { kind: 'document', key: doc.key }, '../故事'), /有效名称/)
   assert.equal(uniqueDocumentName(state, '故事.hflow', 'story', null), '故事 (2).hflow')
-  const folder = addFlowFolder(state, '章节', 'story', null)
-  assert.equal(uniqueDocumentName(folder.state, '故事.hflow', 'story', folder.folder.key), '故事.hflow')
+  assert.equal(uniqueDocumentName(folder.state, '故事.hflow', 'story', folder.folder.key), '故事 (2).hflow')
 })
 test('Broken folder references and cycles cannot silently hide saved documents', () => {
   const doc = { ...createFlowDocument(), folderId: 'missing' }
@@ -756,7 +759,7 @@ test('Unconnected start records a rejected pulse without mutating checkpoints', 
 
 test('Merge node create, roundtrip, multi-in single-out cardinality', () => {
   const merge = createMergeNode(fixture(), { x: 200, y: 100 })
-  assert.equal(merge.flow.merges![merge.id].title.text, '合并变迁')
+  assert.equal(merge.flow.merges![merge.id].title.text, `merges.${merge.id}.title`)
   assert.deepEqual(inputPorts(merge.flow, merge.id), ['input'])
   assert.deepEqual(outputPorts(merge.flow, merge.id), ['output'])
   assert.deepEqual(parseFlow(JSON.stringify(merge.flow)).merges, merge.flow.merges)
@@ -890,7 +893,7 @@ test('Active ckpt on S-C emits G-C; linear transition forwards D from Goal', () 
 
 test('Swap node defaults to one entry and auto-expands when last slot is used', () => {
   const swap = createSwapNode(fixture(), { x: 200, y: 100 })
-  assert.equal(swap.flow.swaps![swap.id].title.text, '交换变迁')
+  assert.equal(swap.flow.swaps![swap.id].title.text, `swaps.${swap.id}.title`)
   assert.equal(swap.flow.swaps![swap.id].entries, 1)
   assert.deepEqual(inputPorts(swap.flow, swap.id), ['in0'])
   assert.deepEqual(outputPorts(swap.flow, swap.id), ['out0'])
@@ -1016,8 +1019,8 @@ test('Conditional node Predicate/Parent/Next are single-wire; Goal cannot connec
   const predicate = createPredicateNode(conditional.flow, { x: 40, y: 40 })
   const other = createPredicateNode(predicate.flow, { x: 40, y: 80 })
   const goal = createGoalNode(other.flow, { x: 80, y: 40 })
-  assert.equal(conditional.flow.conditionals![conditional.id].title.text, '条件变迁')
-  assert.equal(predicate.flow.predicates![predicate.id].title.text, '新谓词')
+  assert.equal(conditional.flow.conditionals![conditional.id].title.text, `conditionals.${conditional.id}.title`)
+  assert.equal(predicate.flow.predicates![predicate.id].title.text, `predicates.${predicate.id}.title`)
   assert.deepEqual(inputPorts(predicate.flow, conditional.id), ['input', 'input2'])
   assert.deepEqual(outputPorts(predicate.flow, conditional.id), ['output'])
   assert.ok(!canConnectNodes(goal.flow, goal.id, conditional.id, 'input'))

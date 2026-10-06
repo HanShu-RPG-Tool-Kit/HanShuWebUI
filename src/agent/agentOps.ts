@@ -38,7 +38,7 @@ import {
 export type AgentOpResult = { ok: boolean; [key: string]: unknown }
 
 /**
- * 源文件类别：`hanshu` / `character` / `scripts` / `meta`（创作资料）；留在包根为 `root`。
+ * 源文件类别：`hanshu` / `character` / `scripts` / `progress` / `story` / `navigator` / `gift` / `meta`；旧 *.voice 等留在包根为 `root`。
  * 与写盘归位同源（`workspace.sourceKindOf`），不在这里另立一套。
  */
 export { sourceKindOf }

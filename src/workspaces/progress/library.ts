@@ -66,6 +66,15 @@ export const packageEntry = (id: FlowPackageId): FlowEntry => ({ kind: 'package'
 export const sectionFolderKey = (pkg: FlowPackageId, sectionId: string) => `section:${pkg}:${sectionId}`
 export const isSectionFolder = (key: string) => key.startsWith('section:')
 
+/** 「目标定义 / 内置」虚拟文件夹（稳定键，不落盘） */
+export const BUILTIN_GOAL_FOLDER_KEY = 'builtin:folder:script:goal-def'
+export const builtinGoalDocumentKey = (name: string) => `builtin:goal:${name}`
+export const isBuiltinGoalFolder = (key: string) => key === BUILTIN_GOAL_FOLDER_KEY
+export const isBuiltinGoalDocumentKey = (key: string) => key.startsWith('builtin:goal:')
+/** 资源树只读项：内置二级分类、虚拟内置文件夹与脚本 */
+export const isReadonlyExplorerKey = (key: string) =>
+  isSectionFolder(key) || isBuiltinGoalFolder(key) || isBuiltinGoalDocumentKey(key)
+
 export function sectionDefs(pkg: FlowPackageId): FlowSectionDef[] {
   return FLOW_PACKAGE_SECTIONS[pkg] ?? []
 }
@@ -131,17 +140,33 @@ export function resourceName(value: string, documentExt: boolean | PackageDocume
 
 function requireFolder(state: FlowWorkspaceState, parent: string | null) {
   if (parent !== null && !state.folders.some((folder) => folder.key === parent)) throw new Error('目标文件夹不存在。')
+  if (parent !== null && isBuiltinGoalFolder(parent)) throw new Error('内置文件夹为只读，不能在此创建或移入资源。')
 }
 
-export function requireAvailableName(state: FlowWorkspaceState, name: string, pkg: FlowPackageId, parent: string | null, except?: string) {
+/** 文件夹：同级唯一；文档：同一分类内全局唯一（与所在文件夹无关，便于磁盘/lang 扁平映射）。 */
+export function requireAvailableName(
+  state: FlowWorkspaceState,
+  name: string,
+  pkg: FlowPackageId,
+  parent: string | null,
+  except?: string,
+  kind: 'folder' | 'document' = 'document',
+) {
   requireFolder(state, parent)
   if (parent !== null) {
     const folder = state.folders.find((item) => item.key === parent)
     if (!folder || folder.package !== pkg) throw new Error('目标文件夹不在当前分类中。')
   }
   const same = (other: string) => other.normalize('NFC').toLocaleLowerCase() === name.normalize('NFC').toLocaleLowerCase()
-  if (state.folders.some((folder) => folder.key !== except && folder.package === pkg && folder.parentId === parent && same(folder.name))) throw new Error('此文件夹中已有同名资源。')
-  if (state.documents.some((document) => document.key !== except && document.package === pkg && (document.folderId ?? null) === parent && same(document.name))) throw new Error('此文件夹中已有同名资源。')
+  if (kind === 'folder') {
+    if (state.folders.some((folder) => folder.key !== except && folder.package === pkg && folder.parentId === parent && same(folder.name))) {
+      throw new Error('此位置已有同名文件夹。')
+    }
+    return
+  }
+  if (state.documents.some((document) => document.key !== except && document.package === pkg && same(document.name))) {
+    throw new Error('此分类中已有同名文件。')
+  }
 }
 
 export function uniqueDocumentName(state: FlowWorkspaceState, name: string, pkg: FlowPackageId, parent: string | null) {
@@ -150,7 +175,7 @@ export function uniqueDocumentName(state: FlowWorkspaceState, name: string, pkg:
   const normalized = resourceName(name, ext), stem = normalized.slice(0, -ext.length)
   let candidate = normalized, index = 2
   for (;;) {
-    try { requireAvailableName(state, candidate, pkg, parent); return candidate }
+    try { requireAvailableName(state, candidate, pkg, parent, undefined, 'document'); return candidate }
     catch (error) { requireFolder(state, parent); if (!(error instanceof Error) || !error.message.includes('同名')) throw error }
     candidate = `${stem} (${index++})${ext}`
   }
@@ -158,7 +183,7 @@ export function uniqueDocumentName(state: FlowWorkspaceState, name: string, pkg:
 
 export function addFlowFolder(state: FlowWorkspaceState, value: string, pkg: FlowPackageId, parentId: string | null) {
   const name = resourceName(value)
-  requireAvailableName(state, name, pkg, parentId)
+  requireAvailableName(state, name, pkg, parentId, undefined, 'folder')
   const folder = { key: crypto.randomUUID(), name, parentId, package: pkg }
   return { state: { ...state, folders: [...state.folders, folder] }, folder }
 }
@@ -166,13 +191,15 @@ export function addFlowFolder(state: FlowWorkspaceState, value: string, pkg: Flo
 export function renameFlowEntry(state: FlowWorkspaceState, entry: FlowEntry, value: string): FlowWorkspaceState {
   if (entry.kind === 'package') return state
   if (entry.kind === 'folder' && isSectionFolder(entry.key)) throw new Error('内置二级分类不可重命名。')
+  if (entry.kind === 'folder' && isBuiltinGoalFolder(entry.key)) throw new Error('内置文件夹不可重命名。')
+  if (entry.kind === 'document' && isBuiltinGoalDocumentKey(entry.key)) throw new Error('内置脚本为只读，不可重命名。')
   const item = entry.kind === 'folder' ? state.folders.find((folder) => folder.key === entry.key) : state.documents.find((document) => document.key === entry.key)
   if (!item) throw new Error('资源不存在。')
   const ext = entry.kind === 'document' ? documentExtOf(item as { package: FlowPackageId; name: string }) : false
   const name = resourceName(value, ext)
   const pkg = item.package
   const parent = entry.kind === 'folder' ? state.folders.find((folder) => folder.key === entry.key)!.parentId : state.documents.find((document) => document.key === entry.key)!.folderId ?? null
-  requireAvailableName(state, name, pkg, parent, entry.key)
+  requireAvailableName(state, name, pkg, parent, entry.key, entry.kind === 'folder' ? 'folder' : 'document')
   return entry.kind === 'folder'
     ? { ...state, folders: state.folders.map((folder) => folder.key === entry.key ? { ...folder, name } : folder) }
     : { ...state, documents: state.documents.map((document) => document.key === entry.key ? { ...document, name } : document) }
@@ -181,6 +208,9 @@ export function renameFlowEntry(state: FlowWorkspaceState, entry: FlowEntry, val
 export function canMoveFlowEntry(state: FlowWorkspaceState, entry: FlowEntry, pkg: FlowPackageId, parent: string | null) {
   if (entry.kind === 'package') return false
   if (entry.kind === 'folder' && isSectionFolder(entry.key)) return false
+  if (entry.kind === 'folder' && isBuiltinGoalFolder(entry.key)) return false
+  if (entry.kind === 'document' && isBuiltinGoalDocumentKey(entry.key)) return false
+  if (parent !== null && isBuiltinGoalFolder(parent)) return false
   if (parent !== null) {
     const folder = state.folders.find((item) => item.key === parent)
     if (!folder || folder.package !== pkg) return false
@@ -229,7 +259,7 @@ export function moveFlowEntry(state: FlowWorkspaceState, entry: FlowEntry, pkg: 
     if (document && !isKitDocument(document) && !isProgressDocument(document) && !isNavigationDocument(document) && !isScriptDocument(document) && !packageAllowsFlows(pkg)) throw new Error('流程只能放在「故事流程」分类中。')
   }
   const name = entry.kind === 'folder' ? state.folders.find((folder) => folder.key === entry.key)!.name : state.documents.find((document) => document.key === entry.key)!.name
-  requireAvailableName(state, name, pkg, parent, entry.key)
+  requireAvailableName(state, name, pkg, parent, entry.key, entry.kind === 'folder' ? 'folder' : 'document')
   if (entry.kind === 'folder') {
     const next = {
       ...state,

@@ -29,13 +29,13 @@ import {
 import {
   createPackage,
   createScript,
+  emptyWorkspace,
   findAsset,
   findScript,
   findScriptByName,
   isHanshuFile,
   isMarkdownFile,
   editorLanguageForFile,
-  loadWorkspace,
   normalizeResourceName,
   ALLOWED_EXTENSIONS_LABEL,
   MANUAL_FILE_EXTENSIONS_LABEL,
@@ -50,6 +50,12 @@ import {
   isVoiceMapFile,
   type Workspace,
 } from '../workspace'
+import {
+  consumeLegacyProgressWorkspace,
+  setProjectSession,
+  subscribeProjectSession,
+  getProjectSession,
+} from '../project/projectSession'
 import {
   createBlankOggBlob,
   isVoiceRefPath,
@@ -113,6 +119,8 @@ import {
   type BoundProject,
   createProjectFromPicker,
   openProjectFromPicker,
+  removeSourceFromDisk,
+  renameSourceOnDisk,
   saveProjectAsToPicker,
   saveProjectToDirectory,
   setBoundProject,
@@ -219,7 +227,7 @@ export const ScriptWorkspace = forwardRef<
   ScriptWorkspaceHandle,
   ScriptWorkspaceProps
 >(function ScriptWorkspace({ onChromeInfo, isActive = true }, ref) {
-  const [workspace, setWorkspace] = useState<Workspace>(() => loadWorkspace())
+  const [workspace, setWorkspace] = useState<Workspace>(() => emptyWorkspace())
   const [project, setProject] = useState<BoundProject | null>(null)
   const [projectBusy, setProjectBusy] = useState(false)
   const active = useMemo(
@@ -300,8 +308,26 @@ export const ScriptWorkspace = forwardRef<
     workspaceRef.current = next
     activeIdRef.current = next.activeScriptId
     setWorkspace(next)
-    saveWorkspace(next)
+    setProjectSession({ workspace: next, binding: projectRef.current })
+    // 仅绑定工程时把镜像写入 localStorage，作为崩溃恢复；未绑定不保留 Virtual Cache
+    if (projectRef.current) saveWorkspace(next)
   }
+
+  // 进度工作区改源文件 / 落盘时，把会话拉回本工作区
+  useEffect(() => {
+    return subscribeProjectSession(() => {
+      const remote = getProjectSession()
+      if (remote.binding?.manifest.id !== projectRef.current?.manifest.id) return
+      if (remote.workspace !== workspaceRef.current) {
+        workspaceRef.current = remote.workspace
+        setWorkspace(remote.workspace)
+      }
+      if (remote.binding && remote.binding !== projectRef.current) {
+        projectRef.current = remote.binding
+        setProject(remote.binding)
+      }
+    })
+  }, [])
 
   /**
    * 内容写回的**唯一**原语：正文 + 它属于哪一份文件。
@@ -1548,12 +1574,14 @@ export const ScriptWorkspace = forwardRef<
     binding: BoundProject
     workspace: Workspace
   }) => {
-    const { binding, workspace: next } = result
+    const { binding, workspace: loaded } = result
+    const next = consumeLegacyProgressWorkspace(loaded)
     projectRef.current = binding
     setProject(binding)
     setPendingProjectRestore(false)
     setBoundProject(binding)
     commitWorkspace(next)
+    setProjectSession({ workspace: next, binding })
     const hit = findScript(next, next.activeScriptId)
     const text = hit?.script.content ?? ''
     loadEditorContent(hit?.script.id ?? null, text, hit?.script.updatedAt ?? null)
@@ -1822,6 +1850,7 @@ export const ScriptWorkspace = forwardRef<
     const hit = findScript(workspaceRef.current, scriptId)
     if (!hit) return { ok: false, error: '文件不存在' }
     if (newName === hit.script.name) return { ok: true, moves: 0 }
+    const oldName = hit.script.name
 
     // 连带改名：每种语言的文本资产与音频目录都跟着走（见 renameScriptAssets）
     const renamed = renameScriptAssets(workspaceRef.current, scriptId, newName)
@@ -1830,6 +1859,7 @@ export const ScriptWorkspace = forwardRef<
     }
 
     // 先搬 blob 再提交模型：否则语言文本映射会先按新路径去读，读到空文件
+    const assetMoves = renamed.kind === 'moved' ? renamed.moves : []
     if (renamed.kind === 'moved') {
       const packageId = hit.pkg.id
       for (const move of renamed.moves) {
@@ -1842,7 +1872,7 @@ export const ScriptWorkspace = forwardRef<
 
     const base =
       renamed.kind === 'moved' ? renamed.workspace : workspaceRef.current
-    commitWorkspace({
+    const nextWorkspace: Workspace = {
       ...base,
       packages: base.packages.map((pkg) => ({
         ...pkg,
@@ -1850,10 +1880,32 @@ export const ScriptWorkspace = forwardRef<
           script.id === scriptId ? { ...script, name: newName } : script,
         ),
       })),
-    })
+    }
+    commitWorkspace(nextWorkspace)
+
+    const bound = projectRef.current
+    if (bound) {
+      try {
+        const content =
+          findScript(nextWorkspace, scriptId)?.script.content ?? hit.script.content
+        await renameSourceOnDisk(
+          bound.handle,
+          oldName,
+          newName,
+          content,
+          assetMoves,
+        )
+      } catch (error) {
+        return {
+          ok: false,
+          error: `工作区已改名，但写入工程目录失败：${error instanceof Error ? error.message : String(error)}`,
+        }
+      }
+    }
+
     return {
       ok: true,
-      moves: renamed.kind === 'moved' ? renamed.moves.length : 0,
+      moves: assetMoves.length,
     }
   }
 
@@ -1929,9 +1981,10 @@ export const ScriptWorkspace = forwardRef<
   ): Promise<{ removedAssets: number } | null> => {
     const hit = findScript(workspaceRef.current, scriptId)
     if (!hit) return null
+    const sourceName = hit.script.name
     const cleaned = await deleteSourceAssets(
       workspaceRef.current,
-      hit.script.name,
+      sourceName,
     )
 
     const nextPackages = cleaned.workspace.packages.map((pkg) => ({
@@ -1950,6 +2003,18 @@ export const ScriptWorkspace = forwardRef<
       activeAssetId: cleaned.workspace.activeAssetId,
     }
     commitWorkspace(next)
+
+    const bound = projectRef.current
+    if (bound) {
+      try {
+        await removeSourceFromDisk(bound.handle, sourceName)
+      } catch (error) {
+        window.alert(
+          `已从工作区删除，但清理工程目录失败：${error instanceof Error ? error.message : String(error)}`,
+        )
+      }
+    }
+
     if (scriptId === bufferOwnerRef.current || scriptId === activeIdRef.current) {
       const opened = findScript(next, activeScriptId)
       loadEditorContent(
@@ -2315,12 +2380,7 @@ export const ScriptWorkspace = forwardRef<
       return
     }
     if (item === '新建包') {
-      if (projectRef.current) {
-        window.alert(
-          '当前已绑定文件夹工程：磁盘上只保存当前这一个包。\n新建包仅留在浏览器缓存；多工程请用「另存为工程…」。',
-        )
-      }
-      handleNewPackage()
+      window.alert('请使用「新建工程…」创建本地工程文件夹；不再支持仅存在于浏览器缓存的包。')
       return
     }
     if (item === '新建剧本') {

@@ -14,6 +14,8 @@ export {
   saveProjectAsToPicker,
   tryRestoreLastProject,
   unbindProject,
+  removeSourceFromDisk,
+  renameSourceOnDisk,
   type BoundProject,
   type LoadProjectResult,
 } from './projectFs'

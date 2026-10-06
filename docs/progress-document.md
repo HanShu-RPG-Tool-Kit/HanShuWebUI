@@ -11,7 +11,7 @@
 - 没有脚本时显示空目录，不自动生成替代类型。定义删除后，现有目标仍保留类型引用和参数，提示恢复脚本或更换类型。未在脚本中声明的旧参数保留在文件中，不推导为新字段。
 - `visibility`（可见性条件）和 `acceptance`（可承接条件）是独立列表，分别保存三项式条件 `{kind, state, target}`。每份列表内全部条件满足才通过；任意一份为空时，该份条件直接满足，不从另一份继承条件。任务状态为 `before_accept / after_accept / active / succeeded / ended`；对话状态为 `before / after`。没有独立时态字段，没有自定义表达式模式。这里只设计条件，引擎求值未实现。对象暂为引用文本，资源选择器尚未接入。
 - `rewardKits` 是去重的礼包引用数组，支持添加多个礼包、逐项移除；没有单礼包限制。
-- `authorNotes` 与玩家 `description` 分开；本地化尚未接入。重复策略保持现有字段。
+- `authorNotes` 与玩家 `description` 分开。玩家可见的 `name` / `description` 存语义键（固定为 `name` / `description`），译文在 `assets/<locale>/lang_progress/<文件>.lang`；作者备注不本地化。
 
 ## 交互
 

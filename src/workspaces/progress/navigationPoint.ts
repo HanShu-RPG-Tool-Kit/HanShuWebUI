@@ -34,10 +34,12 @@ export const NAV_TAG_MAX = 128
 const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
 const DIM_RE = /^[a-z0-9_.-]+:[a-z0-9_./-]+$/i
 
-export function createNavigationPoint(label = '新导航点'): NavigationPoint {
+export function createNavigationPoint(_label = '新导航点'): NavigationPoint {
+  void _label
   return {
     type: 'position',
-    label,
+    /** 语义键；译文在 lang_nav */
+    label: 'label',
     radius: NAV_RADIUS_DEFAULT,
     public: false,
     dimension: 'minecraft:overworld',

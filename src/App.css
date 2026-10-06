@@ -2543,7 +2543,12 @@ body.is-resizing .monaco-editor {
 /* 面板之间 2px 缝，底色透出 */
 .script-workspace .workspace { gap: 2px; padding: 2px; background: var(--border); }
 .script-workspace .editor-column { background: var(--bg); }
-.script-workspace .split-handle { flex: 0 0 2px; width: 2px; margin: 0 -2px; background: transparent; }
+.script-workspace .split-handle {
+  flex: 0 0 2px;
+  width: 2px;
+  margin: 0 -2px;
+  background: var(--border-soft);
+}
 .script-workspace .split-handle:hover,
 body.is-resizing .script-workspace .split-handle { background: var(--accent); }
 

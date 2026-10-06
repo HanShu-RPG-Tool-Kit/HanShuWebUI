@@ -105,6 +105,32 @@ export async function writeFileAtPath(
   }
 }
 
+/** 按相对路径删除文件（父目录不存在则视为本就没有） */
+export async function removeFileAtPath(
+  root: FileSystemDirectoryHandle,
+  relativePath: string,
+): Promise<void> {
+  try {
+    const { parent, fileName } = await resolveParentDir(root, relativePath, false)
+    await removeEntryIfExists(parent, fileName)
+  } catch {
+    // ignore
+  }
+}
+
+/** 按相对路径递归删除目录 */
+export async function removeDirectoryAtPath(
+  root: FileSystemDirectoryHandle,
+  relativePath: string,
+): Promise<void> {
+  try {
+    const { parent, fileName } = await resolveParentDir(root, relativePath, false)
+    await removeEntryIfExists(parent, fileName, { recursive: true })
+  } catch {
+    // ignore
+  }
+}
+
 export async function readFileAtPath(
   root: FileSystemDirectoryHandle,
   relativePath: string,

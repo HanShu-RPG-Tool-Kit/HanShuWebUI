@@ -631,15 +631,45 @@ function PoolSimulator({ pools }: { pools: KitPool[] }) {
   </div>
 }
 
-function FeedbackForm({ feedback, disabled, onChange }: {
+function FeedbackForm({ feedback, disabled, onChange, resolveText, setText }: {
   feedback: KitFeedback
   disabled?: boolean
   onChange: (patch: Partial<KitFeedback>) => void
+  resolveText?: (key: string) => string
+  setText?: (key: string, value: string) => void
 }) {
-  const field = (key: keyof KitFeedback, label: string, placeholder: string, mono = false) => (
+  const canonicalOf = {
+    message: 'feedback.message',
+    title: 'feedback.title',
+    subtitle: 'feedback.subtitle',
+  } as const
+  const readLocalized = (field: 'message' | 'title' | 'subtitle') => {
+    const stored = feedback[field]
+    if (!stored) return ''
+    if (resolveText) return resolveText(stored)
+    return stored === canonicalOf[field] ? '' : stored
+  }
+  const writeLocalized = (field: 'message' | 'title' | 'subtitle', value: string) => {
+    if (disabled) return
+    const canonical = canonicalOf[field]
+    if (setText) {
+      const key = feedback[field].trim() ? feedback[field] : canonical
+      setText(key, value)
+      const nextStored = value.trim() ? key : ''
+      if (nextStored !== feedback[field]) onChange({ [field]: nextStored })
+      return
+    }
+    onChange({ [field]: value })
+  }
+  const field = (key: 'message' | 'title' | 'subtitle', label: string, placeholder: string) => (
     <label className="kit-field">
       <span>{label}</span>
-      <input className={mono ? 'kit-mono' : undefined} value={feedback[key]} disabled={disabled} placeholder={placeholder} onChange={(event) => onChange({ [key]: event.target.value })} />
+      <input
+        value={readLocalized(key)}
+        disabled={disabled}
+        placeholder={placeholder}
+        onChange={(event) => writeLocalized(key, event.target.value)}
+      />
     </label>
   )
   return <div className="kit-form">
@@ -648,7 +678,10 @@ function FeedbackForm({ feedback, disabled, onChange }: {
       {field('title', '标题', '欢迎')}
       {field('subtitle', '副标题', '祝你旅途愉快')}
     </div>
-    {field('sound', '音效', 'minecraft:entity.player.levelup', true)}
+    <label className="kit-field">
+      <span>音效</span>
+      <input className="kit-mono" value={feedback.sound} disabled={disabled} placeholder="minecraft:entity.player.levelup" onChange={(event) => onChange({ sound: event.target.value })} />
+    </label>
   </div>
 }
 
@@ -1032,7 +1065,7 @@ function ModifierPanel({ modifiers, env, disabled, onChange }: {
 }
 
 /** 礼包表单主体：可编辑表单与只读编译结果共用同一套布局 */
-function KitBody({ kit, disabled, readOnly, editorPath, simulatorPools, afterHeader, update }: {
+function KitBody({ kit, disabled, readOnly, editorPath, simulatorPools, afterHeader, update, resolveText, setText }: {
   kit: KitDocument
   disabled?: boolean
   readOnly?: boolean
@@ -1040,17 +1073,25 @@ function KitBody({ kit, disabled, readOnly, editorPath, simulatorPools, afterHea
   simulatorPools: KitPool[]
   afterHeader?: ReactNode
   update: (patch: Partial<KitDocument>) => void
+  resolveText?: (key: string) => string
+  setText?: (key: string, value: string) => void
 }) {
   const fontSize = useEditorFontSize()
   const ui = useContext(KitExprContext)
   const locked = disabled || readOnly
   const add = (label: string, onClick: () => void) => readOnly ? undefined : <AddButton label={label} disabled={disabled} onClick={onClick} />
+  const readName = () => resolveText?.(kit.name) ?? kit.name
+  const writeName = (value: string) => {
+    if (locked) return
+    if (setText) setText(kit.name, value)
+    else update({ name: value })
+  }
 
   return <>
     <header className="kit-header">
       <label className="kit-name-field">
         <span className="kit-name-label" title="礼包显示名称">名称</span>
-        <input className="kit-title" value={kit.name} disabled={locked} placeholder="未命名礼包" aria-label="名称" onChange={(event) => update({ name: event.target.value })} />
+        <input className="kit-title" value={readName()} disabled={locked} placeholder="未命名礼包" aria-label="名称" onChange={(event) => writeName(event.target.value)} />
       </label>
       <ExperienceField experience={kit.experience} disabled={locked} onChange={(experience) => update({ experience })} />
     </header>
@@ -1108,7 +1149,7 @@ function KitBody({ kit, disabled, readOnly, editorPath, simulatorPools, afterHea
 
       <div className="kit-aside">
         <Panel title="领取反馈">
-          <FeedbackForm feedback={kit.feedback} disabled={locked} onChange={(patch) => update({ feedback: { ...kit.feedback, ...patch } })} />
+          <FeedbackForm feedback={kit.feedback} disabled={locked} resolveText={resolveText} setText={setText} onChange={(patch) => update({ feedback: { ...kit.feedback, ...patch } })} />
         </Panel>
 
         <Panel title="脚本" subtitle={readOnly ? undefined : 'kit.param(id) · kit.mod(id, x) · kit.expr(src)'} className="kit-script" action={<span className="kit-lang">Python</span>}>
@@ -1146,7 +1187,7 @@ function KitBody({ kit, disabled, readOnly, editorPath, simulatorPools, afterHea
 const NOOP = () => {}
 const EMPTY_CATALOG: KitCatalog = new Map()
 
-export function KitEditor({ kit, error, disabled, editorPath, selfRef = 'kit', catalog = EMPTY_CATALOG, catalogOptions = [], onChange }: {
+export function KitEditor({ kit, error, disabled, editorPath, selfRef = 'kit', catalog = EMPTY_CATALOG, catalogOptions = [], onChange, resolveText, setText }: {
   kit: KitDocument
   error?: string
   disabled?: boolean
@@ -1156,6 +1197,8 @@ export function KitEditor({ kit, error, disabled, editorPath, selfRef = 'kit', c
   catalog?: KitCatalog
   catalogOptions?: { ref: string; label: string }[]
   onChange: (source: string) => void
+  resolveText?: (key: string) => string
+  setText?: (key: string, value: string) => void
 }) {
   const update = (patch: Partial<KitDocument>) => onChange(stringifyKit({ ...kit, ...patch }))
   const [preview, setPreview] = useState<Record<string, unknown>>({})
@@ -1200,6 +1243,8 @@ export function KitEditor({ kit, error, disabled, editorPath, selfRef = 'kit', c
           simulatorPools={localPools}
           afterHeader={<CompositionBar kit={kit} selfRef={selfRef} options={catalogOptions} disabled={disabled} onChange={(patch) => update(patch)} />}
           update={update}
+          resolveText={resolveText}
+          setText={setText}
         />
 
         <Panel
@@ -1245,7 +1290,7 @@ export function KitEditor({ kit, error, disabled, editorPath, selfRef = 'kit', c
         )}
         <div className="kit-compiled" aria-label="编译结果（只读）">
           <KitExprContext.Provider value={appliedUi}>
-            <KitBody kit={compiled} readOnly editorPath={`${scriptPath}.compiled`} simulatorPools={compiled.pools} update={NOOP} />
+            <KitBody kit={compiled} readOnly editorPath={`${scriptPath}.compiled`} simulatorPools={compiled.pools} update={NOOP} resolveText={resolveText} />
           </KitExprContext.Provider>
           <Panel title="超参数" subtitle="预览值可在此直接调整" count={activeKitParams(compiled.params).length}>
             <ParamPanel params={compiled.params} preview={preview} disabled onChange={NOOP} onPreview={setPreviewValue} />

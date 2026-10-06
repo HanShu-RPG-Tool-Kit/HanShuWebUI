@@ -13,6 +13,10 @@ export const ALLOWED_EXTENSIONS = [
   '.voice',
   '.tts',
   '.ttsservice',
+  '.progress',
+  '.hflow',
+  '.nav',
+  '.kit',
 ] as const
 export type AllowedExtension = (typeof ALLOWED_EXTENSIONS)[number]
 
@@ -32,15 +36,30 @@ export const FILE_DIRS: Record<string, string> = {
   '.hs': 'src/hanshu',
   '.char': 'src/character',
   '.py': 'src/scripts',
+  '.progress': 'src/progress',
+  '.hflow': 'src/story',
+  '.nav': 'src/navigator',
+  '.kit': 'src/gift',
   '.md': 'meta/docs',
   '.tts': 'meta/voice',
   '.ttsservice': 'meta/voice/service',
 }
 
 /** 运行时源目录（会进 PAK）；导出目录骨架与分组展示都按它排 */
-export const SOURCE_KIND_ORDER = ['hanshu', 'character', 'scripts'] as const
+export const SOURCE_KIND_ORDER = [
+  'hanshu',
+  'character',
+  'scripts',
+  'progress',
+  'story',
+  'navigator',
+  'gift',
+] as const
 
-/** 工作区分组顺序：运行时源三类 + 创作资料 `meta` */
+/** 剧本工作区资源树分组（不含进度专属目录） */
+export const SCRIPT_WORKSPACE_GROUP_ORDER = ['hanshu', 'character', 'scripts', 'meta'] as const
+
+/** 工作区分组顺序：全部源类型 + 创作资料 `meta` */
 export const WORKSPACE_GROUP_ORDER = [...SOURCE_KIND_ORDER, 'meta'] as const
 
 /** 文件的目标目录（相对包根）；未归类返回 null（留在包根） */
@@ -109,12 +128,16 @@ export function isManualFileName(name: string): boolean {
   )
 }
 
-export type ScriptFile = {
+/** 工程内源文件（剧本 / 进度 / 礼包等） */
+export type SourceFile = {
   id: string
   name: string
   content: string
   updatedAt: number
 }
+
+/** @deprecated 使用 SourceFile */
+export type ScriptFile = SourceFile
 
 /** 包内资产元数据（二进制在 IndexedDB） */
 export type AssetFile = {
@@ -135,20 +158,25 @@ export type AssetFile = {
   refTarget?: string | null
 }
 
-export type ScriptPackage = {
+/** 一个工程目录对应的内容模型（剧本 + 进度 + 资产） */
+export type Project = {
   id: string
   name: string
   collapsed: boolean
   /** assets 根是否折叠 */
   assetsCollapsed: boolean
-  scripts: ScriptFile[]
+  /** 持久化字段名仍为 scripts，含义是全部源文件 */
+  scripts: SourceFile[]
   assets: AssetFile[]
   /** 显式文件夹（可为空），如 assets/voice/zh */
   assetFolders: string[]
 }
 
+/** @deprecated 使用 Project */
+export type ScriptPackage = Project
+
 export type Workspace = {
-  packages: ScriptPackage[]
+  packages: Project[]
   activeScriptId: string | null
   /** 当前选中的资产（与脚本互斥展示） */
   activeAssetId: string | null
@@ -182,7 +210,10 @@ export function editorLanguageForFile(name: string): string {
   const ext = getExtension(name)
   if (ext === '.md') return 'markdown'
   if (ext === '.char' || ext === '.py') return 'python'
-  if (ext === '.lang' || ext === '.voice' || ext === '.tts' || ext === '.ttsservice') {
+  if (
+    ext === '.lang' || ext === '.voice' || ext === '.tts' || ext === '.ttsservice'
+    || ext === '.progress' || ext === '.hflow' || ext === '.nav' || ext === '.kit'
+  ) {
     return 'json'
   }
   return 'hanshu' // .hs 汉书剧本
@@ -200,19 +231,19 @@ export function isVoiceMapFile(name: string): boolean {
   return getExtension(name) === '.voice'
 }
 
-export function createScript(
-  name: string,
-  content = '',
-): ScriptFile {
+export function createSourceFile(name: string, content = ''): SourceFile {
   return {
-    id: uid('script'),
+    id: uid('src'),
     name,
     content,
     updatedAt: Date.now(),
   }
 }
 
-export function createPackage(name: string, scripts: ScriptFile[] = []): ScriptPackage {
+/** @deprecated 使用 createSourceFile */
+export const createScript = createSourceFile
+
+export function createProject(name: string, scripts: SourceFile[] = []): Project {
   return {
     id: uid('pkg'),
     name,
@@ -224,9 +255,17 @@ export function createPackage(name: string, scripts: ScriptFile[] = []): ScriptP
   }
 }
 
+/** @deprecated 使用 createProject */
+export const createPackage = createProject
+
+/** 未绑定工程时的空工作区（不可当作正式工程编辑） */
+export function emptyWorkspace(): Workspace {
+  return { packages: [], activeScriptId: null, activeAssetId: null }
+}
+
 function defaultWorkspace(seedContent = ''): Workspace {
-  const script = createScript('未命名剧本.hs', seedContent)
-  const pkg = createPackage('默认包', [script])
+  const script = createSourceFile('未命名剧本.hs', seedContent)
+  const pkg = createProject('默认工程', [script])
   return {
     packages: [pkg],
     activeScriptId: script.id,

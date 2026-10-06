@@ -14,6 +14,11 @@ declare module '*.md?raw' {
   export default content
 }
 
+declare module '*.py?raw' {
+  const content: string
+  export default content
+}
+
 declare module '*.ogg' {
   const src: string
   export default src

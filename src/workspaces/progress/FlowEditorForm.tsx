@@ -1,22 +1,41 @@
 import { IdField, TextField } from './Fields'
 import { clone, disconnectLink, getNode, parseFlow, removeNode, renameNode, type FlowSelection, type FlowText, type ProgressFlow } from './model'
 import { withCanvasPositions } from './canvas'
+import { displayLocalized, flowNodeLocaleKeyMoves } from './progressLocale'
 
-export function FlowEditorForm({ flow, selection, onChange, onSelect, onPending, onNotice, locked }: {
+export function FlowEditorForm({ flow, selection, onChange, onSelect, onPending, onNotice, locked, resolveText, setText, renameLocaleKeys }: {
   flow: ProgressFlow; selection: FlowSelection; onChange: (flow: ProgressFlow) => void; onSelect: (selection: FlowSelection) => void
   onPending: (label: string, value: boolean) => void; onNotice: (notice: string) => void; locked: boolean
+  resolveText?: (key: string) => string
+  setText?: (key: string, value: string) => void
+  renameLocaleKeys?: (moves: Array<[string, string]>) => void
 }) {
   function edit(mutate: (next: ProgressFlow) => void) {
     const next = clone(flow); mutate(next)
     onChange(parseFlow(JSON.stringify(next)))
   }
   function attempt(action: () => void) { try { action() } catch (error) { onNotice(String(error)) } }
+  const readLocalized = (field: FlowText) => resolveText ? displayLocalized(field, (key) => resolveText(key)) : field.text
+  const writeLocalized = (field: FlowText, content: string, bindKey: (next: ProgressFlow, key: FlowText) => void) => {
+    if (locked) return
+    if (setText) {
+      setText(field.text, content)
+      return
+    }
+    edit((next) => bindKey(next, { text: content }))
+  }
   const authorText = (label: string, value: FlowText, update: (next: ProgressFlow, value: FlowText) => void, multiline = false) => (
-    <TextField label={label} value={value.text} disabled={locked} multiline={multiline} onChange={(content) => edit((next) => update(next, { text: content }))} />
+    <TextField
+      label={label}
+      value={readLocalized(value)}
+      disabled={locked}
+      multiline={multiline}
+      onChange={(content) => writeLocalized(value, content, update)}
+    />
   )
 
   if (selection.kind === 'entry' || selection.kind === 'entry-link') return <div className="flow-editor-fields">
-    <p className="flow-hint">开始节点保存整张图的名称与说明，并作为唯一信号源。出口连线在画布上操作；Ctrl+点击发出 S(未激活→已激活)。</p>
+    <p className="flow-hint">开始节点保存整张图的名称与说明，并作为唯一信号源。出口连线在画布上操作；Ctrl+点击发出 S(未激活→已激活)。文案写入当前语言的 `.lang`。</p>
     {authorText('流程名称', flow.entry.title, (next, value) => { next.entry.title = value })}
     {authorText('流程说明', flow.entry.description, (next, value) => { next.entry.description = value }, true)}
   </div>
@@ -31,7 +50,11 @@ export function FlowEditorForm({ flow, selection, onChange, onSelect, onPending,
       {authorText('阶段说明', node.description, (next, value) => { next.nodes[id].description = value }, true)}
       <p className="flow-hint">后续经线性变迁：ckpt 激活出 → Parent；Next 发 S → 下一 ckpt。结束流程请连到「结束」节点。</p>
       <details><summary>结构与高级设置</summary>
-        <IdField key={id} label="节点 ID" value={id} disabled={locked} onPending={onPending} onApply={(value) => { onChange(renameNode(flow, id, value)); onSelect({ kind: 'node', id: value }) }} />
+        <IdField key={id} label="节点 ID" value={id} disabled={locked} onPending={onPending} onApply={(value) => {
+          onChange(renameNode(flow, id, value))
+          renameLocaleKeys?.(flowNodeLocaleKeyMoves(id, value))
+          onSelect({ kind: 'node', id: value })
+        }} />
         <div className="flow-inline-actions"><button type="button" className="flow-danger" disabled={locked} onClick={() => {
           attempt(() => { onChange(removeNode(withCanvasPositions(flow), id)); onSelect({ kind: 'flow' }) })
         }}>删除当前节点</button></div>

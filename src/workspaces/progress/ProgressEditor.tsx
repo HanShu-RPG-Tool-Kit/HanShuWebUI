@@ -87,8 +87,13 @@ function GoalPicker({ definitions, current, onChoose, onClose }: {
   </dialog>
 }
 
-export function ProgressEditor({ doc, goalCatalog, kitOptions = [], disabled, onChange }: {
-  doc: ProgressDocument; goalCatalog: GoalDefinitionCatalog; kitOptions?: KitOption[]; disabled?: boolean; onChange: (source: string, discrete?: boolean) => void
+export function ProgressEditor({ doc, goalCatalog, kitOptions = [], disabled, onChange, resolveText, setText }: {
+  doc: ProgressDocument; goalCatalog: GoalDefinitionCatalog; kitOptions?: KitOption[]; disabled?: boolean
+  onChange: (source: string, discrete?: boolean) => void
+  /** 当前语言下解析语义键；缺省时回退显示键名/明文 */
+  resolveText?: (key: string) => string
+  /** 写入当前语言译文（不改文档里的键） */
+  setText?: (key: string, value: string) => void
 }) {
   const definitions = goalCatalog.definitions
   const [collapsed, setCollapsed] = useState(() => new Set<string>())
@@ -100,13 +105,20 @@ export function ProgressEditor({ doc, goalCatalog, kitOptions = [], disabled, on
   const pointerDrag = useRef<{ id: string; startY: number; active: boolean; index: number } | null>(null)
   const [notice, setNotice] = useState('')
   const typeDrafts = useRef(new Map<string, ProgressGoal['config']>())
+  const readText = (key: string) => resolveText?.(key) ?? key
+  const writeText = (key: string, value: string) => {
+    if (disabled) return
+    if (setText) setText(key, value)
+    else if (key === 'name' || key === doc.name) onChange(stringifyProgress({ ...doc, name: value }), false)
+    else if (key === 'description' || key === doc.description) onChange(stringifyProgress({ ...doc, description: value }), false)
+  }
   const update = (patch: Partial<ProgressDocument>) => {
     const identity = (goals: ProgressGoal[]) => goals.map(goal => [goal.id, goal.kind])
     const discrete = patch.completion !== undefined || (!!patch.goals && JSON.stringify(identity(patch.goals)) !== JSON.stringify(identity(doc.goals)))
     if (!disabled) onChange(stringifyProgress({ ...doc, ...patch }), discrete)
   }
   const changeGoal = (goal: ProgressGoal) => update({ goals: doc.goals.map(item => item.id === goal.id ? goal : item) })
-  const issues = progressIssues(doc, definitions)
+  const issues = progressIssues(doc, definitions, resolveText ? (key) => resolveText(key) : null)
   const count = doc.goals.length
   const pickerGoal = doc.goals.find(goal => goal.id === picker?.goalId)
   const availableKits = kitOptions.filter(item => !doc.rewardKits.includes(item.ref))
@@ -162,10 +174,10 @@ export function ProgressEditor({ doc, goalCatalog, kitOptions = [], disabled, on
       <header className="progress-document-head">
         <section className="progress-info-card progress-main-info" aria-label="标题与描述">
         <label className="progress-document-field"><span className="progress-document-field-label">标题</span>
-          <input className="progress-title" aria-label="进度标题" placeholder="为这项进度命名…" value={doc.name} onChange={event => update({ name: event.target.value })} />
+          <input className="progress-title" aria-label="进度标题" placeholder="为这项进度命名…" value={readText(doc.name)} onChange={event => writeText(doc.name, event.target.value)} />
         </label>
         <label className="progress-document-field"><span className="progress-document-field-label">描述 <span>向玩家展示</span></span>
-          <textarea className="progress-description" aria-label="进度描述" rows={3} placeholder="填写这项进度的故事与要求…" value={doc.description} onChange={event => update({ description: event.target.value })} />
+          <textarea className="progress-description" aria-label="进度描述" rows={3} placeholder="填写这项进度的故事与要求…" value={readText(doc.description)} onChange={event => writeText(doc.description, event.target.value)} />
         </label>
         </section>
         <section className="progress-info-card progress-extra-info" aria-label="文档信息">

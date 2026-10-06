@@ -4,7 +4,8 @@ export { textAssetPath } from './localeLayout'
  * 语言文本映射（键名 → 本地化文本）。
  *
  * 设计要点：
- * - 键名固定为 8 位小写十六进制
+ * - `.hs` 默认键名固定为 8 位小写十六进制（`keyStyle: 'hex'`）
+ * - 进度等结构化文档可用语义键（`keyStyle: 'literal'`，如 `name` / `entry.title`）
  * - 产物路径由 `localeLayout` 统一给出：`assets/<语言标签>/lang_<后缀>/…`
  * - `TextMap` 是「抽象的语言文本映射实例」：内部持有内存缓存（权威），
  *   通过 `TextSink` 抽象出落盘方式（包内虚拟文件 / 真实磁盘 / 内存），
@@ -120,17 +121,35 @@ export type TextSink = {
   write(content: string): void
 }
 
+/** 键规范化策略：剧本 hex / 进度等语义字面键 */
+export type TextKeyStyle = 'hex' | 'literal'
+
 export type TextMapOptions = {
-  /** 对应的 `<文件名>.lang.<语言标签>` */
+  /** 对应的 `assets/<locale>/lang_<ext>/….lang` */
   fileName: string
   locale: string
   sink: TextSink
+  /** 默认 `hex`（`.hs`）；进度文档用 `literal` */
+  keyStyle?: TextKeyStyle
+}
+
+/** 按策略规范化键；非法时返回空串 */
+export function normalizeTextMapKey(
+  text: string,
+  style: TextKeyStyle = 'hex',
+): string {
+  if (style === 'literal') {
+    const key = text.trim()
+    return key ? key : ''
+  }
+  return normalizeLocaleKey(text)
 }
 
 /** 内存 + 写穿的抽象语言文本映射实例 */
 export class TextMap {
   readonly fileName: string
   readonly locale: string
+  readonly keyStyle: TextKeyStyle
 
   private readonly sink: TextSink
   private readonly cache = new Map<string, string>()
@@ -140,7 +159,12 @@ export class TextMap {
   constructor(options: TextMapOptions) {
     this.fileName = options.fileName
     this.locale = options.locale
+    this.keyStyle = options.keyStyle ?? 'hex'
     this.sink = options.sink
+  }
+
+  private normalize(key: string): string {
+    return normalizeTextMapKey(key, this.keyStyle)
   }
 
   /** 已是否从 sink 读过（用于状态展示） */
@@ -166,13 +190,14 @@ export class TextMap {
   }
 
   has(key: string): boolean {
-    return this.cache.has(normalizeLocaleKey(key))
+    const k = this.normalize(key)
+    return Boolean(k) && this.cache.has(k)
   }
 
   /** 读取某个键；不存在返回 null */
   get(key: string): string | null {
-    const k = normalizeLocaleKey(key)
-    return this.cache.get(k) ?? null
+    const k = this.normalize(key)
+    return k ? this.cache.get(k) ?? null : null
   }
 
   entries(): Array<[string, string]> {
@@ -189,7 +214,7 @@ export class TextMap {
 
   /** 写一个键：先写缓存，再写穿 sink */
   set(key: string, value: string): void {
-    const k = normalizeLocaleKey(key)
+    const k = this.normalize(key)
     if (!k) return
     this.cache.set(k, value)
     this.emit()
@@ -200,7 +225,7 @@ export class TextMap {
   setMany(pairs: Array<[string, string]>): void {
     let changed = false
     for (const [key, value] of pairs) {
-      const k = normalizeLocaleKey(key)
+      const k = this.normalize(key)
       if (!k) continue
       this.cache.set(k, value)
       changed = true
@@ -210,8 +235,31 @@ export class TextMap {
     this.flush()
   }
 
+  /** 仅写入尚不存在的键（创建/迁移灌默认语时用） */
+  setMissing(pairs: Array<[string, string]>): void {
+    const next = pairs.filter(([key]) => {
+      const k = this.normalize(key)
+      return Boolean(k) && !this.cache.has(k)
+    })
+    if (!next.length) return
+    this.setMany(next)
+  }
+
+  /** 改键名（节点 ID 重命名时搬译文） */
+  renameKey(from: string, to: string): void {
+    const src = this.normalize(from)
+    const dest = this.normalize(to)
+    if (!src || !dest || src === dest || !this.cache.has(src)) return
+    if (this.cache.has(dest)) return
+    const value = this.cache.get(src)!
+    this.cache.delete(src)
+    this.cache.set(dest, value)
+    this.emit()
+    this.flush()
+  }
+
   delete(key: string): void {
-    const k = normalizeLocaleKey(key)
+    const k = this.normalize(key)
     if (!k || !this.cache.delete(k)) return
     this.emit()
     this.flush()
@@ -221,7 +269,7 @@ export class TextMap {
   deleteMany(keys: Iterable<string>): void {
     let changed = false
     for (const key of keys) {
-      const k = normalizeLocaleKey(key)
+      const k = this.normalize(key)
       if (!k) continue
       if (this.cache.delete(k)) changed = true
     }
