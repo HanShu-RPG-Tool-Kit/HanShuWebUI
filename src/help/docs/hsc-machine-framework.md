@@ -128,7 +128,7 @@ Type = BaseHscMachine.compose([
 ```
 
 每个 Feature 可贡献：能力增量、钩子子集、额外 `accept` 规则。  
-具体机器（独白 / 对白 / 过场）= 不同 Feature 组合的 **Type**，再 `spawn` 出 Instance。  
+具体机器（旁白 / 自白 / 对话 / 会议 / 过场动画）= 不同 Feature 组合的 **Type**，再 `spawn` 出 Instance。  
 **禁止**为每个玩法复制一套 PC/选项树循环。
 
 ---
