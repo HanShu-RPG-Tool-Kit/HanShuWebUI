@@ -6,9 +6,24 @@ export const PROGRESS_FORMAT = 'hanshu.progress'
 export type ProgressConfigValue = GoalConfigValue
 export const TASK_VISIBILITY_STATES = { before_accept: '接取之前', after_accept: '接取之后', active: '激活中', succeeded: '成功后', ended: '结束后' } as const
 export const DIALOGUE_VISIBILITY_STATES = { before: '之前', after: '之后' } as const
+/** 条件求值器：表达式本身即条件，仅「满足」一态 */
+export const EXPR_VISIBILITY_STATES = { true: '满足' } as const
 export type ProgressConditionRule =
   | { kind: 'task'; state: keyof typeof TASK_VISIBILITY_STATES; target: string }
   | { kind: 'dialogue'; state: keyof typeof DIALOGUE_VISIBILITY_STATES; target: string }
+  | { kind: 'expr'; state: keyof typeof EXPR_VISIBILITY_STATES; target: string }
+
+export function conditionStatesFor(kind: ProgressConditionRule['kind']) {
+  if (kind === 'task') return TASK_VISIBILITY_STATES
+  if (kind === 'dialogue') return DIALOGUE_VISIBILITY_STATES
+  return EXPR_VISIBILITY_STATES
+}
+
+export function createConditionRule(kind: ProgressConditionRule['kind']): ProgressConditionRule {
+  if (kind === 'task') return { kind: 'task', state: 'succeeded', target: '' }
+  if (kind === 'dialogue') return { kind: 'dialogue', state: 'after', target: '' }
+  return { kind: 'expr', state: 'true', target: '' }
+}
 export type ProgressRepeatKind = 'once' | 'game_daily' | 'game_weekly' | 'real_daily' | 'real_weekly' | 'real_monthly' | 'duration' | 'manual'
 export type ProgressGoal = { id: string; kind: string; config: Record<string, ProgressConfigValue> }
 export type ProgressDocument = {
@@ -91,8 +106,12 @@ export function parseProgress(source: string, _definitions: readonly GoalDefinit
       check(Object.hasOwn(TASK_VISIBILITY_STATES, String(value.state)), '任务条件状态无效')
       return { kind: 'task', state: value.state as keyof typeof TASK_VISIBILITY_STATES, target }
     }
-    check(value.kind === 'dialogue' && Object.hasOwn(DIALOGUE_VISIBILITY_STATES, String(value.state)), '对话条件状态无效')
-    return { kind: 'dialogue', state: value.state as keyof typeof DIALOGUE_VISIBILITY_STATES, target }
+    if (value.kind === 'dialogue') {
+      check(Object.hasOwn(DIALOGUE_VISIBILITY_STATES, String(value.state)), '对话条件状态无效')
+      return { kind: 'dialogue', state: value.state as keyof typeof DIALOGUE_VISIBILITY_STATES, target }
+    }
+    check(value.kind === 'expr' && Object.hasOwn(EXPR_VISIBILITY_STATES, String(value.state)), '求值条件状态无效')
+    return { kind: 'expr', state: value.state as keyof typeof EXPR_VISIBILITY_STATES, target }
     })
   }
   const visibility = readConditions(raw.visibility, '可见性条件')

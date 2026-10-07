@@ -2,7 +2,7 @@ import { useEffect, useId, useRef, useState, type PointerEvent } from 'react'
 import {
   createProgressGoal, duplicateProgressGoal, goalConfigSummary,
   goalLabel, moveProgressGoal, progressIssues, PROGRESS_REPEAT_LABELS, stringifyProgress,
-  TASK_VISIBILITY_STATES, DIALOGUE_VISIBILITY_STATES,
+  conditionStatesFor, createConditionRule,
   type ProgressConditionRule, type ProgressConfigValue, type ProgressDocument, type ProgressGoal,
   type ProgressRepeatKind,
 } from './progressDoc'
@@ -170,6 +170,7 @@ export function ProgressEditor({ doc, goalCatalog, kitOptions = [], disabled, on
   return <div className="progress-editor" onClick={event => {
     if (event.target instanceof Element && event.target.closest('button')) event.target.closest('.progress-menu')?.removeAttribute('open')
   }}>
+    <div className="progress-form-scroll">
     <fieldset disabled={disabled} className="progress-page">
       <header className="progress-document-head">
         <section className="progress-info-card progress-main-info" aria-label="标题与描述">
@@ -250,13 +251,13 @@ export function ProgressEditor({ doc, goalCatalog, kitOptions = [], disabled, on
       {([['visibility', '可见性条件'], ['acceptance', '可承接条件']] as const).map(([field, title]) => <section key={field} className="progress-card progress-rules" aria-label={title}><header className="progress-card-head"><h2>{title}</h2><span className="progress-card-count">{doc[field].length}</span><small className="progress-card-note">全部满足</small></header>
         <div className="progress-card-body">
           {doc[field].map((rule, index) => <div className="progress-visibility-row" key={index}>
-            <select aria-label={`${title} ${index + 1} 对象类型`} value={rule.kind} onChange={event => update({ [field]: doc[field].map((item, i) => i !== index ? item : event.target.value === 'task' ? { kind: 'task', state: 'succeeded', target: '' } : { kind: 'dialogue', state: 'after', target: '' }) })}><option value="task">任务</option><option value="dialogue">对话</option></select>
-            <select aria-label={`${title} ${index + 1} 状态`} value={rule.state} onChange={event => update({ [field]: doc[field].map((item, i) => i !== index ? item : { ...rule, state: event.target.value } as ProgressConditionRule) })}>{Object.entries(rule.kind === 'task' ? TASK_VISIBILITY_STATES : DIALOGUE_VISIBILITY_STATES).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
-            <input aria-label={`${title} ${index + 1} 对象`} placeholder={rule.kind === 'task' ? '任务对象' : '对话对象'} value={rule.target} onChange={event => update({ [field]: doc[field].map((item, i) => i !== index ? item : { ...rule, target: event.target.value }) })} />
+            <select aria-label={`${title} ${index + 1} 对象类型`} value={rule.kind} onChange={event => update({ [field]: doc[field].map((item, i) => i !== index ? item : createConditionRule(event.target.value as ProgressConditionRule['kind'])) })}><option value="task">任务</option><option value="dialogue">对话</option><option value="expr">求值</option></select>
+            <select aria-label={`${title} ${index + 1} 状态`} value={rule.state} onChange={event => update({ [field]: doc[field].map((item, i) => i !== index ? item : { ...rule, state: event.target.value } as ProgressConditionRule) })}>{Object.entries(conditionStatesFor(rule.kind)).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
+            <input aria-label={`${title} ${index + 1} 对象`} placeholder={rule.kind === 'task' ? '任务对象' : rule.kind === 'dialogue' ? '对话对象' : '条件表达式'} value={rule.target} onChange={event => update({ [field]: doc[field].map((item, i) => i !== index ? item : { ...rule, target: event.target.value }) })} />
             <button type="button" className="progress-remove" aria-label={`删除${title} ${index + 1}`} onClick={() => update({ [field]: doc[field].filter((_, i) => i !== index) })}>×</button>
           </div>)}
           {!doc[field].length && <p className="progress-card-empty">没有条件，直接满足。</p>}
-          <button type="button" className="progress-card-add" aria-label={`添加${title}`} onClick={() => update({ [field]: [...doc[field], { kind: 'task', state: 'succeeded', target: '' }] })}>＋ 添加条件</button>
+          <button type="button" className="progress-card-add" aria-label={`添加${title}`} onClick={() => update({ [field]: [...doc[field], createConditionRule('task')] })}>＋ 添加条件</button>
         </div>
       </section>)}
 
@@ -264,5 +265,6 @@ export function ProgressEditor({ doc, goalCatalog, kitOptions = [], disabled, on
       <p className="progress-notice" role="status">{notice || '拖动手柄排序，更多操作在行末菜单'}</p>
       {picker && <GoalPicker definitions={definitions} current={pickerGoal?.kind} onChoose={choose} onClose={() => setPicker(null)} />}
     </fieldset>
+    </div>
   </div>
 }

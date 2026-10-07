@@ -2,7 +2,7 @@
 
 “进度流程”是 HanShu 的内容设计工作区，工作区 ID 为 `progress-flow`。当前阶段先确定作者如何组织阶段、分支和条件，执行规则由后续引擎设计。
 
-**流程模型与信号语义、表达能力分析**见 [progress-flow-model.md](./progress-flow-model.md)。
+**流程模型与信号语义、表达能力分析**见 [进度流程模型](#progress-flow-model)。
 
 ## 原型草稿
 
@@ -43,7 +43,7 @@ checkpoint 按稳定 ID 平铺保存，只含名称与说明（`FlowText` 无 `k
 
 - 左侧资源管理器按九个顶层分类组织资源：**脚本**、**进度**、**故事流程**、**演员**、**声誉**、**区域**、**导航器**、**商店**、**礼包**（各分类下可有文件夹）。「脚本」下内置二级分类 **目标定义**（稳定、不可重命名/移动/删除，其下仍可建普通文件夹），其内另有虚拟只读文件夹 **内置**（含 `core:dialogue_choice` / `core:manual` / `core:counter` 等只读样例脚本，不落盘；进度收集目标定义时始终计入，工程脚本同 kind 可覆盖）。并可新建 / 导入 **`.py`** 脚本（主区用 Python 编辑器打开）。「进度」可新建 / 导入 **`.progress`**（委托表单：目标种类来自目标定义脚本）。「导航器」可新建 / 导入 **`.nav`**（导航点 JSON：`position` 固定坐标或 `entity` 绑定实体；对齐引擎 NavigationPoint，不含 datapack 路径 / 资源 id）。「礼包」可新建 / 导入 **`.kit`**（JSON：名称；可选 `extends` 单父继承、`includes` 组合；可选 `tags` 游戏标签 string[]——类似 MC Tag 的成员声明，引擎可查询，**继承与父并集去重、组合不并入宿主**，空则不写入；可选 `params` 超参数 / `modifiers` 修饰器，详见应用内帮助与 `hanshu.kit.expr` V1；物品 ItemStack `{id,count,components,display?}`——`display` 仅编辑器展示快照，附 `snapshotOf` 指纹（id + components 的 FNV-1a，不含 count），与当前数据不一致即视为过期：tooltip 改由 WebUI 近似渲染（名称/稀有度/附魔/描述/无法破坏，未识别组件只计数），图标保留但加角标；可从桌面拖入模组导出的 **`.itemstack`** 文件追加/替换物品；随机池 `pools[{rolls, entries[{weight, items}]}]`、药水效果 `effects[{id, amplifier, duration(秒,0=无限), particles}]`、指令、经验 `{kind: levels|points, amount}`、领取反馈 `feedback{message,title,subtitle,sound}`、内联脚本；可选块为空时不写入文件；居中双栏表单）。`.hflow` 树图流程仅能在「故事流程」中新建与导入；其余分类暂只支持文件夹占位，供后续扩展。
 
-  **工程目录**：进度与剧本共用同一工程包根。打开/新建工程后，进度文档落在 `src/progress/`、`src/story/`、`src/navigator/`、`src/gift/`、`src/scripts/`（目标定义 `.py`）。内置目标定义脚本来自仓库 `src/workspaces/progress/builtinGoals/*.py`（构建时打进包，虚拟只读展示，不写入工程）。编辑会即时写入共享工程会话；在进度区「保存」/Ctrl+S 即可整包落盘，无需回到剧本区。未打开工程时进度区只读提示。旧的整库 `hanshu.progressWorkspace.v1` 会在打开工程时迁入源文件后删除；页条等 UI 状态改存 `hanshu.progressUi.v1`。旧草稿未带分类字段时加载为「故事流程」。资源名称与文档标题、稳定 ID 分开维护。
+  **工程目录**：进度与剧本共用同一工程包根。打开/新建工程后，进度文档落在 `src/progress/`、`src/story/`、`src/navigator/`、`src/gift/`、`src/script/`（普通脚本 `.py`）、`src/goal/`（「目标定义」二级分类下的 `.py`，与 script 平级、不嵌套）。内置目标定义脚本来自仓库 `src/workspaces/progress/builtinGoals/*.py`（构建时打进包，虚拟只读展示，不写入工程）。编辑会即时写入共享工程会话；在进度区「保存」/Ctrl+S 即可整包落盘，无需回到剧本区。未打开工程时进度区只读提示。旧的整库 `hanshu.progressWorkspace.v1` 会在打开工程时迁入源文件后删除；页条等 UI 状态改存 `hanshu.progressUi.v1`。旧草稿未带分类字段时加载为「故事流程」。资源名称与文档标题、稳定 ID 分开维护。
 
   **本地化**：`.progress` / `.hflow` / `.nav` / `.kit` 的玩家可见文案与 `.hs` 同布局——源文件存语义键，译文在 `assets/<locale>/lang_progress|lang_hflow|lang_nav|lang_kit/….lang`。键为文档内相对路径（如 `name`、`description`、`entry.title`、`label`、`feedback.message`），不含文件名；改文件名时搬迁对等 `.lang`。底部语言切换与剧本共用 `hanshu.locale`。作者备注、画布注释、礼包音效 id / 标签 / 指令不进本地化。打开旧明文稿时自动收成语义键并把原文灌入当前语言。
 - 主区按 VS Code 方式划分**编辑组**，每组有自己的**文档页条**（流程 / 脚本 / 礼包共用）：打开即加入、可拖拽排序；右键可固定、关闭、关闭其他页、关闭右侧页、关闭所有页；固定页跳过关闭，须先取消固定；中键关闭未固定页。

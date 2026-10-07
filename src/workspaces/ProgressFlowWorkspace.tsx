@@ -15,7 +15,13 @@ import { createFlowDocument, downloadFlowFile, importFlowDocument, stampDocument
 import { createKit, kitRefFromFileName, readKitSource, stringifyKit, parseKit } from './progress/kit'
 import { createProgress, createProgressLocaleSeeds, readProgressSource, stringifyProgress, parseProgress } from './progress/progressDoc'
 import { createNavigationPoint, readNavigationSource, stringifyNavigationPoint, parseNavigationPoint } from './progress/navigationPoint'
-import { buildGoalDefinitionCatalog, isBuiltinGoalDocumentKey, stripBuiltinGoalDefinitions, withBuiltinGoalDefinitions } from './progress/goalDefinitions'
+import {
+  buildGoalDefinitionCatalog,
+  isBuiltinGoalDocumentKey,
+  isGoalDefinitionDocument,
+  stripBuiltinGoalDefinitions,
+  withBuiltinGoalDefinitions,
+} from './progress/goalDefinitions'
 import { KitEditor } from './progress/KitEditor'
 import { ProgressEditor } from './progress/ProgressEditor'
 import { NavigationEditor } from './progress/NavigationEditor'
@@ -133,30 +139,53 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
       const diskJobs: Array<Promise<void>> = []
       for (const doc of next.documents) {
         const old = prevScripts.find((script) => script.id === doc.key)
-        if (!old || old.name === doc.name) continue
-        const renamed = renameScriptAssets(workspace, doc.key, doc.name)
-        if (renamed.kind === 'blocked') {
-          setNotice(`语言文件无法随改名搬迁：${renamed.path} 已存在`)
-          continue
-        }
-        const assetMoves = renamed.kind === 'moved' ? renamed.moves : []
-        if (renamed.kind === 'moved') {
-          workspace = renamed.workspace
-          const packageId = workspace.packages[0]?.id
-          if (packageId) {
-            diskJobs.push((async () => {
-              for (const move of assetMoves) {
-                const blob = await getAssetBlob(packageId, move.fromPath)
-                if (!blob) continue
-                await putAssetBlob(packageId, move.toPath, blob)
-                await deleteAssetBlob(packageId, move.fromPath)
+        if (!old) continue
+        const newSrcKind =
+          doc.name.toLowerCase().endsWith('.py')
+            ? isGoalDefinitionDocument(next, doc)
+              ? 'goal'
+              : 'script'
+            : old.srcKind
+        const nameChanged = old.name !== doc.name
+        const kindChanged = (old.srcKind ?? 'script') !== (newSrcKind ?? 'script')
+        if (!nameChanged && !kindChanged) continue
+        const assetMoves = nameChanged
+          ? (() => {
+              const renamed = renameScriptAssets(workspace, doc.key, doc.name)
+              if (renamed.kind === 'blocked') {
+                setNotice(`语言文件无法随改名搬迁：${renamed.path} 已存在`)
+                return null
               }
-            })())
-          }
-        }
+              if (renamed.kind === 'moved') {
+                workspace = renamed.workspace
+                const packageId = workspace.packages[0]?.id
+                if (packageId) {
+                  diskJobs.push((async () => {
+                    for (const move of renamed.moves) {
+                      const blob = await getAssetBlob(packageId, move.fromPath)
+                      if (!blob) continue
+                      await putAssetBlob(packageId, move.toPath, blob)
+                      await deleteAssetBlob(packageId, move.fromPath)
+                    }
+                  })())
+                }
+                return renamed.moves
+              }
+              return [] as Array<{ fromPath: string; toPath: string }>
+            })()
+          : []
+        if (assetMoves === null) continue
         const binding = live.binding
         diskJobs.push(
-          renameSourceOnDisk(binding.handle, old.name, doc.name, doc.source, assetMoves).catch((error) => {
+          renameSourceOnDisk(
+            binding.handle,
+            old.name,
+            doc.name,
+            doc.source,
+            assetMoves,
+            old.srcKind,
+            newSrcKind,
+          ).catch((error) => {
             setNotice(`工作区已改名，但写入工程目录失败：${error instanceof Error ? error.message : String(error)}`)
           }),
         )
@@ -170,13 +199,19 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
       for (const script of removed) {
         const binding = live.binding
         diskJobs.push(
-          removeSourceFromDisk(binding.handle, script.name).catch((error) => {
+          removeSourceFromDisk(binding.handle, script.name, script.srcKind).catch((error) => {
             setNotice(`工作区已删除，但清理工程目录失败：${error instanceof Error ? error.message : String(error)}`)
           }),
         )
       }
       if (diskJobs.length) void Promise.all(diskJobs)
-      setProjectSession({ workspace: applyProgressDocumentsToWorkspace(workspace, next.documents) })
+      setProjectSession({
+        workspace: applyProgressDocumentsToWorkspace(
+          workspace,
+          next.documents,
+          next.folders ?? [],
+        ),
+      })
     }
   }
 
@@ -188,6 +223,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
   const [showIssues, setShowIssues] = useState(false)
   const [cycleAlert, setCycleAlert] = useState<string | null>(null)
   const [propertiesKey, setPropertiesKey] = useState<string | null>(null)
+  const [progressSourceKey, setProgressSourceKey] = useState<string | null>(null)
   const [history, setHistory] = useState(() => new Map<string, History>())
   const fileInput = useRef<HTMLInputElement>(null)
   const importFolder = useRef<{ folderId: string | null; package: FlowPackageId }>({ folderId: null, package: 'story' })
@@ -586,6 +622,12 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
   }
   function selectDocument(key: string, group: GroupId = focusedGroup) {
     updateGroups((previous) => openInGroup(previous, group, key))
+    setProgressSourceKey(null)
+    setNotice('')
+  }
+  function viewProgressSource(key: string) {
+    updateGroups((previous) => openInGroup(previous, focusedGroup, key))
+    setProgressSourceKey(key)
     setNotice('')
   }
   function dropPage(group: GroupId, zone: DropZone, beforeKey: string | null = null) {
@@ -891,6 +933,25 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     if (paneProgress && paneProgressParsed) {
       if (!paneProgressParsed.doc) return <ProgressSourceRepair key={paneDoc.key} source={paneDoc.source} error={paneProgressParsed.error} disabled={disabledPane}
         onApply={source => { if (!disabledPane) changeSource(source, false, paneDoc.key) }} />
+      if (progressSourceKey === paneDoc.key) {
+        return <div className="flow-source-pane flow-script-pane" aria-label=".progress 源码">
+          <div className="flow-script-readonly-bar">
+            <span>只读 · .progress JSON</span>
+            <button type="button" onClick={() => setProgressSourceKey(null)}>返回表单</button>
+          </div>
+          <div className="flow-script-editor">
+            <Editor
+              height="100%"
+              language="json"
+              theme={HANSHU_THEME_ID}
+              value={paneDoc.source}
+              path={`progress-source://g${group}/${paneDoc.key}/${paneDoc.name}`}
+              beforeMount={registerHanshuLanguage}
+              options={{ fontSize: editorFontSize, mouseWheelZoom: true, minimap: { enabled: false }, wordWrap: 'on', automaticLayout: true, scrollBeyondLastLine: false, padding: { top: 8 }, readOnly: true, domReadOnly: true }}
+            />
+          </div>
+        </div>
+      }
       return <div className="flow-kit-pane">
         <ProgressEditor
           key={paneDoc.key}
@@ -1067,7 +1128,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
       {!storageError && <button type="button" aria-label="关闭提示" onClick={() => setNotice('')}>×</button>}
     </div>}
     <div className="flow-layout">
-      <FlowExplorer state={explorerState} active={active} disabled={locked || busy} onChange={(next) => setState((previous) => normalizeGroups({ ...previous, documents: next.documents, folders: next.folders }))} onSelect={(key) => selectDocument(key)} onNew={newFlow} onImport={requestImport} onImportFiles={(files, folderId, packageId) => { void importFiles(files, { folderId, package: packageId }) }} onExport={exportFlow} onDownload={downloadDraft} onRemove={removeResources} onProperties={setPropertiesKey} onNotice={setNotice} />
+      <FlowExplorer state={explorerState} active={active} disabled={locked || busy} onChange={(next) => setState((previous) => normalizeGroups({ ...previous, documents: next.documents, folders: next.folders }))} onSelect={(key) => selectDocument(key)} onNew={newFlow} onImport={requestImport} onImportFiles={(files, folderId, packageId) => { void importFiles(files, { folderId, package: packageId }) }} onExport={exportFlow} onDownload={downloadDraft} onRemove={removeResources} onProperties={setPropertiesKey} onViewSource={viewProgressSource} onNotice={setNotice} />
       <main className="flow-main">
         {state.split ? (
           <EditorSplit

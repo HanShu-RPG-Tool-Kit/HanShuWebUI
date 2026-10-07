@@ -180,8 +180,8 @@ export function AgentPanel({
       <div className="agent-messages" ref={listRef}>
         {messages.length === 0 && (
           <div className="agent-hint">
-            已启用写入工具（无需 git）。顶栏 Pro 可切换模型。语法文档：
-            <code>docs/hanshu-syntax.md</code>
+            已启用写入工具（无需 git）。顶栏 Pro 可切换模型。语法文档见帮助「.hs
+            语法说明」。
           </div>
         )}
         {messages.map((msg) => (

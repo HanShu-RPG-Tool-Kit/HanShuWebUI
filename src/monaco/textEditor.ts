@@ -48,6 +48,7 @@ import {
   type DialogueBlock,
   type TextSpan,
 } from './textSpans'
+import type { CharDiagnostic } from './charDiagnostics'
 import { analyzeHsDiagnostics, type HsDiagnostic } from './hsDiagnostics'
 
 /**
@@ -118,11 +119,22 @@ export type TextUnitDropRequest = {
 }
 
 export type TextHost = {
-  /** 当前活动文件的语言文本映射；不适用（非 .hs、无活动文件、看资产）时返回 null */
+  /** 当前活动文件的语言文本映射；不适用（非可本地化源、无活动文件、看资产）时返回 null */
   getMap(): TextMap | null
+  /**
+   * 可本地化片段解析；默认 `.hs` 的 `parseTextSpans`。
+   * `.char` 等应传入对应解析器。
+   */
+  parseSpans?(source: string): TextSpan[]
+  /**
+   * 语法诊断；默认 `.hs`。传入 `parseCharTextSpans` 时应同时传 char 诊断。
+   */
+  analyzeDiagnostics?(
+    source: string,
+  ): Array<HsDiagnostic | CharDiagnostic>
   /** 请求弹出等位置覆盖编辑框 */
   onEditRequest(request: TextEditRequest): void
-  /** 音频映射管理；非 .hs / 尚未就绪时返回 null（按钮一律渲染成"缺失"） */
+  /** 音频映射管理；非可本地化源 / 尚未就绪时返回 null（按钮一律渲染成"缺失"） */
   getVoice?(): VoiceLibrary | null
   /** 上级容器被右键 */
   onUnitMenu?(request: TextUnitMenuRequest): void
@@ -371,7 +383,8 @@ export function bindText(
     if (version >= 0 && spanCache && spanCache.version === version) {
       return spanCache.spans
     }
-    const spans = parseTextSpans(model.getValue())
+    const parse = host.parseSpans ?? parseTextSpans
+    const spans = parse(model.getValue())
     if (version >= 0) spanCache = { version, spans }
     return spans
   }
@@ -773,12 +786,22 @@ export function bindText(
    * 单行缺 `//` 只叠闭合符；多行缺 `//` 叠"回车 + 闭合符"；
    * 闭合符没独占一行 / `speaker:` 后不该有文本只叠回车。
    */
-  const diagnosticSymbol = (diag: HsDiagnostic): string =>
-    diag.kind === 'missing-terminator'
-      ? diag.multiline
+  const diagnosticSymbol = (
+    diag: HsDiagnostic | CharDiagnostic,
+  ): string => {
+    if (diag.kind === 'missing-terminator') {
+      return 'multiline' in diag && diag.multiline
         ? 'hs-diag-enter-close'
         : 'hs-diag-close'
-      : 'hs-diag-enter'
+    }
+    if (
+      diag.kind === 'duplicate-sys-return' ||
+      diag.kind === 'duplicate-inject'
+    ) {
+      return 'hs-diag-close'
+    }
+    return 'hs-diag-enter'
+  }
 
   // ——————————————————————————————————————————————————————————————
   //  录音棚模式（键名选择）
@@ -1008,8 +1031,9 @@ export function bindText(
    */
   const diagnosticDecorations = (
     model: editor.ITextModel,
-  ): editor.IModelDeltaDecoration[] =>
-    analyzeHsDiagnostics(model.getValue()).map((diag) => ({
+  ): editor.IModelDeltaDecoration[] => {
+    const analyze = host.analyzeDiagnostics ?? analyzeHsDiagnostics
+    return analyze(model.getValue()).map((diag) => ({
       range: monaco.Range.fromPositions(model.getPositionAt(diag.offset)),
       options: {
         stickiness:
@@ -1017,6 +1041,7 @@ export function bindText(
         afterContentClassName: diagnosticSymbol(diag),
       },
     }))
+  }
 
   /** 重建覆盖框与 view zone（内容 / Ctrl / 映射变化） */
   const render = () => {

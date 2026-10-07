@@ -1,6 +1,6 @@
 # 进度流程模型说明
 
-本文描述 HanShu 进度流程工作区**当前**的画布模型与信号运行时（以 `src/workspaces/progress/model.ts`、`signals.ts` 为准）。集线器 / 网关 / 合取·析取节点 / checkpoint 树时代字段已移除。画布操作用法见 [progress-workspace.md](./progress-workspace.md)。
+本文描述 HanShu 进度流程工作区**当前**的画布模型与信号运行时（以 `src/workspaces/progress/model.ts`、`signals.ts` 为准）。集线器 / 网关 / 合取·析取节点 / checkpoint 树时代字段已移除。画布操作用法见 [进度工作区](#progress-workspace)。
 
 ## 1. 模型定位
 

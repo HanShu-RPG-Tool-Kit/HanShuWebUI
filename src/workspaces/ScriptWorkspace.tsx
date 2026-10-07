@@ -10,6 +10,14 @@ import {
 import Editor, { type OnMount } from '@monaco-editor/react'
 import { Explorer } from '../Explorer'
 import {
+  CHAR_THEME_ID,
+  registerCharLanguage,
+} from '../monaco/charLanguage'
+import { indexForeignHsInjects } from '../hanshu/injectIndex'
+import { analyzeCharDiagnostics } from '../monaco/charDiagnostics'
+import { analyzeHsDiagnostics } from '../monaco/hsDiagnostics'
+import { parseCharTextSpans } from '../monaco/charTextSpans'
+import {
   HANSHU_THEME_ID,
   registerHanshuLanguage,
 } from '../monaco/hanshuLanguage'
@@ -33,6 +41,7 @@ import {
   findAsset,
   findScript,
   findScriptByName,
+  isCharFile,
   isHanshuFile,
   isMarkdownFile,
   editorLanguageForFile,
@@ -66,7 +75,9 @@ import { createVoiceOps, type VoiceOps } from '../i18n/voiceOps'
 import { voiceRootDir } from '../i18n/localeLayout'
 import {
   buildResourcePackZip,
+  bundlePacksZip,
   downloadBlob,
+  exportPaks,
 } from '../export/resourcePack'
 import { buildProjectPackZip } from '../export/projectPack'
 import { normalizeAssetPath, normalizeFolderPath } from '../assets/paths'
@@ -303,6 +314,9 @@ export const ScriptWorkspace = forwardRef<
     : (active?.pkg.name ?? '汉书')
   const editingMarkdown = !viewingAsset && isMarkdownFile(titleName)
   const editingHanshu = !viewingAsset && isHanshuFile(titleName)
+  const editingChar = !viewingAsset && isCharFile(titleName)
+  /** `.hs` / `.char`：语言文本映射与录音棚 */
+  const editingLocalizable = editingHanshu || editingChar
 
   const commitWorkspace = (next: Workspace) => {
     workspaceRef.current = next
@@ -456,8 +470,8 @@ export const ScriptWorkspace = forwardRef<
    * 否则「看起来有工程、其实没绑定」，导入只会写进应用内资源。
    */
   const [pendingProjectRestore, setPendingProjectRestore] = useState(false)
-  /** 仅活动文件是 .hs 时才有语言文本映射 */
-  const textSourceName = editingHanshu ? titleName : ''
+  /** 仅活动文件是可本地化源（.hs / .char）时才有语言文本映射 */
+  const textSourceName = editingLocalizable ? titleName : ''
   const handleLocaleChange = (tag: string) => {
     setLocale(tag)
     saveLocale(tag)
@@ -2375,6 +2389,10 @@ export const ScriptWorkspace = forwardRef<
       void handleExportResourcePack()
       return
     }
+    if (item === '导出PAK（分平面）') {
+      void handleExportResourcePackPlanes()
+      return
+    }
     if (item === '导出工程包') {
       void handleExportProjectPack()
       return
@@ -2453,9 +2471,8 @@ export const ScriptWorkspace = forwardRef<
     setHistoryOpen(false)
   }
 
-  /** 导出 PAK：编译 hsc + 只保留被引用到的 lang / voice */
+  /** 导出 PAK：combined（兼容）；走编译图 */
   const handleExportResourcePack = async () => {
-    // 先保存，确保导出用到的是最新的 .hs 正文
     persistNow()
     try {
       const { blob, fileCount, warnings } = await buildResourcePackZip(
@@ -2478,6 +2495,53 @@ export const ScriptWorkspace = forwardRef<
     } catch (err) {
       window.alert(
         `导出 PAK 失败：${err instanceof Error ? err.message : String(err)}`,
+      )
+    }
+  }
+
+  /** 导出 client / server / shared 三个 pak；可选用口令加密 server */
+  const handleExportResourcePackPlanes = async () => {
+    persistNow()
+    try {
+      const passphrase =
+        window.prompt(
+          '服务端 PAK 加密口令（留空则不加密；口令不会写入工程）',
+          '',
+        ) ?? ''
+      const { packs, warnings } = await exportPaks(workspaceRef.current, {
+        targets: ['client', 'server', 'shared'],
+        encrypt: passphrase
+          ? { targets: ['server'], passphrase }
+          : undefined,
+      })
+      const stamp = new Date()
+        .toISOString()
+        .slice(0, 19)
+        .replace(/[:T]/g, '-')
+      const bundle = await bundlePacksZip(packs)
+      downloadBlob(bundle, `hanshu-paks-${stamp}.zip`)
+
+      const summary = packs
+        .map(
+          (p) =>
+            `${p.target}: ${p.fileCount} 文件${p.encrypted ? '（已加密）' : ''}`,
+        )
+        .join('\n')
+      if (warnings.length > 0) {
+        const shown = warnings.slice(0, 20).join('\n')
+        const more =
+          warnings.length > 20 ? `\n…另有 ${warnings.length - 20} 条` : ''
+        window.alert(
+          `已导出分平面 PAK：\n${summary}\n\n警告：\n${shown}${more}`,
+        )
+      } else {
+        window.alert(`已导出分平面 PAK：\n${summary}`)
+      }
+    } catch (err) {
+      window.alert(
+        `导出分平面 PAK 失败：${
+          err instanceof Error ? err.message : String(err)
+        }`,
       )
     }
   }
@@ -2777,7 +2841,7 @@ export const ScriptWorkspace = forwardRef<
           pkg.scripts.map((script) => ({
             package: pkg.name,
             source: script.name,
-            kind: sourceKindOf(script.name),
+            kind: sourceKindOf(script.name, script.srcKind),
             bytes: script.content.length,
             updatedAt: script.updatedAt,
           })),
@@ -2792,7 +2856,7 @@ export const ScriptWorkspace = forwardRef<
       return {
         ok: true,
         source: hit.script.name,
-        kind: sourceKindOf(hit.script.name),
+        kind: sourceKindOf(hit.script.name, hit.script.srcKind),
         version: hit.script.updatedAt,
         ...page,
       }
@@ -2910,7 +2974,12 @@ export const ScriptWorkspace = forwardRef<
       const hit = findScriptByName(workspaceRef.current, source)
       if (!hit) return { ok: false, error: `未找到文件：${source}` }
       const content = agentSourceContent(hit.script.id) ?? hit.script.content
-      const result = validateSourceContent(hit.script.name, content)
+      const result = validateSourceContent(hit.script.name, content, {
+        foreignInjects: indexForeignHsInjects(
+          workspaceRef.current,
+          hit.script.name,
+        ),
+      })
       return {
         ok: result.diagnostics.length === 0 && !result.compileError,
         source: hit.script.name,
@@ -2954,7 +3023,7 @@ export const ScriptWorkspace = forwardRef<
       if (!target) return { ok: false, error: `未找到文件：${source}` }
       const content =
         agentSourceContent(target.hit.script.id) ?? target.hit.script.content
-      const keys = collectSourceKeys(content)
+      const keys = collectSourceKeys(content, target.hit.script.name)
       const start = Math.max(1, Math.floor(offset ?? 1) || 1)
       const count = Math.min(Math.max(1, Math.floor(limit ?? 200) || 200), 1000)
       const page = keys.slice(start - 1, start - 1 + count)
@@ -2994,7 +3063,9 @@ export const ScriptWorkspace = forwardRef<
       if (plan.length === 0) return { ok: false, error: 'translations 为空' }
 
       const content = agentSourceContent(hit.script.id) ?? hit.script.content
-      const known = new Set(collectSourceKeys(content).map((item) => item.key))
+      const known = new Set(
+        collectSourceKeys(content, hit.script.name).map((item) => item.key),
+      )
       let workspace = workspaceRef.current
       const results: Array<Record<string, unknown>> = []
       let writtenTotal = 0
@@ -3094,7 +3165,9 @@ export const ScriptWorkspace = forwardRef<
       const hit = findScriptByName(workspaceRef.current, source)
       if (!hit) return { ok: false, error: `未找到文件：${source}` }
       const content = agentSourceContent(hit.script.id) ?? hit.script.content
-      const keys = collectSourceKeys(content).map((item) => item.key)
+      const keys = collectSourceKeys(content, hit.script.name).map(
+        (item) => item.key,
+      )
       const resolved = resolveAgentLocale(localeArg)
       if ('error' in resolved) return resolved.error
       const lang = resolved.locale
@@ -3124,7 +3197,7 @@ export const ScriptWorkspace = forwardRef<
       const path = langAssetPathFor(hit.script.name, lang)
       const map = await readLangAsset(hit.pkg.id, path)
       const before = agentSourceContent(hit.script.id) ?? hit.script.content
-      const parsed = parseSourceText(before, map)
+      const parsed = parseSourceText(before, map, hit.script.name)
 
       if (parsed.entries.length === 0) {
         return {
@@ -3176,7 +3249,7 @@ export const ScriptWorkspace = forwardRef<
       const path = langAssetPathFor(hit.script.name, lang)
       const map = await readLangAsset(hit.pkg.id, path)
       const before = agentSourceContent(hit.script.id) ?? hit.script.content
-      const unparsed = unparseSourceText(before, map)
+      const unparsed = unparseSourceText(before, map, hit.script.name)
 
       if (unparsed.replaced === 0) {
         return {
@@ -3395,20 +3468,46 @@ export const ScriptWorkspace = forwardRef<
                 )}
                 <div className="editor-pane">
                   <Editor
+                    key={titleName}
                     height="100%"
                     language={editorLanguageForFile(titleName)}
-                    theme={HANSHU_THEME_ID}
+                    theme={
+                      editingChar ? CHAR_THEME_ID : HANSHU_THEME_ID
+                    }
                     value={value}
-                    beforeMount={registerHanshuLanguage}
+                    beforeMount={(monaco) => {
+                      registerHanshuLanguage(monaco)
+                      registerCharLanguage(monaco)
+                    }}
                     onMount={(editor, monaco) => {
                       editorRef.current = editor
                       bindTaggedCommentHotkeys(editor, monaco)
-                      bindChoiceInsertHotkeys(editor, monaco)
-                      bindSpeakerHotkeys(editor, monaco, () => rolesRef.current)
-                      bindCopyDialogueHotkey(editor, monaco)
+                      if (isHanshuFile(titleName)) {
+                        bindChoiceInsertHotkeys(editor, monaco)
+                        bindSpeakerHotkeys(
+                          editor,
+                          monaco,
+                          () => rolesRef.current,
+                        )
+                        bindCopyDialogueHotkey(editor, monaco)
+                      }
                       textBindingRef.current?.dispose()
                       textBindingRef.current = bindText(editor, monaco, {
                         getMap: () => textMapRef.current,
+                        parseSpans: isCharFile(titleName)
+                          ? parseCharTextSpans
+                          : undefined,
+                        analyzeDiagnostics: isCharFile(titleName)
+                          ? analyzeCharDiagnostics
+                          : isHanshuFile(titleName)
+                            ? (source) =>
+                                analyzeHsDiagnostics(source, {
+                                  foreignInjects: indexForeignHsInjects(
+                                    workspaceRef.current,
+                                    titleName,
+                                  ),
+                                })
+                            : undefined,
                         getVoice: () => voiceLibraryRef.current,
                         onEditRequest: (request) => {
                           langEditSeqRef.current += 1
@@ -3545,7 +3644,9 @@ export const ScriptWorkspace = forwardRef<
               sourceMode={studioSourceMode}
               selectedKeys={studioSelection}
               library={
-                editingHanshu ? (voiceRuntime ?? voiceLibraryRef.current) : null
+                editingLocalizable
+                  ? (voiceRuntime ?? voiceLibraryRef.current)
+                  : null
               }
               /*
                 台词取自当前语言的文本映射（和 TTS 合成用的是同一份）：

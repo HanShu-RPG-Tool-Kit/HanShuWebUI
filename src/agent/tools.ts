@@ -92,7 +92,7 @@ export const AGENT_TOOLS = [
     function: {
       name: 'list_sources',
       description:
-        '列出所有工程与源文件（逻辑文件名、类别、大小、更新时间）。类别 hanshu/character/scripts/progress/story/navigator/gift 对应 src/ 下源目录，meta 对应 meta/ 下的创作资料（.md 文档、.tts 配音方案、.ttsservice 服务定义）；旧 *.voice 可能仍在包根（root）。',
+        '列出所有工程与源文件（逻辑文件名、类别、大小、更新时间）。类别 hanshu/character/script/goal/progress/story/navigator/gift 对应 src/ 下源目录，meta 对应 meta/ 下的创作资料（.md 文档、.tts 配音方案、.ttsservice 服务定义）；旧 *.voice 可能仍在包根（root）。',
       parameters: {
         type: 'object',
         properties: {
@@ -383,7 +383,7 @@ export const AGENT_TOOLS = [
     function: {
       name: 'check_export',
       description:
-        '预演导出：返回「导出PAK」与「导出工程包」各有几个文件、有哪些警告（不下载文件）。',
+        '预演导出：返回 combined PAK 与工程包各有几个文件、有哪些警告（不下载；分平面见帮助「导出 PAK」）。',
       parameters: {
         type: 'object',
         properties: {},

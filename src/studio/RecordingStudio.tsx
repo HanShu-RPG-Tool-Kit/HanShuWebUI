@@ -856,7 +856,7 @@ export function RecordingStudio({
           </button>
         </header>
         <div className="studio-empty">
-          当前文件不支持配音：请打开一个 <code>.hs</code> 剧本。
+          当前文件不支持配音：请打开一个 <code>.hs</code> 剧本或 <code>.char</code> 角色卡。
         </div>
       </section>
     )

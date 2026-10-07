@@ -34,7 +34,11 @@ for (const completion of ['all', 'any'] as const) {
 }
 assert.deepEqual(parseProgress(stringifyProgress(moved), []).goals, moved.goals, 'unknown definitions must preserve goals')
 assert.deepEqual(parseProgress(stringifyProgress(moved), [{ ...defs[0]!, fields: [{ key: 'newField', type: 'int', required: false, default: 12 }] }]).goals, moved.goals, 'reading never injects schema defaults')
-doc.visibility = [{ kind: 'task', state: 'succeeded', target: 'first_task' }, { kind: 'dialogue', state: 'after', target: 'intro' }]
+doc.visibility = [
+  { kind: 'task', state: 'succeeded', target: 'first_task' },
+  { kind: 'dialogue', state: 'after', target: 'intro' },
+  { kind: 'expr', state: 'true', target: 'level >= 10' },
+]
 doc.acceptance = [{ kind: 'task', state: 'ended', target: 'other_task' }]
 assert.deepEqual(parseProgress(stringifyProgress(doc)).visibility, doc.visibility)
 assert.deepEqual(parseProgress(stringifyProgress(doc)).acceptance, doc.acceptance)
@@ -45,7 +49,9 @@ const serialized = JSON.parse(stringifyProgress(doc))
 assert.ok(!('accept' in serialized) && !('visible' in serialized) && !('deliver' in serialized) && !('fail' in serialized))
 assert.throws(() => parseProgress(JSON.stringify({ ...serialized, visibility: [{ kind: 'dialogue', state: 'succeeded', target: 'intro' }] })), /对话条件状态无效/)
 assert.throws(() => parseProgress(JSON.stringify({ ...serialized, visibility: [{ kind: 'task', state: 'after', target: 'first_task' }] })), /任务条件状态无效/)
+assert.throws(() => parseProgress(JSON.stringify({ ...serialized, visibility: [{ kind: 'expr', state: 'after', target: 'x' }] })), /求值条件状态无效/)
 assert.ok(progressIssues({ ...doc, visibility: [{ kind: 'task', state: 'active', target: '' }] }, defs).some(issue => issue.includes('请选择或填写对象')))
+assert.ok(progressIssues({ ...doc, visibility: [{ kind: 'expr', state: 'true', target: '' }] }, defs).some(issue => issue.includes('请选择或填写对象')))
 assert.equal(readProgressSource('{broken').doc, null)
 assert.equal(readProgressSource(JSON.stringify({ ...doc, groups: [] })).doc, null)
 assert.equal(readProgressSource(JSON.stringify({ ...doc, completion: 'atLeast' })).doc, null)

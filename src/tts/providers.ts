@@ -38,7 +38,7 @@ export type ProviderPreset = {
   builtin: boolean
 }
 
-/** 内置预设。按 `docs/tts-providers.md` §3.1 的代表模型取值 */
+/** 内置预设。按帮助「配音：供应商与实现」§3.1 的代表模型取值 */
 export const BUILTIN_PRESETS: readonly ProviderPreset[] = [
   {
     id: 'openai',

@@ -7,7 +7,12 @@ import {
   reasonLabel,
   type FileVersion,
 } from './history/fileHistory'
+import {
+  CHAR_THEME_ID,
+  registerCharLanguage,
+} from './monaco/charLanguage'
 import { HANSHU_THEME_ID, registerHanshuLanguage } from './monaco/hanshuLanguage'
+import { isCharFile } from './workspace'
 import { editorLanguageForFile } from './workspace'
 
 type HistoryModalProps = {
@@ -149,8 +154,13 @@ export function HistoryModal({
                     original={currentContent}
                     modified={selected.content}
                     language={editorLanguageForFile(fileName)}
-                    theme={HANSHU_THEME_ID}
-                    beforeMount={registerHanshuLanguage}
+                    theme={
+                      isCharFile(fileName) ? CHAR_THEME_ID : HANSHU_THEME_ID
+                    }
+                    beforeMount={(monaco) => {
+                      registerHanshuLanguage(monaco)
+                      registerCharLanguage(monaco)
+                    }}
                     options={{
                       readOnly: true,
                       renderSideBySide: true,

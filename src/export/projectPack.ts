@@ -2,7 +2,7 @@ import JSZip from 'jszip'
 import { isAudioAsset } from '../assets/paths'
 import { getAssetBlob } from '../assets/idb'
 import { isVoiceRefPath } from '../i18n/voiceMap'
-import { sourceRelativePath, type Workspace } from '../workspace'
+import { sourcePathOf, type Workspace } from '../workspace'
 import type { ExportResult, ExportWarning } from './resourcePack'
 
 function safePackageDir(name: string): string {
@@ -35,7 +35,7 @@ export async function buildProjectPackZip(
 
     for (const script of pkg.scripts) {
       // 工程结构：源文件进 `src/<kind>/`（`xx.hs` → `src/hanshu/xx.hs`）
-      zip.file(`${root}/${sourceRelativePath(script.name)}`, script.content)
+      zip.file(`${root}/${sourcePathOf(script)}`, script.content)
       fileCount++
     }
 

@@ -8,7 +8,7 @@ import {
 export const HANSHU_LANGUAGE_ID = 'hanshu'
 /** `.hsc`（编译产物）单独一套着色：语句以行为界 */
 export const HANSHU_HSC_LANGUAGE_ID = 'hanshu-hsc'
-export const HANSHU_THEME_ID = 'hanshu-dark-v3'
+export const HANSHU_THEME_ID = 'hanshu-dark-v5'
 
 /**
  * 注意：Monarch 正则里 @ 是特殊字符，字面量 @ 必须写成两个 @。
@@ -18,16 +18,62 @@ export const HANSHU_THEME_ID = 'hanshu-dark-v3'
 
 /**
  * 汉书剧本语法（高亮）：
- * - #define / # 注释 / '''' Python
- * - speaker: … // 、行首选项、- 、>>调用 、>跳转 、<<回退
+ * - # 注释 / #stopparse 指令
+ * - 行首信号：`?` 条件 / `!` 行为 / `!:`·`:!` 选项附件（后两者与 `!` 分色）
+ * - speaker: … // 、行首选项、- 、>>跳转 、<<回退
+ * - 系统返回 `--<` / `--<<`（层级 ≥ 2）
  * - @后缀 注入点（洋红）
  * - 行首 @@ 终止符（红色）
  */
+
+/**
+ * 行首信号。匹配顺序：`!:` → `:!` → `?` → `!`（避免 `!:` 被 `!` 吃掉）。
+ * `nextRoot`：在对白块内遇到信号时切回 root。
+ */
+function signalLineRules(nextRoot: boolean): Array<[RegExp, unknown]> {
+  const tail = (token: string) =>
+    nextRoot ? { token, next: 'root' as const } : token
+  return [
+    [
+      /^(!:)([a-zA-Z_][a-zA-Z0-9_.]*)(.*)$/,
+      [
+        'hanshu.signal.bind.mark',
+        'hanshu.signal.bind.id',
+        tail('hanshu.signal.bind.args'),
+      ],
+    ],
+    [
+      /^(:!)([a-zA-Z_][a-zA-Z0-9_.]*)(.*)$/,
+      [
+        'hanshu.signal.bind.mark',
+        'hanshu.signal.bind.id',
+        tail('hanshu.signal.bind.args'),
+      ],
+    ],
+    [
+      /^(\?)([a-zA-Z_][a-zA-Z0-9_.]*)(.*)$/,
+      [
+        'hanshu.signal.cond.mark',
+        'hanshu.signal.cond.id',
+        tail('hanshu.signal.cond.args'),
+      ],
+    ],
+    [
+      /^(!)([a-zA-Z_][a-zA-Z0-9_.]*)(.*)$/,
+      [
+        'hanshu.signal.action.mark',
+        'hanshu.signal.action.id',
+        tail('hanshu.signal.action.args'),
+      ],
+    ],
+  ]
+}
+
 /**
  * 选项行的着色规则（root 与对话块内部**共用同一份**）。
  *
  * 整行规则的口径：短横线 + 文案一次吃掉，不依赖"先进入某个状态"，块内也不会漏着色；
- * 到冒号为止再交给 `@choiceReply` —— 回复里的 `>>func` / `>jump` / `<<` 必须靠子状态
+ * 到冒号为止再交给 `@choiceReply` —— 回复里的 `>>jump` / `<<` 必须靠子状态
  * 才分得出优先级。
  *
  * 下面四条是**实测**得出的（踩过坑，别再改回去）：
@@ -38,7 +84,44 @@ export const HANSHU_THEME_ID = 'hanshu-dark-v3'
  *    剩余文本为空时不会再执行任何规则（零宽的 `$` 规则也不行）；
  * 4. `next` / `switchTo` 要写在**组内最后一个元素**上：写成规则第三元素不生效。
  */
+/** 系统返回：必须在普通选项规则之前；`<<` 规则先于 `<`。 */
+const SYSTEM_RETURN_LINE_RULES = [
+  [
+    /^(-{2,})(<<)(\s*\/\/)$/,
+    [
+      'hanshu.choice.mark',
+      'hanshu.sysret.root',
+      { token: 'hanshu.block.end', next: 'root' },
+    ],
+  ],
+  [
+    /^(-{2,})(<)(\s*\/\/)$/,
+    [
+      'hanshu.choice.mark',
+      'hanshu.sysret.parent',
+      { token: 'hanshu.block.end', next: 'root' },
+    ],
+  ],
+  [
+    /^(-{2,})(<<)()$/,
+    [
+      'hanshu.choice.mark',
+      'hanshu.sysret.root',
+      { token: '', next: 'root' },
+    ],
+  ],
+  [
+    /^(-{2,})(<)()$/,
+    [
+      'hanshu.choice.mark',
+      'hanshu.sysret.parent',
+      { token: '', next: 'root' },
+    ],
+  ],
+]
+
 const CHOICE_LINE_RULES = [
+  ...SYSTEM_RETURN_LINE_RULES,
   // `-文案:`（冒号后为空）：行尾即结束 —— 没有回复可着色，别再进回复状态
   [
     /^(-+)([^:@@\\/\n]*)(:)$/,
@@ -96,12 +179,11 @@ const HSC_CHOICE_KEY_ONLY_RE = new RegExp(
  *
  * 单行语句的状态必须在**行内最后一条被匹配的规则上**退出。Monaco 是逐行词法，
  * 剩余文本为空时不会再尝试任何规则（包括零宽的 `$` 规则），所以只给"正文文本"
- * 挂 pop 是不够的：`test:abcd1234`、`-文案:abcd1234` 这类以键名 / 调用 / 跳转
+ * 挂 pop 是不够的：`test:abcd1234`、`-文案:abcd1234` 这类以键名 / 跳转
  * 收尾的行会留在状态里，把下一行也吞进去（下一行的选项行就会按正文着色）。
  */
 const KEY_AT_LINE_END_RE = new RegExp(`(${LOCALE_KEY_TEXT_RE.source})$`, 'i')
-const CALL_AT_LINE_END_RE = /(>>)([a-zA-Z_][a-zA-Z0-9_]*)$/
-const JUMP_AT_LINE_END_RE = /(>)([a-zA-Z_][a-zA-Z0-9_]*)$/
+const JUMP_AT_LINE_END_RE = /(>>)([a-zA-Z_][a-zA-Z0-9_]*)$/
 
 /**
  * 单行正文状态的规则工厂：`name:正文…` 的**同一行**部分。
@@ -111,25 +193,15 @@ const JUMP_AT_LINE_END_RE = /(>)([a-zA-Z_][a-zA-Z0-9_]*)$/
  * 行尾的规则都要自己切换状态（见文件顶部第 3 条口径）。
  *
  * @param terminated `.hs` 里这一行还可能有 `//` 收尾；`.hsc` 的 `//` 已在编译时去掉
- * @param fencePython `.hs` 的同一行可以开 `''''` 围栏；`.hsc` 不需要
  */
 function lineBodyRules(options: {
   terminated: boolean
-  fencePython: boolean
 }): Array<[RegExp, unknown]> {
   return [
     [/\\>>$/, { token: 'hanshu.escape', next: 'root' }],
     [/\\-$/, { token: 'hanshu.escape', next: 'root' }],
     [/\\>>/, 'hanshu.escape'],
     [/\\-/, 'hanshu.escape'],
-    [
-      CALL_AT_LINE_END_RE,
-      ['hanshu.call.mark', { token: 'hanshu.call.name', next: 'root' }],
-    ],
-    [
-      /(>>)([a-zA-Z_][a-zA-Z0-9_]*)/,
-      ['hanshu.call.mark', 'hanshu.call.name'],
-    ],
     ...(options.terminated
       ? ([[TRAILING_TERMINATOR, { token: 'hanshu.block.end', next: 'root' }]] as Array<
           [RegExp, unknown]
@@ -137,20 +209,8 @@ function lineBodyRules(options: {
       : []),
     [KEY_AT_LINE_END_RE, { token: 'hanshu.key', next: 'root' }],
     [LOCALE_KEY_TEXT_RE, 'hanshu.key'],
-    ...(options.fencePython
-      ? ([
-          [
-            /''''/,
-            {
-              token: 'hanshu.embed',
-              next: '@pythonBlock',
-              nextEmbedded: 'python',
-            },
-          ],
-        ] as Array<[RegExp, unknown]>)
-      : []),
-    [/[^\\/'\n]+$/, { token: 'hanshu.dialogue', next: 'root' }],
-    [/[^\\/'\n]+/, 'hanshu.dialogue'],
+    [/[^\\/\n]+$/, { token: 'hanshu.dialogue', next: 'root' }],
+    [/[^\\/\n]+/, 'hanshu.dialogue'],
     [/./, { token: 'hanshu.dialogue', next: 'root' }],
   ]
 }
@@ -174,19 +234,11 @@ function choiceReplyRules(options: {
     [/<<$/, { token: 'hanshu.back.mark', next: 'root' }],
     [/<</, 'hanshu.back.mark'],
     [
-      CALL_AT_LINE_END_RE,
-      ['hanshu.call.mark', { token: 'hanshu.call.name', next: 'root' }],
-    ],
-    [
-      /(>>)([a-zA-Z_][a-zA-Z0-9_]*)/,
-      ['hanshu.call.mark', 'hanshu.call.name'],
-    ],
-    [
       JUMP_AT_LINE_END_RE,
       ['hanshu.jump.mark', { token: 'hanshu.jump.name', next: 'root' }],
     ],
     [
-      /(>)([a-zA-Z_][a-zA-Z0-9_]*)/,
+      /(>>)([a-zA-Z_][a-zA-Z0-9_]*)/,
       ['hanshu.jump.mark', 'hanshu.jump.name'],
     ],
     ...(options.terminated
@@ -196,53 +248,29 @@ function choiceReplyRules(options: {
       : []),
     [KEY_AT_LINE_END_RE, { token: 'hanshu.key', next: 'root' }],
     [LOCALE_KEY_TEXT_RE, 'hanshu.key'],
-    [/[^:@@\\/'\n]+$/, { token: 'hanshu.choice.reply', next: 'root' }],
-    [/[^:@@\\/'\n]+/, 'hanshu.choice.reply'],
+    [/[^:@@\\/\n]+$/, { token: 'hanshu.choice.reply', next: 'root' }],
+    [/[^:@@\\/\n]+/, 'hanshu.choice.reply'],
     [/./, { token: 'hanshu.choice.reply', next: 'root' }],
   ]
 }
-
-/**
- * `''''` 围栏内的 Python：`.hs` 与 `.hsc` 两套 tokenizer **共用这一份**。
- */
-const PYTHON_BLOCK_RULES = [
-  [/''''/, { token: 'hanshu.embed', next: '@pop', nextEmbedded: '@pop' }],
-  [/[^']+/, ''],
-  [/'/, ''],
-]
 
 /**
  * `.hsc` 的着色规则。与 `.hs` 的差别集中在一条：**语句以行为界**。
  *
  * 编译时注释、空行与 `//` 收尾都已经去掉了，所以这里没有"块结束符"：一行写完就是
  * 一条完整语句，多行只出现在未成键的多行块里，遇到下一条语句（选项行 / 新对白行 /
- * 注入点）即结束。若沿用 `.hs` 的规则，`.hsc` 里第一个 `speaker:键` 会把后面所有行
+ * 注入点 / 信号）即结束。若沿用 `.hs` 的规则，`.hsc` 里第一个 `speaker:键` 会把后面所有行
  * 都吞成它的正文（`//` 永远不会出现，状态永远不退出）。
  */
 const HSC_TOKENIZER = {
   defaultToken: '',
   tokenizer: {
     root: [
-      [
-        /^(#define)(\s+)([a-zA-Z_][a-zA-Z0-9_]*)(\s+)(.*)$/,
-        [
-          'hanshu.define.kw',
-          'white',
-          'hanshu.define.name',
-          'white',
-          'hanshu.define.body',
-        ],
-      ],
-      [
-        /''''/,
-        {
-          token: 'hanshu.embed',
-          next: '@pythonBlock',
-          nextEmbedded: 'python',
-        },
-      ],
+      ...signalLineRules(false),
       [/^@@@@[^\r\n]*/, 'hs.term'],
       [/@@[^\s@@][^\s]*/, 'hs.inject'],
+
+      ...SYSTEM_RETURN_LINE_RULES,
 
       // 选项行：`-文案:回复` / `-文案`（行尾即结束）
       [
@@ -294,19 +322,17 @@ const HSC_TOKENIZER = {
       ],
     ],
 
-    /** `name:正文` 的同一行（`.hsc` 里没有 `//`，也不需要 Python 围栏） */
-    hscLineBody: lineBodyRules({ terminated: false, fencePython: false }),
+    /** `name:正文` 的同一行（`.hsc` 里没有 `//`） */
+    hscLineBody: lineBodyRules({ terminated: false }),
 
-    /** 未成键的多行块：后续正文行遇到下一条语句（含注入点）即结束 */
+    /** 未成键的多行块：后续正文行遇到下一条语句（含注入点 / 信号）即结束 */
     hscBody: [
       [/\\>>/, 'hanshu.escape'],
       [/\\-/, 'hanshu.escape'],
+      ...signalLineRules(true),
       [/^@@@@[^\r\n]*/, { token: 'hs.term', next: '@pop' }],
       [/@@[^\s@@][^\s]*/, { token: 'hs.inject', next: '@pop' }],
-      [
-        /(>>)([a-zA-Z_][a-zA-Z0-9_]*)/,
-        ['hanshu.call.mark', 'hanshu.call.name'],
-      ],
+      ...SYSTEM_RETURN_LINE_RULES,
       [
         HSC_CHOICE_KEY_RE,
         [
@@ -350,14 +376,12 @@ const HSC_TOKENIZER = {
         ['hanshu.speaker', { token: 'hanshu.punct', switchTo: '@hscLineBody' }],
       ],
       [LOCALE_KEY_TEXT_RE, 'hanshu.key'],
-      [/[^#@@\\/'\n]+/, 'hanshu.dialogue'],
+      [/[^#@@\\/\n]+/, 'hanshu.dialogue'],
       [/./, 'hanshu.dialogue'],
     ],
 
     /** 选项回复：只从行内进入（`.hsc` 里没有 `//`） */
     hscChoiceReply: choiceReplyRules({ terminated: false }),
-
-    pythonBlock: PYTHON_BLOCK_RULES,
   },
 }
 
@@ -374,7 +398,6 @@ export function registerHanshuLanguage(monaco: Monaco) {
     base: 'vs-dark',
     inherit: true,
     rules: [
-      { token: 'hanshu.embed', foreground: 'C586C0', fontStyle: 'bold' },
       { token: 'hanshu.speaker', foreground: '4FC1FF', fontStyle: 'bold' },
       { token: 'hanshu.punct', foreground: 'D4D4D4' },
       { token: 'hanshu.block.end', foreground: '808080', fontStyle: 'bold' },
@@ -382,21 +405,32 @@ export function registerHanshuLanguage(monaco: Monaco) {
       { token: 'hanshu.choice.mark', foreground: 'DCDCAA', fontStyle: 'bold' },
       { token: 'hanshu.choice.label', foreground: 'D7BA7D' },
       { token: 'hanshu.choice.reply', foreground: 'CE9178' },
-      { token: 'hanshu.call.mark', foreground: 'C586C0', fontStyle: 'bold' },
-      { token: 'hanshu.call.name', foreground: 'DCDCAA', fontStyle: 'italic' },
-      // :>name 跳到 @name —— 与注入点同色系
+      // :>>name 跳到 @name —— 与注入点同色系
       { token: 'hanshu.jump.mark', foreground: 'C586C0', fontStyle: 'bold' },
       { token: 'hanshu.jump.name', foreground: 'C586C0', fontStyle: 'italic' },
-      // :<< 退回上一级重选
+      // :<< 回整树根
       { token: 'hanshu.back.mark', foreground: '4EC9B0', fontStyle: 'bold' },
+      // `--<` / `--<<` 系统返回（与普通选项文案区分）
+      { token: 'hanshu.sysret.parent', foreground: '4EC9B0', fontStyle: 'bold' },
+      { token: 'hanshu.sysret.root', foreground: '4EC9B0', fontStyle: 'bold italic' },
       { token: 'hanshu.escape', foreground: 'D7BA7D', fontStyle: 'italic' },
+      // `?` 条件信号
+      { token: 'hanshu.signal.cond.mark', foreground: '4EC9B0', fontStyle: 'bold' },
+      { token: 'hanshu.signal.cond.id', foreground: '4EC9B0' },
+      { token: 'hanshu.signal.cond.args', foreground: '6A9955' },
+      // `!` 独立行为信号
+      { token: 'hanshu.signal.action.mark', foreground: 'DCDCAA', fontStyle: 'bold' },
+      { token: 'hanshu.signal.action.id', foreground: 'DCDCAA' },
+      { token: 'hanshu.signal.action.args', foreground: 'B5CEA8' },
+      // `!:` / `:!` 选项附件（与独立 `!` 分色）
+      { token: 'hanshu.signal.bind.mark', foreground: 'D7BA7D', fontStyle: 'bold' },
+      { token: 'hanshu.signal.bind.id', foreground: 'D7BA7D' },
+      { token: 'hanshu.signal.bind.args', foreground: 'CE9178' },
       // 注入 @sth —— 洋红
       { token: 'hs.inject', foreground: 'C586C0', fontStyle: 'bold' },
       // 终止 @@ —— 大红
       { token: 'hs.term', foreground: 'FF2222', fontStyle: 'bold' },
-      { token: 'hanshu.define.kw', foreground: '569CD6', fontStyle: 'bold' },
-      { token: 'hanshu.define.name', foreground: '4EC9B0', fontStyle: 'bold' },
-      { token: 'hanshu.define.body', foreground: 'CE9178' },
+      { token: 'hanshu.directive', foreground: '569CD6', fontStyle: 'bold' },
       // 键名（8 位 hex）：只在可能出现键的正文位置着色，见 tokenizer 里的 key 规则
       { token: 'hanshu.key', foreground: '9CDCFE' },
     ],
@@ -409,29 +443,13 @@ export function registerHanshuLanguage(monaco: Monaco) {
     defaultToken: '',
     tokenizer: {
       root: [
-        [
-          /^(#define)(\s+)([a-zA-Z_][a-zA-Z0-9_]*)(\s+)(.*)$/,
-          [
-            'hanshu.define.kw',
-            'white',
-            'hanshu.define.name',
-            'white',
-            'hanshu.define.body',
-          ],
-        ],
-        // `#stopparse`：指令行 —— 从这行往后不再自动成键（与 `#define` 同色）
-        [/^(#stopparse)([ \t]*)$/, ['hanshu.define.kw', 'white']],
+        // `#stopparse`：指令行 —— 从这行往后不再自动成键
+        [/^(#stopparse)([ \t]*)$/, ['hanshu.directive', 'white']],
         // 只有行首（可含前导空白）才是注释，行内 `#` 属于正文：
         // 与编译去噪 src/hanshu/compiler.ts 的 `/^\s*#/` 保持一致
         [/^\s*#.*$/, 'comment'],
-        [
-          /''''/,
-          {
-            token: 'hanshu.embed',
-            next: '@pythonBlock',
-            nextEmbedded: 'python',
-          },
-        ],
+
+        ...signalLineRules(false),
 
         // 行首终止符：字面量 @@  → Monarch 写成 @@@@
         [/^@@@@[^\r\n]*/, 'hs.term'],
@@ -460,19 +478,16 @@ export function registerHanshuLanguage(monaco: Monaco) {
 
       /**
        * `name:正文…` 的**同一行**部分（注入点 / 终止符都是行级写法，这里 `@` 是普通文本）。
-       * 规则与 `.hsc` 的同名状态共用工厂，差别只有 `//` 收尾与 Python 围栏。
+       * 规则与 `.hsc` 的同名状态共用工厂，差别只有 `//` 收尾。
        */
-      speakerLineBody: lineBodyRules({ terminated: true, fencePython: true }),
+      speakerLineBody: lineBodyRules({ terminated: true }),
 
       speakerBody: [
         [/\\>>/, 'hanshu.escape'],
         [/\\-/, 'hanshu.escape'],
+        ...signalLineRules(true),
         [/^@@@@[^\r\n]*/, 'hs.term'],
         [/@@[^\s@@][^\s]*/, 'hs.inject'],
-        [
-          /(>>)([a-zA-Z_][a-zA-Z0-9_]*)/,
-          ['hanshu.call.mark', 'hanshu.call.name'],
-        ],
         // 块结束符只有两种形态（与解析器同一份正则）：独占一行、或行尾。
         // 行内 `//`（`a//b`）属于正文 —— 以前遇到任何 `//` 都 pop，和解析器不一致。
         [BLOCK_END, { token: 'hanshu.block.end', next: 'root' }],
@@ -498,18 +513,10 @@ export function registerHanshuLanguage(monaco: Monaco) {
         ],
         // 同 root：块内也只有行首 `#` 才是注释
         [/^\s*#.*$/, 'comment'],
-        [
-          /''''/,
-          {
-            token: 'hanshu.embed',
-            next: '@pythonBlock',
-            nextEmbedded: 'python',
-          },
-        ],
-        // 键名：只在可能出现键的正文位置匹配（结构行/注入/调用/转义规则已先消费掉那些位置）
+        // 键名：只在可能出现键的正文位置匹配（结构行/注入/转义规则已先消费掉那些位置）
         [LOCALE_KEY_TEXT_RE, 'hanshu.key'],
         // 字符类里的 @ 同样要 @@ 转义，否则会吞掉注入点
-        [/[^#@@\\/'\n]+/, 'hanshu.dialogue'],
+        [/[^#@@\\/\n]+/, 'hanshu.dialogue'],
         [/./, 'hanshu.dialogue'],
       ],
 
@@ -519,8 +526,6 @@ export function registerHanshuLanguage(monaco: Monaco) {
        * 规则与 `.hsc` 的同名状态共用工厂，差别只有 `//` 收尾。
        */
       choiceReply: choiceReplyRules({ terminated: true }),
-
-      pythonBlock: PYTHON_BLOCK_RULES,
     },
   })
 

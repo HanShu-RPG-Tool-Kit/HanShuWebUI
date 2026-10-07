@@ -18,7 +18,7 @@ import { DEFAULT_LOCALE_TAG, formatLocaleTag } from './locales'
  * 「引用资产」配音（`.ref`）与 `.ogg` 共用同一个对等基名，见 `VOICE_REF_EXTENSION`。
  */
 
-/** 默认的源文件后缀：目前唯一可本地化的源类型是 `.hs` */
+/** 默认的源文件后缀（路径推断失败时）；可本地化源含 `.hs` / `.char` */
 export const DEFAULT_SOURCE_EXT = 'hs'
 
 /** 文本产物的后缀 */

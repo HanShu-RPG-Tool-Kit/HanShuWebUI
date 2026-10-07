@@ -21,7 +21,9 @@ import {
   getExtension,
   isAllowedExtension,
   normalizeResourceName,
+  sourcePathOf,
   sourceRelativePath,
+  srcKindFromDiskPath,
   type ScriptPackage,
   type Workspace,
 } from '../workspace'
@@ -218,7 +220,9 @@ async function readPackageFromDirectory(
     const file = await readFileAtPath(root, path)
     if (!file) return
     seen.add(name.toLowerCase())
-    scripts.push(createScript(name, await file.text()))
+    const text = await file.text()
+    const srcKind = srcKindFromDiskPath(path)
+    scripts.push(createScript(name, text, srcKind))
   }
 
   for (const dirName of TEXT_ROOT_DIRS) {
@@ -300,11 +304,7 @@ export async function openProjectFromPicker(): Promise<LoadProjectResult> {
   if (!hasManifest) {
     await writeTextFile(handle, PROJECT_FILE, serializeManifest(manifest))
     for (const script of pkg.scripts) {
-      await writeFileAtPath(
-        handle,
-        sourceRelativePath(script.name),
-        script.content,
-      )
+      await writeFileAtPath(handle, sourcePathOf(script), script.content)
     }
   }
 
@@ -358,7 +358,7 @@ export async function createProjectFromPicker(): Promise<LoadProjectResult> {
   pkg.name = manifest.name
 
   await writeTextFile(handle, PROJECT_FILE, serializeManifest(manifest))
-  await writeFileAtPath(handle, sourceRelativePath(script.name), script.content)
+  await writeFileAtPath(handle, sourcePathOf(script), script.content)
 
   const binding: BoundProject = {
     handle,
@@ -439,8 +439,11 @@ export async function saveProjectToDirectory(
 
   // 2) 文本文件：按规范写入 `src/<kind>/` 与 `meta/`；清理目录内多余/错位文件
   const wanted = new Set(pkg.scripts.map((s) => s.name.toLowerCase()))
+  const wantedPaths = new Set(
+    pkg.scripts.map((s) => sourcePathOf(s).replace(/\\/g, '/').toLowerCase()),
+  )
   for (const script of pkg.scripts) {
-    await writeFileAtPath(root, sourceRelativePath(script.name), script.content)
+    await writeFileAtPath(root, sourcePathOf(script), script.content)
   }
   for (const dirName of TEXT_ROOT_DIRS) {
     try {
@@ -449,7 +452,8 @@ export async function saveProjectToDirectory(
         if (path.toLowerCase().endsWith('.new')) continue
         const name = path.split('/').pop() ?? ''
         if (!isScriptFileName(name)) continue
-        const misplaced = `${dirName}/${path}` !== sourceRelativePath(name)
+        const full = `${dirName}/${path}`.replace(/\\/g, '/').toLowerCase()
+        const misplaced = !wantedPaths.has(full)
         if (misplaced || !wanted.has(name.toLowerCase())) {
           await removeEntryIfExists(dir, path)
         }
@@ -565,11 +569,21 @@ async function listDiskLocales(
 export async function removeSourceFromDisk(
   handle: FileSystemDirectoryHandle,
   sourceName: string,
+  srcKind?: string | null,
 ): Promise<void> {
   const ok = await ensureReadWritePermission(handle)
   if (!ok) throw new Error('未获得文件夹读写权限')
 
-  await removeFileAtPath(handle, sourceRelativePath(sourceName))
+  await removeFileAtPath(handle, sourceRelativePath(sourceName, srcKind))
+  // 旧布局 src/scripts/ 也清掉，避免重开工程幽灵文件
+  if (getExtension(sourceName) === '.py') {
+    await removeFileAtPath(handle, `src/scripts/${sourceName}`)
+    if (srcKind === 'goal') {
+      await removeFileAtPath(handle, `src/script/${sourceName}`)
+    } else {
+      await removeFileAtPath(handle, `src/goal/${sourceName}`)
+    }
+  }
   const ext = sourceExtension(sourceName)
   for (const locale of await listDiskLocales(handle)) {
     await removeFileAtPath(handle, textAssetPath(locale, sourceName))
@@ -588,15 +602,24 @@ export async function renameSourceOnDisk(
   newName: string,
   content: string,
   assetMoves: Array<{ fromPath: string; toPath: string }> = [],
+  oldSrcKind?: string | null,
+  newSrcKind?: string | null,
 ): Promise<void> {
   const ok = await ensureReadWritePermission(handle)
   if (!ok) throw new Error('未获得文件夹读写权限')
 
-  const oldSource = sourceRelativePath(oldName)
-  const newSource = sourceRelativePath(newName)
+  const oldSource = sourceRelativePath(oldName, oldSrcKind)
+  const newSource = sourceRelativePath(newName, newSrcKind ?? oldSrcKind)
   await writeFileAtPath(handle, newSource, content)
   if (oldSource.toLowerCase() !== newSource.toLowerCase()) {
     await removeFileAtPath(handle, oldSource)
+  }
+  // 兼容旧路径 / 对侧目录残留
+  if (getExtension(oldName) === '.py') {
+    await removeFileAtPath(handle, `src/scripts/${oldName}`)
+    if ((oldSrcKind ?? 'script') !== (newSrcKind ?? oldSrcKind ?? 'script')) {
+      await removeFileAtPath(handle, sourceRelativePath(oldName, oldSrcKind))
+    }
   }
 
   const kept = new Set(

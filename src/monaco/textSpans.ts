@@ -5,8 +5,9 @@
  * - 对白按块整段：`speaker:正文//` 取冒号后的正文；`speaker:` 开头、单独一行 `//` 结束的
  *   多行块取块体整段（跨行算一个片段；块内若夹了 `#` / `@` 行，则按夹断切成多段）。
  * - 选项拆两个键：`-文案:回复//` 的文案与回复各算一个片段；`---只有文案//` 只算文案。
- * - 不是可本地化文本的不算：`:>>func//`、`:>jump//`、空回复。
- * - `#` 注释行（**行首**才算，可含前导空白，与编译去噪一致）、`@` 注入点、`''''…''''` Python 块内的内容一律跳过。
+ * - 不是可本地化文本的不算：`:>>jump//`、系统返回 `--<` / `--<<`、空回复。
+ * - `#` 注释行（**行首**才算，可含前导空白，与编译去噪一致）、`@` 注入点、
+ *   行首信号（`?` / `!` / `!:` / `:!`）一律跳过。
  *
  * 每个片段还记录「紧随其后、同一行上的 `//`」（`terminator`），渲染时要把这个 `//`
  * 挪到覆盖框外的右下角，避免它落进多行框里面。
@@ -16,10 +17,11 @@ import {
   BLOCK_END,
   CHOICE_LINE,
   SPEAKER_LINE,
-  STATEMENT_BREAK_RE,
   TRAILING_TERMINATOR,
-  countEmbedDelimiters,
+  isChoiceJumpReply,
+  isDialogueBreakLine,
   isSkippedHsLine,
+  matchSystemReturnChoice,
   splitHsLines,
   unescapeHsText,
   type HsLine,
@@ -135,23 +137,10 @@ function trimmedRange(
 export function parseTextSpans(source: string): TextSpan[] {
   const lines = splitHsLines(source)
   const spans: TextSpan[] = []
-  let inPython = false
   let i = 0
 
   while (i < lines.length) {
     const line = lines[i]
-    const toggles = countEmbedDelimiters(line.text)
-
-    if (inPython) {
-      if (toggles % 2 === 1) inPython = false
-      i++
-      continue
-    }
-    if (toggles % 2 === 1) {
-      inPython = true
-      i++
-      continue
-    }
 
     if (isSkippedHsLine(line.text)) {
       i++
@@ -166,12 +155,11 @@ export function parseTextSpans(source: string): TextSpan[] {
 
       if (/^\s*$/.test(rest)) {
         // 多行块：`name:` 独占一行，正文若干行，由**独占一行**的 `//` 收尾
-        // （docs/hanshu-syntax.md §1）。正文行尾缀 `//` 不算收尾 → 这样的块不成键，
+        // （帮助「.hs 语法说明」§1）。正文行尾缀 `//` 不算收尾 → 这样的块不成键，
         // 由诊断在同一行给出"这里该换行"的提示。
         // 结构行（选项 / 新对白）只是"这个块到此为止"的边界：`//` 会向前绑定到离它
         // 最近的结构标识，所以 `test:` 后面直接跟 `-msg:<<msg//` 时，那个 `//` 属于
         // 选项行，属于 `test:` 的正文根本不存在。
-        // 注：`>` / `>>` 不算边界（跳转 / 调用行属于正文）。
         const speakerLine = i + 1
         i++
         const bodyLines: HsLine[] = []
@@ -188,45 +176,25 @@ export function parseTextSpans(source: string): TextSpan[] {
             i++
             break
           }
-          // `@` 注入点是**行级语句**，不属于任何块的正文 → 同样结束这个块
-          if (
-            !inPython &&
-            (STATEMENT_BREAK_RE.test(bodyLine.text) ||
-              bodyLine.text.startsWith('@'))
-          ) {
+          // 行级语句（选项 / 新对白 / `@` / 信号）不属于块正文 → 结束这个块
+          if (isDialogueBreakLine(bodyLine.text)) {
             break
           }
-          if (countEmbedDelimiters(bodyLine.text) % 2 === 1) {
-            // 开围栏留作切段标记（闭围栏不重复留）：围栏行与 Python 正文都不进值，
-            // 但正文不能被跨越 Python 段合并成一段
-            if (!inPython) {
-              bodyLines.push(bodyLine)
-              bodyIndexes.push(i)
-            }
-            inPython = !inPython
-            i++
-            continue
-          }
-          if (!inPython) {
-            bodyLines.push(bodyLine)
-            bodyIndexes.push(i)
-          }
+          bodyLines.push(bodyLine)
+          bodyIndexes.push(i)
           i++
         }
         // 没有 `//` → 永久不成键
         if (!ended) continue
 
-        // 按 `#` / `@` / Python 围栏行切段（空行不切）
+        // 按 `#` / `@` 行切段（空行不切）
         const runs: Array<{ from: number; to: number }> = []
         let current: { from: number; to: number } | null = null
         let broken = false
         let hasNonContentLine = false
         bodyLines.forEach((bodyLine, idx) => {
           if (!bodyLine.text.trim()) return
-          if (
-            isSkippedHsLine(bodyLine.text) ||
-            countEmbedDelimiters(bodyLine.text) % 2 === 1
-          ) {
+          if (isSkippedHsLine(bodyLine.text)) {
             hasNonContentLine = true
             broken = true
             return
@@ -247,7 +215,7 @@ export function parseTextSpans(source: string): TextSpan[] {
          * 多行对白（`name:` + 正文 + 独占一行 `//`）成键时应**收缩**成单行 `name:<键>//`。
          *
          * 只在"整块就是这一段正文"时才挂收缩信息：收缩是整段替换，块里若有注释 / `@` /
-         * Python 围栏 / 空行（它们不进正文），替换会把那些行一起吞掉。所以要求
+         * 空行（它们不进正文），替换会把那些行一起吞掉。所以要求
          * 只有一段正文、且这段正文覆盖了全部正文行。
          */
         const coversWholeBody =
@@ -323,6 +291,12 @@ export function parseTextSpans(source: string): TextSpan[] {
     // —— 选项 ——
     // 只认文档里的单行写法（`-文案:回复//` / `---只有文案//`）。
     // 多行选项树属于"未文档化的宽容"，已按决定删除：不再解析，也不再收缩。
+    // 系统返回：不进本地化
+    if (matchSystemReturnChoice(line.text)) {
+      i++
+      continue
+    }
+
     const choice = CHOICE_LINE.exec(line.text)
     if (choice) {
       const dashes = choice[1]
@@ -362,9 +336,7 @@ export function parseTextSpans(source: string): TextSpan[] {
 
         const reply = body.slice(colon + 1)
         const replyStart = bodyStart + colon + 1
-        const isCall = /^\s*>>/.test(reply)
-        const isJump = /^\s*>[a-zA-Z_][a-zA-Z0-9_]*\s*$/.test(reply)
-        if (!isCall && !isJump) {
+        if (!isChoiceJumpReply(reply)) {
           const isRewind = /^\s*<</.test(reply)
           const replyText = isRewind ? reply.replace(/^\s*<</, '') : reply
           const replyOffset = isRewind

@@ -9,7 +9,7 @@
 - `completion` 只支持 `all`（完成全部）和 `any`（完成任一）。没有目标组、可选组或至少 N 个。空列表提示待完善。
 - Goal 类型及参数字段的唯一来源是工作区「脚本 → 目标定义」及子目录中的定义脚本。目录从 `@goal` / `@config(field(...))` 解析；表单不执行 Python。
 - 没有脚本时显示空目录，不自动生成替代类型。定义删除后，现有目标仍保留类型引用和参数，提示恢复脚本或更换类型。未在脚本中声明的旧参数保留在文件中，不推导为新字段。
-- `visibility`（可见性条件）和 `acceptance`（可承接条件）是独立列表，分别保存三项式条件 `{kind, state, target}`。每份列表内全部条件满足才通过；任意一份为空时，该份条件直接满足，不从另一份继承条件。任务状态为 `before_accept / after_accept / active / succeeded / ended`；对话状态为 `before / after`。没有独立时态字段，没有自定义表达式模式。这里只设计条件，引擎求值未实现。对象暂为引用文本，资源选择器尚未接入。
+- `visibility`（可见性条件）和 `acceptance`（可承接条件）是独立列表，分别保存三项式条件 `{kind, state, target}`。每份列表内全部条件满足才通过；任意一份为空时，该份条件直接满足，不从另一份继承条件。任务状态为 `before_accept / after_accept / active / succeeded / ended`；对话状态为 `before / after`；求值（`expr`，接条件求值器）状态仅 `true`（满足），`target` 为条件表达式。没有独立时态字段。这里只设计条件，引擎求值未实现。任务/对话对象暂为引用文本，资源选择器尚未接入。
 - `rewardKits` 是去重的礼包引用数组，支持添加多个礼包、逐项移除；没有单礼包限制。
 - `authorNotes` 与玩家 `description` 分开。玩家可见的 `name` / `description` 存语义键（固定为 `name` / `description`），译文在 `assets/<locale>/lang_progress/<文件>.lang`；作者备注不本地化。
 

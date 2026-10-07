@@ -26,8 +26,8 @@ export type AllowedExtension = (typeof ALLOWED_EXTENSIONS)[number]
  * - **源文件进 `src/<kind>/`**：编译与运行时都从这里取（会进 PAK）
  * - **创作资料进 `meta/`**：文档 `meta/docs/`、配音配置 `meta/voice/`
  *   （配音方案 `*.tts` 扁平放这一层，服务定义 `*.ttsservice` 放 `meta/voice/service/`）。
- *   `meta/` 下的东西**不进 PAK**（`resourcePack` 只认 `src/` 与 `assets/`），
- *   但会被「导出工程包」原样带上 —— 这正是它存在的意义。
+ *   `meta/` 下的东西**不进 PAK**（编译图只认 `src/` 与 `assets/`），
+ *   但会被「导出工程包」原样带上 —— 这正是它存在的意义。详见帮助「导出 PAK」。
  *
  * 值可以是多层路径，归位校验比较 `${根目录}/${相对路径}` 与 `sourceRelativePath`，
  * 不假设只有一层。
@@ -35,7 +35,8 @@ export type AllowedExtension = (typeof ALLOWED_EXTENSIONS)[number]
 export const FILE_DIRS: Record<string, string> = {
   '.hs': 'src/hanshu',
   '.char': 'src/character',
-  '.py': 'src/scripts',
+  /** 普通脚本；目标定义见 `src/goal/`（由 SourceFile.srcKind 分流） */
+  '.py': 'src/script',
   '.progress': 'src/progress',
   '.hflow': 'src/story',
   '.nav': 'src/navigator',
@@ -49,18 +50,43 @@ export const FILE_DIRS: Record<string, string> = {
 export const SOURCE_KIND_ORDER = [
   'hanshu',
   'character',
-  'scripts',
+  'script',
+  'goal',
   'progress',
   'story',
   'navigator',
   'gift',
 ] as const
 
+/**
+ * 源文件后缀的默认 PAK 平面（产物未显式标注时用）。
+ * 见帮助「导出 PAK」；编译器仍可对单个产物覆盖 plane。
+ */
+export type FilePlane = 'client' | 'server' | 'shared'
+
+export const FILE_PLANE: Record<string, FilePlane> = {
+  '.hs': 'client',
+  '.char': 'client',
+  '.py': 'server',
+  '.progress': 'server',
+  '.hflow': 'shared',
+  '.nav': 'shared',
+  '.kit': 'server',
+}
+
+/** 后缀默认平面；未列出则 `shared`（保守：两端都带上） */
+export function defaultPlaneForFile(name: string): FilePlane {
+  return FILE_PLANE[getExtension(name)] ?? 'shared'
+}
+
 /** 剧本工作区资源树分组（不含进度专属目录） */
-export const SCRIPT_WORKSPACE_GROUP_ORDER = ['hanshu', 'character', 'scripts', 'meta'] as const
+export const SCRIPT_WORKSPACE_GROUP_ORDER = ['hanshu', 'character', 'script', 'meta'] as const
 
 /** 工作区分组顺序：全部源类型 + 创作资料 `meta` */
 export const WORKSPACE_GROUP_ORDER = [...SOURCE_KIND_ORDER, 'meta'] as const
+
+/** `.py` 的 srcKind：普通脚本 vs 目标定义（PAK / 工程目录均为顶层 folder） */
+export type PySrcKind = 'script' | 'goal'
 
 /** 文件的目标目录（相对包根）；未归类返回 null（留在包根） */
 export function fileDir(name: string): string | null {
@@ -73,15 +99,50 @@ export function isMetaFile(name: string): boolean {
   return dir === 'meta' || (dir?.startsWith('meta/') ?? false)
 }
 
-/** 文件在工程结构里的相对路径：`xx.hs` → `src/hanshu/xx.hs`；未归类原样返回 */
-export function sourceRelativePath(name: string): string {
+/** 从磁盘相对路径还原 srcKind（兼容旧 `src/scripts/`） */
+export function srcKindFromDiskPath(relativePath: string): string | undefined {
+  const norm = relativePath.trim().replace(/\\/g, '/')
+  const match = /^src\/([^/]+)\//i.exec(norm)
+  if (!match) return undefined
+  const kind = match[1]!.toLowerCase()
+  if (kind === 'scripts' || kind === 'script') return 'script'
+  if (kind === 'goal') return 'goal'
+  return kind
+}
+
+/**
+ * 文件在工程结构里的相对路径。
+ * `.py` 按 `srcKind`：`goal` → `src/goal/`，否则 → `src/script/`（含旧数据未标注时）。
+ */
+export function sourceRelativePath(
+  name: string,
+  srcKind?: string | null,
+): string {
+  if (getExtension(name) === '.py') {
+    const kind: PySrcKind = srcKind === 'goal' ? 'goal' : 'script'
+    return `src/${kind}/${name}`
+  }
   const dir = fileDir(name)
   return dir ? `${dir}/${name}` : name
 }
 
-/** 工作区分组键：`hanshu` / `character` / `scripts` / `meta`；留在包根为 `root` */
-export function sourceKindOf(name: string): string {
+/** 带 srcKind 的源文件路径 */
+export function sourcePathOf(file: {
+  name: string
+  srcKind?: string | null
+}): string {
+  return sourceRelativePath(file.name, file.srcKind)
+}
+
+/** 工作区分组键：`hanshu` / `character` / `script` / `goal` / `meta`；留在包根为 `root` */
+export function sourceKindOf(
+  name: string,
+  srcKind?: string | null,
+): string {
   if (isMetaFile(name)) return 'meta'
+  if (getExtension(name) === '.py') {
+    return srcKind === 'goal' ? 'goal' : 'script'
+  }
   const dir = fileDir(name)
   return dir ? dir.slice('src/'.length) : 'root'
 }
@@ -134,6 +195,11 @@ export type SourceFile = {
   name: string
   content: string
   updatedAt: number
+  /**
+   * 覆盖默认 `src/<kind>/`（目前用于 `.py`：`script` | `goal`）。
+   * 目标定义不进 `script/`，单独落在 `goal/`（工程与 PAK 一致）。
+   */
+  srcKind?: string
 }
 
 /** @deprecated 使用 SourceFile */
@@ -209,7 +275,8 @@ export function editorLanguageForFile(name: string): string {
   if (isTextAssetName(name)) return 'json'
   const ext = getExtension(name)
   if (ext === '.md') return 'markdown'
-  if (ext === '.char' || ext === '.py') return 'python'
+  if (ext === '.char') return 'hanshu-char'
+  if (ext === '.py') return 'python'
   if (
     ext === '.lang' || ext === '.voice' || ext === '.tts' || ext === '.ttsservice'
     || ext === '.progress' || ext === '.hflow' || ext === '.nav' || ext === '.kit'
@@ -227,16 +294,30 @@ export function isHanshuFile(name: string): boolean {
   return getExtension(name) === '.hs'
 }
 
+export function isCharFile(name: string): boolean {
+  return getExtension(name) === '.char'
+}
+
+/** 走语言文本 / 配音映射的源文件（`.hs` / `.char`） */
+export function isLocalizableSourceFile(name: string): boolean {
+  return isHanshuFile(name) || isCharFile(name)
+}
+
 export function isVoiceMapFile(name: string): boolean {
   return getExtension(name) === '.voice'
 }
 
-export function createSourceFile(name: string, content = ''): SourceFile {
+export function createSourceFile(
+  name: string,
+  content = '',
+  srcKind?: string,
+): SourceFile {
   return {
     id: uid('src'),
     name,
     content,
     updatedAt: Date.now(),
+    ...(srcKind ? { srcKind } : {}),
   }
 }
 

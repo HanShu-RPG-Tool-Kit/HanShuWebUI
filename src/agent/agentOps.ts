@@ -22,9 +22,16 @@ import {
 } from '../i18n/textMap'
 import { describeVoiceFormat, inspectOggBytes, isMonoVorbisOgg } from '../i18n/voiceBytes'
 import { resolveVoiceBindingFor, voiceAssetDir } from '../i18n/voiceMap'
-import { analyzeHsDiagnostics, type HsDiagnostic } from '../monaco/hsDiagnostics'
-import { parseTextSpans } from '../monaco/textSpans'
 import {
+  analyzeCharDiagnostics,
+  type CharDiagnostic,
+} from '../monaco/charDiagnostics'
+import { parseCharTextSpans } from '../monaco/charTextSpans'
+import { analyzeHsDiagnostics, type HsDiagnostic } from '../monaco/hsDiagnostics'
+import { parseTextSpans, type TextSpan } from '../monaco/textSpans'
+import {
+  getExtension,
+  isCharFile,
   isHanshuFile,
   registerAsset,
   removeAssetFolder,
@@ -34,11 +41,18 @@ import {
   type Workspace,
 } from '../workspace'
 
+function localizedSpans(content: string, sourceName?: string): TextSpan[] {
+  if (sourceName && getExtension(sourceName) === '.char') {
+    return parseCharTextSpans(content)
+  }
+  return parseTextSpans(content)
+}
+
 /** 工具返回值：一律带 `ok`，失败带 `error`（可选 `hint` 指向正确工具） */
 export type AgentOpResult = { ok: boolean; [key: string]: unknown }
 
 /**
- * 源文件类别：`hanshu` / `character` / `scripts` / `progress` / `story` / `navigator` / `gift` / `meta`；旧 *.voice 等留在包根为 `root`。
+ * 源文件类别：`hanshu` / `character` / `script` / `goal` / `progress` / `story` / `navigator` / `gift` / `meta`；旧 *.voice 等留在包根为 `root`。
  * 与写盘归位同源（`workspace.sourceKindOf`），不在这里另立一套。
  */
 export { sourceKindOf }
@@ -53,8 +67,8 @@ export function activeFilePathOf(
       if (script.id !== activeScriptId) continue
       return {
         name: script.name,
-        kind: sourceKindOf(script.name),
-        path: sourceRelativePath(script.name),
+        kind: sourceKindOf(script.name, script.srcKind),
+        path: sourceRelativePath(script.name, script.srcKind),
       }
     }
   }
@@ -113,11 +127,18 @@ export function applyTextEdit(
   return { ok: true, content: content.split(oldText).join(newText), count }
 }
 
-/** `.hs` 走剧本诊断与编译校验；其它后缀没有可校验的语法 */
+/** `.hs` / `.char` 语法诊断；`.hs` 另跑编译校验（注入点可带跨文件占用表） */
 export function validateSourceContent(
   name: string,
   content: string,
-): { diagnostics: HsDiagnostic[]; compileError: { message: string } | null } {
+  options?: { foreignInjects?: ReadonlyMap<string, string> },
+): {
+  diagnostics: Array<HsDiagnostic | CharDiagnostic>
+  compileError: { message: string } | null
+} {
+  if (isCharFile(name)) {
+    return { diagnostics: analyzeCharDiagnostics(content), compileError: null }
+  }
   if (!isHanshuFile(name)) return { diagnostics: [], compileError: null }
   let compileError: { message: string } | null = null
   try {
@@ -126,7 +147,12 @@ export function validateSourceContent(
     if (error instanceof HsCompileError) compileError = { message: error.message }
     else throw error
   }
-  return { diagnostics: analyzeHsDiagnostics(content), compileError }
+  return {
+    diagnostics: analyzeHsDiagnostics(content, {
+      foreignInjects: options?.foreignInjects,
+    }),
+    compileError,
+  }
 }
 
 /** 键位扫描的实现在纯语法层（`src/hanshu/sourceKeys.ts`），这里原样转发 */
@@ -272,16 +298,17 @@ export type VoiceState = 'ok' | 'missing' | 'not-ogg' | 'not-mono' | 'invalid' |
 export function parseSourceText(
   content: string,
   map: TextFile,
+  sourceName?: string,
 ): { content: string; entries: Array<[string, string]>; skipped: number } {
   const stopLine = stopParseLineOf(content)
   const used = new Set<string>(Object.keys(map))
-  for (const item of collectSourceKeys(content)) used.add(item.key)
+  for (const item of collectSourceKeys(content, sourceName)) used.add(item.key)
 
   const edits: Array<{ start: number; end: number; text: string }> = []
   const entries: Array<[string, string]> = []
   let skipped = 0
 
-  for (const span of parseTextSpans(content)) {
+  for (const span of localizedSpans(content, sourceName)) {
     if (stopLine != null && span.endLine >= stopLine) continue
     if (isLocaleKey(span.value)) continue
     if (!span.value.trim()) {
@@ -310,12 +337,13 @@ export function parseSourceText(
 export function unparseSourceText(
   content: string,
   map: TextFile,
+  sourceName?: string,
 ): { content: string; replaced: number; missing: string[]; multiline: string[] } {
   const edits: Array<{ start: number; end: number; text: string }> = []
   const missing: string[] = []
   const multiline: string[] = []
 
-  for (const span of parseTextSpans(content)) {
+  for (const span of localizedSpans(content, sourceName)) {
     const key = normalizeLocaleKey(span.value)
     if (!key) continue
     const text = map[key]

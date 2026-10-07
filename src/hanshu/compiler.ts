@@ -6,9 +6,7 @@ import { findSpanAt, parseTextSpans, type TextSpan } from '../monaco/textSpans'
 import {
   BLOCK_END,
   COMMENT_LINE,
-  DEFINE_LINE,
   TRAILING_TERMINATOR,
-  countEmbedDelimiters,
   isStructuralLine,
   splitHsLines,
 } from './hsSyntaxRules'
@@ -16,7 +14,7 @@ import {
 /**
  * `.hs` → `.hsc` 编译。
  *
- * 规则（与解析器共用 `hsSyntaxRules`，docs/hanshu-syntax.md 是权威）：
+ * 规则（与解析器共用 `hsSyntaxRules`，应用内帮助「.hs 语法说明」是权威）：
  * - **编译前强制全文解析**：用 `parseTextSpans` 的结果判断哪些是本地化文本，
  *   不依赖任何"正在编辑中"的增量状态；**不再二次成键**，正文里的键名原样保留。
  * - 含键名的语句必须在**一行内闭合**（`speaker:abcd1234//`、`-msg:msg//`，闭合符在
@@ -40,36 +38,16 @@ export function hscAssetName(hsName: string): string {
 
 /**
  * 为 .hsc 去掉噪音：注释行、空行。
- * 保留顶格 `#define`；不碰 `''''…''''` 内 Python（含其中空行）。
  * 不移动 `@` 注入点 —— 它们是后续内容的位置标记。
  */
 export function stripHsComments(hsText: string): string {
   const nl = hsText.includes('\r\n') ? '\r\n' : '\n'
   const lines = hsText.split(/\r?\n/)
   const out: string[] = []
-  let inPython = false
 
   for (const line of lines) {
-    const toggles = countEmbedDelimiters(line)
-    if (inPython) {
-      out.push(line)
-      if (toggles % 2 === 1) inPython = false
-      continue
-    }
-    if (toggles % 2 === 1) {
-      inPython = true
-      out.push(line)
-      continue
-    }
-
-    // 顶格 #define 留给引擎展开；其余 # 行为注释
-    if (DEFINE_LINE.test(line)) {
-      out.push(line)
-      continue
-    }
     if (COMMENT_LINE.test(line)) continue
     if (!line.trim()) continue
-
     out.push(line)
   }
 
@@ -86,50 +64,20 @@ export function minifyHsForHsc(hsText: string): string {
   const nl = hsText.includes('\r\n') ? '\r\n' : '\n'
   const raw = hsText.split(/\r?\n/)
   const flat: string[] = []
-  let inPython = false
 
   for (const line of raw) {
-    const toggles = countEmbedDelimiters(line)
-    if (inPython) {
-      flat.push(line)
-      if (toggles % 2 === 1) inPython = false
-      continue
-    }
-    if (toggles % 2 === 1) {
-      inPython = true
-      flat.push(line)
-      continue
-    }
-
     if (BLOCK_END.test(line)) continue
     flat.push(line.replace(TRAILING_TERMINATOR, ''))
   }
 
   const out: string[] = []
-  inPython = false
   for (let i = 0; i < flat.length; i++) {
     const line = flat[i]!
-    const toggles = countEmbedDelimiters(line)
-
-    if (inPython) {
-      out.push(line)
-      if (toggles % 2 === 1) inPython = false
-      continue
-    }
-    if (toggles % 2 === 1) {
-      inPython = true
-      out.push(line)
-      continue
-    }
 
     const open = /^([a-zA-Z_][a-zA-Z0-9_]*):\s*$/.exec(line)
     if (open) {
       const next = flat[i + 1]
-      if (
-        next !== undefined &&
-        !isStructuralLine(next) &&
-        countEmbedDelimiters(next) % 2 === 0
-      ) {
+      if (next !== undefined && !isStructuralLine(next)) {
         out.push(`${open[1]}:${next}`)
         i++
         continue
@@ -155,7 +103,7 @@ function isKeyedSpan(span: TextSpan): boolean {
  *    多行块里摊着一个键名 → 抛错。
  * 2. 正文行里出现的键名必须落在某个已闭合的片段内 → 否则说明它是"没闭合的含键名内容"。
  *
- * 注释行、`#define`、`@` 行与 Python 块内不算正文，不参与校验。
+ * 注释行、`@` 行与信号行不算正文，不参与校验。
  */
 function normalizeKeyedContent(hsText: string): string {
   const spans = parseTextSpans(hsText)
@@ -175,18 +123,8 @@ function normalizeKeyedContent(hsText: string): string {
   // 2) 正文里的键名必须都在片段内
   const scan = new RegExp(LOCALE_KEY_TEXT_RE.source, 'gi')
   const lines = splitHsLines(hsText)
-  let inPython = false
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!
-    const toggles = countEmbedDelimiters(line.text)
-    if (inPython) {
-      if (toggles % 2 === 1) inPython = false
-      continue
-    }
-    if (toggles % 2 === 1) {
-      inPython = true
-      continue
-    }
     if (COMMENT_LINE.test(line.text) || line.text.startsWith('@')) continue
     if (!line.text.trim()) continue
 

@@ -328,7 +328,7 @@ function PackageNode({
     )
     const root: Array<(typeof pkg.scripts)[number]> = []
     for (const script of pkg.scripts) {
-      const kind = sourceKindOf(script.name)
+      const kind = sourceKindOf(script.name, script.srcKind)
       if (!SCRIPT_WORKSPACE_GROUP_ORDER.includes(kind as (typeof SCRIPT_WORKSPACE_GROUP_ORDER)[number])) {
         if (kind === 'root') root.push(script)
         continue

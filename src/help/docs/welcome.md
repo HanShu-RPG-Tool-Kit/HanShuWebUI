@@ -10,9 +10,13 @@
 
 ## 从这里开始
 
-- [文档索引](#docs)：内置文档一览
+- [文档索引](#docs)：内置文档一览（用户手册与开发规范的唯一真相来源）
+- [.hs 语法说明](#hanshu-syntax)：剧本正式语法
+- [.char 角色卡语法](#char-syntax)：角色槽位文本（本地化 / 配音）
+- [抽象汉书自动机](#hsc-machine)：`.hsc` 如何执行（规范）
 - [礼包：超参数与修饰器](#kit-guide)：让奖励随难度、人数等条件变化
-- [表达式标准 V1](#kit-expr)：修饰器表达式的正式规范
-- [进度：任务与委托](#progress-design)：任务/委托表单的策划草案
+- [进度工作区](#progress-workspace)：进度 / 故事流程 / 礼包怎么组织
+- [配音：服务与方案规范](#tts-spec)：`.tts` / `.ttsservice`
+- [导出 PAK](#export-pak)：编译产物与 client / server / shared 分包
 
 > 帮助窗口可按 `Esc` 关闭，也可以点击窗口外的区域关闭。

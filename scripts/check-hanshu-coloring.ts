@@ -142,11 +142,36 @@ for (const [label, id, cases] of [
   console.log(`  ok - ${label}：${cases.length} 种选项写法都上色且行末退出`)
 }
 
+console.log('== 系统返回选项着色 ==')
+{
+  const provider = providers[HANSHU_LANGUAGE_ID]
+  assert.ok(provider, '.hs 未注册 Monarch provider')
+  for (const [line, token] of [
+    ['--<//', 'sysret.parent'],
+    ['--<<//', 'sysret.root'],
+    ['---<//', 'sysret.parent'],
+    ['---<<//', 'sysret.root'],
+  ] as const) {
+    const [result] = lex(provider, line)
+    const types = result!.tokens.map((t) => t.type).join(' ')
+    assert.ok(
+      result!.tokens[0]!.type.includes('choice.mark'),
+      `${line}：短横线要点亮，实际 ${types}`,
+    )
+    assert.ok(
+      result!.tokens.some((t) => t.type.includes(token)),
+      `${line}：应有 ${token}，实际 ${types}`,
+    )
+    assert.equal(result!.endState, 'root', `${line}：行末状态应为 root`)
+  }
+  console.log('  ok - --</--<< 系统返回着色正确')
+}
+
 console.log('== 选项规则形态 ==')
 for (const [id, provider] of Object.entries(providers)) {
   for (const [state, rules] of Object.entries(provider.tokenizer)) {
     for (const [re, action] of rules) {
-      if (!re.source.includes('(-+)')) continue
+      if (!re.source.includes('(-+)') && !re.source.includes('(-{2,})')) continue
       assert.ok(Array.isArray(action), `${id}/${state} ${re.source}：必须用分组`)
       const pieces = action as Piece[]
       assert.ok(
@@ -173,13 +198,13 @@ console.log('== #stopparse 指令着色 ==')
   assert.ok(provider, '.hs 未注册 Monarch provider')
   const [directive] = lex(provider, '#stopparse')
   assert.ok(
-    directive!.tokens[0]!.type.includes('define.kw'),
-    `.hs #stopparse：应作为指令上色（与 #define 同色），实际 ${directive!.tokens.map((t) => t.type).join(' ')}`,
+    directive!.tokens[0]!.type.includes('directive'),
+    `.hs #stopparse：应作为指令上色，实际 ${directive!.tokens.map((t) => t.type).join(' ')}`,
   )
   const [indented] = lex(provider, '  #stopparse')
   assert.ok(
-    !indented!.tokens[0]!.type.includes('define.kw'),
-    '.hs 缩进的 #stopparse 不是指令（与 #define 的顶格要求一致）',
+    !indented!.tokens[0]!.type.includes('directive'),
+    '.hs 缩进的 #stopparse 不是指令（须顶格）',
   )
   const [comment] = lex(provider, '# 普通注释')
   assert.ok(

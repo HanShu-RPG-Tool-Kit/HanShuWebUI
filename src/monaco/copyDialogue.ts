@@ -1,5 +1,9 @@
 import type { Monaco } from '@monaco-editor/react'
 import type { editor } from 'monaco-editor'
+import {
+  isHsSignalLine,
+  matchSystemReturnChoice,
+} from '../hanshu/hsSyntaxRules'
 
 const SPEAKER_LINE = /^([a-zA-Z_][a-zA-Z0-9_]*):(.*)$/
 const CHOICE_LINE = /^(-+)([\s\S]*?)\/\/\s*$/
@@ -24,20 +28,6 @@ function unescapeHs(text: string): string {
     .replace(/\\-/g, '-')
 }
 
-function countEmbedDelimiters(line: string): number {
-  let n = 0
-  let i = 0
-  while (i < line.length) {
-    if (line.startsWith("''''", i)) {
-      n++
-      i += 4
-    } else {
-      i++
-    }
-  }
-  return n
-}
-
 /** 第一个未转义的 `:` */
 function findChoiceColon(body: string): number {
   for (let i = 0; i < body.length; i++) {
@@ -54,31 +44,19 @@ function trimText(raw: string): string {
   return unescapeHs(raw).replace(/^\s+|\s+$/g, '')
 }
 
-/** 从文本中按出现顺序提取对白块（跳过注释 / 选项 / @ / @@ / ''''） */
+/** 从文本中按出现顺序提取对白块（跳过注释 / 选项 / @ / @@） */
 export function extractDialogueBlocks(text: string): DialogueBlock[] {
   const lines = text.split(/\r?\n/)
   const blocks: DialogueBlock[] = []
-  let inPython = false
   let i = 0
 
   while (i < lines.length) {
     const line = lines[i]
-    const toggles = countEmbedDelimiters(line)
-
-    if (inPython) {
-      if (toggles % 2 === 1) inPython = false
-      i++
-      continue
-    }
-    if (toggles % 2 === 1) {
-      inPython = true
-      i++
-      continue
-    }
 
     if (
       line.startsWith('#') ||
       line.startsWith('@') ||
+      isHsSignalLine(line) ||
       /^-/.test(line)
     ) {
       i++
@@ -106,9 +84,7 @@ export function extractDialogueBlocks(text: string): DialogueBlock[] {
       const buf: string[] = []
       while (i < lines.length && !/^\/\/\s*$/.test(lines[i])) {
         const L = lines[i]
-        const t = countEmbedDelimiters(L)
-        if (t % 2 === 1) inPython = !inPython
-        if (!inPython && !L.startsWith('#') && !L.startsWith('@')) {
+        if (!L.startsWith('#') && !L.startsWith('@')) {
           buf.push(L)
         }
         i++
@@ -129,12 +105,11 @@ export function extractDialogueBlocks(text: string): DialogueBlock[] {
  * 选项行拆分：
  * - label：玩家选项文案
  * - reply：普通答复 / `:<<` 正文；归属「该选项树前最近的 speaker」
- * - 跳过 `:>>func` / `:>jump`
+ * - 跳过 `:>>jump`
  */
 export function extractChoiceParts(text: string): ChoicePart[] {
   const lines = text.split(/\r?\n/)
   const parts: ChoicePart[] = []
-  let inPython = false
   let inSpeaker = false
   let lastSpeaker = ''
   let i = 0
@@ -155,20 +130,8 @@ export function extractChoiceParts(text: string): ChoicePart[] {
 
   while (i < lines.length) {
     const line = lines[i]
-    const toggles = countEmbedDelimiters(line)
 
-    if (inPython) {
-      if (toggles % 2 === 1) inPython = false
-      i++
-      continue
-    }
-    if (toggles % 2 === 1) {
-      inPython = true
-      i++
-      continue
-    }
-
-    if (line.startsWith('#') || line.startsWith('@')) {
+    if (line.startsWith('#') || line.startsWith('@') || isHsSignalLine(line)) {
       i++
       continue
     }
@@ -192,6 +155,11 @@ export function extractChoiceParts(text: string): ChoicePart[] {
       continue
     }
 
+    if (matchSystemReturnChoice(line)) {
+      i++
+      continue
+    }
+
     const choice = line.match(CHOICE_LINE)
     if (!choice) {
       i++
@@ -205,9 +173,7 @@ export function extractChoiceParts(text: string): ChoicePart[] {
     } else {
       pushLabel(body.slice(0, colon))
       const reply = body.slice(colon + 1)
-      if (/^\s*>>/.test(reply)) {
-        // 函数调用
-      } else if (/^\s*>[a-zA-Z_][a-zA-Z0-9_]*\s*$/.test(reply)) {
+      if (/^\s*>>[a-zA-Z_][a-zA-Z0-9_]*\s*$/.test(reply)) {
         // 跳到注入点
       } else if (/^\s*<</.test(reply)) {
         pushReply(reply.replace(/^\s*<</, ''))

@@ -11,7 +11,14 @@ import {
   type Workspace,
 } from '../workspace'
 import { getExtension } from '../workspace'
-import type { FlowDocument, FlowPackageId, FlowWorkspaceState } from '../workspaces/progress/storage'
+import { isGoalDefinitionDocument } from '../workspaces/progress/goalDefinitions'
+import { sectionFolderKey } from '../workspaces/progress/library'
+import type {
+  FlowDocument,
+  FlowFolder,
+  FlowPackageId,
+  FlowWorkspaceState,
+} from '../workspaces/progress/storage'
 import { stampDocument } from '../workspaces/progress/storage'
 
 export const PROGRESS_UI_STORAGE_KEY = 'hanshu.progressUi.v1'
@@ -31,7 +38,7 @@ export const PROGRESS_SOURCE_EXTS = new Set([
 export const SCRIPT_EXPLORER_KINDS = new Set([
   'hanshu',
   'character',
-  'scripts',
+  'script',
   'meta',
   'root',
 ])
@@ -96,16 +103,23 @@ export function sourcesToProgressDocuments(
   documentFolders?: ProgressDocumentFolders,
 ): FlowDocument[] {
   const docs: FlowDocument[] = []
+  const goalSection = sectionFolderKey('script', 'goal-def')
   for (const source of sources) {
     const pkg = packageIdOfExt(getExtension(source.name))
     if (!pkg) continue
-    const folderId = documentFolders?.[source.id]
+    const fromUi = documentFolders?.[source.id]
+    const folderId =
+      typeof fromUi === 'string' && fromUi
+        ? fromUi
+        : source.srcKind === 'goal'
+          ? goalSection
+          : null
     docs.push(stampDocument({
       key: source.id,
       name: source.name,
       source: source.content,
       package: pkg,
-      folderId: typeof folderId === 'string' ? folderId : null,
+      folderId,
       createdAt: undefined,
       updatedAt: new Date(source.updatedAt).toISOString(),
     }))
@@ -116,18 +130,36 @@ export function sourcesToProgressDocuments(
 export function applyProgressDocumentsToWorkspace(
   workspace: Workspace,
   documents: FlowDocument[],
+  folders: FlowFolder[] = [],
 ): Workspace {
   const pkg = workspace.packages[0]
   if (!pkg) return workspace
   const kept = pkg.scripts.filter((item) => !isProgressSourceName(item.name))
+  const folderState = {
+    documents,
+    folders,
+    openKeys: [] as string[],
+    activeKey: null,
+    pinnedKeys: [] as string[],
+  }
   const nextSources: SourceFile[] = [
     ...kept,
-    ...documents.map((doc) => ({
-      id: doc.key,
-      name: doc.name,
-      content: doc.source,
-      updatedAt: doc.updatedAt ? Date.parse(doc.updatedAt) || Date.now() : Date.now(),
-    })),
+    ...documents.map((doc) => {
+      const srcKind =
+        getExtension(doc.name) === '.py' &&
+        isGoalDefinitionDocument(folderState, doc)
+          ? 'goal'
+          : getExtension(doc.name) === '.py'
+            ? 'script'
+            : undefined
+      return {
+        id: doc.key,
+        name: doc.name,
+        content: doc.source,
+        updatedAt: doc.updatedAt ? Date.parse(doc.updatedAt) || Date.now() : Date.now(),
+        ...(srcKind ? { srcKind } : {}),
+      }
+    }),
   ]
   return {
     ...workspace,

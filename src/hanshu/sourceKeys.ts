@@ -10,20 +10,33 @@
  */
 
 import { normalizeLocaleKey } from '../i18n/textMap'
-import { parseTextSpans } from '../monaco/textSpans'
+import { parseCharTextSpans } from '../monaco/charTextSpans'
+import { parseTextSpans, type TextSpan } from '../monaco/textSpans'
+import { getExtension } from '../workspace'
 import { stopParseLineOf } from './directives'
 
 export type SourceKeyEntry = { key: string; line: number }
 
+function spansForSource(source: string, sourceName?: string): TextSpan[] {
+  if (sourceName && getExtension(sourceName) === '.char') {
+    return parseCharTextSpans(source)
+  }
+  return parseTextSpans(source)
+}
+
 /**
  * 源文件里出现的键（按出现顺序，重复只留首次）。
  * `#stopparse` 之后不参与本地化，那里的键一律不计入。
+ * @param sourceName 可选；`.char` 时走角色卡解析。
  */
-export function collectSourceKeys(source: string): SourceKeyEntry[] {
+export function collectSourceKeys(
+  source: string,
+  sourceName?: string,
+): SourceKeyEntry[] {
   const stopLine = stopParseLineOf(source)
   const out: SourceKeyEntry[] = []
   const seen = new Set<string>()
-  for (const span of parseTextSpans(source)) {
+  for (const span of spansForSource(source, sourceName)) {
     if (stopLine != null && span.endLine >= stopLine) continue
     const key = normalizeLocaleKey(span.value)
     if (!key || seen.has(key)) continue

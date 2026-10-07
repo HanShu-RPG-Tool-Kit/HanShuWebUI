@@ -1,6 +1,6 @@
 import { getAgentConfig } from './config'
 import { AGENT_RULES } from './rules'
-import syntaxDocs from '../../docs/hanshu-syntax.md?raw'
+import syntaxDocs from '../help/docs/hanshu-syntax.md?raw'
 import {
   AGENT_TOOLS,
   AGENT_TOOL_NAMES,

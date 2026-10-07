@@ -1,10 +1,11 @@
 .progress-editor {
   --pr-bg: #262729; --pr-surface: #2d2e30; --pr-field: #222325; --pr-line: #3c3d40;
   --pr-text: #e9e7e2; --pr-muted: #a1a2a6; --pr-accent: #a6bedf;
-  flex: 1; min-height: 0; overflow: auto; background: var(--pr-bg); color: var(--pr-text);
+  flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: var(--pr-bg); color: var(--pr-text);
   font: 13px/1.5 -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif;
   scrollbar-width: thin; color-scheme: dark; container-type: inline-size;
 }
+.progress-form-scroll { flex: 1; min-height: 0; overflow: auto; }
 .progress-editor *, .progress-picker * { box-sizing: border-box; }
 .progress-editor button, .progress-editor input, .progress-editor select, .progress-editor textarea,
 .progress-picker button, .progress-picker input { font: inherit; color: inherit; }

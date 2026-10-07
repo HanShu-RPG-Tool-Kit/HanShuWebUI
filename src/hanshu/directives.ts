@@ -8,7 +8,7 @@ export const STOP_PARSE_DIRECTIVE = '#stopparse'
 
 /**
  * `#stopparse` 出现的行号（1 起）；没有则返回 null。
- * 顶格才算指令（与 `#define` 一致），允许行尾空白；行内 `#` 不算。
+ * 顶格才算指令，允许行尾空白；行内 `#` 不算。
  */
 export function stopParseLineOf(source: string): number | null {
   const lines = source.split(/\r?\n/)
