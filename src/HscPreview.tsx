@@ -14,7 +14,7 @@ type HscPreviewProps = {
 /** .hs → .hsc 只读视角（全文解析校验、去注释/空行、去掉 //） */
 export function HscPreview({ source }: HscPreviewProps) {
   const deferred = useDeferredValue(source)
-  // 编译会做"含键名内容必须单行闭合"的校验：不通过时把错误显示出来，而不是空预览
+  // 编译会做"含键名内容必须闭合"的校验：不通过时把错误显示出来，而不是空预览
   const { hsc, error } = useMemo(() => {
     try {
       return { hsc: compileHsToHsc(deferred), error: '' }

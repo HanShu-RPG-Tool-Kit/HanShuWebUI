@@ -1940,7 +1940,7 @@ body.is-resizing .monaco-editor {
   min-height: 0;
 }
 
-/* 编译不通过（含键名内容没写成单行闭合）时，预览位显示错误而不是空白 */
+/* 编译不通过（含键名内容没闭合）时，预览位显示错误而不是空白 */
 .hsc-preview-error {
   flex: 1 1 auto;
   min-height: 0;
