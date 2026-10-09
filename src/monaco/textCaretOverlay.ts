@@ -54,6 +54,11 @@ export function createCaretOverlay(options: {
   lineHeightPx(): number
   /** 尾标与容器之间的间距（与尾标槽位宽度同源，兜底推算时用） */
   tailGapPx?: number
+  /**
+   * 自绘光标让位：沉浸式编辑框正开着（它自己画光标）。
+   * 否则框沿上会多出一个不动的光标，和编辑框里的光标抢眼睛。
+   */
+  isSuppressed?(): boolean
 }): CaretOverlay {
   const { ed, domNode, getLines, isCtrlHeld, lineHeightPx } = options
   const tailGap = options.tailGapPx ?? TAIL_GAP_PX
@@ -93,6 +98,11 @@ export function createCaretOverlay(options: {
   const update = () => {
     if (disposed) return
     clear()
+    if (options.isSuppressed?.()) {
+      // 编辑框接管：原生光标层和自绘光标都让位
+      hideNativeCaret(true)
+      return
+    }
     if (isCtrlHeld() || !ed.hasTextFocus?.()) return
 
     const model = ed.getModel()

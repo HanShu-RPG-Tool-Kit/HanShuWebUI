@@ -201,6 +201,26 @@ export function isDialogueBreakLine(text: string): boolean {
 }
 
 /**
+ * 多行对白块的收尾符（**独占一行**的 `//`）在第几行：从 `fromLine`（1 基）往后找第一行。
+ * 只在语句内找 —— 撞上新的结构行（选项 / 新对白 / `@` / 信号）就说明这个块没有收尾符。
+ * 行文本按 1 基给（`lines[line - 1]`），找到返回 1 基行号，找不到返回 null。
+ *
+ * 用途：成键后的多行块里键名可能单独占一行（`speaker:` / 键名 / `//`），
+ * 提交编辑时光标要落在**语句结尾**（收尾符之后），不能停在键名框的框沿上。
+ */
+export function blockCloserLine(
+  lines: readonly string[],
+  fromLine: number,
+): number | null {
+  for (let line = Math.max(1, fromLine); line <= lines.length; line++) {
+    const text = lines[line - 1] ?? ''
+    if (BLOCK_END.test(text)) return line
+    if (isDialogueBreakLine(text)) return null
+  }
+  return null
+}
+
+/**
  * 结构行（编译紧凑化用）：`#` / `@` / `-` / 信号 / `speaker:` 形。
  * 解析器把 `#` / `@` / 信号当跳过或行级语句，编译则要在这里认出它们，
  * 避免把下一行折上来。

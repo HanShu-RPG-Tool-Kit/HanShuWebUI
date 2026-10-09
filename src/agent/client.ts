@@ -50,7 +50,7 @@ ${syntaxDocs}
 - 改「用户当前打开的文件」：先 \`get_active_file_path\` 拿到 source，再用 \`edit_source\` / \`write_source\`
 - 改完 .hs 调一次 \`validate_source\`（语法诊断 + .hsc 编译校验）
 - 语言标签用「语言_地区」小写下划线形式（zh_cn / en_us / ja_jp）；**写译文前先 list_locales**，沿用工程里已有的标签
-- 译文：\`list_lang_keys\` 看缺哪些键 → \`write_lang\` 写（键来自正文行末，形如 \`narrator:7f3a91c2//\`）；
+- 译文：\`list_lang_keys\` 看缺哪些键 → \`write_lang\` 写（键来自正文：单行如 \`narrator:7f3a91c2//\`，多行块里键名单独占一行）；
   也可以让编辑器自动成键：\`parse_hs(source)\`；反向还原正文用 \`unparse_hs(source, locale)\`（会改写正文，先问用户）
 - 配音：\`list_voice_status\` 查状态（你不能合成语音；缺了就如实说，不要假装已生成）
 - 导出前用 \`check_export\` 预演文件数与警告

@@ -473,6 +473,12 @@ export const ScriptWorkspace = forwardRef<
   /** 仅活动文件是可本地化源（.hs / .char）时才有语言文本映射 */
   const textSourceName = editingLocalizable ? titleName : ''
   const handleLocaleChange = (tag: string) => {
+    // 换语言 = 换映射：编辑框里那行字属于上一个语言，而请求里抓着的是旧映射对象，
+    // 提交会写进上一个语言的文本。就地关掉（等同于 Esc，不动正文）
+    if (langEdit) {
+      langEdit.request.cancel()
+      setLangEdit(null)
+    }
     setLocale(tag)
     saveLocale(tag)
   }
@@ -3120,7 +3126,7 @@ export const ScriptWorkspace = forwardRef<
           error: '没有任何键存在于正文里',
           locales: results,
           notes,
-          hint: '键写在正文行末（`//` + 8 位十六进制，形如 `narrator:7f3a91c2//`）；用 list_lang_keys 查，或先 parse_hs 成键',
+          hint: '键写在正文里（单行 `narrator:7f3a91c2//`；多行块里键名单独占一行）；用 list_lang_keys 查，或先 parse_hs 成键',
         }
       }
       return { ok: true, source: hit.script.name, locales: results, notes }
@@ -3492,6 +3498,8 @@ export const ScriptWorkspace = forwardRef<
                         bindCopyDialogueHotkey(editor, monaco)
                       }
                       textBindingRef.current?.dispose()
+                      // 换文件 = 换绑定：旧绑定的编辑请求已经作废，覆盖编辑框不能留在新文件上
+                      setLangEdit(null)
                       textBindingRef.current = bindText(editor, monaco, {
                         getMap: () => textMapRef.current,
                         parseSpans: isCharFile(titleName)
@@ -3853,14 +3861,32 @@ export const ScriptWorkspace = forwardRef<
           mode={langEdit.request.mode}
           initial={langEdit.request.initial}
           rect={langEdit.request.rect}
-          onCommit={(next) => {
+          caretIndex={langEdit.request.caretIndex}
+          font={langEdit.request.font}
+          placeholder={langEdit.request.placeholder}
+          // 滚轮 / 布局变化时编辑器会推来新位置，编辑框跟着框走（只重渲染这个输入框）
+          subscribeSpot={langEdit.request.subscribeSpot}
+          // 点另一个框 = 切换编辑目标：先提交这一份，再把编辑框交给那个框
+          grabBoxAt={langEdit.request.grabBoxAt}
+          onCommit={(next, reason) => {
             const edit = langEdit
             setLangEdit((current) => (current?.id === edit.id ? null : current))
-            edit.request.apply(next)
+            edit.request.apply(next, reason)
           }}
           onCancel={() => {
             const edit = langEdit
             setLangEdit((current) => (current?.id === edit.id ? null : current))
+            edit.request.cancel()
+          }}
+          onExit={(direction, input) => {
+            const edit = langEdit
+            // 光标出框可能会顺势贴上别的框：那一下会把新的编辑请求塞进来（见 handleCaretEnter）。
+            // 先问编辑器"这一按出得去吗"：出不去（框贴文档头 / 尾）就不关框，把按下当无事发生。
+            const left = edit.request.exit(direction, input)
+            if (left) {
+              setLangEdit((current) => (current?.id === edit.id ? null : current))
+            }
+            return left
           }}
         />
       )}

@@ -278,7 +278,7 @@ export const AGENT_TOOLS = [
     function: {
       name: 'write_lang',
       description:
-        '一次写入多种语言的译文（多语言任务一次调用搞定）。语言标签用「语言_地区」小写下划线形式（如 zh_cn / en_us / ja_jp）；工程里已有该语言时会自动沿用它的标签。键必须已存在于正文行末（用 list_lang_keys 查），新增台词要先 parse_hs 或 edit_source 把键写进正文。',
+        '一次写入多种语言的译文（多语言任务一次调用搞定）。语言标签用「语言_地区」小写下划线形式（如 zh_cn / en_us / ja_jp）；工程里已有该语言时会自动沿用它的标签。键必须已存在于正文里（用 list_lang_keys 查）——单行语句写在行末 `narrator:7f3a91c2//`，多行块里键名单独占一行；新增台词要先 parse_hs 或 edit_source 把键写进正文。',
       parameters: {
         type: 'object',
         properties: {
@@ -366,7 +366,7 @@ export const AGENT_TOOLS = [
     function: {
       name: 'unparse_hs',
       description:
-        '逆解析：把正文里的键名换回该语言映射里的文本（键名被替换掉），常用来把某个语言的内容还原成可读正文。**会改写正文**，动手前先跟用户确认。多行译文与缺失译文不会处理，会如实报告。',
+        '逆解析：把正文里的键名换回该语言映射里的文本（键名被替换掉），常用来把某个语言的内容还原成可读正文。**会改写正文**，动手前先跟用户确认。多行译文与缺失译文不会处理，会如实报告。`#stopparse` 只影响解析成键，不拦逆解析。',
       parameters: {
         type: 'object',
         properties: {
