@@ -1639,12 +1639,13 @@ body.is-resizing .monaco-editor {
   }
 }
 
-/* 语法诊断：红色波浪线 + 半透明虚线符号。
+/* 语法诊断：红色波浪线 + 半透明符号。
    波浪线画在锚点之后，`margin-left: 1ch` 就是"离文本一个空格"。
-   三种叠加：只闭合符 / 只回车 / 回车 + 闭合符。 */
+   四种叠加：只闭合符 / 只回车 / 回车 + 闭合符 / 冲突符。 */
 .hs-diag-close,
 .hs-diag-enter,
-.hs-diag-enter-close {
+.hs-diag-enter-close,
+.hs-diag-conflict {
   display: inline-block;
   margin-left: 1ch;
   padding-bottom: 2px;
@@ -1684,6 +1685,24 @@ body.is-resizing .monaco-editor {
 
 .hs-diag-enter-close::after {
   content: '//';
+}
+
+/*
+  冲突符：`@name` 撞名（本文件内重复 / 跨文件重复）叠加的图形。
+  图形是"两个中空方框重叠 + 重叠处实心 + 中央中空感叹号"（hs-diag-conflict.svg），
+  挂在外链符号上，不再借用补 `//` 的提示 —— 重复不是缺闭合符。
+  感叹号是 evenodd 挖出来的孔，透出编辑器底色，所以深浅主题同一张图。
+*/
+.hs-diag-conflict::before {
+  content: '';
+  display: inline-block;
+  width: 1.05em;
+  height: 1.05em;
+  margin: 0 1px;
+  padding: 0;
+  border: none;
+  vertical-align: -0.15em;
+  background: url('./monaco/hs-diag-conflict.svg') center / contain no-repeat;
 }
 
 .explorer-context-menu {

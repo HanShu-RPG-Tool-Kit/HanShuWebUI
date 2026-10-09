@@ -19,6 +19,7 @@
     "test:progress-locale": "tsx scripts/verify-progress-locale.ts",
     "test:kit-expr": "tsx scripts/verify-kit-expr.ts",
     "test:editor-groups": "tsx scripts/verify-editor-groups.ts",
+    "test:hs-diag": "tsx scripts/verify-hs-diagnostic-symbols.ts",
     "test:goal-definitions": "npx vite-node scripts/verify-goal-definitions.ts",
     "test:navigation": "tsx scripts/verify-navigation-point.ts",
     "test:tts": "npm run test:tts-net && npm run test:tts-protocols && npm run test:tts-voices",
