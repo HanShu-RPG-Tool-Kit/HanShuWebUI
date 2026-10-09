@@ -6,9 +6,11 @@ import { findSpanAt, parseTextSpans, type TextSpan } from '../monaco/textSpans'
 import {
   BLOCK_END,
   COMMENT_LINE,
+  SPEAKER_LINE,
   TRAILING_TERMINATOR,
   isStructuralLine,
   splitHsLines,
+  type HsLine,
 } from './hsSyntaxRules'
 
 /**
@@ -17,13 +19,17 @@ import {
  * 规则（与解析器共用 `hsSyntaxRules`，应用内帮助「.hs 语法说明」是权威）：
  * - **编译前强制全文解析**：用 `parseTextSpans` 的结果判断哪些是本地化文本，
  *   不依赖任何"正在编辑中"的增量状态；**不再二次成键**，正文里的键名原样保留。
- * - 含键名的语句必须在**一行内闭合**（`speaker:abcd1234//`、`-msg:msg//`，闭合符在
- *   行末）；不满足就抛 `HsCompileError` —— 键名还摊在块里时不允许出包。
+ * - 含键名的语句必须**完整闭合**，形态跟随多行文本的标准规则：
+ *   单行 `speaker:<键>//`，或多行块 `speaker:` + `<键>` + 独占一行的 `//`
+ *   （成键只换正文、不收缩语句，所以多行块的键名就写在块里）。
+ *   没闭合就抛 `HsCompileError`。
+ * - 一个多行块**只能有一个键名**（键名必须在块的第一段正文里）：块里夹 `#` 注释会把
+ *   正文切成多段，只有第一段能被紧凑化折成 `speaker:<键>`，其余段会掉成裸行 → 抛错。
  * - 键名前后的空格 / 制表符在编译时删掉。
  * - 不再生成 `.lines`：hash → 原文的映射已经被正文里的键名取代。
  */
 
-/** 编译错误：含键名内容没写成"单行 + 行末闭合" */
+/** 编译错误：含键名内容没闭合 / 一个多行块里摊了多个键名 */
 export class HsCompileError extends Error {
   constructor(message: string) {
     super(message)
@@ -95,34 +101,50 @@ function isKeyedSpan(span: TextSpan): boolean {
   return isLocaleKey(span.value)
 }
 
+/** 这一行是「多行块的开块行」吗（顶格 `speaker:` + 空正文） */
+function isBlockOpenLine(text: string): boolean {
+  const m = SPEAKER_LINE.exec(text)
+  return m != null && m[2]!.trim() === ''
+}
+
+/**
+ * 多行块里，`span` 之前（同一块内）是否已经有正文行。
+ * 往上走：空行 / `#` 注释跳过，撞到开块行就是"没有" —— 撞到别的行说明
+ * 正文被 `#` 注释切成了好几段。
+ */
+function hasBodyBefore(lines: HsLine[], span: TextSpan): boolean {
+  for (let i = span.line - 2; i >= 0; i--) {
+    const text = lines[i]!.text
+    if (!text.trim() || COMMENT_LINE.test(text)) continue
+    return !isBlockOpenLine(text)
+  }
+  return false
+}
+
 /**
  * 校验含键名内容，并把键名前后的空格 / 制表符删掉。
  *
- * 两条硬性要求（对应"每行完整且闭合"）：
- * 1. 键名所在的独白必须是**单行写法**（`speaker:<键>//`，`//` 在同一行行末）；
- *    多行块里摊着一个键名 → 抛错。
- * 2. 正文行里出现的键名必须落在某个已闭合的片段内 → 否则说明它是"没闭合的含键名内容"。
+ * 硬性要求只有一条：**正文里出现的每个键名都必须落在某个已闭合的片段内**。
+ * 闭合形态与解析器完全一致：单行 `speaker:<键>//`，或多行块
+ * `speaker:` + `<键>` + 独占一行的 `//` —— 多行块里的键名是正常写法，
+ * 不再要求 `//` 与键名同一行行末。
+ *
+ * 另外守住「**一个块只能有一个键**」：块里夹 `#` 注释会把正文切成好几段
+ * （每段各成一个片段、各拿一个键），而紧凑化只能把 `speaker:` 后的**第一段**
+ * 折成 `speaker:<键>`，多出来的段落会掉成没有语句归属的裸键名 —— 机器按行走，
+ * 那几行没人执行、正文永远不显示。这种形状必须报错，不能让坏 `.hsc` 静默出厂。
  *
  * 注释行、`@` 行与信号行不算正文，不参与校验。
+ * `#stopparse` 是**仅解析**的控制指令（编辑器自动成键 / `parse_hs`），对编译无效：
+ * 它之后照样按键名校验、该报错还是报错。
  */
 function normalizeKeyedContent(hsText: string): string {
   const spans = parseTextSpans(hsText)
   const keyed = spans.filter(isKeyedSpan)
-
-  // 1) 键名必须收进单行
-  for (const span of keyed) {
-    // 选项行由 `CHOICE_LINE` 保证单行且行末闭合，不用额外检查
-    if (span.kind !== 'dialogue') continue
-    if (span.terminator == null) {
-      throw new HsCompileError(
-        `第 ${span.line} 行：含键名的独白必须写成单行的 \`speaker:<键>//\`（闭合符在行末）`,
-      )
-    }
-  }
-
-  // 2) 正文里的键名必须都在片段内
-  const scan = new RegExp(LOCALE_KEY_TEXT_RE.source, 'gi')
   const lines = splitHsLines(hsText)
+
+  // 1) 正文里的键名必须都在片段内（单行 / 多行块的两条闭合路径共用这一条）
+  const scan = new RegExp(LOCALE_KEY_TEXT_RE.source, 'gi')
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!
     if (COMMENT_LINE.test(line.text) || line.text.startsWith('@')) continue
@@ -133,10 +155,22 @@ function normalizeKeyedContent(hsText: string): string {
       const span = findSpanAt(spans, line.start + m.index)
       if (!span || !isKeyedSpan(span)) {
         throw new HsCompileError(
-          `第 ${i + 1} 行：键名必须写在闭合的语句里（\`speaker:<键>//\` 或 \`-文案:回复//\`）`,
+          `第 ${i + 1} 行：键名必须写在闭合的语句里（\`speaker:<键>//\`，或多行块 \`speaker:\` + \`<键>\` + 独占一行的 \`//\`）`,
         )
       }
     }
+  }
+
+  // 2) 一个多行块只能有一个键名：键名必须落在块的**第一段正文**里。
+  //    块里夹 `#` 注释会把正文切成多段（`narrator:` / 正文 / `# 注释` / 正文 / `//`），
+  //    每段各成一个片段、各拿一个键，而紧凑化只折第一段 —— 后面的键名会掉成裸行。
+  //    注意：键名前面只有空行 / 注释是正常的（`narrator:` / `# 场景` / `<键>` / `//`）。
+  for (const span of keyed) {
+    if (span.kind !== 'dialogue' || span.terminator != null) continue
+    if (!hasBodyBefore(lines, span)) continue
+    throw new HsCompileError(
+      `第 ${span.line} 行：一个多行对白块只能有一个键名 —— 块里的 \`#\` 注释把正文切成了好几段，紧凑化只折第一段，后面的段落会掉成没有语句归属的裸键名。请把它拆成两条 \`speaker:\` 语句，或去掉块里的注释`,
+    )
   }
 
   // 3) 键名前后的空格 / 制表符：删掉（不会跨行）

@@ -25,11 +25,12 @@ import {
  * | `missing-terminator`（多行） | 多行块没有 `//` 收尾 | 最后一行行末 | 回车 + 闭合符 |
  * | `inline-terminator` | 多行块的 `//` 没有独占一行 | `//` 之前 | 回车 |
  * | `speaker-needs-newline` | 独白块是多行，但 `speaker:` 后面还跟着文本 | 冒号之后 | 回车 |
- * | `duplicate-sys-return` | 同级兄弟里重复的 `--<` 或 `--<<`（第二个起） | 行首 `-` 后 | 回车（占位提示） |
- * | `duplicate-inject` | 工作区内重复的 `@name`（本文件内第二次，或与其它 `.hs` 撞名） | 行首 `@` | 回车（占位提示） |
+ * | `duplicate-sys-return` | 同级兄弟里重复的 `--<` 或 `--<<`（第二个起） | 行首 `-` 后 | 冲突符（两个方框重叠 + 中空感叹号） |
+ * | `duplicate-inject` | 工作区内重复的 `@name`（本文件内第二次，或与其它 `.hs` 撞名） | 行首 `@` | 冲突符（两个方框重叠 + 中空感叹号） |
  *
  * 锚点是"波浪线画在这个 offset 之后"；波浪线离文本一个空格由渲染侧留白，
- * 虚线符号是半透明图形（`.hs-diag-*`，见 App.css）。
+ * 叠加图形是半透明符号（`.hs-diag-*`，见 App.css；冲突符本体
+ * `hs-diag-conflict.svg`）。「重复」不是缺闭合符，所以**不叠** `//`。
  */
 export type HsDiagnosticKind =
   | 'missing-terminator'

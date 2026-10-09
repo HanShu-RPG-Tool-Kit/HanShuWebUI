@@ -55,20 +55,6 @@ export type TextSpan = {
    * 拥有终结符时，渲染会把 `//` 挪到框外右下角。
    */
   terminator: TextTerminator | null
-  /** 只对"多行对白"设置：整条语句信息（同一语句的多个片段共享同一个对象） */
-  dialogueBlock?: DialogueBlock
-}
-
-/**
- * 多行对白（`name:` + 正文若干行 + 独占一行 `//`）的整条语句信息。
- * 成键时编辑器据此把它**收缩**成规范单行 `name:<键>//`（编译侧不做这件事）。
- */
-export type DialogueBlock = {
-  /** 整条语句的范围：从行首到收尾 `//` 结束 */
-  start: number
-  end: number
-  /** 角色名 */
-  speaker: string
 }
 
 /** 第一个未转义的 `:` */
@@ -95,8 +81,6 @@ type SpanInput = {
    * 否则它永远拿不到键。选项的空回复仍然不算（"空回复"明确排除）。
    */
   allowEmpty?: boolean
-  /** 多行对白的整条语句信息（同一语句的多个片段共享同一个对象） */
-  dialogueBlock?: DialogueBlock
 }
 
 function makeSpan(source: string, input: SpanInput): TextSpan | null {
@@ -116,7 +100,6 @@ function makeSpan(source: string, input: SpanInput): TextSpan | null {
     line: input.fromLine,
     endLine: input.toLine,
     terminator: input.terminator ?? null,
-    ...(input.dialogueBlock ? { dialogueBlock: input.dialogueBlock } : {}),
   }
 }
 
@@ -166,13 +149,10 @@ export function parseTextSpans(source: string): TextSpan[] {
         const bodyIndexes: number[] = []
         /** 是否见到**单独一行**的 `//` —— 没有它就不成键 */
         let ended = false
-        /** 收尾 `//` 的结束偏移（整条语句的 end，收缩时用） */
-        let closerEnd: number | null = null
         while (i < lines.length) {
           const bodyLine = lines[i]
           if (BLOCK_END.test(bodyLine.text)) {
             ended = true
-            closerEnd = bodyLine.start + bodyLine.text.length
             i++
             break
           }
@@ -191,11 +171,9 @@ export function parseTextSpans(source: string): TextSpan[] {
         const runs: Array<{ from: number; to: number }> = []
         let current: { from: number; to: number } | null = null
         let broken = false
-        let hasNonContentLine = false
         bodyLines.forEach((bodyLine, idx) => {
           if (!bodyLine.text.trim()) return
           if (isSkippedHsLine(bodyLine.text)) {
-            hasNonContentLine = true
             broken = true
             return
           }
@@ -211,24 +189,8 @@ export function parseTextSpans(source: string): TextSpan[] {
         })
         if (current) runs.push(current)
 
-        /**
-         * 多行对白（`name:` + 正文 + 独占一行 `//`）成键时应**收缩**成单行 `name:<键>//`。
-         *
-         * 只在"整块就是这一段正文"时才挂收缩信息：收缩是整段替换，块里若有注释 / `@` /
-         * 空行（它们不进正文），替换会把那些行一起吞掉。所以要求
-         * 只有一段正文、且这段正文覆盖了全部正文行。
-         */
-        const coversWholeBody =
-          runs.length === 0 ||
-          (runs.length === 1 &&
-            !hasNonContentLine &&
-            runs[0]!.from === 0 &&
-            runs[0]!.to === bodyLines.length - 1)
-        const dialogueBlock: DialogueBlock | null =
-          ended && closerEnd != null && coversWholeBody
-            ? { start: line.start, end: closerEnd, speaker: speaker[1] }
-            : null
-
+        // 成键是**就地替换正文**：多行块成键后仍是多行块（`name:` / 键名 / `//` 各占一行），
+        // 不收缩成单行 —— 收缩等于替作者重排版面，也和 `parse_hs` 的就地替换行为不一致。
         for (const run of runs) {
           const first = bodyLines[run.from]
           const last = bodyLines[run.to]
@@ -242,13 +204,15 @@ export function parseTextSpans(source: string): TextSpan[] {
             fromLine: bodyIndexes[run.from] + 1,
             toLine: bodyIndexes[run.to] + 1,
             terminator: null,
-            ...(dialogueBlock ? { dialogueBlock } : {}),
           })
           if (span) spans.push(span)
         }
 
         // 空体但已终结（`test:` + 独占一行的 `//`）：也要产出一个空片段，
-        // 否则它永远成不了键；片段是零长度区间，成键时键名插在冒号之后。
+        // 否则它永远成不了键；片段是零长度区间，成键时键名插在冒号之后，
+        // 但**单独占一行**（见 `keyReplacementFor`），多行块的结构保持不变。
+        // 没闭合的空体（`test:` 后面什么都没有）不产出片段：往里插键名等于
+        // 把一个没闭合的语句交给编译器，成键反而制造出编译错误。
         if (ended && runs.length === 0) {
           const span = makeSpan(source, {
             kind: 'dialogue',
@@ -257,7 +221,6 @@ export function parseTextSpans(source: string): TextSpan[] {
             fromLine: speakerLine,
             toLine: speakerLine,
             allowEmpty: true,
-            ...(dialogueBlock ? { dialogueBlock } : {}),
           })
           if (span) spans.push(span)
         }
@@ -290,7 +253,7 @@ export function parseTextSpans(source: string): TextSpan[] {
 
     // —— 选项 ——
     // 只认文档里的单行写法（`-文案:回复//` / `---只有文案//`）。
-    // 多行选项树属于"未文档化的宽容"，已按决定删除：不再解析，也不再收缩。
+    // 多行选项树属于"未文档化的宽容"，已按决定删除：不再解析。
     // 系统返回：不进本地化
     if (matchSystemReturnChoice(line.text)) {
       i++

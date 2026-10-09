@@ -640,49 +640,102 @@ html.splash-windowed .app {
   pointer-events: none;
 }
 
-/* —— 等位置覆盖的编辑框 —— */
+/* —— 等位置覆盖的编辑框（沉浸式：与黄底框等大、都贴着文字） ——
+   外层只负责定位（不带尺寸、不带裁切），内层 frame 才是"框"：
+   尺寸由 textEditor 量出的框矩形内联给，overflow: hidden 把框底那几像素
+   行高缝隙裁掉，于是输入框里的字与框里的字逐像素重合。
+   焦点环用 inset 阴影（outline 也行），绝不用 border / padding —— 它们会把字挤偏。 */
 .hs-lang-edit {
   position: fixed;
   z-index: 300;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  /* 这是输入框的容器：不给它上色，黄底 / 红底由框透出来 */
+  background: transparent;
+}
+
+.hs-lang-edit-frame {
+  display: block;
+  box-sizing: border-box;
+  overflow: hidden;
+  border-radius: 2px;
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 
 .hs-lang-edit-input {
-  flex: 1 1 auto;
+  display: block;
   box-sizing: border-box;
   width: 100%;
-  min-height: 26px;
-  padding: 0 4px;
-  border: 1px solid var(--accent);
-  border-radius: 2px;
-  background: #22252a;
+  margin: 0;
+  /* 不留内边距 / 边框：宽度就等于框里的文本宽度，否则文字会右移几像素 */
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  /* 底板透明：让框自己的命中（黄）/ 缺失（红）底色显出来，才有"就地改"的感觉 */
+  background: transparent;
   color: var(--text-bright);
+  /* 字体 / 行高由内联样式照抄框的 computed style，这里只兜底 */
   font-family: Consolas, "Sarasa Mono SC", monospace;
   font-size: 18px;
-  line-height: 26px;
+  line-height: 28px;
+  white-space: pre;
   resize: none;
   outline: none;
+  /* 内容超出框时自己滚，不用撑大框（撑大就不"贴着文字"了），滚动条也不显示 */
+  overflow: auto;
+  scrollbar-width: none;
+  caret-color: var(--text-bright);
   user-select: text;
 }
 
-.hs-lang-edit textarea.hs-lang-edit-input {
-  resize: vertical;
-  line-height: 24px;
+.hs-lang-edit-input::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 .hs-lang-edit-input:focus {
-  box-shadow: 0 0 0 1px rgba(91, 159, 212, 0.55);
+  outline: none;
 }
 
 .hs-lang-edit-input.invalid {
-  border-color: #c44a52;
+  color: #e08a8f;
+}
+
+.hs-lang-edit-frame.invalid {
+  box-shadow: inset 0 0 0 1px #c44a52;
+}
+
+.hs-lang-edit-input::placeholder {
+  color: inherit;
+  opacity: 0.7;
 }
 
 .hs-lang-edit-hint {
+  /* 提示挂在框外下方：框只有框那么高，放里面会被 overflow: hidden 裁掉 */
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 2px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(34, 37, 42, 0.92);
   color: #e08a8f;
   font-size: 12px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* 编辑框在改哪个框：把框里文字藏掉（不然和输入框里的字重影），底色留着 */
+.hs-lang-box.is-editing {
+  color: transparent;
+}
+
+.hs-lang-box.hs-lang-hit.is-editing {
+  background: rgba(214, 186, 74, 0.55);
+}
+
+.hs-lang-box.hs-lang-miss.is-editing {
+  background: rgba(206, 78, 74, 0.6);
 }
 
 /* —— 上级容器的右键菜单（可扩展：条目由上层给，见 LangUnitMenu） —— */
@@ -1639,12 +1692,13 @@ body.is-resizing .monaco-editor {
   }
 }
 
-/* 语法诊断：红色波浪线 + 半透明虚线符号。
+/* 语法诊断：红色波浪线 + 半透明符号。
    波浪线画在锚点之后，`margin-left: 1ch` 就是"离文本一个空格"。
-   三种叠加：只闭合符 / 只回车 / 回车 + 闭合符。 */
+   四种叠加：只闭合符 / 只回车 / 回车 + 闭合符 / 冲突符。 */
 .hs-diag-close,
 .hs-diag-enter,
-.hs-diag-enter-close {
+.hs-diag-enter-close,
+.hs-diag-conflict {
   display: inline-block;
   margin-left: 1ch;
   padding-bottom: 2px;
@@ -1684,6 +1738,24 @@ body.is-resizing .monaco-editor {
 
 .hs-diag-enter-close::after {
   content: '//';
+}
+
+/*
+  冲突符：`@name` 撞名（本文件内重复 / 跨文件重复）叠加的图形。
+  图形是"两个中空方框重叠 + 重叠处实心 + 中央中空感叹号"（hs-diag-conflict.svg），
+  挂在外链符号上，不再借用补 `//` 的提示 —— 重复不是缺闭合符。
+  感叹号是 evenodd 挖出来的孔，透出编辑器底色，所以深浅主题同一张图。
+*/
+.hs-diag-conflict::before {
+  content: '';
+  display: inline-block;
+  width: 1.05em;
+  height: 1.05em;
+  margin: 0 1px;
+  padding: 0;
+  border: none;
+  vertical-align: -0.15em;
+  background: url('./monaco/hs-diag-conflict.svg') center / contain no-repeat;
 }
 
 .explorer-context-menu {
@@ -1921,7 +1993,7 @@ body.is-resizing .monaco-editor {
   min-height: 0;
 }
 
-/* 编译不通过（含键名内容没写成单行闭合）时，预览位显示错误而不是空白 */
+/* 编译不通过（含键名内容没闭合）时，预览位显示错误而不是空白 */
 .hsc-preview-error {
   flex: 1 1 auto;
   min-height: 0;

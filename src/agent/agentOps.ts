@@ -8,7 +8,7 @@
 import { getAssetBlob, deleteAssetBlob, putAssetBlob } from '../assets/idb'
 import { HsCompileError, compileHsToHsc } from '../hanshu/compiler'
 import { stopParseLineOf } from '../hanshu/directives'
-import { escapeHsText } from '../hanshu/hsSyntaxRules'
+import { escapeHsText, splitHsLines } from '../hanshu/hsSyntaxRules'
 import { collectSourceKeys, type SourceKeyEntry } from '../hanshu/sourceKeys'
 import { sourceExtension, textAssetPath } from '../i18n/localeLayout'
 import {
@@ -29,6 +29,7 @@ import {
 import { parseCharTextSpans } from '../monaco/charTextSpans'
 import { analyzeHsDiagnostics, type HsDiagnostic } from '../monaco/hsDiagnostics'
 import { parseTextSpans, type TextSpan } from '../monaco/textSpans'
+import { keyReplacementFor } from '../monaco/textKeyRules'
 import {
   getExtension,
   isCharFile,
@@ -294,6 +295,12 @@ export type VoiceState = 'ok' | 'missing' | 'not-ogg' | 'not-mono' | 'invalid' |
 /**
  * 解析（自动成键）：把还不是键名的可本地化文本换成**文本哈希键**，
  * 并给出要写进该语言映射的键值对。纯函数 —— 写盘与提交由调用方做。
+ *
+ * 与编辑器的自动成键（`textEditor.migrateNow`）**必须完全一致**：两者都走
+ * `keyReplacementFor` —— 就地替换、不收缩多行块；空体多行块（`name:` + 空正文 +
+ * 独占一行的 `//`）把键名插成独立一行。空文本也照样成键（否则它永远拿不到键）。
+ *
+ * `skipped` 只统计因 `#stopparse` 指令而未成键的片段。
  */
 export function parseSourceText(
   content: string,
@@ -308,19 +315,26 @@ export function parseSourceText(
   const entries: Array<[string, string]> = []
   let skipped = 0
 
+  // 与编辑器同源：行末 offset 供"空体多行块把键名插成独立一行"用
+  const eol = content.includes('\r\n') ? '\r\n' : '\n'
+  const lines = splitHsLines(content)
+  const lineEndOf = (line: number): number => {
+    const l = lines[line - 1]
+    return l ? l.start + l.text.length : content.length
+  }
+
   for (const span of localizedSpans(content, sourceName)) {
-    if (stopLine != null && span.endLine >= stopLine) continue
-    if (isLocaleKey(span.value)) continue
-    if (!span.value.trim()) {
+    if (stopLine != null && span.endLine >= stopLine) {
       skipped += 1
       continue
     }
+    if (isLocaleKey(span.value)) continue
     const key = createLocaleKeyFromText(span.value, (candidate) =>
       used.has(candidate),
     )
     used.add(key)
     entries.push([key, span.value])
-    edits.push({ start: span.start, end: span.end, text: key })
+    edits.push(keyReplacementFor(span, key, eol, lineEndOf))
   }
 
   let next = content
@@ -333,6 +347,8 @@ export function parseSourceText(
 /**
  * 逆解析：把正文里的键名换回该语言的映射文本（转义后写回）。
  * 多行译文与缺失译文不处理，原样报告给调用方 —— 不静默丢内容。
+ * `#stopparse` 只控制**解析成键**，逆解析不受它影响：它要还原的是整个文件，
+ * 指令往往就顶格写在第一行（Agent 的"关闭解析 → 逆解析 → 改稿 → 主动解析"流程）。
  */
 export function unparseSourceText(
   content: string,
