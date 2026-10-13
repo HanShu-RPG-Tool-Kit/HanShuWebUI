@@ -1,4 +1,5 @@
 import { registerFileCompiler, registerPackagePass } from '../registry'
+import { activeSkinsPass } from './activeSkins'
 import { hanshuCompiler } from './hanshu'
 import { identityCompiler } from './identity'
 import { localeAssetsPass } from './localeAssets'
@@ -13,4 +14,5 @@ export function ensureBuiltinCompilers(): void {
   registerFileCompiler(hanshuCompiler)
   registerFileCompiler(identityCompiler)
   registerPackagePass(localeAssetsPass)
+  registerPackagePass(activeSkinsPass)
 }
