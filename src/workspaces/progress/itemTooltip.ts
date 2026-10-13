@@ -1,7 +1,7 @@
 import { isObject } from './model'
 import { isSnapshotFresh, type ItemStackDisplay, type ItemTextSegment } from './itemstack'
 
-type ItemLike = { id: string; count: number; components: Record<string, unknown>; display?: ItemStackDisplay }
+type ItemLike = { id: string; count?: number; components: Record<string, unknown>; display?: ItemStackDisplay }
 
 export type ItemPresentation = {
   source: 'snapshot' | 'webui'

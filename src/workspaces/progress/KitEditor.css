@@ -583,6 +583,47 @@
   padding: 4px 0 8px;
 }
 
+.kit-item-link-components {
+  grid-column: 3 / -1;
+  padding: 4px 0 8px;
+}
+
+.kit-item-link-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.kit-item-link-badge {
+  flex: 0 0 auto;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: rgba(154, 184, 126, 0.16);
+  color: #b7d0a0;
+  font-family: var(--kit-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+}
+
+.kit-item.is-link .kit-item-fields .kit-mono {
+  color: #c9dda8;
+}
+
+.kit-item-link-id {
+  color: var(--text-dim);
+  font-family: var(--kit-mono);
+  font-size: calc(11.5px * var(--fl-s, 1.25) / 1.1);
+  opacity: 0.85;
+}
+
+.kit-item-link-id.is-missing,
+.kit-item.is-missing .kit-item-link-badge {
+  color: #e0a0a0;
+  background: rgba(180, 80, 80, 0.14);
+}
+
 /* ---------- 拖入 / 物品展示 ---------- */
 
 .kit-drop {

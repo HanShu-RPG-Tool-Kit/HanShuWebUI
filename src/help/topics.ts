@@ -6,6 +6,7 @@ import hscMachine from './docs/hsc-machine.md?raw'
 import hscMachineFramework from './docs/hsc-machine-framework.md?raw'
 import kitGuide from './docs/kit-guide.md?raw'
 import kitExpr from './docs/kit-expr.md?raw'
+import itemGuide from './docs/item-guide.md?raw'
 import progressWorkspace from './docs/progress-workspace.md?raw'
 import progressFlowModel from './docs/progress-flow-model.md?raw'
 import progressDocument from './docs/progress-document.md?raw'
@@ -26,6 +27,7 @@ export type HelpTopicId =
   | 'hsc-machine-framework'
   | 'kit-guide'
   | 'kit-expr'
+  | 'item-guide'
   | 'progress-workspace'
   | 'progress-flow-model'
   | 'progress-document'
@@ -100,6 +102,14 @@ export const HELP_TOPICS: HelpTopic[] = [
     audience: 'dev',
     inDocs: true,
     body: kitExpr,
+  },
+  {
+    id: 'item-guide',
+    title: '物品库：.item 与 .itemstack',
+    group: '进度',
+    audience: 'both',
+    inDocs: true,
+    body: itemGuide,
   },
   {
     id: 'progress-workspace',

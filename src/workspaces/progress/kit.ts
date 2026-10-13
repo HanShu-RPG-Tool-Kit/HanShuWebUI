@@ -1,18 +1,86 @@
 import { isObject } from './model'
 import { parseJsonValue } from '../../utils/strictJson'
+import type { ItemDocument } from './itemDoc'
 import { itemFingerprint, readItemStackDisplay, type ItemStackDisplay } from './itemstack'
 import { buildKitModifierEnv, interpolateKitText, resolveKitNumber, type KitModifierEnv, type KitNumberRule } from './kitExpr'
 
 /** 数值字段 → 绑定的修饰器 id；最终值 = 字段规则(修饰器(raw)) */
 export type KitMods<K extends string> = Partial<Record<K, string>>
 
-/** Minecraft 1.20.5+ ItemStack：id / count / components；display 仅编辑器展示，运行时忽略 */
+/**
+ * 礼包物品：内嵌 ItemStack，或链接物品库 `.item`（`item` = 文件名无后缀）。
+ * 有 `item` 时 id/components/display 由物品目录展开；文件里只持久化 item + count + mods。
+ */
 export type KitItem = {
+  /** 物品库链接（规范化后的 `.item` 文件名，无后缀） */
+  item?: string
   id: string
   count: number
   components: Record<string, unknown>
   display?: ItemStackDisplay
   mods?: KitMods<'count'>
+}
+
+/** 物品库目录：key 为规范化引用（无 `.item` 后缀） */
+export type ItemCatalog = ReadonlyMap<string, ItemDocument>
+
+export const ITEM_LINK_MIME = 'application/x-hanshu-item-link'
+
+/** `sword.item` / `sword` → `sword` */
+export function normalizeItemRef(value: string): string {
+  return value.trim().replace(/\.itemstack$/i, '').replace(/\.item$/i, '')
+}
+
+export function itemRefFromFileName(fileName: string): string {
+  return normalizeItemRef(fileName)
+}
+
+export function isKitItemLink(item: KitItem): boolean {
+  return Boolean(item.item && normalizeItemRef(item.item))
+}
+
+/** 把链接条目展开为可展示 / 可模拟的完整堆；找不到引用时保留空壳并带上 ref 作 id 兜底 */
+export function expandKitItem(item: KitItem, catalog?: ItemCatalog): KitItem {
+  const ref = item.item ? normalizeItemRef(item.item) : ''
+  if (!ref) return item
+  const doc = catalog?.get(ref)
+  if (!doc) {
+    return {
+      ...item,
+      item: ref,
+      id: item.id || ref,
+      components: item.components,
+    }
+  }
+  return {
+    ...item,
+    item: ref,
+    id: doc.item.id,
+    components: { ...doc.item.components },
+    display: doc.display,
+  }
+}
+
+export function createKitItemLink(ref: string, count = 1): KitItem {
+  return { item: normalizeItemRef(ref), id: '', count: Math.max(0, Math.floor(count)), components: {} }
+}
+
+export function encodeItemLinkPayload(ref: string): string {
+  return JSON.stringify({ ref: normalizeItemRef(ref) })
+}
+
+export function decodeItemLinkPayload(raw: string): string | null {
+  const text = raw.trim()
+  if (!text) return null
+  try {
+    const parsed = JSON.parse(text) as unknown
+    if (isObject(parsed) && typeof parsed.ref === 'string') {
+      const ref = normalizeItemRef(parsed.ref)
+      return ref || null
+    }
+  } catch { /* 纯文本引用 */ }
+  const ref = normalizeItemRef(text)
+  return ref || null
 }
 
 export type KitExperienceKind = 'levels' | 'points'
@@ -209,8 +277,13 @@ export type KitResolved = KitDocument & {
 /**
  * 按修饰器绑定计算条目字段最终值（用于预览 / 运行时对齐）。
  * 通常传入 flatten 之后的礼包；`overrides` 模拟引擎注入的超参数。
+ * `itemCatalog` 用于展开 `.item` 链接。
  */
-export function resolveKit(kit: KitDocument, overrides?: Record<string, unknown>): KitResolved {
+export function resolveKit(
+  kit: KitDocument,
+  overrides?: Record<string, unknown>,
+  itemCatalog?: ItemCatalog,
+): KitResolved {
   const env = kitModifierEnv(kit, overrides)
   const issues: KitResolveIssue[] = []
   const field = (path: string, raw: number, mod: string | undefined, rule: KitNumberRule) => {
@@ -219,7 +292,17 @@ export function resolveKit(kit: KitDocument, overrides?: Record<string, unknown>
     else if (result.warning) issues.push({ path, level: 'warning', message: result.warning })
     return result.value
   }
-  const item = (path: string, value: KitItem): KitItem => ({ ...value, count: field(`${path}.count`, value.count, value.mods?.count, KIT_NUMBER_RULES.count) })
+  const item = (path: string, value: KitItem): KitItem => {
+    const ref = value.item ? normalizeItemRef(value.item) : ''
+    if (ref && !itemCatalog?.has(ref)) {
+      issues.push({ path, level: 'error', message: `找不到物品库引用「${ref}」` })
+    }
+    const expanded = expandKitItem(value, itemCatalog)
+    return {
+      ...expanded,
+      count: field(`${path}.count`, expanded.count, expanded.mods?.count, KIT_NUMBER_RULES.count),
+    }
+  }
 
   return {
     ...kit,
@@ -468,8 +551,14 @@ function withMods<T extends { mods?: KitMods<string> }>(value: T): Omit<T, 'mods
 }
 
 function writeItem(item: KitItem): Record<string, unknown> {
-  const next: Record<string, unknown> = { id: item.id, count: item.count }
   const mods = cleanMods(item.mods)
+  const ref = item.item ? normalizeItemRef(item.item) : ''
+  if (ref) {
+    const next: Record<string, unknown> = { item: ref, count: item.count }
+    if (mods) next.mods = mods
+    return next
+  }
+  const next: Record<string, unknown> = { id: item.id, count: item.count }
   if (mods) next.mods = mods
   if (Object.keys(item.components).length > 0) next.components = item.components
   if (item.display) next.display = item.display
@@ -547,15 +636,22 @@ function readMods<K extends string>(value: unknown, path: string, keys: readonly
 }
 
 function readItem(value: unknown, path: string): KitItem {
-  if (!isObject(value)) throw new Error(`${path} 应为 ItemStack 对象`)
+  if (!isObject(value)) throw new Error(`${path} 应为 ItemStack 或物品链接对象`)
+  const count = readInt(value.count, 1)
+  const mods = readMods(value.mods, `${path}.mods`, ['count'])
+  const link = typeof value.item === 'string' ? normalizeItemRef(value.item) : ''
+  if (link) {
+    const item: KitItem = { item: link, id: '', count, components: {} }
+    if (mods) item.mods = mods
+    return item
+  }
   let components: Record<string, unknown> = {}
   if (value.components !== undefined) {
     if (!isObject(value.components)) throw new Error(`${path}.components 应为对象`)
     components = value.components
   }
   const display = readItemStackDisplay(value.display)
-  const item: KitItem = { id: readString(value.id), count: readInt(value.count, 1), components }
-  const mods = readMods(value.mods, `${path}.mods`, ['count'])
+  const item: KitItem = { id: readString(value.id), count, components }
   if (mods) item.mods = mods
   if (display) {
     // 早期存档没有指纹：视为保存时快照有效

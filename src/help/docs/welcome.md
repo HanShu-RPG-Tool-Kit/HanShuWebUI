@@ -15,6 +15,7 @@
 - [.char 角色卡语法](#char-syntax)：角色槽位文本（本地化 / 配音）
 - [抽象汉书自动机](#hsc-machine)：`.hsc` 如何执行（规范）
 - [礼包：超参数与修饰器](#kit-guide)：让奖励随难度、人数等条件变化
+- [物品库：.item 与 .itemstack](#item-guide)：可复用物品、快照导入与标签
 - [进度工作区](#progress-workspace)：进度 / 故事流程 / 礼包怎么组织
 - [配音：服务与方案规范](#tts-spec)：`.tts` / `.ttsservice`
 - [导出 PAK](#export-pak)：编译产物与 client / server / shared 分包

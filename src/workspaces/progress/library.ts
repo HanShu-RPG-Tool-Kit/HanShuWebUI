@@ -1,4 +1,4 @@
-import type { FlowFolder, FlowPackageId, FlowWorkspaceState } from './storage'
+import { stampDocument, type FlowFolder, type FlowPackageId, type FlowWorkspaceState } from './storage'
 
 export type FlowEntry =
   | { kind: 'package'; package: FlowPackageId }
@@ -6,7 +6,7 @@ export type FlowEntry =
 
 export type FlowSectionDef = { id: string; name: string }
 
-export const FLOW_PACKAGE_ORDER: FlowPackageId[] = ['script', 'progress', 'story', 'actor', 'reputation', 'region', 'navigator', 'shop', 'gift']
+export const FLOW_PACKAGE_ORDER: FlowPackageId[] = ['script', 'progress', 'story', 'actor', 'reputation', 'region', 'navigator', 'shop', 'gift', 'items']
 export const FLOW_PACKAGE_NAMES: Record<FlowPackageId, string> = {
   script: '脚本',
   progress: '进度',
@@ -16,6 +16,7 @@ export const FLOW_PACKAGE_NAMES: Record<FlowPackageId, string> = {
   region: '区域',
   navigator: '导航器',
   shop: '商店',
+  items: '物品库',
   gift: '礼包',
 }
 /** 顶层分类下的内置二级分类（稳定键、不可重命名/移动/删除） */
@@ -27,25 +28,33 @@ export const packageAllowsScripts = (id: FlowPackageId) => id === 'script'
 export const packageAllowsKits = (id: FlowPackageId) => id === 'gift'
 export const packageAllowsProgress = (id: FlowPackageId) => id === 'progress'
 export const packageAllowsNavigation = (id: FlowPackageId) => id === 'navigator'
+export const packageAllowsItems = (id: FlowPackageId) => id === 'items'
 export const packageAllowsDocuments = (id: FlowPackageId) =>
-  packageAllowsFlows(id) || packageAllowsScripts(id) || packageAllowsKits(id) || packageAllowsProgress(id) || packageAllowsNavigation(id)
+  packageAllowsFlows(id) || packageAllowsScripts(id) || packageAllowsKits(id) || packageAllowsProgress(id) || packageAllowsNavigation(id) || packageAllowsItems(id)
 export const packageAcceptsImportFile = (id: FlowPackageId, fileName: string) => {
   const lower = fileName.toLowerCase()
   if (id === 'script') return lower.endsWith('.py')
   if (id === 'gift') return lower.endsWith('.kit')
   if (id === 'progress') return lower.endsWith('.progress')
   if (id === 'navigator') return lower.endsWith('.nav') || lower.endsWith('.json')
+  if (id === 'items') return lower.endsWith('.item') || lower.endsWith('.itemstack') || lower.endsWith('.json')
   if (id === 'story') return lower.endsWith('.hflow') || lower.endsWith('.json')
   return false
 }
-export type PackageDocumentExt = '.hflow' | '.py' | '.kit' | '.progress' | '.nav'
+export type PackageDocumentExt = '.hflow' | '.py' | '.kit' | '.progress' | '.nav' | '.item'
 export const packageDocumentExt = (id: FlowPackageId): PackageDocumentExt | null =>
   id === 'story' ? '.hflow'
     : id === 'script' ? '.py'
       : id === 'gift' ? '.kit'
         : id === 'progress' ? '.progress'
           : id === 'navigator' ? '.nav'
-            : null
+            : id === 'items' ? '.item'
+              : null
+
+/** 「物品库」虚拟表视图（稳定键，不落盘） */
+export const ITEM_LIBRARY_TABLE_KEY = 'builtin:item-library-table'
+export const isItemLibraryTableKey = (key: string) => key === ITEM_LIBRARY_TABLE_KEY
+
 export const isScriptDocument = (document: { package: FlowPackageId; name: string }) =>
   document.package === 'script' || document.name.toLowerCase().endsWith('.py')
 export const isKitDocument = (document: { package: FlowPackageId; name: string }) =>
@@ -54,13 +63,18 @@ export const isProgressDocument = (document: { package: FlowPackageId; name: str
   document.package === 'progress' || document.name.toLowerCase().endsWith('.progress')
 export const isNavigationDocument = (document: { package: FlowPackageId; name: string }) =>
   document.package === 'navigator' || document.name.toLowerCase().endsWith('.nav')
+export const isItemDocument = (document: { key?: string; package: FlowPackageId; name: string }) => {
+  if (document.key && isItemLibraryTableKey(document.key)) return false
+  return document.package === 'items' || document.name.toLowerCase().endsWith('.item')
+}
 export function documentExtOf(document: { package: FlowPackageId; name: string }): PackageDocumentExt {
   return packageDocumentExt(document.package)
-    ?? (isNavigationDocument(document) ? '.nav'
-      : isProgressDocument(document) ? '.progress'
-        : isKitDocument(document) ? '.kit'
-          : isScriptDocument(document) ? '.py'
-            : '.hflow')
+    ?? (isItemDocument(document) ? '.item'
+      : isNavigationDocument(document) ? '.nav'
+        : isProgressDocument(document) ? '.progress'
+          : isKitDocument(document) ? '.kit'
+            : isScriptDocument(document) ? '.py'
+              : '.hflow')
 }
 export const packageEntry = (id: FlowPackageId): FlowEntry => ({ kind: 'package', package: id })
 export const sectionFolderKey = (pkg: FlowPackageId, sectionId: string) => `section:${pkg}:${sectionId}`
@@ -71,9 +85,9 @@ export const BUILTIN_GOAL_FOLDER_KEY = 'builtin:folder:script:goal-def'
 export const builtinGoalDocumentKey = (name: string) => `builtin:goal:${name}`
 export const isBuiltinGoalFolder = (key: string) => key === BUILTIN_GOAL_FOLDER_KEY
 export const isBuiltinGoalDocumentKey = (key: string) => key.startsWith('builtin:goal:')
-/** 资源树只读项：内置二级分类、虚拟内置文件夹与脚本 */
+/** 资源树只读项：内置二级分类、虚拟内置文件夹与脚本、物品库表视图 */
 export const isReadonlyExplorerKey = (key: string) =>
-  isSectionFolder(key) || isBuiltinGoalFolder(key) || isBuiltinGoalDocumentKey(key)
+  isSectionFolder(key) || isBuiltinGoalFolder(key) || isBuiltinGoalDocumentKey(key) || isItemLibraryTableKey(key)
 
 export function sectionDefs(pkg: FlowPackageId): FlowSectionDef[] {
   return FLOW_PACKAGE_SECTIONS[pkg] ?? []
@@ -134,7 +148,7 @@ export function resourceName(value: string, documentExt: boolean | PackageDocume
   const ext = documentExt === true ? '.hflow' : documentExt
   const lower = name.toLowerCase()
   if (lower.endsWith(ext)) return name
-  if (/\.(hflow|py|json|kit|progress|nav)$/i.test(name)) return name.replace(/\.(hflow|py|json|kit|progress|nav)$/i, ext)
+  if (/\.(hflow|py|json|kit|progress|nav|itemstack|item)$/i.test(name)) return name.replace(/\.(hflow|py|json|kit|progress|nav|itemstack|item)$/i, ext)
   return `${name}${ext}`
 }
 
@@ -193,6 +207,7 @@ export function renameFlowEntry(state: FlowWorkspaceState, entry: FlowEntry, val
   if (entry.kind === 'folder' && isSectionFolder(entry.key)) throw new Error('内置二级分类不可重命名。')
   if (entry.kind === 'folder' && isBuiltinGoalFolder(entry.key)) throw new Error('内置文件夹不可重命名。')
   if (entry.kind === 'document' && isBuiltinGoalDocumentKey(entry.key)) throw new Error('内置脚本为只读，不可重命名。')
+  if (entry.kind === 'document' && isItemLibraryTableKey(entry.key)) throw new Error('物品库表视图为只读，不可重命名。')
   const item = entry.kind === 'folder' ? state.folders.find((folder) => folder.key === entry.key) : state.documents.find((document) => document.key === entry.key)
   if (!item) throw new Error('资源不存在。')
   const ext = entry.kind === 'document' ? documentExtOf(item as { package: FlowPackageId; name: string }) : false
@@ -210,6 +225,7 @@ export function canMoveFlowEntry(state: FlowWorkspaceState, entry: FlowEntry, pk
   if (entry.kind === 'folder' && isSectionFolder(entry.key)) return false
   if (entry.kind === 'folder' && isBuiltinGoalFolder(entry.key)) return false
   if (entry.kind === 'document' && isBuiltinGoalDocumentKey(entry.key)) return false
+  if (entry.kind === 'document' && isItemLibraryTableKey(entry.key)) return false
   if (parent !== null && isBuiltinGoalFolder(parent)) return false
   if (parent !== null) {
     const folder = state.folders.find((item) => item.key === parent)
@@ -221,6 +237,7 @@ export function canMoveFlowEntry(state: FlowWorkspaceState, entry: FlowEntry, pk
     if (isKitDocument(document)) return packageAllowsKits(pkg)
     if (isProgressDocument(document)) return packageAllowsProgress(pkg)
     if (isNavigationDocument(document)) return packageAllowsNavigation(pkg)
+    if (isItemDocument(document)) return packageAllowsItems(pkg)
     if (isScriptDocument(document)) return packageAllowsScripts(pkg)
     return packageAllowsFlows(pkg)
   }
@@ -255,8 +272,9 @@ export function moveFlowEntry(state: FlowWorkspaceState, entry: FlowEntry, pkg: 
     if (document && isKitDocument(document) && !packageAllowsKits(pkg)) throw new Error('礼包只能放在「礼包」分类中。')
     if (document && isProgressDocument(document) && !packageAllowsProgress(pkg)) throw new Error('进度只能放在「进度」分类中。')
     if (document && isNavigationDocument(document) && !packageAllowsNavigation(pkg)) throw new Error('导航点只能放在「导航器」分类中。')
+    if (document && isItemDocument(document) && !packageAllowsItems(pkg)) throw new Error('物品只能放在「物品库」分类中。')
     if (document && isScriptDocument(document) && !packageAllowsScripts(pkg)) throw new Error('脚本只能放在「脚本」分类中。')
-    if (document && !isKitDocument(document) && !isProgressDocument(document) && !isNavigationDocument(document) && !isScriptDocument(document) && !packageAllowsFlows(pkg)) throw new Error('流程只能放在「故事流程」分类中。')
+    if (document && !isKitDocument(document) && !isProgressDocument(document) && !isNavigationDocument(document) && !isItemDocument(document) && !isScriptDocument(document) && !packageAllowsFlows(pkg)) throw new Error('流程只能放在「故事流程」分类中。')
   }
   const name = entry.kind === 'folder' ? state.folders.find((folder) => folder.key === entry.key)!.name : state.documents.find((document) => document.key === entry.key)!.name
   requireAvailableName(state, name, pkg, parent, entry.key, entry.kind === 'folder' ? 'folder' : 'document')
@@ -285,4 +303,28 @@ export function folderPath(state: FlowWorkspaceState, pkg: FlowPackageId, key: s
     current = folder.parentId
   }
   return [FLOW_PACKAGE_NAMES[pkg], ...parts].join(' / ')
+}
+
+/** 「物品库 / 物品库表视图」虚拟文档（稳定键，不落盘）。 */
+export function itemLibraryTableDocument() {
+  return stampDocument({
+    key: ITEM_LIBRARY_TABLE_KEY,
+    name: '物品库表视图',
+    source: '',
+    package: 'items',
+    folderId: null,
+  }, false)
+}
+
+/** 把虚拟表视图叠进工作区（不落盘）；固定插在文档列表前部便于资源树置顶。 */
+export function withItemLibraryTable(state: FlowWorkspaceState): FlowWorkspaceState {
+  if (state.documents.some((document) => isItemLibraryTableKey(document.key))) return state
+  return { ...state, documents: [itemLibraryTableDocument(), ...state.documents] }
+}
+
+export function stripItemLibraryTable(state: FlowWorkspaceState): FlowWorkspaceState {
+  return {
+    ...state,
+    documents: state.documents.filter((document) => !isItemLibraryTableKey(document.key)),
+  }
 }
