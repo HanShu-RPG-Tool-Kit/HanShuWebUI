@@ -54,6 +54,7 @@ export interface QueueRow {
   license?: LicenseInfo
   provenance?: Provenance
   note?: string
+  customId?: string | null
   job?: ImportJob
   state: RowState
   errorMessage?: string
@@ -378,6 +379,7 @@ export function ImportQueuePanel({
             license: job.result!.suggestedLicense ?? EMPTY_LICENSE,
             provenance: job.result!.suggestedProvenance ?? EMPTY_PROVENANCE,
             note: job.result!.suggestedNote ?? '',
+            customId: job.result!.suggestedCustomId ?? null,
           }
           if (existing) {
             next.state = 'duplicate'
@@ -522,6 +524,7 @@ export function ImportQueuePanel({
         license: row.license ?? EMPTY_LICENSE,
         provenance: row.provenance ?? EMPTY_PROVENANCE,
         note: row.note ?? '',
+        customId: row.customId ?? null,
       })
       patchRow(row.rowId, {
         state: 'done',

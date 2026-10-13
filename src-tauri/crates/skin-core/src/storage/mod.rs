@@ -342,6 +342,9 @@ pub struct PatchEntry {
     pub license: Option<LicenseInfo>,
     pub provenance: Option<Provenance>,
     pub note: Option<String>,
+    /// Present → set/clear (empty or null clears). Absent → leave unchanged.
+    #[serde(default)]
+    pub custom_id: Option<Option<String>>,
 }
 
 #[derive(Debug, Default, serde::Deserialize)]
@@ -527,6 +530,7 @@ impl Storage {
                 provenance: Provenance::default(),
                 license: LicenseInfo::default(),
                 note: String::new(),
+                custom_id: None,
                 created_at: e.created_at.unwrap_or_else(now_iso),
                 updated_at: e.updated_at.unwrap_or_else(now_iso),
                 revision: e.revision.unwrap_or(1),
@@ -599,6 +603,7 @@ impl Storage {
                     provenance: Provenance::default(),
                     license: LicenseInfo::default(),
                     note: String::new(),
+                    custom_id: None,
                     created_at: e.created_at,
                     updated_at: e.updated_at,
                     revision: e.revision,
@@ -1357,6 +1362,10 @@ impl Storage {
             let folder_ids_set = snap.folder_ids();
             let tags = normalize_tag_list(input.tags);
             let folder_id = input.folder_id.filter(|f| folder_ids_set.contains(f));
+            let custom_id = normalize_custom_id(input.custom_id.as_deref())?;
+            if let Some(ref cid) = custom_id {
+                assert_custom_id_available(&snap.entries, cid, None)?;
+            }
             let entry = LibraryEntry {
                 entry_id: new_id(),
                 skin_id: input.skin_id,
@@ -1372,6 +1381,7 @@ impl Storage {
                 provenance: input.provenance,
                 license: input.license,
                 note: input.note,
+                custom_id,
                 created_at: now.clone(),
                 updated_at: now,
                 revision: 1,
@@ -1447,6 +1457,13 @@ impl Storage {
             }
             if let Some(note) = &patch.note {
                 snap.entries[idx].note = note.clone();
+            }
+            if let Some(custom_id_field) = &patch.custom_id {
+                let next = normalize_custom_id(custom_id_field.as_deref())?;
+                if let Some(ref cid) = next {
+                    assert_custom_id_available(&snap.entries, cid, Some(entry_id))?;
+                }
+                snap.entries[idx].custom_id = next;
             }
             snap.entries[idx].revision += 1;
             snap.entries[idx].updated_at = now_iso();
@@ -1568,6 +1585,44 @@ pub struct AddEntryInput {
     pub provenance: Provenance,
     pub license: LicenseInfo,
     pub note: String,
+    pub custom_id: Option<String>,
+}
+
+pub const CUSTOM_ID_MAX_LEN: usize = 64;
+
+/// NFC + trim; empty → None. Rejects oversized values.
+pub fn normalize_custom_id(raw: Option<&str>) -> SkinResult<Option<String>> {
+    let Some(s) = raw else {
+        return Ok(None);
+    };
+    let n: String = s.trim().nfc().collect();
+    if n.is_empty() {
+        return Ok(None);
+    }
+    if n.chars().count() > CUSTOM_ID_MAX_LEN {
+        return Err(SkinError::api(
+            codes::BAD_REQUEST,
+            format!("自定义 ID 最长 {CUSTOM_ID_MAX_LEN} 字符"),
+        ));
+    }
+    Ok(Some(n))
+}
+
+fn assert_custom_id_available(
+    entries: &[LibraryEntry],
+    custom_id: &str,
+    except_entry_id: Option<&str>,
+) -> SkinResult<()> {
+    if let Some(clash) = entries.iter().find(|e| {
+        e.custom_id.as_deref() == Some(custom_id)
+            && except_entry_id.map(|id| e.entry_id != id).unwrap_or(true)
+    }) {
+        return Err(SkinError::api(
+            codes::CONFLICT,
+            format!("自定义 ID「{custom_id}」已被「{}」占用", clash.name),
+        ));
+    }
+    Ok(())
 }
 
 pub fn is_valid_skin_id(skin_id: &str) -> bool {
@@ -1658,6 +1713,7 @@ fn legacy_entry_to_v5(e: LibraryEntryLegacy, registry: &HashMap<String, String>)
         provenance: e.provenance,
         license: e.license,
         note: e.note,
+        custom_id: None,
         created_at: e.created_at,
         updated_at: e.updated_at,
         revision: e.revision,

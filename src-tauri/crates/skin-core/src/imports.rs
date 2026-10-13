@@ -70,6 +70,8 @@ pub struct ImportResult {
     pub suggested_provenance: Option<Provenance>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub suggested_note: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggested_custom_id: Option<String>,
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -101,6 +103,7 @@ pub struct Staged {
     pub suggested_license: Option<LicenseInfo>,
     pub suggested_provenance: Option<Provenance>,
     pub suggested_note: Option<String>,
+    pub suggested_custom_id: Option<String>,
     pub source: EntrySource,
 }
 
@@ -309,6 +312,7 @@ impl ImportManager {
                         suggested_license: None,
                         suggested_provenance: None,
                         suggested_note: None,
+                        suggested_custom_id: None,
                         source: EntrySource::SkinCode,
                     },
                 )
@@ -391,6 +395,9 @@ impl ImportManager {
                     serde_json::from_value::<Provenance>(v.clone()).ok()
                 });
                 let suggested_note = parsed.get("note").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let suggested_custom_id = crate::storage::normalize_custom_id(
+                    parsed.get("customId").and_then(|v| v.as_str()),
+                )?;
                 let model = parsed
                     .get("model")
                     .and_then(|v| v.as_str())
@@ -417,6 +424,7 @@ impl ImportManager {
                         suggested_license,
                         suggested_provenance,
                         suggested_note,
+                        suggested_custom_id,
                         source: EntrySource::SkinFile { file_name },
                     },
                 )
@@ -469,6 +477,7 @@ impl ImportManager {
                 suggested_license: None,
                 suggested_provenance: None,
                 suggested_note: None,
+                suggested_custom_id: None,
                 source,
             },
         )
@@ -491,6 +500,7 @@ impl ImportManager {
             suggested_license: staged.suggested_license.clone(),
             suggested_provenance: staged.suggested_provenance.clone(),
             suggested_note: staged.suggested_note.clone(),
+            suggested_custom_id: staged.suggested_custom_id.clone(),
         });
         e.staged = Some(staged);
         set_state(&mut e.job, JobState::Ready, None);
@@ -510,6 +520,7 @@ impl ImportManager {
         license: Option<LicenseInfo>,
         provenance: Option<Provenance>,
         note: Option<String>,
+        custom_id: Option<String>,
     ) -> SkinResult<crate::storage::schema::LibraryEntry> {
         let staged = self
             .take_staged(job_id)
@@ -555,6 +566,7 @@ impl ImportManager {
             provenance: provenance.or(staged.suggested_provenance).unwrap_or_default(),
             license: license.or(staged.suggested_license).unwrap_or_default(),
             note: note.or(staged.suggested_note).unwrap_or_default(),
+            custom_id: custom_id.or(staged.suggested_custom_id),
         })
     }
 }

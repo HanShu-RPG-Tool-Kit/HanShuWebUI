@@ -827,7 +827,6 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
             isPinned ? styles.selected : '',
             isHovered && !isPinned ? styles.hovered : '',
             isChecked ? styles.checked : '',
-            !e.active ? styles.cardInactive : '',
           ]
             .filter(Boolean)
             .join(' ')}

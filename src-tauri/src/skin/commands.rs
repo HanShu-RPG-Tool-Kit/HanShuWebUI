@@ -116,6 +116,8 @@ pub struct SaveEntryRequest {
     pub provenance: Option<skin_core::storage::schema::Provenance>,
     #[serde(default)]
     pub note: Option<String>,
+    #[serde(default)]
+    pub custom_id: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -348,6 +350,7 @@ pub async fn skin_save_entry(
                 body.license,
                 body.provenance,
                 body.note,
+                body.custom_id,
             )
             .map_err(CommandError::from)
     })
@@ -641,7 +644,7 @@ pub async fn skin_export_skin(
                     .as_ref()
                     .map(|e| e.tags.iter().map(|name| vec![name.clone()]).collect())
                     .unwrap_or_default();
-                let (name, model, active, license, provenance, note) = match entry {
+                let (name, model, active, license, provenance, note, custom_id) = match entry {
                     Some(e) => (
                         e.name,
                         e.model,
@@ -649,6 +652,7 @@ pub async fn skin_export_skin(
                         e.license,
                         e.provenance,
                         e.note,
+                        e.custom_id,
                     ),
                     None => (
                         format!("skin-{}", &skin_id[..8]),
@@ -657,6 +661,7 @@ pub async fn skin_export_skin(
                         Default::default(),
                         Default::default(),
                         Default::default(),
+                        None,
                     ),
                 };
                 let skin_code = encode_share_code(model, &decoded)?;
@@ -671,6 +676,7 @@ pub async fn skin_export_skin(
                     license,
                     provenance,
                     note,
+                    custom_id,
                 };
                 Ok(serde_json::to_value(portable)?)
             }
@@ -726,6 +732,7 @@ pub async fn skin_export_entry(
                     license: entry.license,
                     provenance: entry.provenance,
                     note: entry.note,
+                    custom_id: entry.custom_id,
                 };
                 Ok(serde_json::to_value(portable)?)
             }

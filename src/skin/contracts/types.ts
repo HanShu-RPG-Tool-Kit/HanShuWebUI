@@ -122,6 +122,11 @@ export interface LibraryEntry {
   provenance: Provenance
   license: LicenseInfo
   note: string
+  /**
+   * Optional user-facing ID (NFC + trim). Null/empty = unset.
+   * Unique across the library when set; independent of skinId/entryId.
+   */
+  customId: string | null
   createdAt: string
   updatedAt: string
   revision: number
@@ -197,6 +202,7 @@ export interface ImportJob {
     suggestedLicense?: LicenseInfo
     suggestedProvenance?: Provenance
     suggestedNote?: string
+    suggestedCustomId?: string
   }
   createdAt: string
   updatedAt: string
@@ -217,6 +223,8 @@ export interface SaveEntryRequest {
   license?: LicenseInfo
   provenance?: Provenance
   note?: string
+  /** Optional custom ID from portable import; null/empty clears. */
+  customId?: string | null
 }
 
 export interface PatchEntryRequest {
@@ -232,6 +240,8 @@ export interface PatchEntryRequest {
   license?: LicenseInfo
   provenance?: Provenance
   note?: string
+  /** Set or clear; omit to leave unchanged. Empty/null clears. */
+  customId?: string | null
 }
 
 export interface BatchPatchRequest {
@@ -263,6 +273,8 @@ export interface PortableSkinFileV3 {
   license: LicenseInfo
   provenance: Provenance
   note: string
+  /** Present when the entry has a custom ID. */
+  customId?: string | null
 }
 
 export interface PortableSkinFileV2 {

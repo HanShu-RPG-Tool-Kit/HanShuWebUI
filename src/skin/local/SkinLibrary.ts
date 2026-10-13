@@ -43,6 +43,7 @@ import {
   emptyProvenance,
   folderDescendants,
   foldersWithStats,
+  normalizeCustomId,
   normalizeFolderName,
   normalizeTagList,
   normalizeTagName,
@@ -644,6 +645,137 @@ export class SkinLibrarySession {
     return { jobId }
   }
 
+  /** Import portable `.skin.json` (v1–v3) or binary `.skin`. */
+  async startImportSkinFile(
+    bytes: Uint8Array,
+    fileName?: string,
+    model?: SkinModel,
+  ): Promise<{ jobId: string }> {
+    this.ensureReady()
+    const nameLower = (fileName ?? '').toLowerCase()
+    const looksJson =
+      nameLower.endsWith('.skin.json') ||
+      nameLower.endsWith('.json') ||
+      (bytes.length > 0 && (bytes[0] === 0x7b || bytes[0] === 0xef))
+    if (looksJson) {
+      return this.startImportPortableJson(bytes, fileName)
+    }
+    const { decoded } = await decodeDiskFile(bytes)
+    const { skinCode } = await encodeShareCode(model ?? 'classic', decoded)
+    return this.startImportSkinCode(skinCode)
+  }
+
+  private async startImportPortableJson(
+    bytes: Uint8Array,
+    fileName?: string,
+  ): Promise<{ jobId: string }> {
+    const jobId = uid('job')
+    const now = nowIso()
+    const job: ImportJob = {
+      jobId,
+      kind: 'skin-file',
+      state: 'validating',
+      createdAt: now,
+      updatedAt: now,
+      seq: ++this.jobSeq,
+    }
+    this.jobs.set(jobId, job)
+    this.emit(emitJob(job))
+    void this.persistJobs()
+    try {
+      const text = new TextDecoder().decode(bytes)
+      const parsed = JSON.parse(text) as {
+        schemaVersion?: number
+        name?: string
+        skinCode?: string
+        model?: SkinModel
+        tagPaths?: string[][]
+        active?: boolean
+        license?: LibraryEntry['license']
+        provenance?: LibraryEntry['provenance']
+        note?: string
+        customId?: string | null
+      }
+      const version = Number(parsed.schemaVersion ?? 0)
+      if (![1, 2, 3].includes(version) || typeof parsed.skinCode !== 'string') {
+        throw new SkinApiError({
+          code: 'BAD_REQUEST',
+          message: 'portable file missing schemaVersion=1|2|3/skinCode',
+        })
+      }
+      const { decoded, model: modelFromCode, skinId, skinCode } =
+        await decodeShareCode(parsed.skinCode.trim())
+      await this.putDecoded(decoded)
+      const model =
+        parsed.model === 'slim' || parsed.model === 'classic'
+          ? parsed.model
+          : modelFromCode
+      const suggestedName =
+        (typeof parsed.name === 'string' && parsed.name.trim()) ||
+        (fileName
+          ? fileName.replace(/\.skin\.json$/i, '').replace(/\.json$/i, '')
+          : '') ||
+        `skin-${skinId.slice(0, 8)}`
+      let suggestedCustomId: string | undefined
+      try {
+        suggestedCustomId = normalizeCustomId(parsed.customId) ?? undefined
+      } catch (e) {
+        throw new SkinApiError({
+          code: 'BAD_REQUEST',
+          message: e instanceof Error ? e.message : String(e),
+        })
+      }
+      job.state = 'ready'
+      job.result = {
+        skinId,
+        model,
+        suggestedName,
+        skinCode,
+        textureWidth: decoded.width,
+        textureHeight: decoded.height,
+        suggestedTagPaths: Array.isArray(parsed.tagPaths)
+          ? parsed.tagPaths
+          : undefined,
+        suggestedActive:
+          typeof parsed.active === 'boolean' ? parsed.active : undefined,
+        suggestedLicense: parsed.license,
+        suggestedProvenance: parsed.provenance,
+        suggestedNote:
+          typeof parsed.note === 'string' ? parsed.note : undefined,
+        suggestedCustomId,
+      }
+      job.updatedAt = nowIso()
+      this.jobs.set(jobId, job)
+      this.jobSources.set(jobId, {
+        kind: 'skin-file',
+        fileName: fileName,
+      })
+      this.emit(emitJob(job))
+      void this.persistJobs()
+    } catch (e) {
+      this.failJob(job, e)
+    }
+    return { jobId }
+  }
+
+  private assertCustomIdAvailable(
+    customId: string | null,
+    exceptEntryId?: string,
+  ): void {
+    if (!customId) return
+    const clash = this.lib.entries.find(
+      (e) =>
+        e.customId === customId &&
+        (!exceptEntryId || e.entryId !== exceptEntryId),
+    )
+    if (clash) {
+      throw new SkinApiError({
+        code: 'CONFLICT',
+        message: `自定义 ID「${customId}」已被「${clash.name}」占用`,
+      })
+    }
+  }
+
   getImport(jobId: string): ImportJob {
     const job = this.jobs.get(jobId)
     if (!job) {
@@ -722,6 +854,20 @@ export class SkinLibrarySession {
               })
     this.jobSources.delete(body.jobId)
     this.jobDecoded.delete(body.jobId)
+    let customId: string | null = null
+    try {
+      customId = normalizeCustomId(
+        body.customId !== undefined
+          ? body.customId
+          : job.result.suggestedCustomId,
+      )
+    } catch (e) {
+      throw new SkinApiError({
+        code: 'BAD_REQUEST',
+        message: e instanceof Error ? e.message : String(e),
+      })
+    }
+    this.assertCustomIdAvailable(customId)
     const now = nowIso()
     const entry: LibraryEntry = {
       entryId: uid('entry'),
@@ -738,6 +884,7 @@ export class SkinLibrarySession {
       provenance: body.provenance ?? emptyProvenance(),
       license: body.license ?? emptyLicense(),
       note: body.note ?? '',
+      customId,
       createdAt: now,
       updatedAt: now,
       revision: 1,
@@ -772,6 +919,19 @@ export class SkinLibrarySession {
     if (body.license) entry.license = body.license
     if (body.provenance) entry.provenance = body.provenance
     if (body.note != null) entry.note = body.note
+    if (body.customId !== undefined) {
+      let next: string | null
+      try {
+        next = normalizeCustomId(body.customId)
+      } catch (e) {
+        throw new SkinApiError({
+          code: 'BAD_REQUEST',
+          message: e instanceof Error ? e.message : String(e),
+        })
+      }
+      this.assertCustomIdAvailable(next, entryId)
+      entry.customId = next
+    }
     if (body.tags) entry.tags = normalizeTagList(body.tags)
     if (body.addTags?.length) {
       entry.tags = normalizeTagList([...entry.tags, ...body.addTags])
@@ -978,6 +1138,7 @@ export class SkinLibrarySession {
       license: entry.license,
       provenance: entry.provenance,
       note: entry.note,
+      ...(entry.customId ? { customId: entry.customId } : {}),
     }
   }
 
