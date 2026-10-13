@@ -587,7 +587,12 @@ html.splash-windowed .app {
 
 /* 覆盖框：值里的换行是真换行，续行共享同一个左边界。
    white-space 用 pre：只按值里的显式换行断行，框高恒等于「行数 × 行高」，
-   不会出现折行后被固定框高裁掉的情况。 */
+   不会出现折行后被固定框高裁掉的情况。
+
+   注意：这个框的 min-width / height 与 .hs-lang-line 的高度是**逐键实时改写**的
+   （见 textEditor.applyLiveBox）：打字过程中它们跟着草稿变，正文里的槽位宽度同步变。
+   所以这一段**不能**给宽高加 transition / animation —— 那会让框追着草稿慢半拍，
+   与同一拍就已经重排好的正文错开（而框里那行字是与输入框逐像素对齐的，一眼就看出来）。 */
 .hs-lang-box {
   position: relative;
   /* 不留内边距、不用 border：框的宽度就等于文本自身的长度，

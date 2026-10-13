@@ -47,6 +47,48 @@ function roundPx(value: number): number {
   return Math.round(value * 100) / 100
 }
 
+/**
+ * 按文本缓存的条目上限。
+ *
+ * 为什么要有上限：打字跟手会不断给 meter 喂**新的**文本（每按一键就多一个前缀，
+ * 中文输入法组字时更多），这些前缀几乎互不复用 —— 一篇长文逐字敲下来就是几千条只增不减的
+ * 键，Map 只涨不落（内存 + 每次查表都在更大的表上做）。
+ * 上限本身导出给测试引用：验证脚本要断言"超限之后留下的是最新的一批"。
+ */
+export const METER_CACHE_LIMIT = 512
+
+/**
+ * 缓存超限时的淘汰：**按插入顺序丢最旧的**，而不是整表清空。
+ *
+ * 为什么不能清空：`indexAtX`（见 textEditor）一次调用就喂进「行长 + 1」条前缀，
+ * 于是**行长 > 上限时"每次都超限"必然成立** —— 整表清空等于每次都全量重量，
+ * 缓存对长行一点用都没有，而这一次量测之后紧跟着的 `render()` 还要把所有槽位宽度
+ * 再全部量一遍（那一次才是真的贵）。
+ * 淘汰最旧则留下"刚量的那一段"：行长 601、上限 512 时同一行的下一次量测约 85% 命中
+ * （清空是 0%），而且缓存占用的上界从"无界"变成了一个常数。
+ *
+ * 为什么是 FIFO 而不是 LRU：这里的命中路径（同一行的前缀扫描、逐字增长的键名）
+ * 是**单调**的，刚插入的就是刚命中的；LRU 每次命中都要 delete + set 把键挪到队尾，
+ * 白白多付一次 Map 操作。`Map` 天然保留插入顺序，`keys().next().value` 就是最旧的键，
+ * 淘汰一条是 O(1)。
+ *
+ * 单独抽成导出函数是为了可断言：真正的 `measure()` 需要 DOM（没有 `document` 时
+ * 它根本不写缓存），在 node 里跑不到淘汰那一步。
+ */
+export function evictOldestEntries(
+  cache: Map<string, number>,
+  limit: number,
+): void {
+  // 上限本身不合法（NaN / 负数）时退化成"清空"：宁可多量一次，也别留下一个只涨不落的表
+  const max = Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : 0
+  while (cache.size > max) {
+    const oldest = cache.keys().next().value
+    // 理论上到不了（size > max >= 0 保证还有键）；写成早退是为了不写非空断言
+    if (oldest === undefined) return
+    cache.delete(oldest)
+  }
+}
+
 export type TextWidthMeter = {
   /** 批量量文本的渲染宽度（px）；一次调用只触发一轮布局，返回值覆盖全部入参 */
   measure(texts: readonly string[]): Map<string, number>
@@ -135,6 +177,12 @@ export function createTextWidthMeter(options: {
       })
       for (const el of nodes) el.remove()
 
+      // 见 METER_CACHE_LIMIT / evictOldestEntries：逐键输入会把缓存顶到无界，
+      // 超限只丢最旧的几条（不是整表清空 —— 长行每次都超限，清空等于缓存完全失效）。
+      // 注意与上面那处 cache.clear() 的区别：那处是**字体指纹变了**，旧值全部作废、
+      // 必须整表丢；这里只是**容量**问题，旧的还有用，丢最旧的即可。
+      evictOldestEntries(cache, METER_CACHE_LIMIT)
+
       return widths
     },
   }
@@ -143,6 +191,11 @@ export function createTextWidthMeter(options: {
 export type SlotStyles = {
   /** 该宽度的槽位类，返回可直接交给 `inlineClassName` 的完整类名 */
   decorationClassFor(widthPx: number): string
+  /**
+   * 「正在编辑的那一条」的槽位类：**单例**，宽度靠改写同一条规则更新。
+   * 逐键调用不会新增样式规则（这正是它存在的理由，见实现里的注释）。
+   */
+  liveSlotClass(widthPx: number): string
   dispose(): void
 }
 
@@ -150,6 +203,9 @@ export type SlotStyles = {
  * 槽位宽度是按需生成的，所以挂一个内部样式表，同一宽度只生成一条规则。
  * 用 `clip-path` 而不是 `overflow: hidden`：后者会把 inline-block 的基线改成底边，
  * 把整行文字顶歪。`clip-path` 只影响绘制与命中，基线不受影响。
+ *
+ * 「正在编辑的那一条」走另一条路（见 liveSlotClass）：它每按一键都换宽度，
+ * 走 `decorationClassFor` 的话样式规则数会随按键数无界增长。
  */
 export function createSlotStyles(): SlotStyles {
   const styleEl =
@@ -158,6 +214,29 @@ export function createSlotStyles(): SlotStyles {
       : null
   if (styleEl) document.head.appendChild(styleEl)
   const known = new Set<string>()
+  /**
+   * 实时槽位那条规则（单例）。
+   *
+   * 独立一个 `<style>` 节点、并且**只改它的 textContent**：
+   * - 不能往上面那个大 styleEl 里追加 —— 那就是"每按一键多一条规则"；
+   * - 改写整条规则（而不是改元素的 inline style）是为了让槽位宽度仍然只有**一个来源**：
+   *   Monaco 的装饰只认 `inlineClassName`，inline style 会被它下一次重建 DOM 抹掉。
+   * 类名固定，于是 Monaco 那边看起来"这个装饰没变"，只有样式表内容变了、浏览器重排一次。
+   */
+  const liveClass = `${SLOT_CLASS}-live`
+  const liveStyleEl =
+    typeof document !== 'undefined' && document.head
+      ? document.createElement('style')
+      : null
+  if (liveStyleEl) document.head.appendChild(liveStyleEl)
+  /** 上一次写进去的宽度：同一宽度不重复写 textContent（省一次样式失效 / 重排） */
+  let liveWidth = -1
+
+  const writeLiveRule = (width: number) => {
+    if (!liveStyleEl || liveWidth === width) return
+    liveWidth = width
+    liveStyleEl.textContent = `.${liveClass}{display:inline-block;width:${width}px;clip-path:inset(0)}\n`
+  }
 
   return {
     decorationClassFor(widthPx: number): string {
@@ -170,8 +249,16 @@ export function createSlotStyles(): SlotStyles {
       }
       return `${HIDDEN_CLASS} ${cls}`
     },
+    liveSlotClass(widthPx: number): string {
+      writeLiveRule(
+        roundPx(Number.isFinite(widthPx) ? Math.max(0, widthPx) : 0),
+      )
+      return `${HIDDEN_CLASS} ${liveClass}`
+    },
     dispose() {
       known.clear()
+      liveWidth = -1
+      liveStyleEl?.remove()
       styleEl?.remove()
     },
   }

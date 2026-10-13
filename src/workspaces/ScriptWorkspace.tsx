@@ -3866,6 +3866,13 @@ export const ScriptWorkspace = forwardRef<
           placeholder={langEdit.request.placeholder}
           // 滚轮 / 布局变化时编辑器会推来新位置，编辑框跟着框走（只重渲染这个输入框）
           subscribeSpot={langEdit.request.subscribeSpot}
+          /*
+           * 每次草稿变化都上报原始草稿：编辑器据此**实时**改黄底框与正文里键名槽位的
+           * 宽度 / 高度，框和后面的正文都跟着手指走，而不是等提交才跳一下。
+           * 上报的是原始草稿（没归一化、没回退成键名）：显示成什么由编辑器按模式决定，
+           * 免得同一套规则在两边各写一份。
+           */
+          onDraftChange={langEdit.request.onDraftChange}
           // 点另一个框 = 切换编辑目标：先提交这一份，再把编辑框交给那个框
           grabBoxAt={langEdit.request.grabBoxAt}
           onCommit={(next, reason) => {

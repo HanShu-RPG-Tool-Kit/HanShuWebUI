@@ -42,6 +42,13 @@ import {
   SLOT_CLASS,
 } from './textSlotStyles'
 import {
+  liveBoxGeometry,
+  renderDisplayText,
+  liveSlotWidthPx,
+  TEXT_BOX_GAP_PX,
+  type TextLiveGeometry,
+} from './textLiveGeometry'
+import {
   VOICE_STATE_LABEL,
   formatVoiceButtonSvg,
   type VoiceButtonState,
@@ -157,6 +164,13 @@ export type TextEditSpot = {
   top: number
   /** 框还在编辑器的可视区里吗：滚出去后编辑框隐身，但**不卸载**（卸载会丢输入焦点） */
   visible: boolean
+  /**
+   * 框的实时尺寸（宽 / 高，px）。打字过程中每按一键都会变（见 TextEditRequest.onDraftChange），
+   * 编辑框必须跟着变 —— 否则输入框、背后的黄底框、正文里键名的占位槽三者会各说各话。
+   * 不传时订阅者退回打开那一刻量的矩形。
+   */
+  width?: number
+  height?: number
   /** 编辑器可视区（视口坐标）：编辑框超出它的部分要裁掉，免得盖到工具栏 / 底栏上 */
   clip?: TextRect
 }
@@ -179,13 +193,22 @@ export type TextEditRequest = {
    * 订阅"编辑框现在该待在哪"：滚轮 / 布局变化后由编辑器推新位置，返回取消订阅。
    *
    * 订阅一挂上就先同步推一次当前位置（框可能已经被 render 重新锚过），所以订阅者拿到的
-   * 永远是最新的，不会先闪一下旧位置。位置推的是**只有 left / top / visible**：
-   * 宽高锁死 —— 字形量测、占位加宽都在打开那一刻算完，中途变尺寸会让文字重排、与框错开。
+   * 永远是最新的，不会先闪一下旧位置。推的是 left / top / visible / clip / **width / height**：
+   * 宽高不再是"打开那一刻锁死"，而是随草稿实时变（见 onDraftChange）。
    *
    * 为什么不把位置塞回上层 React 的编辑态：滚动时每帧都在变，让整个工作区跟着重渲染太亏；
    * 订阅只重渲染那个小输入框。
    */
   subscribeSpot?(onSpot: (spot: TextEditSpot) => void): () => void
+  /**
+   * 每次草稿变化时调用（**原始**草稿，未归一化）：编辑器据此实时重算框宽高与槽位宽度。
+   *
+   * 为什么不用"提交后再 render"：用户明确要的是打字过程中跟手 —— 输入框、背后的黄底框、
+   * 正文里键名的占位槽都要随输入同步变宽变窄，同一行后面的正文实时跟着挪。
+   * 传原始草稿而不是归一化后的值：改键名时 `normalizeLocaleKey` 会补全 / 截断，
+   * 拿它量宽度会让框宽在打字中途跳来跳去（用户还没打完就先被纠正了）。
+   */
+  onDraftChange?(text: string): void
   /**
    * 编辑框外按下时先问一句："这一点按在**另一个键框**上了吗？"
    *
@@ -360,8 +383,12 @@ export function computeSpanFingerprint(
 ): string {
   return spans.map((span) => `${span.start}:${span.end}:${span.value}`).join('|')
 }
-/** 框底留出的空隙，避免相邻行的框交叉 */
-const BOX_GAP_PX = 3
+/**
+ * 框底留出的空隙，避免相邻行的框交叉。
+ * 值本身定义在 textLiveGeometry（实时路径也要用它），这里只是别名 ——
+ * 两处各写一个 3 的话，打字时框高与提交后框高会差一点、看起来像"跳了一下"。
+ */
+const BOX_GAP_PX = TEXT_BOX_GAP_PX
 /**
  * 配音按钮的边长（固定正方形）。
  * 不跟文本等高：文本可能有多行，按钮只需要在文本的**垂直中央**右侧，
@@ -395,13 +422,32 @@ const VOICE_SLOT_EXTRA_PX = VOICE_BUTTON_PX + VOICE_BUTTON_GAP_PX
 
 /** 一行覆盖框：形状即 textCaretOverlay 需要的输入，另加一个用于移除的根节点 */
 /** 一次自动成键写进映射的条目（撤销时要能原样回收 / 重做时放回） */
-type LineEntry = CaretLine & { el: HTMLElement }
+type LineEntry = CaretLine & {
+  el: HTMLElement
+  /**
+   * 这一条的**键名槽位**在最近一次 `collection.set` 的数组里的下标。
+   * 打字跟手要"只替换那一条"：没有下标就得整表重建（等于每按一键跑一次 render）。
+   */
+  slotDecorationIndex: number
+  /**
+   * 这一条对应的 view zone（显示文本只有一行时为 null）。
+   * 持有引用是为了实时改行数时能 `layoutZone` 更新高度、以及减回一行时把它摘掉 ——
+   * 绝不每按一键加一个 zone（那会把文档越推越长）。
+   */
+  zone: ZoneEntry | null
+}
 type ZoneEntry = {
   /** 纯占位元素：视觉一律走覆盖层，见 render() 里的注释 */
   el: HTMLElement
   span: TextSpan
   heightPx: number
   id: string
+  /**
+   * 当初交给 `addZone` 的那个对象：Monaco 把它当 delegate 存着，
+   * `layoutZone(id)` 会**重新读它的 `heightInPx`**（见 viewZones._layoutZone）。
+   * 所以改高度 = 改这个对象 + 调 layoutZone，而不是删了重加（重加会换锚点、闪一下）。
+   */
+  delegate: editor.IViewZone
 }
 
 export function bindText(
@@ -448,18 +494,51 @@ export function bindText(
   /**
    * 编辑框打开期间被覆盖的那个框（`is-editing` 挂在它身上）。
    * `render()` 会重建所有框，所以每次重画都要按 key 重新挂上，见 syncEditingBox。
-   * `showKey` 是打开那一刻框的显示方式 —— 编辑期间**锁死**：
-   * Ctrl 中途按下 / 松开不能让框改宽度（槽位宽度跟着变，后面的正文会整体挪位，
-   * 编辑框还停在旧位置上，与框错开）。
+   *
+   * `draft` / `live` 是打字跟手的实时状态：`draft` 是输入框里的**原始**草稿，
+   * `live` 是由它算出来的显示文本 / 宽 / 高。每按一键合并到一个 rAF 里重算一次
+   * （见 scheduleLiveDraft），走"只改这一条"的外科手术路径，不跑 render()。
+   *
+   * 显示模式（显示键名还是译文）**由 `mode` + `draft` 决定**（见 renderDisplayText /
+   * liveDisplayText）：
+   * 编辑期间 Ctrl 按下 / 松开都读不到这条路径上，所以框的显示模式天然锁死 ——
+   * 这正是原来 `showKey` 那个字段要保证的事，现在改成结构上不可能违反。
    */
   let activeEdit: {
     key: string
-    showKey: boolean
+    /** 打开这一刻定的编辑模式：键名 / 译文（Ctrl 中途变化不改它） */
+    mode: TextEditMode
     /** 当前渲染出来的那个框（元素会被 render 换掉，见 syncEditingBox） */
     el: HTMLElement | null
     /** 进编辑框之前的光标位置：Esc 复位用 */
     returnOffset: number
+    /** 输入框里的原始草稿（与 TextEditBox 的 state 同源，未归一化） */
+    draft: string
+    /**
+     * 打开那一刻的初始值。出框（方向键挪出边界）要判断"用户到底改没改"：
+     * 没改就不写映射 —— `TextMap.set` 每次都会 emit + flush，白写一次会带一次多余的落盘。
+     */
+    initialDraft: string
+    /** 草稿对应的实时几何（宽高、行数、是否需要 zone） */
+    live: TextLiveGeometry
   } | null = null
+  /**
+   * 打字跟手的 rAF 句柄。**一次按键一批**：中文输入法 / 长按连发会在一帧里塞进好几个
+   * change 事件，逐条同步重算等于一帧里反复量文字、改样式表、刷 Monaco 渲染。
+   */
+  let liveFrame: number | null = null
+  /**
+   * 最近一次 `collection.set` 用的那个数组。
+   * 实时跟手要在**原位**换掉正在编辑那一条（其余对象保持同一引用），
+   * 所以要留着上一次的数组当底稿。
+   */
+  let lastDecorations: editor.IModelDeltaDecoration[] = []
+  /**
+   * 实时跟手是否已经改过覆盖层（框宽高 / 槽位宽度）。
+   * 由 applyLiveGeometry 置位、render() 清零 —— 见 restoreOverlayAfterEditing：
+   * Esc / 出框**不改文档**，不重画的话框会一直停在草稿的尺寸上。
+   */
+  let liveDirty = false
   /**
    * 编辑框位置的订阅者（见 TextEditRequest.subscribeSpot）。同一时刻最多一个编辑框，
    * 所以只留一个回调；关框（clearEditingBox）时立刻摘掉，避免上一个框还收到推送。
@@ -803,16 +882,23 @@ export function bindText(
     if (!entry) return null
     const key = normalizeLocaleKey(entry.span.value)
     if (!key) return null
-    // 与 render 的显示口径一致：Ctrl / 缺文本时框里显示键名，预判就得按键名量
-    const showKey = ctrlHeld || map.get(key) == null
-    const text = showKey ? key : (map.get(key) ?? '')
-    const displayLines = text.split('\n')
+    /*
+     * 显示文本与 render 同一口径（`renderDisplayText`），不再在这里内联一份 ——
+     * 这条预判必须按**屏幕上真正显示的那串字**量宽度，抄一份判断迟早会与 render 漂移
+     * （漂移的表现是"从上面下来时插入位置偏一点"，很难联想到是显示口径的问题）。
+     * 这里不是编辑目标，所以 `editing` 传 null。
+     */
+    const value = map.get(key) ?? null
+    const display = renderDisplayText({ editing: null, key, value, ctrlHeld })
+    // 显示的是键名 → 打开编辑框时该进"改键名"模式（与 renderDisplayText 的两个分支同源）
+    const showKey = ctrlHeld || value == null
+    const displayLines = display.split('\n')
     return {
       span: entry.span,
       el: entry.box,
       mode: showKey ? 'key' : 'value',
       caretIndex: indexAtLineX(
-        text,
+        display,
         boxLineAt(entry.span, lineNumber, displayLines.length, fromBelow),
         clientX - lineLeft - hit.left,
       ),
@@ -858,6 +944,11 @@ export function bindText(
   const clearEditingBox = () => {
     activeEdit?.el?.classList.remove(EDITING_CLASS)
     activeEdit = null
+    // 还没兑现的那一帧实时跟手作废：编辑框已经关了，再算就是算给下一个框
+    if (liveFrame != null) {
+      window.cancelAnimationFrame(liveFrame)
+      liveFrame = null
+    }
     // 关框就断掉位置推送：编辑框正在卸载，再推就是推给下一个框了
     spotListener = null
     lastSpot = null
@@ -869,8 +960,9 @@ export function bindText(
    * 把"编辑框现在该待在哪"推给订阅者（见 TextEditRequest.subscribeSpot）。
    *
    * 位置取**框元素自己的视口矩形** —— 与打开那一刻 `rectForSpan` 用的是同一把尺子，
-   * 所以滚动 / 布局变化后编辑框与框始终逐像素重合。只推 left / top / visible / clip：
-   * 宽高在编辑期间锁死（中途改尺寸会让文字重排）。
+   * 所以滚动 / 布局变化后编辑框与框始终逐像素重合。推 left / top / visible / clip /
+   * **width / height**：宽高随草稿实时变（打字跟手），取的是**实时几何**而不是元素矩形 ——
+   * 元素矩形在"框滚出可视区被藏起来"时量不到，而宽高与可见性无关，不该跟着一起失效。
    * 框滚出可视区（覆盖层把它藏起来、量不到矩形）时沿用最后一次位置并报 `visible: false`：
    * 编辑框只是隐身，不卸载 —— 卸载会丢输入焦点，滚回来还得重新点一次。
    * `clip` = 编辑器自己的可视矩形，半露在上下边缘的框按它裁，才像贴在编辑器里。
@@ -904,13 +996,27 @@ export function bindText(
           rect.left + rect.width > clip.left &&
           rect.top < clip.top + clip.height &&
           rect.top + rect.height > clip.top))
+    const size = {
+      width: activeEdit.live.widthPx,
+      height: activeEdit.live.heightPx,
+    }
     const next: TextEditSpot = shown && rect
-      ? { left: rect.left, top: rect.top, visible: true, clip: clip ?? undefined }
-      : { left: lastSpot.left, top: lastSpot.top, visible: false }
+      ? {
+          left: rect.left,
+          top: rect.top,
+          visible: true,
+          clip: clip ?? undefined,
+          ...size,
+        }
+      : { left: lastSpot.left, top: lastSpot.top, visible: false, ...size }
     if (
       next.left === lastSpot.left &&
       next.top === lastSpot.top &&
       next.visible === lastSpot.visible &&
+      // 宽高必须一起比：只比位置的话，打字变宽时这一帧就被"没变"挡掉了，
+      // 编辑框会停在旧尺寸上（这正是这次要修的病）
+      next.width === lastSpot.width &&
+      next.height === lastSpot.height &&
       // 编辑器自身大小变了（裁切范围跟着变）也要重推
       next.clip?.width === lastSpot.clip?.width &&
       next.clip?.height === lastSpot.clip?.height &&
@@ -935,6 +1041,221 @@ export function bindText(
     }
     activeEdit.el = entry.box
     entry.box.classList.add(EDITING_CLASS)
+  }
+
+  // ——————————————————————————————————————————————————————————————
+  //  打字跟手：草稿 → 框宽高 / 槽位宽度 / view zone
+  //
+  //  为什么不能"每按一键跑一次 render()"：render() 会把覆盖层的**所有**行元素、
+  //  框、按钮、尾标重建一遍（还顺带重建全部 view zone、重解析全篇片段表）。
+  //  打字时绝大多数按键只影响**正在编辑的那一条**，其余几十条一动不动 ——
+  //  重建它们纯属浪费，而且会让鼠标悬停态、拖拽中的元素、滚动位置一起抖。
+  //  所以这里走外科手术路径：只改那一条的 DOM、只换装饰数组里的那一个元素。
+  // ——————————————————————————————————————————————————————————————
+
+  /** 草稿 → 实时几何。与 render 共用同一把 meter、同一套规则（见 textLiveGeometry） */
+  const liveGeometryFor = (
+    mode: TextEditMode,
+    draft: string,
+    key: string,
+  ): TextLiveGeometry =>
+    liveBoxGeometry({
+      mode,
+      draft,
+      key,
+      lineHeightPx: lineHeightPx(),
+      measureWidths: (texts) => {
+        const widths = meter.measure(texts)
+        return texts.map((text) => widths.get(text) ?? 0)
+      },
+    })
+
+  /**
+   * 草稿变了（TextEditBox 每次 change 都会叫到这里）：只记下来，把重算合并到一帧里。
+   *
+   * 不在事件里同步干活的原因：一帧里可能来好几个 change（中文输入法组字、长按连发），
+   * 每个都同步重算就是反复量文字 + 改样式表 + 刷一次 Monaco 渲染。
+   * 只记草稿、一帧算一次，跟手感没有任何损失（屏幕本来也只会画一帧）。
+   */
+  const scheduleLiveDraft = (text: string) => {
+    const edit = activeEdit
+    if (!edit || disposed) return
+    edit.draft = text
+    if (liveFrame != null) return
+    liveFrame = window.requestAnimationFrame(applyLiveGeometry)
+  }
+
+  /**
+   * 只改这一条的框 / 行元素：文字、最小宽度、高度。
+   *
+   * 文字对**视觉**没有影响（`.hs-lang-box.is-editing` 把框里的字设成了透明，
+   * 免得和输入框里的字重影），但它决定宽度 —— 框宽 = 显示文本的实测宽度。
+   *
+   * 行元素（`.hs-lang-line`）的高度也要跟着改：它是覆盖框的容器，
+   * 里面那行是 `height: 100%` 的 row；只改 box 的话多行时框会从容器里溢出来。
+   */
+  const applyLiveBox = (entry: LineEntry, geometry: TextLiveGeometry) => {
+    entry.box.textContent = geometry.display
+    entry.box.style.minWidth = `${geometry.widthPx}px`
+    entry.box.style.height = `${geometry.heightPx}px`
+    entry.el.style.height = `${geometry.heightPx}px`
+  }
+
+  /**
+   * 槽位宽度：整个原子单位 = 框宽 + 间距 + 配音按钮（与 render 同一式，见 liveSlotWidthPx）。
+   *
+   * 走**单例可变规则**（slotStyles.liveSlotClass）：它固定用同一个类名、改写同一条 CSS 的
+   * width。走 render 那条路（`decorationClassFor`）会为每个新宽度追加一条 `<style>` 规则 ——
+   * 逐键调用等于"每按一键多一条规则"，敲一篇长文就是几千条。
+   *
+   * 装饰数组只换**正在编辑的那一个**：其余对象保持同一引用、原位复用（`collection.set`
+   * 是按**下标**把旧 id 配给新对象的，所以引用不变主要是不让别的东西被顺手重建，
+   * 真正省下的是覆盖层 DOM、片段表解析、以及其它条目的装饰重算）。
+   */
+  const applyLiveSlot = (entry: LineEntry, geometry: TextLiveGeometry) => {
+    const index = entry.slotDecorationIndex
+    const previous = lastDecorations[index]
+    if (!previous) return
+    const next = lastDecorations.slice()
+    next[index] = {
+      range: previous.range,
+      options: {
+        ...previous.options,
+        inlineClassName: slotStyles.liveSlotClass(
+          liveSlotWidthPx(geometry.widthPx, VOICE_SLOT_EXTRA_PX),
+        ),
+      },
+    }
+    collection.set(next)
+    lastDecorations = next
+  }
+
+  /**
+   * view zone：只负责把后面的行往下推（视觉一律走覆盖层）。
+   *
+   * 行数变化时才动它：多行 ↔ 更多行只改高度（`layoutZone` 重读 delegate 的 `heightInPx`，
+   * 不换锚点、不闪），一行 ↔ 多行翻转才加 / 删。
+   * **绝不每按一键加一个 zone** —— 那样文档会被越推越长，而且 zone 是内容高度的一部分，
+   * 加错一个就再也回不来了。
+   */
+  const applyLiveZone = (entry: LineEntry, geometry: TextLiveGeometry) => {
+    const zone = entry.zone
+    if (!geometry.needsZone) {
+      if (!zone) return
+      const id = zone.id
+      ed.changeViewZones((accessor) => accessor.removeZone(id))
+      entry.zone = null
+      zoneEntries = zoneEntries.filter((item) => item !== zone)
+      return
+    }
+    if (zone) {
+      if (zone.heightPx === geometry.zoneHeightPx) return
+      zone.heightPx = geometry.zoneHeightPx
+      zone.delegate.heightInPx = geometry.zoneHeightPx
+      const id = zone.id
+      ed.changeViewZones((accessor) => accessor.layoutZone(id))
+      return
+    }
+    const zoneEl = document.createElement('div')
+    zoneEl.className = ZONE_CLASS
+    const delegate: editor.IViewZone = {
+      afterLineNumber: entry.span.endLine,
+      heightInPx: geometry.zoneHeightPx,
+      domNode: zoneEl,
+    }
+    const created: ZoneEntry = {
+      el: zoneEl,
+      span: entry.span,
+      heightPx: geometry.zoneHeightPx,
+      // addZone 的返回值只能从回调里拿到，先占位再回填
+      id: '',
+      delegate,
+    }
+    ed.changeViewZones((accessor) => {
+      created.id = accessor.addZone(delegate)
+    })
+    entry.zone = created
+    zoneEntries.push(created)
+  }
+
+  /**
+   * 把草稿的实时几何应用到三处（框 / 槽位 / view zone），然后**同步**刷一次几何。
+   *
+   * 为什么要在同一拍里刷一次 Monaco：槽位宽度是 Monaco 渲染出来的（装饰的 inlineClassName
+   * 指向的那条样式规则），`collection.set` 之后它只是把这一帧排进 rAF
+   * （view.js `_scheduleRender` → `runAtThisOrScheduleAtNextAnimationFrame`），
+   * **这一拍 DOM 还是旧宽度**；而 positionBoxes 是按槽位的真实矩形给覆盖框定位的，
+   * 不刷就会拿旧几何摆框 —— 框、尾标、同一行后面的正文会差一帧地"追着抖"。
+   *
+   * 为什么仍然显式写 `ed.render()`（而不是靠 positionBoxes 顺带刷）：
+   * 读 Monaco 源码可以确认 `positionBoxes` → `ed.getScrolledVisiblePosition`
+   * → `view.getOffsetForColumn` → `_flushAccumulatedAndRenderNow()` **已经**是同步刷的，
+   * 所以这一句在当前实现下很可能是冗余的。但那次刷是**副作用**：它只发生在
+   * `positionBoxes` 里 `.hs-lang-slot` 那个查询命中不到、于是走
+   * `getScrolledVisiblePosition` 的条目上（见 positionBoxes 的注释 —— 派生类名
+   * `.hs-lang-slot-w<N>` 本来就命中不了基础类）。哪天有人把那个查询修好，
+   * 这次顺带刷就没了，覆盖框会悄悄退回"差一帧"。
+   * 一帧一次显式刷（不是一键一次）换掉这份隐式耦合，值。
+   *
+   * 边界：`ed.render()` 走的就是 `view.render(true, false)`，同步、且
+   * 与 `syncOverlayAfterEdit` 用的是同一个手法；"真机上有没有一帧抖动、跟手是否顺滑"
+   * 仍然必须开浏览器敲字才能确认（见交付说明里的"无法验证"清单）。
+   */
+  const applyLiveGeometry = () => {
+    liveFrame = null
+    const edit = activeEdit
+    if (disposed || !edit) return
+    const geometry = liveGeometryFor(edit.mode, edit.draft, edit.key)
+    edit.live = geometry
+    const entry = lineEntries.find(
+      (item) => normalizeLocaleKey(item.span.value) === edit.key,
+    )
+    // 找不到活着的框（覆盖层刚被重建过 / 这条已经被删）：这一帧作废。
+    // 不能在这里 clearEditingBox —— 输入框还在打字，关了就等于把用户踢出去
+    if (!entry) return
+    applyLiveBox(entry, geometry)
+    applyLiveSlot(entry, geometry)
+    applyLiveZone(entry, geometry)
+    liveDirty = true
+    ed.render()
+    positionBoxes()
+    caretOverlay.update()
+  }
+
+  /**
+   * 编辑结束（Esc / 出框 / 提交键名）后把覆盖层还原成"按文档渲染"的样子。
+   *
+   * 为什么必须有：编辑期间走的是实时跟手 —— 框宽高与槽位宽度都是按**草稿**改的，
+   * 而 Esc / 出框**不改文档**，提交键名还可能把草稿归一化成别的长度。
+   * 不重画的话框会一直停在草稿的尺寸上，看起来就像"取消没生效"。
+   * 只在真脏过时才重画：提交译文本来就会 render（liveDirty 已被清零），这里不再来一次。
+   */
+  const restoreOverlayAfterEditing = () => {
+    if (liveDirty) render()
+  }
+
+  /**
+   * 开**新**的编辑目标之前，把**上一个**目标留下的实时几何还原掉；返回是否真的重画过。
+   *
+   * 为什么必须在这里还原：`liveDirty` 只由 `render()` 清零，而"打开一个已有编辑框之外的
+   * 新目标"这条路径原来是直接 `clearEditingBox()` 就往下走的 —— 摘掉 `is-editing` 只是
+   * 让框里的字重新可见，`minWidth` / `height` 还停在**上一个目标草稿**的尺寸上，
+   * 与 render 算出来的槽位宽度、与框里那行文字都不一致，要一直等新目标结束编辑
+   * 触发 `restoreOverlayAfterEditing()` 才一起修好。
+   *
+   * 别把这条路径当成不可达：编辑期间 220ms 防抖的 `migrateNow` 会 `moveCaret(target, true)`
+   * 搬光标，光标事件再经 `handleCaretEnter` 落在另一个键框上 —— 那一下就会在这里换目标
+   * （用户正在打字，自动成键把正文改短了，光标顺势落到下一条键名上）。
+   *
+   * 顺序不能反：**先摘掉 activeEdit、再 render()**。`render()` 会读 activeEdit 决定这一条
+   * 显示什么（见 renderDisplayText），留着它等于"又按上一个目标的草稿渲染了一遍"，
+   * 还原就白做了 —— 这也是这条缺陷真正的坑：框的尺寸属于**上一个编辑目标**，不该被下一个继承。
+   */
+  const restorePreviousEditingBox = (): boolean => {
+    if (!liveDirty) return false
+    clearEditingBox()
+    render()
+    return true
   }
 
   /**
@@ -995,35 +1316,131 @@ export function bindText(
     const key = normalizeLocaleKey(span.value)
     if (!key) return false
 
+    /** 按 key 找当前**活着的**那一条（render 之后旧元素会离开 DOM，必须重取） */
+    const liveEntryFor = (): LineEntry | null =>
+      lineEntries.find(
+        (item) => normalizeLocaleKey(item.span.value) === key,
+      ) ?? null
+
+    /**
+     * 把草稿**写下去**：改键名 = 换正文里的键，改译文 = 写映射。**不碰光标**。
+     *
+     * 为什么单独抽出来：提交（回车 / 点外部）与出框（方向键挪出边界）落点不同 ——
+     * 前者停在语句结尾，后者要落到用户挪向的那一格 —— 但"写什么、怎么写"必须只有一份。
+     * 尤其 `pushUndoStop` 的成对包裹：分两处写迟早有一处忘记，撤销栈就会碎成好几步。
+     *
+     * 返回 false = **键名非法，什么都没写**（改键名时唯一会失败的情形）。
+     * 出框路径要靠它决定"这一按算不算数"：写不成就别动光标，让用户留在框里改。
+     */
+    const writeDraft = (
+      target: TextEditMode,
+      span: TextSpan,
+      next: string,
+    ): boolean => {
+      if (disposed) return false
+      if (target === 'key') {
+        const normalized = normalizeLocaleKey(next)
+        const m = ed.getModel()
+        if (!normalized || !m) return false
+        const range = monaco.Range.fromPositions(
+          m.getPositionAt(span.start),
+          m.getPositionAt(span.end),
+        )
+        if (m.getValueInRange(range).trim().toLowerCase() !== normalized) {
+          ed.pushUndoStop()
+          ed.executeEdits('hanshu-locale-retarget', [{ range, text: normalized }])
+          ed.pushUndoStop()
+        }
+        /*
+         * 正文那笔改动会自己触发一次 render（内容变了）；但"草稿归一化后与正文相同"
+         * 与"改译文"这两种**不动正文**的情形，覆盖层还停在草稿的尺寸上 ——
+         * 由调用方用 restoreOverlayAfterEditing() 收尾，liveDirty 就是那个收尾的开关。
+         */
+        liveDirty = true
+        return true
+      }
+      // 改译文只动映射、不动正文（正文里仍是键名）：槽位宽度 / 框高要等收尾重画
+      map.set(key, next)
+      liveDirty = true
+      return true
+    }
+
+    /**
+     * 先把**上一个**编辑目标留下的实时几何还原掉（见 restorePreviousEditingBox）。
+     * 这一步会 render() 重建覆盖层，所以调用方传进来的 element 可能已经离开 DOM ——
+     * 还原过就按 key 重新取一次活着的框：拿旧元素去量矩形只会量到 0×0、
+     * `fontOfBox` 也只会拿到默认字体，输入框与框当场就错开了。
+     *
+     * 顺序上必须在 `rectForSpan` **之前**：槽位宽度就是覆盖框的宽度，
+     * 覆盖层没还原干净的话量出来的矩形是上一个目标草稿的尺寸。
+     */
+    let liveEntry = liveEntryFor()
+    let box = element
+    if (restorePreviousEditingBox()) {
+      liveEntry = liveEntryFor()
+      box = liveEntry?.box ?? null
+    }
+
     const mode: TextEditMode = forced ?? (ctrlHeld ? 'key' : 'value')
-    const rect = rectForSpan(span, element)
+    const rect = rectForSpan(span, box)
     if (mode === 'key') {
       // 改键名是单行框：只按首行高度覆盖（覆盖框可能是多行的）
       rect.height = Math.min(rect.height, lineHeightPx())
     }
     const initial = mode === 'key' ? key : (map.get(key) ?? '')
-    // 空值（缺失 / 空串）时框里显示的是键名：编辑框照抄成占位文本，宽度也照键名算
+    // 实时几何在打开这一刻就算一次：它既是"框该显示什么、多宽多高"的唯一口径，
+    // 也是编辑框首帧尺寸的来源（见下面的 lastSpot）
+    const live = liveGeometryFor(mode, initial, key)
+    // 空值（缺失 / 空串）时框里显示的是键名：编辑框照抄成占位文本，宽度也照键名算。
+    // 用 live.widthPx 而不是再量一次键名 —— 同一把尺子，少一次量测
     const placeholder = initial === '' ? key : undefined
-    if (placeholder) {
-      rect.width = Math.max(rect.width, meter.measure([key]).get(key) ?? 0)
-    }
+    if (placeholder) rect.width = Math.max(rect.width, live.widthPx)
 
     const returnOffset = returnOffsetFor(span)
+    // 还原路径已经摘过一次；liveDirty 为假时（上一个目标没打过字）还得在这一手摘掉，
+    // 否则上一个框的 is-editing 会一直挂着、字看不见
     clearEditingBox()
-    // 打开这一刻框的显示方式（与 render 里的 showKey 同一式）：编辑期间照着它渲染，
-    // 宽度才不会中途跳变、和编辑框错开
+    /**
+     * 打开这一刻的显示方式。**显示文本一律由 mode + 草稿决定**（与实时跟手、与 render
+     * 同一式，见 renderDisplayText / liveDisplayText）：改键名就显示正在改的键名，
+     * 改译文就显示草稿。
+     *
+     * 于是 Ctrl 中途按下 / 松开不可能改变这个框的显示模式 —— 这条路径根本不读 ctrlHeld
+     * （原来是靠"打开那一刻把 showKey 记下来、渲染时照抄"达到同样效果的；现在锁得更死，
+     * 连"右键菜单改键名时框里显示的还是译文"这个不一致也一并修掉了）。
+     */
     activeEdit = {
       key,
-      showKey: ctrlHeld || map.get(key) == null,
-      el: element,
+      mode,
+      el: box,
       returnOffset,
+      draft: initial,
+      initialDraft: initial,
+      live,
     }
-    element?.classList.add(EDITING_CLASS)
+    box?.classList.add(EDITING_CLASS)
     // 编辑框接管这一格的光标：自绘光标与原生光标层都让位
     caretOverlay.update()
-    // 位置的起点就是打开这一刻量的矩形；之后由 reportEditSpot 按滚动 / 布局推新的
-    lastSpot = { left: rect.left, top: rect.top, visible: true }
+    // 位置的起点就是打开这一刻的实时几何；之后由 reportEditSpot 按滚动 / 布局推新的
+    lastSpot = {
+      left: rect.left,
+      top: rect.top,
+      visible: true,
+      width: live.widthPx,
+      height: live.heightPx,
+    }
     spotListener = null
+
+    /**
+     * 打开这一刻就把框落到位 —— **只在显示文本与现状不同时才做**。
+     * 不同只会发生在"右键菜单改键名，而框里原本显示的是译文"（以及空串译文）：
+     * 那时框宽还是译文的宽度，而编辑期间要按键名宽 —— 不在这里落一次，
+     * 输入框与背后的黄底框会各说各话，直到用户敲下第一个字符才对齐。
+     * 常见路径（Ctrl 点开改键名 / 点开改译文）显示文本没变，这里什么都不做、不开销。
+     */
+    if (liveEntry && liveEntry.box.textContent !== live.display) {
+      applyLiveGeometry()
+    }
 
     host.onEditRequest({
       mode,
@@ -1031,8 +1448,10 @@ export function bindText(
       initial,
       rect,
       caretIndex,
-      font: fontOfBox(element),
+      font: fontOfBox(box),
       placeholder,
+      // 每次草稿变化都实时重算（见 onDraftChange / scheduleLiveDraft）
+      onDraftChange: scheduleLiveDraft,
       subscribeSpot: (onSpot) => {
         spotListener = onSpot
         // 订阅时补一次当前位置：挂载到这份请求之间的那一拍里框可能刚被 render 重新锚过
@@ -1055,28 +1474,12 @@ export function bindText(
          * 全程碰不到框沿。
          */
         const landing = statementEndOffsetFor(span)
-        if (mode === 'key') {
-          const normalized = normalizeLocaleKey(next)
-          const m = ed.getModel()
-          if (!normalized || !m) return
-          const range = monaco.Range.fromPositions(
-            m.getPositionAt(span.start),
-            m.getPositionAt(span.end),
-          )
-          if (m.getValueInRange(range).trim().toLowerCase() !== normalized) {
-            ed.pushUndoStop()
-            ed.executeEdits('hanshu-locale-retarget', [
-              { range, text: normalized },
-            ])
-            ed.pushUndoStop()
-            render()
-          }
-          if (reason === 'enter') ed.focus()
-          moveCaret(landing, true)
-          return
-        }
-        map.set(key, next)
-        render()
+        // 键名非法时 writeDraft 什么都不写：保持原样（编辑框已经被 clear，调用方会关掉它）
+        if (!writeDraft(mode, span, next)) return
+        // 无论正文变没变都要重画一次：实时跟手把框宽高改成了**草稿**的尺寸，
+        // 而草稿未必等于最终写进文档的值（改键名时会归一化）——
+        // 不重画框就停在草稿的宽度上（见 restoreOverlayAfterEditing）
+        restoreOverlayAfterEditing()
         if (reason === 'enter') ed.focus()
         moveCaret(landing, true)
       },
@@ -1085,6 +1488,8 @@ export function bindText(
         const back = activeEdit?.returnOffset ?? returnOffset
         clearEditingBox()
         flushCtrlRender()
+        // 取消不改文档：实时跟手改过的框宽高要还原回映射里的值（见 restoreOverlayAfterEditing）
+        restoreOverlayAfterEditing()
         ed.focus()
         moveCaret(back, true)
       },
@@ -1099,11 +1504,32 @@ export function bindText(
           input,
         )
         if (!plan) return false
+        /**
+         * 出框 = **提交**（与"点外部"同一语义）：方向键挪出边界时，刚打的字必须留下。
+         *
+         * 这条以前是漏的 —— 出框只摘掉编辑框、一个字段都不写，用户改完译文用方向键
+         * 往外走，改动就静默消失（而且看起来和"提交成功"一模一样，最难发现的那种丢数据）。
+         *
+         * 落点已经预判成功才写，所以不存在"写了一半又出不去"的中间态；
+         * 写入必须在 `clearEditingBox()` 之前 —— 写的是 `box.draft` 这一份状态。
+         * 键名非法时（writeDraft 返回 false）不变出框：留在框里由 TextEditBox 标红，
+         * 这一按当无事发生（TextEditBox 那边也会先拦一道，这里只是兜底）。
+         */
+        if (box.draft !== box.initialDraft) {
+          const span = spanFor(box.key)
+          if (!span || !writeDraft(box.mode, span, box.draft)) return false
+        }
         clearEditingBox()
         flushCtrlRender()
+        // 出框前刚写过草稿（或实时跟手改过尺寸）：先把覆盖层还原成文档态，再决定光标去哪
+        restoreOverlayAfterEditing()
         // 落点压在邻行的键名框上：直接开那个框（插入位置按同一个像素 x 预判）
         if (plan.kind === 'box') {
-          return openEditor(plan.span, plan.el, plan.mode, plan.caretIndex)
+          // 上面那次 render() 可能刚把覆盖层整个重建过：按 key 重新取**活着的**框元素。
+          // 拿 plan 里那个旧元素（已从 DOM 上摘掉）去量矩形会量到 0×0、
+          // 抄字体也只会拿到默认值，输入框与框就错开了
+          const live = entryFor(normalizeLocaleKey(plan.span.value))
+          return openEditor(plan.span, live?.box ?? null, plan.mode, plan.caretIndex)
         }
         ed.focus()
         moveCaret(plan.offset, plan.guard)
@@ -1756,6 +2182,8 @@ export function bindText(
   /** 重建覆盖框与 view zone（内容 / Ctrl / 映射变化） */
   const render = () => {
     if (disposed) return
+    // 覆盖层马上要被整个重建：实时跟手留下的"脏"随之消失
+    liveDirty = false
 
     for (const entry of lineEntries) entry.el.remove()
     lineEntries = []
@@ -1799,6 +2227,8 @@ export function bindText(
       el: HTMLElement
       span: TextSpan
       heightPx: number
+      /** 建完 zone 后回填到这条上：打字跟手要拿它 layoutZone（见 applyLiveZone） */
+      line: LineEntry
     }> = []
 
     // 先把这一批要渲染的片段收齐，再一次性量宽度：整批只触发一轮布局
@@ -1807,8 +2237,6 @@ export function bindText(
       key: string
       display: string
       displayLines: string[]
-      /** Ctrl / 缺文本时显示的是键名，宽度按键名算 */
-      showKey: boolean
       stateClass: string
     }
     const items: RenderItem[] = []
@@ -1820,12 +2248,24 @@ export function bindText(
       if (!key) continue
 
       const value = map.get(key)
-      // 键名和值各自按自己的长度渲染（取较长者会把短的一侧撑宽，跟同行后续内容错位）。
-      // 正在被编辑的那个框按"打开那一刻"的显示方式渲染：Ctrl 状态中途变化不改它的宽度，
-      // 否则槽位跟着变宽变窄，后面的正文整体挪位，编辑框还停在旧位置、和框错开。
-      const showKey =
-        activeEdit?.key === key ? activeEdit.showKey : ctrlHeld || value == null
-      const display = showKey ? key : (value ?? key)
+      /**
+       * 键名和值各自按自己的长度渲染（取较长者会把短的一侧撑宽，跟同行后续内容错位）。
+       *
+       * 正在被编辑的那个框按**它自己的草稿**渲染（见 renderDisplayText / liveDisplayText）：
+       * 一是打开这一刻宽度就已经等于输入框的宽度，不会等第一次按键才对齐；
+       * 二是编辑期间发生的 render（例如别处自动成键）也不会把它打回"打开那一刻"的旧宽度。
+       * Ctrl 状态中途变化影响不到它 —— 那一支读的是打开那一刻的 mode，不是 ctrlHeld。
+       *
+       * 传 null（上一个编辑目标已经关掉）时这条规则回到映射里的值 ——
+       * 参见 restorePreviousEditingBox：换目标前必须先 render 一次，且那一次必须
+       * **看不到**上一个目标的草稿，否则上一个框的尺寸就跟着草稿留下来了。
+       */
+      const display = renderDisplayText({
+        editing: activeEdit?.key === key ? activeEdit : null,
+        key,
+        value,
+        ctrlHeld,
+      })
       const displayLines = display.split('\n')
       const stateClass = ctrlHeld
         ? 'hs-lang-ctrl'
@@ -1833,9 +2273,8 @@ export function bindText(
           ? 'hs-lang-miss'
           : 'hs-lang-hit'
 
-      items.push({ span, key, display, displayLines, showKey, stateClass })
-      if (showKey) texts.push(key)
-      else texts.push(...displayLines)
+      items.push({ span, key, display, displayLines, stateClass })
+      texts.push(...displayLines)
       // 尾标要按实际宽度留槽位，也纳入这批测量
       if (span.terminator) texts.push(TAIL_TEXT)
     }
@@ -1848,13 +2287,15 @@ export function bindText(
     const voice = host.getVoice?.() ?? null
 
     for (const item of items) {
-      const { span, key, display, displayLines, showKey, stateClass } = item
-      const widthPx = showKey
-        ? widthOf(key)
-        : Math.max(...displayLines.map(widthOf), 1)
+      const { span, key, display, displayLines, stateClass } = item
+      // 显示的就是键名时，`max(各行宽度)` 与 `宽(键名)` 是同一个值（键名不含换行），
+      // 所以这里不再分 showKey 两条路 —— 少一处口径就少一处不一致
+      const widthPx = Math.max(...displayLines.map(widthOf), 1)
 
       // 原文键名 + 被挪走的 `//` 都改成等宽槽位（保留文档，但占位跟随渲染长度）
-      // 槽位宽度 = 文本框 + 间距 + 按钮：选区/光标判定按整个原子单位算
+      // 槽位宽度 = 文本框 + 间距 + 按钮：选区/光标判定按整个原子单位算。
+      // 顺手记下它在数组里的下标：打字跟手要原位替换这一条（见 applyLiveSlot）
+      const slotDecorationIndex = decorations.length
       decorations.push(hide(span.start, span.end, widthPx + VOICE_SLOT_EXTRA_PX))
       if (span.terminator) {
         // `//` 的字符隐掉，但槽位按**它的实际宽度**留（再加与容器的间距）：
@@ -1970,7 +2411,7 @@ export function bindText(
       if (tail) row.appendChild(tail)
       lineEl.appendChild(row)
       layer.appendChild(lineEl)
-      lineEntries.push({
+      const lineEntry: LineEntry = {
         el: lineEl,
         row,
         box,
@@ -1980,7 +2421,10 @@ export function bindText(
         span,
         // 尾标现在排在按钮右边：光标定位要用它的真实左沿
         tailLeft: tail ? tail.offsetLeft : null,
-      })
+        slotDecorationIndex,
+        zone: null,
+      }
+      lineEntries.push(lineEntry)
 
       // 多出来的行用 view zone 占位，把后面的行真实往下推。
       // zone 里不放任何内容：zone 的 DOM 被 Monaco 插在 .view-lines 之下
@@ -1993,6 +2437,7 @@ export function bindText(
           el: zoneEl,
           span,
           heightPx: (displayLines.length - 1) * lineHeight,
+          line: lineEntry,
         })
       }
     }
@@ -2001,19 +2446,29 @@ export function bindText(
     decorations.push(...diagnosticDecorations(model))
 
     collection.set(decorations)
+    // 留着当底稿：打字跟手要在原位替换其中一条（见 applyLiveSlot / lastDecorations）
+    lastDecorations = decorations
 
     if (pendingZones.length > 0) {
       ed.changeViewZones((accessor) => {
-        zoneEntries = pendingZones.map((zone) => ({
-          el: zone.el,
-          span: zone.span,
-          heightPx: zone.heightPx,
-          id: accessor.addZone({
+        for (const zone of pendingZones) {
+          // delegate 要留着：`layoutZone` 是**重读 delegate 的 heightInPx** 来改高度的
+          // （见 viewZones._layoutZone），所以实时改高度 = 改这个对象 + layoutZone
+          const delegate: editor.IViewZone = {
             afterLineNumber: zone.span.endLine,
             heightInPx: zone.heightPx,
             domNode: zone.el,
-          }),
-        }))
+          }
+          const entry: ZoneEntry = {
+            el: zone.el,
+            span: zone.span,
+            heightPx: zone.heightPx,
+            id: accessor.addZone(delegate),
+            delegate,
+          }
+          zoneEntries.push(entry)
+          zone.line.zone = entry
+        }
       })
     }
 
@@ -2811,6 +3266,9 @@ export function bindText(
       if (timer != null) window.clearTimeout(timer)
       if (snapTimer != null) window.clearTimeout(snapTimer)
       if (frame != null) window.cancelAnimationFrame(frame)
+      if (liveFrame != null) window.cancelAnimationFrame(liveFrame)
+      liveFrame = null
+      lastDecorations = []
       window.removeEventListener('keydown', onKeyDown, true)
       window.removeEventListener('keyup', onKeyUp, true)
       window.removeEventListener('blur', onBlur)
