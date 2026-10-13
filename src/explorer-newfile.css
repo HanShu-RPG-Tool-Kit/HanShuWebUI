@@ -1,0 +1,224 @@
+/*
+ * 「新建文件」两件东西的样式：类型选择器（`+剧` / 包行 `+` 弹出的下拉菜单）
+ * 与树里的内联命名行。
+ *
+ * 为什么单开一个文件而不是写进 App.css：这段只服务资源管理器的新建流程，
+ * 而 App.css 已经背着剧本编辑器的整套皮肤覆盖（`.script-workspace .explorer-*`）。
+ * 独立成文件后，改这里的任何一条都不会波及那一片 —— 反过来也一样。
+ *
+ * 观感对齐现有深色 VS Code 风：一律吃 App.css 里的主题变量（`--bg-dropdown` /
+ * `--border-soft` / `--accent` / `--text-dim` …），不硬编码颜色。
+ * 剧本工作区会把这一组变量重定义一遍（`.script-workspace { --bg-dropdown: … }`），
+ * 所以这里跟着变量走就自动是那套方角深色，不需要再来一份 `.script-workspace` 覆盖。
+ * 尺寸同理走 `--sw-s` / `--sw-font-*`：那三个变量只在剧本工作区里定义，
+ * 别处用 `var(--x, 兜底值)` 退回 1 倍与常规字号。
+ */
+
+/* ================= 新增类型的图标配色 ================= */
+
+/*
+ * 这一节严格说**不属于**"新建文件"这一个功能：它是资源树图标的配色，
+ * 树里与下拉菜单里共用（`explorerIcons` 的 kind → 颜色是一对一的）。
+ *
+ * 为什么落在本文件而不是 App.css 里紧挨着其它 `.explorer-icon.is-*`：
+ * 本轮 App.css 由另一名队友独占（他在改 `.hs-lang-*` 那几段），不能碰。
+ * 下次谁动 App.css 时，把这一节整体搬过去与既有那批放一起更顺 —— 那边才是它的家。
+ *
+ * 为什么必须补：本轮新增的 kind 在 App.css 里没有对应规则，于是全部落到
+ * `.explorer-icon { color: #9db4d4 }` 这条兜底上 —— 下拉里 11 个类型有 6 个是同一个颜色，
+ * "专属图标"就只剩形状能分辨（`.py` 的普通脚本 / 目标定义那一对尤其像）。
+ * 取色沿用进度工作区 `FlowExplorer` 的同一套，同一类型在两个资源树里同色。
+ *
+ * 特异性：这里是 (0,2,0)，压得过 App.css 的兜底 `.explorer-icon`（0,1,0），
+ * 所以本文件先加载也不影响结果。
+ */
+.explorer-icon.is-progress { color: #c9a86c; }
+.explorer-icon.is-hflow { color: #8eb0d4; }
+.explorer-icon.is-nav { color: #7a9ec4; }
+.explorer-icon.is-kit { color: #c48a9a; }
+.explorer-icon.is-goal { color: #c4b06a; }
+/*
+ * `is-service` 这个 kind 已改名为 `is-ttsservice`（见 explorerIcons 的注释：与 `.tts`
+ * 的喇叭图标区分开）。App.css 里旧的 `.explorer-icon.is-service` 规则现在没人命中，
+ * 是条死规则 —— 等谁动 App.css 时顺手删掉即可。
+ */
+.explorer-icon.is-ttsservice { color: #9a9aa5; }
+
+/* ================= 类型选择器 ================= */
+
+.explorer-newfile-menu {
+  position: fixed;
+  z-index: 210;
+  /* 比资源树右键菜单（200）高一层：它常常是**被右键菜单挡住**才点不到的 */
+  min-width: 260px;
+  max-width: 340px;
+  /*
+   * 菜单**自己能滚**：类型是会越加越多的（11 条已经比一屏的半截还高，窄窗口 / 小屏
+   * 更明显），没有这条就会长到视口外面去 —— 底部的「创作资料」那几项点不到，
+   * 而且它是 `position: fixed`，资源树再滚也带不动它。
+   *
+   * `max-height` 用 vh 而不是写死 px：桌面外壳与网页预览两种窗口高度下都合适。
+   * 减 16px 是给 `NewFileTypeMenu` 的贴边钳位留余量 —— 它按「上下各 8px」夹，
+   * 菜单正好吃掉整个视口高度的话，钳位就永远生效不了。
+   *
+   * `overscroll-behavior: contain`：滚到头的继续滚不会穿透给编辑器（Monaco 会跟着滚），
+   * 这在菜单盖在正文上的时候尤其明显。
+   * 滚动条本身不用单独写样式：剧本工作区在 App.css 里统一定过 `::-webkit-scrollbar`。
+   */
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: var(--bg-dropdown);
+  border: 1px solid var(--border-soft);
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.5);
+  font-size: var(--sw-font-sm, 13px);
+  color: var(--text);
+}
+
+.explorer-newfile-menu ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* 分组标题：不是可选项，所以不参与 ↑/↓，也不吃悬停高亮 */
+.explorer-newfile-group {
+  padding: 6px 8px 3px;
+  color: var(--text-dim);
+  font-size: var(--sw-font-xs, 11px);
+  letter-spacing: 0.04em;
+  user-select: none;
+}
+
+.explorer-newfile-item {
+  appearance: none;
+  display: grid;
+  /* 图标 / 名称 / 后缀 / 说明 —— 说明单独占一行，窄面板里不会把名称挤没 */
+  grid-template-columns: auto 1fr auto;
+  grid-template-areas:
+    'icon label ext'
+    'icon hint hint';
+  align-items: center;
+  gap: 0 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+/*
+ * 图标尺寸**刻意不在这里定**：`.explorer-icon` 的基础 16px 与剧本工作区的
+ * `calc(16px * var(--sw-s))` 都在 App.css 里，是图标尺寸的唯一出处。
+ *
+ * 这里曾经写过 `calc(15px * var(--sw-s, 1))`，但那两条规则是**死规则**：
+ * 与 App.css 的 `.script-workspace .explorer-icon` 同为 (0,2,0)，而 App.css 后加载，
+ * 于是永远被它盖掉（下拉菜单在 DOM 上是 `.script-workspace` 的后代，选择器命中）。
+ * 留着的坏处是"看着像在调尺寸、实际没生效"—— 改它的人会白花时间。
+ * 尺寸真要单独调，就加高特异性（例如带上 `.explorer-newfile-menu` 前缀）再说。
+ */
+.explorer-newfile-item .explorer-icon {
+  grid-area: icon;
+}
+
+.explorer-newfile-label {
+  grid-area: label;
+}
+
+.explorer-newfile-hint {
+  grid-area: hint;
+  color: var(--text-dim);
+  font-size: var(--sw-font-xs, 11px);
+}
+
+/* 后缀单独一列、等宽：一列后缀对齐之后，`.py` 那两条才看得出区别在图标与名字上 */
+.explorer-newfile-ext {
+  grid-area: ext;
+  color: var(--text-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--sw-font-xs, 11px);
+}
+
+/*
+ * 悬停与键盘焦点共用一个高亮：鼠标移动只改 `active`（见 NewFileTypeMenu），
+ * 真正的焦点落在项上，所以两条都要给 —— 只给 `:hover` 的话键盘用户看不到落点。
+ */
+.explorer-newfile-item:hover,
+.explorer-newfile-item.is-active,
+.explorer-newfile-item:focus-visible {
+  background: var(--accent);
+  color: var(--text-bright);
+  outline: none;
+}
+
+.explorer-newfile-item:hover .explorer-newfile-hint,
+.explorer-newfile-item:hover .explorer-newfile-ext,
+.explorer-newfile-item.is-active .explorer-newfile-hint,
+.explorer-newfile-item.is-active .explorer-newfile-ext,
+.explorer-newfile-item:focus-visible .explorer-newfile-hint,
+.explorer-newfile-item:focus-visible .explorer-newfile-ext {
+  /* 高亮底上那两级灰会糊成一团，统一提亮 */
+  color: var(--text-bright);
+}
+
+/* ================= 内联命名行 ================= */
+
+.explorer-newfile-row-item {
+  list-style: none;
+}
+
+.explorer-newfile-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px 1px 0;
+}
+
+/* 图标与后缀不吃鼠标事件（见组件里的 onMouseDown）：点它们不该取消这一行。
+   尺寸同样交给 App.css（理由见上面 `.explorer-newfile-item .explorer-icon` 那段） */
+.explorer-newfile-affix {
+  display: flex;
+  align-items: center;
+  flex: 0 0 auto;
+  color: var(--text-dim);
+  user-select: none;
+}
+
+.explorer-newfile-row .explorer-newfile-ext {
+  grid-area: auto;
+}
+
+.explorer-newfile-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 2px 4px;
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-s, 3px);
+  background: var(--bg-sunken);
+  color: var(--text-bright);
+  font: inherit;
+  font-size: var(--sw-font-sm, 13px);
+  outline: none;
+}
+
+.explorer-newfile-input:focus {
+  box-shadow: var(--focus-glow);
+}
+
+.explorer-newfile-input[aria-invalid='true'] {
+  border-color: var(--danger);
+}
+
+/* 错误就地画在输入框下面：重名 / 非法名是用户此刻正在处理的事 */
+.explorer-newfile-error {
+  padding: 2px 6px 4px 22px;
+  color: var(--danger);
+  font-size: var(--sw-font-xs, 11px);
+  line-height: 1.4;
+}
