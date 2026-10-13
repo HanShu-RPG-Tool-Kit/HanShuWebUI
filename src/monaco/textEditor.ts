@@ -351,6 +351,15 @@ const MIGRATE_DEBOUNCE_MS = 220
 const DROP_TARGET_CLASS = 'is-drop-target'
 /** 拖拽落点光标（键名拖到文本区时的插入点指示） */
 const DROP_CARET_CLASS = 'hs-lang-drop-caret'
+/**
+ * 刚成键的那一条：挂在框上做一次性的"落位"高亮（见 recentlyKeyed）。
+ *
+ * 为什么需要它：成键是**静默跳变** —— 敲下 `//` 之后原文消失、换成键名加黄底框，
+ * 除了"文字变了"没有任何反馈，第一次遇到会以为编辑器把内容吃掉了。
+ * 动画只做一次（`render()` 之后就把 key 从集合里清掉），所以打开文件那种批量成键
+ * 不会满屏闪 —— 批量路径压根不进这个集合（见 migrateNow 的 animate 判据）。
+ */
+const KEYING_IN_CLASS = 'is-keying-in'
 /** 原子单位被文档选区命中（多行值要由覆盖层补底色，见 syncUnitSelection） */
 const SELECTED_CLASS = 'is-selected'
 /**
@@ -478,6 +487,42 @@ export function bindText(
   /** 自动成键写下的条目；被撤销的挪进 redoLog，重做时放回 */
   let migrationLog: MigrationRecord[] = []
   let redoLog: MigrationRecord[] = []
+  /**
+   * 本次要"落位高亮"的键名（刚由用户这条路径成键的，见 KEYING_IN_CLASS）。
+   *
+   * 只由**增量**路径（`migrateNow({ skipEditing: true })`，即打字 / 挪光标触发的防抖）
+   * 灌入。打开文件 / 换语言那种批量成键不进这里 —— 一次闪几百个框比不加动画更糟，
+   * 而那本来也不是"用户刚做的事"。
+   *
+   * **生命周期由生产者管，`render()` 只读不写**（见 scheduleKeyingClear）：
+   * 一次成键在**同一个同步任务**里会连跑好几次 render（写映射触发的、改正文触发的、
+   * `migrateNow` 收尾的、`scheduleMigrate` 收尾的），而浏览器只画任务结束后的那一版 DOM。
+   * 若 `render()` 一读就清，后一次 render 重建的框就没有这个类，画出来的那版也没类 ——
+   * 动画一次都不会亮（这条真踩过：白闪整段变成死代码）。
+   */
+  let recentlyKeyed = new Set<string>()
+  /**
+   * 「本次渲染帧结束前作废 recentlyKeyed」的句柄。
+   *
+   * 为什么用 `requestAnimationFrame` 而不是 `setTimeout(0)`：两者都排在当前任务之后，
+   * 但 `setTimeout(0)` 被钳到 ≥1ms，可能**落在这一帧的画面之后**。那样一来，
+   * "画完 → 作废"之间若还有一次 render（例如配音解码回调触发的 refreshVoice），
+   * 新建的框会再挂一次类，动画从 0 重播 —— 用户看得见。
+   * rAF 回调是浏览器绘制前**最后一个** JS 钩子：它之前发生的 render 都还没画过
+   * （新建元素带类只会让动画从这一帧开始，不会重播），它之后到绘制之间不可能再插进
+   * 任何 render。于是"高亮只属于即将绘制的这一帧"这句话是闭合的。
+   *
+   * 清空只影响**将来**的 render，已经建出来的元素照样带着类 —— 这是关键。
+   */
+  let keyingClearFrame: number | null = null
+  /** 把集合作废推迟到本帧绘制前（幂等：已有待跑的帧就不再排） */
+  const scheduleKeyingClear = () => {
+    if (keyingClearFrame != null) return
+    keyingClearFrame = window.requestAnimationFrame(() => {
+      keyingClearFrame = null
+      recentlyKeyed.clear()
+    })
+  }
   /** 光标"整体跳过框"的辅助状态（开不了编辑框时的兜底） */
   let snapping = false
   let snapTimer: number | null = null
@@ -1331,6 +1376,13 @@ export function bindText(
      *
      * 返回 false = **键名非法，什么都没写**（改键名时唯一会失败的情形）。
      * 出框路径要靠它决定"这一按算不算数"：写不成就别动光标，让用户留在框里改。
+     *
+     * 两条闸门的一致性说明：`TextEditBox` 会在出框前先用**同一个** `normalizeLocaleKey`
+     * 拦一道（拦下就地标红、留在框里），所以这条兜底在正常路径上不可达。
+     * 但它是隐式依赖来的 —— 那道闸门放行 `draft === initial` 的情形，
+     * 而 `initial` 合法是因为 `openEditor` 里 `initial = mode === 'key' ? key`、
+     * `key` 又来自 `normalizeLocaleKey(span.value)`。哪天 `initial` 的来源变了
+     * （或键名模式出现"初始值本身就非法"的入口），这里就是最后一道防线，别删。
      */
     const writeDraft = (
       target: TextEditMode,
@@ -2199,6 +2251,8 @@ export function bindText(
     const map = host.getMap()
     if (!model || !map) {
       collection.clear()
+      // 底稿一起清掉：留着旧的会让实时跟手往一个已经不存在的下标上替换（见 applyLiveSlot）
+      lastDecorations = []
       renderedFingerprint = ''
       return
     }
@@ -2331,6 +2385,8 @@ export function bindText(
       bindUnitDragDrop(unit, key)
 
       const box = makeBox(display, stateClass, widthPx, boxHeight, key)
+      // 刚由用户这条路径成键的：挂一次"落位"高亮（见 recentlyKeyed / KEYING_IN_CLASS）
+      if (recentlyKeyed.has(key)) box.classList.add(KEYING_IN_CLASS)
       unit.appendChild(box)
 
       // 文本右侧的配音按钮：固定正方形（垂直中央由 CSS 摆放）；四态由映射管理给
@@ -2477,6 +2533,11 @@ export function bindText(
     positionBoxes()
     caretOverlay.update()
     syncUnitSelection()
+    /*
+     * 这里**不**清空 recentlyKeyed —— 本函数只负责把它兑现成框上的类，集合的生死由
+     * 生产者（migrateNow → scheduleKeyingClear）管。原因见 recentlyKeyed 的注释：
+     * 同一次成键会在一个同步任务里连跑好几次 render，谁在中间清空，最后画出来的那版就没类。
+     */
   }
 
   /** 已成键的框的原子范围（未成键的原文不设防） */
@@ -2740,6 +2801,30 @@ export function bindText(
       ed.pushUndoStop()
       ed.executeEdits('hanshu-locale-key', edits)
       ed.pushUndoStop()
+
+      /*
+       * 落位高亮（见 recentlyKeyed）**必须在正文已经换成键名之后**才登记。
+       *
+       * 登记在 `map.setMany` 之前是错的，而且错得很隐蔽：写映射会**同步**触发
+       * 订阅回调 → `refresh()` → `render()`，而那一刻正文里还是原文、一条框都建不出来，
+       * 可 `render()` 收尾照样把集合清空 —— 等真正换成键名时集合已经空了，
+       * 动画一次都不会亮（整段 CSS 变成死代码）。
+       *
+       * 登记在这里，集合里的键就**一定已经存在于文档中**：此后任何一次 render()
+       * （executeEdits 触发的那次、或本函数收尾那次）都能把它兑现成高亮。
+       *
+       * 只给**增量**路径（打字 / 挪光标触发的防抖，带 skipEditing）：首次绑定与
+       * refresh() 是不带选项的批量成键，一次几百条，闪起来像整篇在抽搐。
+       */
+      if (options?.skipEditing) {
+        for (const { key } of plan) recentlyKeyed.add(key)
+        /*
+         * 作废推迟到**本帧绘制前**（见 scheduleKeyingClear）。此刻到本任务结束之间还会跑
+         * 好几次 render（`ed.executeEdits` 触发的、下面收尾的、`scheduleMigrate` 收尾的），
+         * 而浏览器只画最后一版 —— 谁在中间清空，动画就一次都不亮（见 recentlyKeyed）。
+         */
+        scheduleKeyingClear()
+      }
 
       if (cursorOffset != null) {
         const m = ed.getModel()
@@ -3269,6 +3354,10 @@ export function bindText(
       if (liveFrame != null) window.cancelAnimationFrame(liveFrame)
       liveFrame = null
       lastDecorations = []
+      // 待兑现的落位高亮一并作废：绑定没了，下一次 render 也不会来了
+      if (keyingClearFrame != null) window.cancelAnimationFrame(keyingClearFrame)
+      keyingClearFrame = null
+      recentlyKeyed.clear()
       window.removeEventListener('keydown', onKeyDown, true)
       window.removeEventListener('keyup', onKeyUp, true)
       window.removeEventListener('blur', onBlur)
