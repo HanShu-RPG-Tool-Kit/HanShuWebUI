@@ -645,50 +645,38 @@ html.splash-windowed .app {
   pointer-events: none;
 }
 
-/* —— 刚成键那一条的"落位"过渡 ——
-   成键是静默跳变：敲下 `//` 之后原文消失、换成键名加黄底框，除了"文字变了"没有任何反馈。
-   这里补一次单向的落位：外层光环由内向外散开并淡出（`box-shadow` 挂在框自己身上，
-   因为 `.hs-lang-box` 是 `overflow: hidden`，子元素的阴影会被裁掉），
-   内层一层白闪由亮转透（`::after` 铺满框内，`background` 不参与布局）。
-   两个都不碰 `width` / `height` / `padding` / `border`：几何是逐键实时改写的，
-   这里只要"动颜色不动态"，免得与正文重排错开一帧（见上面 `.hs-lang-box` 的注释）。
-   类由 textEditor 的 `recentlyKeyed` 挂上，**只挂一次**（render 后即清），
+/* —— 刚成键那一条的"淡入" ——
+   成键是静默跳变：敲下 `//` 之后原文消失、换成一整条原子单位（黄底框 + 配音按钮），
+   除了"文字变了"没有任何反馈。这里补一次单向的淡入。
+
+   为什么是淡入而不是"白闪 + 扩散光环"：框底本身就是半透明黄（`rgba(214, 186, 74, .3)`），
+   白闪退去的过程读起来是"先过曝、再落到正常色"，也就是**闪一下然后变暗** —— 很脏。
+   淡入只让这一条从无到有地出现，没有过曝那一段。
+
+   挂在整个 `.hs-lang-unit`（文本 + 配音按钮）而不是只挂框：成键那一刻这两样是一起出现的，
+   只淡入其中一个、另一个硬弹出来会很割裂。
+
+   只动 `opacity`，不碰 `width` / `height` / `padding` / `border` / `margin`：
+   几何是逐键实时改写的（见上面 `.hs-lang-box` 的注释），动画掺进几何会与正文错开一帧。
+
+   类由 textEditor 的 `recentlyKeyed` 挂上、**只挂一次**（本帧绘制前即作废），
    所以批量成键（打开文件 / 换语言）不会满屏闪 —— 那条路径不进那个集合。 */
-.hs-lang-box.is-keying-in {
-  animation: hs-lang-key-ring 520ms ease-out both;
+.hs-lang-unit.is-keying-in {
+  animation: hs-lang-key-in 220ms ease-out both;
 }
 
-.hs-lang-box.is-keying-in::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  pointer-events: none;
-  animation: hs-lang-key-flash 520ms ease-out both;
-}
-
-@keyframes hs-lang-key-ring {
+@keyframes hs-lang-key-in {
   from {
-    box-shadow: 0 0 0 2px rgba(214, 186, 74, 0.75), 0 0 12px 2px rgba(214, 186, 74, 0.45);
+    opacity: 0;
   }
   to {
-    box-shadow: 0 0 0 9px rgba(214, 186, 74, 0), 0 0 0 0 rgba(214, 186, 74, 0);
-  }
-}
-
-@keyframes hs-lang-key-flash {
-  from {
-    background: rgba(255, 255, 255, 0.55);
-  }
-  to {
-    background: rgba(255, 255, 255, 0);
+    opacity: 1;
   }
 }
 
 /* 系统里关了动效就不放：这条动画纯装饰，没有它成键一样成立 */
 @media (prefers-reduced-motion: reduce) {
-  .hs-lang-box.is-keying-in,
-  .hs-lang-box.is-keying-in::after {
+  .hs-lang-unit.is-keying-in {
     animation: none;
   }
 }

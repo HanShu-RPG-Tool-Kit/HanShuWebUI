@@ -352,12 +352,15 @@ const DROP_TARGET_CLASS = 'is-drop-target'
 /** 拖拽落点光标（键名拖到文本区时的插入点指示） */
 const DROP_CARET_CLASS = 'hs-lang-drop-caret'
 /**
- * 刚成键的那一条：挂在框上做一次性的"落位"高亮（见 recentlyKeyed）。
+ * 刚成键的那一条：挂在这一整条原子单位上做一次性的"淡入"（见 recentlyKeyed）。
  *
  * 为什么需要它：成键是**静默跳变** —— 敲下 `//` 之后原文消失、换成键名加黄底框，
  * 除了"文字变了"没有任何反馈，第一次遇到会以为编辑器把内容吃掉了。
- * 动画只做一次（`render()` 之后就把 key 从集合里清掉），所以打开文件那种批量成键
- * 不会满屏闪 —— 批量路径压根不进这个集合（见 migrateNow 的 animate 判据）。
+ *
+ * 为什么挂在 `.hs-lang-unit`（文本 + 配音按钮）而不是只挂框：成键那一刻这两样是
+ * 一起出现的，只淡入其中一个、另一个硬弹出来会很割裂。
+ * 动画只做一次（本帧绘制前就把 key 从集合里作废，见 scheduleKeyingClear），
+ * 所以打开文件那种批量成键不会满屏闪 —— 批量路径压根不进这个集合（见 migrateNow）。
  */
 const KEYING_IN_CLASS = 'is-keying-in'
 /** 原子单位被文档选区命中（多行值要由覆盖层补底色，见 syncUnitSelection） */
@@ -2385,8 +2388,11 @@ export function bindText(
       bindUnitDragDrop(unit, key)
 
       const box = makeBox(display, stateClass, widthPx, boxHeight, key)
-      // 刚由用户这条路径成键的：挂一次"落位"高亮（见 recentlyKeyed / KEYING_IN_CLASS）
-      if (recentlyKeyed.has(key)) box.classList.add(KEYING_IN_CLASS)
+      /*
+       * 刚由用户这条路径成键的：给**整条单位**（文本 + 下面的配音按钮）挂一次淡入。
+       * 挂 unit 而不是 box：两者是同一刻出现的，只淡入一个会很割裂。
+       */
+      if (recentlyKeyed.has(key)) unit.classList.add(KEYING_IN_CLASS)
       unit.appendChild(box)
 
       // 文本右侧的配音按钮：固定正方形（垂直中央由 CSS 摆放）；四态由映射管理给

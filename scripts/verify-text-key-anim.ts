@@ -107,8 +107,9 @@ test('render 只读不写：集合的作废必须推迟到本帧绘制前', () =
    */
   const renderBody = sliceFrom(editor, 'const render = () => {', 20000)
   assert.ok(
-    renderBody.includes('box.classList.add(KEYING_IN_CLASS)'),
-    'render 要给刚成键的那个框挂 KEYING_IN_CLASS',
+    renderBody.includes('unit.classList.add(KEYING_IN_CLASS)'),
+    'render 要给刚成键的那条**单位**挂 KEYING_IN_CLASS（文本与配音按钮一起淡入，' +
+      '只淡入框、按钮硬弹出来会很割裂）',
   )
   assert.ok(renderBody.includes('recentlyKeyed.has(key)'), 'render 按 key 判断该不该挂类')
   assert.equal(
@@ -150,20 +151,42 @@ test('render 只读不写：集合的作废必须推迟到本帧绘制前', () =
   )
 })
 
-test('动画不动几何：只改颜色 / 阴影，绝不碰宽高与内边距', () => {
+test('动画是淡入而不是闪光，且不动几何', () => {
   const css = readCode('src/App.css')
-  const ruleAt = css.indexOf('.hs-lang-box.is-keying-in {')
-  assert.ok(ruleAt >= 0, '找不到 .hs-lang-box.is-keying-in 规则')
-  const keyframesAt = css.indexOf('@keyframes hs-lang-key-ring', ruleAt)
-  assert.ok(keyframesAt > ruleAt, '找不到 @keyframes hs-lang-key-ring（改名了就把这条断言一起改）')
+  const ruleAt = css.indexOf('.hs-lang-unit.is-keying-in {')
+  assert.ok(ruleAt >= 0, '找不到 .hs-lang-unit.is-keying-in 规则')
+  const keyframesAt = css.indexOf('@keyframes hs-lang-key-in', ruleAt)
+  assert.ok(keyframesAt > ruleAt, '找不到 @keyframes hs-lang-key-in（改名了就把这条断言一起改）')
   const rule = css.slice(ruleAt, keyframesAt)
+
+  /*
+   * 只动 opacity，不碰任何几何：宽高是逐键实时改写的（见 applyLiveBox），
+   * 动画里掺进 width / height / padding / border / margin 会与同一拍已经重排好的正文错开。
+   */
   for (const banned of ['width', 'height', 'padding', 'border:', 'margin']) {
     assert.equal(
       rule.includes(banned),
       false,
-      `落位动画不许碰 ${banned}：几何是逐键实时改写的，动画只该动颜色 / 阴影`,
+      `成键动画不许碰 ${banned}：几何是逐键实时改写的，动画只该动透明度`,
     )
   }
+
+  /*
+   * 必须是**淡入**（opacity 0 → 1），不能是"白闪 / 光环淡出"：
+   * 框底本来就是半透明黄，白闪退去读起来是"先过曝、再落到正常色"（闪一下然后变暗）。
+   * 这条断言就是那次返工的防线。
+   */
+  const frames = css.slice(keyframesAt, css.indexOf('prefers-reduced-motion', keyframesAt))
+  assert.ok(frames.includes('opacity: 0'), '淡入必须从 opacity: 0 起')
+  assert.ok(frames.includes('opacity: 1'), '淡入必须到 opacity: 1 止')
+  for (const flashy of ['box-shadow', 'background:', '255, 255, 255']) {
+    assert.equal(
+      frames.includes(flashy),
+      false,
+      `成键动画不该再出现 ${flashy}：白闪 / 光环淡出就是"闪光然后变暗"那种观感的来源`,
+    )
+  }
+
   // 关了动效就不放（纯装饰，没有它成键一样成立）
   assert.ok(
     css.includes('prefers-reduced-motion: reduce'),
