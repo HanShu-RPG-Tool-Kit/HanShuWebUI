@@ -16,6 +16,7 @@ export const ALLOWED_EXTENSIONS = [
   '.progress',
   '.hflow',
   '.nav',
+  '.item',
   '.kit',
 ] as const
 export type AllowedExtension = (typeof ALLOWED_EXTENSIONS)[number]
@@ -40,6 +41,7 @@ export const FILE_DIRS: Record<string, string> = {
   '.progress': 'src/progress',
   '.hflow': 'src/story',
   '.nav': 'src/navigator',
+  '.item': 'src/items',
   '.kit': 'src/gift',
   '.md': 'meta/docs',
   '.tts': 'meta/voice',
@@ -56,6 +58,7 @@ export const SOURCE_KIND_ORDER = [
   'story',
   'navigator',
   'gift',
+  'items',
 ] as const
 
 /**
@@ -71,6 +74,7 @@ export const FILE_PLANE: Record<string, FilePlane> = {
   '.progress': 'server',
   '.hflow': 'shared',
   '.nav': 'shared',
+  '.item': 'server',
   '.kit': 'server',
 }
 
@@ -279,7 +283,7 @@ export function editorLanguageForFile(name: string): string {
   if (ext === '.py') return 'python'
   if (
     ext === '.lang' || ext === '.voice' || ext === '.tts' || ext === '.ttsservice'
-    || ext === '.progress' || ext === '.hflow' || ext === '.nav' || ext === '.kit'
+    || ext === '.progress' || ext === '.hflow' || ext === '.nav' || ext === '.item' || ext === '.kit'
   ) {
     return 'json'
   }

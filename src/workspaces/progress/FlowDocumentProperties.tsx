@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Field, IdField, TextField } from './Fields'
-import { documentExtOf, isKitDocument, isNavigationDocument, isProgressDocument, isScriptDocument, resourceName } from './library'
+import { documentExtOf, isItemDocument, isKitDocument, isNavigationDocument, isProgressDocument, isScriptDocument, resourceName } from './library'
 import { parseFlow, setFlowId } from './model'
 import type { FlowDocument } from './storage'
 
@@ -22,7 +22,8 @@ export function FlowDocumentProperties({ doc, onSave, onCancel }: {
   const kit = isKitDocument(doc)
   const progress = isProgressDocument(doc)
   const navigation = isNavigationDocument(doc)
-  const plain = script || kit || progress || navigation
+  const item = isItemDocument(doc)
+  const plain = script || kit || progress || navigation || item
   const parsed = plain ? { flow: null, error: '' } : (() => { try { return { flow: parseFlow(doc.source), error: '' } } catch (error) { return { flow: null, error: error instanceof Error ? error.message : String(error) } } })()
   const [name, setName] = useState(doc.name)
   const [source, setSource] = useState(doc.source)
@@ -58,13 +59,15 @@ export function FlowDocumentProperties({ doc, onSave, onCancel }: {
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) }
   }
 
-  const title = kit ? '礼包属性' : navigation ? '导航点属性' : progress ? '进度属性' : script ? '脚本属性' : '流程属性'
+  const title = item ? '物品属性' : kit ? '礼包属性' : navigation ? '导航点属性' : progress ? '进度属性' : script ? '脚本属性' : '流程属性'
 
   return createPortal(<dialog ref={dialog} className="flow-alert-dialog flow-properties-dialog" aria-labelledby={titleId} onCancel={(event) => { event.preventDefault(); onCancel() }}>
     <header><strong id={titleId}>{title}</strong></header>
     <div className="flow-alert-body flow-properties-body">
       <TextField label="文件名" value={name} onChange={(value) => { setName(value); setError('') }} />
-      {kit ? (
+      {item ? (
+        <p className="flow-hint">物品以 `.item`（JSON）写入工程目录；可从 `.itemstack` 导入。内容在主区可视化编辑器中修改。</p>
+      ) : kit ? (
         <p className="flow-hint">礼包以 `.kit`（JSON）写入工程目录；内容在主区表单中修改。</p>
       ) : navigation ? (
         <p className="flow-hint">导航点以 `.nav`（JSON）写入工程目录；内容在主区表单中修改。</p>

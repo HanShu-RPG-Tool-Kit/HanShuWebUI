@@ -18,7 +18,7 @@ PAK 是给引擎用的运行时包。流水线：**编译图 → 接线校验 �
 | 路径 | 职责 |
 | --- | --- |
 | `src/export/compile/` | 类型、注册表、接线、`buildCompileGraph` |
-| `src/export/compile/compilers/` | 内置 Hanshu / Identity / LocaleAssets |
+| `src/export/compile/compilers/` | 内置 Hanshu / Identity / LocaleAssets / ActiveSkins |
 | `src/export/pack/exportPaks.ts` | 总入口 `exportPaks` |
 | `src/export/pack/planes.ts` | 平面过滤 |
 | `src/export/pack/encrypt.ts` | AES-256-GCM 整包加密 |
@@ -54,6 +54,11 @@ registerFileCompiler({
 
 包级后处理（依赖其它产物的 `requires`，如按键裁剪 lang）用 `registerPackagePass`。
 
+内置 **ActiveSkins**：把工程皮肤库里已启用的皮肤打进 client 平面：
+
+- `assets/skin/<skinId>.png`（`skinId` = 内容 SHA-256）
+- `assets/skins.json`：`customId → skinId` 别名索引（无 customId 的不进表，但仍导出 PNG）
+
 编辑器编译预览应调用与导出相同的 `compile`（`.hs` 已共用 `compileHsToHsc`）。
 
 ## 4. 平面
@@ -61,7 +66,7 @@ registerFileCompiler({
 | 平面 | 含义 | 默认后缀（`FILE_PLANE`） |
 | --- | --- | --- |
 | `client` | 仅客户端 | `.hs` / `.char`；lang / voice 产物 |
-| `server` | 仅服务端 | `.py`（`script/` 与 `goal/`）/ `.progress` / `.kit` |
+| `server` | 仅服务端 | `.py`（`script/` 与 `goal/`）/ `.progress` / `.item` / `.kit` |
 | `shared` | 两端都要 | `.hflow` / `.nav`；未列出后缀默认 shared |
 
 ### 源目录与 PAK 顶层
@@ -72,7 +77,7 @@ registerFileCompiler({
 | --- | --- |
 | `script` | 普通脚本 `.py`（进度「脚本」分类根下） |
 | `goal` | 目标定义 `.py`（「目标定义」二级分类；**不在** `script/` 下） |
-| `hanshu` / `character` / `progress` / `story` / `navigator` / `gift` | 其它源类型 |
+| `hanshu` / `character` / `progress` / `story` / `navigator` / `gift` / `items` | 其它源类型 |
 
 旧工程若仍有 `src/scripts/`，加载时按 `script` 认领，保存后迁到 `src/script/`。
 

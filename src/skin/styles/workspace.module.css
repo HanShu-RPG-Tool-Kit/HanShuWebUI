@@ -1278,12 +1278,6 @@
   width: 7px;
   height: 7px;
 }
-.cardInactive {
-  opacity: 0.72;
-}
-.cardInactive .thumb {
-  filter: grayscale(0.35);
-}
 .card {
   display: flex;
   flex-direction: column;

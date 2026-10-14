@@ -1,22 +1,51 @@
-import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type DragEvent, type MouseEvent, type ReactNode } from 'react'
-import { createPortal } from 'react-dom'
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent, type MouseEvent, type ReactNode } from 'react'
 import Editor from '@monaco-editor/react'
 import { HANSHU_THEME_ID, registerHanshuLanguage } from '../../monaco/hanshuLanguage'
 import { parseJsonValue } from '../../utils/strictJson'
 import { useEditorFontSize } from './editorFont'
 import { isObject } from './model'
-import type { KitCatalog, KitDocument, KitEffect, KitExperience, KitFeedback, KitItem, KitModifier, KitMods, KitParam, KitParamKind, KitPool, KitPoolEntry, KitPoolHit } from './kit'
-import { KIT_NUMBER_RULES, activeKitModifiers, activeKitParams, createKitEffect, createKitItem, createKitModifier, createKitParam, createKitPool, createKitPoolEntry, flattenKit, isKitBindingId, normalizeKitRef, normalizeKitTag, resolveKit, rollKitPools, stringifyKit, unionKitTags } from './kit'
+import type { ItemCatalog, KitCatalog, KitDocument, KitEffect, KitExperience, KitFeedback, KitItem, KitModifier, KitMods, KitParam, KitParamKind, KitPool, KitPoolEntry, KitPoolHit } from './kit'
+import {
+  ITEM_LINK_MIME,
+  KIT_NUMBER_RULES,
+  activeKitModifiers,
+  activeKitParams,
+  createKitEffect,
+  createKitItem,
+  createKitItemLink,
+  createKitModifier,
+  createKitParam,
+  createKitPool,
+  createKitPoolEntry,
+  decodeItemLinkPayload,
+  expandKitItem,
+  flattenKit,
+  isKitBindingId,
+  isKitItemLink,
+  itemRefFromFileName,
+  normalizeItemRef,
+  normalizeKitRef,
+  normalizeKitTag,
+  resolveKit,
+  rollKitPools,
+  stringifyKit,
+  unionKitTags,
+} from './kit'
 import { interpolateKitText, resolveKitNumber, type KitModifierEnv, type KitNumberRule } from './kitExpr'
 import {
   collectItemStackFiles,
   hasItemStackDrag,
+  isItemStackFileName,
   itemStackIconSrc,
   readItemStackFiles,
-  type ItemTextSegment,
 } from './itemstack'
+import { isItemFileName, parseItem } from './itemDoc'
 import { presentItem, type ItemPresentation } from './itemTooltip'
+import { ItemHoverTipTarget, ItemTipSegments } from './itemHoverTip'
 import './KitEditor.css'
+
+const EMPTY_ITEM_CATALOG: ItemCatalog = new Map()
+const ItemCatalogContext = createContext<ItemCatalog>(EMPTY_ITEM_CATALOG)
 
 const toCount = (value: string) => Math.max(0, Math.floor(Number(value) || 0))
 const replaceAt = <T,>(list: T[], index: number, value: T) => list.map((item, i) => i === index ? value : item)
@@ -113,51 +142,6 @@ function RemoveButton({ label, disabled, onClick }: { label: string; disabled?: 
   </button>
 }
 
-/** 原版文字阴影 = 前景色各通道 ÷ 4 */
-function mcShadow(color: string, explicit?: string): string {
-  if (explicit && /^#[0-9a-f]{8}$/i.test(explicit)) {
-    const alpha = parseInt(explicit.slice(1, 3), 16) / 255
-    return `1px 1px 0 rgba(${parseInt(explicit.slice(3, 5), 16)}, ${parseInt(explicit.slice(5, 7), 16)}, ${parseInt(explicit.slice(7, 9), 16)}, ${alpha})`
-  }
-  const hex = /^#([0-9a-f]{6})$/i.exec(color)?.[1]
-  if (!hex) return '1px 1px 0 #3f3f3f'
-  const channel = (offset: number) => Math.floor(parseInt(hex.slice(offset, offset + 2), 16) / 4)
-  return `1px 1px 0 rgb(${channel(0)}, ${channel(2)}, ${channel(4)})`
-}
-
-const OBFUSCATED_CHARS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789#$%&?@'
-
-function ObfuscatedText({ text }: { text: string }) {
-  const [, setTick] = useState(0)
-  useEffect(() => {
-    const timer = window.setInterval(() => setTick((tick) => tick + 1), 50)
-    return () => window.clearInterval(timer)
-  }, [])
-  return <>{[...text].map((char) => char === ' ' ? ' ' : OBFUSCATED_CHARS[Math.floor(Math.random() * OBFUSCATED_CHARS.length)]).join('')}</>
-}
-
-function TextSegments({ segments, fallbackColor = '#FFFFFF', shadow = false }: {
-  segments: ItemTextSegment[]
-  fallbackColor?: string
-  shadow?: boolean
-}) {
-  return <>
-    {segments.map((segment, index) => {
-      const color = segment.color || fallbackColor
-      return <span
-        key={index}
-        style={{
-          color,
-          fontWeight: segment.bold ? 700 : undefined,
-          fontStyle: segment.italic ? 'italic' : undefined,
-          textDecoration: [segment.underlined && 'underline', segment.strikethrough && 'line-through'].filter(Boolean).join(' ') || undefined,
-          textShadow: shadow ? mcShadow(color, segment.shadowColor) : undefined,
-        }}
-      >{segment.obfuscated ? <ObfuscatedText text={segment.text} /> : segment.text}</span>
-    })}
-  </>
-}
-
 function ItemIcon({ item, presentation }: { item: KitItem; presentation: ItemPresentation }) {
   const icon = item.display?.icon
   const src = icon ? itemStackIconSrc(icon) : ''
@@ -172,134 +156,70 @@ function ItemIcon({ item, presentation }: { item: KitItem; presentation: ItemPre
   </span>
 }
 
-function tooltipLines(item: KitItem, presentation: ItemPresentation): ItemTextSegment[][] {
-  if (presentation.hidden) return [[{ text: '（原版隐藏了此物品的提示框）', color: '#555555', italic: true }]]
-  return item.id ? [...presentation.tooltip, [{ text: item.id, color: '#555555' }]] : presentation.tooltip
-}
-
-/** 光标箭头约占右下 12×20px；tooltip 整体放在光标右上方，与箭头保持明显间隔 */
-const TIP_GAP_X = 40
-const TIP_GAP_Y = 32
-
-const TIP_SCALE_KEY = 'hanshu.kitTooltipScale'
-const TIP_SCALE_MIN = 0.8
-const TIP_SCALE_MAX = 2.5
-const TIP_SCALE_DEFAULT = 1.25
-
-const clampScale = (value: number) => Math.min(TIP_SCALE_MAX, Math.max(TIP_SCALE_MIN, Math.round(value * 20) / 20))
-
-let tipScale = (() => {
-  try {
-    const saved = Number(localStorage.getItem(TIP_SCALE_KEY))
-    return Number.isFinite(saved) && saved > 0 ? clampScale(saved) : TIP_SCALE_DEFAULT
-  } catch {
-    return TIP_SCALE_DEFAULT
-  }
-})()
-const tipScaleListeners = new Set<() => void>()
-
-function setTipScale(value: number) {
-  const next = clampScale(value)
-  if (next === tipScale) return
-  tipScale = next
-  try { localStorage.setItem(TIP_SCALE_KEY, String(next)) } catch { /* 隐私模式等不可写时只在本次会话生效 */ }
-  tipScaleListeners.forEach((listener) => listener())
-}
-
-function useTipScale() {
-  return useSyncExternalStore((listener) => {
-    tipScaleListeners.add(listener)
-    return () => { tipScaleListeners.delete(listener) }
-  }, () => tipScale)
-}
-
-function sourceNote(item: KitItem, presentation: ItemPresentation): string {
-  if (presentation.source === 'snapshot') return ['游戏快照', item.display?.locale].filter(Boolean).join(' · ')
-  return [
-    'WebUI 渲染',
-    presentation.unrendered.length > 0 && `${presentation.unrendered.length} 个组件未显示`,
-    presentation.iconStale && '图标为旧快照',
-  ].filter(Boolean).join(' · ')
-}
-
-function ItemTooltip({ item, presentation, x, y, scale, showScale }: {
-  item: KitItem
-  presentation: ItemPresentation
-  x: number
-  y: number
-  scale: number
-  showScale: boolean
-}) {
-  const ref = useRef<HTMLDivElement>(null)
-  const [place, setPlace] = useState({ left: x + TIP_GAP_X, top: y - TIP_GAP_Y })
-  const fallback = presentation.defaultColor
-
-  useLayoutEffect(() => {
-    const box = ref.current?.getBoundingClientRect()
-    if (!box) return
-    let left = x + TIP_GAP_X
-    let top = y - TIP_GAP_Y - box.height / 2
-    if (left + box.width > window.innerWidth - 4) left = Math.max(4, x - TIP_GAP_X - box.width)
-    if (top + box.height > window.innerHeight - 4) top = window.innerHeight - 4 - box.height
-    if (top < 4) top = 4
-    setPlace({ left, top })
-  }, [x, y, scale, showScale])
-
-  return createPortal(<div ref={ref} className="kit-item-tip" role="tooltip" style={{ ...place, '--tip-scale': scale } as CSSProperties}>
-    {tooltipLines(item, presentation).map((line, lineIndex) => (
-      <div key={lineIndex} className="kit-item-tip-line">
-        {line.length ? <TextSegments segments={line} fallbackColor={fallback} shadow /> : '\u00a0'}
-      </div>
-    ))}
-    <div className={`kit-item-tip-meta is-${presentation.source}`}>{sourceNote(item, presentation)}</div>
-    {showScale && <div className="kit-item-tip-meta">{Math.round(scale * 100)}% · Ctrl + 滚轮缩放</div>}
-  </div>, document.body)
-}
-
 function ItemVisual({ item, presentation }: { item: KitItem; presentation: ItemPresentation }) {
-  const ref = useRef<HTMLSpanElement>(null)
-  const scale = useTipScale()
-  const [pointer, setPointer] = useState<{ x: number; y: number } | null>(null)
-  const [showScale, setShowScale] = useState(false)
-  const track = (event: MouseEvent) => setPointer({ x: event.clientX, y: event.clientY })
-
-  useEffect(() => {
-    const node = ref.current
-    if (!node) return
-    let timer = 0
-    const onWheel = (event: WheelEvent) => {
-      if (!event.ctrlKey) return
-      event.preventDefault()
-      setTipScale(tipScale * (event.deltaY < 0 ? 1.1 : 1 / 1.1))
-      setShowScale(true)
-      window.clearTimeout(timer)
-      timer = window.setTimeout(() => setShowScale(false), 1200)
-    }
-    node.addEventListener('wheel', onWheel, { passive: false })
-    return () => {
-      node.removeEventListener('wheel', onWheel)
-      window.clearTimeout(timer)
-    }
-  }, [])
-
-  return <span ref={ref} className="kit-item-visual" onMouseEnter={track} onMouseMove={track} onMouseLeave={() => { setPointer(null); setShowScale(false) }}>
+  return <ItemHoverTipTarget id={item.id} presentation={presentation} locale={item.display?.locale}>
     <ItemIcon item={item} presentation={presentation} />
-    {pointer && <ItemTooltip item={item} presentation={presentation} x={pointer.x} y={pointer.y} scale={scale} showScale={showScale} />}
-  </span>
+  </ItemHoverTipTarget>
 }
 
-async function acceptItemStacks(event: DragEvent, onItems: (items: KitItem[]) => void, onNotice: (message: string) => void) {
+function hasItemLinkDrag(dataTransfer: DataTransfer | null): boolean {
+  if (!dataTransfer) return false
+  const types = Array.from(dataTransfer.types ?? [])
+  if (types.includes(ITEM_LINK_MIME)) return true
+  return Array.from(dataTransfer.files ?? []).some((file) => isItemFileName(file.name) || isItemStackFileName(file.name))
+}
+
+function hasKitItemDrag(dataTransfer: DataTransfer | null): boolean {
+  return hasItemStackDrag(dataTransfer) || hasItemLinkDrag(dataTransfer)
+}
+
+async function acceptKitItemDrops(event: DragEvent, onItems: (items: KitItem[]) => void, onNotice: (message: string) => void) {
   event.preventDefault()
   event.stopPropagation()
-  const files = collectItemStackFiles(event.dataTransfer)
-  if (files.length === 0) {
-    onNotice('请拖入 .itemstack 文件')
+  const transfer = event.dataTransfer
+  const linked: KitItem[] = []
+  const errors: string[] = []
+
+  const mime = transfer.getData(ITEM_LINK_MIME)
+  if (mime) {
+    const ref = decodeItemLinkPayload(mime)
+    if (ref) linked.push(createKitItemLink(ref))
+    else errors.push('物品链接无效')
+  }
+
+  const files = Array.from(transfer.files ?? [])
+  const stackFiles = files.filter((file) => isItemStackFileName(file.name))
+  const itemFiles = files.filter((file) => isItemFileName(file.name))
+  if (stackFiles.length) {
+    const { items, errors: stackErrors } = await readItemStackFiles(stackFiles)
+    linked.push(...items)
+    errors.push(...stackErrors)
+  }
+  for (const file of itemFiles) {
+    try {
+      parseItem(await file.text())
+      linked.push(createKitItemLink(itemRefFromFileName(file.name)))
+    } catch (cause) {
+      errors.push(`${file.name}：${cause instanceof Error ? cause.message : String(cause)}`)
+    }
+  }
+
+  // 无 files 时仍可能只有 MIME（编辑器互拖）
+  if (!linked.length && !errors.length && collectItemStackFiles(transfer).length === 0) {
+    onNotice('请拖入 .item / .itemstack，或从物品库拖入链接')
     return
   }
-  const { items, errors } = await readItemStackFiles(files)
-  if (items.length) onItems(items)
+  if (linked.length) onItems(linked)
   if (errors.length) onNotice(errors.join('；'))
-  else if (items.length) onNotice(`已导入 ${items.length} 个物品`)
+  else if (linked.length) {
+    const links = linked.filter(isKitItemLink).length
+    const embeds = linked.length - links
+    const parts = [
+      embeds ? `${embeds} 个内嵌` : '',
+      links ? `${links} 个链接` : '',
+    ].filter(Boolean)
+    onNotice(`已导入 ${parts.join(' · ')}`)
+  }
 }
 
 function ItemDropZone({ disabled, hint, className = '', onDropItems, children }: {
@@ -313,7 +233,7 @@ function ItemDropZone({ disabled, hint, className = '', onDropItems, children }:
   const [notice, setNotice] = useState('')
 
   function onDragOver(event: DragEvent) {
-    if (disabled || !hasItemStackDrag(event.dataTransfer)) return
+    if (disabled || !hasKitItemDrag(event.dataTransfer)) return
     event.preventDefault()
     event.stopPropagation()
     event.dataTransfer.dropEffect = 'copy'
@@ -330,14 +250,14 @@ function ItemDropZone({ disabled, hint, className = '', onDropItems, children }:
     onDrop={(event) => {
       setOver(false)
       if (disabled) return
-      void acceptItemStacks(event, onDropItems, (message) => {
+      void acceptKitItemDrops(event, onDropItems, (message) => {
         setNotice(message)
         window.setTimeout(() => setNotice((current) => current === message ? '' : current), 3200)
       })
     }}
   >
     {children}
-    {(over || hint) && <p className={`kit-drop-hint${over ? ' is-over' : ''}`}>{over ? '松开以导入 .itemstack' : hint}</p>}
+    {(over || hint) && <p className={`kit-drop-hint${over ? ' is-over' : ''}`}>{over ? '松开以导入 .item / .itemstack' : hint}</p>}
     {notice && <p className="kit-drop-notice" role="status">{notice}</p>}
   </div>
 }
@@ -387,13 +307,17 @@ function ItemRow({ item, index, open, disabled, onToggle, onChange, onRemove, on
   onRemove: () => void
   onDropReplace: (items: KitItem[]) => void
 }) {
-  const componentCount = Object.keys(item.components).length
-  const presentation = useMemo(() => presentItem(item), [item])
-  const showName = !!item.display || Object.keys(item.components).some((key) => /(^|:)(custom_name|item_name)$/.test(key))
+  const catalog = useContext(ItemCatalogContext)
+  const linked = isKitItemLink(item)
+  const resolved = useMemo(() => expandKitItem(item, catalog), [item, catalog])
+  const missing = linked && !catalog.has(normalizeItemRef(item.item || ''))
+  const componentCount = Object.keys(resolved.components).length
+  const presentation = useMemo(() => presentItem(resolved), [resolved])
+  const showName = !!resolved.display || Object.keys(resolved.components).some((key) => /(^|:)(custom_name|item_name)$/.test(key))
   const [over, setOver] = useState(false)
 
   function onDragOver(event: DragEvent) {
-    if (disabled || !hasItemStackDrag(event.dataTransfer)) return
+    if (disabled || !hasKitItemDrag(event.dataTransfer)) return
     event.preventDefault()
     event.stopPropagation()
     event.dataTransfer.dropEffect = 'copy'
@@ -401,7 +325,7 @@ function ItemRow({ item, index, open, disabled, onToggle, onChange, onRemove, on
   }
 
   return <li
-    className={`kit-row kit-item${open ? ' is-open' : ''}${over ? ' is-drop' : ''}`}
+    className={`kit-row kit-item${open ? ' is-open' : ''}${over ? ' is-drop' : ''}${linked ? ' is-link' : ''}${missing ? ' is-missing' : ''}`}
     onDragEnter={onDragOver}
     onDragOver={onDragOver}
     onDragLeave={(event) => {
@@ -410,24 +334,50 @@ function ItemRow({ item, index, open, disabled, onToggle, onChange, onRemove, on
     onDrop={(event) => {
       setOver(false)
       if (disabled) return
-      void acceptItemStacks(event, onDropReplace, () => {})
+      void acceptKitItemDrops(event, onDropReplace, () => {})
     }}
   >
     <span className="kit-row-index">{index + 1}</span>
-    <ItemVisual item={item} presentation={presentation} />
+    <ItemVisual item={resolved} presentation={presentation} />
     <div className="kit-item-fields">
-      <input className="kit-mono" value={item.id} disabled={disabled} placeholder="minecraft:diamond_sword" aria-label={`物品 ${index + 1} ID`} onChange={(event) => onChange({ id: event.target.value })} />
-      {showName && <span className="kit-item-name"><TextSegments segments={presentation.name} fallbackColor={presentation.defaultColor} /></span>}
+      {linked ? (
+        <>
+          <span className="kit-item-link-row">
+            <span className="kit-item-link-badge" title="物品库链接">link</span>
+            <input
+              className="kit-mono"
+              value={item.item || ''}
+              disabled={disabled}
+              placeholder="物品文件名（无 .item）"
+              aria-label={`物品 ${index + 1} 链接`}
+              onChange={(event) => onChange({ item: normalizeItemRef(event.target.value), id: '', components: {}, display: undefined })}
+            />
+          </span>
+          <span className={`kit-item-link-id${missing ? ' is-missing' : ''}`}>
+            {missing ? `找不到 ${normalizeItemRef(item.item || '')}.item` : resolved.id || '（空 ID）'}
+          </span>
+        </>
+      ) : (
+        <input className="kit-mono" value={item.id} disabled={disabled} placeholder="minecraft:diamond_sword" aria-label={`物品 ${index + 1} ID`} onChange={(event) => onChange({ id: event.target.value, item: undefined })} />
+      )}
+      {showName && <span className="kit-item-name"><ItemTipSegments segments={presentation.name} fallbackColor={presentation.defaultColor} /></span>}
     </div>
     <span className="kit-numbind">
       <input className="kit-num" type="number" min={0} step={1} value={item.count} disabled={disabled} aria-label={`物品 ${index + 1} 数量`} onChange={(event) => onChange({ count: toCount(event.target.value) })} />
       <ModChip raw={item.count} mod={item.mods?.count} rule={KIT_NUMBER_RULES.count} label={`物品 ${index + 1} 数量`} disabled={disabled} onChange={(id) => onChange({ mods: setMod(item.mods, 'count', id) })} />
     </span>
-    <button type="button" className={`kit-chip${componentCount ? ' has-value' : ''}`} aria-expanded={open} title="组件" onClick={onToggle}>
+    <button type="button" className={`kit-chip${componentCount ? ' has-value' : ''}`} aria-expanded={open} title={linked ? '组件（来自物品库，只读）' : '组件'} onClick={onToggle}>
       {'{ }'}{componentCount > 0 && <span>{componentCount}</span>}
     </button>
     <RemoveButton label={`移除物品 ${index + 1}`} disabled={disabled} onClick={onRemove} />
-    {open && <ComponentsEditor value={item.components} disabled={disabled} onChange={(components) => onChange({ components })} />}
+    {open && (
+      linked
+        ? <div className="kit-item-link-components">
+          <p className="kit-hint">组件来自物品库链接，只读；改定义请打开对应 `.item`。</p>
+          <ComponentsEditor value={resolved.components} disabled onChange={() => {}} />
+        </div>
+        : <ComponentsEditor value={item.components} disabled={disabled} onChange={(components) => onChange({ components })} />
+    )}
   </li>
 }
 
@@ -452,14 +402,14 @@ function ItemList({ items, header, disabled, onChange }: {
     })
   }
 
-  return <ItemDropZone disabled={disabled} hint={items.length === 0 ? '可从桌面拖入 .itemstack' : undefined} onDropItems={(dropped) => onChange([...items, ...dropped])}>
+  return <ItemDropZone disabled={disabled} hint={items.length === 0 ? '可拖入 .item（链接）或 .itemstack（内嵌）' : undefined} onDropItems={(dropped) => onChange([...items, ...dropped])}>
     {header && items.length > 0 && <div className="kit-row kit-item kit-row-head" aria-hidden><span /><span /><span>物品</span><span>数量</span><span>组件</span><span /></div>}
     {items.length === 0
-      ? <p className="kit-empty">暂无物品 · 拖入 .itemstack 或点添加</p>
+      ? <p className="kit-empty">暂无物品 · 拖入 .item / .itemstack 或点添加</p>
       : <ol className="kit-list">
         {items.map((item, index) => (
           <ItemRow
-            key={`${item.id}:${index}`}
+            key={`${item.item || item.id}:${index}`}
             item={item}
             index={index}
             open={open.has(index)}
@@ -1187,7 +1137,7 @@ function KitBody({ kit, disabled, readOnly, editorPath, simulatorPools, afterHea
 const NOOP = () => {}
 const EMPTY_CATALOG: KitCatalog = new Map()
 
-export function KitEditor({ kit, error, disabled, editorPath, selfRef = 'kit', catalog = EMPTY_CATALOG, catalogOptions = [], onChange, resolveText, setText }: {
+export function KitEditor({ kit, error, disabled, editorPath, selfRef = 'kit', catalog = EMPTY_CATALOG, catalogOptions = [], itemCatalog = EMPTY_ITEM_CATALOG, onChange, resolveText, setText }: {
   kit: KitDocument
   error?: string
   disabled?: boolean
@@ -1196,6 +1146,8 @@ export function KitEditor({ kit, error, disabled, editorPath, selfRef = 'kit', c
   selfRef?: string
   catalog?: KitCatalog
   catalogOptions?: { ref: string; label: string }[]
+  /** 物品库目录：展开礼包里的 `.item` 链接 */
+  itemCatalog?: ItemCatalog
   onChange: (source: string) => void
   resolveText?: (key: string) => string
   setText?: (key: string, value: string) => void
@@ -1204,11 +1156,11 @@ export function KitEditor({ kit, error, disabled, editorPath, selfRef = 'kit', c
   const [preview, setPreview] = useState<Record<string, unknown>>({})
   const [compiledOpen, setCompiledOpen] = useState(true)
   const flat = useMemo(() => flattenKit(kit, selfRef, catalog), [kit, selfRef, catalog])
-  const compiled = useMemo(() => resolveKit(flat.kit, preview), [flat.kit, preview])
+  const compiled = useMemo(() => resolveKit(flat.kit, preview, itemCatalog), [flat.kit, preview, itemCatalog])
   // 本文件随机池按展开后的修饰器求值，模拟器与当前卡片一一对应
   const localPools = useMemo(
-    () => resolveKit({ ...kit, params: flat.kit.params, modifiers: flat.kit.modifiers }, preview).pools,
-    [kit, flat.kit.params, flat.kit.modifiers, preview],
+    () => resolveKit({ ...kit, params: flat.kit.params, modifiers: flat.kit.modifiers }, preview, itemCatalog).pools,
+    [kit, flat.kit.params, flat.kit.modifiers, preview, itemCatalog],
   )
   const env = compiled.env
   const exprUi = useMemo<KitExprUi>(() => ({
@@ -1231,75 +1183,77 @@ export function KitEditor({ kit, error, disabled, editorPath, selfRef = 'kit', c
     return next
   })
 
-  return <div className="kit-editor">
-    <div className="kit-page">
-      {error && <p className="kit-banner" role="alert">草稿无法解析，已显示空表单：{error}</p>}
+  return <ItemCatalogContext.Provider value={itemCatalog}>
+    <div className="kit-editor">
+      <div className="kit-page">
+        {error && <p className="kit-banner" role="alert">草稿无法解析，已显示空表单：{error}</p>}
 
-      <KitExprContext.Provider value={exprUi}>
-        <KitBody
-          kit={kit}
-          disabled={disabled}
-          editorPath={scriptPath}
-          simulatorPools={localPools}
-          afterHeader={<CompositionBar kit={kit} selfRef={selfRef} options={catalogOptions} disabled={disabled} onChange={(patch) => update(patch)} />}
-          update={update}
-          resolveText={resolveText}
-          setText={setText}
-        />
-
-        <Panel
-          title="超参数"
-          subtitle="由引擎注入，此处为默认值"
-          count={activeKitParams(kit.params).length}
-          action={<AddButton label="添加" disabled={disabled} onClick={() => update({ params: [...kit.params, createKitParam()] })} />}
-        >
-          <ParamPanel
-            params={kit.params}
-            preview={preview}
+        <KitExprContext.Provider value={exprUi}>
+          <KitBody
+            kit={kit}
             disabled={disabled}
-            onChange={(params) => update({ params })}
-            onPreview={setPreviewValue}
+            editorPath={scriptPath}
+            simulatorPools={localPools}
+            afterHeader={<CompositionBar kit={kit} selfRef={selfRef} options={catalogOptions} disabled={disabled} onChange={(patch) => update(patch)} />}
+            update={update}
+            resolveText={resolveText}
+            setText={setText}
           />
-        </Panel>
 
-        <Panel
-          title="修饰器"
-          subtitle="一元函数 f(x)，x 为字段原值"
-          count={activeKitModifiers(kit.modifiers).length}
-          action={<AddButton label="添加" disabled={disabled} onClick={() => update({ modifiers: [...kit.modifiers, createKitModifier()] })} />}
-        >
-          <ModifierPanel modifiers={kit.modifiers} env={env} disabled={disabled} onChange={(modifiers) => update({ modifiers })} />
-        </Panel>
-      </KitExprContext.Provider>
-
-      <div className="kit-compiled-divider">
-        <button type="button" className="kit-fold" aria-expanded={compiledOpen} onClick={() => setCompiledOpen(!compiledOpen)}>
-          <svg viewBox="0 0 16 16" aria-hidden><path d={compiledOpen ? 'M4 6l4 4 4-4' : 'M6 4l4 4-4 4'} /></svg>
-          编译结果
-        </button>
-        <span className="kit-compiled-note">只读 · 展开继承与组合，按预览值应用修饰器与插值</span>
-        <ol className="kit-flatten-chain">{flat.chain.map((ref, index) => <li key={`${ref}-${index}`}>{ref}</li>)}</ol>
-        {problems.length > 0 && <span className="kit-compiled-count">{problems.length} 个问题</span>}
-      </div>
-
-      {compiledOpen && <>
-        {problems.length > 0 && (
-          <ul className="kit-issues kit-compiled-issues" role="status">
-            {problems.map((issue, index) => <li key={index} className={`is-${issue.level}`}><code>{issue.path}</code>{issue.message}</li>)}
-          </ul>
-        )}
-        <div className="kit-compiled" aria-label="编译结果（只读）">
-          <KitExprContext.Provider value={appliedUi}>
-            <KitBody kit={compiled} readOnly editorPath={`${scriptPath}.compiled`} simulatorPools={compiled.pools} update={NOOP} resolveText={resolveText} />
-          </KitExprContext.Provider>
-          <Panel title="超参数" subtitle="预览值可在此直接调整" count={activeKitParams(compiled.params).length}>
-            <ParamPanel params={compiled.params} preview={preview} disabled onChange={NOOP} onPreview={setPreviewValue} />
+          <Panel
+            title="超参数"
+            subtitle="由引擎注入，此处为默认值"
+            count={activeKitParams(kit.params).length}
+            action={<AddButton label="添加" disabled={disabled} onClick={() => update({ params: [...kit.params, createKitParam()] })} />}
+          >
+            <ParamPanel
+              params={kit.params}
+              preview={preview}
+              disabled={disabled}
+              onChange={(params) => update({ params })}
+              onPreview={setPreviewValue}
+            />
           </Panel>
-          <Panel title="修饰器" count={activeKitModifiers(compiled.modifiers).length}>
-            <ModifierPanel modifiers={compiled.modifiers} env={env} disabled onChange={NOOP} />
+
+          <Panel
+            title="修饰器"
+            subtitle="一元函数 f(x)，x 为字段原值"
+            count={activeKitModifiers(kit.modifiers).length}
+            action={<AddButton label="添加" disabled={disabled} onClick={() => update({ modifiers: [...kit.modifiers, createKitModifier()] })} />}
+          >
+            <ModifierPanel modifiers={kit.modifiers} env={env} disabled={disabled} onChange={(modifiers) => update({ modifiers })} />
           </Panel>
+        </KitExprContext.Provider>
+
+        <div className="kit-compiled-divider">
+          <button type="button" className="kit-fold" aria-expanded={compiledOpen} onClick={() => setCompiledOpen(!compiledOpen)}>
+            <svg viewBox="0 0 16 16" aria-hidden><path d={compiledOpen ? 'M4 6l4 4 4-4' : 'M6 4l4 4-4 4'} /></svg>
+            编译结果
+          </button>
+          <span className="kit-compiled-note">只读 · 展开继承与组合，按预览值应用修饰器与插值</span>
+          <ol className="kit-flatten-chain">{flat.chain.map((ref, index) => <li key={`${ref}-${index}`}>{ref}</li>)}</ol>
+          {problems.length > 0 && <span className="kit-compiled-count">{problems.length} 个问题</span>}
         </div>
-      </>}
+
+        {compiledOpen && <>
+          {problems.length > 0 && (
+            <ul className="kit-issues kit-compiled-issues" role="status">
+              {problems.map((issue, index) => <li key={index} className={`is-${issue.level}`}><code>{issue.path}</code>{issue.message}</li>)}
+            </ul>
+          )}
+          <div className="kit-compiled" aria-label="编译结果（只读）">
+            <KitExprContext.Provider value={appliedUi}>
+              <KitBody kit={compiled} readOnly editorPath={`${scriptPath}.compiled`} simulatorPools={compiled.pools} update={NOOP} resolveText={resolveText} />
+            </KitExprContext.Provider>
+            <Panel title="超参数" subtitle="预览值可在此直接调整" count={activeKitParams(compiled.params).length}>
+              <ParamPanel params={compiled.params} preview={preview} disabled onChange={NOOP} onPreview={setPreviewValue} />
+            </Panel>
+            <Panel title="修饰器" count={activeKitModifiers(compiled.modifiers).length}>
+              <ModifierPanel modifiers={compiled.modifiers} env={env} disabled onChange={NOOP} />
+            </Panel>
+          </div>
+        </>}
+      </div>
     </div>
-  </div>
+  </ItemCatalogContext.Provider>
 }

@@ -1156,4 +1156,32 @@ test('Kit stringify/parse keeps extends and includes', () => {
   assert.equal(merged.includes.length, 0)
 })
 
+test('Kit item can link to .item library by filename stem', async () => {
+  const { createKitItemLink, expandKitItem, isKitItemLink, normalizeItemRef, resolveKit } = await import('../src/workspaces/progress/kit.ts')
+  const { createItem } = await import('../src/workspaces/progress/itemDoc.ts')
+  const linked = createKitItemLink('diamond_spear.item', 3)
+  assert.equal(linked.item, 'diamond_spear')
+  assert.ok(isKitItemLink(linked))
+  const kit = createKit('link-kit')
+  kit.items = [linked, createKitItem('minecraft:stick', 1)]
+  const again = parseKit(stringifyKit(kit))
+  assert.equal(again.items[0]?.item, 'diamond_spear')
+  assert.equal(again.items[0]?.count, 3)
+  assert.equal(again.items[0]?.id, '')
+  assert.equal(again.items[1]?.id, 'minecraft:stick')
+  assert.equal(normalizeItemRef('foo.itemstack'), 'foo')
+
+  const doc = createItem('minecraft:diamond_spear')
+  doc.item.components = { 'minecraft:enchantment_glint_override': true }
+  const catalog = new Map([['diamond_spear', doc]])
+  const expanded = expandKitItem(again.items[0]!, catalog)
+  assert.equal(expanded.id, 'minecraft:diamond_spear')
+  assert.equal(expanded.components['minecraft:enchantment_glint_override'], true)
+  const resolved = resolveKit(again, undefined, catalog)
+  assert.equal(resolved.items[0]?.id, 'minecraft:diamond_spear')
+  assert.equal(resolved.items[0]?.count, 3)
+  const missing = resolveKit(again, undefined, new Map())
+  assert.ok(missing.issues.some((issue) => issue.message.includes('diamond_spear')))
+})
+
 console.log(`Progress model: ${passed} checks passed.`)

@@ -54,6 +54,7 @@ type Draft = {
   sourceUrl: string
   sourceNote: string
   note: string
+  customId: string
 }
 
 function draftFromEntry(entry: LibraryEntry): Draft {
@@ -71,6 +72,7 @@ function draftFromEntry(entry: LibraryEntry): Draft {
     sourceUrl: entry.provenance.sourceUrl ?? '',
     sourceNote: entry.provenance.sourceNote ?? '',
     note: entry.note,
+    customId: entry.customId ?? '',
   }
 }
 
@@ -325,6 +327,21 @@ export function EntryDetails({
 
       <div className={styles.detailsScroll}>
         <div className={styles.detailsFields}>
+          <label className={styles.detailsField}>
+            <span>自定义 ID</span>
+            <input
+              value={draft.customId}
+              placeholder="可选，库内唯一"
+              spellCheck={false}
+              onChange={(e) => setDraft((d) => ({ ...d, customId: e.target.value }))}
+              onBlur={() => {
+                const customId = draft.customId.trim() || null
+                if (customId === (entry.customId ?? null)) return
+                void applyPatch({ customId })
+              }}
+            />
+          </label>
+
           <label className={styles.detailsField}>
             <span>位置</span>
             <select

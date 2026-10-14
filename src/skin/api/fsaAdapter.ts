@@ -150,12 +150,12 @@ export function createFsaSkinApi(): SkinApi {
           return s.startImportSkinCode(text)
         }
       }
-      if (name.endsWith('.skin')) {
-        // Binary object — decode and import as share with classic default model
-        const { decodeDiskFile, encodeShareCode } = await import('../local/codec')
-        const { decoded } = await decodeDiskFile(buf)
-        const { skinCode } = await encodeShareCode(model ?? 'classic', decoded)
-        return s.startImportSkinCode(skinCode)
+      if (
+        name.endsWith('.skin.json') ||
+        name.endsWith('.json') ||
+        name.endsWith('.skin')
+      ) {
+        return s.startImportSkinFile(buf, file.name, model)
       }
       return s.startImportFromPng(buf, file.name, model)
     },

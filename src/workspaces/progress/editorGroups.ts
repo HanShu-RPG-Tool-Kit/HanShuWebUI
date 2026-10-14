@@ -70,6 +70,48 @@ export function openInGroup(state: FlowWorkspaceState, id: GroupId, keys: string
   return focusGroup(writeGroup(state, target, { ...group, openKeys, activeKey: list[0]! }), target)
 }
 
+/** 页键所在编辑组；未打开返回 null。优先返回焦点组。 */
+export function groupHoldingKey(state: FlowWorkspaceState, key: string): GroupId | null {
+  const focus = focusedGroupId(state)
+  if (readGroup(state, focus).openKeys.includes(key)) return focus
+  if (state.split) {
+    const other: GroupId = focus === 0 ? 1 : 0
+    if (readGroup(state, other).openKeys.includes(key)) return other
+  }
+  return null
+}
+
+/**
+ * 召唤到右侧：已开则聚焦；已二分则开到第 1 组；
+ * 主组另有页面时 open + 向右 move 拆分；否则普通打开。
+ */
+export function openAsRightSplit(state: FlowWorkspaceState, key: string): FlowWorkspaceState {
+  const holding = groupHoldingKey(state, key)
+  if (holding !== null) {
+    const group = readGroup(state, holding)
+    return focusGroup(writeGroup(state, holding, { ...group, activeKey: key }), holding)
+  }
+  if (state.split) return openInGroup(state, 1, key)
+  const primary = readGroup(state, 0)
+  if (primary.openKeys.length === 0) return openInGroup(state, 0, key)
+  const opened = openInGroup(state, 0, key)
+  return splitTab(opened, key, 'right', 'move')
+}
+
+/** 从表视图打开文档：表在某一侧时开到对侧，否则开到指定组。 */
+export function openOppositeToKey(
+  state: FlowWorkspaceState,
+  anchorKey: string,
+  openKey: string,
+  fallback: GroupId = 0,
+): FlowWorkspaceState {
+  if (!state.split) return openInGroup(state, fallback, openKey)
+  const anchor = groupHoldingKey(state, anchorKey)
+  if (anchor === null) return openInGroup(state, fallback, openKey)
+  const other: GroupId = anchor === 0 ? 1 : 0
+  return openInGroup(state, other, openKey)
+}
+
 export function closeInGroup(state: FlowWorkspaceState, id: GroupId, keys: string[]): FlowWorkspaceState {
   const group = readGroup(state, id)
   const pinned = new Set(group.pinnedKeys)

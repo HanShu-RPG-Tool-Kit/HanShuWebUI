@@ -72,6 +72,21 @@ export function normalizeTagName(name: string): string | null {
   return n.length > 0 ? n : null
 }
 
+export const CUSTOM_ID_MAX_LEN = 64
+
+/** NFC + trim; empty → null. Rejects oversized values. */
+export function normalizeCustomId(
+  raw: string | null | undefined,
+): string | null {
+  if (raw == null) return null
+  const n = raw.trim().normalize('NFC')
+  if (!n) return null
+  if (Array.from(n).length > CUSTOM_ID_MAX_LEN) {
+    throw new Error(`自定义 ID 最长 ${CUSTOM_ID_MAX_LEN} 字符`)
+  }
+  return n
+}
+
 /** Dedupe case-insensitively while preserving first-seen casing. */
 export function normalizeTagList(input: Iterable<string>): string[] {
   const out: string[] = []
@@ -146,6 +161,10 @@ export function parseLibraryJson(raw: string): LibraryFile {
       provenance: e.provenance ?? emptyProvenance(),
       license: e.license ?? emptyLicense(),
       note: e.note ?? '',
+      customId:
+        typeof e.customId === 'string' && e.customId.trim()
+          ? e.customId.trim().normalize('NFC')
+          : null,
       createdAt: e.createdAt ?? nowIso(),
       updatedAt: e.updatedAt ?? e.createdAt ?? nowIso(),
       revision: Number(e.revision ?? 1) || 1,

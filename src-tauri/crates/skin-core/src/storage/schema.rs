@@ -95,6 +95,9 @@ pub struct LibraryEntry {
     pub license: LicenseInfo,
     #[serde(default)]
     pub note: String,
+    /// Optional user-facing ID; unique across the library when set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_id: Option<String>,
     /// ISO-8601.
     pub created_at: String,
     pub updated_at: String,
@@ -227,6 +230,8 @@ pub struct PortableSkinFileV3 {
     pub provenance: Provenance,
     #[serde(default)]
     pub note: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub custom_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

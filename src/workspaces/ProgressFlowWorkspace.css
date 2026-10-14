@@ -210,6 +210,8 @@
   opacity: 0.85;
 }
 .flow-page-tab .is-kit { color: #c48a9a; }
+.flow-page-tab .is-item { color: #9ab87e; }
+.flow-page-tab .is-item-table { color: #9ab87e; }
 .flow-page-tab .is-python { color: #7eb8a2; }
 .flow-page-tab .is-progress { color: #c9a86c; }
 .flow-page-tab .is-navigator { color: #7a9ec4; }
@@ -253,10 +255,13 @@
 .flow-resource-row .is-region { color: #7aaf9a; }
 .flow-resource-row .is-navigator { color: #7a9ec4; }
 .flow-resource-row .is-shop { color: #c49a78; }
+.flow-resource-row .is-items { color: #9ab87e; }
 .flow-resource-row .is-gift { color: #c48a9a; }
 .flow-resource-row .is-goal-def { color: #c4b06a; }
 .flow-resource-row .is-python { color: #7eb8a2; }
 .flow-resource-row .is-kit { color: #c48a9a; }
+.flow-resource-row .is-item { color: #9ab87e; }
+.flow-resource-row .is-item-table { color: #9ab87e; }
 .flow-resource-row .is-progress { color: #c9a86c; }
 
 .flow-resource-tree { flex: 1; overflow: auto; padding: 0 0 12px; }

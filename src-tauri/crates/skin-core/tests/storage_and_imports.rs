@@ -182,6 +182,7 @@ fn storage_with_entry() -> (std::path::PathBuf, Storage, String) {
             provenance: Default::default(),
             license: Default::default(),
             note: String::new(),
+            custom_id: None,
         })
         .unwrap();
     (root, storage, entry.entry_id)
@@ -228,6 +229,7 @@ fn same_skin_id_multiple_entries() {
             provenance: Default::default(),
             license: Default::default(),
             note: String::new(),
+            custom_id: None,
         })
         .unwrap();
     assert_eq!(storage.entries_using(&entry.skin_id).len(), 2);
@@ -259,6 +261,7 @@ fn freeform_tags_and_three_state_folder() {
             provenance: Default::default(),
             license: Default::default(),
             note: String::new(),
+            custom_id: None,
         })
         .unwrap();
 
@@ -370,6 +373,7 @@ fn restart_persistence() {
                 provenance: Default::default(),
                 license: Default::default(),
                 note: String::new(),
+                custom_id: None,
             })
             .unwrap();
     }
@@ -432,7 +436,7 @@ fn skin_code_import_save_preview_restart() {
 
     // save → entry exists; restart keeps it
     let entry = mgr
-        .save_entry(&job.job_id, "导入的皮肤", vec![], vec![], None, false, None, None, None, None)
+        .save_entry(&job.job_id, "导入的皮肤", vec![], vec![], None, false, None, None, None, None, None)
         .unwrap();
     assert_eq!(entry.name, "导入的皮肤");
     drop(mgr);
@@ -472,7 +476,7 @@ fn png_file_import_full_chain() {
     assert_eq!(result.suggested_name, "legacy");
 
     let entry = mgr
-        .save_entry(&job.job_id, "旧版皮肤", vec![], vec![], None, false, None, None, None, None)
+        .save_entry(&job.job_id, "旧版皮肤", vec![], vec![], None, false, None, None, None, None, None)
         .unwrap();
     assert!(matches!(
         entry.source,
@@ -513,7 +517,7 @@ fn portable_v2_and_v1_import() {
         vec![vec!["精灵".to_string(), "森林精灵".to_string()]]
     );
     let entry = mgr
-        .save_entry(&job.job_id, "便携皮肤", vec![], vec![], None, false, None, None, None, None)
+        .save_entry(&job.job_id, "便携皮肤", vec![], vec![], None, false, None, None, None, None, None)
         .unwrap();
     assert_eq!(entry.tags, vec!["森林精灵".to_string()]);
 
@@ -534,7 +538,7 @@ fn portable_v2_and_v1_import() {
     );
     assert_eq!(job1.state, JobState::Ready, "{:?}", job1.error);
     let entry1 = mgr
-        .save_entry(&job1.job_id, "旧便携", vec![], vec![], None, false, None, None, None, None)
+        .save_entry(&job1.job_id, "旧便携", vec![], vec![], None, false, None, None, None, None, None)
         .unwrap();
     assert_eq!(entry1.tags.len(), 2); // 精灵 + 战士
 }
@@ -652,6 +656,7 @@ fn add_meta_entry(
                 note: None,
             },
             note: "备注内容".into(),
+            custom_id: None,
         })
         .unwrap()
 }
@@ -838,6 +843,7 @@ fn portable_v3_export_import_round_trip() {
         license: entry.license.clone(),
         provenance: entry.provenance.clone(),
         note: entry.note.clone(),
+        custom_id: Some("guard-01".into()),
     };
     let bytes = serde_json::to_vec(&portable).unwrap();
 
@@ -854,9 +860,10 @@ fn portable_v3_export_import_round_trip() {
     assert_eq!(result.suggested_license.unwrap().name.as_deref(), Some("MIT"));
     assert_eq!(result.suggested_provenance.unwrap().author.as_deref(), Some("Alice"));
     assert_eq!(result.suggested_note.as_deref(), Some("备注内容"));
+    assert_eq!(result.suggested_custom_id.as_deref(), Some("guard-01"));
 
     let saved = mgr
-        .save_entry(&job.job_id, "新名字", vec![], vec![], None, false, None, None, None, None)
+        .save_entry(&job.job_id, "新名字", vec![], vec![], None, false, None, None, None, None, None)
         .unwrap();
     assert_eq!(saved.skin_id, skin_id);
     assert_ne!(saved.entry_id, entry.entry_id); // new library → new entryId
@@ -864,5 +871,6 @@ fn portable_v3_export_import_round_trip() {
     assert_eq!(saved.license.name.as_deref(), Some("MIT"));
     assert_eq!(saved.provenance.author.as_deref(), Some("Alice"));
     assert_eq!(saved.note, "备注内容");
+    assert_eq!(saved.custom_id.as_deref(), Some("guard-01"));
     assert_eq!(saved.tags, vec!["守卫".to_string()]); // tagPaths flattened at save time
 }

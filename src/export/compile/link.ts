@@ -97,6 +97,8 @@ export function linkArtifacts(artifacts: CompileArtifact[]): CompileDiagnostic[]
     if (key.startsWith('localeKey:')) continue
     // hsInject 可为引擎入口，不必被 `:>>` 引用
     if (key.startsWith('hsInject:')) continue
+    // 启用皮肤由引擎按路径 / skins.json 消费，无需脚本 require
+    if (key.startsWith('skinId:') || key.startsWith('skinCustomId:')) continue
     diagnostics.push({
       severity: 'warning',
       code: 'unused_provide',

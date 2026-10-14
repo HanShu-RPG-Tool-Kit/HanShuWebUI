@@ -4,7 +4,7 @@ import { createFlow, isObject, parseFlow } from './model'
 import { parseJsonValue } from '../../utils/strictJson'
 
 export const FLOW_STORAGE_KEY = 'hanshu.progressWorkspace.v1'
-export type FlowPackageId = 'script' | 'progress' | 'story' | 'actor' | 'reputation' | 'region' | 'navigator' | 'shop' | 'gift'
+export type FlowPackageId = 'script' | 'progress' | 'story' | 'actor' | 'reputation' | 'region' | 'navigator' | 'shop' | 'items' | 'gift'
 export type FlowDocument = {
   key: string
   name: string
@@ -42,7 +42,7 @@ export type FlowWorkspaceState = {
   split?: FlowEditorSplit | null
 }
 
-const PACKAGE_IDS = new Set<FlowPackageId>(['script', 'progress', 'story', 'actor', 'reputation', 'region', 'navigator', 'shop', 'gift'])
+const PACKAGE_IDS = new Set<FlowPackageId>(['script', 'progress', 'story', 'actor', 'reputation', 'region', 'navigator', 'shop', 'items', 'gift'])
 const readPackage = (value: unknown): FlowPackageId => typeof value === 'string' && PACKAGE_IDS.has(value as FlowPackageId) ? value as FlowPackageId : 'story'
 
 export function stampDocument(document: FlowDocument, touch = true): FlowDocument {

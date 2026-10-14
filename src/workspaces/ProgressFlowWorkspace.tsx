@@ -9,12 +9,15 @@ import { FlowDocumentProperties } from './progress/FlowDocumentProperties'
 import { FlowExplorer } from './progress/FlowExplorer'
 import { PageList } from './progress/PageList'
 import { EditorSplit } from './progress/EditorSplit'
-import { closeAllInGroup, closeInGroup, closeOthersInGroup, closeRightInGroup, focusedGroupId, focusGroup, joinGroups, moveTab, normalizeGroups, openInGroup, readGroup, setSplitRatio, splitTab, togglePinInGroup, type GroupId, type SplitZone } from './progress/editorGroups'
-import { ensurePackageSections, isBuiltinGoalFolder, isKitDocument, isNavigationDocument, isProgressDocument, isScriptDocument, isSectionFolder, packageAcceptsImportFile, packageAllowsDocuments, packageDocumentExt, requireAvailableName, renameFlowEntry, resourceName, uniqueDocumentName } from './progress/library'
+import { closeAllInGroup, closeInGroup, closeOthersInGroup, closeRightInGroup, focusedGroupId, focusGroup, joinGroups, moveTab, normalizeGroups, openAsRightSplit, openInGroup, openOppositeToKey, readGroup, setSplitRatio, splitTab, togglePinInGroup, type GroupId, type SplitZone } from './progress/editorGroups'
+import { ensurePackageSections, folderPath, isBuiltinGoalFolder, isItemDocument, isItemLibraryTableKey, ITEM_LIBRARY_TABLE_KEY, isKitDocument, isNavigationDocument, isProgressDocument, isScriptDocument, isSectionFolder, packageAcceptsImportFile, packageAllowsDocuments, packageDocumentExt, requireAvailableName, renameFlowEntry, resourceName, stripItemLibraryTable, uniqueDocumentName, withItemLibraryTable } from './progress/library'
 import { createFlowDocument, downloadFlowFile, importFlowDocument, stampDocument, type FlowDocument, type FlowPackageId, type FlowWorkspaceState } from './progress/storage'
 import { createKit, kitRefFromFileName, readKitSource, stringifyKit, parseKit } from './progress/kit'
 import { createProgress, createProgressLocaleSeeds, readProgressSource, stringifyProgress, parseProgress } from './progress/progressDoc'
 import { createNavigationPoint, readNavigationSource, stringifyNavigationPoint, parseNavigationPoint } from './progress/navigationPoint'
+import { createItem, itemFromItemStackSource, parseItem, readItemSource, stringifyItem } from './progress/itemDoc'
+import { isItemStackFileName } from './progress/itemstack'
+import { itemRefFromFileName } from './progress/kit'
 import {
   buildGoalDefinitionCatalog,
   isBuiltinGoalDocumentKey,
@@ -25,6 +28,8 @@ import {
 import { KitEditor } from './progress/KitEditor'
 import { ProgressEditor } from './progress/ProgressEditor'
 import { NavigationEditor } from './progress/NavigationEditor'
+import { ItemEditor } from './progress/ItemEditor'
+import { ItemLibraryTable } from './progress/ItemLibraryTable'
 import { useEditorFontSize } from './progress/editorFont'
 import {
   defaultFlowLocaleSeeds,
@@ -111,9 +116,9 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     }),
     [documents, ui],
   )
-  /** 先叠虚拟内置文档，再清理页条——否则内置页会被当成失效键清掉 */
+  /** 先叠虚拟内置文档 / 物品库表视图，再清理页条——否则虚拟页会被当成失效键清掉 */
   const state = useMemo(
-    () => normalizeGroups(withBuiltinGoalDefinitions(baseState)),
+    () => normalizeGroups(withItemLibraryTable(withBuiltinGoalDefinitions(baseState))),
     [baseState],
   )
   const stateRef = useRef(state)
@@ -121,7 +126,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
 
   const setState = (change: FlowWorkspaceState | ((previous: FlowWorkspaceState) => FlowWorkspaceState)) => {
     const previous = stateRef.current
-    const next = stripBuiltinGoalDefinitions(typeof change === 'function' ? change(previous) : change)
+    const next = stripItemLibraryTable(stripBuiltinGoalDefinitions(typeof change === 'function' ? change(previous) : change))
     const nextUi = {
       openKeys: next.openKeys ?? [],
       activeKey: next.activeKey ?? null,
@@ -272,6 +277,8 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
   const kitDoc = doc ? isKitDocument(doc) : false
   const progressDoc = doc ? isProgressDocument(doc) : false
   const navigationDoc = doc ? isNavigationDocument(doc) : false
+  const itemTableDoc = doc ? isItemLibraryTableKey(doc.key) : false
+  const itemDoc = doc ? isItemDocument(doc) : false
   const goalCatalog = useMemo(() => buildGoalDefinitionCatalog(state), [state.documents, state.folders])
   const kitCatalog = useMemo(() => {
     const map = new Map<string, ReturnType<typeof readKitSource>['kit']>()
@@ -290,18 +297,30 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     options.sort((a, b) => a.ref.localeCompare(b.ref, 'zh-CN'))
     return { map, options }
   }, [state.documents])
+  const itemCatalog = useMemo(() => {
+    const map = new Map<string, ReturnType<typeof readItemSource>['doc']>()
+    for (const item of state.documents) {
+      if (!isItemDocument(item)) continue
+      const ref = itemRefFromFileName(item.name)
+      if (!ref || map.has(ref)) continue
+      const parsedItem = readItemSource(item.source)
+      if (parsedItem.error) continue
+      map.set(ref, parsedItem.doc)
+    }
+    return map
+  }, [state.documents])
   const parsed = useMemo(() => {
-    if (!doc || scriptDoc || kitDoc || progressDoc || navigationDoc) return { flow: null, error: '' }
+    if (!doc || scriptDoc || kitDoc || progressDoc || navigationDoc || itemDoc || itemTableDoc) return { flow: null, error: '' }
     try { return { flow: parseFlow(doc.source), error: '' } }
     catch (error) { return { flow: null, error: error instanceof Error ? error.message : String(error) } }
-  }, [doc, scriptDoc, kitDoc, progressDoc, navigationDoc])
+  }, [doc, scriptDoc, kitDoc, progressDoc, navigationDoc, itemDoc, itemTableDoc])
   const docByKey = useMemo(() => new Map(state.documents.map((item) => [item.key, item])), [state.documents])
   const explorerState = useMemo(() => ({ ...state, activeKey: focusedKey }), [state, focusedKey])
   const issues = useMemo(() => parsed.flow ? validateFlow(parsed.flow) : [], [parsed.flow])
   const cycleWarning = issues.find(issue => issue.path === 'graph' && issue.message.includes('环'))
   const locked = !projectBound || editor !== null || propertiesKey !== null
   const propertiesDoc = propertiesKey ? state.documents.find((item) => item.key === propertiesKey) ?? null : null
-  const flowLocalizable = Boolean(doc && !scriptDoc && !kitDoc && !progressDoc && !navigationDoc)
+  const flowLocalizable = Boolean(doc && !scriptDoc && !kitDoc && !progressDoc && !navigationDoc && !itemDoc && !itemTableDoc)
   const localeDoc = Boolean(doc && (progressDoc || flowLocalizable || kitDoc || navigationDoc))
 
   // 当前焦点文档的语义键 TextMap（literal）
@@ -498,7 +517,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
   }, [storageError, projectBound])
 
   function changeSource(source: string, group = false, key = doc?.key) {
-    if (!key || isBuiltinGoalDocumentKey(key)) return
+    if (!key || isBuiltinGoalDocumentKey(key) || isItemLibraryTableKey(key)) return
     const current = state.documents.find((item) => item.key === key)
     if (!current || source === current.source) return
     const previous = history.get(key)
@@ -621,7 +640,18 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     updateGroups((previous) => focusGroup(previous, id))
   }
   function selectDocument(key: string, group: GroupId = focusedGroup) {
+    if (isItemLibraryTableKey(key)) {
+      updateGroups((previous) => openAsRightSplit(previous, key))
+      setProgressSourceKey(null)
+      setNotice('')
+      return
+    }
     updateGroups((previous) => openInGroup(previous, group, key))
+    setProgressSourceKey(null)
+    setNotice('')
+  }
+  function openItemFromTable(itemKey: string) {
+    updateGroups((previous) => openOppositeToKey(previous, ITEM_LIBRARY_TABLE_KEY, itemKey, focusedGroup))
     setProgressSourceKey(null)
     setNotice('')
   }
@@ -677,6 +707,14 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
               package: packageId,
               folderId,
             })
+            : ext === '.item'
+              ? stampDocument({
+                key: crypto.randomUUID(),
+                name,
+                source: stringifyItem(createItem()),
+                package: packageId,
+                folderId,
+              })
         : { ...createFlowDocument(createFlow(undefined, title), packageId), name, folderId, package: packageId }
     if (ext === '.progress') queueLocaleSeeds(next.key, createProgressLocaleSeeds(title))
     else if (ext === '.hflow') queueLocaleSeeds(next.key, defaultFlowLocaleSeeds(title))
@@ -694,7 +732,8 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
       : packageId === 'gift' ? '.kit,application/json'
         : packageId === 'progress' ? '.progress,application/json'
           : packageId === 'navigator' ? '.nav,.json,application/json'
-            : '.hflow,.json,application/json'
+            : packageId === 'items' ? '.item,.itemstack,.json,application/json'
+              : '.hflow,.json,application/json'
     input.click()
   }
   async function importFiles(files: File[], target = importFolder.current) {
@@ -708,7 +747,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     const accepted = files.filter((file) => packageAcceptsImportFile(pkg, file.name))
     const skipped = files.length - accepted.length
     if (!accepted.length) {
-      setNotice(pkg === 'script' ? '请放入 .py 脚本。' : pkg === 'gift' ? '请放入 .kit 礼包。' : pkg === 'progress' ? '请放入 .progress 进度。' : pkg === 'navigator' ? '请放入 .nav 导航点。' : '请放入 .hflow 或 JSON 树图文档。')
+      setNotice(pkg === 'script' ? '请放入 .py 脚本。' : pkg === 'gift' ? '请放入 .kit 礼包。' : pkg === 'progress' ? '请放入 .progress 进度。' : pkg === 'navigator' ? '请放入 .nav 导航点。' : pkg === 'items' ? '请放入 .item 或 .itemstack。' : '请放入 .hflow 或 JSON 树图文档。')
       return
     }
     setBusy(true)
@@ -766,6 +805,21 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
           }))
           continue
         }
+        if (pkg === 'items') {
+          const raw = await file.text()
+          const source = isItemStackFileName(file.name)
+            ? stringifyItem(itemFromItemStackSource(raw))
+            : stringifyItem(parseItem(raw))
+          const name = uniqueDocumentName({ ...state, documents: [...state.documents, ...documents] }, file.name, pkg, folderId)
+          documents.push(stampDocument({
+            key: crypto.randomUUID(),
+            name,
+            source,
+            package: pkg,
+            folderId,
+          }))
+          continue
+        }
         const imported = importFlowDocument(file.name, await file.text(), pkg)
         imported.folderId = folderId
         imported.name = uniqueDocumentName({ ...state, documents: [...state.documents, ...documents] }, imported.name, pkg, folderId)
@@ -777,7 +831,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
         documents.map((item) => item.key),
       ))
       setSelection({ kind: 'flow' })
-      const kind = pkg === 'script' ? '个脚本' : pkg === 'gift' ? '个礼包' : pkg === 'progress' ? '个进度' : pkg === 'navigator' ? '个导航点' : '份树图文档'
+      const kind = pkg === 'script' ? '个脚本' : pkg === 'gift' ? '个礼包' : pkg === 'progress' ? '个进度' : pkg === 'navigator' ? '个导航点' : pkg === 'items' ? '个物品' : '份树图文档'
       setNotice(skipped > 0 ? `已导入 ${documents.length} ${kind}，跳过 ${skipped} 个不匹配的文件。` : `已导入 ${documents.length} ${kind}。`)
     } catch (error) { setNotice(`导入失败：${String(error)}`) }
     finally { setBusy(false) }
@@ -786,9 +840,9 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     if (locked || busy) return
     const item = state.documents.find((d) => d.key === key)
     if (!item) return
-    if (isScriptDocument(item) || isKitDocument(item) || isProgressDocument(item) || isNavigationDocument(item)) {
+    if (isScriptDocument(item) || isKitDocument(item) || isProgressDocument(item) || isNavigationDocument(item) || isItemDocument(item)) {
       downloadFlowFile(item.name, item.source)
-      setNotice(isKitDocument(item) ? '已下载礼包。' : isProgressDocument(item) ? '已下载进度。' : isNavigationDocument(item) ? '已下载导航点。' : '已下载脚本。')
+      setNotice(isItemDocument(item) ? '已下载物品。' : isKitDocument(item) ? '已下载礼包。' : isProgressDocument(item) ? '已下载进度。' : isNavigationDocument(item) ? '已下载导航点。' : '已下载脚本。')
       return
     }
     try {
@@ -827,7 +881,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     setNotice('已更新流程属性。')
   }
   function removeResources({ documents: documentKeys, folders: folderKeys }: { documents: string[]; folders: string[] }) {
-    const docs = documentKeys.filter((key) => !isBuiltinGoalDocumentKey(key))
+    const docs = documentKeys.filter((key) => !isBuiltinGoalDocumentKey(key) && !isItemLibraryTableKey(key))
     const foldersToRemove = folderKeys.filter((key) => !isBuiltinGoalFolder(key) && !isSectionFolder(key))
     if (locked || busy || (!docs.length && !foldersToRemove.length)) return
     const parts = [
@@ -904,16 +958,19 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     const paneKit = isKitDocument(paneDoc)
     const paneProgress = isProgressDocument(paneDoc)
     const paneNavigation = isNavigationDocument(paneDoc)
+    const paneItemTable = isItemLibraryTableKey(paneDoc.key)
+    const paneItem = isItemDocument(paneDoc)
     const paneKitParsed = paneKit ? readKitSource(paneDoc.source) : null
     const paneProgressParsed = paneProgress ? readProgressSource(paneDoc.source, goalCatalog.definitions) : null
     const paneNavigationParsed = paneNavigation ? readNavigationSource(paneDoc.source) : null
+    const paneItemParsed = paneItem ? readItemSource(paneDoc.source) : null
     const paneCatalogOptions = kitCatalog.options.filter((option) => option.ref !== kitRefFromFileName(paneDoc.name))
     const paneCatalog = new Map(kitCatalog.map)
     const selfRef = kitRefFromFileName(paneDoc.name)
     if (selfRef) paneCatalog.delete(selfRef)
     let paneFlow: ProgressFlow | null = null
     let paneError = ''
-    if (!paneScript && !paneKit && !paneProgress && !paneNavigation) {
+    if (!paneScript && !paneKit && !paneProgress && !paneNavigation && !paneItem && !paneItemTable) {
       // 焦点文档复用 memo 过的 parse，避免父级重渲染换掉 flow 引用打断拖拽
       if (paneDoc.key === focusedKey && parsed.flow) paneFlow = parsed.flow
       else {
@@ -978,6 +1035,46 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
         />
       </div>
     }
+    if (paneItemTable) {
+      return <div className="flow-kit-pane">
+        <ItemLibraryTable
+          documents={state.documents}
+          folderLabel={(document) => folderPath(state, document.package, document.folderId ?? null)}
+          onOpen={openItemFromTable}
+        />
+      </div>
+    }
+    if (paneItem && paneItemParsed) {
+      if (progressSourceKey === paneDoc.key) {
+        return <div className="flow-source-pane flow-script-pane" aria-label=".item 源码">
+          <div className="flow-script-readonly-bar">
+            <span>只读 · .item JSON</span>
+            <button type="button" onClick={() => setProgressSourceKey(null)}>返回编辑器</button>
+          </div>
+          <div className="flow-script-editor">
+            <Editor
+              height="100%"
+              language="json"
+              theme={HANSHU_THEME_ID}
+              value={paneDoc.source}
+              path={`progress-item-source://g${group}/${paneDoc.key}/${paneDoc.name}`}
+              beforeMount={registerHanshuLanguage}
+              options={{ fontSize: editorFontSize, mouseWheelZoom: true, minimap: { enabled: false }, wordWrap: 'on', automaticLayout: true, scrollBeyondLastLine: false, padding: { top: 8 }, readOnly: true, domReadOnly: true }}
+            />
+          </div>
+        </div>
+      }
+      return <div className="flow-kit-pane">
+        <ItemEditor
+          key={paneDoc.key}
+          doc={paneItemParsed.doc}
+          error={paneItemParsed.error}
+          selfRef={itemRefFromFileName(paneDoc.name)}
+          disabled={disabledPane}
+          onChange={(source) => { if (!disabledPane) changeSource(source, true, paneDoc.key) }}
+        />
+      </div>
+    }
     if (paneKit && paneKitParsed) {
       return <div className="flow-kit-pane">
         <KitEditor
@@ -988,6 +1085,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
           selfRef={selfRef}
           catalog={paneCatalog}
           catalogOptions={paneCatalogOptions}
+          itemCatalog={itemCatalog}
           disabled={disabledPane}
           resolveText={paneDoc.key === focusedKey ? resolveLocaleText : undefined}
           setText={paneDoc.key === focusedKey ? setLocaleText : undefined}
@@ -1140,7 +1238,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
             secondary={renderGroup(1)}
           />
         ) : (state.openKeys ?? []).length ? renderGroup(0) : (
-          <div className="flow-empty"><span className="flow-empty-icon">◇</span><h2>设计一个故事流程</h2><p>在左侧「故事流程」分类中新建或导入 .hflow；「脚本」可新建 .py；「进度」可新建 .progress 委托表单；「导航器」可新建 .nav 导航点；「礼包」可新建 .kit。打开的文档会出现在上方页条；把页拖到编辑区的左右上下边缘即可拆分对照。</p></div>
+          <div className="flow-empty"><span className="flow-empty-icon">◇</span><h2>设计一个故事流程</h2><p>在左侧「故事流程」分类中新建或导入 .hflow；「脚本」可新建 .py；「进度」可新建 .progress 委托表单；「导航器」可新建 .nav 导航点；「物品库」可新建 .item 或拖入 .itemstack；「礼包」可新建 .kit。打开的文档会出现在上方页条；把页拖到编辑区的左右上下边缘即可拆分对照。</p></div>
         )}
       </main>
     </div>
@@ -1153,7 +1251,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
             onChange={(tag) => { setLocale(tag); saveLocale(tag) }}
           />
         )}
-        <span className="flow-statusbar-type">{navigationDoc ? '导航点 · .nav' : progressDoc ? '进度 · .progress' : kitDoc ? '礼包 · .kit' : scriptDoc ? '脚本 · Python' : '故事流程 · 原型草稿'}</span>
+        <span className="flow-statusbar-type">{itemTableDoc ? '物品库 · 表视图' : itemDoc ? '物品 · .item' : navigationDoc ? '导航点 · .nav' : progressDoc ? '进度 · .progress' : kitDoc ? '礼包 · .kit' : scriptDoc ? '脚本 · Python' : '故事流程 · 原型草稿'}</span>
       </span>
     </footer>
     {editor && active && (
