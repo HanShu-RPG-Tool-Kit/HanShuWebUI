@@ -49,6 +49,60 @@ function sliceFrom(source: string, marker: string, limit = 4000): string {
   return source.slice(at, at + limit)
 }
 
+/**
+ * 取出名字以 `prefix` 开头的所有 `@keyframes` 块（按大括号配平，不看位置）。
+ *
+ * 为什么不用"从 A 切到 B"那种定长/定界切片：断言的强度会变成"白闪只要不出现在这段里就行"，
+ * 把它写到文件别处就绕过去了。这里按**名字**找，写到哪里都能查到。
+ */
+function keyframeBlocks(css: string, prefix: string): Array<{ name: string; body: string }> {
+  const blocks: Array<{ name: string; body: string }> = []
+  const pattern = new RegExp(`@keyframes\\s+(${prefix}[\\w-]*)\\s*\\{`, 'g')
+  for (const match of css.matchAll(pattern)) {
+    const name = match[1]!
+    const open = match.index + match[0].length - 1
+    let depth = 0
+    let end = open
+    for (let i = open; i < css.length; i++) {
+      if (css[i] === '{') depth++
+      else if (css[i] === '}') {
+        depth--
+        if (depth === 0) {
+          end = i
+          break
+        }
+      }
+    }
+    blocks.push({ name, body: css.slice(open, end + 1) })
+  }
+  return blocks
+}
+
+/** 取出每一处提到 `needle` 的规则体（从该处往后第一个 `{` 起，按大括号配平） */
+function ruleBodiesAround(css: string, needle: string): string[] {
+  const bodies: string[] = []
+  let at = css.indexOf(needle)
+  while (at >= 0) {
+    const open = css.indexOf('{', at)
+    assert.ok(open >= 0, `「${needle}」后面找不到 {（写法变了就把这条断言一起改）`)
+    let depth = 0
+    let end = open
+    for (let i = open; i < css.length; i++) {
+      if (css[i] === '{') depth++
+      else if (css[i] === '}') {
+        depth--
+        if (depth === 0) {
+          end = i
+          break
+        }
+      }
+    }
+    bodies.push(css.slice(open, end + 1))
+    at = css.indexOf(needle, end)
+  }
+  return bodies
+}
+
 const editor = readCode('src/monaco/textEditor.ts')
 
 test('动画的触发源只认增量路径：批量成键（打开文件 / 换语言）不进集合', () => {
@@ -153,38 +207,56 @@ test('render 只读不写：集合的作废必须推迟到本帧绘制前', () =
 
 test('动画是淡入而不是闪光，且不动几何', () => {
   const css = readCode('src/App.css')
-  const ruleAt = css.indexOf('.hs-lang-unit.is-keying-in {')
-  assert.ok(ruleAt >= 0, '找不到 .hs-lang-unit.is-keying-in 规则')
-  const keyframesAt = css.indexOf('@keyframes hs-lang-key-in', ruleAt)
-  assert.ok(keyframesAt > ruleAt, '找不到 @keyframes hs-lang-key-in（改名了就把这条断言一起改）')
-  const rule = css.slice(ruleAt, keyframesAt)
-
-  /*
-   * 只动 opacity，不碰任何几何：宽高是逐键实时改写的（见 applyLiveBox），
-   * 动画里掺进 width / height / padding / border / margin 会与同一拍已经重排好的正文错开。
-   */
-  for (const banned of ['width', 'height', 'padding', 'border:', 'margin']) {
-    assert.equal(
-      rule.includes(banned),
-      false,
-      `成键动画不许碰 ${banned}：几何是逐键实时改写的，动画只该动透明度`,
-    )
-  }
 
   /*
    * 必须是**淡入**（opacity 0 → 1），不能是"白闪 / 光环淡出"：
    * 框底本来就是半透明黄，白闪退去读起来是"先过曝、再落到正常色"（闪一下然后变暗）。
    * 这条断言就是那次返工的防线。
+   *
+   * 检查范围按**名字**取（全文件所有 `hs-lang-key-*` 关键帧 + 所有提到 `is-keying-in`
+   * 的规则体），不是"从 A 切到 B"的切片：早先按 `keyframesAt → prefers-reduced-motion`
+   * 切片时，把整套白闪写进文件末尾（降级块之后）就能绕过断言 —— 那样断言守的变成了
+   * "白闪只要不出现在这一段就行"，而它该守的是"白闪根本不该存在"。
    */
-  const frames = css.slice(keyframesAt, css.indexOf('prefers-reduced-motion', keyframesAt))
-  assert.ok(frames.includes('opacity: 0'), '淡入必须从 opacity: 0 起')
-  assert.ok(frames.includes('opacity: 1'), '淡入必须到 opacity: 1 止')
-  for (const flashy of ['box-shadow', 'background:', '255, 255, 255']) {
-    assert.equal(
-      frames.includes(flashy),
-      false,
-      `成键动画不该再出现 ${flashy}：白闪 / 光环淡出就是"闪光然后变暗"那种观感的来源`,
-    )
+  const allKeyframes = keyframeBlocks(css, 'hs-lang-key')
+  assert.deepEqual(
+    allKeyframes.map((block) => block.name),
+    ['hs-lang-key-in'],
+    '成键动画只该有 hs-lang-key-in 一组关键帧（白闪 / 光环那两组必须已删干净）',
+  )
+  const fade = allKeyframes[0]!
+  assert.ok(fade.body.includes('opacity: 0'), '淡入必须从 opacity: 0 起')
+  assert.ok(fade.body.includes('opacity: 1'), '淡入必须到 opacity: 1 止')
+
+  const keyingRules = ruleBodiesAround(css, 'is-keying-in')
+  assert.equal(
+    keyingRules.length,
+    2,
+    'is-keying-in 只该出现在两处规则里：动画本体 + prefers-reduced-motion 降级' +
+      '（多出来的就是有人又往成键动画上叠了别的东西）',
+  )
+
+  /*
+   * 逐个查所有相关块：
+   * - 不许碰几何 —— 宽高是逐键实时改写的（见 applyLiveBox），掺进 width / height /
+   *   padding / border / margin 会与同一拍已经重排好的正文错开一帧。
+   * - 不许出现白闪 / 光环 —— 那是"闪光然后变暗"那种观感的来源。
+   */
+  for (const body of [...keyingRules, ...allKeyframes.map((block) => block.body)]) {
+    for (const banned of ['width', 'height', 'padding', 'border:', 'margin']) {
+      assert.equal(
+        body.includes(banned),
+        false,
+        `成键动画不许碰 ${banned}：几何是逐键实时改写的，动画只该动透明度`,
+      )
+    }
+    for (const flashy of ['box-shadow', 'background:', '255, 255, 255']) {
+      assert.equal(
+        body.includes(flashy),
+        false,
+        `成键动画里不该出现 ${flashy}：白闪 / 光环淡出就是"闪光然后变暗"那种观感的来源`,
+      )
+    }
   }
 
   // 关了动效就不放（纯装饰，没有它成键一样成立）
