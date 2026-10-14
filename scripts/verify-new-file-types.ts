@@ -34,6 +34,7 @@ import {
   type NewFileType,
 } from '../src/newFileTypes.ts'
 import { EXPLORER_ICON_KINDS, fileIconKind, sourceIconKind } from '../src/explorerIcons.tsx'
+import { shouldHoldWheel } from '../src/newFileMenuWheel.ts'
 import { analyzeHsDiagnostics } from '../src/monaco/hsDiagnostics.ts'
 import { analyzeCharDiagnostics } from '../src/monaco/charDiagnostics.ts'
 import { parseCharTextSpans } from '../src/monaco/charTextSpans.ts'
@@ -234,10 +235,99 @@ assert.ok(
 )
 const wheelHandlerAt = explorerSource.indexOf('const onWheel = (event: WheelEvent)')
 assert.ok(wheelHandlerAt >= 0, '找不到 onWheel（改名了就把这条断言一起改）')
+const wheelHandler = explorerSource.slice(wheelHandlerAt, wheelHandlerAt + 500)
 assert.ok(
-  /preventDefault\(\)/.test(explorerSource.slice(wheelHandlerAt, wheelHandlerAt + 500)),
+  /preventDefault\(\)/.test(wheelHandler),
   'onWheel 里要在会穿透时 preventDefault：否则滚轮去滚资源树，菜单照样被关掉',
 )
+/*
+ * 但"里面有个 preventDefault"远远不够 —— **无条件** preventDefault 也能过上面那条，
+ * 而那正是"滚轮完全不可用"（用户报的第二个症状）。
+ * 判据必须来自那个纯函数，且必须拿真实尺寸算过（见下面的穷举）。
+ */
+assert.ok(
+  /shouldHoldWheel\(\{/.test(wheelHandler) &&
+    /scrollHeight: el\.scrollHeight/.test(wheelHandler) &&
+    /deltaY: event\.deltaY/.test(wheelHandler),
+  'onWheel 必须把真实尺寸与方向交给 shouldHoldWheel 判 —— 无条件 preventDefault 会把滚轮彻底废掉',
+)
+
+// ===== 2d. 拦与不拦的判据：纯算术穷举 =====
+
+/*
+ * `shouldHoldWheel` 就是 Explorer 里用的那一个（上面那条断言钉住了"用的是它"），
+ * 所以这里可以不起浏览器、不模拟 DOM，直接把边界算干净。
+ *
+ * 两条不变量：
+ *   INV1 不拦 → 菜单必须真的能沿这个方向滚（否则浏览器会链给树，树一滚菜单就被关）
+ *   INV2 拦 → 被挡掉的真实可滚量 ≤ 1px（否则就是"滚轮不可用"）
+ * `deltaY === 0` 不参与 INV1：纵向本来就不会滚，也就没有穿透。
+ */
+const sizes = [0, 1, 2, 50, 120, 384, 500, 704, 1064]
+const overflows = [0, 1, 2, 3, 5, 20, 100, 400]
+const positions = [0, 1, 2, 3, 10, 50, 99, 100, 400]
+const deltas = [200, 100, 3, 1, 0, -1, -3, -100, -200]
+
+let heldCases = 0
+let freeCases = 0
+for (const clientHeight of sizes) {
+  for (const overflow of overflows) {
+    const scrollHeight = clientHeight + overflow
+    for (const rawTop of positions) {
+      const scrollTop = Math.max(0, Math.min(rawTop, scrollHeight - clientHeight))
+      for (const deltaY of deltas) {
+        const held = shouldHoldWheel({ scrollTop, clientHeight, scrollHeight, deltaY })
+        if (held) {
+          heldCases++
+          // INV2：拦下时最多只挡掉 1px（容差，见函数里的注释）
+          //
+          // `clientHeight === 0`（元素还没量到尺寸）要单独算：可视高度为 0 时
+          // 浏览器根本没有"可滚动的行程"，挡掉的就是 0px —— 不能拿 scrollHeight 当行程。
+          const roomUp = clientHeight > 0 ? scrollTop : 0
+          const roomDown = clientHeight > 0 ? scrollHeight - clientHeight - scrollTop : 0
+          const blocked = deltaY < 0 ? Math.min(roomUp, -deltaY) : deltaY > 0 ? Math.min(roomDown, deltaY) : 0
+          assert.ok(
+            blocked <= 1,
+            `拦下了不该拦的一下：scrollTop=${scrollTop} client=${clientHeight} ` +
+              `scroll=${scrollHeight} deltaY=${deltaY} 会挡掉 ${blocked}px 的真实滚动`,
+          )
+        } else {
+          freeCases++
+          if (deltaY !== 0) {
+            // INV1：不拦就必须真能滚
+            assert.ok(
+              clientHeight > 0 && scrollHeight > clientHeight + 1,
+              `没拦但菜单不可滚：scrollTop=${scrollTop} client=${clientHeight} ` +
+                `scroll=${scrollHeight} deltaY=${deltaY} —— 这一下会穿透去滚资源树，菜单被关掉`,
+            )
+            const room = deltaY > 0 ? scrollHeight - clientHeight - scrollTop : scrollTop
+            assert.ok(
+              room > 0,
+              `没拦但该方向已到头：scrollTop=${scrollTop} client=${clientHeight} ` +
+                `scroll=${scrollHeight} deltaY=${deltaY}`,
+            )
+          }
+        }
+      }
+    }
+  }
+}
+assert.ok(heldCases > 0 && freeCases > 0, '穷举两个分支都要覆盖到（否则断言是空跑）')
+
+// 逐条钉死几个手算的边界，免得穷举的网格恰好漏掉它们
+const wheeling = (scrollTop: number, clientHeight: number, scrollHeight: number, deltaY: number) =>
+  shouldHoldWheel({ scrollTop, clientHeight, scrollHeight, deltaY })
+assert.equal(wheeling(0, 500, 500, 100), true, '内容不溢出：滚轮要拦下（不能去滚树）')
+assert.equal(wheeling(0, 500, 501, 100), true, '只溢出 1px：按容差判为不可滚，拦下（最多挡 1px）')
+assert.equal(wheeling(0, 500, 502, 100), false, '还能往下滚：不要拦，交给原生滚')
+assert.equal(wheeling(0, 500, 900, -100), true, '已经在顶、还要往上：拦下')
+assert.equal(wheeling(2, 500, 900, -100), false, '不在顶、向上还有余量：不要拦')
+assert.equal(wheeling(1, 500, 900, 100), false, '不在底、向下还有余量：不要拦')
+assert.equal(wheeling(399, 500, 900, 100), true, '正好到底、还要往下：拦下')
+assert.equal(wheeling(398, 500, 900, 100), false, '离底还有 1px：不要拦')
+assert.equal(wheeling(1, 500, 502, 100), true, '已经到底（差 1px 也算到底）：拦下')
+assert.equal(wheeling(0, 0, 0, 100), true, '退化尺寸（还没量到）：拦下，别去滚树')
+assert.equal(wheeling(0, 500, 900, 0), false, 'deltaY = 0：纵向没有穿透这回事')
 
 // ===== 3. 每条 seed 都能被各自的解析器吃回去 =====
 

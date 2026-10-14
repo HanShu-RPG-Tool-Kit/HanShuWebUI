@@ -27,6 +27,7 @@ import {
   type NewFileType,
   type NewFileTypeId,
 } from './newFileTypes'
+import { shouldHoldWheel } from './newFileMenuWheel'
 import {
   WORKSPACE_GROUP_ORDER,
   groupDirPrefix,
@@ -494,12 +495,17 @@ function NewFileTypeMenu({
     const el = ref.current
     const onWheel = (event: WheelEvent) => {
       if (!el) return
-      const scrollable = el.scrollHeight > el.clientHeight + 1
-      const atTop = el.scrollTop <= 0
-      const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 1
-      const wouldChain =
-        !scrollable || (event.deltaY < 0 && atTop) || (event.deltaY > 0 && atBottom)
-      if (wouldChain) event.preventDefault()
+      // 判据本身是纯算术，抽在 newFileMenuWheel 里穷举测（这里只管取数与拦）
+      if (
+        shouldHoldWheel({
+          scrollTop: el.scrollTop,
+          clientHeight: el.clientHeight,
+          scrollHeight: el.scrollHeight,
+          deltaY: event.deltaY,
+        })
+      ) {
+        event.preventDefault()
+      }
     }
     window.addEventListener('mousedown', onMouseDown)
     // 捕获阶段：资源树自己的滚动容器不会把事件冒泡到 window
