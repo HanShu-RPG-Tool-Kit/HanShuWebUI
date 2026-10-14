@@ -10,6 +10,14 @@ import {
 import Editor, { type OnMount } from '@monaco-editor/react'
 import { Explorer } from '../Explorer'
 import {
+  findNewFileType,
+  newFileName,
+  validateNewFileBase,
+  type NewFileSeedContext,
+  type NewFileTypeId,
+} from '../newFileTypes'
+import { parseGoalDefinitionsFromSource } from '../workspaces/progress/goalDefinitions'
+import {
   CHAR_THEME_ID,
   registerCharLanguage,
 } from '../monaco/charLanguage'
@@ -432,6 +440,15 @@ export const ScriptWorkspace = forwardRef<
     progress: number
     phase: 'process' | 'write'
   } | null>(null)
+  /**
+   * 「新建剧本」菜单项的请求号：**值变化**即请求资源管理器打开类型选择器（0 = 从未请求）。
+   *
+   * 菜单在 App 那一层，类型选择器在资源树里（它需要树上的锚点位置），中间只能过这么
+   * 一个计数器。用计数器而不是布尔量：连点两次菜单项时布尔量第二次不产生变化，
+   * 菜单就不会重开。真正打开由 `Explorer` 负责 —— 目标包得按"当前活动文件在哪个包"算，
+   * 那是资源树的知识。
+   */
+  const [newFileMenuRequest, setNewFileMenuRequest] = useState(0)
 
   // —— 录音棚（右侧可调宽面板，与 Agent 窗口一样从底部栏唤出）——
   const [studioOpen, setStudioOpen] = useState(false)
@@ -1805,23 +1822,53 @@ export const ScriptWorkspace = forwardRef<
     })
   }
 
-  const handleNewScript = (packageId: string) => {
-    const name = window.prompt(
-      `文件名（后缀须为 ${MANUAL_FILE_EXTENSIONS_LABEL}）`,
-      '新剧本.hs',
-    )
-    if (name == null) return
+  /**
+   * 新建一个文件。**返回 null 表示建成，返回字符串表示要显示在命名行里的原因。**
+   *
+   * 取代了旧的 `handleNewScript`：那时候用户在 `window.prompt` 里连后缀一起手打，
+   * 提示语还得把 `MANUAL_FILE_EXTENSIONS_LABEL` 抄一遍。现在类型来自
+   * `newFileTypes` 注册表（后缀由类型决定，用户只给基名），初始正文也由注册表按类型播种 ——
+   * 空正文对 `.progress` / `.kit` / `.hflow` 就是一份打开即报错的坏文档。
+   *
+   * 错误**返回**而不是 `window.alert`：调用方（资源树）把它画在输入框下面，
+   * 用户刚敲的名字还在，改一下就能重试。
+   */
+  const handleNewFile = (
+    packageId: string,
+    typeId: NewFileTypeId,
+    base: string,
+  ): string | null => {
+    const type = findNewFileType(typeId)
+    // 界面传来的 id 与注册表不同步（改过 id 忘了改调用方）—— 说清楚，不要静默新建
+    if (!type) return `不认识的文件类型「${typeId}」`
+
+    const pkg = workspaceRef.current.packages.find((item) => item.id === packageId)
+    if (!pkg) return '目标工程不存在'
+
+    // 先按注册表的规则说清楚（含"别把后缀也敲进来"），再交给既有管线复核
+    const baseError = validateNewFileBase(type, base)
+    if (baseError) return baseError
+
+    const name = newFileName(type, base)
     const normalized = normalizeResourceName(name)
-    // `.lang` / `.voice` 的名字由剧本名派生（改名剧本时会一起搬），不手工新建
+    // 判据与旧路径同源：`.lang` / `.voice` 的名字由剧本名派生，不能手工建
     if (!normalized || !isManualFileName(normalized)) {
-      window.alert(`文件名无效。新建允许的后缀：${MANUAL_FILE_EXTENSIONS_LABEL}`)
-      return
+      return `文件名无效。新建允许的后缀：${MANUAL_FILE_EXTENSIONS_LABEL}`
     }
-    const script = createScript(normalized, '')
-    const nextPackages = flushEditorInto(workspaceRef.current).packages.map((pkg) =>
-      pkg.id === packageId
-        ? { ...pkg, collapsed: false, scripts: [...pkg.scripts, script] }
-        : pkg,
+    // 重名只看**目标包**：不同包是两份独立工程，同名文件本来就允许
+    if (pkg.scripts.some((item) => item.name.toLowerCase() === normalized.toLowerCase())) {
+      return `「${normalized}」已经存在`
+    }
+
+    const script = createScript(
+      normalized,
+      type.seed(base, newFileSeedContext()),
+      type.srcKind,
+    )
+    const nextPackages = flushEditorInto(workspaceRef.current).packages.map((item) =>
+      item.id === packageId
+        ? { ...item, collapsed: false, scripts: [...item.scripts, script] }
+        : item,
     )
     const next: Workspace = {
       packages: nextPackages,
@@ -1829,8 +1876,47 @@ export const ScriptWorkspace = forwardRef<
       activeAssetId: null,
     }
     commitWorkspace(next)
-    loadEditorContent(script.id, '', script.updatedAt)
+    /*
+     * 正文要**传种子的内容**，不能像旧代码那样传 `''`：那份种子已经写进了工作区，
+     * 而编辑器缓冲区是空的 —— 下一次自动保存会把空正文写回去，种子当场消失。
+     */
+    loadEditorContent(script.id, script.content, script.updatedAt)
     setRoles(createDefaultRoles())
+    return null
+  }
+
+  /**
+   * 注册表的播种上下文。
+   *
+   * 注册表**不认识工作区**（见 `newFileTypes.ts` 文件头），语言表、服务定义、目标定义
+   * 都由这里现取现给 —— 反过来让一张纯数据表去拉这些，等于把新建文件和配音 / 进度
+   * 两个工作区焊在一起。
+   */
+  const newFileSeedContext = (): NewFileSeedContext => {
+    const scripts = workspaceRef.current.packages.flatMap((item) => item.scripts)
+    const firstService = [...ttsServices.values()][0]
+    return {
+      /*
+       * 目标定义只扫 `srcKind === 'goal'` 的 `.py`。解析器是纯函数（只看源码文本），
+       * 所以这里不必去问进度工作区要它的 catalog。
+       * 说明：`createProgress` 现在**收了不用**（新建进度一律空 `goals`，由用户自己加），
+       * 所以这一项眼下不改变播种结果 —— 留着是为了它开始按定义播种那天不用改这条路径。
+       */
+      goalDefinitions: scripts
+        .filter((item) => item.srcKind === 'goal')
+        .flatMap((item) =>
+          parseGoalDefinitionsFromSource(item.content, {
+            sourceKey: item.id,
+            sourceName: item.name,
+          }),
+        ),
+      ttsPresets,
+      // 与录音棚的 `createTtsPlan` 取同一份：方案的语言必须与编辑器当前编辑的那种一致
+      firstLocale: isValidLocaleTag(locale) ? locale : (ttsProjectLocales[0] ?? null),
+      firstServiceId: firstService?.id ?? '',
+      // 预设声明过固定音色表时才预填音色（如 [OI]）；否则留空由方案表单要
+      firstVoiceId: firstService?.preset?.voices?.[0] ?? null,
+    }
   }
 
   const handleTogglePackage = (packageId: string) => {
@@ -2408,9 +2494,12 @@ export const ScriptWorkspace = forwardRef<
       return
     }
     if (item === '新建剧本') {
-      const pkgId =
-        active?.pkg.id ?? workspaceRef.current.packages[0]?.id ?? null
-      if (pkgId) handleNewScript(pkgId)
+      /*
+       * 菜单项与资源管理器的 `+剧` 是同一个入口：这里只把"请求"递过去，
+       * 真正打开类型选择器的是资源树 —— 目标包要按"当前活动文件在哪个包"算，
+       * 菜单锚点位置也在那儿。所以不在这里猜 pkgId。
+       */
+      setNewFileMenuRequest((count) => count + 1)
       return
     }
     if (item === 'Agent 窗口') {
@@ -3335,7 +3424,8 @@ export const ScriptWorkspace = forwardRef<
           onTogglePackage={handleTogglePackage}
           onToggleAssets={handleToggleAssets}
           onNewPackage={handleNewPackage}
-          onNewScript={handleNewScript}
+          onNewFile={handleNewFile}
+          newFileMenuRequest={newFileMenuRequest}
           onRenamePackage={handleRenamePackage}
           onRenameScript={handleRenameScript}
           onDeletePackage={handleDeletePackage}
@@ -3866,6 +3956,13 @@ export const ScriptWorkspace = forwardRef<
           placeholder={langEdit.request.placeholder}
           // 滚轮 / 布局变化时编辑器会推来新位置，编辑框跟着框走（只重渲染这个输入框）
           subscribeSpot={langEdit.request.subscribeSpot}
+          /*
+           * 每次草稿变化都上报原始草稿：编辑器据此**实时**改黄底框与正文里键名槽位的
+           * 宽度 / 高度，框和后面的正文都跟着手指走，而不是等提交才跳一下。
+           * 上报的是原始草稿（没归一化、没回退成键名）：显示成什么由编辑器按模式决定，
+           * 免得同一套规则在两边各写一份。
+           */
+          onDraftChange={langEdit.request.onDraftChange}
           // 点另一个框 = 切换编辑目标：先提交这一份，再把编辑框交给那个框
           grabBoxAt={langEdit.request.grabBoxAt}
           onCommit={(next, reason) => {

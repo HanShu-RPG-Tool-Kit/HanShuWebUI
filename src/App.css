@@ -587,7 +587,12 @@ html.splash-windowed .app {
 
 /* 覆盖框：值里的换行是真换行，续行共享同一个左边界。
    white-space 用 pre：只按值里的显式换行断行，框高恒等于「行数 × 行高」，
-   不会出现折行后被固定框高裁掉的情况。 */
+   不会出现折行后被固定框高裁掉的情况。
+
+   注意：这个框的 min-width / height 与 .hs-lang-line 的高度是**逐键实时改写**的
+   （见 textEditor.applyLiveBox）：打字过程中它们跟着草稿变，正文里的槽位宽度同步变。
+   所以这一段**不能**给宽高加 transition / animation —— 那会让框追着草稿慢半拍，
+   与同一拍就已经重排好的正文错开（而框里那行字是与输入框逐像素对齐的，一眼就看出来）。 */
 .hs-lang-box {
   position: relative;
   /* 不留内边距、不用 border：框的宽度就等于文本自身的长度，
@@ -640,10 +645,47 @@ html.splash-windowed .app {
   pointer-events: none;
 }
 
+/* —— 刚成键那一条的"淡入" ——
+   成键是静默跳变：敲下 `//` 之后原文消失、换成一整条原子单位（黄底框 + 配音按钮），
+   除了"文字变了"没有任何反馈。这里补一次单向的淡入。
+
+   为什么是淡入而不是"白闪 + 扩散光环"：框底本身就是半透明黄（`rgba(214, 186, 74, .3)`），
+   白闪退去的过程读起来是"先过曝、再落到正常色"，也就是**闪一下然后变暗** —— 很脏。
+   淡入只让这一条从无到有地出现，没有过曝那一段。
+
+   挂在整个 `.hs-lang-unit`（文本 + 配音按钮）而不是只挂框：成键那一刻这两样是一起出现的，
+   只淡入其中一个、另一个硬弹出来会很割裂。
+
+   只动 `opacity`，不碰 `width` / `height` / `padding` / `border` / `margin`：
+   几何是逐键实时改写的（见上面 `.hs-lang-box` 的注释），动画掺进几何会与正文错开一帧。
+
+   类由 textEditor 的 `recentlyKeyed` 挂上、**只挂一次**（本帧绘制前即作废），
+   所以批量成键（打开文件 / 换语言）不会满屏闪 —— 那条路径不进那个集合。 */
+.hs-lang-unit.is-keying-in {
+  animation: hs-lang-key-in 220ms ease-out both;
+}
+
+@keyframes hs-lang-key-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 系统里关了动效就不放：这条动画纯装饰，没有它成键一样成立 */
+@media (prefers-reduced-motion: reduce) {
+  .hs-lang-unit.is-keying-in {
+    animation: none;
+  }
+}
+
 /* —— 等位置覆盖的编辑框（沉浸式：与黄底框等大、都贴着文字） ——
    外层只负责定位（不带尺寸、不带裁切），内层 frame 才是"框"：
-   尺寸由 textEditor 量出的框矩形内联给，overflow: hidden 把框底那几像素
-   行高缝隙裁掉，于是输入框里的字与框里的字逐像素重合。
+   尺寸由 textEditor 量出的框矩形内联给（**实时**的：打字时每帧跟着草稿改，
+   见 textEditor.reportEditSpot 推来的 spot.width / spot.height），
+   overflow: hidden 把框底那几像素行高缝隙裁掉，于是输入框里的字与框里的字逐像素重合。
    焦点环用 inset 阴影（outline 也行），绝不用 border / padding —— 它们会把字挤偏。 */
 .hs-lang-edit {
   position: fixed;

@@ -43,6 +43,13 @@ type Props = {
   grabBoxAt?: (clientX: number, clientY: number) => (() => void) | null
   onCommit: (value: string, reason: TextEditCommitReason) => void
   onCancel: () => void
+  /**
+   * 每次草稿变化时上报**原始**文本（未归一化）：编辑器据此实时重算黄底框与
+   * 正文里键名槽位的宽度，打字过程中框就跟着变宽变窄（见 TextEditRequest.onDraftChange）。
+   * 上报原始草稿而不是归一化后的值 —— 归一化会在打字中途补全 / 截断，
+   * 拿它量宽度会让框宽忽大忽小。
+   */
+  onDraftChange?: (text: string) => void
   /** 出框：返回是否真的出框了（外面没地方去 = false，编辑框留着别关） */
   onExit: (
     direction: TextEditExitDirection,
@@ -73,13 +80,15 @@ export function TextEditBox({
   grabBoxAt,
   onCommit,
   onCancel,
+  onDraftChange,
   onExit,
 }: Props) {
   const [draft, setDraft] = useState(initial)
   const [invalid, setInvalid] = useState(false)
   /**
-   * 编辑器推来的实时位置（null = 还用打开那一刻的矩形）。
+   * 编辑器推来的实时位置与尺寸（null = 还用打开那一刻的矩形）。
    * `visible: false` = 框滚出可视区了：编辑框隐身但**不卸载**，否则会丢输入焦点。
+   * 宽高也在里面：打字时编辑器每帧重算一次推过来，框就跟着草稿变宽变高（见下）。
    */
   const [spot, setSpot] = useState<TextEditSpot | null>(null)
   const rootRef = useRef<HTMLDivElement | null>(null)
@@ -87,8 +96,19 @@ export function TextEditBox({
   const doneRef = useRef(false)
 
   const lineHeight = font?.lineHeightPx ?? 28
-  /** 多行值的可见高度按内容行数给：框本身就是这么多行高（见 render 的 boxHeight） */
-  const lines = Math.max(1, initial.split('\n').length)
+  /**
+   * 可见行数由**实时草稿**推导（原来是按 initial 算一次就定死）：
+   * Shift+Enter 加一行，输入框和它外面的框要一起长高 —— 按 initial 算的话
+   * 多出来的那一行会被 frame 的 overflow: hidden 裁掉，用户看不见自己刚加的行。
+   */
+  const lines = Math.max(1, draft.split('\n').length)
+  /**
+   * 尺寸优先用编辑器推来的**实时**值：它是由同一把 meter 量出来的显示文本宽度，
+   * 与正文里的槽位、背后的黄底框同源。打开那一刻的 `rect` 只当兜底
+   * （订阅还没推来第一帧时用，比如编辑器量不出几何的无头环境）。
+   */
+  const width = spot?.width ?? rect.width
+  const height = spot?.height ?? rect.height
 
   // 挂载即聚焦：插入位置由编辑器预判（点击 = 点哪插哪；方向键 = 框内比例）。
   // 依赖刻意留空 —— 之后光标归用户；编辑框每次打开都是新的 key，重挂载才重新摆
@@ -167,8 +187,11 @@ export function TextEditBox({
   const handleChange = (
     event: ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
   ) => {
-    setDraft(event.target.value)
+    const next = event.target.value
+    setDraft(next)
     if (invalid) setInvalid(false)
+    // 上报原始草稿：编辑器据此实时改框宽高与正文槽位（不等提交）
+    onDraftChange?.(next)
   }
 
   /**
@@ -208,6 +231,18 @@ export function TextEditBox({
     if (!direction) return false
     event.preventDefault()
     if (doneRef.current) return true
+    /**
+     * 出框 = **提交**（与回车 / 点外部同一个语义）：先把非法键名拦在这里。
+     *
+     * 编辑器那边的出框会写草稿，但"写失败"它只能返回"没出去"——那时用户看到的是
+     * "按了方向键没反应"，不知道是键名错了。所以校验放在这里：就地标红、留在框里，
+     * 与回车提交被拒绝时的反馈一模一样（见 commit）。
+     * 判据与 commit 同源（同一个 normalizeLocaleKey），不会出现两处口径不一致。
+     */
+    if (mode === 'key' && draft !== initial && !normalizeLocaleKey(draft)) {
+      setInvalid(true)
+      return true
+    }
     // 出不去（框贴文档头 / 尾、已在首行末行）时编辑框留着，这一按当无事发生
     doneRef.current = exitRef.current(direction, {
       text,
@@ -237,9 +272,9 @@ export function TextEditBox({
   }
 
   /** 字体照抄框：字距 / 连字设置都会影响文字落点，一个都不能漏。
-   *  宽高就是覆盖框量出来的矩形 —— 不多一分（多留内边距 / 边框都会把文字挤偏）。 */
+   *  宽高就是编辑器量出来的实时矩形 —— 不多一分（多留内边距 / 边框都会把文字挤偏）。 */
   const frameStyle = useMemo<CSSProperties>(() => {
-    const style: CSSProperties = { width: rect.width, height: rect.height }
+    const style: CSSProperties = { width, height }
     if (!font) return style
     style.fontFamily = font.family
     style.fontSize = font.size
@@ -249,7 +284,7 @@ export function TextEditBox({
     style.fontVariationSettings = font.variationSettings
     style.lineHeight = `${font.lineHeightPx}px`
     return style
-  }, [font, rect.width, rect.height])
+  }, [font, width, height])
 
   const inputStyle: CSSProperties = {
     height:
@@ -263,22 +298,24 @@ export function TextEditBox({
   /**
    * 编辑器可视区之外的裁切。编辑框是 `position: fixed`，不受编辑器自己的 overflow 约束 ——
    * 框滚到上下边缘时半截身体盖在工具栏 / 底栏上，所以按编辑器的矩形裁一下。
+   * 用**实时**宽高算内缩：打字把框变宽变高之后，裁切范围也要跟着走，
+   * 否则框长高了、下半截却仍然被按旧高度裁掉。
    */
   const clipPath = useMemo(() => {
     const clip = spot?.clip
     if (!clip || !spot) return undefined
     const insetTop = Math.max(0, clip.top - spot.top)
     const insetLeft = Math.max(0, clip.left - spot.left)
-    const insetRight = Math.max(0, spot.left + rect.width - (clip.left + clip.width))
+    const insetRight = Math.max(0, spot.left + width - (clip.left + clip.width))
     const insetBottom = Math.max(
       0,
-      spot.top + rect.height - (clip.top + clip.height),
+      spot.top + height - (clip.top + clip.height),
     )
     if (insetTop === 0 && insetLeft === 0 && insetRight === 0 && insetBottom === 0) {
       return undefined
     }
     return `inset(${insetTop}px ${insetRight}px ${insetBottom}px ${insetLeft}px)`
-  }, [spot, rect.width, rect.height])
+  }, [spot, width, height])
 
   return (
     <div
