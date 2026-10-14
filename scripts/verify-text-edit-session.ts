@@ -48,12 +48,36 @@ function sliceFrom(source: string, marker: string, limit = 4000): string {
   return source.slice(at, at + limit)
 }
 
+/**
+ * 按**大括号配平**取 `marker` 处那个函数/对象的函数体。
+ *
+ * 别用定长切片：`sliceFrom(src, 'const render = () => {', 20000)` 这类写法会越界，
+ * 把后面十几个无关函数一起圈进断言范围 —— 断言的含义（"render 里没有 X"）
+ * 就变成"render 和它后面那一串里都没有 X"，将来别处出现 X 会误报，
+ * 而 render 自己长长了又会漏报。
+ */
+function bodyAt(source: string, marker: string): string {
+  const at = source.indexOf(marker)
+  assert.ok(at >= 0, `找不到 marker「${marker}」—— 改名了就把这条断言一起改`)
+  const open = source.indexOf('{', at)
+  assert.ok(open >= 0, `「${marker}」后面找不到 {`)
+  let depth = 0
+  for (let i = open; i < source.length; i++) {
+    if (source[i] === '{') depth++
+    else if (source[i] === '}') {
+      depth--
+      if (depth === 0) return source.slice(at, i + 1)
+    }
+  }
+  assert.fail(`「${marker}」的大括号没有配平`)
+}
+
 const editor = readCode('src/monaco/textEditor.ts')
 const editBox = readCode('src/TextEditBox.tsx')
 
 test('出框会写草稿，而且写在关框之前（这条就是"出框丢译文"的回归防线）', () => {
   const exitBody = sliceFrom(editor, 'exit: (direction: TextEditExitDirection')
-  const writeAt = exitBody.indexOf('writeDraft(box.mode, span, box.draft)')
+  const writeAt = exitBody.indexOf('writeDraft(box.mode, box.draft)')
   assert.ok(
     writeAt >= 0,
     'exit 必须把草稿写下去（writeDraft）—— 少了它就是缺陷本身：方向键挪出边界不保存',
@@ -78,7 +102,7 @@ test('没改过就不写映射：TextMap.set 每次都会 emit + flush，白写�
 test('出框与提交共用同一份写入逻辑，不再各写一份', () => {
   const applyBody = sliceFrom(editor, 'apply: (next: string, reason: TextEditCommitReason)')
   assert.ok(
-    applyBody.includes('writeDraft(mode, span, next)'),
+    applyBody.includes('writeDraft(mode, next)'),
     'apply（回车 / 点外部）必须走 writeDraft，否则撤销栈的 pushUndoStop 成对包裹会分叉',
   )
   // 改键名的正文替换只应有一处：分两处写，迟早有一处忘记配对的 pushUndoStop
@@ -86,6 +110,50 @@ test('出框与提交共用同一份写入逻辑，不再各写一份', () => {
     editor.split("executeEdits('hanshu-locale-retarget'").length - 1,
     1,
     '改键名的 executeEdits 只应出现一次（都在 writeDraft 里）',
+  )
+})
+
+test('写入偏移一律按 key 现取：编辑期间别处成键会挪动正文，旧偏移会改坏错位的字符', () => {
+  /*
+   * 编辑框开着的时候，220ms 防抖的自动成键会给**别的**语句换键名（原文 → 8 位键名，
+   * 长度变了），被编辑这条的 start / end 会整体位移。拿打开那一刻的旧偏移去
+   * `executeEdits`，替换就落在错位的 8 个字符上 —— 静默改坏正文。
+   * 所以 writeDraft **不接受**调用方传进来的 span，自己按 key 现取。
+   */
+  const writeBody = bodyAt(editor, 'const writeDraft = (target: TextEditMode, next: string)')
+  assert.ok(writeBody.includes('spanFor(key)'), 'writeDraft 要按 key 现取偏移')
+  assert.equal(
+    /writeDraft\([^)]*\bspan\b/.test(editor),
+    false,
+    '不该再有任何调用方把 span 传给 writeDraft —— 那正是"两条入口口径不一致"的来源',
+  )
+})
+
+test('还原开关按"画出来的东西"算：编辑期间的 render 不许把它抹掉', () => {
+  /*
+   * `liveDirty` 的含义是「覆盖层显示的不是映射里的值」。`render()` 重建时，
+   * "正在编辑的那一条"画的是**草稿**（见 renderDisplayText），所以那一帧建完之后
+   * 相对映射**仍然是脏的** —— 编辑结束时还得靠 restoreOverlayAfterEditing() 再画一次。
+   *
+   * 这里曾经是函数开头一句无条件的 `liveDirty = false`：编辑期间任何一次 render
+   * （别处自动成键、配音状态变化、防抖收尾）都会把开关抹掉，之后按 Esc 的还原变成空操作，
+   * 框里留着刚被取消掉的草稿 —— 看起来像"取消没生效"。
+   *
+   * 行为层面这条要 Monaco + DOM 才能真跑，所以这里守的是**结构**：
+   * 脏标记必须由"这一帧画出来的是什么"推导，而不是无脑清零。
+   */
+  const renderBody = bodyAt(editor, 'const render = () => {')
+  assert.ok(renderBody.includes('liveDirty = drewDraft'), 'render 收尾要按 drewDraft 重算脏标记')
+  assert.ok(
+    renderBody.includes('display !== renderDisplayText({ editing: null, key, value, ctrlHeld })'),
+    '要拿"正在编辑那条的实际显示"与"按映射渲染"比 —— 两者不同才算脏',
+  )
+  // 唯一的无脑清零只允许出现在"一条都没画"的早退分支里
+  const blindClears = renderBody.match(/liveDirty = false/g) ?? []
+  assert.equal(blindClears.length, 1, 'render 里只该有一处 liveDirty = false（无 model/map 的早退）')
+  assert.ok(
+    renderBody.indexOf('liveDirty = false') > renderBody.indexOf('if (!model || !map)'),
+    '那唯一一处清零必须在"没有 model / map、什么都没画"的早退分支里',
   )
 })
 

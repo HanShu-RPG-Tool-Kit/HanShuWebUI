@@ -433,7 +433,6 @@ const TAIL_TEXT = '//'
 const VOICE_SLOT_EXTRA_PX = VOICE_BUTTON_PX + VOICE_BUTTON_GAP_PX
 
 /** 一行覆盖框：形状即 textCaretOverlay 需要的输入，另加一个用于移除的根节点 */
-/** 一次自动成键写进映射的条目（撤销时要能原样回收 / 重做时放回） */
 type LineEntry = CaretLine & {
   el: HTMLElement
   /**
@@ -1377,45 +1376,51 @@ export function bindText(
      * 前者停在语句结尾，后者要落到用户挪向的那一格 —— 但"写什么、怎么写"必须只有一份。
      * 尤其 `pushUndoStop` 的成对包裹：分两处写迟早有一处忘记，撤销栈就会碎成好几步。
      *
-     * 返回 false = **键名非法，什么都没写**（改键名时唯一会失败的情形）。
+     * 返回 false = **什么都没写**：键名非法，或文档里已经没有这个键了。
      * 出框路径要靠它决定"这一按算不算数"：写不成就别动光标，让用户留在框里改。
      *
+     * **偏移一律按 key 现取，不接受调用方传进来的 span。**
+     * 编辑框开着的时候，220ms 防抖的自动成键会给**别的**语句换键名（原文 → 8 位键名，
+     * 长度变了），被编辑这一条的 start / end 会整体位移。此时若拿打开那一刻的旧偏移去
+     * `executeEdits`，替换就落在错位的 8 个字符上 —— **静默改坏正文**，而且
+     * 下面那句"范围里的文本不等于新键"挡不住它（错位处的文本同样不等于新键）。
+     * 把重取收进这里（而不是让两个调用方各取一次），是为了让 `apply`（回车 / 点外部）
+     * 与 `exit`（方向键出框）**不可能**再有第二种口径。
+     *
      * 两条闸门的一致性说明：`TextEditBox` 会在出框前先用**同一个** `normalizeLocaleKey`
-     * 拦一道（拦下就地标红、留在框里），所以这条兜底在正常路径上不可达。
+     * 拦一道（拦下就地标红、留在框里），所以"键名非法"这条兜底在正常路径上不可达。
      * 但它是隐式依赖来的 —— 那道闸门放行 `draft === initial` 的情形，
      * 而 `initial` 合法是因为 `openEditor` 里 `initial = mode === 'key' ? key`、
      * `key` 又来自 `normalizeLocaleKey(span.value)`。哪天 `initial` 的来源变了
      * （或键名模式出现"初始值本身就非法"的入口），这里就是最后一道防线，别删。
      */
-    const writeDraft = (
-      target: TextEditMode,
-      span: TextSpan,
-      next: string,
-    ): boolean => {
+    const writeDraft = (target: TextEditMode, next: string): boolean => {
       if (disposed) return false
+      // 文档里已经没有这个键了（被删 / 被换掉）：宁可不写，也别写到一个猜出来的位置
+      const live = spanFor(key)
+      if (!live) return false
       if (target === 'key') {
         const normalized = normalizeLocaleKey(next)
         const m = ed.getModel()
         if (!normalized || !m) return false
         const range = monaco.Range.fromPositions(
-          m.getPositionAt(span.start),
-          m.getPositionAt(span.end),
+          m.getPositionAt(live.start),
+          m.getPositionAt(live.end),
         )
         if (m.getValueInRange(range).trim().toLowerCase() !== normalized) {
           ed.pushUndoStop()
           ed.executeEdits('hanshu-locale-retarget', [{ range, text: normalized }])
           ed.pushUndoStop()
         }
-        /*
-         * 正文那笔改动会自己触发一次 render（内容变了）；但"草稿归一化后与正文相同"
-         * 与"改译文"这两种**不动正文**的情形，覆盖层还停在草稿的尺寸上 ——
-         * 由调用方用 restoreOverlayAfterEditing() 收尾，liveDirty 就是那个收尾的开关。
-         */
-        liveDirty = true
-        return true
+      } else {
+        // 改译文只动映射、不动正文（正文里仍是键名）：槽位宽度 / 框高要等收尾重画
+        map.set(key, next)
       }
-      // 改译文只动映射、不动正文（正文里仍是键名）：槽位宽度 / 框高要等收尾重画
-      map.set(key, next)
+      /*
+       * 正文那笔改动会自己触发一次 render（内容变了）；但"草稿归一化后与正文相同"
+       * 与"改译文"这两种**不动正文**的情形，覆盖层还停在草稿的尺寸上 ——
+       * 由调用方用 restoreOverlayAfterEditing() 收尾，liveDirty 就是那个收尾的开关。
+       */
       liveDirty = true
       return true
     }
@@ -1529,8 +1534,9 @@ export function bindText(
          * 全程碰不到框沿。
          */
         const landing = statementEndOffsetFor(span)
-        // 键名非法时 writeDraft 什么都不写：保持原样（编辑框已经被 clear，调用方会关掉它）
-        if (!writeDraft(mode, span, next)) return
+        // 键名非法（或这个键已经不在文档里）时 writeDraft 什么都不写：保持原样
+        // （编辑框已经被 clear，调用方会关掉它）
+        if (!writeDraft(mode, next)) return
         // 无论正文变没变都要重画一次：实时跟手把框宽高改成了**草稿**的尺寸，
         // 而草稿未必等于最终写进文档的值（改键名时会归一化）——
         // 不重画框就停在草稿的宽度上（见 restoreOverlayAfterEditing）
@@ -1571,8 +1577,8 @@ export function bindText(
          * 这一按当无事发生（TextEditBox 那边也会先拦一道，这里只是兜底）。
          */
         if (box.draft !== box.initialDraft) {
-          const span = spanFor(box.key)
-          if (!span || !writeDraft(box.mode, span, box.draft)) return false
+          // 偏移由 writeDraft 自己按 key 现取（见那边：编辑期间别处成键会挪动正文）
+          if (!writeDraft(box.mode, box.draft)) return false
         }
         clearEditingBox()
         flushCtrlRender()
@@ -2237,8 +2243,20 @@ export function bindText(
   /** 重建覆盖框与 view zone（内容 / Ctrl / 映射变化） */
   const render = () => {
     if (disposed) return
-    // 覆盖层马上要被整个重建：实时跟手留下的"脏"随之消失
-    liveDirty = false
+    /*
+     * `liveDirty` 的含义是「覆盖层显示的东西**不是映射里的值**」，不是"自上次重建以来有没有人打过字"。
+     * 所以它**不能**在函数开头无脑清零：下面重建"正在编辑的那一条"时读的是 `activeEdit` 的**草稿**
+     * （见 renderDisplayText），那一帧建完之后相对映射仍然是脏的 —— 编辑结束时还得靠
+     * `restoreOverlayAfterEditing()` 再画一次，才能把草稿收回去。
+     *
+     * 这里曾经就是开头一句 `liveDirty = false`，后果：编辑期间任何一次 render
+     * （别处自动成键触发的 refresh、配音状态变化、220ms 防抖那次收尾……）都会把开关抹掉，
+     * 之后按 Esc 的还原就成了空操作 —— 框里留着刚被取消掉的草稿文字与草稿宽度，看起来像
+     * "取消没生效"。`restorePreviousEditingBox` 同病：换编辑目标前不再还原上一个框（D-3 复发）。
+     *
+     * 现在的口径：这一帧按**实际画出来的东西**重算，写在函数末尾（`liveDirty = drewDraft`）。
+     */
+    let drewDraft = false
 
     for (const entry of lineEntries) entry.el.remove()
     lineEntries = []
@@ -2257,6 +2275,8 @@ export function bindText(
       // 底稿一起清掉：留着旧的会让实时跟手往一个已经不存在的下标上替换（见 applyLiveSlot）
       lastDecorations = []
       renderedFingerprint = ''
+      // 一条都没画：覆盖层与映射无从谈"脏"
+      liveDirty = false
       return
     }
 
@@ -2317,12 +2337,23 @@ export function bindText(
        * 参见 restorePreviousEditingBox：换目标前必须先 render 一次，且那一次必须
        * **看不到**上一个目标的草稿，否则上一个框的尺寸就跟着草稿留下来了。
        */
+      const editingThis = activeEdit?.key === key ? activeEdit : null
       const display = renderDisplayText({
-        editing: activeEdit?.key === key ? activeEdit : null,
+        editing: editingThis,
         key,
         value,
         ctrlHeld,
       })
+      /*
+       * 正在编辑的这一条画的是**草稿**：只要它与"按映射渲染"的结果不同，这一帧建完之后
+       * 覆盖层相对映射就还是脏的。宽度取自 displayLines（与 display 同源），所以比文本就够。
+       */
+      if (
+        editingThis &&
+        display !== renderDisplayText({ editing: null, key, value, ctrlHeld })
+      ) {
+        drewDraft = true
+      }
       const displayLines = display.split('\n')
       const stateClass = ctrlHeld
         ? 'hs-lang-ctrl'
@@ -2544,6 +2575,11 @@ export function bindText(
      * 生产者（migrateNow → scheduleKeyingClear）管。原因见 recentlyKeyed 的注释：
      * 同一次成键会在一个同步任务里连跑好几次 render，谁在中间清空，最后画出来的那版就没类。
      */
+    /*
+     * 这一帧建完了，按**画出来的东西**重算脏标记（见函数开头的注释）：
+     * 只有"正在编辑的那条画的不是映射值"时才算脏 —— 此时编辑一结束必须再画一次。
+     */
+    liveDirty = drewDraft
   }
 
   /** 已成键的框的原子范围（未成键的原文不设防） */
