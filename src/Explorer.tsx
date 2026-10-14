@@ -470,13 +470,45 @@ function NewFileTypeMenu({
       if (target.closest('[data-newfile-trigger]')) return
       onClose()
     }
-    const onScroll = () => onClose()
+    /*
+     * 菜单自己的滚动**不该**把菜单关掉。
+     *
+     * 上面的捕获监听是为了抓资源树那种不冒泡的容器滚动，但 `scroll` 在捕获阶段
+     * 照样会经过 window —— 菜单现在自己就是滚动容器（类型多了要能滚，见
+     * .explorer-newfile-menu 的 max-height），于是"滚轮一碰菜单，菜单瞬间消失"。
+     */
+    const onScroll = (event: Event) => {
+      const el = ref.current
+      if (el && event.target instanceof Node && el.contains(event.target)) return
+      onClose()
+    }
+    /*
+     * 滚轮要被菜单自己吃掉，不能穿透去滚背后的资源树 —— 树一滚，上面那条监听
+     * 立刻把菜单关掉（菜单是 fixed 定位，不跟锚点走，所以关掉也算合理，但用户
+     * 只是想滚菜单）。菜单自己还能滚时交给浏览器原生滚（只在到边界时才拦），
+     * 菜单根本不溢出时直接拦下 —— 否则滚轮会去滚树、菜单照样消失。
+     *
+     * 用原生监听而不是 React 的 onWheel：React 在根节点上把 wheel 注册成 passive，
+     * 里面 preventDefault 不生效（还会打警告）。
+     */
+    const el = ref.current
+    const onWheel = (event: WheelEvent) => {
+      if (!el) return
+      const scrollable = el.scrollHeight > el.clientHeight + 1
+      const atTop = el.scrollTop <= 0
+      const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 1
+      const wouldChain =
+        !scrollable || (event.deltaY < 0 && atTop) || (event.deltaY > 0 && atBottom)
+      if (wouldChain) event.preventDefault()
+    }
     window.addEventListener('mousedown', onMouseDown)
     // 捕获阶段：资源树自己的滚动容器不会把事件冒泡到 window
     window.addEventListener('scroll', onScroll, true)
+    el?.addEventListener('wheel', onWheel, { passive: false })
     return () => {
       window.removeEventListener('mousedown', onMouseDown)
       window.removeEventListener('scroll', onScroll, true)
+      el?.removeEventListener('wheel', onWheel)
     }
   }, [onClose])
 

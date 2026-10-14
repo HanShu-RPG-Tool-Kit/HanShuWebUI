@@ -198,6 +198,47 @@ assert.ok(
   'Explorer.tsx 不能再按 SCRIPT_WORKSPACE_GROUP_ORDER 建桶 —— 那会让进度/流程/导航/礼包/目标定义在树里消失',
 )
 
+// ===== 2c. 菜单能滚：滚轮不能被"关菜单"或"穿透去滚树"吃掉 =====
+
+/*
+ * 守的是实测到的两条：
+ * 1. 菜单自己就是滚动容器（`.explorer-newfile-menu` 的 max-height + overflow-y），
+ *    而关闭监听是 `window.addEventListener('scroll', close, true)` —— **捕获阶段**。
+ *    `scroll` 不冒泡，但捕获阶段照样会经过 window，于是"滚轮一碰菜单，菜单瞬间消失"。
+ * 2. 菜单不溢出时滚轮会穿透去滚背后的资源树 —— 树一滚，同一条监听又把菜单关掉。
+ *
+ * 两条判据都只能读源码：`Explorer.tsx` 顶层 import 了 `./explorer-newfile.css`，
+ * tsx 直接 import 会 `Unknown file extension ".css"`（见上面 2b 的说明）。
+ */
+const scrollHandlerAt = explorerSource.indexOf('const onScroll = (event: Event) =>')
+assert.ok(
+  scrollHandlerAt >= 0,
+  '找不到菜单的 onScroll 关闭处理器（改成别的形态了就把这条断言一起改）',
+)
+const scrollHandler = explorerSource.slice(scrollHandlerAt, scrollHandlerAt + 400)
+assert.ok(
+  /contains\(event\.target\)/.test(scrollHandler) && /return/.test(scrollHandler),
+  '菜单自己的滚动必须放过（scroll 在捕获阶段也会经过 window）：' +
+    '不放过就是"滚轮一碰菜单，菜单瞬间消失"',
+)
+assert.ok(
+  /addEventListener\('scroll', onScroll, true\)/.test(explorerSource),
+  '资源树那种不冒泡的容器滚动仍要靠捕获阶段抓 —— 别顺手把 true 去掉',
+)
+
+// 滚轮要在菜单这一层被拦住：菜单自己不能滚（或已到边界）时 preventDefault，别让它滚到树上去
+assert.ok(
+  /addEventListener\('wheel', onWheel, \{ passive: false \}\)/.test(explorerSource),
+  '菜单要挂一个**非 passive** 的 wheel 监听：React 的 onWheel 在根节点上是 passive，' +
+    '里面 preventDefault 不生效',
+)
+const wheelHandlerAt = explorerSource.indexOf('const onWheel = (event: WheelEvent)')
+assert.ok(wheelHandlerAt >= 0, '找不到 onWheel（改名了就把这条断言一起改）')
+assert.ok(
+  /preventDefault\(\)/.test(explorerSource.slice(wheelHandlerAt, wheelHandlerAt + 500)),
+  'onWheel 里要在会穿透时 preventDefault：否则滚轮去滚资源树，菜单照样被关掉',
+)
+
 // ===== 3. 每条 seed 都能被各自的解析器吃回去 =====
 
 // `.hs`：不能有任何语法诊断（缺闭合符 / 说话人换行都算）
