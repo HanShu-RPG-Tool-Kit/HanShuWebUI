@@ -40,6 +40,7 @@ import { analyzeCharDiagnostics } from '../src/monaco/charDiagnostics.ts'
 import { parseCharTextSpans } from '../src/monaco/charTextSpans.ts'
 import { collectSourceKeys } from '../src/hanshu/sourceKeys.ts'
 import { parseProgress, stringifyProgress } from '../src/workspaces/progress/progressDoc.ts'
+import { parseItem, stringifyItem } from '../src/workspaces/progress/itemDoc.ts'
 import { parseKit } from '../src/workspaces/progress/kit.ts'
 import { parseNavigationPoint, validateNavigationPoint } from '../src/workspaces/progress/navigationPoint.ts'
 import { parseFlow } from '../src/workspaces/progress/model.ts'
@@ -165,7 +166,18 @@ const RENDERED_GROUPS = new Set<string>([...WORKSPACE_GROUP_ORDER, 'root'])
 // 光靠"注册表 ext 集合 == MANUAL_FILE_EXTENSIONS"是发现不了的
 assert.deepEqual(
   [...WORKSPACE_GROUP_ORDER],
-  ['hanshu', 'character', 'script', 'goal', 'progress', 'story', 'navigator', 'gift', 'meta'],
+  [
+    'hanshu',
+    'character',
+    'script',
+    'goal',
+    'progress',
+    'story',
+    'navigator',
+    'gift',
+    'items',
+    'meta',
+  ],
   'WORKSPACE_GROUP_ORDER 必须覆盖全部源类型 + meta（资源树按它建桶）',
 )
 assert.deepEqual([...SOURCE_KIND_ORDER], [...WORKSPACE_GROUP_ORDER].slice(0, -1), 'WORKSPACE_GROUP_ORDER 应是 SOURCE_KIND_ORDER + meta')
@@ -373,7 +385,14 @@ assert.deepEqual(progressDoc.goals, [], '新建进度不带目标，由用户在
 // `.kit`
 const kitSeed = seedOf('kit')
 assert.equal(parseKit(kitSeed).name, 'name', '礼包名是语义键，种子不该写死展示名')
-
+/*
+ * `.item`（上游的物品库文档）：往返一致。
+ * 物品 id 是**数据**（`minecraft:` 命名空间），不该由文件名猜出来 —— 种子里是
+ * `createItem()` 的默认 id，与进度工作区的新建文档同式。
+ */
+const itemSeed = seedOf('item')
+assert.equal(stringifyItem(parseItem(itemSeed)), itemSeed, '.item 种子应能原样往返')
+assert.equal(parseItem(itemSeed).item.id, 'minecraft:stick', '.item 种子用 itemDoc 的默认 id')
 // `.nav`：解析回来还得过校验（坐标 / 维度 / 半径都得是合法值）
 const navPoint = parseNavigationPoint(seedOf('nav'))
 assert.deepEqual(validateNavigationPoint(navPoint), [], '.nav 种子应是一份合法导航点')

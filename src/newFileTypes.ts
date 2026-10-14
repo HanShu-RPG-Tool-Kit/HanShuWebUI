@@ -32,6 +32,7 @@ import {
   stringifyNavigationPoint,
 } from './workspaces/progress/navigationPoint'
 import { createProgress, stringifyProgress } from './workspaces/progress/progressDoc'
+import { createItem, stringifyItem } from './workspaces/progress/itemDoc'
 import type { GoalDefinition } from './workspaces/progress/goalDefinitions'
 import { blankServiceDefinition, stringifyServiceDefinition } from './tts/service'
 import { stringifyVoicePlan, type VoicePlan } from './tts/plan'
@@ -55,6 +56,7 @@ export type NewFileTypeId =
   | 'progress'
   | 'hflow'
   | 'nav'
+  | 'item'
   | 'kit'
   | 'md'
   | 'tts'
@@ -338,6 +340,23 @@ export const NEW_FILE_TYPES: readonly NewFileType[] = [
     defaultBase: '新导航点',
     // `createNavigationPoint` 同样忽略展示名：`label` 是语义键，译文在 lang_nav
     seed: (base) => stringifyNavigationPoint(createNavigationPoint(base.trim())),
+  },
+  {
+    id: 'item',
+    ext: '.item',
+    label: '物品',
+    hint: '物品 id、组件与标签（src/items）',
+    icon: 'item',
+    group: 'progress',
+    defaultBase: '新物品',
+    /*
+     * 与进度工作区的新建文档同式：`stringifyItem(createItem())`。
+     *
+     * `createItem` 的默认 id 是 `minecraft:stick`（见 itemDoc 的 `DEFAULT_ITEM_ID`）——
+     * 物品 id 是**数据**、不是展示名，所以**不拿文件名去猜**：猜出来的多半是个不存在的
+     * 物品（而 `minecraft:` 命名空间的东西也不该由文件名决定）。用户进去改成自己的 id。
+     */
+    seed: () => stringifyItem(createItem()),
   },
   {
     id: 'kit',

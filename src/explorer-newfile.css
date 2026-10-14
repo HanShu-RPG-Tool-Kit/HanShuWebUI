@@ -35,6 +35,8 @@
 .explorer-icon.is-progress { color: #c9a86c; }
 .explorer-icon.is-hflow { color: #8eb0d4; }
 .explorer-icon.is-nav { color: #7a9ec4; }
+/* 物品（上游 `.item` 库）：青绿，与 nav 的蓝、kit 的粉都分得开 */
+.explorer-icon.is-item { color: #7fb08a; }
 .explorer-icon.is-kit { color: #c48a9a; }
 .explorer-icon.is-goal { color: #c4b06a; }
 /*
