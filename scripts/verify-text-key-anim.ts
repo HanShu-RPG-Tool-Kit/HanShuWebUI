@@ -50,6 +50,30 @@ function sliceFrom(source: string, marker: string, limit = 4000): string {
 }
 
 /**
+ * 按**大括号配平**取 `marker` 处那个函数体。
+ *
+ * 别用 `sliceFrom(src, 'const render = () => {', 20000)` 这类定长切片：render 现在约 10k 字符，
+ * 20000 会越界近 10k，把后面十几个无关函数一起圈进来 —— 断言的含义（"render 里没有 X"）
+ * 于是变成"render 和它后面那一串里都没有 X"：别处出现 X 会误报，render 自己长长了又会漏报。
+ * 本文件上面按**名字**找关键帧块、而不是按位置切片，是同一条原则。
+ */
+function bodyAt(source: string, marker: string): string {
+  const at = source.indexOf(marker)
+  assert.ok(at >= 0, `找不到 marker「${marker}」—— 改名了就把这条断言一起改`)
+  const open = source.indexOf('{', at)
+  assert.ok(open >= 0, `「${marker}」后面找不到 {`)
+  let depth = 0
+  for (let i = open; i < source.length; i++) {
+    if (source[i] === '{') depth++
+    else if (source[i] === '}') {
+      depth--
+      if (depth === 0) return source.slice(at, i + 1)
+    }
+  }
+  assert.fail(`「${marker}」的大括号没有配平`)
+}
+
+/**
  * 取出名字以 `prefix` 开头的所有 `@keyframes` 块（按大括号配平，不看位置）。
  *
  * 为什么不用"从 A 切到 B"那种定长/定界切片：断言的强度会变成"白闪只要不出现在这段里就行"，
@@ -159,7 +183,7 @@ test('render 只读不写：集合的作废必须推迟到本帧绘制前', () =
    * 但 rAF 回调是绘制前**最后一个** JS 钩子 —— `setTimeout(0)` 可能落在画面之后，
    * "画完 → 作废"之间若还有一次 render，新建的框会再挂一次类、动画从 0 重播（看得见）。
    */
-  const renderBody = sliceFrom(editor, 'const render = () => {', 20000)
+  const renderBody = bodyAt(editor, 'const render = () => {')
   assert.ok(
     renderBody.includes('unit.classList.add(KEYING_IN_CLASS)'),
     'render 要给刚成键的那条**单位**挂 KEYING_IN_CLASS（文本与配音按钮一起淡入，' +

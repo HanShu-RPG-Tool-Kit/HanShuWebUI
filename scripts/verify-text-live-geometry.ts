@@ -274,12 +274,18 @@ test('D-6 装配检查：measure() 真的调了淘汰（不是把 evictOldestEnt
     false,
     '量完那一段不能整表清空：长行每次都超限，清空等于缓存对长行完全失效',
   )
-  // 反证：把 measure 换回整表清空（老写法）会让上面这条断言失败
-  assert.ok(
-    stripComments('if (cache.size > METER_CACHE_LIMIT) cache.clear()').includes(
-      'cache.clear()',
-    ),
-    '去注释后的源码里仍能认出老写法，说明这条断言不是恒真',
+  /*
+   * 反证：同一条判据喂进"老写法"必须报错，否则它就是恒真的空跑。
+   * 这里必须自己造一份**老写法的函数体**再喂给同一个表达式 ——
+   * 早先这行写的是把一段字面量丢给 stripComments 再 `includes('cache.clear()')`，
+   * 那检的是字符串本身，永远为真，等于什么都没验（注释还声称它证明了"不是恒真"）。
+   */
+  const legacyBody =
+    'for (const el of nodes) el.remove()\n  if (cache.size > METER_CACHE_LIMIT) cache.clear()'
+  assert.equal(
+    legacyBody.slice(legacyBody.indexOf(nodesMarker)).includes('cache.clear()'),
+    true,
+    '老写法喂进同一条判据必须被认出来，否则上面那条装配检查是恒真的空跑',
   )
 })
 
