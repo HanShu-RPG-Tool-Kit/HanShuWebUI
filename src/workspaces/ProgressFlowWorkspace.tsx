@@ -65,6 +65,7 @@ import { LocaleSelect } from '../LocaleSelect'
 import Editor from '@monaco-editor/react'
 import { HANSHU_THEME_ID, registerHanshuLanguage } from '../monaco/hanshuLanguage'
 import './ProgressFlowWorkspace.css'
+import { CollaborationWorkspace } from '../collab/CollaborationWorkspace'
 
 export type ProgressWorkspaceHandle = { handleMenuAction: (item: string) => void }
 
@@ -83,6 +84,18 @@ function dropZoneAt(event: DragEvent, splitOn: boolean): DropZone {
 }
 
 export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolean; workspaceRef?: Ref<ProgressWorkspaceHandle> }) {
+  const [mode, setMode] = useState<'local' | 'shared'>('local')
+  const localRef = useRef<ProgressWorkspaceHandle>(null)
+  const sharedRef = useRef<ProgressWorkspaceHandle>(null)
+  useImperativeHandle(workspaceRef, () => ({ handleMenuAction(item) { (mode === 'local' ? localRef.current : sharedRef.current)?.handleMenuAction(item) } }), [mode])
+  return <div className="flow-mode-container">
+    <nav className="flow-service-mode" aria-label="工程位置"><button aria-pressed={mode === 'local'} onClick={() => setMode('local')}>本机草稿</button><button aria-pressed={mode === 'shared'} onClick={() => setMode('shared')}>共享工程</button></nav>
+    <div className="flow-mode-pane" hidden={mode !== 'local'}><LocalProgressFlowWorkspace active={active && mode === 'local'} workspaceRef={localRef} /></div>
+    <div className="flow-mode-pane" hidden={mode !== 'shared'}><CollaborationWorkspace active={active && mode === 'shared'} workspaceRef={sharedRef} /></div>
+  </div>
+}
+
+function LocalProgressFlowWorkspace({ active, workspaceRef }: { active: boolean; workspaceRef?: Ref<ProgressWorkspaceHandle> }) {
   const session = useProjectSession()
   const projectBound = Boolean(session.binding)
   const editorFontSize = useEditorFontSize()

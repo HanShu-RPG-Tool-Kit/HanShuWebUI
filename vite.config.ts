@@ -15,6 +15,7 @@ export default defineConfig({
     host: host || false,
     // Mojang JSON APIs lack CORS; same-origin proxy for browser player-name import.
     proxy: {
+      '/__project': { target: 'http://127.0.0.1:47831', ws: true, rewrite: (path) => path.replace(/^\/__project/, '') },
       '/__skin_net/name': {
         target: 'https://api.minecraftservices.com',
         changeOrigin: true,
@@ -47,6 +48,7 @@ export default defineConfig({
   },
   preview: {
     proxy: {
+      '/__project': { target: 'http://127.0.0.1:47831', ws: true, rewrite: (path) => path.replace(/^\/__project/, '') },
       '/__skin_net/name': {
         target: 'https://api.minecraftservices.com',
         changeOrigin: true,

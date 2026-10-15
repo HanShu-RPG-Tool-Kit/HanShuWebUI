@@ -5,7 +5,13 @@
   "license": "MIT",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "node scripts/dev-service.mjs",
+    "dev:ui": "vite",
+    "server": "node scripts/dev-service.mjs --server-only",
+    "generate:protocol": "node scripts/generate-protocol.mjs",
+    "check:protocol": "node scripts/generate-protocol.mjs --check",
+    "test:collaboration": "node scripts/verify-collaboration.mjs",
+    "test:collaboration:ui": "node scripts/verify-collaboration-ui.mjs",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "test": "npm run test:text-live-geometry && npm run test:text-edit-session && npm run test:text-key-anim && npm run test:new-file-types && npm run test:text-key-rules && npm run test:hs-diag && npm run test:hs-compile && npm run test:progress && npm run test:progress-locale && npm run test:kit-expr && npm run test:editor-groups && npm run test:skin-codec && npm run test:tts",
@@ -58,6 +64,7 @@
     "@vitejs/plugin-react": "^6.1.1",
     "esbuild": "^0.28.2",
     "oxlint": "^1.81.0",
+    "playwright": "^1.64.1",
     "tsx": "^4.23.15",
     "typescript": "~6.0.2",
     "vite": "^8.3.0"
