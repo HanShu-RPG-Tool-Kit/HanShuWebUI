@@ -11,6 +11,7 @@ uuid = { version = "1", features = ["v4"] }
 sha2 = "0.11"
 tempfile = "3"
 fs4 = "1.1"
+ts-rs = { version = "12.0.1", features = ["serde-compat"] }
 
 [dev-dependencies]
 tempfile = "3"
