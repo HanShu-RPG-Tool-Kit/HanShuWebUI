@@ -265,3 +265,33 @@ fn duplicate_document_and_nested_config_keys_are_rejected() {
         .is_err());
     assert!(e.snapshot(&owner).unwrap().resources.is_empty());
 }
+
+#[test]
+fn expression_conditions_match_the_progress_editor_contract() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut e = Engine::open(dir.path()).unwrap();
+    let (_, owner) = login(&mut e, dir.path());
+    let mut doc: serde_json::Value = serde_json::from_str(&progress()).unwrap();
+    for field in ["visibility", "acceptance"] {
+        doc[field] = serde_json::json!([{"kind":"expr","state":"true","target":"level >= 5"}]);
+    }
+    e.create_resource(
+        &owner,
+        None,
+        "expr.progress".into(),
+        ResourceKind::Progress,
+        Some(doc.to_string()),
+    )
+    .unwrap();
+    doc["acceptance"][0]["state"] = serde_json::json!("false");
+    assert!(e
+        .create_resource(
+            &owner,
+            None,
+            "invalid.progress".into(),
+            ResourceKind::Progress,
+            Some(doc.to_string())
+        )
+        .is_err());
+    assert_eq!(e.snapshot(&owner).unwrap().resources.len(), 1);
+}

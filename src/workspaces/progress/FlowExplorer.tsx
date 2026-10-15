@@ -492,7 +492,7 @@ export function FlowExplorer({ state, active, disabled, onChange, onSelect, onNe
       else selectOnly(row.parent === null ? packageEntry(row.pkg) : { kind: 'folder', key: row.parent })
     }
     if (event.key === 'Enter') { if (entry.kind === 'document') onSelect(entry.key); else toggle(entry) }
-    if (event.key === 'F2' && entry.kind !== 'package' && !(entry.kind !== 'package' && isReadonlyExplorerKey(entry.key)) && multiCount <= 1) startEdit('rename', entry)
+    if (event.key === 'F2' && entry.kind !== 'package' && !isReadonlyExplorerKey(entry.key) && multiCount <= 1) startEdit('rename', entry)
     if ((event.shiftKey && event.key === 'F10') || event.key === 'ContextMenu') {
       event.preventDefault(); const rect = event.currentTarget.getBoundingClientRect()
       const multi = selectedIds.has(entryId(entry)) && multiCount > 1

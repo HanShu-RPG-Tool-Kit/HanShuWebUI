@@ -121,6 +121,7 @@ pub fn validate(source: &str) -> Result<()> {
                     Some("before_accept" | "after_accept" | "active" | "succeeded" | "ended")
                 ),
                 Some("dialogue") => matches!(rule["state"].as_str(), Some("before" | "after")),
+                Some("expr") => rule["state"].as_str() == Some("true"),
                 _ => false,
             })?;
         }
