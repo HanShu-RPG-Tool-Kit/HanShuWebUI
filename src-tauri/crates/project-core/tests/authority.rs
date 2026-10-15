@@ -202,3 +202,66 @@ fn malformed_writes_and_invalid_directory_changes_preserve_state() {
         .is_err());
     assert!(Engine::open(dir.path()).is_err());
 }
+
+#[test]
+fn failed_disk_replacement_never_publishes_candidate_state() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut e = Engine::open(dir.path()).unwrap();
+    let (_, owner) = login(&mut e, dir.path());
+    let r = e
+        .create_resource(
+            &owner,
+            None,
+            "one.progress".into(),
+            ResourceKind::Progress,
+            Some(progress()),
+        )
+        .unwrap();
+    let lease = e.acquire(&owner, &r.id, false, 1000).unwrap();
+    let original = fs::read(dir.path().join("project.json")).unwrap();
+    fs::rename(
+        dir.path().join("project.json"),
+        dir.path().join("before.json"),
+    )
+    .unwrap();
+    fs::create_dir(dir.path().join("project.json")).unwrap();
+    assert_eq!(
+        e.save(&owner, &r.id, &lease.id, 1, progress(), 1001)
+            .unwrap_err()
+            .code,
+        "storage"
+    );
+    assert_eq!(e.resource(&owner, &r.id).unwrap().revision, 1);
+    assert_eq!(fs::read(dir.path().join("before.json")).unwrap(), original);
+}
+
+#[test]
+fn duplicate_document_and_nested_config_keys_are_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut e = Engine::open(dir.path()).unwrap();
+    let (_, owner) = login(&mut e, dir.path());
+    let duplicate = progress().replace("\"name\":", "\"name\":\"discarded\",\"name\":");
+    assert!(e
+        .create_resource(
+            &owner,
+            None,
+            "duplicate.progress".into(),
+            ResourceKind::Progress,
+            Some(duplicate)
+        )
+        .is_err());
+    let duplicate = progress().replace(
+        "\"goals\":[]",
+        "\"goals\":[{\"id\":\"g\",\"kind\":\"counter\",\"config\":{\"count\":1,\"count\":2}}]",
+    );
+    assert!(e
+        .create_resource(
+            &owner,
+            None,
+            "nested.progress".into(),
+            ResourceKind::Progress,
+            Some(duplicate)
+        )
+        .is_err());
+    assert!(e.snapshot(&owner).unwrap().resources.is_empty());
+}

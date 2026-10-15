@@ -1,6 +1,71 @@
 use crate::{Error, Result};
+use serde::{
+    de::{self, MapAccess, SeqAccess, Visitor},
+    Deserialize, Deserializer,
+};
 use serde_json::Value;
 use std::collections::BTreeSet;
+
+// Value's default parser accepts duplicate object keys. Author documents must not
+// silently discard earlier values, including duplicates inside extension/config data.
+struct UniqueJson(Value);
+impl<'de> Deserialize<'de> for UniqueJson {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        struct UniqueVisitor;
+        impl<'de> Visitor<'de> for UniqueVisitor {
+            type Value = UniqueJson;
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                write!(f, "JSON without duplicate keys")
+            }
+            fn visit_bool<E: de::Error>(self, v: bool) -> std::result::Result<UniqueJson, E> {
+                Ok(UniqueJson(Value::Bool(v)))
+            }
+            fn visit_i64<E: de::Error>(self, v: i64) -> std::result::Result<UniqueJson, E> {
+                Ok(UniqueJson(Value::Number(v.into())))
+            }
+            fn visit_u64<E: de::Error>(self, v: u64) -> std::result::Result<UniqueJson, E> {
+                Ok(UniqueJson(Value::Number(v.into())))
+            }
+            fn visit_f64<E: de::Error>(self, v: f64) -> std::result::Result<UniqueJson, E> {
+                Ok(UniqueJson(Value::Number(
+                    serde_json::Number::from_f64(v).ok_or_else(|| E::custom("invalid number"))?,
+                )))
+            }
+            fn visit_str<E: de::Error>(self, v: &str) -> std::result::Result<UniqueJson, E> {
+                Ok(UniqueJson(Value::String(v.into())))
+            }
+            fn visit_string<E: de::Error>(self, v: String) -> std::result::Result<UniqueJson, E> {
+                Ok(UniqueJson(Value::String(v)))
+            }
+            fn visit_unit<E: de::Error>(self) -> std::result::Result<UniqueJson, E> {
+                Ok(UniqueJson(Value::Null))
+            }
+            fn visit_seq<A: SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> std::result::Result<UniqueJson, A::Error> {
+                let mut values = Vec::new();
+                while let Some(value) = seq.next_element::<UniqueJson>()? {
+                    values.push(value.0);
+                }
+                Ok(UniqueJson(Value::Array(values)))
+            }
+            fn visit_map<A: MapAccess<'de>>(
+                self,
+                mut map: A,
+            ) -> std::result::Result<UniqueJson, A::Error> {
+                let mut values = serde_json::Map::new();
+                while let Some((key, value)) = map.next_entry::<String, UniqueJson>()? {
+                    if values.insert(key, value.0).is_some() {
+                        return Err(de::Error::custom("duplicate object key"));
+                    }
+                }
+                Ok(UniqueJson(Value::Object(values)))
+            }
+        }
+        deserializer.deserialize_any(UniqueVisitor)
+    }
+}
 
 /// Mirrors the current .progress structural contract. Unresolved references are valid drafts.
 pub fn validate(source: &str) -> Result<()> {
@@ -8,7 +73,9 @@ pub fn validate(source: &str) -> Result<()> {
     if source.len() > 1024 * 1024 {
         return Err(Error::new("invalid", "单份进度文档不能超过 1 MiB"));
     }
-    let v: Value = serde_json::from_str(source).map_err(|_| invalid())?;
+    let v = serde_json::from_str::<UniqueJson>(source)
+        .map_err(|_| invalid())?
+        .0;
     let check = |ok| if ok { Ok(()) } else { Err(invalid()) };
     check(
         v.is_object()
