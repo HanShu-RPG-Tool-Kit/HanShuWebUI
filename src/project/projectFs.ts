@@ -1,3 +1,6 @@
+import { ServiceError } from '../collab/protocol'
+import { getProjectSession } from './projectSession'
+import type { ProjectDirectory } from './serviceClient'
 /**
  * 文件夹工程：打开 / 新建 / 保存
  * 一个目录 = 一个 Project；文本在 `src/`（源）与 `meta/`（创作资料），二进制在 `assets/`
@@ -5,48 +8,33 @@
  */
 
 import {
-  deletePackageAssetBlobs,
   getAssetBlob,
+  assetCacheEpoch,
+  cacheRemoteAsset,
   putAssetBlob,
 } from '../assets/idb'
 import { normalizeAssetPath, normalizeFolderPath } from '../assets/paths'
-import { isVoiceRefPath, parseVoiceRefContent, voiceAssetDir } from '../i18n/voiceMap'
-import { sourceExtension, textAssetPath } from '../i18n/localeLayout'
+import { isVoiceRefPath, parseVoiceRefContent } from '../i18n/voiceMap'
 import {
   ALLOWED_EXTENSIONS,
   FILE_DIRS,
-  createPackage,
   createScript,
-  findScript,
-  getExtension,
-  isAllowedExtension,
   normalizeResourceName,
   sourcePathOf,
   sourceRelativePath,
   srcKindFromDiskPath,
+  type SourceFile,
   type ScriptPackage,
   type Workspace,
 } from '../workspace'
 import {
-  ensureReadWritePermission,
   guessMime,
-  listChildren,
   listFilesRecursive,
   pickProjectDirectory,
   readFileAtPath,
   readTextFile,
-  removeDirectoryAtPath,
-  removeEntryIfExists,
-  removeFileAtPath,
   supportsDirectoryPicker,
-  writeFileAtPath,
-  writeTextFile,
 } from './directoryIo'
-import {
-  clearLastDirectoryHandle,
-  loadLastDirectoryHandle,
-  saveLastDirectoryHandle,
-} from './handleStore'
 import {
   PROJECT_FILE,
   createManifest,
@@ -59,7 +47,7 @@ export { supportsDirectoryPicker, PROJECT_FILE }
 export type { ProjectManifest }
 
 export type BoundProject = {
-  handle: FileSystemDirectoryHandle
+  handle: ProjectDirectory
   /** 文件夹名 */
   folderName: string
   manifest: ProjectManifest
@@ -82,12 +70,6 @@ const TEXT_ROOT_DIRS = [
   ...new Set(Object.values(FILE_DIRS).map((dir) => dir.split('/')[0] ?? '')),
 ]
 
-function isScriptFileName(name: string): boolean {
-  if (name === PROJECT_FILE) return false
-  if (name.startsWith('.')) return false
-  return isAllowedExtension(getExtension(name))
-}
-
 /**
  * 加载时可以进工作区的文件：白名单后缀，或语言文本文件 `<名>.lang.<语言标签>`
  * —— 后者结尾是语言标签、不在后缀白名单里，靠 `normalizeResourceName` 的例外放行。
@@ -100,30 +82,19 @@ function isProjectLoadableFile(name: string): boolean {
   return normalizeResourceName(name) !== null
 }
 
-async function directoryLooksInitialized(
-  dir: FileSystemDirectoryHandle,
-): Promise<{ hasManifest: boolean; hasOtherFiles: boolean }> {
-  let hasManifest = false
-  let hasOtherFiles = false
-  for await (const [name] of dir.entries()) {
-    if (name === PROJECT_FILE) hasManifest = true
-    else hasOtherFiles = true
-  }
-  return { hasManifest, hasOtherFiles }
-}
-
 async function loadAssetsFromDisk(
-  root: FileSystemDirectoryHandle,
+  root: ProjectDirectory,
   packageId: string,
 ): Promise<{
   assets: ScriptPackage['assets']
   assetFolders: string[]
 }> {
-  let assetsDir: FileSystemDirectoryHandle
+  let assetsDir: ProjectDirectory
   try {
     assetsDir = await root.getDirectoryHandle('assets')
-  } catch {
-    return { assets: [], assetFolders: [] }
+  } catch (e) {
+    if (e instanceof ServiceError && e.code === 'not_found') return { assets: [], assetFolders: [] }
+    throw e
   }
 
   const filePaths = await listFilesRecursive(assetsDir, 'assets')
@@ -134,7 +105,7 @@ async function loadAssetsFromDisk(
     const norm = normalizeAssetPath(path)
     if (!norm) continue
     // 配音导入的 `.new` 中间文件：万一崩溃残留，别把它当成资产收进 IndexedDB
-    // （下次「保存工程」会整树重写 assets/，残留自然被清掉）
+    // 中间文件不是作者资源；保存不再通过重写目录清理它们。
     if (norm.toLowerCase().endsWith('.new')) continue
     const parent = norm.includes('/')
       ? norm.slice(0, norm.lastIndexOf('/'))
@@ -144,7 +115,7 @@ async function loadAssetsFromDisk(
 
     const file = await (async () => {
       const parts = norm.split('/')
-      let cur: FileSystemDirectoryHandle = root
+      let cur: ProjectDirectory = root
       for (let i = 0; i < parts.length - 1; i++) {
         cur = await cur.getDirectoryHandle(parts[i]!)
       }
@@ -173,7 +144,7 @@ async function loadAssetsFromDisk(
 
   // 空文件夹：扫目录树
   const walkDirs = async (
-    dir: FileSystemDirectoryHandle,
+    dir: ProjectDirectory,
     prefix: string,
   ): Promise<void> => {
     folderSet.add(prefix)
@@ -192,7 +163,7 @@ async function loadAssetsFromDisk(
 }
 
 async function readPackageFromDirectory(
-  root: FileSystemDirectoryHandle,
+  root: ProjectDirectory,
   folderName: string,
   existingManifest?: ProjectManifest | null,
 ): Promise<{ pkg: ScriptPackage; manifest: ProjectManifest; activeScriptId: string | null }> {
@@ -209,11 +180,9 @@ async function readPackageFromDirectory(
     })
   }
 
-  // 换工程前清掉同 id 的旧 blob，避免脏数据（id 稳定时是覆盖写入）
-  await deletePackageAssetBlobs(manifest.id)
 
   // 源文件只认 `src/<kind>/` 与 `meta/`，不再兼容包根平铺。
-  const scripts = []
+  const scripts: SourceFile[] = []
   const seen = new Set<string>()
   const addScript = async (name: string, path: string) => {
     if (seen.has(name.toLowerCase())) return
@@ -222,7 +191,8 @@ async function readPackageFromDirectory(
     seen.add(name.toLowerCase())
     const text = await file.text()
     const srcKind = srcKindFromDiskPath(path)
-    scripts.push(createScript(name, text, srcKind))
+    root.client.texts.set(path, text)
+    scripts.push({ ...createScript(name, text, srcKind), id: `source:${path}` })
   }
 
   for (const dirName of TEXT_ROOT_DIRS) {
@@ -234,18 +204,9 @@ async function readPackageFromDirectory(
         if (!isProjectLoadableFile(name)) continue
         await addScript(name, `${dirName}/${path}`)
       }
-    } catch {
-      // 还没有这个目录
+    } catch (e) {
+      if (!(e instanceof ServiceError && e.code === 'not_found')) throw e
     }
-  }
-
-  if (scripts.length === 0) {
-    scripts.push(
-      createScript(
-        '未命名剧本.hs',
-        `标题：${manifest.name}\n\n第一场\n\n`,
-      ),
-    )
   }
 
   const { assets, assetFolders } = await loadAssetsFromDisk(root, manifest.id)
@@ -282,377 +243,113 @@ function workspaceFromPackage(
   }
 }
 
-export async function openProjectFromPicker(): Promise<LoadProjectResult> {
-  const handle = await pickProjectDirectory()
-  const ok = await ensureReadWritePermission(handle)
-  if (!ok) throw new Error('未获得文件夹读写权限')
-
-  const { hasManifest } = await directoryLooksInitialized(handle)
-  if (!hasManifest) {
-    const init = window.confirm(
-      `文件夹「${handle.name}」没有 project.json。\n\n是否在此初始化为汉书工程？`,
-    )
-    if (!init) throw new Error('已取消打开工程')
-  }
-
-  const { pkg, manifest, activeScriptId } = await readPackageFromDirectory(
-    handle,
-    handle.name,
-  )
-
-  // 若刚初始化，立刻写一份 manifest + 默认剧本
-  if (!hasManifest) {
-    await writeTextFile(handle, PROJECT_FILE, serializeManifest(manifest))
-    for (const script of pkg.scripts) {
-      await writeFileAtPath(handle, sourcePathOf(script), script.content)
-    }
-  }
-
-  const binding: BoundProject = {
-    handle,
-    folderName: handle.name,
-    manifest: { ...manifest, name: pkg.name },
-  }
-  await saveLastDirectoryHandle(handle)
-
-  return {
-    binding,
-    workspace: workspaceFromPackage(pkg, activeScriptId),
-  }
+export async function loadServiceProject(handle: ProjectDirectory): Promise<LoadProjectResult> {
+  await handle.client.refresh()
+  const { pkg, manifest, activeScriptId } = await readPackageFromDirectory(handle, handle.name)
+  return { binding: { handle, folderName: manifest.name, manifest }, workspace: workspaceFromPackage(pkg, activeScriptId) }
 }
-
-export async function createProjectFromPicker(): Promise<LoadProjectResult> {
-  const handle = await pickProjectDirectory()
-  const ok = await ensureReadWritePermission(handle)
-  if (!ok) throw new Error('未获得文件夹读写权限')
-
-  const { hasManifest, hasOtherFiles } = await directoryLooksInitialized(handle)
-  if (hasManifest) {
-    const reuse = window.confirm(
-      `「${handle.name}」已是汉书工程。\n\n打开它，而不是覆盖？`,
-    )
-    if (reuse) {
-      return openProjectWithHandle(handle)
-    }
-    throw new Error('已取消新建工程')
+/** Merge remote changes only into clean resources; dirty text/binary drafts retain their read versions. */
+export async function refreshServiceProject(binding: BoundProject, current: Workspace): Promise<Workspace> {
+  const client = binding.handle.client
+  await client.refresh()
+  const pkg = current.packages.find(p => p.id === binding.manifest.id)
+  if (!pkg) return current
+  const scripts = [...pkg.scripts]
+  const staged: Array<{path:string;content:string;version:string}> = []
+  const remote = client.tree.entries.filter(e => e.kind === 'file' && TEXT_ROOT_DIRS.some(root => e.path.startsWith(`${root}/`)) && isProjectLoadableFile(e.path.split('/').at(-1)!))
+  for (const entry of remote) {
+    const index = scripts.findIndex(s => sourcePathOf(s) === entry.path)
+    const local = scripts[index]
+    if (local && client.texts.get(entry.path) !== local.content) continue
+    if (local && client.baseline.get(entry.path) === entry.version) continue
+    const content = await (await client.read(entry.path, false, entry.version)).text()
+    if (content === null) continue
+    const source = { ...createScript(entry.path.split('/').at(-1)!, content, srcKindFromDiskPath(entry.path)), id: local?.id ?? `source:${entry.path}` }
+    if (index >= 0) scripts[index] = source; else scripts.push(source)
+    staged.push({path:entry.path,content,version:entry.version})
   }
-  if (hasOtherFiles) {
-    const go = window.confirm(
-      `「${handle.name}」不是空文件夹。\n\n仍要在此创建 project.json 并写入默认剧本吗？`,
-    )
-    if (!go) throw new Error('已取消新建工程')
-  }
-
-  const script = createScript(
-    '未命名剧本.hs',
-    `标题：${handle.name}\n\n第一场 · \n\n【场景】\n`,
-  )
-  const pkg = createPackage(handle.name, [script])
-  const manifest = createManifest({
-    name: handle.name,
-    id: pkg.id,
-    activeScript: script.name,
+  const kept = scripts.filter(s => {
+    const path = sourcePathOf(s)
+    return remote.some(e => e.path === path) || !client.baseline.has(path) || client.texts.get(path) !== s.content
   })
-  // createPackage 生成了新 id，与 manifest 对齐
-  pkg.id = manifest.id
-  pkg.name = manifest.name
-
-  await writeTextFile(handle, PROJECT_FILE, serializeManifest(manifest))
-  await writeFileAtPath(handle, sourcePathOf(script), script.content)
-
-  const binding: BoundProject = {
-    handle,
-    folderName: handle.name,
-    manifest,
-  }
-  await saveLastDirectoryHandle(handle)
-
-  return {
-    binding,
-    workspace: workspaceFromPackage(pkg, script.id),
-  }
-}
-
-async function openProjectWithHandle(
-  handle: FileSystemDirectoryHandle,
-): Promise<LoadProjectResult> {
-  const ok = await ensureReadWritePermission(handle)
-  if (!ok) throw new Error('未获得文件夹读写权限')
-
-  const { pkg, manifest, activeScriptId } = await readPackageFromDirectory(
-    handle,
-    handle.name,
-  )
-  const binding: BoundProject = {
-    handle,
-    folderName: handle.name,
-    manifest: { ...manifest, name: pkg.name },
-  }
-  await saveLastDirectoryHandle(handle)
-  return {
-    binding,
-    workspace: workspaceFromPackage(pkg, activeScriptId),
-  }
-}
-
-/** 尝试恢复上次工程（需用户曾授权；失败返回 null） */
-export async function tryRestoreLastProject(): Promise<LoadProjectResult | null> {
-  if (!supportsDirectoryPicker()) return null
-  const handle = await loadLastDirectoryHandle()
-  if (!handle) return null
-  try {
-    const ok = await ensureReadWritePermission(handle)
-    if (!ok) return null
-    const raw = await readTextFile(handle, PROJECT_FILE)
-    if (!raw) return null
-    return await openProjectWithHandle(handle)
-  } catch {
-    return null
-  }
-}
-
-export async function saveProjectToDirectory(
-  binding: BoundProject,
-  workspace: Workspace,
-): Promise<BoundProject> {
-  const ok = await ensureReadWritePermission(binding.handle)
-  if (!ok) throw new Error('未获得文件夹读写权限')
-
-  const pkg =
-    workspace.packages.find((p) => p.id === binding.manifest.id) ??
-    workspace.packages[0]
-  if (!pkg) throw new Error('工作区没有可保存的包')
-
-  const active = findScript(workspace, workspace.activeScriptId)
-  const manifest = createManifest({
-    name: pkg.name,
-    id: pkg.id,
-    activeScript: active?.script.name ?? null,
-    collapsed: pkg.collapsed,
-    assetsCollapsed: pkg.assetsCollapsed,
-  })
-
-  const root = binding.handle
-
-  // 1) project.json
-  await writeTextFile(root, PROJECT_FILE, serializeManifest(manifest))
-
-  // 2) 文本文件：按规范写入 `src/<kind>/` 与 `meta/`；清理目录内多余/错位文件
-  const wanted = new Set(pkg.scripts.map((s) => s.name.toLowerCase()))
-  const wantedPaths = new Set(
-    pkg.scripts.map((s) => sourcePathOf(s).replace(/\\/g, '/').toLowerCase()),
-  )
-  for (const script of pkg.scripts) {
-    await writeFileAtPath(root, sourcePathOf(script), script.content)
-  }
-  for (const dirName of TEXT_ROOT_DIRS) {
-    try {
-      const dir = await root.getDirectoryHandle(dirName)
-      for (const path of await listFilesRecursive(dir, '')) {
-        if (path.toLowerCase().endsWith('.new')) continue
-        const name = path.split('/').pop() ?? ''
-        if (!isScriptFileName(name)) continue
-        const full = `${dirName}/${path}`.replace(/\\/g, '/').toLowerCase()
-        const misplaced = !wantedPaths.has(full)
-        if (misplaced || !wanted.has(name.toLowerCase())) {
-          await removeEntryIfExists(dir, path)
-        }
-      }
-    } catch {
-      // 尚未创建该目录
+  let assets = [...pkg.assets]
+  let assetChanges = 0
+  for (const entry of client.tree.entries.filter(e => e.kind === 'file' && e.path.startsWith('assets/'))) {
+    const epoch = assetCacheEpoch(pkg.id,entry.path)
+    const index = assets.findIndex(a => a.path === entry.path)
+    if (index >= 0 && client.baseline.get(entry.path) === entry.version) continue
+    if (index >= 0) {
+      const local = await getAssetBlob(pkg.id, entry.path)
+      if (local) { const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', await local.arrayBuffer()))].map(b => b.toString(16).padStart(2,'0')).join(''); if (hash !== client.baseline.get(entry.path)) continue }
     }
+    const blob = await client.read(entry.path, false, entry.version)
+    if(!await cacheRemoteAsset(pkg.id,entry.path,blob,epoch))continue
+    client.baseline.set(entry.path,entry.version)
+    assetChanges++
+    const asset = { id: assets[index]?.id ?? `asset:${entry.path}`, path: entry.path, mime: guessMime(entry.path), size: entry.size, updatedAt: Date.now() }
+    if (index >= 0) assets[index] = asset; else assets.push(asset)
   }
+  for(const asset of [...assets]) {
+    if(client.entry(asset.path) || !client.baseline.has(asset.path))continue
+    const epoch=assetCacheEpoch(pkg.id,asset.path)
+    const blob=await getAssetBlob(pkg.id,asset.path)
+    if(blob){const hash=[...new Uint8Array(await crypto.subtle.digest('SHA-256',await blob.arrayBuffer()))].map(b=>b.toString(16).padStart(2,'0')).join('');if(hash!==client.baseline.get(asset.path))continue}
+    if(assetCacheEpoch(pkg.id,asset.path)!==epoch)continue
+    assets=assets.filter(a=>a.path!==asset.path);client.baseline.delete(asset.path);assetChanges++
+  }
+  const live = getProjectSession()
+  if (live.binding?.handle.client !== client) return current
+  const latest = live.workspace
+  const latestPkg = latest.packages.find(p => p.id === pkg.id)
+  if (!latestPkg) return latest
+  const merged = [...latestPkg.scripts]
+  for (const stage of staged) {
+    const i = merged.findIndex(s => sourcePathOf(s) === stage.path)
+    const before = pkg.scripts.find(s => sourcePathOf(s) === stage.path)
+    if (merged[i] && merged[i].content !== before?.content) continue
+    const next = kept.find(s => sourcePathOf(s) === stage.path)!
+    if (i >= 0) merged[i] = next; else merged.push(next)
+    client.texts.set(stage.path,stage.content); client.baseline.set(stage.path,stage.version)
+  }
+  for(const before of pkg.scripts)if(!kept.some(s=>s.id===before.id) && merged.find(s=>s.id===before.id)?.content===before.content){client.baseline.delete(sourcePathOf(before));client.texts.delete(sourcePathOf(before))}
+  const result = merged.filter(s => kept.some(k => k.id === s.id) || !pkg.scripts.some(p => p.id === s.id && p.content === s.content))
+  if (staged.length || assetChanges || result.length !== pkg.scripts.length) client.remoteEpoch++
+  const packages = latest.packages.map(p => p.id === pkg.id ? { ...p, scripts: result, assets: latestPkg.assets === pkg.assets ? assets : latestPkg.assets } : p)
+  const activeScriptId = result.some(s => s.id === latest.activeScriptId) ? latest.activeScriptId : result[0]?.id ?? null
+  return { ...latest, packages, activeScriptId }
+}
+export async function openProjectFromPicker(): Promise<LoadProjectResult> { return loadServiceProject(await pickProjectDirectory()) }
+export async function createProjectFromPicker(): Promise<LoadProjectResult> { return openProjectFromPicker() }
 
-  // 3) assets：整树重写（先删再写，逻辑简单可靠）
-  // 注意：绝不触碰 `.hanshu/`（皮肤库等工程附属数据）
-  await removeEntryIfExists(root, 'assets', { recursive: true })
-  if (pkg.assetFolders.length > 0 || pkg.assets.length > 0) {
-    await root.getDirectoryHandle('assets', { create: true })
+/** Save only changed, previously read resources. Omission from a client snapshot never deletes a file. */
+export async function saveProjectToDirectory(binding: BoundProject, workspace: Workspace): Promise<BoundProject> {
+  const client = binding.handle.client
+  const pkg = workspace.packages.find(p => p.id === binding.manifest.id)
+  if (!pkg) throw new Error('没有可保存的工程')
+  const edits: import('./serviceClient').FileEdit[] = []
+  if (pkg.name !== binding.manifest.name) edits.push({ op: 'write', path: PROJECT_FILE, data: serializeManifest({ ...binding.manifest, name: pkg.name }) })
+  for (const source of pkg.scripts) {
+    const path = sourcePathOf(source)
+    if (client.texts.get(path) !== source.content) edits.push({ op: 'write', path, data: source.content })
   }
-  for (const folder of pkg.assetFolders) {
-    const norm = normalizeFolderPath(folder)
-    if (!norm || norm === 'assets') continue
-    const parts = norm.split('/')
-    let cur = root
-    for (const part of parts) {
-      cur = await cur.getDirectoryHandle(part, { create: true })
-    }
-  }
+  // Asset content comparison avoids replacing another client's unchanged binary resources.
   for (const asset of pkg.assets) {
     const blob = await getAssetBlob(pkg.id, asset.path)
-    if (!blob) continue
-    await writeFileAtPath(root, asset.path, blob)
+    if (!blob) throw new Error(`资产缓存缺失，未提交：${asset.path}`)
+    const bytes = await blob.arrayBuffer()
+    const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(b => b.toString(16).padStart(2,'0')).join('')
+    if (hash !== client.baseline.get(asset.path)) edits.push({ op: 'write', path: asset.path, data: blob })
   }
-
-  const next: BoundProject = {
-    handle: root,
-    folderName: root.name,
-    manifest,
-  }
-  await saveLastDirectoryHandle(root)
-  return next
+  // A single checked server transaction, with no deletion inferred from missing entries.
+  if (edits.length) await client.apply(edits)
+  return { ...binding, manifest: { ...binding.manifest, name: pkg.name } }
 }
-
-/** 另存为：选新目录写入并切换绑定 */
-export async function saveProjectAsToPicker(
-  workspace: Workspace,
-  preferredPackageId?: string | null,
-): Promise<LoadProjectResult> {
-  const handle = await pickProjectDirectory()
-  const ok = await ensureReadWritePermission(handle)
-  if (!ok) throw new Error('未获得文件夹读写权限')
-
-  const { hasManifest, hasOtherFiles } = await directoryLooksInitialized(handle)
-  if (hasManifest || hasOtherFiles) {
-    const go = window.confirm(
-      `「${handle.name}」非空。\n\n继续写入将覆盖同名剧本文件与 assets，是否继续？`,
-    )
-    if (!go) throw new Error('已取消另存为')
-  }
-
-  const pkg =
-    workspace.packages.find((p) => p.id === preferredPackageId) ??
-    workspace.packages[0]
-  if (!pkg) throw new Error('没有可保存的包')
-
-  // 另存为使用新目录名，但保留包 id（资产 IDB 键不变）
-  const renamed: ScriptPackage = {
-    ...pkg,
-    name: pkg.name || handle.name,
-  }
-  const ws: Workspace = {
-    packages: [renamed],
-    activeScriptId: workspace.activeScriptId,
-    activeAssetId: null,
-  }
-
-  const binding: BoundProject = {
-    handle,
-    folderName: handle.name,
-    manifest: createManifest({
-      name: renamed.name,
-      id: renamed.id,
-    }),
-  }
-
-  const saved = await saveProjectToDirectory(binding, ws)
-  return {
-    binding: saved,
-    workspace: ws,
-  }
+export async function removeSourceFromDisk(handle: ProjectDirectory, sourceName: string, srcKind?: string | null): Promise<void> {
+  await handle.client.sourceCommand(sourceRelativePath(sourceName, srcKind), null)
 }
-
-export async function unbindProject(): Promise<void> {
-  await clearLastDirectoryHandle()
-}
-
-/** `assets/` 下已有的语言标签目录名 */
-async function listDiskLocales(
-  root: FileSystemDirectoryHandle,
-): Promise<string[]> {
-  try {
-    const assets = await root.getDirectoryHandle('assets')
-    const locales: string[] = []
-    for (const entry of await listChildren(assets)) {
-      if (entry.kind === 'directory') locales.push(entry.name)
-    }
-    return locales
-  } catch {
-    return []
-  }
-}
-
-/**
- * 立刻从工程目录删掉某个源文件及其各语言 lang / voice 产物。
- * 改名、删除不应只改内存、等整包保存才清磁盘 —— 否则重开工程旧文件会回来。
- */
-export async function removeSourceFromDisk(
-  handle: FileSystemDirectoryHandle,
-  sourceName: string,
-  srcKind?: string | null,
-): Promise<void> {
-  const ok = await ensureReadWritePermission(handle)
-  if (!ok) throw new Error('未获得文件夹读写权限')
-
-  await removeFileAtPath(handle, sourceRelativePath(sourceName, srcKind))
-  // 旧布局 src/scripts/ 也清掉，避免重开工程幽灵文件
-  if (getExtension(sourceName) === '.py') {
-    await removeFileAtPath(handle, `src/scripts/${sourceName}`)
-    if (srcKind === 'goal') {
-      await removeFileAtPath(handle, `src/script/${sourceName}`)
-    } else {
-      await removeFileAtPath(handle, `src/goal/${sourceName}`)
-    }
-  }
-  const ext = sourceExtension(sourceName)
-  for (const locale of await listDiskLocales(handle)) {
-    await removeFileAtPath(handle, textAssetPath(locale, sourceName))
-    if (ext) {
-      await removeDirectoryAtPath(handle, voiceAssetDir(locale, sourceName, ext))
-    }
-  }
-}
-
-/**
- * 立刻在工程目录完成源文件改名：写新路径、删旧路径，并搬迁已登记的语言资产。
- */
-export async function renameSourceOnDisk(
-  handle: FileSystemDirectoryHandle,
-  oldName: string,
-  newName: string,
-  content: string,
-  assetMoves: Array<{ fromPath: string; toPath: string }> = [],
-  oldSrcKind?: string | null,
-  newSrcKind?: string | null,
-): Promise<void> {
-  const ok = await ensureReadWritePermission(handle)
-  if (!ok) throw new Error('未获得文件夹读写权限')
-
-  const oldSource = sourceRelativePath(oldName, oldSrcKind)
-  const newSource = sourceRelativePath(newName, newSrcKind ?? oldSrcKind)
-  await writeFileAtPath(handle, newSource, content)
-  if (oldSource.toLowerCase() !== newSource.toLowerCase()) {
-    await removeFileAtPath(handle, oldSource)
-  }
-  // 兼容旧路径 / 对侧目录残留
-  if (getExtension(oldName) === '.py') {
-    await removeFileAtPath(handle, `src/scripts/${oldName}`)
-    if ((oldSrcKind ?? 'script') !== (newSrcKind ?? oldSrcKind ?? 'script')) {
-      await removeFileAtPath(handle, sourceRelativePath(oldName, oldSrcKind))
-    }
-  }
-
-  const kept = new Set(
-    assetMoves.map((move) => move.toPath.replace(/\\/g, '/').toLowerCase()),
-  )
-  kept.add(newSource.toLowerCase())
-
-  for (const move of assetMoves) {
-    if (move.fromPath.toLowerCase() === move.toPath.toLowerCase()) continue
-    const data = await readFileAtPath(handle, move.fromPath)
-    if (data) {
-      await writeFileAtPath(handle, move.toPath, data)
-    }
-    if (!kept.has(move.fromPath.replace(/\\/g, '/').toLowerCase())) {
-      await removeFileAtPath(handle, move.fromPath)
-    }
-  }
-
-  // 旧名下可能还有未进工作区元数据的语音目录 / lang，一并清掉（避开新路径）
-  const oldExt = sourceExtension(oldName)
-  for (const locale of await listDiskLocales(handle)) {
-    const oldLang = textAssetPath(locale, oldName)
-    if (!kept.has(oldLang.toLowerCase())) {
-      await removeFileAtPath(handle, oldLang)
-    }
-    if (oldExt) {
-      const oldVoice = voiceAssetDir(locale, oldName, oldExt)
-      const newVoice = voiceAssetDir(locale, newName, sourceExtension(newName) || oldExt)
-      if (oldVoice.toLowerCase() !== newVoice.toLowerCase()) {
-        await removeDirectoryAtPath(handle, oldVoice)
-      }
-    }
-  }
+export async function renameSourceOnDisk(handle: ProjectDirectory, oldName: string, newName: string, content: string, _assetMoves: Array<{fromPath: string; toPath: string}> = [], oldSrcKind?: string | null, newSrcKind?: string | null): Promise<void> {
+  const oldPath = sourceRelativePath(oldName, oldSrcKind)
+  await handle.client.sourceCommand(oldPath, sourceRelativePath(newName, newSrcKind ?? oldSrcKind), content)
 }
 
 /** 供 UI 展示：允许的脚本后缀 */

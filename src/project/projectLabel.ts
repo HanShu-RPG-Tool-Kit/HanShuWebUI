@@ -1,14 +1,7 @@
-/**
- * 工程位置的显示标签（资源管理器里工程那一行的小灰字）。
- *
- * 刻意**不显示文件夹名/路径**：浏览器的 File System Access API 不暴露绝对路径
- * （`FileSystemDirectoryHandle` 只有 `name`），只显示文件夹名信息量有限、还得处理截断。
- *
- * 正式工作流要求绑定本地工程目录；未绑定不作为可编辑工程展示。
- */
+/** Resource-tree location label. C knows the connected project, not a writable OS directory. */
 
-/** 已绑定本地工程文件夹 */
-export const LOCAL_MIRROR_LABEL = '本地工程'
+/** 已连接服务端工程 */
+export const LOCAL_MIRROR_LABEL = '服务端工程'
 
 /**
  * @deprecated Virtual Cache 已不再作为正式工作流；未绑定工程不应出现在资源树。
@@ -35,9 +28,9 @@ export function packageLocationTitle(options: {
 }): string {
   const { packageId, boundPackageId, boundFolderName } = options
   if (!boundPackageId || packageId !== boundPackageId) {
-    return '尚未绑定工程文件夹；请「打开工程」或「新建工程」'
+    return '尚未连接工程服务；请「打开工程」或「新建工程」'
   }
   return boundFolderName
-    ? `已绑定本地工程文件夹：${boundFolderName}`
-    : '已绑定本地工程文件夹'
+    ? `已连接服务端工程：${boundFolderName}`
+    : '已连接服务端工程'
 }

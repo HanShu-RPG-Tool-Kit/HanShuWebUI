@@ -1,17 +1,9 @@
+import type { ProjectDirectory } from './serviceClient'
 import { createFileSink } from './fileSink'
 
-/**
- * 配音的**磁盘写穿** —— 通用写盘层（`fileSink`）的薄封装。
- *
- * 权限申请、`.new` → 删旧 → 改名、`move` 特性探测与降级、串行队列、结果上报
- * 都在 `fileSink` 里做一次；这里只负责把字节包成 Blob，并保持"失败要抛"的契约，
- * 让上层（ScriptWorkspace）能提示"配音未写入磁盘"。
- *
- * 未绑定工程（虚拟工作区）时 `enabled` 为 false：资产真身只在 IndexedDB 里，
- * 磁盘副本由「保存工程」整树重写。
+/** Voice asset submissions use the same checked server file commands as every other resource.
+ * S owns atomic persistence; failed submissions throw while C retains its cache/draft.
  */
-
-export { FILE_SINK_TEMP_SUFFIX as VOICE_DISK_TEMP_SUFFIX } from './fileSink'
 
 export type VoiceDiskSink = {
   /** 是否真的会写磁盘（绑定工程才 true） */
@@ -28,7 +20,7 @@ export type VoiceDiskSink = {
 }
 
 export function createVoiceDiskSink(
-  handle: FileSystemDirectoryHandle | null,
+  handle: ProjectDirectory | null,
   /** 写/删的结果回调：失败时给了它就不会被静默吞掉 */
   onWriteResult?: (path: string, error: unknown) => void,
 ): VoiceDiskSink {

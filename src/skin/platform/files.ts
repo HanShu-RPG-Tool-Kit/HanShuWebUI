@@ -198,34 +198,6 @@ async function fromDataTransferAsync(dt: DataTransfer): Promise<PickedFile[]> {
   return pickedFromSnapshot(snapshotDataTransfer(dt))
 }
 
-const tauriFiles: PlatformFiles = {
-  mode: 'tauri',
-  hasNativePaths: true,
-  async pickSkinFiles() {
-    const { open } = await import('@tauri-apps/plugin-dialog')
-    const selected = await open({
-      multiple: true,
-      title: '选择 PNG / .skin / .skin.json',
-      filters: [
-        { name: '皮肤文件', extensions: ['png', 'skin', 'json'] },
-      ],
-    })
-    if (!selected) return []
-    const paths = Array.isArray(selected) ? selected : [selected]
-    return paths.map((p) => {
-      const name = p.split(/[\\/]/).pop() ?? 'file'
-      return { name, path: p }
-    })
-  },
-  async pickSkinFolder() {
-    // WebView 的 directory input 能带上 webkitRelativePath；原生仅返回目录路径无法遍历。
-    return pickViaInput({ directory: true })
-  },
-  fromDataTransfer(dt) {
-    return fromDataTransferAsync(dt)
-  },
-}
-
 const browserFiles: PlatformFiles = {
   mode: 'browser',
   hasNativePaths: false,
@@ -241,7 +213,7 @@ const browserFiles: PlatformFiles = {
 }
 
 export function getPlatformFiles(): PlatformFiles {
-  return isTauriRuntime() ? tauriFiles : browserFiles
+  return browserFiles
 }
 
 /** Classify a picked file for the import queue. */

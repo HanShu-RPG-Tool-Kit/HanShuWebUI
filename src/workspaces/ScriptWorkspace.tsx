@@ -43,7 +43,6 @@ import {
   numpadLabel,
 } from '../monaco/speakerInsert'
 import {
-  createPackage,
   createScript,
   emptyWorkspace,
   findAsset,
@@ -68,9 +67,9 @@ import {
   type Workspace,
 } from '../workspace'
 import {
-  consumeLegacyProgressWorkspace,
   setProjectSession,
   subscribeProjectSession,
+  useProjectSession,
   getProjectSession,
 } from '../project/projectSession'
 import {
@@ -140,12 +139,9 @@ import {
   openProjectFromPicker,
   removeSourceFromDisk,
   renameSourceOnDisk,
-  saveProjectAsToPicker,
   saveProjectToDirectory,
   setBoundProject,
   supportsDirectoryPicker,
-  loadLastDirectoryHandle,
-  tryRestoreLastProject,
 } from '../project'
 
 import type {
@@ -246,6 +242,7 @@ export const ScriptWorkspace = forwardRef<
   ScriptWorkspaceHandle,
   ScriptWorkspaceProps
 >(function ScriptWorkspace({ onChromeInfo, isActive = true }, ref) {
+  const serviceSession = useProjectSession()
   const [workspace, setWorkspace] = useState<Workspace>(() => emptyWorkspace())
   const [project, setProject] = useState<BoundProject | null>(null)
   const [projectBusy, setProjectBusy] = useState(false)
@@ -335,22 +332,6 @@ export const ScriptWorkspace = forwardRef<
     if (projectRef.current) saveWorkspace(next)
   }
 
-  // 进度工作区改源文件 / 落盘时，把会话拉回本工作区
-  useEffect(() => {
-    return subscribeProjectSession(() => {
-      const remote = getProjectSession()
-      if (remote.binding?.manifest.id !== projectRef.current?.manifest.id) return
-      if (remote.workspace !== workspaceRef.current) {
-        workspaceRef.current = remote.workspace
-        setWorkspace(remote.workspace)
-      }
-      if (remote.binding && remote.binding !== projectRef.current) {
-        projectRef.current = remote.binding
-        setProject(remote.binding)
-      }
-    })
-  }, [])
-
   /**
    * 内容写回的**唯一**原语：正文 + 它属于哪一份文件。
    *
@@ -360,7 +341,9 @@ export const ScriptWorkspace = forwardRef<
    * 所以这里要求调用方**明确指出**是哪一份，然后再由 `persistActiveContent` 去核对归属。
    */
   const writeScriptContent = (scriptId: string, text: string): boolean => {
-    if (!findScript(workspaceRef.current, scriptId)) return false
+    const current = findScript(workspaceRef.current, scriptId)
+    if (!current) return false
+    if (current.script.content === text) return true
     commitWorkspace(updateScriptContent(workspaceRef.current, scriptId, text))
     return true
   }
@@ -486,7 +469,6 @@ export const ScriptWorkspace = forwardRef<
    * `requestPermission` 会被静默拒绝）。此时给出一个可点的一键恢复入口，
    * 否则「看起来有工程、其实没绑定」，导入只会写进应用内资源。
    */
-  const [pendingProjectRestore, setPendingProjectRestore] = useState(false)
   /** 仅活动文件是可本地化源（.hs / .char）时才有语言文本映射 */
   const textSourceName = editingLocalizable ? titleName : ''
   const handleLocaleChange = (tag: string) => {
@@ -672,7 +654,7 @@ export const ScriptWorkspace = forwardRef<
       unsubscribe?.()
       if (textMapRef.current === created) textMapRef.current = null
     }
-  }, [textSourceName, textWriteKey, locale, projectHandle])
+  }, [textSourceName, textWriteKey, locale, serviceSession.binding?.handle.client.remoteEpoch, projectHandle])
 
   // 工具卸载时解绑编辑器
   useEffect(() => () => textBindingRef.current?.dispose(), [])
@@ -717,7 +699,7 @@ export const ScriptWorkspace = forwardRef<
         voiceLibraryRef.current = null
       }
     }
-  }, [textSourceName, locale, projectHandle])
+  }, [textSourceName, locale, serviceSession.binding?.handle.client.remoteEpoch, projectHandle])
 
   // 资产清单一变（导入完成、拖入、删除…），配音按钮的状态就可能从缺失变可用：
   // 让音频映射管理失效并发一次通知 —— 覆盖层按钮与已打开的选择器都会跟着刷新。
@@ -991,10 +973,12 @@ export const ScriptWorkspace = forwardRef<
     void (async () => {
       const blob = await getAssetBlob(result.fromPackageId, result.fromPath)
       if (!blob) return
+      const client = projectRef.current?.handle.client
+      if (client?.entry(result.fromPath)) await client.apply([{ op: 'move', path: result.fromPath, destination: result.toPath }])
       await putAssetBlob(result.toPackageId, result.toPath, blob)
       await deleteAssetBlob(result.fromPackageId, result.fromPath)
       commitWorkspace(result.workspace)
-    })()
+    })().catch(e => window.alert(`移动资产失败：${String(e)}`))
   }
 
   const handleDropIntoFolder = (
@@ -1612,10 +1596,9 @@ export const ScriptWorkspace = forwardRef<
     workspace: Workspace
   }) => {
     const { binding, workspace: loaded } = result
-    const next = consumeLegacyProgressWorkspace(loaded)
+    const next = loaded
     projectRef.current = binding
     setProject(binding)
-    setPendingProjectRestore(false)
     setBoundProject(binding)
     commitWorkspace(next)
     setProjectSession({ workspace: next, binding })
@@ -1631,6 +1614,34 @@ export const ScriptWorkspace = forwardRef<
       setRoles(createDefaultRoles())
     }
   }
+
+  // 进度工作区改源文件 / 落盘时，把会话拉回本工作区
+  useEffect(() => {
+    return subscribeProjectSession(() => {
+      const remote = getProjectSession()
+      if (remote.binding?.handle.client !== projectRef.current?.handle.client) {
+        if (remote.binding) applyLoadedProject({ binding: remote.binding, workspace: remote.workspace })
+        else { projectRef.current = null; setProject(null); workspaceRef.current = remote.workspace; setWorkspace(remote.workspace); loadEditorContent(null, '', null) }
+        return
+      }
+      if (remote.workspace !== workspaceRef.current) {
+        const owner = bufferOwnerRef.current
+        const before = owner ? findScript(workspaceRef.current,owner)?.script : null
+        const incoming = owner ? findScript(remote.workspace,owner)?.script : null
+        workspaceRef.current = remote.workspace
+        setWorkspace(remote.workspace)
+        if (before && valueRef.current === before.content && incoming?.content !== before.content) {
+          const opened = incoming ?? findScript(remote.workspace,remote.workspace.activeScriptId)?.script
+          loadEditorContent(opened?.id ?? null,opened?.content ?? '',opened?.updatedAt ?? null)
+        }
+      }
+      if (remote.binding && remote.binding !== projectRef.current) {
+        projectRef.current = remote.binding
+        setProject(remote.binding)
+      }
+    })
+  }, [])
+
 
   const isProjectCancel = (err: unknown) =>
     (err instanceof DOMException && err.name === 'AbortError') ||
@@ -1747,40 +1758,6 @@ export const ScriptWorkspace = forwardRef<
     }
   }
 
-  const handleSaveProjectAs = async () => {
-    if (!supportsDirectoryPicker()) {
-      window.alert(
-        '当前浏览器不支持文件夹 API。\n请用 Chrome / Edge 打开本开发页（localhost）。',
-      )
-      return
-    }
-    // 先落本地缓存，再写盘 —— 并回编辑器正文**属于的**那一份
-    if (bufferOwnerRef.current) {
-      commitWorkspace(flushEditorInto(workspaceRef.current))
-      setSavedAt(nowStamp())
-    }
-    setProjectBusy(true)
-    try {
-      const preferred =
-        projectRef.current?.manifest.id ??
-        workspaceRef.current.packages[0]?.id ??
-        null
-      const result = await saveProjectAsToPicker(
-        workspaceRef.current,
-        preferred,
-      )
-      applyLoadedProject(result)
-    } catch (err) {
-      if (!isProjectCancel(err)) {
-        window.alert(
-          `另存为失败：${err instanceof Error ? err.message : String(err)}`,
-        )
-      }
-    } finally {
-      setProjectBusy(false)
-    }
-  }
-
   const openScript = (scriptId: string) => {
     if (
       scriptId === activeIdRef.current &&
@@ -1812,15 +1789,7 @@ export const ScriptWorkspace = forwardRef<
     })
   }
 
-  const handleNewPackage = () => {
-    const name = window.prompt('新包名称', '新包')
-    if (!name?.trim()) return
-    const pkg = createPackage(name.trim())
-    commitWorkspace({
-      ...workspaceRef.current,
-      packages: [...workspaceRef.current.packages, pkg],
-    })
-  }
+  const handleNewPackage = () => { void handleOpenProject() }
 
   /**
    * 新建一个文件。**返回 null 表示建成，返回字符串表示要显示在命名行里的原因。**
@@ -2165,7 +2134,8 @@ export const ScriptWorkspace = forwardRef<
       window.alert('文件夹路径无效')
       return
     }
-    commitWorkspace(ensureAssetFolder(workspaceRef.current, packageId, folder))
+    const client = projectRef.current?.handle.client
+    if (client) void client.apply([{op:'mkdir',path:folder}]).then(() => commitWorkspace(ensureAssetFolder(workspaceRef.current, packageId, folder))).catch(e => window.alert(String(e)))
   }
 
   const handleDeleteAssetFolder = (packageId: string, folderPath: string) => {
@@ -2182,6 +2152,8 @@ export const ScriptWorkspace = forwardRef<
       packageId,
       folderPath,
     )
+    const client = projectRef.current?.handle.client
+    if (client?.entry(folderPath)) void client.apply([{op:'remove',path:folderPath}]).catch(e => window.alert(`删除文件夹失败：${String(e)}`))
     commitWorkspace(next)
     // 整个文件夹的磁盘副本一起删（同上：不删就会在下次打开工程时整批复活）
     voiceOps().removeAssetEverywhere(
@@ -2351,51 +2323,6 @@ export const ScriptWorkspace = forwardRef<
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [isActive])
 
-  // 尝试恢复上次授权的工程文件夹（Chrome 会再弹一次权限）
-  useEffect(() => {
-    let cancelled = false
-    void (async () => {
-      if (!supportsDirectoryPicker()) return
-      try {
-        const result = await tryRestoreLastProject()
-        if (cancelled) return
-        if (result) {
-          applyLoadedProject(result)
-          return
-        }
-        // 恢复不了：句柄还在的话，多半是权限没授（冷启动没有用户手势，
-        // requestPermission 会被静默拒绝）→ 给出可点的一键恢复入口
-        const handle = await loadLastDirectoryHandle()
-        if (!cancelled && handle) setPendingProjectRestore(true)
-      } catch {
-        // 忽略：无句柄或用户拒绝权限
-      }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  /** 用户点「上次工程待授权」：这时有手势，权限框能正常弹出 */
-  const handleRestoreProject = () => {
-    if (projectBusy) return
-    setProjectBusy(true)
-    void (async () => {
-      try {
-        const result = await tryRestoreLastProject()
-        if (result) applyLoadedProject(result)
-        else setPendingProjectRestore(false)
-      } catch (error) {
-        window.alert(
-          `恢复上次工程失败：${error instanceof Error ? error.message : String(error)}`,
-        )
-        setPendingProjectRestore(false)
-      } finally {
-        setProjectBusy(false)
-      }
-    })()
-  }
-
   useEffect(() => {
     const onMove = (event: PointerEvent) => {
       // 录音棚右把手：从"按下时的宽度"倒推，不依赖容器矩形
@@ -2466,7 +2393,7 @@ export const ScriptWorkspace = forwardRef<
       return
     }
     if (item === '另存为工程…') {
-      void handleSaveProjectAs()
+      void handleExportProjectPack()
       return
     }
     if (item === '保存') {
@@ -3633,6 +3560,7 @@ export const ScriptWorkspace = forwardRef<
                        */
                       valueRef.current = text
                       setValue(text)
+                      if (bufferOwnerRef.current) writeScriptContent(bufferOwnerRef.current,text)
                     }}
                     options={{
                       fontSize: 18,
@@ -3643,7 +3571,7 @@ export const ScriptWorkspace = forwardRef<
                        * 录音棚打开时编辑器是**只读**的：那会儿左键点键名是"选中"、
                        * 空白处按下是"划框"，不允许再改正文（正常交互整体让位）。
                        */
-                      readOnly: studioOpen,
+                      readOnly: studioOpen || serviceSession.binding?.handle.client.snapshot.role === 'viewer',
                       domReadOnly: studioOpen,
                       minimap: { enabled: false },
                       wordWrap: 'on',
@@ -3885,22 +3813,6 @@ export const ScriptWorkspace = forwardRef<
               }}
             >
               语言文本未写入磁盘
-            </span>
-          )}
-          {pendingProjectRestore && (
-            <span
-              className="status-warn"
-              title="上次的工程文件夹还没授权（启动时无法自动弹出权限框）。点一下重新打开它，并同意读写权限。"
-              role="button"
-              tabIndex={0}
-              onClick={handleRestoreProject}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' || event.key === ' ') {
-                  handleRestoreProject()
-                }
-              }}
-            >
-              上次工程待授权
             </span>
           )}
           {voiceDiskError && (

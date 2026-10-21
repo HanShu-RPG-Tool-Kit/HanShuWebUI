@@ -1,5 +1,6 @@
+import type { ProjectDirectory } from '../../project/serviceClient'
 /**
- * File System Access SkinApi — 数据落在当前工程 `.hanshu/skinmanager`
+ * Project service SkinApi — 数据落在当前工程 `.hanshu/skinmanager`
  */
 
 import { getBoundProjectHandle } from '../../project'
@@ -18,7 +19,7 @@ import { SkinLibrarySession } from '../local/SkinLibrary'
 import { SCHEMA_VERSION, SKIN_ROOT } from '../local/paths'
 
 let session: SkinLibrarySession | null = null
-let sessionRoot: FileSystemDirectoryHandle | null = null
+let sessionRoot: ProjectDirectory | null = null
 /** Serialize init so concurrent list/create never sees a half-ready session. */
 let sessionInit: Promise<SkinLibrarySession> | null = null
 
@@ -28,7 +29,7 @@ async function getSession(): Promise<SkinLibrarySession> {
     throw new SkinApiError({
       code: 'PROJECT_REQUIRED',
       message:
-        '请先在「剧本」工作区打开或新建工程。皮肤库保存在工程目录的 .hanshu/skinmanager。',
+        '请先打开工程。',
     })
   }
   if (session && sessionRoot === handle && session.isReady()) {
@@ -58,14 +59,14 @@ async function getSession(): Promise<SkinLibrarySession> {
   return sessionInit
 }
 
-export function resetFsaSkinSession(): void {
+export function resetProjectSkinSession(): void {
   session?.dispose()
   session = null
   sessionRoot = null
   sessionInit = null
 }
 
-export function createFsaSkinApi(): SkinApi {
+export function createProjectSkinApi(): SkinApi {
   return {
     capabilities: async () => {
       try {
@@ -74,7 +75,7 @@ export function createFsaSkinApi(): SkinApi {
       } catch (e) {
         if (e instanceof SkinApiError && e.code === 'PROJECT_REQUIRED') {
           return {
-            toolVersion: 'hanshu-fsa',
+            toolVersion: 'hanshu-project-client',
             apiVersion: '1',
             librarySchemaVersion: SCHEMA_VERSION,
             formatVersion: 1,
@@ -215,4 +216,4 @@ function triggerDownload(blob: Blob, fileName: string) {
   URL.revokeObjectURL(url)
 }
 
-export const FSA_SKIN_ROOT_LABEL = SKIN_ROOT
+export const PROJECT_SKIN_ROOT_LABEL = SKIN_ROOT

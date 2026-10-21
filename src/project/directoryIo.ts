@@ -1,192 +1,38 @@
-/** File System Access — 目录读写工具（Web 开发 / Chromium WebView） */
-
-export function supportsDirectoryPicker(): boolean {
-  return typeof window !== 'undefined' && 'showDirectoryPicker' in window
+/** Project directory navigation and explicit server commands. No browser filesystem mutation. */
+import { ProjectDirectory, requestProjectConnection } from './serviceClient'
+import { ServiceError } from '../collab/protocol'
+export { ProjectDirectory }
+export function supportsDirectoryPicker(): boolean { return true }
+export async function pickProjectDirectory(): Promise<ProjectDirectory> { return (await requestProjectConnection()).root() }
+export async function ensureReadWritePermission(dir: ProjectDirectory): Promise<boolean> { return dir.client.writable }
+export async function readTextFile(dir: ProjectDirectory, name: string): Promise<string | null> { return dir.client.text(dir.resolve(name)) }
+export async function writeTextFile(dir: ProjectDirectory, name: string, content: string): Promise<void> { await writeFileAtPath(dir, name, content) }
+export async function writeBlobFile(dir: ProjectDirectory, name: string, content: Blob): Promise<void> { await writeFileAtPath(dir, name, content) }
+export async function writeFileAtPath(dir: ProjectDirectory, path: string, data: string | Blob): Promise<void> { await dir.client.apply([{ op: 'write', path: dir.resolve(path), data }]) }
+export async function removeEntryIfExists(dir: ProjectDirectory, path: string, _opts?: { recursive?: boolean }): Promise<void> {
+  const full = dir.resolve(path)
+  if (dir.client.entry(full)) await dir.client.apply([{ op: 'remove', path: full }])
 }
-
-export async function pickProjectDirectory(): Promise<FileSystemDirectoryHandle> {
-  if (!supportsDirectoryPicker()) {
-    throw new Error(
-      '当前环境不支持文件夹 API。请使用 Chrome / Edge 打开本开发页（localhost）。',
-    )
-  }
-  return window.showDirectoryPicker!({
-    id: 'hanshu-project',
-    mode: 'readwrite',
-    startIn: 'documents',
-  })
+export async function removeFileAtPath(dir: ProjectDirectory, path: string): Promise<void> { await removeEntryIfExists(dir, path) }
+export async function removeDirectoryAtPath(dir: ProjectDirectory, path: string): Promise<void> { await removeEntryIfExists(dir, path) }
+export async function resolveParentDir(root: ProjectDirectory, path: string, create = false): Promise<{parent: ProjectDirectory; fileName: string}> {
+  const full = root.resolve(path); const split = full.lastIndexOf('/'); const parentPath = split < 0 ? '' : full.slice(0, split)
+  if (create && parentPath && !root.client.entry(parentPath)) await root.client.apply([{ op: 'mkdir', path: parentPath }])
+  return { parent: new ProjectDirectory(root.client, parentPath), fileName: full.slice(split + 1) }
 }
-
-export async function ensureReadWritePermission(
-  handle: FileSystemDirectoryHandle,
-): Promise<boolean> {
-  const opts = { mode: 'readwrite' as const }
-  const current = await handle.queryPermission(opts)
-  if (current === 'granted') return true
-  const next = await handle.requestPermission(opts)
-  return next === 'granted'
+export async function readFileAtPath(root: ProjectDirectory, path: string): Promise<File | null> {
+  try { return await root.client.read(root.resolve(path)) }
+  catch (e) { if (e instanceof ServiceError && e.code === 'not_found') return null; throw e }
 }
-
-export async function readTextFile(
-  dir: FileSystemDirectoryHandle,
-  name: string,
-): Promise<string | null> {
-  try {
-    const fileHandle = await dir.getFileHandle(name)
-    const file = await fileHandle.getFile()
-    return await file.text()
-  } catch {
-    return null
-  }
+export type DirEntry = {kind: 'file' | 'directory'; name: string; path: string}
+export async function listChildren(dir: ProjectDirectory, prefix = ''): Promise<DirEntry[]> {
+  const out: DirEntry[] = []; for await (const [name, handle] of dir.entries()) out.push({ kind: handle.kind, name, path: prefix ? `${prefix}/${name}` : name }); return out
 }
-
-export async function writeTextFile(
-  dir: FileSystemDirectoryHandle,
-  name: string,
-  content: string,
-): Promise<void> {
-  const fileHandle = await dir.getFileHandle(name, { create: true })
-  const writable = await fileHandle.createWritable()
-  await writable.write(content)
-  await writable.close()
-}
-
-export async function writeBlobFile(
-  dir: FileSystemDirectoryHandle,
-  name: string,
-  blob: Blob,
-): Promise<void> {
-  const fileHandle = await dir.getFileHandle(name, { create: true })
-  const writable = await fileHandle.createWritable()
-  await writable.write(blob)
-  await writable.close()
-}
-
-export async function removeEntryIfExists(
-  dir: FileSystemDirectoryHandle,
-  name: string,
-  opts?: { recursive?: boolean },
-): Promise<void> {
-  try {
-    await dir.removeEntry(name, { recursive: opts?.recursive })
-  } catch {
-    // ignore missing
-  }
-}
-
-/** 按相对路径（a/b/c.txt）解析父目录与文件名 */
-export async function resolveParentDir(
-  root: FileSystemDirectoryHandle,
-  relativePath: string,
-  create = false,
-): Promise<{ parent: FileSystemDirectoryHandle; fileName: string }> {
-  const parts = relativePath.replace(/\\/g, '/').split('/').filter(Boolean)
-  if (parts.length === 0) {
-    throw new Error('空路径')
-  }
-  const fileName = parts[parts.length - 1]!
-  let parent = root
-  for (let i = 0; i < parts.length - 1; i++) {
-    parent = await parent.getDirectoryHandle(parts[i]!, { create })
-  }
-  return { parent, fileName }
-}
-
-export async function writeFileAtPath(
-  root: FileSystemDirectoryHandle,
-  relativePath: string,
-  data: string | Blob,
-): Promise<void> {
-  const { parent, fileName } = await resolveParentDir(root, relativePath, true)
-  if (typeof data === 'string') {
-    await writeTextFile(parent, fileName, data)
-  } else {
-    await writeBlobFile(parent, fileName, data)
-  }
-}
-
-/** 按相对路径删除文件（父目录不存在则视为本就没有） */
-export async function removeFileAtPath(
-  root: FileSystemDirectoryHandle,
-  relativePath: string,
-): Promise<void> {
-  try {
-    const { parent, fileName } = await resolveParentDir(root, relativePath, false)
-    await removeEntryIfExists(parent, fileName)
-  } catch {
-    // ignore
-  }
-}
-
-/** 按相对路径递归删除目录 */
-export async function removeDirectoryAtPath(
-  root: FileSystemDirectoryHandle,
-  relativePath: string,
-): Promise<void> {
-  try {
-    const { parent, fileName } = await resolveParentDir(root, relativePath, false)
-    await removeEntryIfExists(parent, fileName, { recursive: true })
-  } catch {
-    // ignore
-  }
-}
-
-export async function readFileAtPath(
-  root: FileSystemDirectoryHandle,
-  relativePath: string,
-): Promise<File | null> {
-  try {
-    const { parent, fileName } = await resolveParentDir(
-      root,
-      relativePath,
-      false,
-    )
-    const handle = await parent.getFileHandle(fileName)
-    return await handle.getFile()
-  } catch {
-    return null
-  }
-}
-
-export type DirEntry =
-  | { kind: 'file'; name: string; path: string }
-  | { kind: 'directory'; name: string; path: string }
-
-/** 列出目录直接子项 */
-export async function listChildren(
-  dir: FileSystemDirectoryHandle,
-  prefix = '',
-): Promise<DirEntry[]> {
-  const out: DirEntry[] = []
-  for await (const [name, handle] of dir.entries()) {
-    const path = prefix ? `${prefix}/${name}` : name
-    if (handle.kind === 'file') {
-      out.push({ kind: 'file', name, path })
-    } else {
-      out.push({ kind: 'directory', name, path })
-    }
-  }
+export async function listFilesRecursive(dir: ProjectDirectory, prefix = ''): Promise<string[]> {
+  const out: string[] = []
+  for await (const [name, handle] of dir.entries()) { const path = prefix ? `${prefix}/${name}` : name; if (handle.kind === 'file') out.push(path); else out.push(...await listFilesRecursive(handle as ProjectDirectory, path)) }
   return out
 }
-
-/** 递归列出文件相对路径 */
-export async function listFilesRecursive(
-  dir: FileSystemDirectoryHandle,
-  prefix = '',
-): Promise<string[]> {
-  const files: string[] = []
-  for await (const [name, handle] of dir.entries()) {
-    const path = prefix ? `${prefix}/${name}` : name
-    if (handle.kind === 'file') {
-      files.push(path)
-    } else if (handle.kind === 'directory') {
-      const sub = await listFilesRecursive(handle, path)
-      files.push(...sub)
-    }
-  }
-  return files
-}
-
 export function guessMime(path: string): string {
   const lower = path.toLowerCase()
   if (lower.endsWith('.png')) return 'image/png'

@@ -4,6 +4,7 @@
  */
 
 import { useSyncExternalStore } from 'react'
+import { rememberProjectDraft } from './drafts'
 import type { BoundProject } from './projectFs'
 import {
   emptyWorkspace,
@@ -74,6 +75,7 @@ export function setProjectSession(next: Partial<Session>) {
     workspace: next.workspace ?? session.workspace,
     binding: next.binding !== undefined ? next.binding : session.binding,
   }
+  if (next.workspace && session.binding) rememberProjectDraft(session.workspace)
   emit()
 }
 

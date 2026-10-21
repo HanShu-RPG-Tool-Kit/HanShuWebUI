@@ -1,6 +1,9 @@
 const DB_NAME = 'hanshu.assets.v1'
 const STORE = 'blobs'
 const DB_VERSION = 1
+const epochs = new Map<string, number>()
+export function assetCacheEpoch(packageId: string, path: string): number { return epochs.get(assetKey(packageId,path)) ?? 0 }
+function touch(packageId: string, path: string) { const key=assetKey(packageId,path);epochs.set(key,(epochs.get(key)??0)+1) }
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -25,6 +28,7 @@ export async function putAssetBlob(
   path: string,
   blob: Blob,
 ): Promise<void> {
+  touch(packageId,path)
   const db = await openDb()
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(STORE, 'readwrite')
@@ -54,6 +58,7 @@ export async function deleteAssetBlob(
   packageId: string,
   path: string,
 ): Promise<void> {
+  touch(packageId,path)
   const db = await openDb()
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(STORE, 'readwrite')
@@ -62,6 +67,15 @@ export async function deleteAssetBlob(
     tx.onerror = () => reject(tx.error ?? new Error('deleteAssetBlob failed'))
   })
   db.close()
+}
+
+/** A remote fetch must not replace a local recording/import that started while it was in flight. */
+export async function cacheRemoteAsset(packageId: string,path: string,blob: Blob,expectedEpoch: number): Promise<boolean> {
+  const db=await openDb()
+  if(assetCacheEpoch(packageId,path)!==expectedEpoch){db.close();return false}
+  touch(packageId,path)
+  await new Promise<void>((resolve,reject)=>{const tx=db.transaction(STORE,'readwrite');tx.objectStore(STORE).put(blob,assetKey(packageId,path));tx.oncomplete=()=>resolve();tx.onerror=()=>reject(tx.error)})
+  db.close();return true
 }
 
 /** 删除某包下全部资产二进制 */

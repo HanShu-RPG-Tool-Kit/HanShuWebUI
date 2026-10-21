@@ -9,7 +9,12 @@ import { CKPT_STATES, GOAL_STATES, PREDICATE_STATES, ckptState, createSimState, 
 import { createKit, createKitItem, flattenKit, mergeKitLayer, parseKit, stringifyKit } from '../src/workspaces/progress/kit.ts'
 
 let passed = 0
-function test(name: string, check: () => void) { check(); passed++; console.log(`[OK] ${name}`) }
+const pending: Promise<void>[] = []
+function test(name: string, check: () => void | Promise<void>) {
+  const result=check()
+  const success=()=>{passed++;console.log(`[OK] ${name}`)}
+  if(result instanceof Promise)pending.push(result.then(success));else success()
+}
 const errors = (f: ProgressFlow) => validateFlow(f).filter((i) => i.severity === 'error')
 function fixture() {
   const flow = createFlow('story-progress', '驿站的约定')
@@ -1184,4 +1189,5 @@ test('Kit item can link to .item library by filename stem', async () => {
   assert.ok(missing.issues.some((issue) => issue.message.includes('diamond_spear')))
 })
 
+await Promise.all(pending)
 console.log(`Progress model: ${passed} checks passed.`)

@@ -21,8 +21,8 @@
     "desktop:dev": "node scripts/desktop.mjs dev",
     "desktop:build": "node scripts/desktop.mjs build",
     "test:skin-codec": "tsx scripts/verify-skin-codec.ts",
-    "test:progress": "tsx scripts/verify-progress-model.ts",
-    "test:progress-doc": "tsx scripts/verify-progress-document.ts",
+    "test:progress": "node scripts/run-verification.mjs scripts/verify-progress-model.ts",
+    "test:progress-doc": "node scripts/run-verification.mjs scripts/verify-progress-document.ts",
     "test:progress-locale": "tsx scripts/verify-progress-locale.ts",
     "test:kit-expr": "tsx scripts/verify-kit-expr.ts",
     "test:editor-groups": "tsx scripts/verify-editor-groups.ts",
@@ -30,15 +30,16 @@
     "test:text-live-geometry": "tsx scripts/verify-text-live-geometry.ts",
     "test:text-edit-session": "tsx scripts/verify-text-edit-session.ts",
     "test:text-key-anim": "tsx scripts/verify-text-key-anim.ts",
-    "test:new-file-types": "tsx scripts/verify-new-file-types.ts",
+    "test:new-file-types": "node scripts/run-verification.mjs scripts/verify-new-file-types.ts",
     "test:hs-compile": "tsx scripts/verify-hs-compile.ts",
     "test:hs-diag": "tsx scripts/verify-hs-diagnostic-symbols.ts",
-    "test:goal-definitions": "npx vite-node scripts/verify-goal-definitions.ts",
+    "test:goal-definitions": "node scripts/run-verification.mjs scripts/verify-goal-definitions.ts",
     "test:navigation": "tsx scripts/verify-navigation-point.ts",
     "test:tts": "npm run test:tts-net && npm run test:tts-protocols && npm run test:tts-voices",
     "test:tts-net": "tsx scripts/verify-tts-net.ts",
     "test:tts-protocols": "tsx scripts/verify-tts-protocols.ts",
-    "test:tts-voices": "tsx scripts/verify-tts-voices.ts"
+    "test:tts-voices": "tsx scripts/verify-tts-voices.ts",
+    "test:project-boundary": "node scripts/verify-project-boundary.mjs"
   },
   "dependencies": {
     "@audio/encode-ogg": "^1.3.0",
@@ -51,7 +52,8 @@
     "pako": "^3.0.2",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "skinview3d": "^3.4.2"
+    "skinview3d": "^3.4.2",
+    "monaco-editor": "^0.56.0"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.5",

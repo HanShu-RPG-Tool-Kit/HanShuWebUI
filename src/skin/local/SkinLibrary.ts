@@ -1,3 +1,4 @@
+import type { ProjectDirectory } from '../../project/serviceClient'
 /**
  * Skin library session under project `.hanshu/skinmanager`
  */
@@ -83,7 +84,7 @@ function emitJob(job: ImportJob): SkinEvent {
 }
 
 export class SkinLibrarySession {
-  private root: FileSystemDirectoryHandle
+  private root: ProjectDirectory
   private lib: LibraryFile = emptyLibrary()
   private jobs = new Map<string, ImportJob>()
   private jobSources = new Map<string, EntrySource>()
@@ -93,9 +94,10 @@ export class SkinLibrarySession {
   private listeners = new Set<(e: SkinEvent) => void>()
   private previewUrls = new Map<string, string>()
   private ready = false
+  private disposed = false
   private persistJobsTimer: ReturnType<typeof setTimeout> | null = null
 
-  constructor(root: FileSystemDirectoryHandle) {
+  constructor(root: ProjectDirectory) {
     this.root = root
   }
 
@@ -130,7 +132,7 @@ export class SkinLibrarySession {
       }
     } else {
       this.lib = emptyLibrary()
-      await this.persistLibrary('folders')
+      if (this.root.client.writable) await this.persistLibrary('folders')
     }
     await this.loadJobs()
     this.ready = true
@@ -162,6 +164,7 @@ export class SkinLibrarySession {
   }
 
   private async persistJobsNow(): Promise<void> {
+    if(this.disposed || !this.root.client.writable)return
     const jobs = [...this.jobs.values()].sort((a, b) => b.seq - a.seq).slice(0, 50)
     const json = `${JSON.stringify({ seq: this.jobSeq, jobs })}\n`
     await writeTextAt(this.root, IMPORT_JOBS_FILE, json)
@@ -173,7 +176,7 @@ export class SkinLibrarySession {
   }
 
   private ensureReady() {
-    if (!this.ready) {
+    if (!this.ready || this.disposed) {
       throw new SkinApiError({
         code: 'NOT_READY',
         message: 'Skin library is not ready',
@@ -203,11 +206,12 @@ export class SkinLibrarySession {
   private async persistLibrary(
     domain: 'entries' | 'tags' | 'folders' = 'entries',
   ): Promise<void> {
+    if(this.disposed)throw new Error('皮肤工程会话已关闭，未提交修改')
     this.persistDirtyDomain = domain
     if (!this.persistWaiter) {
       this.persistWaiter = (async () => {
         await Promise.resolve()
-        while (this.persistDirtyDomain) {
+        while (this.persistDirtyDomain && !this.disposed) {
           const d = this.persistDirtyDomain
           this.persistDirtyDomain = null
           const json = `${JSON.stringify(
@@ -244,6 +248,7 @@ export class SkinLibrarySession {
   ): Promise<void> {
     const png = await rgbaToPngBlob(decoded.rgba, decoded.width, decoded.height)
     const buf = new Uint8Array(await png.arrayBuffer())
+    if(this.disposed)return
     await writeBytesAt(this.root, this.previewCachePath(skinId), buf)
   }
 
@@ -262,6 +267,7 @@ export class SkinLibrarySession {
       }
       return { skinId, decoded }
     }
+    if(this.disposed)throw new Error('皮肤工程会话已关闭')
     const disk = encodeDiskFile(decoded)
     await writeBytesAt(this.root, path, disk)
     // Preview PNG in background ? don't block validate path.
@@ -1086,7 +1092,8 @@ export class SkinLibrarySession {
       })
     }
     if (format === 'skin' || format === 'hskin') {
-      const disk = encodeDiskFile(decoded)
+      if(this.disposed)throw new Error('皮肤工程会话已关闭')
+    const disk = encodeDiskFile(decoded)
       let binary = ''
       for (const b of disk) binary += String.fromCharCode(b)
       return { skinBase64: btoa(binary) }
@@ -1295,6 +1302,8 @@ export class SkinLibrarySession {
   }
 
   dispose() {
+    this.disposed=true
+    if(this.persistJobsTimer!==null)clearTimeout(this.persistJobsTimer)
     for (const url of this.previewUrls.values()) URL.revokeObjectURL(url)
     this.previewUrls.clear()
     this.listeners.clear()

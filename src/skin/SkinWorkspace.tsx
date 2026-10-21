@@ -20,7 +20,7 @@ import {
 } from '../project'
 import { getSkinApi, resetSkinApiCache } from './api/index.ts'
 import type { GcOrphansProgress, SkinApi } from './api/SkinApi.ts'
-import { FSA_SKIN_ROOT_LABEL } from './api/fsaAdapter.ts'
+import { PROJECT_SKIN_ROOT_LABEL } from './api/projectAdapter.ts'
 import { FolderTree } from './components/FolderTree.tsx'
 import { ImportQueuePanel } from './components/ImportQueuePanel.tsx'
 import { SkinThumb } from './components/SkinThumb.tsx'
@@ -449,7 +449,7 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
           <h2 style={{ marginTop: 0 }}>需要先打开剧本工程</h2>
           <p>
             皮肤库现在保存在工程目录的{' '}
-            <code>{FSA_SKIN_ROOT_LABEL}</code>，与剧本共用同一文件夹。
+            <code>{PROJECT_SKIN_ROOT_LABEL}</code>，与剧本共用同一文件夹。
           </p>
           <p>请切换到「剧本」工作区：文件 → 打开工程… / 新建工程…</p>
         </div>
@@ -471,7 +471,7 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
     return (
       <div className={`skinWorkspace ${styles.workspace}`} data-active={active ? '1' : '0'}>
         <p className={styles.empty} style={{ padding: 24 }}>
-          正在打开皮肤库（{project.folderName}/{FSA_SKIN_ROOT_LABEL}）…
+          正在打开皮肤库（{project.folderName}/{PROJECT_SKIN_ROOT_LABEL}）…
         </p>
       </div>
     )

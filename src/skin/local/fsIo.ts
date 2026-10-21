@@ -1,4 +1,6 @@
-/** 基于 FileSystemDirectoryHandle 的相对路径读写 */
+import { ServiceError } from '../../collab/protocol'
+import { ProjectDirectory } from '../../project/serviceClient'
+/** 基于 ProjectDirectory 的相对路径读写 */
 
 import {
   resolveParentDir,
@@ -7,19 +9,15 @@ import {
 } from '../../project/directoryIo'
 
 export async function ensureDir(
-  root: FileSystemDirectoryHandle,
+  root: ProjectDirectory,
   relativeDir: string,
-): Promise<FileSystemDirectoryHandle> {
-  const parts = relativeDir.replace(/\\/g, '/').split('/').filter(Boolean)
-  let cur = root
-  for (const part of parts) {
-    cur = await cur.getDirectoryHandle(part, { create: true })
-  }
-  return cur
+): Promise<ProjectDirectory> {
+  // Parents are created by the server's atomic file transaction, including for read-only browsing.
+  return new ProjectDirectory(root.client, root.resolve(relativeDir))
 }
 
 export async function readTextAt(
-  root: FileSystemDirectoryHandle,
+  root: ProjectDirectory,
   relativePath: string,
 ): Promise<string | null> {
   try {
@@ -31,13 +29,14 @@ export async function readTextAt(
     const fh = await parent.getFileHandle(fileName)
     const file = await fh.getFile()
     return await file.text()
-  } catch {
-    return null
+  } catch (e) {
+    if (e instanceof ServiceError && e.code === 'not_found') return null
+    throw e
   }
 }
 
 export async function readBytesAt(
-  root: FileSystemDirectoryHandle,
+  root: ProjectDirectory,
   relativePath: string,
 ): Promise<Uint8Array | null> {
   try {
@@ -49,13 +48,14 @@ export async function readBytesAt(
     const fh = await parent.getFileHandle(fileName)
     const file = await fh.getFile()
     return new Uint8Array(await file.arrayBuffer())
-  } catch {
-    return null
+  } catch (e) {
+    if (e instanceof ServiceError && e.code === 'not_found') return null
+    throw e
   }
 }
 
 export async function writeTextAt(
-  root: FileSystemDirectoryHandle,
+  root: ProjectDirectory,
   relativePath: string,
   content: string,
 ): Promise<void> {
@@ -63,7 +63,7 @@ export async function writeTextAt(
 }
 
 export async function writeBytesAt(
-  root: FileSystemDirectoryHandle,
+  root: ProjectDirectory,
   relativePath: string,
   data: Uint8Array | Blob,
 ): Promise<void> {
@@ -74,7 +74,7 @@ export async function writeBytesAt(
 
 /** 列出相对目录下的直接子项名称（不存在则空数组）。 */
 export async function listChildNames(
-  root: FileSystemDirectoryHandle,
+  root: ProjectDirectory,
   relativeDir: string,
 ): Promise<{ name: string; kind: 'file' | 'directory' }[]> {
   try {
@@ -91,36 +91,23 @@ export async function listChildNames(
       })
     }
     return out
-  } catch {
-    return []
+  } catch (e) {
+    if (e instanceof ServiceError && e.code === 'not_found') return []
+    throw e
   }
 }
 
 export async function removeAt(
-  root: FileSystemDirectoryHandle,
+  root: ProjectDirectory,
   relativePath: string,
-  recursive = false,
+  _recursive = false,
 ): Promise<void> {
-  try {
-    const parts = relativePath.replace(/\\/g, '/').split('/').filter(Boolean)
-    if (parts.length === 0) return
-    if (parts.length === 1) {
-      await root.removeEntry(parts[0]!, { recursive })
-      return
-    }
-    const fileName = parts[parts.length - 1]!
-    let parent = root
-    for (let i = 0; i < parts.length - 1; i++) {
-      parent = await parent.getDirectoryHandle(parts[i]!)
-    }
-    await parent.removeEntry(fileName, { recursive })
-  } catch {
-    // ignore
-  }
+  const path = root.resolve(relativePath)
+  if (root.client.entry(path)) await root.client.apply([{ op: 'remove', path }])
 }
 
 export async function writeRootText(
-  dir: FileSystemDirectoryHandle,
+  dir: ProjectDirectory,
   name: string,
   content: string,
 ): Promise<void> {

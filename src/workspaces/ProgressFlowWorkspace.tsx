@@ -65,7 +65,6 @@ import { LocaleSelect } from '../LocaleSelect'
 import Editor from '@monaco-editor/react'
 import { HANSHU_THEME_ID, registerHanshuLanguage } from '../monaco/hanshuLanguage'
 import './ProgressFlowWorkspace.css'
-import { CollaborationWorkspace } from '../collab/CollaborationWorkspace'
 
 export type ProgressWorkspaceHandle = { handleMenuAction: (item: string) => void }
 
@@ -84,18 +83,6 @@ function dropZoneAt(event: DragEvent, splitOn: boolean): DropZone {
 }
 
 export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolean; workspaceRef?: Ref<ProgressWorkspaceHandle> }) {
-  const [mode, setMode] = useState<'local' | 'shared'>('local')
-  const localRef = useRef<ProgressWorkspaceHandle>(null)
-  const sharedRef = useRef<ProgressWorkspaceHandle>(null)
-  useImperativeHandle(workspaceRef, () => ({ handleMenuAction(item) { (mode === 'local' ? localRef.current : sharedRef.current)?.handleMenuAction(item) } }), [mode])
-  return <div className="flow-mode-container">
-    <nav className="flow-service-mode" aria-label="工程位置"><button aria-pressed={mode === 'local'} onClick={() => setMode('local')}>本机草稿</button><button aria-pressed={mode === 'shared'} onClick={() => setMode('shared')}>共享工程</button></nav>
-    <div className="flow-mode-pane" hidden={mode !== 'local'}><LocalProgressFlowWorkspace active={active && mode === 'local'} workspaceRef={localRef} /></div>
-    <div className="flow-mode-pane" hidden={mode !== 'shared'}><CollaborationWorkspace active={active && mode === 'shared'} workspaceRef={sharedRef} /></div>
-  </div>
-}
-
-function LocalProgressFlowWorkspace({ active, workspaceRef }: { active: boolean; workspaceRef?: Ref<ProgressWorkspaceHandle> }) {
   const session = useProjectSession()
   const projectBound = Boolean(session.binding)
   const editorFontSize = useEditorFontSize()
@@ -251,7 +238,7 @@ function LocalProgressFlowWorkspace({ active, workspaceRef }: { active: boolean;
   const [dropTarget, setDropTarget] = useState<{ group: GroupId; zone: DropZone } | null>(null)
 
   useEffect(() => {
-    setStorageError(projectBound ? '' : '请先在剧本工作区打开或新建工程；进度文件与剧本共用同一工程目录。')
+    setStorageError(projectBound ? '' : '请先打开工程；所有工作区使用同一工程连接。')
     if (!projectBound) setNotice('')
   }, [projectBound])
 
@@ -331,6 +318,7 @@ function LocalProgressFlowWorkspace({ active, workspaceRef }: { active: boolean;
   const explorerState = useMemo(() => ({ ...state, activeKey: focusedKey }), [state, focusedKey])
   const issues = useMemo(() => parsed.flow ? validateFlow(parsed.flow) : [], [parsed.flow])
   const cycleWarning = issues.find(issue => issue.path === 'graph' && issue.message.includes('环'))
+  const readOnly = session.binding?.handle.client.snapshot.role === 'viewer'
   const locked = !projectBound || editor !== null || propertiesKey !== null
   const propertiesDoc = propertiesKey ? state.documents.find((item) => item.key === propertiesKey) ?? null : null
   const flowLocalizable = Boolean(doc && !scriptDoc && !kitDoc && !progressDoc && !navigationDoc && !itemDoc && !itemTableDoc)
@@ -406,17 +394,17 @@ function LocalProgressFlowWorkspace({ active, workspaceRef }: { active: boolean;
         textDocKeyRef.current = null
       }
     }
-  }, [doc?.key, doc?.name, locale, projectBound, localeDoc, session.workspace.packages[0]?.id])
+  }, [doc?.key, doc?.name, locale, projectBound, localeDoc, session.workspace.packages[0]?.id, session.binding?.handle.client.remoteEpoch])
 
   // 打开旧明文文档时迁移为语义键并灌默认语种子
   useEffect(() => {
-    if (!doc || !projectBound || migratedKeysRef.current.has(`${doc.key}:${locale}`)) return
+    if (!doc || !projectBound || session.binding?.handle.client.snapshot.role === 'viewer' || migratedKeysRef.current.has(`${doc.key}:${locale}`)) return
     if (progressDoc) {
       const parsedDoc = readProgressSource(doc.source).doc
       if (!parsedDoc) return
       const { doc: next, seeds } = ensureProgressLocaleKeys(parsedDoc)
       migratedKeysRef.current.add(`${doc.key}:${locale}`)
-      if (stringifyProgress(next) !== doc.source) {
+      if (Object.keys(seeds).length && stringifyProgress(next) !== doc.source) {
         setState((previous) => ({
           ...previous,
           documents: previous.documents.map((item) =>
@@ -436,7 +424,7 @@ function LocalProgressFlowWorkspace({ active, workspaceRef }: { active: boolean;
       const { point: next, seeds } = ensureNavLocaleKeys(parsedNav.point)
       migratedKeysRef.current.add(`${doc.key}:${locale}`)
       const source = stringifyNavigationPoint(next)
-      if (source !== doc.source) {
+      if (Object.keys(seeds).length && source !== doc.source) {
         setState((previous) => ({
           ...previous,
           documents: previous.documents.map((item) =>
@@ -456,7 +444,7 @@ function LocalProgressFlowWorkspace({ active, workspaceRef }: { active: boolean;
       const { kit: next, seeds } = ensureKitLocaleKeys(parsedKit.kit)
       migratedKeysRef.current.add(`${doc.key}:${locale}`)
       const source = stringifyKit(next)
-      if (source !== doc.source) {
+      if (Object.keys(seeds).length && source !== doc.source) {
         setState((previous) => ({
           ...previous,
           documents: previous.documents.map((item) =>
@@ -473,7 +461,7 @@ function LocalProgressFlowWorkspace({ active, workspaceRef }: { active: boolean;
         const { flow: next, seeds } = ensureFlowLocaleKeys(flow)
         migratedKeysRef.current.add(`${doc.key}:${locale}`)
         const source = JSON.stringify(next, null, 2) + '\n'
-        if (source !== doc.source) {
+        if (Object.keys(seeds).length && source !== doc.source) {
           setState((previous) => ({
             ...previous,
             documents: previous.documents.map((item) =>
@@ -998,7 +986,7 @@ function LocalProgressFlowWorkspace({ active, workspaceRef }: { active: boolean;
     const paneCycle = paneIssues.find((issue) => issue.path === 'graph' && issue.message.includes('环'))
     // 同一文档可同时开在两组，画布交互只交给焦点组
     const graphLive = group === focusedGroup
-    const disabledPane = locked || busy
+    const disabledPane = locked || busy || readOnly
 
     if (paneProgress && paneProgressParsed) {
       if (!paneProgressParsed.doc) return <ProgressSourceRepair key={paneDoc.key} source={paneDoc.source} error={paneProgressParsed.error} disabled={disabledPane}
@@ -1148,7 +1136,7 @@ function LocalProgressFlowWorkspace({ active, workspaceRef }: { active: boolean;
           onDisconnect={graphLive ? disconnectCanvasLink : () => undefined}
           onCut={graphLive ? disconnectCanvasLinks : () => undefined}
           active={active && graphLive}
-          disabled={locked || busy || !graphLive}
+          disabled={locked || busy || readOnly || !graphLive}
         />
       ) : (
         <div className="flow-source-pane">
@@ -1239,7 +1227,7 @@ function LocalProgressFlowWorkspace({ active, workspaceRef }: { active: boolean;
       {!storageError && <button type="button" aria-label="关闭提示" onClick={() => setNotice('')}>×</button>}
     </div>}
     <div className="flow-layout">
-      <FlowExplorer state={explorerState} active={active} disabled={locked || busy} onChange={(next) => setState((previous) => normalizeGroups({ ...previous, documents: next.documents, folders: next.folders }))} onSelect={(key) => selectDocument(key)} onNew={newFlow} onImport={requestImport} onImportFiles={(files, folderId, packageId) => { void importFiles(files, { folderId, package: packageId }) }} onExport={exportFlow} onDownload={downloadDraft} onRemove={removeResources} onProperties={setPropertiesKey} onViewSource={viewProgressSource} onNotice={setNotice} />
+      <FlowExplorer readOnly={readOnly} state={explorerState} active={active} disabled={locked || busy} onChange={(next) => setState((previous) => normalizeGroups({ ...previous, documents: next.documents, folders: next.folders }))} onSelect={(key) => selectDocument(key)} onNew={newFlow} onImport={requestImport} onImportFiles={(files, folderId, packageId) => { void importFiles(files, { folderId, package: packageId }) }} onExport={exportFlow} onDownload={downloadDraft} onRemove={removeResources} onProperties={setPropertiesKey} onViewSource={viewProgressSource} onNotice={setNotice} />
       <main className="flow-main">
         {state.split ? (
           <EditorSplit

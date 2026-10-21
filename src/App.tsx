@@ -40,6 +40,7 @@ import { SplashOverlay } from './SplashOverlay.tsx'
 import { shouldShowSplash } from './splashSession.ts'
 import appWordmarkUrl from './brand/hanshu-wordmark.svg'
 import './App.css'
+import { ProjectConnectionBar } from './project/ProjectConnectionBar'
 
 const isDesktopShell = isTauriRuntime()
 
@@ -283,7 +284,8 @@ function App() {
       void closeDesktopWindow()
       return
     }
-    if (activeWorkspaceId === 'progress-flow') progressRef.current?.handleMenuAction(item)
+    if (item === '打开工程…' || item === '新建工程…') scriptRef.current?.handleMenuAction(item)
+    else if (activeWorkspaceId === 'progress-flow') progressRef.current?.handleMenuAction(item)
     else if (activeWorkspaceId === 'script') scriptRef.current?.handleMenuAction(item)
   }
 
@@ -341,7 +343,7 @@ function App() {
                             type="button"
                             role="menuitem"
                             disabled={activeWorkspaceId === 'progress-flow' &&
-                              !['保存', '撤销', '重做'].includes(menuItem) &&
+                              !['保存', '撤销', '重做', '打开工程…', '新建工程…'].includes(menuItem) &&
                               !isAlwaysEnabledMenuItem(menuItem)}
                             aria-checked={
                               menu.label === '查看' &&
@@ -419,6 +421,7 @@ function App() {
         )}
       </header>
 
+      <ProjectConnectionBar />
       <div className="app-body">
         <div
           className={`app-workspace-pane${

@@ -1,3 +1,4 @@
+import type { ProjectDirectory } from '../project/serviceClient'
 /**
  * 配音资产的**写、删、引用** —— 与界面无关的那一半。
  *
@@ -37,7 +38,7 @@ export type VoiceOpsHost = {
   /** 当前活动包；没有就返回 null */
   activePackage(): VoiceOpsPackage | null
   /** 已绑定的工程目录句柄（null = 虚拟工作区，磁盘写穿是 no-op） */
-  projectHandle(): FileSystemDirectoryHandle | null
+  projectHandle(): ProjectDirectory | null
   /** 当前配音库；没有（不是剧本）就 null */
   library(): VoiceLibrary | null
   /** 配音相关资产变更后，让解析层与编辑器按钮刷新 */
@@ -108,8 +109,9 @@ export function createVoiceOps(host: VoiceOpsHost): VoiceOps {
       }
     })
     for (const path of paths) {
-      void deleteAssetBlob(packageId, path)
-      void sink.remove(path)
+      void sink.remove(path).then(() => deleteAssetBlob(packageId, path)).catch(error => {
+        window.alert(`工程资源删除失败，本地草稿与服务器可能不同：${String(error)}`)
+      })
     }
   }
 

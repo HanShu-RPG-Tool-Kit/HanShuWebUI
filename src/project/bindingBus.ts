@@ -1,3 +1,4 @@
+import type { ProjectDirectory } from './serviceClient'
 /**
  * 当前打开的剧本工程绑定 — 供皮肤等模块订阅。
  * ScriptWorkspace 在打开/关闭/切换工程时 publish。
@@ -14,7 +15,7 @@ export function getBoundProject(): BoundProject | null {
   return current
 }
 
-export function getBoundProjectHandle(): FileSystemDirectoryHandle | null {
+export function getBoundProjectHandle(): ProjectDirectory | null {
   return current?.handle ?? null
 }
 

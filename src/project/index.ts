@@ -11,15 +11,11 @@ export {
   openProjectFromPicker,
   createProjectFromPicker,
   saveProjectToDirectory,
-  saveProjectAsToPicker,
-  tryRestoreLastProject,
-  unbindProject,
   removeSourceFromDisk,
   renameSourceOnDisk,
   type BoundProject,
   type LoadProjectResult,
 } from './projectFs'
-export { loadLastDirectoryHandle } from './handleStore'
 export {
   getBoundProject,
   getBoundProjectHandle,

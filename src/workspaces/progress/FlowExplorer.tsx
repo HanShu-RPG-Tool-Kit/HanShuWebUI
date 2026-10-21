@@ -95,8 +95,8 @@ const parseSelection = (ids: Set<string>) => {
 
 const isPackageId = (value: string): value is FlowPackageId => (FLOW_PACKAGE_ORDER as string[]).includes(value)
 
-export function FlowExplorer({ state, active, disabled, onChange, onSelect, onNew, onImport, onImportFiles, onExport, onDownload, onRemove, onProperties, onViewSource, onNotice }: {
-  state: FlowWorkspaceState; active: boolean; disabled: boolean
+export function FlowExplorer({ state, active, disabled, readOnly = false, onChange, onSelect, onNew, onImport, onImportFiles, onExport, onDownload, onRemove, onProperties, onViewSource, onNotice }: {
+  state: FlowWorkspaceState; active: boolean; disabled: boolean; readOnly?: boolean
   onChange: (state: FlowWorkspaceState) => void; onSelect: (key: string) => void
   onNew: (name: string, folder: string | null, pkg: FlowPackageId) => string
   onImport: (folder: string | null, pkg: FlowPackageId) => void
@@ -288,7 +288,7 @@ export function FlowExplorer({ state, active, disabled, onChange, onSelect, onNe
     return state.documents.find((d) => d.key === entry.key)?.folderId ?? null
   }
   function startEdit(mode: Edit['mode'], entry = focus) {
-    if (disabled) return
+    if (disabled || readOnly) return
     const pkg = entryPackage(state, entry)
     if (mode === 'flow' && !packageAllowsFlows(pkg)) {
       onNotice('流程只能建在「故事流程」分类中。')
@@ -335,7 +335,7 @@ export function FlowExplorer({ state, active, disabled, onChange, onSelect, onNe
     })
   }
   function submitEdit() {
-    if (!edit || disabled) return
+    if (!edit || disabled || readOnly) return
     try {
       let nextEntry = edit.entry
       if (edit.mode === 'flow' || edit.mode === 'script' || edit.mode === 'kit' || edit.mode === 'progress' || edit.mode === 'navigation' || edit.mode === 'item') { const key = onNew(edit.value, edit.parent, edit.pkg); nextEntry = { kind: 'document', key } }
@@ -607,9 +607,9 @@ export function FlowExplorer({ state, active, disabled, onChange, onSelect, onNe
 
   return <aside className="flow-library" aria-label="故事流程资源管理器">
     <div className="flow-explorer-heading"><strong>资源管理器</strong><div className="flow-explorer-actions">
-      <button type="button" title={newLabel} aria-label={newLabel} disabled={disabled || !!edit || !allowsDocuments || !newDocumentMode || focusReadonly} onClick={() => newDocumentMode && startEdit(newDocumentMode)}><Icon kind="new" /></button>
-      <button type="button" title="新建文件夹" aria-label="新建文件夹" disabled={disabled || !!edit || focusReadonly} onClick={() => startEdit('folder')}><Icon kind="folder" /></button>
-      <button type="button" title={importLabel} aria-label={importLabel} disabled={disabled || !!edit || !allowsDocuments || (rawFolder != null && isBuiltinGoalFolder(rawFolder))} onClick={() => onImport(currentFolder, currentPkg)}><Icon kind="import" /></button>
+      <button type="button" title={newLabel} aria-label={newLabel} disabled={disabled || readOnly || !!edit || !allowsDocuments || !newDocumentMode || focusReadonly} onClick={() => newDocumentMode && startEdit(newDocumentMode)}><Icon kind="new" /></button>
+      <button type="button" title="新建文件夹" aria-label="新建文件夹" disabled={disabled || readOnly || !!edit || focusReadonly} onClick={() => startEdit('folder')}><Icon kind="folder" /></button>
+      <button type="button" title={importLabel} aria-label={importLabel} disabled={disabled || readOnly || !!edit || !allowsDocuments || (rawFolder != null && isBuiltinGoalFolder(rawFolder))} onClick={() => onImport(currentFolder, currentPkg)}><Icon kind="import" /></button>
       <button type="button" title="折叠文件夹" aria-label="折叠文件夹" disabled={!!edit} onClick={() => { setExpanded(new Set([...FLOW_PACKAGE_ORDER.map((pkg) => entryId(packageEntry(pkg))), ...allSectionEntryIds()])); selectOnly(defaultFocus); setSearch('') }}><Icon kind="collapse" /></button>
     </div></div>
     <input className="flow-search" placeholder="筛选资源…" aria-label="筛选资源" value={search} disabled={!!edit} onChange={(event) => setSearch(event.target.value)} />
@@ -631,7 +631,7 @@ export function FlowExplorer({ state, active, disabled, onChange, onSelect, onNe
         return <div key={id} role="none">
           <div ref={(element) => { if (element) elements.current.set(id, element); else elements.current.delete(id) }} className={`flow-resource-row${isSelected ? ' selected' : ''}${row.entry.kind === 'document' && row.entry.key === state.activeKey ? ' is-open' : ''}${dropTarget === id ? ' drop-target' : ''}${builtinFolder || builtinDoc || itemTableDoc ? ' is-builtin' : ''}`} role="treeitem" aria-level={row.depth + 1} aria-selected={isSelected} aria-expanded={folder ? !!search || expanded.has(id) : undefined} aria-disabled={disabled} tabIndex={isFocused || (!rows.some((r) => entryId(r.entry) === entryId(focus)) && index === 0) ? 0 : -1} style={{ paddingLeft: 6 + row.depth * TREE_INDENT }} title={builtinDoc || builtinFolder || itemTableDoc ? `${row.name}（只读）` : row.name}
             onClick={(event) => clickRow(event, row.entry)}
-            onFocus={(event) => { if (event.target === event.currentTarget) setFocus(row.entry) }} onKeyDown={(event) => keyDown(event, row, index)} onContextMenu={(event) => showMenu(event, row.entry)} draggable={!disabled && !edit && row.entry.kind !== 'package' && !section && !builtinFolder && !builtinDoc && !itemTableDoc && multiCount <= 1}
+            onFocus={(event) => { if (event.target === event.currentTarget) setFocus(row.entry) }} onKeyDown={(event) => keyDown(event, row, index)} onContextMenu={(event) => showMenu(event, row.entry)} draggable={!disabled && !readOnly && !edit && row.entry.kind !== 'package' && !section && !builtinFolder && !builtinDoc && !itemTableDoc && multiCount <= 1}
             onDragStart={(event) => {
               dragging.current = row.entry
               event.dataTransfer.effectAllowed = itemDoc ? 'copyMove' : 'move'
