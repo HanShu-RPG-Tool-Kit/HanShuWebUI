@@ -1,3 +1,4 @@
+import collaborationService from './docs/collaboration-service.md?raw'
 import welcome from './docs/welcome.md?raw'
 import docs from './docs/docs.md?raw'
 import hanshuSyntax from './docs/hanshu-syntax.md?raw'
@@ -19,6 +20,7 @@ import about from './docs/about.md?raw'
 
 /** 帮助条目 id；正文用 `[标题](#topic-id)` 互链 */
 export type HelpTopicId =
+  | 'collaboration-service'
   | 'welcome'
   | 'docs'
   | 'hanshu-syntax'
@@ -53,6 +55,7 @@ export type HelpTopic = {
 }
 
 export const HELP_TOPICS: HelpTopic[] = [
+  { id:'collaboration-service',title:'工程服务与多人协作',group:'开始',audience:'both',inDocs:true,body:collaborationService },
   { id: 'welcome', title: '欢迎', group: '开始', audience: 'user', inDocs: false, body: welcome },
   { id: 'docs', title: '文档索引', group: '开始', audience: 'both', inDocs: false, body: docs },
   {

@@ -269,3 +269,34 @@ fn failed_apply_rolls_back_and_crash_recovery_restores_files_and_empty_directori
     assert!(!dir.path().join("assets/new").exists());
     assert!(dir.path().join("assets/old-empty").is_dir());
 }
+
+#[cfg(windows)]
+#[test]
+fn failed_file_replacement_fences_reads_until_recovery() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut e, sid) = setup(dir.path());
+    for path in ["assets/a.txt", "assets/z_long_readonly_target.txt"] {
+        let c = change(&mut e, &sid, path, "before");
+        e.commit_files(&sid, vec![c], 1000).unwrap();
+    }
+    let a = change(&mut e, &sid, "assets/a.txt", "after");
+    let z = change(&mut e, &sid, "assets/z_long_readonly_target.txt", "after");
+    let target = dir.path().join("assets/z_long_readonly_target.txt");
+    let mut permissions = fs::metadata(&target).unwrap().permissions();
+    permissions.set_readonly(true);
+    fs::set_permissions(&target, permissions).unwrap();
+    let result = e.commit_files(&sid, vec![a, z], 1000);
+    let mut permissions = fs::metadata(&target).unwrap().permissions();
+    permissions.set_readonly(false);
+    fs::set_permissions(&target, permissions).unwrap();
+    assert_eq!(result.unwrap_err().code, "storage");
+    assert!(e.read_project_file(&sid, "assets/a.txt", None).is_err());
+    drop(e);
+    let (e, sid) = setup(dir.path());
+    assert_eq!(
+        e.read_project_file(&sid, "assets/a.txt", None).unwrap().0,
+        b"before"
+    );
+    assert_eq!(fs::read_to_string(target).unwrap(), "before");
+    assert!(!dir.path().join(".hanshu/service/file-undo.json").exists());
+}

@@ -39,6 +39,10 @@ checkpoint 按稳定 ID 平铺保存，只含名称与说明（`FlowText` 无 `k
 
 文档根上的 `id` 是作者可控的稳定文档身份（默认 UUID，校验非空且 ≤200），**允许修改**，且不会改写图内节点引用；它与资源树里的文件名、内部资源键不是同一事物。文件名、文档 ID、创建/修改时间在资源管理器右键「属性」中查看与编辑。
 
+## 工程服务
+
+进度与剧本使用同一个全局工程连接，文件读写统一经过 S；不再另开一份「共享进度」工程。源文件与语言/配音资源共用写权，保存只提交变更。详见[工程服务与多人协作](#collaboration-service)。
+
 ## 编辑与保存
 
 - 左侧资源管理器按十个顶层分类组织资源：**脚本**、**进度**、**故事流程**、**演员**、**声誉**、**区域**、**导航器**、**商店**、**礼包**、**物品库**（各分类下可有文件夹）。「脚本」下内置二级分类 **目标定义**（稳定、不可重命名/移动/删除，其下仍可建普通文件夹），其内另有虚拟只读文件夹 **内置**（含 `core:dialogue_choice` / `core:manual` / `core:counter` 等只读样例脚本，不落盘；进度收集目标定义时始终计入，工程脚本同 kind 可覆盖）。并可新建 / 导入 **`.py`** 脚本（主区用 Python 编辑器打开）。「进度」可新建 / 导入 **`.progress`**（委托表单：目标种类来自目标定义脚本）。「导航器」可新建 / 导入 **`.nav`**（导航点 JSON：`position` 固定坐标或 `entity` 绑定实体；对齐引擎 NavigationPoint，不含 datapack 路径 / 资源 id）。「物品库」可新建 / 导入 **`.item`**（详见 [物品库：.item 与 .itemstack](#item-guide)：`format: rpgtoolkit:item`、必填 `item.id` + `components`，**不存 count**；可选根级 `tags` 与礼包相同；可带 `display` 快照；主区为标签 + 预览 + 组件树；资源树有只读表视图）。也可拖入 **`.itemstack`** 转成 `.item`（去掉 count）。「礼包」可新建 / 导入 **`.kit`**（JSON：名称；可选 `extends` 单父继承、`includes` 组合；可选 `tags` 游戏标签 string[]——类似 MC Tag 的成员声明，引擎可查询，**继承与父并集去重、组合不并入宿主**，空则不写入；可选 `params` 超参数 / `modifiers` 修饰器，详见应用内帮助与 `hanshu.kit.expr` V1；物品 ItemStack `{id,count,components,display?}`——`display` 仅编辑器展示快照，附 `snapshotOf` 指纹（id + components 的 FNV-1a，不含 count），与当前数据不一致即视为过期：tooltip 改由 WebUI 近似渲染（名称/稀有度/附魔/描述/无法破坏，未识别组件只计数），图标保留但加角标；可从桌面拖入模组导出的 **`.itemstack`** 文件追加/替换物品；随机池 `pools[{rolls, entries[{weight, items}]}]`、药水效果 `effects[{id, amplifier, duration(秒,0=无限), particles}]`、指令、经验 `{kind: levels|points, amount}`、领取反馈 `feedback{message,title,subtitle,sound}`、内联脚本；可选块为空时不写入文件；居中双栏表单）。`.hflow` 树图流程仅能在「故事流程」中新建与导入；其余分类暂只支持文件夹占位，供后续扩展。

@@ -1,13 +1,13 @@
 # 皮肤库
 
-皮肤库与剧本共用**同一个工程文件夹**。浏览器 / Tauri WebView 通过 File System Access 读写，**不再依赖**独立的 `skin-http` 或 Vite `/api` 代理。
+皮肤库与剧本、进度共用同一个服务端工程。C 负责预览、表单和导入准备，皮肤集合与对象文件的持久化统一经过 Rust S，受主体权限、文件写权和版本校验保护。详见[工程服务与多人协作](#collaboration-service)。
 
 ## 工程内布局
 
 ```
 工程根/
   project.json
-  *.hs …
+  src/
   assets/
   .hanshu/skinmanager/          # 皮肤库
     library.json                # schema v5（条目 tags 为自由字符串）
@@ -18,17 +18,12 @@
 
 对象文件为二进制 `.skin`（像素 + 半透明 flag，不含 model）。分享串：`hanshu-skin:1:<model>:<payload>`。
 
-| 适配器 | 何时使用 |
-| --- | --- |
-| **FSA**（默认） | 已打开剧本工程；数据在 `.hanshu/skinmanager` |
-| Tauri IPC | 仅当设置 `VITE_SKIN_USE_TAURI=1`（对照/回退） |
-
-实现入口：`src/skin/api/SkinApi.ts`、`src/skin/local/`、`src/skin/api/fsaAdapter.ts`。
+实现入口：`src/skin/api/SkinApi.ts`、`src/skin/api/projectAdapter.ts`、`src/project/serviceClient.ts`。旧 Tauri 库写入适配器已删除。
 
 ## 使用
 
 1. Chrome / Edge 打开开发页，或运行桌面壳。
-2. **剧本**工作区：文件 → 打开工程… / 新建工程…
+2. 全局「打开工程…」：连接服务并登录主体
 3. 切到**皮肤**工作区：导入本地 PNG（正方形 N×N 或半高 N×N/2，N∈[64…1024]）、管理文件夹；标签写在皮肤上，系统自动收集。
 4. 未打开工程时皮肤页会提示先打开工程。
 
