@@ -17,6 +17,9 @@ fn main() {
         ProjectFile::decl(&config),
         ProjectFileTree::decl(&config),
         FileChange::decl(&config),
+        FileTransactionStatus::decl(&config),
+        FileTransactionError::decl(&config),
+        FileTransactionReceipt::decl(&config),
         SourceFileMove::decl(&config),
     ] {
         println!("export {declaration}\n");

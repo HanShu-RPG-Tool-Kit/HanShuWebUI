@@ -24,5 +24,11 @@ export type ProjectFileTree = { revision: number, entries: Array<ProjectFile>, }
 
 export type FileChange = { op: string, path: string, version: string | null, content: string | null, destination: string | null, destinationVersion: string | null, leaseId: string, };
 
+export type FileTransactionStatus = "committed" | "rejected";
+
+export type FileTransactionError = { code: string, message: string, };
+
+export type FileTransactionReceipt = { transactionId: string, status: FileTransactionStatus, tree: ProjectFileTree | null, error: FileTransactionError | null, };
+
 export type SourceFileMove = { path: string, destination: string | null, };
 

@@ -281,7 +281,9 @@ async fn file_leases(
     Ok(Json(json!(leases)))
 }
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct FileBatch {
+    transaction_id: String,
     changes: Vec<project_core::FileChange>,
 }
 async fn file_commit(
@@ -290,10 +292,21 @@ async fn file_commit(
     Json(i): Json<FileBatch>,
 ) -> ApiResult {
     let files = access(&s, bearer(&h)?, true, move |e, id, now| {
-        e.commit_files(id, i.changes, now)
+        e.commit_files(id, &i.transaction_id, i.changes, now)
     })
     .await?;
     Ok(Json(json!(files)))
+}
+async fn file_transaction(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path(transaction_id): Path<String>,
+) -> ApiResult {
+    let receipt = access(&s, bearer(&h)?, false, move |e, id, _| {
+        e.file_transaction(id, &transaction_id)
+    })
+    .await?;
+    Ok(Json(json!(receipt)))
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -400,7 +413,7 @@ pub async fn start(
     let mut router = Router::new()
         .route(
             "/health",
-            get(|| async { Json(json!({"service":"hanshu-project","protocol":2})) }),
+            get(|| async { Json(json!({"service":"hanshu-project","protocol":3})) }),
         )
         .route("/api/sessions", post(login))
         .route("/api/sessions/current", axum::routing::delete(logout))
@@ -408,6 +421,10 @@ pub async fn start(
         .route("/api/files", get(files))
         .route("/api/files/content", get(file_read))
         .route("/api/files/source-plan", get(source_plan))
+        .route(
+            "/api/files/transactions/{transaction_id}",
+            get(file_transaction),
+        )
         .route("/api/files/leases", post(file_leases).delete(file_release))
         .route(
             "/api/files/commit",

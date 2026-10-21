@@ -1,5 +1,7 @@
 //! The server owns the ordinary project directory. Clients receive names/versions, never OS handles.
 //! A checked batch has an on-disk undo journal; interrupted batches roll back before serving clients.
+#[path = "file_transactions.rs"]
+mod transactions;
 use crate::{require, secret, Engine, Error, Lease, Result, LEASE_TTL};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
@@ -9,13 +11,15 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
 };
+use transactions::{CommitJournal, TransactionRecord};
+pub use transactions::{FileTransactionError, FileTransactionReceipt, FileTransactionStatus};
 use ts_rs::TS;
 
 type Tree = BTreeMap<String, Option<Vec<u8>>>;
 const MAX_FILE: usize = 32 * 1024 * 1024;
 const MAX_TREE: usize = 256 * 1024 * 1024;
 
-#[derive(Clone, Debug, Serialize, TS)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectFile {
     pub path: String,
@@ -24,7 +28,7 @@ pub struct ProjectFile {
     #[ts(type = "number")]
     pub size: u64,
 }
-#[derive(Clone, Debug, Serialize, TS)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectFileTree {
     #[ts(type = "number")]
@@ -49,7 +53,7 @@ pub struct SourceFileMove {
     pub destination: Option<String>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct UndoEntry {
     kind: String,
     content: Option<String>,
@@ -59,6 +63,8 @@ pub(crate) struct ProjectFiles {
     root: PathBuf,
     pub revision: u64,
     healthy: bool,
+    transactions: BTreeMap<String, TransactionRecord>,
+    transaction_bytes: usize,
 }
 
 fn path_ok(path: &str) -> Result<()> {
@@ -161,31 +167,12 @@ impl ProjectFiles {
             root: root.canonicalize()?,
             revision: 1,
             healthy: true,
+            transactions: BTreeMap::new(),
+            transaction_bytes: 0,
         };
-        if out.journal().exists() {
-            let old: BTreeMap<String, UndoEntry> =
-                serde_json::from_slice(&fs::read(out.journal())?)
-                    .map_err(|_| Error::new("storage", "事务恢复日志损坏，拒绝启动"))?;
-            let old = old
-                .into_iter()
-                .map(|(p, b)| {
-                    path_ok(&p)?;
-                    let value = match b.kind.as_str() {
-                        "missing" => None,
-                        "directory" => Some(None),
-                        "file" => Some(Some(
-                            STANDARD
-                                .decode(b.content.unwrap_or_default())
-                                .map_err(|_| Error::new("storage", "事务恢复内容无效"))?,
-                        )),
-                        _ => return Err(Error::new("storage", "事务恢复类型无效")),
-                    };
-                    Ok((p, value))
-                })
-                .collect::<Result<BTreeMap<_, _>>>()?;
-            out.apply(&old)?;
-            fs::remove_file(out.journal())?;
-        }
+        out.prepare_staging()?;
+        out.load_transactions()?;
+        out.recover_transaction()?;
         out.scan()?;
         Ok(out)
     }
@@ -266,22 +253,56 @@ impl ProjectFiles {
     }
     fn snapshot(&self) -> Result<ProjectFileTree> {
         let tree = self.scan()?;
-        Ok(ProjectFileTree {
-            revision: self.revision,
+        Ok(self.tree_snapshot(&tree, self.revision))
+    }
+    fn tree_snapshot(&self, tree: &Tree, revision: u64) -> ProjectFileTree {
+        ProjectFileTree {
+            revision,
             entries: tree
                 .iter()
                 .map(|(path, b)| ProjectFile {
                     path: path.clone(),
                     kind: if b.is_some() { "file" } else { "directory" }.into(),
-                    version: version(&tree, path).unwrap(),
+                    version: version(tree, path).unwrap(),
                     size: b.as_ref().map_or(0, |b| b.len() as u64),
                 })
                 .collect(),
-        })
+        }
     }
-    fn atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    fn staging(&self) -> PathBuf {
+        self.root.join(".hanshu/service/write-staging")
+    }
+    fn prepare_staging(&self) -> Result<()> {
+        let staging = self.staging();
+        if let Ok(meta) = fs::symlink_metadata(&staging) {
+            require(!reparse(&meta), "storage", "事务暂存目录不能是链接")?;
+        }
+        fs::create_dir_all(&staging)?;
+        // Only this service's private temporary files are removable. The process
+        // lock is already held, so none can belong to an active writer.
+        for entry in fs::read_dir(staging)? {
+            let entry = entry?;
+            let meta = fs::symlink_metadata(entry.path())?;
+            require(!reparse(&meta), "storage", "事务暂存文件不能是链接")?;
+            if meta.is_file() && entry.file_name().to_string_lossy().starts_with("atomic-") {
+                fs::remove_file(entry.path())?;
+            }
+        }
+        Ok(())
+    }
+    fn atomic(&self, path: &Path, bytes: &[u8]) -> Result<()> {
         fs::create_dir_all(path.parent().unwrap())?;
-        let mut file = tempfile::NamedTempFile::new_in(path.parent().unwrap())?;
+        // Keep crash leftovers out of the authoritative resource tree. Both paths
+        // stay on the project volume; persist still performs an atomic rename.
+        let staging = self.staging();
+        require(
+            !reparse(&fs::symlink_metadata(&staging)?),
+            "storage",
+            "事务暂存目录不能是链接",
+        )?;
+        let mut file = tempfile::Builder::new()
+            .prefix("atomic-")
+            .tempfile_in(staging)?;
         file.write_all(bytes)?;
         file.as_file().sync_all()?;
         file.persist(path)
@@ -309,13 +330,17 @@ impl ProjectFiles {
                 let full = self.safe(p)?;
                 match value {
                     None => fs::create_dir_all(full)?,
-                    Some(bytes) => Self::atomic(&full, bytes)?,
+                    Some(bytes) => self.atomic(&full, bytes)?,
                 }
             }
         }
         Ok(())
     }
-    fn commit(&mut self, changes: &[FileChange]) -> Result<ProjectFileTree> {
+    fn commit(
+        &mut self,
+        changes: &[FileChange],
+        mut record: TransactionRecord,
+    ) -> Result<FileTransactionReceipt> {
         let old = self.scan()?;
         let mut next = old.clone();
         require(
@@ -331,6 +356,16 @@ impl ProjectFiles {
                 format!("{} 已被其他客户端修改，草稿仍保留", c.path).as_str(),
             )?;
             match c.op.as_str() {
+                // A read-set assertion participates in the same checked batch.
+                // It lets a conflict resolution adopt some server resources while
+                // modifying others, without racing a second writer in between.
+                "check" => {
+                    require(
+                        c.content.is_none() && c.destination.is_none(),
+                        "invalid",
+                        "版本检查不能包含写入内容或移动目标",
+                    )?;
+                }
                 "write" => {
                     require(c.content.is_some(), "invalid", "写入缺少文件正文")?;
                     require(
@@ -491,24 +526,18 @@ impl ProjectFiles {
                 )
             })
             .collect::<BTreeMap<_, _>>();
-        Self::atomic(
-            &self.journal(),
-            &serde_json::to_vec(&encoded).map_err(|_| Error::new("storage", "事务编码失败"))?,
-        )?;
-        if let Err(error) = self.apply(&writes) {
-            if self.apply(&undo).is_ok() {
-                fs::remove_file(self.journal())?;
-            } else {
-                self.healthy = false;
-            }
-            return Err(error);
-        }
-        if fs::remove_file(self.journal()).is_err() {
-            self.healthy = false;
-            return Err(Error::new("storage", "工程事务未确认，请重启服务恢复"));
-        }
-        self.revision += 1;
-        self.snapshot()
+        record.receipt.tree = Some(self.tree_snapshot(&next, self.revision + 1));
+        self.execute_transaction(
+            CommitJournal {
+                committed: false,
+                transaction: record,
+                undo: encoded
+                    .into_iter()
+                    .map(|(p, entry)| (p.clone(), entry))
+                    .collect(),
+            },
+            &writes,
+        )
     }
 }
 
@@ -707,15 +736,9 @@ impl Engine {
         }
         Ok(out)
     }
-    pub fn commit_files(
-        &mut self,
-        sid: &str,
-        changes: Vec<FileChange>,
-        now: u64,
-    ) -> Result<ProjectFileTree> {
-        self.expire(now);
+    fn validate_file_changes(&self, sid: &str, changes: &[FileChange], now: u64) -> Result<()> {
         self.writer(sid)?;
-        for c in &changes {
+        for c in changes {
             path_ok(&c.path)?;
             self.require_lease(sid, &format!("file:{}", c.path), &c.lease_id, now)?;
             for path in std::iter::once(c.path.as_str()).chain(c.destination.as_deref()) {
@@ -772,10 +795,7 @@ impl Engine {
                 }
             }
         }
-        self.files
-            .as_mut()
-            .ok_or_else(|| Error::new("invalid", "未打开目录工程"))?
-            .commit(&changes)
+        Ok(())
     }
     pub fn renew_files(&mut self, sid: &str, ids: &[String], now: u64) -> Result<()> {
         self.writer(sid)?;

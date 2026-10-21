@@ -1,4 +1,4 @@
-/** Protocol v2: one server-owned directory project shared by every workspace. */
+/** Protocol v3: one server-owned directory project shared by every workspace. */
 export type { Role, Subject, Session, Lease, ResourceInfo, Resource, Snapshot } from './generated'
 export type Connection = { url: string; token: string }
 

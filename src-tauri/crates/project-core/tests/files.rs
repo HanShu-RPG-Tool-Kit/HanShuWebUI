@@ -8,6 +8,29 @@ fn setup(root: &Path) -> (project_core::Engine, String) {
     let (_, session) = engine.login(&credential, "test", 1000).unwrap();
     (engine, session.id)
 }
+fn commit(
+    e: &mut project_core::Engine,
+    sid: &str,
+    changes: Vec<FileChange>,
+    now: u64,
+) -> Result<ProjectFileTree> {
+    let receipt = e.commit_files(sid, &uuid::Uuid::new_v4().to_string(), changes, now)?;
+    if let Some(error) = receipt.error {
+        return Err(Error::new(
+            match error.code.as_str() {
+                "conflict" => "conflict",
+                "locked" => "locked",
+                "invalid" => "invalid",
+                "forbidden" => "forbidden",
+                "busy" => "busy",
+                _ => "storage",
+            },
+            error.message,
+        ));
+    }
+    Ok(receipt.tree.unwrap())
+}
+
 fn change(e: &mut project_core::Engine, sid: &str, path: &str, data: &str) -> FileChange {
     let version = e
         .files_snapshot(sid)
@@ -51,14 +74,14 @@ fn all_file_types_are_server_owned_and_stale_versions_cannot_overwrite() {
             "original"
         };
         let c = change(&mut e, &sid, path, content);
-        e.commit_files(&sid, vec![c], 1000).unwrap();
+        commit(&mut e, &sid, vec![c], 1000).unwrap();
         assert_eq!(fs::read_to_string(dir.path().join(path)).unwrap(), content);
     }
     let stale = change(&mut e, &sid, "src/hanshu/story.hs", "stale");
     let next = change(&mut e, &sid, "src/hanshu/story.hs", "new");
-    e.commit_files(&sid, vec![next], 1000).unwrap();
+    commit(&mut e, &sid, vec![next], 1000).unwrap();
     assert_eq!(
-        e.commit_files(&sid, vec![stale], 1000).unwrap_err().code,
+        commit(&mut e, &sid, vec![stale], 1000).unwrap_err().code,
         "conflict"
     );
     assert_eq!(
@@ -87,12 +110,12 @@ fn viewers_cannot_write_and_leases_are_bound_to_sessions_and_directories() {
     let (_, b) = e.login(&key, "B", 1000).unwrap();
     let c = change(&mut e, &a.id, "assets/a.png", "png");
     assert_eq!(
-        e.commit_files(&b.id, vec![c.clone()], 1000)
+        commit(&mut e, &b.id, vec![c.clone()], 1000)
             .unwrap_err()
             .code,
         "locked"
     );
-    e.commit_files(&a.id, vec![c], 1000).unwrap();
+    commit(&mut e, &a.id, vec![c], 1000).unwrap();
     assert_eq!(
         e.acquire_files(&b.id, &["assets".into()], false, 1000)
             .unwrap_err()
@@ -114,7 +137,7 @@ fn viewers_cannot_write_and_leases_are_bound_to_sessions_and_directories() {
         lease_id: "stolen".into(),
     };
     assert_eq!(
-        e.commit_files(&a.id, vec![c], 1000).unwrap_err().code,
+        commit(&mut e, &a.id, vec![c], 1000).unwrap_err().code,
         "locked"
     );
 }
@@ -139,10 +162,10 @@ fn traversal_service_secrets_and_case_collisions_are_rejected() {
         assert!(e.read_project_file(&sid, path, None).is_err(), "{path}");
     }
     let a = change(&mut e, &sid, "assets/A.png", "A");
-    e.commit_files(&sid, vec![a], 1000).unwrap();
+    commit(&mut e, &sid, vec![a], 1000).unwrap();
     let b = change(&mut e, &sid, "assets/a.png", "b");
     assert_eq!(
-        e.commit_files(&sid, vec![b], 1000).unwrap_err().code,
+        commit(&mut e, &sid, vec![b], 1000).unwrap_err().code,
         "conflict"
     );
     assert!(e
@@ -158,17 +181,17 @@ fn batches_validate_every_change_before_touching_disk_and_do_not_delete_omission
     let (mut e, sid) = setup(dir.path());
     let a = change(&mut e, &sid, "src/hanshu/a.hs", "A");
     let b = change(&mut e, &sid, "src/hanshu/b.hs", "B");
-    e.commit_files(&sid, vec![a, b], 1000).unwrap();
+    commit(&mut e, &sid, vec![a, b], 1000).unwrap();
     let a = change(&mut e, &sid, "src/hanshu/a.hs", "changed");
     let mut b = change(&mut e, &sid, "src/hanshu/b.hs", "invalid");
     b.version = Some("wrong".into());
-    assert!(e.commit_files(&sid, vec![a, b], 1000).is_err());
+    assert!(commit(&mut e, &sid, vec![a, b], 1000).is_err());
     assert_eq!(
         fs::read_to_string(dir.path().join("src/hanshu/a.hs")).unwrap(),
         "A"
     );
     let a = change(&mut e, &sid, "src/hanshu/a.hs", "changed");
-    e.commit_files(&sid, vec![a], 1000).unwrap();
+    commit(&mut e, &sid, vec![a], 1000).unwrap();
     assert_eq!(
         fs::read_to_string(dir.path().join("src/hanshu/b.hs")).unwrap(),
         "B"
@@ -184,7 +207,7 @@ fn association_plan_is_derived_from_all_server_files() {
         "assets/en_us/voice_hs/a/line.ogg",
     ] {
         let c = change(&mut e, &sid, path, "x");
-        e.commit_files(&sid, vec![c], 1000).unwrap();
+        commit(&mut e, &sid, vec![c], 1000).unwrap();
     }
     let plan = e
         .source_plan(&sid, "src/hanshu/a.hs", Some("src/hanshu/b.hs"))
@@ -197,7 +220,7 @@ fn association_plan_is_derived_from_all_server_files() {
     removal.op = "remove".into();
     removal.content = None;
     assert_eq!(
-        e.commit_files(&sid, vec![removal], 1000).unwrap_err().code,
+        commit(&mut e, &sid, vec![removal], 1000).unwrap_err().code,
         "invalid"
     );
 }
@@ -249,7 +272,7 @@ fn failed_apply_rolls_back_and_crash_recovery_restores_files_and_empty_directori
     let dir = tempfile::tempdir().unwrap();
     let (mut e, sid) = setup(dir.path());
     let c = change(&mut e, &sid, "assets/a.txt", "before");
-    e.commit_files(&sid, vec![c], 1000).unwrap();
+    commit(&mut e, &sid, vec![c], 1000).unwrap();
     // Simulate a crash after partial application of a journaled transaction.
     drop(e);
     fs::write(dir.path().join("assets/a.txt"), "partial").unwrap();
@@ -258,7 +281,12 @@ fn failed_apply_rolls_back_and_crash_recovery_restores_files_and_empty_directori
     let journal = serde_json::json!({"assets/a.txt":{"kind":"file","content":STANDARD.encode("before")},"assets/new/empty":{"kind":"missing","content":null},"assets/new":{"kind":"missing","content":null},"assets/old-empty":{"kind":"directory","content":null}});
     fs::write(
         dir.path().join(".hanshu/service/file-undo.json"),
-        journal.to_string(),
+        serde_json::json!({
+            "committed":false,
+            "transaction":{"subjectId":"test-subject","requestDigest":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "receipt":{"transactionId":"interrupted-test","status":"committed","tree":{"revision":3,"entries":[]},"error":null}},
+            "undo":journal
+        }).to_string(),
     )
     .unwrap();
     let (_e, _) = setup(dir.path());
@@ -277,7 +305,7 @@ fn failed_file_replacement_fences_reads_until_recovery() {
     let (mut e, sid) = setup(dir.path());
     for path in ["assets/a.txt", "assets/z_long_readonly_target.txt"] {
         let c = change(&mut e, &sid, path, "before");
-        e.commit_files(&sid, vec![c], 1000).unwrap();
+        commit(&mut e, &sid, vec![c], 1000).unwrap();
     }
     let a = change(&mut e, &sid, "assets/a.txt", "after");
     let z = change(&mut e, &sid, "assets/z_long_readonly_target.txt", "after");
@@ -285,7 +313,7 @@ fn failed_file_replacement_fences_reads_until_recovery() {
     let mut permissions = fs::metadata(&target).unwrap().permissions();
     permissions.set_readonly(true);
     fs::set_permissions(&target, permissions).unwrap();
-    let result = e.commit_files(&sid, vec![a, z], 1000);
+    let result = commit(&mut e, &sid, vec![a, z], 1000);
     let mut permissions = fs::metadata(&target).unwrap().permissions();
     permissions.set_readonly(false);
     fs::set_permissions(&target, permissions).unwrap();
