@@ -60,6 +60,7 @@ import {
   removeAssetMeta,
   removeAssetFolder,
   saveWorkspace,
+  sourcePathOf,
   toggleAssetsCollapsed,
   updateScriptContent,
   ensureAssetFolder,
@@ -155,7 +156,6 @@ import {
   TEXT_ASSET_MIME,
   stringifyTextFile,
   textAssetPath,
-  type TextSink,
 } from '../i18n/textMap'
 import { createTextSink } from '../i18n/textSink'
 import {
@@ -381,19 +381,36 @@ export const ScriptWorkspace = forwardRef<
     request: TextEditRequest
   } | null>(null)
   /**
-   * 语言文本写盘失败：连同它属于哪个「文件 + 语言」一起记下来。
+   * 语言草稿镜像失败：连同它属于哪个「文件 + 语言」一起记下来。
    * 渲染时只认当前写入周期 —— 既避免切换语言/文件后还挂着旧提示，
    * 也避免在 effect 里同步 setState。
    */
   const [textDiskError, setLangDiskError] = useState<{
     key: string
+    path: string
     message: string
   } | null>(null)
-  /** 配音未能写入磁盘（绑定了工程才会发生）；只提示，IndexedDB 里的内容仍权威 */
+  /** 配音提交失败；原绑定保留，待提交字节保留在事务记录中。 */
   const [voiceDiskError, setVoiceDiskError] = useState<{
     path: string
     message: string
   } | null>(null)
+  useEffect(() => {
+    const client = serviceSession.binding?.handle.client
+    if (!client) return
+    let saved = new Set(client.transactions.getSnapshot().transactions.filter(transaction => transaction.phase === 'saved').map(transaction => `${transaction.id}:${transaction.requestId}`))
+    return client.transactions.subscribe(() => {
+      const complete = client.transactions.getSnapshot().transactions.filter(transaction => transaction.phase === 'saved')
+      const acknowledged = complete.filter(transaction => !saved.has(`${transaction.id}:${transaction.requestId}`))
+      saved = new Set(complete.map(transaction => `${transaction.id}:${transaction.requestId}`))
+      if (!acknowledged.length) return
+      const includes = (path: string) => acknowledged.some(transaction => transaction.paths.some(changed => changed === path || path.startsWith(`${changed}/`)))
+      setLangDiskError(previous => previous && includes(previous.path) ? null : previous)
+      setVoiceDiskError(previous => previous && includes(previous.path) ? null : previous)
+      const current = findScript(workspaceRef.current, bufferOwnerRef.current)?.script
+      if (current && includes(sourcePathOf(current))) setDiskSavedAt(Date.now())
+    })
+  }, [serviceSession.binding?.handle.client])
   const textMapRef = useRef<TextMap | null>(null)
   /** 当前语言文本资产的原始内容（TextSink.read 是同步接口，所以要用缓存兜住） */
   const textCacheRef = useRef<string | null>(null)
@@ -499,7 +516,11 @@ export const ScriptWorkspace = forwardRef<
     const { pkg, asset } = hit
     const mime = asset.mime || TEXT_ASSET_MIME
     const blob = new Blob([content], { type: mime })
+    const sourceClient = projectRef.current?.handle.client
+    const mirror = async () => {
+    if (projectRef.current?.handle.client !== sourceClient) throw new Error('工程已切换，原语言草稿保留在原工程')
     await putAssetBlob(pkg.id, asset.path, blob)
+    if (projectRef.current?.handle.client !== sourceClient) throw new Error('工程已切换，原语言草稿保留在原工程')
     const result = registerAsset(
       workspaceRef.current,
       pkg.id,
@@ -520,10 +541,14 @@ export const ScriptWorkspace = forwardRef<
       textCacheRef.current = content
       textMapRef.current.load()
     }
+    }
+    if (sourceClient && /^assets\/[^/]+\/lang_/.test(asset.path)) {
+      await sourceClient.transactions.stageWrite({op:'write',path:asset.path,data:content}, mirror)
+    } else await mirror()
   }
 
   // 语言文本映射实例：活动源文件 + 当前语言标签 → `assets/<语言标签>/lang_<后缀>/…`
-  // 绑定文件夹工程时读写真实磁盘文件，否则退回包内虚拟文件（见 textSink）。
+  // 绑定工程时读取服务内容，修改暂存并与正文一起提交（见 textSink）。
   useEffect(() => {
     if (!textSourceName) {
       textMapRef.current = null
@@ -532,6 +557,8 @@ export const ScriptWorkspace = forwardRef<
     }
 
     const fileName = textAssetPath(locale, textSourceName)
+    const sourceId = workspaceRef.current.activeScriptId
+    const sourceClient = projectRef.current?.handle.client
     // 语言文本按**资产**存放（`assets/<locale>/lang_<ext>/…`）：与音频一样进 IndexedDB，
     // 资源管理器因此把它画在 assets 树下。此前当包内文件写，会在包根下多出一条名字
     // 带整条路径的记录（旧状态在读到时顺手迁移掉，见 loadTextAsset）。
@@ -587,11 +614,12 @@ export const ScriptWorkspace = forwardRef<
       return legacy.content
     }
 
-    const virtualSink: TextSink = {
+    const virtualSink = {
       read: () => textCacheRef.current,
       write: (content: string) => {
+        if (projectRef.current?.handle.client !== sourceClient) throw new Error('工程已切换，原语言草稿保留在原工程')
         const base = workspaceRef.current
-        const id = base.activeScriptId
+        const id = sourceId
         if (!id) return
         textCacheRef.current = content
         // 先把编辑器里的当前正文并回**它属于的**那一份，避免覆盖未保存的输入
@@ -599,7 +627,8 @@ export const ScriptWorkspace = forwardRef<
         const hit = findScript(merged, id)
         if (!hit) return
         const blob = new Blob([content], { type: TEXT_ASSET_MIME })
-        void putAssetBlob(hit.pkg.id, fileName, blob).then(() => {
+        return putAssetBlob(hit.pkg.id, fileName, blob).then(() => {
+          if (projectRef.current?.handle.client !== sourceClient) throw new Error('工程已切换，原语言草稿保留在原工程')
           const result = registerAsset(
             workspaceRef.current,
             hit.pkg.id,
@@ -619,21 +648,24 @@ export const ScriptWorkspace = forwardRef<
     // 磁盘读取是异步的：读完再建映射；磁盘写入在 sink 里按顺序串行执行
     void (async () => {
       // TextSink.read 是同步接口：先把资产文本读进缓存再建映射
-      textCacheRef.current = await loadTextAsset()
+      const content = await loadTextAsset()
+      if (cancelled || projectRef.current?.handle.client !== sourceClient) return
+      textCacheRef.current = content
       const sink = await createTextSink({
         project: projectRef.current,
         fileName,
         virtual: virtualSink,
-        // 只在磁盘写结束后异步触发。oxlint 的 react(set-state-in-effect) 按词法
+        // 只在本地镜像结束后异步触发。oxlint 的 react(set-state-in-effect) 按词法
         // 判定，仍会就此报一条告警（规则过度近似：此处不会引发级联渲染）。
         onWriteResult: (error) => {
           if (!error) {
-            setLangDiskError(null)
+            setLangDiskError(previous => previous?.path === fileName ? null : previous)
             return
           }
-          console.warn('[hanshu] 语言文本写入磁盘失败', error)
+          console.warn('[hanshu] 语言草稿镜像失败', error)
           setLangDiskError({
             key: textWriteKey,
+            path: fileName,
             message: error instanceof Error ? error.message : String(error),
           })
         },
@@ -723,13 +755,7 @@ export const ScriptWorkspace = forwardRef<
     setStudioOpen(true)
   }
 
-  /**
-   * 资产读写适配器（照 `.lang` 的 sink 思路）：
-   * - **IndexedDB + 工作区模型**：`put` 是事务原子的，直接覆盖，不需要临时文件；
-   * - **绑定工程时再磁盘写穿**：`voiceDiskSink` 内部走 `.new` → 删旧 → 改名
-   *   （同卷改名原子，防的是磁盘写被中断留下截断文件）。
-   * 磁盘失败只提示不回滚：IndexedDB 是权威，且「保存工程」还会整树重写磁盘。
-   */
+  /** 音频与同基名引用的替换是一个 S 事务；确认后再更新缓存和可见绑定。 */
   const createVoiceImportIo = (packageId: string): VoiceImportIo => {
     const findAsset = (path: string) => {
       const pkg = workspaceRef.current.packages.find((item) => item.id === packageId)
@@ -748,36 +774,28 @@ export const ScriptWorkspace = forwardRef<
 
       async write(path, bytes, mime, onProgress) {
         const blob = new Blob([bytes as BlobPart], { type: mime })
+        const peerPath = path.replace(/\.ogg$/i, '.ref')
+        const sink = createVoiceDiskSink(projectRef.current?.handle ?? null)
+        try {
+          await sink.replace(path, bytes, mime, peerPath === path ? [] : [peerPath], (ratio) => onProgress?.(ratio * 0.8))
+          setVoiceDiskError(null)
+        } catch (error) {
+          setVoiceDiskError({ path, message: error instanceof Error ? error.message : String(error) })
+          throw error
+        }
+        if (peerPath !== path) await deleteAssetBlob(packageId, peerPath)
         await putAssetBlob(packageId, path, blob)
-        onProgress?.(0.4)
-
+        const peer = findAsset(peerPath)
+        const current = peer && peerPath !== path ? removeAssetMeta(workspaceRef.current, peer.id) : workspaceRef.current
         const result = registerAsset(
-          workspaceRef.current,
+          current,
           packageId,
           path,
           mime,
           blob.size,
         )
         if (result) commitWorkspace(result.workspace)
-        onProgress?.(0.6)
-
-        const sink = createVoiceDiskSink(projectRef.current?.handle ?? null)
-        if (!sink.enabled) {
-          onProgress?.(1)
-          return
-        }
-        try {
-          await sink.write(path, bytes, mime, (ratio) =>
-            onProgress?.(0.6 + 0.4 * Math.max(0, Math.min(1, ratio))),
-          )
-          setVoiceDiskError(null)
-        } catch (error) {
-          console.warn('[hanshu] 配音写入磁盘失败', path, error)
-          setVoiceDiskError({
-            path,
-            message: error instanceof Error ? error.message : String(error),
-          })
-        }
+        onProgress?.(1)
       },
     }
   }
@@ -855,9 +873,6 @@ export const ScriptWorkspace = forwardRef<
         lastDetail = report.detail
         if (report.ok) {
           ok += 1
-          // 落成了 `.ogg`：把同基名的 `.ref` 清掉 —— 一个键只该有一个来源
-          // （否则解析按 `.ogg` 优先，用户会以为刚写的引用还在生效）
-          voiceOps().clearPeerBindingOf(keys[index], 'file')
         } else {
           failed += 1
         }
@@ -969,15 +984,22 @@ export const ScriptWorkspace = forwardRef<
       targetDir,
     )
     if (!result) return
-
+    const client = projectRef.current?.handle.client
     void (async () => {
       const blob = await getAssetBlob(result.fromPackageId, result.fromPath)
       if (!blob) return
-      const client = projectRef.current?.handle.client
-      if (client?.entry(result.fromPath)) await client.apply([{ op: 'move', path: result.fromPath, destination: result.toPath }])
+      if (client) {
+        if (client.transactions.stagedWrites().some(edit => edit.path === result.fromPath)) throw new Error('该资产还有未保存的修改，请先保存再移动')
+        await client.apply([
+          ...(client.entry(result.fromPath) ? [{ op: 'move' as const, path: result.fromPath, destination: result.toPath }] : []),
+          { op: 'write', path: result.toPath, data: blob },
+        ], '移动资产及当前内容')
+      }
+      if (projectRef.current?.handle.client !== client) return
       await putAssetBlob(result.toPackageId, result.toPath, blob)
       await deleteAssetBlob(result.fromPackageId, result.fromPath)
-      commitWorkspace(result.workspace)
+      const current = moveAssetToDir(workspaceRef.current, assetId, targetPackageId, targetDir)
+      if (current) commitWorkspace(current.workspace)
     })().catch(e => window.alert(`移动资产失败：${String(e)}`))
   }
 
@@ -1925,16 +1947,31 @@ export const ScriptWorkspace = forwardRef<
     const hit = findScript(workspaceRef.current, scriptId)
     if (!hit) return { ok: false, error: '文件不存在' }
     if (newName === hit.script.name) return { ok: true, moves: 0 }
+    if (projectBusy) return { ok: false, error: '工程操作进行中，请稍候' }
     const oldName = hit.script.name
 
+    try { projectRef.current?.handle.client.assertSourceDraftsSaved(sourcePathOf(hit.script)) }
+    catch (error) { return { ok: false, error: error instanceof Error ? error.message : String(error) } }
+
     // 连带改名：每种语言的文本资产与音频目录都跟着走（见 renameScriptAssets）
-    const renamed = renameScriptAssets(workspaceRef.current, scriptId, newName)
+    let renamed = renameScriptAssets(workspaceRef.current, scriptId, newName)
     if (renamed.kind === 'blocked') {
       return { ok: false, error: `${renamed.path} 已存在` }
     }
 
-    // 先搬 blob 再提交模型：否则语言文本映射会先按新路径去读，读到空文件
     const assetMoves = renamed.kind === 'moved' ? renamed.moves : []
+    const bound = projectRef.current
+    setProjectBusy(true)
+    try {
+      if (bound) await renameSourceOnDisk(bound.handle, oldName, newName, hit.script.content, assetMoves, hit.script.srcKind, hit.script.srcKind)
+    } catch (error) {
+      setProjectBusy(false)
+      return { ok: false, error: `改名未提交，原文件与草稿已保留：${error instanceof Error ? error.message : String(error)}` }
+    }
+    if (projectRef.current?.handle.client !== bound?.handle.client) { setProjectBusy(false); return { ok: true, moves: assetMoves.length } }
+    // S 已确认。用最新工作区更新投影，避免覆盖等待期间其他文件的编辑。
+    renamed = renameScriptAssets(workspaceRef.current, scriptId, newName)
+    try {
     if (renamed.kind === 'moved') {
       const packageId = hit.pkg.id
       for (const move of renamed.moves) {
@@ -1957,31 +1994,13 @@ export const ScriptWorkspace = forwardRef<
       })),
     }
     commitWorkspace(nextWorkspace)
-
-    const bound = projectRef.current
-    if (bound) {
-      try {
-        const content =
-          findScript(nextWorkspace, scriptId)?.script.content ?? hit.script.content
-        await renameSourceOnDisk(
-          bound.handle,
-          oldName,
-          newName,
-          content,
-          assetMoves,
-        )
-      } catch (error) {
-        return {
-          ok: false,
-          error: `工作区已改名，但写入工程目录失败：${error instanceof Error ? error.message : String(error)}`,
-        }
-      }
-    }
-
     return {
       ok: true,
       moves: assetMoves.length,
     }
+    } catch (error) {
+      return { ok: false, error: `服务器已改名，本地缓存更新失败，请重新打开工程：${String(error)}` }
+    } finally { setProjectBusy(false) }
   }
 
   const handleRenameScript = async (scriptId: string) => {
@@ -2057,6 +2076,20 @@ export const ScriptWorkspace = forwardRef<
     const hit = findScript(workspaceRef.current, scriptId)
     if (!hit) return null
     const sourceName = hit.script.name
+    if (projectBusy) return null
+    try { projectRef.current?.handle.client.assertSourceDraftsSaved(sourcePathOf(hit.script)) }
+    catch (error) { window.alert(error instanceof Error ? error.message : String(error)); return null }
+    const bound = projectRef.current
+    setProjectBusy(true)
+    try {
+      if (bound) await removeSourceFromDisk(bound.handle, sourceName, hit.script.srcKind)
+    } catch (error) {
+      setProjectBusy(false)
+      window.alert(`删除未提交，原文件与草稿已保留：${error instanceof Error ? error.message : String(error)}`)
+      return null
+    }
+    if (projectRef.current?.handle.client !== bound?.handle.client) { setProjectBusy(false); return { removedAssets: 0 } }
+    try {
     const cleaned = await deleteSourceAssets(
       workspaceRef.current,
       sourceName,
@@ -2079,17 +2112,6 @@ export const ScriptWorkspace = forwardRef<
     }
     commitWorkspace(next)
 
-    const bound = projectRef.current
-    if (bound) {
-      try {
-        await removeSourceFromDisk(bound.handle, sourceName)
-      } catch (error) {
-        window.alert(
-          `已从工作区删除，但清理工程目录失败：${error instanceof Error ? error.message : String(error)}`,
-        )
-      }
-    }
-
     if (scriptId === bufferOwnerRef.current || scriptId === activeIdRef.current) {
       const opened = findScript(next, activeScriptId)
       loadEditorContent(
@@ -2100,6 +2122,10 @@ export const ScriptWorkspace = forwardRef<
       setRoles(createDefaultRoles())
     }
     return { removedAssets: cleaned.removed.length }
+    } catch (error) {
+      window.alert(`服务器已删除，本地缓存更新失败，请重新打开工程：${String(error)}`)
+      return null
+    } finally { setProjectBusy(false) }
   }
 
   const handleDeleteScript = async (scriptId: string) => {
@@ -2117,9 +2143,7 @@ export const ScriptWorkspace = forwardRef<
     const hit = findAsset(workspaceRef.current, assetId)
     if (!hit) return
     if (!window.confirm(`删除资产「${hit.asset.path}」？`)) return
-    commitWorkspace(removeAssetMeta(workspaceRef.current, assetId))
-    // 磁盘那一份也要删：只删应用内的话，重开工程会被读回来
-    voiceOps().removeAssetEverywhere(hit.pkg.id, [hit.asset.path])
+    void voiceOps().removeAssetEverywhere(hit.pkg.id, [hit.asset.path]).catch(error => window.alert(`资产未删除：${String(error)}`))
   }
 
   const handleNewAssetFolder = (packageId: string, parentPath: string) => {
@@ -2147,19 +2171,15 @@ export const ScriptWorkspace = forwardRef<
     ) {
       return
     }
-    const { workspace: next, removed } = removeAssetFolder(
-      workspaceRef.current,
-      packageId,
-      folderPath,
-    )
     const client = projectRef.current?.handle.client
-    if (client?.entry(folderPath)) void client.apply([{op:'remove',path:folderPath}]).catch(e => window.alert(`删除文件夹失败：${String(e)}`))
-    commitWorkspace(next)
-    // 整个文件夹的磁盘副本一起删（同上：不删就会在下次打开工程时整批复活）
-    voiceOps().removeAssetEverywhere(
-      packageId,
-      removed.map((asset) => asset.path),
-    )
+    void (async () => {
+      if (client?.transactions.stagedWrites().some(edit => edit.path.startsWith(`${folderPath}/`))) throw new Error('文件夹内还有未保存的修改，请先保存或处理提交记录')
+      if (client?.entry(folderPath)) await client.apply([{ op: 'remove', path: folderPath }], '删除资产文件夹')
+      if (projectRef.current?.handle.client !== client) return
+      const { workspace: next, removed } = removeAssetFolder(workspaceRef.current, packageId, folderPath)
+      for (const asset of removed) await deleteAssetBlob(packageId, asset.path)
+      commitWorkspace(next)
+    })().catch(error => window.alert(`删除文件夹未完成：${String(error)}`))
   }
 
   const handleImportAssets = async (
@@ -3571,7 +3591,7 @@ export const ScriptWorkspace = forwardRef<
                        * 录音棚打开时编辑器是**只读**的：那会儿左键点键名是"选中"、
                        * 空白处按下是"划框"，不允许再改正文（正常交互整体让位）。
                        */
-                      readOnly: studioOpen || serviceSession.binding?.handle.client.snapshot.role === 'viewer',
+                      readOnly: projectBusy || studioOpen || serviceSession.binding?.handle.client.snapshot.role === 'viewer',
                       domReadOnly: studioOpen,
                       minimap: { enabled: false },
                       wordWrap: 'on',
@@ -3802,7 +3822,7 @@ export const ScriptWorkspace = forwardRef<
           {activeTextDiskError && (
             <span
               className="status-warn"
-              title={`语言文本未能写入磁盘：${activeTextDiskError}`}
+              title={`语言草稿镜像失败：${activeTextDiskError}`}
               role="button"
               tabIndex={0}
               onClick={() => setLangDiskError(null)}
@@ -3812,7 +3832,7 @@ export const ScriptWorkspace = forwardRef<
                 }
               }}
             >
-              语言文本未写入磁盘
+              语言草稿镜像失败
             </span>
           )}
           {voiceDiskError && (

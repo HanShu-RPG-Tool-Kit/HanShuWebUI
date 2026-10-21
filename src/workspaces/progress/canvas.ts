@@ -1,3 +1,4 @@
+import { randomId } from '../../project/crypto'
 import { addNode, clone, connectNodes, getCanvasNote, getEndNode, getNode, hasCanvasItem, NOTE_COLORS, getGoalNode, getPredicateNode, getTransitionNode, getConditionalNode, getDiffNode, getMergeNode, getSwapNode, hasContentNode, makeNode, removeNode, text, type FlowCanvasNote, type FlowPort, type FlowPosition, type ProgressFlow } from './model'
 
 export const NODE_WIDTH = 216
@@ -100,7 +101,7 @@ export function createCheckpoint(flow: ProgressFlow, position: FlowPosition) {
   requirePosition(position)
   const next = withCanvasPositions(flow)
   let id: string
-  do { id = `ckpt_${crypto.randomUUID()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
+  do { id = `ckpt_${randomId()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
   next.nodes[id] = makeNode(id, '新 checkpoint')
   next.layout!.positions[id] = { ...position }
   return { flow: next, id, localeSeeds: { [`nodes.${id}.title`]: '新 checkpoint', [`nodes.${id}.description`]: '' } }
@@ -110,7 +111,7 @@ export function createTransitionNode(flow: ProgressFlow, position: FlowPosition)
   requirePosition(position)
   const next = withCanvasPositions(flow)
   let id: string
-  do { id = `transition_${crypto.randomUUID()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
+  do { id = `transition_${randomId()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
   next.transitions ??= {}
   next.transitions[id] = {
     title: text(`transitions.${id}.title`),
@@ -124,7 +125,7 @@ export function createConditionalNode(flow: ProgressFlow, position: FlowPosition
   requirePosition(position)
   const next = withCanvasPositions(flow)
   let id: string
-  do { id = `conditional_${crypto.randomUUID()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
+  do { id = `conditional_${randomId()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
   next.conditionals ??= {}
   next.conditionals[id] = {
     title: text(`conditionals.${id}.title`),
@@ -138,7 +139,7 @@ export function createDiffNode(flow: ProgressFlow, position: FlowPosition) {
   requirePosition(position)
   const next = withCanvasPositions(flow)
   let id: string
-  do { id = `diff_${crypto.randomUUID()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
+  do { id = `diff_${randomId()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
   next.diffs ??= {}
   next.diffs[id] = {
     title: text(`diffs.${id}.title`),
@@ -152,7 +153,7 @@ export function createMergeNode(flow: ProgressFlow, position: FlowPosition) {
   requirePosition(position)
   const next = withCanvasPositions(flow)
   let id: string
-  do { id = `merge_${crypto.randomUUID()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
+  do { id = `merge_${randomId()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
   next.merges ??= {}
   next.merges[id] = {
     title: text(`merges.${id}.title`),
@@ -166,7 +167,7 @@ export function createEndNode(flow: ProgressFlow, position: FlowPosition) {
   requirePosition(position)
   const next = withCanvasPositions(flow)
   let id: string
-  do { id = `end_${crypto.randomUUID()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
+  do { id = `end_${randomId()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
   next.ends ??= {}
   next.ends[id] = {}
   next.layout!.positions[id] = { ...position }
@@ -177,7 +178,7 @@ export function createSwapNode(flow: ProgressFlow, position: FlowPosition) {
   requirePosition(position)
   const next = withCanvasPositions(flow)
   let id: string
-  do { id = `swap_${crypto.randomUUID()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
+  do { id = `swap_${randomId()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
   next.swaps ??= {}
   next.swaps[id] = {
     title: text(`swaps.${id}.title`),
@@ -193,7 +194,7 @@ export function createGoalNode(flow: ProgressFlow, position: FlowPosition) {
   requirePosition(position)
   const next = withCanvasPositions(flow)
   let id: string
-  do { id = `goal_${crypto.randomUUID()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
+  do { id = `goal_${randomId()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
   next.goals ??= {}
   next.goals[id] = {
     kind: 'manual',
@@ -210,7 +211,7 @@ export function createPredicateNode(flow: ProgressFlow, position: FlowPosition) 
   requirePosition(position)
   const next = withCanvasPositions(flow)
   let id: string
-  do { id = `predicate_${crypto.randomUUID()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
+  do { id = `predicate_${randomId()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
   next.predicates ??= {}
   next.predicates[id] = {
     kind: 'manual',
@@ -228,7 +229,7 @@ export function createCanvasNote(flow: ProgressFlow, position: FlowPosition) {
   requirePosition(position)
   const next = withCanvasPositions(flow)
   let id: string
-  do { id = `note_${crypto.randomUUID()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
+  do { id = `note_${randomId()}` } while (hasCanvasItem(next, id) || id === next.entry.id)
   next.layout!.notes ??= {}
   next.layout!.notes[id] = { title: '注释', text: '', width: 280, height: 160, color: 'slate' }
   next.layout!.positions[id] = { ...position }
@@ -310,7 +311,7 @@ export function groupCanvasNodes(flow: ProgressFlow, ids: string[]) {
   if (nodes.length < 2) throw new Error('请选择至少两个节点。')
   const next = withCanvasPositions(flow), selected = new Set(nodes)
   next.layout!.groups = Object.fromEntries(Object.entries(next.layout!.groups ?? {}).map(([id, group]) => [id, { ...group, nodes: group.nodes.filter(node => !selected.has(node)) }] as const).filter(([, group]) => group.nodes.length >= 2))
-  const id = `group_${crypto.randomUUID()}`
+  const id = `group_${randomId()}`
   const names = new Set(Object.values(next.layout!.groups).map((group, index) => group.name || `Group ${index + 1}`))
   let number = 1
   while (names.has(`Group ${number}`)) number++

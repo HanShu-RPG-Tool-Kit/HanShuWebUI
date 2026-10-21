@@ -1,11 +1,9 @@
 import type { BoundProject } from '../project'
 import { readTextFile } from '../project/directoryIo'
-import { createFileSink } from '../project/fileSink'
 import type { TextSink } from './textMap'
 
-/** Language drafts are mirrored into C's resource model and submitted through FileSink.
- * S validates identity, the source document's write authority and the read version before persisting.
- * A failed submission retains the local draft and is reported through onWriteResult.
+/** Language changes are staged alongside source drafts. Saving the project waits for
+ * their local mirrors, then sends source and language changes in one transaction.
  */
 
 export type TextSinkTarget = {
@@ -14,8 +12,8 @@ export type TextSinkTarget = {
   /** 语言文本的包内相对路径，如 `assets/zh_cn/lang_hs/folder/cp1.lang` */
   fileName: string
   /** 虚拟工作区实现（未绑定工程时使用） */
-  virtual: TextSink
-  /** 每次磁盘写入结束回调：成功传 null，失败传错误；未提供时失败只 console.warn */
+  virtual: Omit<TextSink, 'write'> & { write(content: string): void | Promise<void> }
+  /** 本地镜像完成回调；提交状态由工程事务层统一展示。 */
   onWriteResult?: (error: unknown | null) => void
 }
 
@@ -26,23 +24,17 @@ export async function createTextSink(
   if (!project) return virtual
 
   const handle = project.handle
-  const diskText = await readTextFile(handle, fileName)
-
-  const sink = createFileSink({
-    handle,
-    onWriteResult: (_path, error) => {
-      if (target.onWriteResult) target.onWriteResult(error)
-      else if (error) console.warn(`[hanshu] 写入语言文本文件失败：${fileName}`, error)
-    },
-  })
+  const diskText = handle.client.transactions.stagedText(handle.resolve(fileName)) ?? await readTextFile(handle, fileName)
 
   return {
     // 磁盘上还没有这个文件时，退回虚拟工作区里可能已有的内容
-    read: () => diskText ?? virtual.read(),
-    // 工程模式：先镜像进工作区模型（同步、立刻生效），再交给写盘层落盘
+    read: () => handle.client.transactions.stagedText(handle.resolve(fileName)) ?? diskText ?? virtual.read(),
+    // No independent server write: this translation may be referenced by unsaved source.
     write: (content: string) => {
-      virtual.write(content)
-      void sink.write(fileName, content)
+      handle.client.transactions.stageWrite({ op: 'write', path: handle.resolve(fileName), data: content }, async () => {
+        try { await virtual.write(content); target.onWriteResult?.(null) }
+        catch (error) { target.onWriteResult?.(error); throw error }
+      })
     },
   }
 }

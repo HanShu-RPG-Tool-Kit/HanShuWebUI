@@ -7,12 +7,16 @@ import { setBoundProject } from './bindingBus'
 import { emptyWorkspace } from '../workspace'
 import './project-connection.css'
 import { rememberProjectDraft, restoreProjectDraft } from './drafts'
+import { EditTransactionPanel } from './EditTransactionPanel'
+import { openEditJournal } from './editJournal'
+import { attachReconciliation } from './reconcileEdits'
 
 const labels: Record<Role,string> = { owner: '管理者', editor: '编辑者', viewer: '只读' }
 const defaultUrl = () => import.meta.env.DEV || window.location.port === '4173' ? '/__project' : window.location.origin
 
 async function openClient(client: ProjectClient, initialName: string) {
   await client.refresh(true)
+  await client.transactions.restore(openEditJournal(`${client.snapshot.projectId}:${client.snapshot.session.subjectId}`))
   if (!client.entry('project.json')) {
     if (!client.writable) throw new Error('服务端工程尚未初始化，请由管理者先打开一次。')
     await client.apply([
@@ -22,11 +26,23 @@ async function openClient(client: ProjectClient, initialName: string) {
     await client.release()
   }
   const loaded = await loadServiceProject(client.root())
-  loaded.workspace = restoreProjectDraft(client,loaded.workspace)
+  loaded.workspace = await restoreProjectDraft(client,loaded.workspace)
   setProjectClient(client)
-  client.onSaved = () => rememberProjectDraft(getProjectSession().workspace)
+  client.onSaved = () => { if (getProjectClient() === client) { rememberProjectDraft(getProjectSession().workspace); setProjectSession({}) } }
   setProjectSession(loaded)
   setBoundProject(loaded.binding)
+  attachReconciliation(client)
+  const reconcile = client.onCommitted
+  client.onCommitted = async (edits,replayed) => {
+    await reconcile?.(edits,replayed)
+    const live = getProjectSession()
+    if (replayed && getProjectClient() === client && live.binding?.handle.client === client) {
+      // The immutable receipt may be older than a peer's later edit. Advance
+      // only the now-clean resources; subsequent local drafts remain protected.
+      const workspace = await refreshServiceProject(live.binding,live.workspace).catch(()=>null)
+      if (workspace && getProjectClient() === client) setProjectSession({workspace})
+    }
+  }
   return loaded
 }
 
@@ -58,6 +74,7 @@ export function ProjectConnectionBar() {
     finally { operation.current = false; setBusy(false) }
   }
   async function connect(base: string, key: string, name: string) {
+    if (getProjectClient()?.transactions.getSnapshot().queued) throw new Error('请等待当前提交结束，再切换工程')
     const login = await request<{token: string}>({url: base,token:''}, '/api/sessions', 'POST', { credential: key.trim(), clientName: name })
     const connection = {url:base.replace(/\/$/,''),token:login.token}
     let candidate: ProjectClient | null = null
@@ -89,6 +106,10 @@ export function ProjectConnectionBar() {
     // The desktop bootstrap intentionally uses the initial connection form defaults once.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+  useEffect(() => {
+    if (!client) return
+    return client.transactions.subscribe(() => rememberProjectDraft(getProjectSession().workspace))
+  }, [client])
   useEffect(() => {
     if (!client) return
     let stopped = false; let socket: WebSocket | null = null; let retry: ReturnType<typeof setTimeout>
@@ -152,10 +173,13 @@ export function ProjectConnectionBar() {
       <span>{client ? `${online ? '● 已连接' : '○ 已断开'} · ${labels[snapshot?.role ?? 'viewer']} · ${snapshot?.members.find(m => m.subject.id === snapshot.session.subjectId)?.subject.name ?? ''}` : '打开服务端工程，所有工作区使用同一份资源'}</span>
       <button onClick={open} disabled={busy}>打开工程…</button>
       {client && <><button onClick={() => void run(() => client.release())} disabled={!online || busy}>释放写权</button><button onClick={() => setManage(!manage)}>在线主体与权限 · {snapshot?.sessions.length ?? 0}</button><button onClick={() => void run(async () => {
+        if (client.transactions.getSnapshot().queued) throw new Error('请等待当前提交结束，再关闭工程')
+        rememberProjectDraft(getProjectSession().workspace)
         await request(client.connection,'/api/sessions/current','DELETE'); client.setStatus(false);setProjectClient(null);setClient(null);setSnapshot(null);setOnline(false);setBoundProject(null);setProjectSession({binding:null,workspace:emptyWorkspace()})
       })}>关闭工程</button></>}
       {error && <span className="project-service-error" role="alert">{error}</span>}
     </div>
+    {client && <EditTransactionPanel client={client} />}
     {manage && snapshot && client && <section className="project-members" aria-label="工程主体与权限">
       <button onClick={() => setManage(false)}>收起</button>
       <div className="project-presence">{snapshot.sessions.map(s => <span key={s.id}>{snapshot.members.find(m=>m.subject.id===s.subjectId)?.subject.name} · {s.clientName}{snapshot.leases.some(l=>l.sessionId===s.id) ? ' · 持有写权' : ' · 查看'}</span>)}</div>

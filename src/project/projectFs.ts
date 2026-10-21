@@ -1,3 +1,4 @@
+import { sha256Hex } from './crypto'
 import { ServiceError } from '../collab/protocol'
 import { getProjectSession } from './projectSession'
 import type { ProjectDirectory } from './serviceClient'
@@ -210,6 +211,8 @@ async function readPackageFromDirectory(
   }
 
   const { assets, assetFolders } = await loadAssetsFromDisk(root, manifest.id)
+  root.client.assetPackageId = manifest.id
+  for (const asset of assets) root.client.assetEpochs.set(asset.path, assetCacheEpoch(manifest.id, asset.path))
 
   const pkg: ScriptPackage = {
     id: manifest.id,
@@ -280,11 +283,13 @@ export async function refreshServiceProject(binding: BoundProject, current: Work
     if (index >= 0 && client.baseline.get(entry.path) === entry.version) continue
     if (index >= 0) {
       const local = await getAssetBlob(pkg.id, entry.path)
-      if (local) { const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', await local.arrayBuffer()))].map(b => b.toString(16).padStart(2,'0')).join(''); if (hash !== client.baseline.get(entry.path)) continue }
+      if (local) { const hash = await sha256Hex(await local.arrayBuffer()); if (hash !== client.baseline.get(entry.path)) continue }
     }
     const blob = await client.read(entry.path, false, entry.version)
     if(!await cacheRemoteAsset(pkg.id,entry.path,blob,epoch))continue
     client.baseline.set(entry.path,entry.version)
+    client.originals.set(entry.path,{version:entry.version,data:blob})
+    client.assetEpochs.set(entry.path, assetCacheEpoch(pkg.id, entry.path))
     assetChanges++
     const asset = { id: assets[index]?.id ?? `asset:${entry.path}`, path: entry.path, mime: guessMime(entry.path), size: entry.size, updatedAt: Date.now() }
     if (index >= 0) assets[index] = asset; else assets.push(asset)
@@ -293,7 +298,7 @@ export async function refreshServiceProject(binding: BoundProject, current: Work
     if(client.entry(asset.path) || !client.baseline.has(asset.path))continue
     const epoch=assetCacheEpoch(pkg.id,asset.path)
     const blob=await getAssetBlob(pkg.id,asset.path)
-    if(blob){const hash=[...new Uint8Array(await crypto.subtle.digest('SHA-256',await blob.arrayBuffer()))].map(b=>b.toString(16).padStart(2,'0')).join('');if(hash!==client.baseline.get(asset.path))continue}
+    if(blob){const hash=await sha256Hex(await blob.arrayBuffer());if(hash!==client.baseline.get(asset.path))continue}
     if(assetCacheEpoch(pkg.id,asset.path)!==epoch)continue
     assets=assets.filter(a=>a.path!==asset.path);client.baseline.delete(asset.path);assetChanges++
   }
@@ -309,7 +314,7 @@ export async function refreshServiceProject(binding: BoundProject, current: Work
     if (merged[i] && merged[i].content !== before?.content) continue
     const next = kept.find(s => sourcePathOf(s) === stage.path)!
     if (i >= 0) merged[i] = next; else merged.push(next)
-    client.texts.set(stage.path,stage.content); client.baseline.set(stage.path,stage.version)
+    client.texts.set(stage.path,stage.content); client.baseline.set(stage.path,stage.version);client.originals.set(stage.path,{version:stage.version,data:stage.content})
   }
   for(const before of pkg.scripts)if(!kept.some(s=>s.id===before.id) && merged.find(s=>s.id===before.id)?.content===before.content){client.baseline.delete(sourcePathOf(before));client.texts.delete(sourcePathOf(before))}
   const result = merged.filter(s => kept.some(k => k.id === s.id) || !pkg.scripts.some(p => p.id === s.id && p.content === s.content))
@@ -324,25 +329,34 @@ export async function createProjectFromPicker(): Promise<LoadProjectResult> { re
 /** Save only changed, previously read resources. Omission from a client snapshot never deletes a file. */
 export async function saveProjectToDirectory(binding: BoundProject, workspace: Workspace): Promise<BoundProject> {
   const client = binding.handle.client
-  const pkg = workspace.packages.find(p => p.id === binding.manifest.id)
-  if (!pkg) throw new Error('没有可保存的工程')
-  const edits: import('./serviceClient').FileEdit[] = []
-  if (pkg.name !== binding.manifest.name) edits.push({ op: 'write', path: PROJECT_FILE, data: serializeManifest({ ...binding.manifest, name: pkg.name }) })
-  for (const source of pkg.scripts) {
-    const path = sourcePathOf(source)
-    if (client.texts.get(path) !== source.content) edits.push({ op: 'write', path, data: source.content })
-  }
-  // Asset content comparison avoids replacing another client's unchanged binary resources.
-  for (const asset of pkg.assets) {
-    const blob = await getAssetBlob(pkg.id, asset.path)
-    if (!blob) throw new Error(`资产缓存缺失，未提交：${asset.path}`)
-    const bytes = await blob.arrayBuffer()
-    const hash = [...new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))].map(b => b.toString(16).padStart(2,'0')).join('')
-    if (hash !== client.baseline.get(asset.path)) edits.push({ op: 'write', path: asset.path, data: blob })
-  }
-  // A single checked server transaction, with no deletion inferred from missing entries.
-  if (edits.length) await client.apply(edits)
-  return { ...binding, manifest: { ...binding.manifest, name: pkg.name } }
+  let savedName = binding.manifest.name
+  await client.transactions.submit('保存工程修改', async () => {
+    // Preparation can update the workspace asynchronously. Read it AFTER the barrier,
+    // rather than using the snapshot that the Save button captured before IndexedDB.
+    const live = getProjectSession()
+    const current = live.binding?.handle.client === client ? live.workspace : workspace
+    const pkg = current.packages.find(p => p.id === binding.manifest.id)
+    if (!pkg) throw new Error('没有可保存的工程')
+    savedName = pkg.name
+    const edits: import('./serviceClient').FileEdit[] = []
+    if (pkg.name !== binding.manifest.name) edits.push({ op: 'write', path: PROJECT_FILE, data: serializeManifest({ ...binding.manifest, name: pkg.name }) })
+    for (const source of pkg.scripts) {
+      const path = sourcePathOf(source)
+      if (client.texts.get(path) !== source.content) edits.push({ op: 'write', path, data: source.content })
+    }
+    // Asset content comparison avoids replacing another client's unchanged binary resources.
+    for (const asset of pkg.assets) {
+      const epoch = assetCacheEpoch(pkg.id, asset.path)
+      const blob = await getAssetBlob(pkg.id, asset.path)
+      if (!blob) throw new Error(`资产缓存缺失，未提交：${asset.path}`)
+      const bytes = await blob.arrayBuffer()
+      const hash = await sha256Hex(bytes)
+      if (hash !== client.baseline.get(asset.path)) edits.push({ op: 'write', path: asset.path, data: blob, cacheEpoch: epoch })
+      else if (assetCacheEpoch(pkg.id, asset.path) === epoch) client.assetEpochs.set(asset.path, epoch)
+    }
+    return edits
+  }, true)
+  return { ...binding, manifest: { ...binding.manifest, name: savedName } }
 }
 export async function removeSourceFromDisk(handle: ProjectDirectory, sourceName: string, srcKind?: string | null): Promise<void> {
   await handle.client.sourceCommand(sourceRelativePath(sourceName, srcKind), null)

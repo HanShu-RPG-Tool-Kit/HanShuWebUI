@@ -53,11 +53,13 @@ import {
   useProjectSession,
 } from '../project/projectSession'
 import { setBoundProject } from '../project/bindingBus'
-import { removeSourceFromDisk, renameSourceOnDisk, saveProjectToDirectory } from '../project/projectFs'
+import { saveProjectToDirectory } from '../project/projectFs'
+import { deleteSourceAssets } from '../agent/agentOps'
+import { randomId } from '../project/crypto'
 import { renameScriptAssets } from '../workspaceMove'
-import { registerAsset, saveWorkspace } from '../workspace'
+import { registerAsset, saveWorkspace, sourcePathOf } from '../workspace'
 import { deleteAssetBlob, getAssetBlob, putAssetBlob } from '../assets/idb'
-import { TextMap, TEXT_ASSET_MIME, type TextSink } from '../i18n/textMap'
+import { TextMap, TEXT_ASSET_MIME } from '../i18n/textMap'
 import { textAssetPath } from '../i18n/localeLayout'
 import { createTextSink } from '../i18n/textSink'
 import { loadLocale, saveLocale } from '../storage'
@@ -124,103 +126,87 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
   const stateRef = useRef(state)
   stateRef.current = state
 
+  const structuralPendingRef = useRef(false)
   const setState = (change: FlowWorkspaceState | ((previous: FlowWorkspaceState) => FlowWorkspaceState)) => {
+    if (structuralPendingRef.current) return
     const previous = stateRef.current
     const next = stripItemLibraryTable(stripBuiltinGoalDefinitions(typeof change === 'function' ? change(previous) : change))
-    const nextUi = {
-      openKeys: next.openKeys ?? [],
-      activeKey: next.activeKey ?? null,
-      pinnedKeys: next.pinnedKeys ?? [],
-      split: next.split,
-      folders: next.folders ?? [],
-      documentFolders: documentFoldersFromDocuments(next.documents),
-    }
-    setUi(nextUi)
-    saveProgressUiState(nextUi)
     const live = getProjectSession()
-    if (live.binding) {
-      let workspace = live.workspace
-      const prevScripts = workspace.packages[0]?.scripts ?? []
-      const diskJobs: Array<Promise<void>> = []
-      for (const doc of next.documents) {
-        const old = prevScripts.find((script) => script.id === doc.key)
-        if (!old) continue
-        const newSrcKind =
-          doc.name.toLowerCase().endsWith('.py')
-            ? isGoalDefinitionDocument(next, doc)
-              ? 'goal'
-              : 'script'
-            : old.srcKind
-        const nameChanged = old.name !== doc.name
-        const kindChanged = (old.srcKind ?? 'script') !== (newSrcKind ?? 'script')
-        if (!nameChanged && !kindChanged) continue
-        const assetMoves = nameChanged
-          ? (() => {
-              const renamed = renameScriptAssets(workspace, doc.key, doc.name)
-              if (renamed.kind === 'blocked') {
-                setNotice(`语言文件无法随改名搬迁：${renamed.path} 已存在`)
-                return null
-              }
-              if (renamed.kind === 'moved') {
-                workspace = renamed.workspace
-                const packageId = workspace.packages[0]?.id
-                if (packageId) {
-                  diskJobs.push((async () => {
-                    for (const move of renamed.moves) {
-                      const blob = await getAssetBlob(packageId, move.fromPath)
-                      if (!blob) continue
-                      await putAssetBlob(packageId, move.toPath, blob)
-                      await deleteAssetBlob(packageId, move.fromPath)
-                    }
-                  })())
-                }
-                return renamed.moves
-              }
-              return [] as Array<{ fromPath: string; toPath: string }>
-            })()
-          : []
-        if (assetMoves === null) continue
-        const binding = live.binding
-        diskJobs.push(
-          renameSourceOnDisk(
-            binding.handle,
-            old.name,
-            doc.name,
-            doc.source,
-            assetMoves,
-            old.srcKind,
-            newSrcKind,
-          ).catch((error) => {
-            setNotice(`工作区已改名，但写入工程目录失败：${error instanceof Error ? error.message : String(error)}`)
-          }),
-        )
+    const binding = live.binding
+    const prevScripts = live.workspace.packages[0]?.scripts ?? []
+    const renames = next.documents.flatMap(doc => {
+      const old = prevScripts.find(script => script.id === doc.key)
+      if (!old) return []
+      const srcKind = doc.name.toLowerCase().endsWith('.py')
+        ? isGoalDefinitionDocument(next, doc) ? 'goal' : 'script'
+        : old.srcKind
+      return old.name !== doc.name || (old.srcKind ?? 'script') !== (srcKind ?? 'script')
+        ? [{ old, doc, srcKind }] : []
+    })
+    const removed = prevScripts.filter(script => isProgressSourceName(script.name) && !next.documents.some(doc => doc.key === script.id))
+    const applyUi = (workspace: typeof live.workspace) => {
+      const nextUi = {
+        openKeys: next.openKeys ?? [], activeKey: next.activeKey ?? null,
+        pinnedKeys: next.pinnedKeys ?? [], split: next.split, folders: next.folders ?? [],
+        documentFolders: documentFoldersFromDocuments(next.documents),
       }
-      // 进度区 documents 只有 .progress/.hflow/…；绝不能把 .hs 等剧本源当成「已删除」去清磁盘
-      const removed = prevScripts.filter(
-        (script) =>
-          isProgressSourceName(script.name) &&
-          !next.documents.some((doc) => doc.key === script.id),
-      )
-      for (const script of removed) {
-        const binding = live.binding
-        diskJobs.push(
-          removeSourceFromDisk(binding.handle, script.name, script.srcKind).catch((error) => {
-            setNotice(`工作区已删除，但清理工程目录失败：${error instanceof Error ? error.message : String(error)}`)
-          }),
-        )
-      }
-      if (diskJobs.length) void Promise.all(diskJobs)
-      setProjectSession({
-        workspace: applyProgressDocumentsToWorkspace(
-          workspace,
-          next.documents,
-          next.folders ?? [],
-        ),
+      setUi(nextUi)
+      saveProgressUiState(nextUi)
+      const structuralIds = new Set(renames.map(item => item.doc.key))
+      const currentSources = workspace.packages[0]?.scripts ?? []
+      const projected = next.documents.map(doc => {
+        if (!structuralPendingRef.current || structuralIds.has(doc.key)) return doc
+        const current = currentSources.find(source => source.id === doc.key)
+        return current ? { ...doc, source: current.content, updatedAt: new Date(current.updatedAt).toISOString() } : doc
       })
+      if (binding) setProjectSession({ workspace: applyProgressDocumentsToWorkspace(workspace, projected, next.folders ?? []) })
     }
+    if (!binding || (!renames.length && !removed.length)) { applyUi(live.workspace); return }
+    try {
+      for (const old of [...renames.map(item => item.old), ...removed]) binding.handle.client.assertSourceDraftsSaved(sourcePathOf(old))
+      for (const { doc } of renames) {
+        const renamed = renameScriptAssets(live.workspace, doc.key, doc.name)
+        if (renamed.kind === 'blocked') throw new Error(`关联文件 ${renamed.path} 已存在`)
+      }
+    } catch (error) { setNotice(String(error)); return }
+    structuralPendingRef.current = true
+    setBusy(true)
+    let acknowledged = false
+    void (async () => {
+      await binding.handle.client.sourceCommands([
+        ...renames.map(({ old, doc, srcKind }) => ({ path: sourcePathOf(old), destination: sourcePathOf({ name: doc.name, srcKind }), content: doc.source })),
+        ...removed.map(old => ({ path: sourcePathOf(old), destination: null })),
+      ])
+      acknowledged = true
+      // A project switch while S was working must not replace the new project's view.
+      if (getProjectSession().binding?.handle.client !== binding.handle.client) return
+      let workspace = getProjectSession().workspace
+      for (const { doc } of renames) {
+        const renamed = renameScriptAssets(workspace, doc.key, doc.name)
+        if (renamed.kind === 'moved') {
+          const packageId = workspace.packages[0]?.id
+          if (packageId) for (const move of renamed.moves) {
+            const blob = await getAssetBlob(packageId, move.fromPath)
+            if (blob) await putAssetBlob(packageId, move.toPath, blob)
+            await deleteAssetBlob(packageId, move.fromPath)
+          }
+          workspace = renamed.workspace
+        }
+      }
+      for (const old of removed) workspace = (await deleteSourceAssets(workspace, old.name)).workspace
+      applyUi(workspace)
+      if (removed.length) {
+        const ids = new Set(removed.map(old => old.id))
+        setHistory(previous => new Map([...previous].filter(([key]) => !ids.has(key))))
+        if (ids.has(previous.activeKey ?? '')) setSelection({ kind: 'flow' })
+      }
+      setNotice('工程结构已保存。')
+    })().catch(error => setNotice(`${acknowledged ? '服务器已保存，本地视图更新失败，请重新打开工程' : '操作未提交，原文件和草稿已保留'}：${String(error)}`))
+      .finally(() => { structuralPendingRef.current = false; setBusy(false) })
   }
 
   const [storageError, setStorageError] = useState('')
+  const failedSaveRef = useRef<{ client: NonNullable<typeof session.binding>['handle']['client']; ids: number[] } | null>(null)
   const [notice, setNotice] = useState('')
   const [selection, setSelection] = useState<FlowSelection>({ kind: 'flow' })
   const [editor, setEditor] = useState<{ key: string; flow: ProgressFlow; selection: FlowSelection; origin: HTMLElement | null } | null>(null)
@@ -238,9 +224,24 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
   const [dropTarget, setDropTarget] = useState<{ group: GroupId; zone: DropZone } | null>(null)
 
   useEffect(() => {
+    failedSaveRef.current = null
     setStorageError(projectBound ? '' : '请先打开工程；所有工作区使用同一工程连接。')
     if (!projectBound) setNotice('')
-  }, [projectBound])
+  }, [projectBound, session.binding?.handle.client])
+
+  useEffect(() => {
+    const client = session.binding?.handle.client
+    if (!client) return
+    return client.transactions.subscribe(() => {
+      const failed = failedSaveRef.current
+      if (failed?.client !== client) return
+      const saved = new Set(client.transactions.getSnapshot().transactions.filter(transaction => transaction.phase === 'saved').map(transaction => transaction.id))
+      if (!failed.ids.length || !failed.ids.every(id => saved.has(id))) return
+      failedSaveRef.current = null
+      setStorageError('')
+      setNotice('相关提交已保存。')
+    })
+  }, [session.binding?.handle.client])
 
   function queueLocaleSeeds(docKey: string, seeds: Record<string, string>) {
     if (!Object.keys(seeds).length) return
@@ -337,16 +338,19 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     const fileName = textAssetPath(locale, sourceDoc.name)
     const packageId = session.workspace.packages[0]?.id
     if (!packageId) return
+    const sourceClient = session.binding?.handle.client
 
-    const virtualSink: TextSink = {
+    const virtualSink = {
       read: () => textCacheRef.current,
       write: (content: string) => {
+        if (getProjectSession().binding?.handle.client !== sourceClient) throw new Error('工程已切换，原语言草稿保留在原工程')
         textCacheRef.current = content
         const live = getProjectSession()
         const pkg = live.workspace.packages[0]
         if (!pkg) return
         const blob = new Blob([content], { type: TEXT_ASSET_MIME })
-        void putAssetBlob(pkg.id, fileName, blob).then(() => {
+        return putAssetBlob(pkg.id, fileName, blob).then(() => {
+          if (getProjectSession().binding?.handle.client !== sourceClient) throw new Error('工程已切换，原语言草稿保留在原工程')
           const result = registerAsset(
             getProjectSession().workspace,
             pkg.id,
@@ -365,9 +369,11 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
 
     void (async () => {
       const blob = await getAssetBlob(packageId, fileName)
-      textCacheRef.current = blob ? await blob.text() : null
+      const content = blob ? await blob.text() : null
+      if (cancelled || getProjectSession().binding?.handle.client !== sourceClient) return
+      textCacheRef.current = content
       const sink = await createTextSink({
-        project: getProjectSession().binding,
+        project: session.binding,
         fileName,
         virtual: virtualSink,
       })
@@ -678,7 +684,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     const title = name.slice(0, -ext.length)
     const next = ext === '.py'
       ? stampDocument({
-        key: crypto.randomUUID(),
+        key: randomId(),
         name,
         source: '# 目标定义脚本\n\n',
         package: packageId,
@@ -686,7 +692,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
       })
       : ext === '.kit'
         ? stampDocument({
-          key: crypto.randomUUID(),
+          key: randomId(),
           name,
           source: stringifyKit(createKit(title)),
           package: packageId,
@@ -694,7 +700,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
         })
         : ext === '.progress'
           ? stampDocument({
-            key: crypto.randomUUID(),
+            key: randomId(),
             name,
             source: stringifyProgress(createProgress(title, goalCatalog.definitions)),
             package: packageId,
@@ -702,7 +708,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
           })
           : ext === '.nav'
             ? stampDocument({
-              key: crypto.randomUUID(),
+              key: randomId(),
               name,
               source: stringifyNavigationPoint(createNavigationPoint(title)),
               package: packageId,
@@ -710,7 +716,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
             })
             : ext === '.item'
               ? stampDocument({
-                key: crypto.randomUUID(),
+                key: randomId(),
                 name,
                 source: stringifyItem(createItem()),
                 package: packageId,
@@ -759,7 +765,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
         if (pkg === 'script') {
           const name = uniqueDocumentName({ ...state, documents: [...state.documents, ...documents] }, file.name, pkg, folderId)
           documents.push(stampDocument({
-            key: crypto.randomUUID(),
+            key: randomId(),
             name,
             source: await file.text(),
             package: pkg,
@@ -772,7 +778,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
           parseKit(source)
           const name = uniqueDocumentName({ ...state, documents: [...state.documents, ...documents] }, file.name, pkg, folderId)
           documents.push(stampDocument({
-            key: crypto.randomUUID(),
+            key: randomId(),
             name,
             source,
             package: pkg,
@@ -785,7 +791,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
           parseProgress(source)
           const name = uniqueDocumentName({ ...state, documents: [...state.documents, ...documents] }, file.name, pkg, folderId)
           documents.push(stampDocument({
-            key: crypto.randomUUID(),
+            key: randomId(),
             name,
             source,
             package: pkg,
@@ -798,7 +804,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
           parseNavigationPoint(source)
           const name = uniqueDocumentName({ ...state, documents: [...state.documents, ...documents] }, file.name, pkg, folderId)
           documents.push(stampDocument({
-            key: crypto.randomUUID(),
+            key: randomId(),
             name,
             source,
             package: pkg,
@@ -813,7 +819,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
             : stringifyItem(parseItem(raw))
           const name = uniqueDocumentName({ ...state, documents: [...state.documents, ...documents] }, file.name, pkg, folderId)
           documents.push(stampDocument({
-            key: crypto.randomUUID(),
+            key: randomId(),
             name,
             source,
             package: pkg,
@@ -879,7 +885,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
       return nextState
     })
     setPropertiesKey(null)
-    setNotice('已更新流程属性。')
+    setNotice(next.name !== current.name ? '正在保存流程属性…' : '已更新草稿属性。')
   }
   function removeResources({ documents: documentKeys, folders: folderKeys }: { documents: string[]; folders: string[] }) {
     const docs = documentKeys.filter((key) => !isBuiltinGoalDocumentKey(key) && !isItemLibraryTableKey(key))
@@ -889,14 +895,9 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
       docs.length ? `${docs.length} 个流程` : '',
       foldersToRemove.length ? `${foldersToRemove.length} 个文件夹` : '',
     ].filter(Boolean)
-    if (!window.confirm(`从本机资源中移除 ${parts.join('、')}？`)) return
+    if (!window.confirm(`从共享工程中移除 ${parts.join('、')}？`)) return
     const documentSet = new Set(docs)
     const folderSet = new Set(foldersToRemove)
-    setHistory((previous) => {
-      const next = new Map(previous)
-      for (const key of docs) next.delete(key)
-      return next
-    })
     setState((previous) => {
       const documents = previous.documents.filter((item) => !documentSet.has(item.key))
       const folders = previous.folders.filter((folder) => {
@@ -908,7 +909,6 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
       })
       return normalizeGroups({ ...previous, documents, folders })
     })
-    if (doc && documentSet.has(doc.key)) setSelection({ kind: 'flow' })
   }
   async function saveDraft() {
     if (locked || busy) return
@@ -918,15 +918,27 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
       return
     }
     setBusy(true)
+    const client = live.binding.handle.client
+    const pendingPaths = client.transactions.getSnapshot().pendingPaths
+    let transactionId: number | undefined
     try {
       saveWorkspace(live.workspace)
-      const saved = await saveProjectToDirectory(live.binding, live.workspace)
+      const saving = saveProjectToDirectory(live.binding, live.workspace)
+      transactionId = client.transactions.getSnapshot().transactions.at(-1)?.id
+      const saved = await saving
       setProjectSession({ binding: saved })
       setBoundProject(saved)
+      failedSaveRef.current = null
       setStorageError('')
       setNotice('')
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
+      const failed = client.transactions.getSnapshot().transactions.filter(transaction => ['failed', 'conflict', 'uncertain'].includes(transaction.phase))
+      // A duplicate save can be rejected by an older unresolved transaction; tie
+      // the banner to that original record so resolving it also clears the banner.
+      const own = failed.find(transaction => transaction.id === transactionId)
+      const ids = own ? [own.id] : failed.filter(transaction => transaction.paths.some(path => pendingPaths.some(pending => path === pending || path.startsWith(`${pending}/`) || pending.startsWith(`${path}/`)))).map(transaction => transaction.id)
+      failedSaveRef.current = { client, ids }
       setStorageError(message)
       setNotice(`保存失败：${message}`)
     } finally {

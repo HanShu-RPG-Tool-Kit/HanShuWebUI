@@ -1,4 +1,4 @@
-import type { ProjectDirectory } from '../../project/serviceClient'
+import type { FileEdit, ProjectDirectory } from '../../project/serviceClient'
 /**
  * Skin library session under project `.hanshu/skinmanager`
  */
@@ -31,7 +31,6 @@ import {
   listChildNames,
   readBytesAt,
   readTextAt,
-  removeAt,
   writeBytesAt,
   writeTextAt,
 } from './fsIo'
@@ -86,6 +85,44 @@ function emitJob(job: ImportJob): SkinEvent {
 export class SkinLibrarySession {
   private root: ProjectDirectory
   private lib: LibraryFile = emptyLibrary()
+  private readableLib: LibraryFile | null = null
+  private mutationTail: Promise<unknown> = Promise.resolve()
+  private pendingDomain: 'entries' | 'tags' | 'folders' | null = null
+  private pendingObjects = new Map<string, DecodedSkin>()
+
+  /** Mutations work on a private copy; queries only see the last acknowledged index. */
+  private mutateLibrary<T>(action: () => Promise<T>): Promise<T> {
+    const run = this.mutationTail.then(async () => {
+      this.ensureReady()
+      const previous = this.lib
+      this.lib = structuredClone(previous)
+      this.readableLib = previous
+      try {
+        const result = await action()
+        this.readableLib = null
+        if (this.pendingDomain) this.emit({ type: 'library-updated', revision: this.lib.revision, domain: this.pendingDomain })
+        return result
+      } catch (error) {
+        this.lib = previous
+        throw error
+      } finally { this.readableLib = null; this.pendingDomain = null }
+    })
+    this.mutationTail = run.catch(() => undefined)
+    return run
+  }
+  private get visibleLibrary() { return this.readableLib ?? this.lib }
+
+  renameTag(from: string, to: string) { return this.mutateLibrary(() => this.renameTagDraft(from, to)) }
+  deleteTag(name: string) { return this.mutateLibrary(() => this.deleteTagDraft(name)) }
+  createFolder(body: CreateFolderRequest) { return this.mutateLibrary(() => this.createFolderDraft(body)) }
+  patchFolder(id: string, body: PatchFolderRequest) { return this.mutateLibrary(() => this.patchFolderDraft(id, body)) }
+  deleteFolder(id: string) { return this.mutateLibrary(() => this.deleteFolderDraft(id)) }
+  saveEntry(body: SaveEntryRequest) { return this.mutateLibrary(() => this.saveEntryDraft(body)) }
+  patchEntry(id: string, body: PatchEntryRequest) { return this.mutateLibrary(() => this.patchEntryDraft(id, body)) }
+  batchPatchEntries(body: Parameters<SkinLibrarySession['batchPatchEntriesDraft']>[0]) { return this.mutateLibrary(() => this.batchPatchEntriesDraft(body)) }
+  deleteEntry(id: string) { return this.mutateLibrary(() => this.deleteEntryDraft(id)) }
+  deleteEntriesInFolder(id: string) { return this.mutateLibrary(() => this.deleteEntriesInFolderDraft(id)) }
+  gcOrphans(progress?: Parameters<SkinLibrarySession['gcOrphansDraft']>[0]) { return this.mutateLibrary(() => this.gcOrphansDraft(progress)) }
   private jobs = new Map<string, ImportJob>()
   private jobSources = new Map<string, EntrySource>()
   /** ?????????????? encode ??? */
@@ -159,7 +196,7 @@ export class SkinLibrarySession {
     if (this.persistJobsTimer != null) return
     this.persistJobsTimer = setTimeout(() => {
       this.persistJobsTimer = null
-      void this.persistJobsNow()
+      void this.persistJobsNow().catch(error => console.warn('[hanshu] 导入队列提交失败，记录保留在事务列表', error))
     }, 400)
   }
 
@@ -199,84 +236,33 @@ export class SkinLibrarySession {
     }
   }
 
-  private persistDirtyDomain: 'entries' | 'tags' | 'folders' | null = null
-  private persistWaiter: Promise<void> | null = null
-
-  /** Coalesce rapid library.json writes (batch import). */
-  private async persistLibrary(
-    domain: 'entries' | 'tags' | 'folders' = 'entries',
-  ): Promise<void> {
-    if(this.disposed)throw new Error('皮肤工程会话已关闭，未提交修改')
-    this.persistDirtyDomain = domain
-    if (!this.persistWaiter) {
-      this.persistWaiter = (async () => {
-        await Promise.resolve()
-        while (this.persistDirtyDomain && !this.disposed) {
-          const d = this.persistDirtyDomain
-          this.persistDirtyDomain = null
-          const json = `${JSON.stringify(
-            {
-              schemaVersion: this.lib.schemaVersion,
-              revision: this.lib.revision,
-              folders: this.lib.folders,
-              entries: this.lib.entries,
-            },
-            null,
-            2,
-          )}\n`
-          await writeTextAt(this.root, `${SKIN_ROOT}/${LIBRARY_FILE}`, json)
-          this.emit({
-            type: 'library-updated',
-            revision: this.lib.revision,
-            domain: d,
-          })
-        }
-      })().finally(() => {
-        this.persistWaiter = null
-      })
-    }
-    await this.persistWaiter
+  private async persistLibrary(domain: 'entries' | 'tags' | 'folders' = 'entries', extra: FileEdit[] = []): Promise<void> {
+    if (this.disposed) throw new Error('皮肤工程会话已关闭，未提交修改')
+    const objects = [...new Set(this.lib.entries.map(entry => entry.skinId))]
+      .filter(id => this.pendingObjects.has(id) && !this.root.client.entry(this.root.resolve(objectPath(id))))
+    const edits: FileEdit[] = objects.map(id => ({ op: 'write', path: this.root.resolve(objectPath(id)), data: encodeDiskFile(this.pendingObjects.get(id)!) }))
+    edits.push(...extra, { op: 'write', path: this.root.resolve(`${SKIN_ROOT}/${LIBRARY_FILE}`), data: `${JSON.stringify(this.lib, null, 2)}\n` })
+    await this.root.client.apply(edits, extra.length ? '清理皮肤对象及索引' : '保存皮肤对象及索引')
+    for (const id of objects) this.pendingObjects.delete(id)
+    if (this.readableLib) this.pendingDomain = domain
+    else this.emit({ type: 'library-updated', revision: this.lib.revision, domain })
   }
 
   private previewCachePath(skinId: string): string {
     return `${SKIN_ROOT}/${CACHE_PNG_DIR}/${skinId}.png`
   }
 
-  private async writePreviewCache(
-    skinId: string,
-    decoded: DecodedSkin,
-  ): Promise<void> {
-    const png = await rgbaToPngBlob(decoded.rgba, decoded.width, decoded.height)
-    const buf = new Uint8Array(await png.arrayBuffer())
-    if(this.disposed)return
-    await writeBytesAt(this.root, this.previewCachePath(skinId), buf)
-  }
-
-  private async putDecoded(
-    decoded: DecodedSkin,
-  ): Promise<{ skinId: string; decoded: DecodedSkin }> {
-    const c = buildC(decoded.flags, decoded.width, decoded.height, decoded.rgba)
-    const skinId = await skinIdOf(c)
-    const path = objectPath(skinId)
-    const existing = await readBytesAt(this.root, path)
-    if (existing) {
-      // Ensure preview cache exists for faster right-panel loads.
-      const cached = await readBytesAt(this.root, this.previewCachePath(skinId))
-      if (!cached) {
-        void this.writePreviewCache(skinId, decoded).catch(() => {})
-      }
-      return { skinId, decoded }
-    }
-    if(this.disposed)throw new Error('皮肤工程会话已关闭')
-    const disk = encodeDiskFile(decoded)
-    await writeBytesAt(this.root, path, disk)
-    // Preview PNG in background ? don't block validate path.
-    void this.writePreviewCache(skinId, decoded).catch(() => {})
+  /** Import validation is local. The object and its index entry are written together on save. */
+  private async putDecoded(decoded: DecodedSkin): Promise<{ skinId: string; decoded: DecodedSkin }> {
+    if (this.disposed) throw new Error('皮肤工程会话已关闭')
+    const skinId = await skinIdOf(buildC(decoded.flags, decoded.width, decoded.height, decoded.rgba))
+    this.pendingObjects.set(skinId, decoded)
     return { skinId, decoded }
   }
 
   private async readObject(skinId: string): Promise<DecodedSkin | null> {
     if (!isValidSkinId(skinId)) return null
+    if (this.pendingObjects.has(skinId)) return this.pendingObjects.get(skinId)!
     const raw = await readBytesAt(this.root, objectPath(skinId))
     if (!raw) return null
     const { decoded, skinId: verified } = await decodeDiskFile(raw)
@@ -315,12 +301,12 @@ export class SkinLibrarySession {
 
   listEntries(query: LibraryQuery) {
     this.ensureReady()
-    return queryEntries(this.lib, query)
+    return queryEntries(this.visibleLibrary, query)
   }
 
   getEntry(entryId: string): LibraryEntry {
     this.ensureReady()
-    const e = this.lib.entries.find((x) => x.entryId === entryId)
+    const e = this.visibleLibrary.entries.find((x) => x.entryId === entryId)
     if (!e) {
       throw new SkinApiError({ code: 'NOT_FOUND', message: `entry ${entryId}` })
     }
@@ -330,13 +316,13 @@ export class SkinLibrarySession {
   listTags() {
     this.ensureReady()
     return {
-      revision: this.lib.revision,
-      tags: collectTags(this.lib),
-      textureSizes: collectTextureSizes(this.lib),
+      revision: this.visibleLibrary.revision,
+      tags: collectTags(this.visibleLibrary),
+      textureSizes: collectTextureSizes(this.visibleLibrary),
     }
   }
 
-  async renameTag(from: string, to: string) {
+  private async renameTagDraft(from: string, to: string) {
     this.ensureReady()
     const fromN = normalizeTagName(from)
     const toN = normalizeTagName(to)
@@ -356,7 +342,7 @@ export class SkinLibrarySession {
     return { affectedEntries: affected }
   }
 
-  async deleteTag(name: string) {
+  private async deleteTagDraft(name: string) {
     this.ensureReady()
     const n = normalizeTagName(name)
     if (!n) {
@@ -372,7 +358,7 @@ export class SkinLibrarySession {
 
   listFolders() {
     this.ensureReady()
-    return { revision: this.lib.revision, folders: foldersWithStats(this.lib) }
+    return { revision: this.visibleLibrary.revision, folders: foldersWithStats(this.visibleLibrary) }
   }
 
   private assertUniqueSiblingFolderName(
@@ -395,7 +381,7 @@ export class SkinLibrarySession {
     }
   }
 
-  async createFolder(body: CreateFolderRequest) {
+  private async createFolderDraft(body: CreateFolderRequest) {
     this.ensureReady()
     const name = normalizeFolderName(body.name)
     if (!name) {
@@ -425,7 +411,7 @@ export class SkinLibrarySession {
     return folder
   }
 
-  async patchFolder(folderId: string, body: PatchFolderRequest) {
+  private async patchFolderDraft(folderId: string, body: PatchFolderRequest) {
     this.ensureReady()
     const folder = this.lib.folders.find((f) => f.folderId === folderId)
     if (!folder) {
@@ -451,7 +437,7 @@ export class SkinLibrarySession {
     return folder
   }
 
-  async deleteFolder(folderId: string) {
+  private async deleteFolderDraft(folderId: string) {
     this.ensureReady()
     const before = this.lib.folders.length
     this.lib.folders = this.lib.folders.filter((f) => f.folderId !== folderId)
@@ -514,7 +500,7 @@ export class SkinLibrarySession {
       model: resolved,
       suggestedName: suggestedName.replace(/\.[^.]+$/, '') || 'skin',
       // ?????????????? save ????
-      skinCode: '',
+      skinCode: (await encodeShareCode(resolved, decoded)).skinCode,
       textureWidth,
       textureHeight,
     }
@@ -813,7 +799,7 @@ export class SkinLibrarySession {
     return job
   }
 
-  async saveEntry(body: SaveEntryRequest): Promise<LibraryEntry> {
+  private async saveEntryDraft(body: SaveEntryRequest): Promise<LibraryEntry> {
     this.ensureReady()
     const job = this.getImport(body.jobId)
     if (job.state !== 'ready' || !job.result) {
@@ -826,7 +812,7 @@ export class SkinLibrarySession {
     const textureWidth = job.result.textureWidth || 64
     const textureHeight = job.result.textureHeight || 64
     if (body.model) model = body.model
-    // Ensure object exists on disk (share-code imports already wrote it).
+    // Recover a locally prepared object or a persisted share-code job before committing the index.
     if (!(await this.readObject(skinId))) {
       const cached = this.jobDecoded.get(body.jobId)
       if (cached) {
@@ -858,8 +844,6 @@ export class SkinLibrarySession {
                 kind: 'png-file' as const,
                 fileName: job.result.suggestedName,
               })
-    this.jobSources.delete(body.jobId)
-    this.jobDecoded.delete(body.jobId)
     let customId: string | null = null
     try {
       customId = normalizeCustomId(
@@ -898,10 +882,12 @@ export class SkinLibrarySession {
     this.lib.entries.push(entry)
     this.bump()
     await this.persistLibrary('entries')
+    this.jobSources.delete(body.jobId)
+    this.jobDecoded.delete(body.jobId)
     return entry
   }
 
-  async patchEntry(
+  private async patchEntryDraft(
     entryId: string,
     body: PatchEntryRequest,
   ): Promise<LibraryEntry> {
@@ -957,7 +943,7 @@ export class SkinLibrarySession {
     return entry
   }
 
-  async batchPatchEntries(body: {
+  private async batchPatchEntriesDraft(body: {
     entryIds: string[]
     addTags?: string[]
     removeTags?: string[]
@@ -1009,7 +995,7 @@ export class SkinLibrarySession {
     return { updated, revision: this.lib.revision, conflicts }
   }
 
-  async deleteEntry(entryId: string) {
+  private async deleteEntryDraft(entryId: string) {
     this.ensureReady()
     const before = this.lib.entries.length
     this.lib.entries = this.lib.entries.filter((e) => e.entryId !== entryId)
@@ -1019,7 +1005,7 @@ export class SkinLibrarySession {
     return { deleted: true }
   }
 
-  async deleteEntriesInFolder(folderId: string): Promise<{ deleted: number }> {
+  private async deleteEntriesInFolderDraft(folderId: string): Promise<{ deleted: number }> {
     this.ensureReady()
     const scope = folderDescendants(this.lib.folders, folderId)
     const before = this.lib.entries.length
@@ -1057,11 +1043,9 @@ export class SkinLibrarySession {
       decoded.width,
       decoded.height,
     )
-    void writeBytesAt(
-      this.root,
-      this.previewCachePath(skinId),
-      new Uint8Array(await png.arrayBuffer()),
-    ).catch(() => {})
+    if (this.root.client.entry(this.root.resolve(objectPath(skinId))) && this.root.client.writable) {
+      void writeBytesAt(this.root, this.previewCachePath(skinId), new Uint8Array(await png.arrayBuffer())).catch(() => {})
+    }
     const url = URL.createObjectURL(png)
     this.previewUrls.set(skinId, url)
     return url
@@ -1077,7 +1061,7 @@ export class SkinLibrarySession {
       })
     }
     const model =
-      this.lib.entries.find((e) => e.skinId === skinId)?.model ?? 'classic'
+      this.visibleLibrary.entries.find((e) => e.skinId === skinId)?.model ?? 'classic'
     const { skinCode } = await encodeShareCode(model, decoded)
     return skinCode
   }
@@ -1151,7 +1135,7 @@ export class SkinLibrarySession {
 
   exportUsableManifest() {
     this.ensureReady()
-    const entries = this.lib.entries
+    const entries = this.visibleLibrary.entries
       .filter((e) => e.active)
       .map((e) => ({
         entryId: e.entryId,
@@ -1169,7 +1153,7 @@ export class SkinLibrarySession {
    * Remove unreferenced objects (orphans) and leftover preview cache.
    * `onProgress` drives the blocking GC dialog.
    */
-  async gcOrphans(
+  private async gcOrphansDraft(
     onProgress?: (p: {
       phase: 'scanning' | 'objects' | 'previews' | 'done'
       current: number
@@ -1219,78 +1203,26 @@ export class SkinLibrarySession {
       }
     }
 
-    let removedObjects = 0
-    const objTotal = objectVictims.length
-    report(
-      'objects',
-      0,
-      objTotal,
-      objTotal
-        ? `Cleaning objects 0 / ${objTotal}\u2026`
-        : 'No orphan objects',
-    )
-    for (let i = 0; i < objectVictims.length; i++) {
-      const v = objectVictims[i]!
-      await removeAt(
-        this.root,
-        `${SKIN_ROOT}/${OBJECTS_DIR}/${v.shard}/${v.name}`,
-      )
-      removedObjects += 1
-      await removeAt(this.root, `${SKIN_ROOT}/${CACHE_PNG_DIR}/${v.skinId}.png`)
-      const url = this.previewUrls.get(v.skinId)
-      if (url) {
-        URL.revokeObjectURL(url)
-        this.previewUrls.delete(v.skinId)
+    const previews = await listChildNames(this.root, `${SKIN_ROOT}/${CACHE_PNG_DIR}`)
+    const previewVictims = previews.filter(file => file.kind === 'file' && file.name.endsWith('.png') && !protectedIds.has(file.name.slice(0, -4)))
+    const edits: FileEdit[] = [
+      ...objectVictims.map(victim => ({ op: 'remove' as const, path: this.root.resolve(`${SKIN_ROOT}/${OBJECTS_DIR}/${victim.shard}/${victim.name}`) })),
+      ...previewVictims.map(victim => ({ op: 'remove' as const, path: this.root.resolve(`${SKIN_ROOT}/${CACHE_PNG_DIR}/${victim.name}`) })),
+    ]
+    if (edits.length) {
+      report('objects', 0, edits.length, '正在提交清理事务…')
+      // Include the index to validate its version and hold its lease: a concurrent
+      // newly added reference must prevent deleting that client's object.
+      await this.persistLibrary('entries', edits)
+      for (const victim of previewVictims) {
+        const skinId = victim.name.slice(0, -4)
+        const url = this.previewUrls.get(skinId)
+        if (url) URL.revokeObjectURL(url)
+        this.previewUrls.delete(skinId)
       }
-      report(
-        'objects',
-        i + 1,
-        objTotal,
-        `Cleaning objects ${i + 1} / ${objTotal}\u2026`,
-      )
-      // Yield so the progress bar can paint.
-      if ((i + 1) % 4 === 0) await new Promise((r) => setTimeout(r, 0))
     }
-
-    const previewVictims: { name: string; skinId: string }[] = []
-    const previews = await listChildNames(
-      this.root,
-      `${SKIN_ROOT}/${CACHE_PNG_DIR}`,
-    )
-    for (const f of previews) {
-      if (f.kind !== 'file' || !f.name.endsWith('.png')) continue
-      const skinId = f.name.slice(0, -'.png'.length)
-      if (!skinId || protectedIds.has(skinId)) continue
-      previewVictims.push({ name: f.name, skinId })
-    }
-
-    let removedPreviews = 0
-    const prevTotal = previewVictims.length
-    report(
-      'previews',
-      0,
-      prevTotal,
-      prevTotal
-        ? `Cleaning previews 0 / ${prevTotal}\u2026`
-        : 'No orphan previews',
-    )
-    for (let i = 0; i < previewVictims.length; i++) {
-      const v = previewVictims[i]!
-      await removeAt(this.root, `${SKIN_ROOT}/${CACHE_PNG_DIR}/${v.name}`)
-      removedPreviews += 1
-      const url = this.previewUrls.get(v.skinId)
-      if (url) {
-        URL.revokeObjectURL(url)
-        this.previewUrls.delete(v.skinId)
-      }
-      report(
-        'previews',
-        i + 1,
-        prevTotal,
-        `Cleaning previews ${i + 1} / ${prevTotal}\u2026`,
-      )
-      if ((i + 1) % 8 === 0) await new Promise((r) => setTimeout(r, 0))
-    }
+    const removedObjects = objectVictims.length
+    const removedPreviews = previewVictims.length
 
     report('done', 1, 1, 'Done')
 

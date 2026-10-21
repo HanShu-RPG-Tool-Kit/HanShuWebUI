@@ -1,6 +1,12 @@
+import { randomId } from '../project/crypto'
+
 const DB_NAME = 'hanshu.assets.v1'
 const STORE = 'blobs'
 const DB_VERSION = 1
+// IndexedDB is shared by every tab on an origin. This cache is a C-side draft
+// projection, so it must be private to this page runtime, including duplicate tabs.
+// Reconnects in this runtime reuse it; reload rebuilds from S plus draft/outbox recovery.
+const CACHE_NAMESPACE = `runtime:${randomId()}::`
 const epochs = new Map<string, number>()
 export function assetCacheEpoch(packageId: string, path: string): number { return epochs.get(assetKey(packageId,path)) ?? 0 }
 function touch(packageId: string, path: string) { const key=assetKey(packageId,path);epochs.set(key,(epochs.get(key)??0)+1) }
@@ -20,7 +26,7 @@ function openDb(): Promise<IDBDatabase> {
 }
 
 function assetKey(packageId: string, path: string) {
-  return `${packageId}::${path}`
+  return `${CACHE_NAMESPACE}${packageId}::${path}`
 }
 
 export async function putAssetBlob(
@@ -78,20 +84,42 @@ export async function cacheRemoteAsset(packageId: string,path: string,blob: Blob
   db.close();return true
 }
 
+/** Remove an acknowledged remote deletion only if no newer local import won. */
+export async function deleteCachedAsset(packageId: string, path: string, expectedEpoch: number): Promise<boolean> {
+  const db = await openDb()
+  if (assetCacheEpoch(packageId, path) !== expectedEpoch) { db.close(); return false }
+  touch(packageId, path)
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE, 'readwrite')
+    tx.objectStore(STORE).delete(assetKey(packageId, path))
+    tx.oncomplete = () => resolve(); tx.onerror = () => reject(tx.error)
+  })
+  db.close(); return true
+}
+
 /** 删除某包下全部资产二进制 */
 export async function deletePackageAssetBlobs(
   packageId: string,
 ): Promise<void> {
+  await deleteByPrefix(`${CACHE_NAMESPACE}${packageId}::`)
+}
+
+/** Best-effort lifecycle cleanup only touches this runtime, never another live C. */
+export async function deleteCurrentAssetCache(): Promise<void> {
+  await deleteByPrefix(CACHE_NAMESPACE)
+}
+
+async function deleteByPrefix(prefix: string): Promise<void> {
   const db = await openDb()
-  const prefix = `${packageId}::`
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(STORE, 'readwrite')
     const store = tx.objectStore(STORE)
-    const req = store.openCursor()
+    const req = store.openCursor(IDBKeyRange.bound(prefix, `${prefix}\uffff`))
     req.onsuccess = () => {
       const cursor = req.result
       if (!cursor) return
       if (typeof cursor.key === 'string' && cursor.key.startsWith(prefix)) {
+        epochs.set(cursor.key, (epochs.get(cursor.key) ?? 0) + 1)
         cursor.delete()
       }
       cursor.continue()
@@ -101,4 +129,11 @@ export async function deletePackageAssetBlobs(
       reject(tx.error ?? new Error('deletePackageAssetBlobs failed'))
   })
   db.close()
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('pagehide', event => {
+    // BFCache can resume the same runtime, which still needs its own projection.
+    if (!event.persisted) void deleteCurrentAssetCache().catch(() => undefined)
+  })
 }

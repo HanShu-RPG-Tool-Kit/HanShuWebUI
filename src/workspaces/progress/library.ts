@@ -1,3 +1,4 @@
+import { randomId } from '../../project/crypto'
 import { stampDocument, type FlowFolder, type FlowPackageId, type FlowWorkspaceState } from './storage'
 
 export type FlowEntry =
@@ -198,7 +199,7 @@ export function uniqueDocumentName(state: FlowWorkspaceState, name: string, pkg:
 export function addFlowFolder(state: FlowWorkspaceState, value: string, pkg: FlowPackageId, parentId: string | null) {
   const name = resourceName(value)
   requireAvailableName(state, name, pkg, parentId, undefined, 'folder')
-  const folder = { key: crypto.randomUUID(), name, parentId, package: pkg }
+  const folder = { key: randomId(), name, parentId, package: pkg }
   return { state: { ...state, folders: [...state.folders, folder] }, folder }
 }
 

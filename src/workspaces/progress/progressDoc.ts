@@ -1,3 +1,4 @@
+import { randomId } from '../../project/crypto'
 import { isObject } from './model'
 import { parseJsonValue } from '../../utils/strictJson'
 import { type GoalConfigValue, type GoalDefinition } from './goalDefinitions'
@@ -47,7 +48,7 @@ export const PROGRESS_REPEAT_LABELS: Record<ProgressRepeatKind, string> = {
   once: '仅一次', game_daily: '每个游戏日', game_weekly: '每个游戏周',
   real_daily: '每天', real_weekly: '每周', real_monthly: '每月', duration: '结束后间隔', manual: '手动重开',
 }
-const uid = () => crypto.randomUUID()
+const uid = () => randomId()
 export function createProgressGoal(kind: string, _definitions: readonly GoalDefinition[] = []): ProgressGoal {
   return { id: uid(), kind, config: {} }
 }

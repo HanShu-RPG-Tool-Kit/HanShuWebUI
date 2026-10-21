@@ -12,6 +12,8 @@ import {
   type Workspace,
 } from '../workspace'
 import { getExtension } from '../workspace'
+import { sourcePathOf } from '../workspace'
+import { assetCacheEpoch } from '../assets/idb'
 import { isGoalDefinitionDocument } from '../workspaces/progress/goalDefinitions'
 import { sectionFolderKey } from '../workspaces/progress/library'
 import type {
@@ -71,11 +73,21 @@ export function subscribeProjectSession(listener: () => void): () => void {
 }
 
 export function setProjectSession(next: Partial<Session>) {
+  const previousWorkspace = session.workspace
   session = {
     workspace: next.workspace ?? session.workspace,
     binding: next.binding !== undefined ? next.binding : session.binding,
   }
   if (next.workspace && session.binding) rememberProjectDraft(session.workspace)
+  const client = session.binding?.handle.client
+  if (client) {
+    client.transactions.setDirtyPaths(session.workspace.packages.flatMap(p => [
+      ...p.scripts.filter(s => s.content !== client.texts.get(sourcePathOf(s))).map(sourcePathOf),
+      ...p.assets.filter(a => client.assetEpochs.get(a.path) !== assetCacheEpoch(p.id, a.path)).map(a => a.path),
+      ...(p.name !== session.binding?.manifest.name ? ['project.json'] : []),
+    ]))
+    if (next.workspace && next.workspace !== previousWorkspace) client.transactions.changed()
+  }
   emit()
 }
 

@@ -48,71 +48,38 @@ export type VoiceOpsHost = {
 }
 
 export type VoiceOps = {
-  /**
-   * 彻底删掉一批资产：blob + 磁盘副本（元数据由调用方先删）。
-   *
-   * 三步缺一不可，尤其磁盘那步：配音是写穿到工程目录的，只删应用内的话，
-   * **下次打开工程又会被读回来**（`loadAssetsFromDisk` 扫整个 `assets/`），
-   * 表现就是"删了没删掉"。
-   *
-   * 磁盘失败只 `console.warn` 不回滚：IndexedDB 是权威，「保存工程」还会整树重写磁盘。
-   */
-  removeAssetEverywhere(packageId: string, paths: readonly string[]): void
-  /** 清掉某个键对等位置上**另一种形式**的绑定（写 `.ogg` 前清 `.ref`，反之亦然） */
-  clearPeerBindingOf(key: string, keep: 'file' | 'ref'): void
+  /** S 确认整个删除批次后才移除本地缓存和元数据；失败保持原状。 */
+  removeAssetEverywhere(packageId: string, paths: readonly string[]): Promise<void>
   /** 把一个或多个键的配音设成「引用资产」（对等位置写 `.ref`，不拷贝字节） */
   referenceForKeys(keys: string[], targetPath: string): void
   /** 删掉某个键的配音：**绑定文件本身**（实文件删 `.ogg`，引用只删 `.ref`） */
-  deleteVoice(key: string): boolean
+  deleteVoice(key: string): Promise<boolean>
   /** 菜单里的「删除配音」：带确认（引用与实文件两种文案） */
   confirmAndDeleteVoice(key: string): void
-  /** 录音棚的「清除配音」：一次确认，逐个删 */
+  /** 录音棚的「清除配音」：一次确认，一个删除事务 */
   deleteVoices(keys: string[]): void
 }
 
 export function createVoiceOps(host: VoiceOpsHost): VoiceOps {
-  /**
-   * 清掉某个键对等位置上**另一种形式**的绑定。
-   *
-   * 一个键的对等基名只有一份语义（见 voiceMap：`.ogg` 优先、`.ref` 兜底），所以：
-   * - 导入 / 录音 / 合成写 `.ogg` 之前，先把同基名的 `.ref` 清掉；
-   * - 写 `.ref` 之前，先把同基名的 `.ogg` 清掉。
-   *
-   * 不清的后果是"两个来源同时存在"：解析按 `.ogg` 优先，于是用户以为改了引用、其实没生效，
-   * 或者反过来 —— 这类幽灵绑定最难查，所以在这里一次做干净（元数据 + blob + 磁盘副本）。
-   */
-  const clearPeerBindingOf = (key: string, keep: 'file' | 'ref'): void => {
-    const library = host.library()
-    const pkg = host.activePackage()
-    if (!library || !pkg) return
-
-    const peerPath =
-      keep === 'ref'
-        ? library.targetPathOf(key) // 要留引用 → 清同基名的 `.ogg`
-        : library.refPathOf(key) // 要留实文件 → 清同基名的 `.ref`
-    const wanted = peerPath.toLowerCase()
-    const asset = pkg.assets.find((item) => item.path.toLowerCase() === wanted)
-    if (!asset) return
-
-    host.commit(removeAssetMeta(host.getWorkspace(), asset.id))
-    removeAssetEverywhere(pkg.id, [asset.path])
-  }
-
-  const removeAssetEverywhere = (
+  const removeAssetEverywhere = async (
     packageId: string,
     paths: readonly string[],
-  ): void => {
+  ): Promise<void> => {
     if (paths.length === 0) return
-    const sink = createVoiceDiskSink(host.projectHandle(), (failedPath, error) => {
-      if (error) {
-        console.warn('[hanshu] 没能删掉磁盘上的资产文件：', failedPath, error)
-      }
-    })
-    for (const path of paths) {
-      void sink.remove(path).then(() => deleteAssetBlob(packageId, path)).catch(error => {
-        window.alert(`工程资源删除失败，本地草稿与服务器可能不同：${String(error)}`)
-      })
+    const handle = host.projectHandle()
+    const sink = createVoiceDiskSink(handle)
+    const unique = [...new Set(paths)]
+    await sink.removeMany(unique)
+    if (host.projectHandle()?.client !== handle?.client) return
+    for (const path of unique) await deleteAssetBlob(packageId, path)
+    if (host.projectHandle()?.client !== handle?.client) return
+    const wanted = new Set(unique.map(path => path.toLowerCase()))
+    let next = host.getWorkspace()
+    for (const asset of next.packages.find(pkg => pkg.id === packageId)?.assets ?? []) {
+      if (wanted.has(asset.path.toLowerCase())) next = removeAssetMeta(next, asset.id)
     }
+    host.commit(next)
+    host.refresh()
   }
 
   /**
@@ -144,26 +111,28 @@ export function createVoiceOps(host: VoiceOpsHost): VoiceOps {
     const content = stringifyVoiceRefContent(asset.path)
     const bytes = new TextEncoder().encode(content)
     const blob = new Blob([bytes as BlobPart], { type: 'text/plain' })
-    const sink = createVoiceDiskSink(host.projectHandle(), (failedPath, error) => {
-      if (!error) return
-      console.warn('[hanshu] 引用文件写入磁盘失败', failedPath, error)
-    })
+    const handle = host.projectHandle()
+    const sink = createVoiceDiskSink(handle)
+    const bindings = [...new Set(keys)].map(key => ({ ref: library.refPathOf(key), peer: library.targetPathOf(key) }))
+    if (bindings.some(binding => binding.peer.toLowerCase() === asset.path.toLowerCase())) {
+      host.notify('引用目标不能是本次会被替换的配音文件，请选择共享音频或其他配音', false)
+      return
+    }
 
     void (async () => {
-      for (const key of keys) {
-        // 先清掉同基名的 `.ogg`：一个键只该有一个来源（见 clearPeerBindingOf）
-        clearPeerBindingOf(key, 'ref')
-
-        const refPath = library.refPathOf(key)
+      await sink.apply(bindings.flatMap(({ ref, peer }) => [
+        { op: 'remove' as const, path: peer },
+        { op: 'write' as const, path: ref, data: content },
+      ]), '设置配音引用')
+      if (host.projectHandle()?.client !== handle?.client) return
+      for (const { ref: refPath, peer } of bindings) {
+        await deleteAssetBlob(pkg.id, peer)
         await putAssetBlob(pkg.id, refPath, blob)
-
-        /*
-         * 每次都从**当前**工作区出发：上面那步 `clearPeerBindingOf` 刚提交过一次，
-         * 用循环外捕获的旧引用去写会把刚清掉的 `.ogg` 元数据又带回来。
-         * 目标路径随元数据一起记下：配音四态是**同步**判定的，不能等到读文件才知道指向谁。
-         */
+        if (host.projectHandle()?.client !== handle?.client) return
+        const peerAsset = host.getWorkspace().packages.find(item => item.id === pkg.id)?.assets.find(item => item.path.toLowerCase() === peer.toLowerCase())
+        const current = peerAsset ? removeAssetMeta(host.getWorkspace(), peerAsset.id) : host.getWorkspace()
         const result = registerAsset(
-          host.getWorkspace(),
+          current,
           pkg.id,
           refPath,
           'text/plain',
@@ -171,13 +140,12 @@ export function createVoiceOps(host: VoiceOpsHost): VoiceOps {
           asset.path,
         )
         if (result) host.commit(result.workspace)
-        if (sink.enabled) await sink.write(refPath, bytes, 'text/plain')
       }
 
       host.refresh()
       const shown = keys.length === 1 ? `「${keys[0]}」` : `${keys.length} 个键`
       host.notify(`已把 ${shown} 的配音设为引用：${asset.path}`, true)
-    })()
+    })().catch(error => host.notify(`配音引用未提交：${error instanceof Error ? error.message : String(error)}`, false))
   }
 
   /**
@@ -186,7 +154,7 @@ export function createVoiceOps(host: VoiceOpsHost): VoiceOps {
    * 删的是 `status.path` —— **绑定文件本身**：实文件删 `.ogg`，引用就只删 `.ref`，
    * 被引用的那份音频留在原地（别的键可能还在用它）。
    */
-  const deleteVoice = (key: string): boolean => {
+  const deleteVoice = async (key: string): Promise<boolean> => {
     const library = host.library()
     const pkg = host.activePackage()
     if (!library || !pkg) return false
@@ -197,14 +165,7 @@ export function createVoiceOps(host: VoiceOpsHost): VoiceOps {
     // 正在播就先停掉，否则播的是已经被删掉的音频
     if (status.state === 'playing') library.togglePlay(key)
 
-    const asset = pkg.assets.find(
-      (item) => item.path.toLowerCase() === path.toLowerCase(),
-    )
-    if (asset) {
-      host.commit(removeAssetMeta(host.getWorkspace(), asset.id))
-    }
-    // 元数据 + blob + 磁盘副本：删掉才算真的删了（见 removeAssetEverywhere）
-    removeAssetEverywhere(pkg.id, [path])
+    await removeAssetEverywhere(pkg.id, [path])
     return true
   }
 
@@ -245,7 +206,7 @@ export function createVoiceOps(host: VoiceOpsHost): VoiceOps {
       return
     }
 
-    deleteVoice(key)
+    void deleteVoice(key).catch(error => host.notify(`配音未删除：${String(error)}`, false))
   }
 
   /** 录音棚：清除选中键名的配音（一次确认，逐个删） */
@@ -270,12 +231,14 @@ export function createVoiceOps(host: VoiceOpsHost): VoiceOps {
     ) {
       return
     }
-    for (const key of withVoice) deleteVoice(key)
+    const pkg = host.activePackage()
+    if (!pkg) return
+    const paths = withVoice.map(key => library.statusOf(key).path).filter((path): path is string => !!path)
+    void removeAssetEverywhere(pkg.id, paths).catch(error => host.notify(`配音未删除：${String(error)}`, false))
   }
 
   return {
     removeAssetEverywhere,
-    clearPeerBindingOf,
     referenceForKeys,
     deleteVoice,
     confirmAndDeleteVoice,

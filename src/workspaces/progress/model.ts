@@ -1,3 +1,4 @@
+import { randomId } from '../../project/crypto'
 import { parseJsonValue } from '../../utils/strictJson'
 
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json }
@@ -208,7 +209,7 @@ export const makeNode = (id: string, _title = '新阶段'): FlowNode => ({
   title: text(`nodes.${id}.title`),
   description: text(`nodes.${id}.description`),
 })
-export function createFlow(id = crypto.randomUUID(), _title = '新的进度流程'): ProgressFlow {
+export function createFlow(id = randomId(), _title = '新的进度流程'): ProgressFlow {
   return {
     format: 'hanshu.progress-tree',
     version: 1,

@@ -1,3 +1,4 @@
+import { randomId } from '../../project/crypto'
 import { ensurePackageSections } from './library'
 import { normalizeGroups } from './editorGroups'
 import { createFlow, isObject, parseFlow } from './model'
@@ -51,7 +52,7 @@ export function stampDocument(document: FlowDocument, touch = true): FlowDocumen
 }
 
 export const createFlowDocument = (flow = createFlow(), pkg: FlowPackageId = 'story'): FlowDocument => stampDocument({
-  key: crypto.randomUUID(),
+  key: randomId(),
   name: `${(flow.entry.title.text.trim() || flow.id).replace(/[\\/:*?"<>|]/g, '_')}.hflow`,
   source: JSON.stringify(flow, null, 2),
   package: pkg,

@@ -1,3 +1,4 @@
+import { sha256Hex } from '../../project/crypto'
 /**
  * Hanshu skin object codec (TS port of skin-core codec.rs)
  *
@@ -207,13 +208,7 @@ function base64UrlToBytes(s: string): Uint8Array {
 }
 
 export async function skinIdOf(c: Uint8Array): Promise<string> {
-  const copy = new Uint8Array(c.byteLength)
-  copy.set(c)
-  const digest = await crypto.subtle.digest('SHA-256', copy.buffer)
-  const bytes = new Uint8Array(digest)
-  let hex = ''
-  for (const b of bytes) hex += b.toString(16).padStart(2, '0')
-  return hex
+  return sha256Hex(c)
 }
 
 export function encodeDiskFile(decoded: DecodedSkin): Uint8Array {
