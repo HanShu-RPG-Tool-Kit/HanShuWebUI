@@ -1,5 +1,2 @@
-//! Skin manager Tauri adapter: state, commands, events.
-
+//! Optional native network helpers; project persistence belongs to project-server.
 pub mod commands;
-pub mod events;
-pub mod state;

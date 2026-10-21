@@ -1,84 +1,45 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
-import { mkdtemp, readFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
-
-const root = await mkdtemp(join(tmpdir(), 'hanshu-service-test-'))
-const binary = resolve('src-tauri/target/debug', process.platform === 'win32' ? 'project-server.exe' : 'project-server')
-const children = []; const sockets = []
-let base
-async function start() {
-  const child = spawn(binary, ['--project', root, '--listen', '127.0.0.1:0'], { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }); children.push(child)
-  let output = ''; let errors = ''
-  base = await new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error('Service startup timed out')), 10000)
-    child.stdout.on('data', data => { output += data; const match = /HanShu S: (http:\/\/[^\s]+)/.exec(output); if (match) { clearTimeout(timeout); resolve(match[1]) } })
-    child.stderr.on('data', data => { errors += data }); child.on('error', reject); child.on('exit', code => { clearTimeout(timeout); reject(new Error(`Service exited ${code}: ${errors}`)) })
-  }); return child
-}
-async function api(token, path, method = 'GET', data, status = 200, origin = undefined) {
-  const response = await fetch(base + path, { method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(origin ? { Origin: origin } : {}) }, body: data === undefined ? undefined : JSON.stringify(data), signal: AbortSignal.timeout(5000) })
-  const body = await response.json(); assert.equal(response.status, status, `Unexpected status for ${method} ${path}: ${body.code ?? 'unknown'}`); return body
-}
-async function login(credential, clientName) { return api('', '/api/sessions', 'POST', { credential, clientName }) }
-async function watch(token) {
-  const socket = new WebSocket(base.replace('http:', 'ws:') + '/api/events'); sockets.push(socket)
-  const snapshots = []
-  socket.addEventListener('message', e => snapshots.push(JSON.parse(e.data).data))
-  await new Promise((resolve, reject) => { socket.addEventListener('open', resolve, { once: true }); socket.addEventListener('error', reject, { once: true }) })
-  socket.send(JSON.stringify({ token }))
-  return { snapshots, async until(predicate) { const deadline = Date.now() + 5000; while (!snapshots.some(predicate)) { assert.ok(Date.now() < deadline, 'Missing collaboration broadcast'); await new Promise(r => setTimeout(r, 25)) } } }
-}
-const source = JSON.stringify({ format: 'hanshu.progress', version: 1, id: 'author-document', name: '原始进度', description: '', authorNotes: '', tags: [], completion: 'all', goals: [], visibility: [], acceptance: [], abandonable: true, repeat: { kind: 'once' }, rewardKits: [] })
+import { readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { harness } from './collaboration-harness.mjs'
+const h=await harness();const sockets=[]
 try {
-  const process1 = await start()
-  const credential = await readFile(join(root, 'owner-key'), 'utf8')
-  await api('', '/api/project', 'GET', undefined, 401)
-  await api('', '/api/sessions', 'POST', { credential: 'wrong', clientName: 'bad' }, 401)
-  const owner = await login(credential, 'owner')
-  await api(owner.token, '/api/project', 'GET', undefined, 403, 'https://untrusted.example')
-  const member = await api(owner.token, '/api/subjects', 'POST', { name: '自动化主体', kind: 'agent', role: 'editor' })
-  const viewer = await api(owner.token, '/api/subjects', 'POST', { name: '观察主体', kind: 'account', role: 'viewer' })
-  const a = await login(member.credential, '编辑窗口 A'); const b = await login(member.credential, '编辑窗口 B'); const v = await login(viewer.credential, '只读窗口')
-  assert.equal(a.session.subjectId, b.session.subjectId); assert.notEqual(a.session.id, b.session.id)
-  const observer = await watch(v.token)
-  const folder = await api(a.token, '/api/resources', 'POST', { name: '进度', kind: 'folder', parentId: null })
-  const doc = await api(a.token, '/api/resources', 'POST', { name: '测试.progress', kind: 'progress', parentId: folder.id, content: source })
-  await observer.until(s => s.resources.some(r => r.id === doc.id))
-  await api(v.token, `/api/resources/${doc.id}/lease`, 'POST', {}, 403)
-  await api(v.token, `/api/resources/${doc.id}`, 'DELETE', { revision: 1 }, 403)
-  await api(v.token, '/api/subjects', 'POST', { name: '伪造者', kind: 'agent', role: 'editor' }, 403)
-  const lease = await api(a.token, `/api/resources/${doc.id}/lease`, 'POST', {})
-  await api(b.token, `/api/resources/${doc.id}/lease`, 'POST', {}, 423)
-  await api(b.token, `/api/resources/${doc.id}`, 'PUT', { leaseId: lease.id, revision: 1, content: source }, 423)
-  await api(a.token, '/api/heartbeat', 'POST', { resourceId: doc.id, leaseId: lease.id, typing: true })
-  await observer.until(s => s.sessions.some(s => s.id === a.session.id && s.activity === 'typing'))
-  const updated = JSON.stringify({ ...JSON.parse(source), name: '两个客户端共享的标题' })
-  const saved = await api(a.token, `/api/resources/${doc.id}`, 'PUT', { leaseId: lease.id, revision: 1, content: updated })
-  assert.equal(saved.revision, 2)
-  await observer.until(s => s.resources.some(r => r.id === doc.id && r.revision === 2))
-  assert.equal((await api(v.token, `/api/resources/${doc.id}`)).content, updated)
-  await api(a.token, `/api/resources/${doc.id}`, 'PUT', { leaseId: lease.id, revision: 1, content: source }, 409)
-  await api(a.token, `/api/resources/${doc.id}`, 'PUT', { leaseId: lease.id, revision: 2, content: '{}' }, 400)
-  const takeover = await api(owner.token, `/api/resources/${doc.id}/lease`, 'POST', { force: true })
-  await api(a.token, `/api/resources/${doc.id}`, 'PUT', { leaseId: lease.id, revision: 2, content: source }, 423)
-  await api(owner.token, `/api/resources/${doc.id}/lease`, 'DELETE', { leaseId: takeover.id })
-  await api(b.token, `/api/resources/${doc.id}/lease`, 'POST', {})
-  await api(owner.token, `/api/subjects/${member.subject.id}`, 'PATCH', { role: 'viewer', enabled: true })
-  assert.equal((await api(owner.token, '/api/project')).leases.length, 0)
-  await api(b.token, `/api/resources/${doc.id}/lease`, 'POST', {}, 403)
-  await api(owner.token, `/api/subjects/${member.subject.id}`, 'PATCH', { role: 'viewer', enabled: false })
-  await api(a.token, '/api/project', 'GET', undefined, 401)
-  const snapshot = await api(owner.token, '/api/project')
-  assert.ok(!JSON.stringify(snapshot).includes(credential)); assert.ok(!('content' in snapshot.resources[0]))
-  sockets.forEach(s => s.close()); process1.kill(); await new Promise(r => process1.once('exit', r))
-  await start()
-  await api(owner.token, '/api/project', 'GET', undefined, 401)
-  const restored = await login(credential, '重启后管理者')
-  assert.equal((await api(restored.token, `/api/resources/${doc.id}`)).content, updated)
-  assert.equal((await api(restored.token, '/api/project')).leases.length, 0)
-  console.log('协作服务集成验证通过：主体/会话隔离、权限、在线状态、广播、写权接管、版本冲突与重启持久化。')
-} finally {
-  sockets.forEach(s => s.close()); children.forEach(c => { if (c.exitCode === null) c.kill() })
-}
+  await h.api('','/api/project','GET',undefined,401)
+  const owner=await h.login(h.credential,'owner')
+  const person=await h.api(owner.token,'/api/subjects','POST',{name:'editor',kind:'account',role:'editor'})
+  const observer=await h.api(owner.token,'/api/subjects','POST',{name:'reader',kind:'agent',role:'viewer'})
+  const a=await h.login(person.credential,'A');const b=await h.login(person.credential,'B');const viewer=await h.login(observer.credential,'V')
+  assert.equal(a.session.subjectId,b.session.subjectId);assert.notEqual(a.session.id,b.session.id)
+  const tree=await h.files(a.token);assert.ok(tree.entries.some(e=>e.path==='src/hanshu/story.hs'));assert.ok(!JSON.stringify(tree).includes('owner-key'))
+  await h.api(viewer.token,'/api/files/leases','POST',{paths:['src/hanshu/story.hs']},403)
+  await h.api(viewer.token,'/api/files/commit','POST',{changes:[]},403)
+  for(const path of ['../outside','.hanshu/service/owner-key','assets/../../secret','C:/outside'])await h.api(a.token,`/api/files/content?path=${encodeURIComponent(path)}`,'GET',undefined,path==='C:/outside'||path.includes('..')?400:403)
+  await h.api(a.token,'/api/files','GET',undefined,403,'https://untrusted.example')
+  const snapshots=[];const ws=new WebSocket(h.base.replace('http:','ws:')+'/api/events');sockets.push(ws);ws.addEventListener('message',e=>snapshots.push(JSON.parse(e.data).data));await new Promise((r,j)=>{ws.addEventListener('open',r,{once:true});ws.addEventListener('error',j,{once:true})});ws.send(JSON.stringify({token:viewer.token}))
+  const before=tree.entries.find(e=>e.path==='src/hanshu/story.hs').version
+  await h.commit(a.token,[{path:'src/hanshu/story.hs',content:'标题：服务端保存后的剧本\n'}])
+  assert.equal(await readFile(join(h.root,'src/hanshu/story.hs'),'utf8'),'标题：服务端保存后的剧本\n')
+  await h.api(b.token,'/api/files/leases','POST',{paths:['src/hanshu/story.hs']},423)
+  await h.commit(b.token,[{path:'meta/docs/notes.md',content:'# 独立文件并行保存'}])
+  const lease=await h.api(owner.token,'/api/files/leases','POST',{paths:['src/hanshu/story.hs'],force:true})
+  await h.api(a.token,'/api/files/commit','POST',{changes:[{op:'write',path:'src/hanshu/story.hs',version:before,content:Buffer.from('stale').toString('base64'),leaseId:lease[0].id}]},423)
+  await h.commit(owner.token,[{path:'src/hanshu/story.hs',content:'stale',version:before}],409)
+  await h.release(owner.token)
+  for(const path of ['src/story/flow.hflow','src/items/test.item','src/gift/test.kit','src/navigator/test.nav','assets/audio.ogg','.hanshu/skinmanager/tmp/state.json'])await h.commit(b.token,[{path,content:'server owns these bytes'}])
+  await h.release(b.token)
+  const plan=await h.api(owner.token,'/api/files/source-plan?path=src/progress/example.progress&destination=src/progress/renamed.progress')
+  assert.ok(plan.some(p=>p.path==='assets/zh_cn/lang_progress/example.lang'))
+  await h.commit(owner.token,plan.map(p=>({op:'move',path:p.path,destination:p.destination})))
+  assert.equal(await readFile(join(h.root,'assets/zh_cn/lang_progress/renamed.lang'),'utf8'),h.fixtures['assets/zh_cn/lang_progress/example.lang'])
+  assert.ok((await h.files(viewer.token)).entries.some(e=>e.path==='src/progress/renamed.progress'))
+  await h.api(owner.token,`/api/subjects/${person.subject.id}`,'PATCH',{role:'viewer',enabled:false})
+  await h.api(b.token,'/api/files','GET',undefined,401)
+  await new Promise(r=>setTimeout(r,100));assert.ok(snapshots.some(s=>s.filesRevision>1))
+  assert.ok(!JSON.stringify(snapshots).includes(h.credential))
+  sockets.forEach(s=>s.close());await h.stop();await h.start()
+  await h.api(owner.token,'/api/files','GET',undefined,401)
+  const restored=await h.login(h.credential,'restart')
+  assert.equal((await h.api(restored.token,'/api/project')).leases.length,0)
+  assert.equal(await readFile(join(h.root,'src/hanshu/story.hs'),'utf8'),'标题：服务端保存后的剧本\n')
+  console.log('通过：普通工程目录、多文件类型、两个同主体会话、独立文件并行写入、只读与越权拒绝、版本冲突、接管、服务端关联改名、广播与重启。')
+} finally {sockets.forEach(s=>s.close());await h.stop()}

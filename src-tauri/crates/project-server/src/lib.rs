@@ -2,7 +2,7 @@
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        DefaultBodyLimit, Path, State,
+        DefaultBodyLimit, Path, Query, State,
     },
     http::{header, HeaderMap, HeaderValue, Method, Request, StatusCode},
     middleware::{self, Next},
@@ -10,7 +10,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use project_core::{now_ms, Engine, Error, ResourceKind, Result, Role};
+use project_core::{now_ms, Engine, Error, Result, Role};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
@@ -167,6 +167,8 @@ async fn logout(State(s): State<AppState>, h: HeaderMap) -> ApiResult {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Heartbeat {
+    #[serde(default)]
+    file_leases: Vec<String>,
     resource_id: Option<String>,
     lease_id: Option<String>,
     #[serde(default)]
@@ -175,6 +177,9 @@ struct Heartbeat {
 async fn heartbeat(State(s): State<AppState>, h: HeaderMap, Json(i): Json<Heartbeat>) -> ApiResult {
     let v = access(&s, bearer(&h)?, true, move |e, id, now| {
         e.heartbeat(id, i.resource_id, i.lease_id.as_deref(), i.typing, now)?;
+        if !i.file_leases.is_empty() {
+            e.renew_files(id, &i.file_leases, now)?;
+        }
         e.snapshot(id)
     })
     .await?;
@@ -214,139 +219,98 @@ async fn update_subject(
     .await?;
     Ok(Json(json!({"ok":true})))
 }
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct NewResource {
-    parent_id: Option<String>,
-    name: String,
-    kind: ResourceKind,
-    content: Option<String>,
-}
-async fn create_resource(
-    State(s): State<AppState>,
-    h: HeaderMap,
-    Json(i): Json<NewResource>,
-) -> ApiResult {
-    let r = access(&s, bearer(&h)?, true, move |e, id, _| {
-        e.create_resource(id, i.parent_id, i.name, i.kind, i.content)
-    })
-    .await?;
-    Ok(Json(json!(r)))
-}
-async fn resource(
-    State(s): State<AppState>,
-    h: HeaderMap,
-    Path(target): Path<String>,
-) -> ApiResult {
-    let r = access(&s, bearer(&h)?, false, move |e, id, _| {
-        e.resource(id, &target)
-    })
-    .await?;
-    Ok(Json(json!(r)))
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Save {
-    lease_id: String,
-    revision: u64,
-    content: String,
-}
-async fn save(
-    State(s): State<AppState>,
-    h: HeaderMap,
-    Path(target): Path<String>,
-    Json(i): Json<Save>,
-) -> ApiResult {
-    let r = access(&s, bearer(&h)?, true, move |e, id, now| {
-        e.save(id, &target, &i.lease_id, i.revision, i.content, now)
-    })
-    .await?;
-    Ok(Json(json!(r)))
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Rename {
-    lease_id: Option<String>,
-    revision: u64,
-    parent_id: Option<String>,
-    name: String,
-}
-async fn rename(
-    State(s): State<AppState>,
-    h: HeaderMap,
-    Path(target): Path<String>,
-    Json(i): Json<Rename>,
-) -> ApiResult {
-    let r = access(&s, bearer(&h)?, true, move |e, id, now| {
-        e.rename(
-            id,
-            &target,
-            i.lease_id.as_deref(),
-            i.revision,
-            i.parent_id,
-            i.name,
-            now,
-        )
-    })
-    .await?;
-    Ok(Json(json!(r)))
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Delete {
-    lease_id: Option<String>,
-    revision: u64,
-}
-async fn delete(
-    State(s): State<AppState>,
-    h: HeaderMap,
-    Path(target): Path<String>,
-    Json(i): Json<Delete>,
-) -> ApiResult {
-    access(&s, bearer(&h)?, true, move |e, id, now| {
-        e.delete(id, &target, i.lease_id.as_deref(), i.revision, now)
-    })
-    .await?;
-    Ok(Json(json!({"ok":true})))
-}
-#[derive(Deserialize)]
-struct Acquire {
-    #[serde(default)]
-    force: bool,
-}
-async fn acquire(
-    State(s): State<AppState>,
-    h: HeaderMap,
-    Path(target): Path<String>,
-    Json(i): Json<Acquire>,
-) -> ApiResult {
-    let r = access(&s, bearer(&h)?, true, move |e, id, now| {
-        e.acquire(id, &target, i.force, now)
-    })
-    .await?;
-    Ok(Json(json!(r)))
-}
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Release {
-    lease_id: String,
-}
-async fn release(
-    State(s): State<AppState>,
-    h: HeaderMap,
-    Path(target): Path<String>,
-    Json(i): Json<Release>,
-) -> ApiResult {
-    access(&s, bearer(&h)?, true, move |e, id, now| {
-        e.release(id, &target, &i.lease_id, now)
-    })
-    .await?;
-    Ok(Json(json!({"ok":true})))
-}
-
 async fn events(State(state): State<AppState>, ws: WebSocketUpgrade) -> Response {
     ws.max_message_size(1024)
         .on_upgrade(move |socket| watch(socket, state))
+}
+
+async fn files(State(s): State<AppState>, h: HeaderMap) -> ApiResult {
+    let v = access(&s, bearer(&h)?, false, |e, id, _| e.files_snapshot(id)).await?;
+    Ok(Json(json!(v)))
+}
+#[derive(Deserialize)]
+struct FileRead {
+    path: String,
+    version: Option<String>,
+}
+async fn file_read(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Query(i): Query<FileRead>,
+) -> ApiResult {
+    use base64::{engine::general_purpose::STANDARD, Engine as _};
+    let (bytes, version) = access(&s, bearer(&h)?, false, move |e, id, _| {
+        e.read_project_file(id, &i.path, i.version.as_deref())
+    })
+    .await?;
+    Ok(Json(
+        json!({"content": STANDARD.encode(bytes), "version": version}),
+    ))
+}
+#[derive(Deserialize)]
+struct SourcePlan {
+    path: String,
+    destination: Option<String>,
+}
+async fn source_plan(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Query(i): Query<SourcePlan>,
+) -> ApiResult {
+    let plan = access(&s, bearer(&h)?, false, move |e, id, _| {
+        e.source_plan(id, &i.path, i.destination.as_deref())
+    })
+    .await?;
+    Ok(Json(json!(plan)))
+}
+#[derive(Deserialize)]
+struct FileLeases {
+    paths: Vec<String>,
+    #[serde(default)]
+    force: bool,
+}
+async fn file_leases(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Json(i): Json<FileLeases>,
+) -> ApiResult {
+    let leases = access(&s, bearer(&h)?, true, move |e, id, now| {
+        e.acquire_files(id, &i.paths, i.force, now)
+    })
+    .await?;
+    Ok(Json(json!(leases)))
+}
+#[derive(Deserialize)]
+struct FileBatch {
+    changes: Vec<project_core::FileChange>,
+}
+async fn file_commit(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Json(i): Json<FileBatch>,
+) -> ApiResult {
+    let files = access(&s, bearer(&h)?, true, move |e, id, now| {
+        e.commit_files(id, i.changes, now)
+    })
+    .await?;
+    Ok(Json(json!(files)))
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FileRelease {
+    path: String,
+    lease_id: String,
+}
+async fn file_release(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Json(i): Json<FileRelease>,
+) -> ApiResult {
+    access(&s, bearer(&h)?, true, move |e, id, now| {
+        e.release(id, &format!("file:{}", i.path), &i.lease_id, now)
+    })
+    .await?;
+    Ok(Json(json!({"ok":true})))
 }
 async fn watch(mut socket: WebSocket, state: AppState) {
     // Browser WebSocket cannot attach an Authorization header. Authenticate in the first frame,
@@ -418,7 +382,7 @@ pub async fn start(
             ));
         }
     }
-    let engine = Engine::open(root)?;
+    let engine = Engine::open_project(root)?;
     let listener = TcpListener::bind(address).await?;
     let address = listener.local_addr()?;
     origins.extend([
@@ -436,20 +400,22 @@ pub async fn start(
     let mut router = Router::new()
         .route(
             "/health",
-            get(|| async { Json(json!({"service":"hanshu-project","protocol":1})) }),
+            get(|| async { Json(json!({"service":"hanshu-project","protocol":2})) }),
         )
         .route("/api/sessions", post(login))
         .route("/api/sessions/current", axum::routing::delete(logout))
         .route("/api/project", get(snapshot))
+        .route("/api/files", get(files))
+        .route("/api/files/content", get(file_read))
+        .route("/api/files/source-plan", get(source_plan))
+        .route("/api/files/leases", post(file_leases).delete(file_release))
+        .route(
+            "/api/files/commit",
+            post(file_commit).layer(DefaultBodyLimit::max(48 * 1024 * 1024)),
+        )
         .route("/api/heartbeat", post(heartbeat))
         .route("/api/subjects", post(create_subject))
         .route("/api/subjects/{id}", axum::routing::patch(update_subject))
-        .route("/api/resources", post(create_resource))
-        .route(
-            "/api/resources/{id}",
-            get(resource).put(save).patch(rename).delete(delete),
-        )
-        .route("/api/resources/{id}/lease", post(acquire).delete(release))
         .route("/api/events", get(events));
     if let Some(root) = web_root {
         router =

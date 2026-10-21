@@ -1,7 +1,9 @@
 //! Transport-neutral, single-authority project service. Persisted subjects/grants/resources;
 //! ephemeral sessions, presence and fenced per-session write leases. All times are server times.
+mod files;
 mod model;
 mod progress;
+pub use files::*;
 pub use model::*;
 use sha2::{Digest, Sha256};
 use std::{
@@ -51,6 +53,7 @@ pub struct Engine {
     _guard: File,
     sessions: BTreeMap<String, (Session, String)>,
     leases: BTreeMap<String, Lease>,
+    files: Option<ProjectFiles>,
 }
 
 impl Engine {
@@ -124,6 +127,7 @@ impl Engine {
             _guard: guard,
             sessions: BTreeMap::new(),
             leases: BTreeMap::new(),
+            files: None,
         })
     }
     fn persist(root: &Path, data: &model::Project) -> Result<()> {
@@ -252,6 +256,7 @@ impl Engine {
             project_id: self.data.id.clone(),
             project_name: self.data.name.clone(),
             revision: self.data.revision,
+            files_revision: self.files.as_ref().map_or(0, |f| f.revision),
             session,
             role,
             members: self

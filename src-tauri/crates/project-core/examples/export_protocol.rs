@@ -14,6 +14,10 @@ fn main() {
         Lease::decl(&config),
         Member::decl(&config),
         Snapshot::decl(&config),
+        ProjectFile::decl(&config),
+        ProjectFileTree::decl(&config),
+        FileChange::decl(&config),
+        SourceFileMove::decl(&config),
     ] {
         println!("export {declaration}\n");
     }

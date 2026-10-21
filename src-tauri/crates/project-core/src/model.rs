@@ -126,6 +126,8 @@ pub struct Snapshot {
     pub project_name: String,
     #[ts(type = "number")]
     pub revision: u64,
+    #[ts(type = "number")]
+    pub files_revision: u64,
     pub session: Session,
     pub role: Role,
     pub members: Vec<Member>,

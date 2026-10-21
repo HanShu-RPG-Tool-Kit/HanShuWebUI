@@ -30,3 +30,7 @@ src-tauri/gen/schemas
 *.njsproj
 *.sln
 *.sw?
+
+# Default directory project managed by the local Rust service
+.hanshu-project/
+**/.hanshu/service/

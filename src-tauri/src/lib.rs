@@ -1,7 +1,7 @@
 mod skin;
 mod project_service;
-mod webview_perms;
 mod window_chrome;
+mod webview_perms;
 
 use tauri::Manager;
 
@@ -17,47 +17,17 @@ pub fn run() {
                         .build(),
                 )?;
             }
-            // MC 皮肤管理器：独立 Rust core + 薄 IPC 适配层。
-            let skin_state = skin::state::SkinState::init(app.handle())?;
-            app.manage(skin_state);
             app.manage(project_service::ProjectService::init(app.handle())?);
-            // 桌面壳：自动放行 WebView 的文件读写授权弹窗（仍会弹出选文件夹）。
-            webview_perms::install(app.handle())?;
+            webview_perms::configure_visuals(app.handle())?;
             // Splash starts hidden; apply rounded / borderless chrome before first show.
             let _ = window_chrome::set_chrome(app.handle(), true);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             project_service::project_local_connection,
+            project_service::project_open_local,
             window_chrome::desktop_set_splash_chrome,
             window_chrome::desktop_set_main_chrome,
-            skin::commands::skin_get_capabilities,
-            skin::commands::skin_list_entries,
-            skin::commands::skin_get_entry,
-            skin::commands::skin_list_tags,
-            skin::commands::skin_rename_tag,
-            skin::commands::skin_delete_tag,
-            skin::commands::skin_list_folders,
-            skin::commands::skin_create_folder,
-            skin::commands::skin_patch_folder,
-            skin::commands::skin_delete_folder,
-            skin::commands::skin_delete_entries_in_folder,
-            skin::commands::skin_save_entry,
-            skin::commands::skin_patch_entry,
-            skin::commands::skin_batch_patch_entries,
-            skin::commands::skin_delete_entry,
-            skin::commands::skin_gc_orphans,
-            skin::commands::skin_start_import,
-            skin::commands::skin_import_file,
-            skin::commands::skin_get_import,
-            skin::commands::skin_list_imports,
-            skin::commands::skin_cancel_import,
-            skin::commands::skin_get_preview_png,
-            skin::commands::skin_export_skin,
-            skin::commands::skin_export_entry,
-            skin::commands::skin_export_usable_manifest,
-            skin::commands::skin_get_skin_code,
-            skin::commands::skin_write_export_file,
             skin::commands::skin_net_fetch_png,
             skin::commands::skin_net_resolve_player,
         ])

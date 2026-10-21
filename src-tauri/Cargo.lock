@@ -2751,6 +2751,7 @@ dependencies = [
 name = "project-core"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "fs4",
  "serde",
  "serde_json",
@@ -2765,6 +2766,7 @@ name = "project-server"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "base64 0.22.1",
  "project-core",
  "serde",
  "serde_json",

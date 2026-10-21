@@ -2,9 +2,10 @@
 use project_server::{LocalConnection, Service};
 use std::sync::Mutex;
 use tauri::Manager;
+use tauri_plugin_dialog::DialogExt;
 
 pub struct ProjectService {
-    connection: LocalConnection,
+    connection: Mutex<LocalConnection>,
     _service: Mutex<Service>,
 }
 impl ProjectService {
@@ -13,7 +14,7 @@ impl ProjectService {
             .path()
             .app_local_data_dir()
             .map_err(|e| e.to_string())?
-            .join("project-service");
+            .join("projects/default");
         let address = std::env::var("HANSHU_PROJECT_LISTEN")
             .unwrap_or_else(|_| "127.0.0.1:0".into())
             .parse()
@@ -33,13 +34,13 @@ impl ProjectService {
         let service =
             tauri::async_runtime::block_on(project_server::start(&root, address, origins, None))
                 .map_err(|e| e.to_string())?;
-        let credential =
-            std::fs::read_to_string(root.join("owner-key")).map_err(|e| e.to_string())?;
+        let credential = std::fs::read_to_string(root.join(".hanshu/service/owner-key"))
+            .map_err(|e| e.to_string())?;
         Ok(Self {
-            connection: LocalConnection {
+            connection: Mutex::new(LocalConnection {
                 url: format!("http://127.0.0.1:{}", service.address.port()),
                 credential,
-            },
+            }),
             _service: Mutex::new(service),
         })
     }
@@ -47,6 +48,50 @@ impl ProjectService {
 
 /// Local desktop IPC only. The network server never exposes the bootstrap credential.
 #[tauri::command]
-pub fn project_local_connection(state: tauri::State<'_, ProjectService>) -> LocalConnection {
-    state.connection.clone()
+pub fn project_local_connection(
+    state: tauri::State<'_, ProjectService>,
+) -> Result<LocalConnection, String> {
+    Ok(state
+        .connection
+        .lock()
+        .map_err(|_| "工程状态不可用")?
+        .clone())
+}
+
+/// The trusted native host chooses the directory. C cannot pass a path or obtain a writable handle.
+#[tauri::command]
+pub async fn project_open_local(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, ProjectService>,
+) -> Result<LocalConnection, String> {
+    let selected = tauri::async_runtime::spawn_blocking(move || {
+        app.dialog()
+            .file()
+            .set_title("由本机服务打开工程目录")
+            .blocking_pick_folder()
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .ok_or("已取消打开工程")?;
+    let root = selected.into_path().map_err(|e| e.to_string())?;
+    let service = project_server::start(
+        &root,
+        "127.0.0.1:0".parse().unwrap(),
+        vec![
+            "http://localhost:5173".into(),
+            "http://127.0.0.1:5173".into(),
+        ],
+        None,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+    let credential = std::fs::read_to_string(root.join(".hanshu/service/owner-key"))
+        .map_err(|e| e.to_string())?;
+    let connection = LocalConnection {
+        url: format!("http://127.0.0.1:{}", service.address.port()),
+        credential,
+    };
+    *state.connection.lock().map_err(|_| "工程状态不可用")? = connection.clone();
+    *state._service.lock().map_err(|_| "工程状态不可用")? = service;
+    Ok(connection)
 }

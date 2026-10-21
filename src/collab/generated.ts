@@ -16,5 +16,13 @@ export type Lease = { id: string, resourceId: string, sessionId: string, expires
 
 export type Member = { subject: Subject, role: Role, };
 
-export type Snapshot = { projectId: string, projectName: string, revision: number, session: Session, role: Role, members: Array<Member>, resources: Array<ResourceInfo>, sessions: Array<Session>, leases: Array<Lease>, };
+export type Snapshot = { projectId: string, projectName: string, revision: number, filesRevision: number, session: Session, role: Role, members: Array<Member>, resources: Array<ResourceInfo>, sessions: Array<Session>, leases: Array<Lease>, };
+
+export type ProjectFile = { path: string, kind: string, version: string, size: number, };
+
+export type ProjectFileTree = { revision: number, entries: Array<ProjectFile>, };
+
+export type FileChange = { op: string, path: string, version: string | null, content: string | null, destination: string | null, destinationVersion: string | null, leaseId: string, };
+
+export type SourceFileMove = { path: string, destination: string | null, };
 

@@ -2,7 +2,7 @@ use std::{net::SocketAddr, path::PathBuf};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut root = PathBuf::from(".hanshu-server");
+    let mut root = PathBuf::from(".hanshu-project");
     let mut listen: SocketAddr = "127.0.0.1:47831".parse()?;
     let mut origins = vec![
         "http://localhost:5173".into(),
@@ -22,7 +22,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let service = project_server::start(&root, listen, origins, web).await?;
     println!("HanShu S: http://{}", service.address);
-    println!("管理者凭证文件：{}", root.join("owner-key").display());
+    println!(
+        "管理者凭证文件：{}",
+        root.join(".hanshu/service/owner-key").display()
+    );
     tokio::signal::ctrl_c().await?;
     drop(service);
     Ok(())

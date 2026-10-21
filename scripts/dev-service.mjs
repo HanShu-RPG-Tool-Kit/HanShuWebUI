@@ -30,7 +30,7 @@ async function rebuild() {
   building = false
   if (shuttingDown) return
   if (code !== 0) { console.error('S 编译失败，修复后保存 Rust 文件会重试。'); return }
-  const running = launch(resolve(root, 'src-tauri/target/debug', executable('project-server')), ['--project', process.env.HANSHU_PROJECT_DIR ?? '.hanshu-server', '--listen', '127.0.0.1:47831'])
+  const running = launch(resolve(root, 'src-tauri/target/debug', executable('project-server')), ['--project', process.env.HANSHU_PROJECT_DIR ?? '.hanshu-project', '--listen', '127.0.0.1:47831'])
   server = running
   running.once('exit', code => { if (server === running && !shuttingDown) { console.error(`工程服务退出：${code}`); shutdown(code ?? 1) } })
   if (pending) void rebuild()
