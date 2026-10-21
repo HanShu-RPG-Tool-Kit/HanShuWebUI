@@ -14,7 +14,7 @@
     "test:collaboration:ui": "node scripts/verify-collaboration-ui.mjs",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "test": "npm run test:text-live-geometry && npm run test:text-edit-session && npm run test:text-key-anim && npm run test:new-file-types && npm run test:text-key-rules && npm run test:hs-diag && npm run test:hs-compile && npm run test:progress && npm run test:progress-locale && npm run test:kit-expr && npm run test:editor-groups && npm run test:skin-codec && npm run test:tts",
+    "test": "npm run test:text-live-geometry && npm run test:text-edit-session && npm run test:text-key-anim && npm run test:new-file-types && npm run test:text-key-rules && npm run test:hs-diag && npm run test:hs-compile && npm run test:progress && npm run test:progress-locale && npm run test:kit-expr && npm run test:editor-groups && npm run test:skin-codec && npm run test:tts && npm run test:edit-transactions && npm run test:editor-transactions && npm run test:project-crypto",
     "check:hs": "esbuild scripts/check-hanshu-coloring.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/check-hanshu-coloring.cjs --log-level=warning && node node_modules/.cache/check-hanshu-coloring.cjs",
     "preview": "vite preview",
     "tauri": "node scripts/desktop.mjs",
@@ -39,7 +39,13 @@
     "test:tts-net": "tsx scripts/verify-tts-net.ts",
     "test:tts-protocols": "tsx scripts/verify-tts-protocols.ts",
     "test:tts-voices": "tsx scripts/verify-tts-voices.ts",
-    "test:project-boundary": "node scripts/verify-project-boundary.mjs"
+    "test:project-boundary": "node scripts/verify-project-boundary.mjs",
+    "test:edit-transactions": "node scripts/run-verification.mjs scripts/verify-edit-transactions.ts",
+    "test:collaboration:network": "node scripts/verify-collaboration-network.mjs",
+    "test:editor-transactions": "node scripts/run-verification.mjs scripts/verify-editor-transactions.ts",
+    "test:project-crypto": "node scripts/run-verification.mjs scripts/verify-project-crypto.ts",
+    "test:asset-cache-isolation": "node scripts/verify-asset-cache-isolation.mjs",
+    "test:edit-journal": "node scripts/verify-edit-journal.mjs"
   },
   "dependencies": {
     "@audio/encode-ogg": "^1.3.0",

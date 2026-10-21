@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { harness } from './collaboration-harness.mjs'
 const h=await harness();const sockets=[]
 try {
@@ -12,7 +13,8 @@ try {
   assert.equal(a.session.subjectId,b.session.subjectId);assert.notEqual(a.session.id,b.session.id)
   const tree=await h.files(a.token);assert.ok(tree.entries.some(e=>e.path==='src/hanshu/story.hs'));assert.ok(!JSON.stringify(tree).includes('owner-key'))
   await h.api(viewer.token,'/api/files/leases','POST',{paths:['src/hanshu/story.hs']},403)
-  await h.api(viewer.token,'/api/files/commit','POST',{changes:[]},403)
+  const denied=await h.api(viewer.token,'/api/files/commit','POST',{transactionId:randomUUID(),changes:[]})
+  assert.equal(denied.status,'rejected');assert.equal(denied.error.code,'forbidden')
   for(const path of ['../outside','.hanshu/service/owner-key','assets/../../secret','C:/outside'])await h.api(a.token,`/api/files/content?path=${encodeURIComponent(path)}`,'GET',undefined,path==='C:/outside'||path.includes('..')?400:403)
   await h.api(a.token,'/api/files','GET',undefined,403,'https://untrusted.example')
   const snapshots=[];const ws=new WebSocket(h.base.replace('http:','ws:')+'/api/events');sockets.push(ws);ws.addEventListener('message',e=>snapshots.push(JSON.parse(e.data).data));await new Promise((r,j)=>{ws.addEventListener('open',r,{once:true});ws.addEventListener('error',j,{once:true})});ws.send(JSON.stringify({token:viewer.token}))
@@ -22,7 +24,8 @@ try {
   await h.api(b.token,'/api/files/leases','POST',{paths:['src/hanshu/story.hs']},423)
   await h.commit(b.token,[{path:'meta/docs/notes.md',content:'# 独立文件并行保存'}])
   const lease=await h.api(owner.token,'/api/files/leases','POST',{paths:['src/hanshu/story.hs'],force:true})
-  await h.api(a.token,'/api/files/commit','POST',{changes:[{op:'write',path:'src/hanshu/story.hs',version:before,content:Buffer.from('stale').toString('base64'),leaseId:lease[0].id}]},423)
+  const lostLease=await h.api(a.token,'/api/files/commit','POST',{transactionId:randomUUID(),changes:[{op:'write',path:'src/hanshu/story.hs',version:before,content:Buffer.from('stale').toString('base64'),leaseId:lease[0].id}]})
+  assert.equal(lostLease.status,'rejected');assert.equal(lostLease.error.code,'locked')
   await h.commit(owner.token,[{path:'src/hanshu/story.hs',content:'stale',version:before}],409)
   await h.release(owner.token)
   for(const path of ['src/story/flow.hflow','src/items/test.item','src/gift/test.kit','src/navigator/test.nav','assets/audio.ogg','.hanshu/skinmanager/tmp/state.json'])await h.commit(b.token,[{path,content:'server owns these bytes'}])
