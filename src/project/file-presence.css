@@ -1,0 +1,36 @@
+.file-presence-bar { flex: 0 0 auto; position: relative; z-index: 6; color: #c4c6d0; background: #25262e; border-bottom: 1px solid #3c3e48; font-size: 12px; }
+.file-presence-main { display: flex; align-items: center; gap: 14px; min-height: 49px; padding: 8px 16px; }
+.file-presence-caption { display: flex; align-items: center; gap: 6px; color: #8e919f; flex: 0 0 auto; font-size: 11px; letter-spacing: .06em; }
+.file-presence-caption svg { width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.35; stroke-linecap: round; }
+.file-presence-people { display: flex; align-items: center; gap: 7px; flex: 1; min-width: 0; flex-wrap: wrap; }
+.file-presence-person { position: relative; min-width: 0; }
+.file-presence-person > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px; padding: 3px 10px 3px 3px; border: 1px solid #454751; border-radius: 22px; background: #2d2e38; min-height: 30px; }
+.file-presence-person > summary::-webkit-details-marker, .file-presence-overflow > summary::-webkit-details-marker { display: none; }
+.file-presence-person > summary:hover, .file-presence-person[open] > summary { border-color: var(--person-color); background: #343642; }
+.file-presence-person.is-editing > summary { border-color: color-mix(in srgb, var(--person-color) 55%, #454751); }
+.file-presence-avatar { display: grid; place-items: center; position: relative; width: 25px; height: 25px; flex: 0 0 25px; border-radius: 50%; font-size: 11px; font-weight: 700; color: #1e222b; background: var(--person-color); }
+.file-presence-avatar i { position: absolute; width: 7px; height: 7px; bottom: -1px; right: -1px; border: 2px solid #2d2e38; background: #828792; border-radius: 50%; box-sizing: content-box; }
+.is-editing .file-presence-avatar i { background: #96d5af; }
+.file-presence-person-name { display: flex; align-items: center; gap: 5px; max-width: 108px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #e1e2e8; }
+.file-presence-person-name small { font-size: 9px; font-weight: 400; color: #9a9dab; }
+.file-presence-person-state { font-size: 10px; color: #a1a4b1; white-space: nowrap; }
+.is-editing .file-presence-person-state { color: var(--person-color); }
+.file-presence-person-detail { position: absolute; z-index: 30; left: 0; top: calc(100% + 8px); display: grid; gap: 6px; min-width: 172px; padding: 13px 15px; border: 1px solid #505360; border-radius: 10px; color: #b6b9c6; background: #2d2f39; box-shadow: 0 8px 28px #0005; }
+.file-presence-person-detail strong { color: #f1f1f5; font-size: 13px; }
+.file-presence-actions { display: flex; align-items: center; gap: 7px; flex: 0 0 auto; }
+.file-presence-mode { font-size: 11px; color: #989ca9; margin-right: 2px; white-space: nowrap; }
+.file-presence-mode.is-editing { color: #99d2b3; }
+.file-presence-bar button { background: #33353f; color: #d8dbe5; border: 1px solid #505462; border-radius: 7px; font-size: 11px; padding: 6px 11px; cursor: pointer; white-space: nowrap; }
+.file-presence-bar button:hover:not(:disabled) { background: #414451; border-color: #7b7f94; }
+.file-presence-bar button.file-presence-start { background: #49415f; border-color: #73638e; color: #e4d7f7; }
+.file-presence-bar button:disabled { opacity: .45; cursor: default; }
+.file-presence-bar :focus-visible { outline: 2px solid #b6a2dc; outline-offset: 3px; }
+.file-presence-muted { color: #9c9fac; font-size: 11px; }
+.file-presence-note { padding: 0 16px 9px; line-height: 1.6; color: #b4afc4; font-size: 11px; overflow-wrap: anywhere; }
+.file-presence-confirm { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; padding: 10px 16px; background: #34303b; border-top: 1px solid #4e435d; color: #d3c5df; }
+.file-presence-confirm span { flex: 1; min-width: 180px; }
+.file-presence-overflow { position: relative; }
+.file-presence-overflow > summary { list-style: none; cursor: pointer; border: 1px solid #505360; padding: 7px; border-radius: 50%; min-width: 30px; text-align: center; }
+.file-presence-overflow > div { position: absolute; top: calc(100% + 9px); right: 0; width: max-content; min-width: 200px; max-width: min(330px, 80vw); display: grid; gap: 7px; padding: 12px; border: 1px solid #505360; border-radius: 10px; background: #292b34; box-shadow: 0 8px 28px #0005; }
+.file-presence-bar.is-offline { background: #292830; }
+@media (max-width: 1050px) { .file-presence-main { gap: 9px; padding: 8px 11px; flex-wrap: wrap; } .file-presence-caption span { display: none; } .file-presence-people { flex-basis: calc(100% - 32px); } .file-presence-actions { margin-left: auto; } }

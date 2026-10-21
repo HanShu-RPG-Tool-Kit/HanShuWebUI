@@ -10,6 +10,8 @@ fn main() {
         ResourceKind::decl(&config),
         ResourceInfo::decl(&config),
         Resource::decl(&config),
+        FileActivity::decl(&config),
+        FilePresence::decl(&config),
         Session::decl(&config),
         Lease::decl(&config),
         Member::decl(&config),
@@ -22,6 +24,12 @@ fn main() {
         FileTransactionReceipt::decl(&config),
         SourceFileMove::decl(&config),
     ] {
+        // ts-rs inserts spaces before documentation newlines; keep generated files clean.
+        let declaration = declaration
+            .lines()
+            .map(str::trim_end)
+            .collect::<Vec<_>>()
+            .join("\n");
         println!("export {declaration}\n");
     }
 }

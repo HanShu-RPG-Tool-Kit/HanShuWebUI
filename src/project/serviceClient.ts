@@ -2,6 +2,7 @@ import { request, ServiceError, type Connection, type Lease, type Snapshot } fro
 import type { FileChange, FileTransactionReceipt, ProjectFile, ProjectFileTree } from '../collab/generated'
 import { EditTransactions, type SendAttempt } from './editTransactions'
 import { assetCacheEpoch } from '../assets/idb'
+import { FileEditing, progressEditingPath } from './fileEditing'
 
 export type FileEdit = {
   op: 'write' | 'mkdir' | 'remove' | 'move'; path: string; data?: string | Blob | Uint8Array
@@ -41,7 +42,29 @@ export class ProjectClient {
   online = true
   remoteEpoch = 0
   private ownVersions = new Map<string, Map<string | null,string | null>>()
-  setStatus(online: boolean, snapshot?: Snapshot) { this.online = online; if(snapshot)this.snapshot=snapshot }
+  private serverClock = 0
+  private serverClockAt = 0
+  serverNow = () => this.serverClock + Math.max(0, performance.now() - this.serverClockAt)
+  readonly editing: FileEditing
+  setStatus(online: boolean, snapshot?: Snapshot) {
+    // Presence, HTTP and WebSocket responses can arrive out of order.
+    if (snapshot && snapshot.statusVersion < this.snapshot.statusVersion) return false
+    const reconnect = online && !this.online
+    this.online = online
+    if (snapshot) {
+      this.snapshot = snapshot
+      this.serverClock = snapshot.serverTime ?? Date.now()
+      this.serverClockAt = performance.now()
+      for (const [path, lease] of this.leases) {
+        const current = snapshot.leases.find(item => item.id === lease.id && item.sessionId === snapshot.session.id)
+        if (current && current.expiresAt > this.serverNow()) this.leases.set(path, current)
+        else this.leases.delete(path)
+      }
+    }
+    this.editing.reconcile(online, this.snapshot)
+    if (reconnect) this.editing.publishFocus()
+    return true
+  }
   private expected(path: string, version: string | null): string | null {
     const history=this.ownVersions.get(path); const seen=new Set<string | null>()
     while(history?.has(version) && !seen.has(version)){seen.add(version);version=history.get(version)!}
@@ -55,6 +78,8 @@ export class ProjectClient {
   snapshot: Snapshot
   constructor(connection: Connection, snapshot: Snapshot) {
     this.connection = connection; this.snapshot = snapshot
+    this.serverClock = snapshot.serverTime ?? Date.now(); this.serverClockAt = performance.now()
+    this.editing = new FileEditing(this)
     this.transactions = new EditTransactions(edits => this.capture(edits), (edits, attempt) => this.perform(edits, attempt))
     this.transactions.onSettled = replayed => {
       // TextMap reads staged text first. Notify editors only after the exact
@@ -64,6 +89,15 @@ export class ProjectClient {
     }
   }
   get writable() { return this.online && this.snapshot.role !== 'viewer' }
+  assertEditingIntent(edits: FileEdit[], uncertain = false) {
+    for (const edit of edits) {
+      const path = progressEditingPath(edit.path)
+      const structural = path && edits.some(item => (item.op === 'move' || item.op === 'remove') && (item.path === path || item.destination === path))
+      if (path && edit.op === 'write' && !structural && !this.editing.canEdit(path)) {
+        throw new ServiceError(uncertain ? 'commit_uncertain' : 'editing_required', `请先打开 ${path.split('/').at(-1)} 并申请编辑；本窗口的草稿已保留`)
+      }
+    }
+  }
   root() { return new ProjectDirectory(this, '') }
   entry(path: string): ProjectFile | undefined { return this.tree.entries.find(e => e.path === path) }
   async refresh(initial = false): Promise<void> {
@@ -113,24 +147,38 @@ export class ProjectClient {
     if (!receipt) {
       if (!this.writable) throw new ServiceError(attempt.uncertain ? 'commit_uncertain' : this.online ? 'forbidden' : 'offline', this.online ? '当前主体只有读取权限' : '服务已断开，草稿保留在本窗口')
       const mutations = edits
+      this.assertEditingIntent(mutations, attempt.uncertain)
       const paths = [...new Set(mutations.flatMap(e => e.destination ? [e.path, e.destination] : [e.path]))]
       for (const path of paths) normalizeProjectPath(path)
+      const existing = new Set([...this.leases.values()].map(lease => lease.id))
       const acquired = paths.length ? await request<Lease[]>(this.connection, '/api/files/leases', 'POST', { paths }).catch(error => { if (attempt.uncertain) throw new ServiceError('commit_uncertain', '尚未确认原提交结果，暂时无法取得写权；请继续查询结果'); throw error }) : []
+      const acquiredByPath = new Map(acquired.map(lease => [lease.resourceId.slice(5), lease]))
       for (const l of acquired) this.leases.set(l.resourceId.slice(5), l)
-      const changes: FileChange[] = []
-      for (const edit of mutations) {
-        const data = edit.adopt ? undefined : edit.data
-        const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data instanceof Blob ? new Uint8Array(await data.arrayBuffer()) : data
-        changes.push({ op: edit.adopt ? 'check' : edit.op, path: edit.path, version: edit.version ?? null, leaseId: this.leases.get(edit.path)!.id, content: bytes ? bytesToBase64(bytes) : null, destination: edit.destination ?? null, destinationVersion: edit.destinationVersion ?? null })
-      }
-      // No retries with a newer version: that would silently overwrite another client's work.
       try {
-        receipt = validateReceipt(await request<FileTransactionReceipt>(this.connection, '/api/files/commit', 'POST', { transactionId: attempt.transactionId, changes }),attempt.transactionId)
-      } catch (error) {
-        // Only a definitive protocol rejection can start a new attempt. Network,
-        // storage and malformed responses retain identity, even across a reload.
-        if (!attempt.uncertain && error instanceof ServiceError && (['unauthorized','forbidden','invalid','busy','transaction_mismatch','transaction_limit'].includes(error.code) || [400,413,415].includes(error.status ?? 0))) throw error
-        throw new ServiceError('commit_uncertain', '提交结果待确认：服务可能已经保存。请查询结果，或重试同一提交')
+        // An expired/taken-over editor token must not be silently replaced by this
+        // transaction's acquire request, even if the resource is free again.
+        this.assertEditingIntent(mutations, attempt.uncertain)
+        const changes: FileChange[] = []
+        for (const edit of mutations) {
+          const data = edit.adopt ? undefined : edit.data
+          const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data instanceof Blob ? new Uint8Array(await data.arrayBuffer()) : data
+          const lease = acquiredByPath.get(edit.path)
+          if (!lease) throw new ServiceError('locked', '服务没有返回完整的文件写权，请重新申请后重试')
+          changes.push({ op: edit.adopt ? 'check' : edit.op, path: edit.path, version: edit.version ?? null, leaseId: lease.id, content: bytes ? bytesToBase64(bytes) : null, destination: edit.destination ?? null, destinationVersion: edit.destinationVersion ?? null })
+        }
+        // No retries with a newer version: that would silently overwrite another client's work.
+        try {
+          receipt = validateReceipt(await request<FileTransactionReceipt>(this.connection, '/api/files/commit', 'POST', { transactionId: attempt.transactionId, changes }),attempt.transactionId)
+        } catch (error) {
+          // Only a definitive protocol rejection can start a new attempt. Network,
+          // storage and malformed responses retain identity, even across a reload.
+          if (!attempt.uncertain && error instanceof ServiceError && (['unauthorized','forbidden','invalid','busy','transaction_mismatch','transaction_limit'].includes(error.code) || [400,413,415].includes(error.status ?? 0))) throw error
+          throw new ServiceError('commit_uncertain', '提交结果待确认：服务可能已经保存。请查询结果，或重试同一提交')
+        }
+      } finally {
+        // A language/binary sidecar must not keep blocking peers after its batch.
+        // Editor-owned leases and pre-existing leases belong to separate actions.
+        await this.releaseLeases(acquired.filter(lease => !existing.has(lease.id) && !this.editing.retained(lease.id)))
       }
     }
     if (receipt?.status === 'rejected') throw new ServiceError(receipt.error!.code, receipt.error!.message)
@@ -169,12 +217,22 @@ export class ProjectClient {
     try { await this.onCommitted?.(edits, attempt.replayed) }
     catch { throw new ServiceError('commit_uncertain', '服务已保存，本地视图更新未完成；请重试以恢复本地视图') }
   }
-  async release(): Promise<void> {
-    const leases = [...this.leases.entries()]
-    for (const [path,l] of leases) {
-      try { await request(this.connection, '/api/files/leases', 'DELETE', { path, leaseId: l.id }); this.leases.delete(path) }
-      catch (e) { if (!(e instanceof ServiceError && e.code === 'locked')) throw e; this.leases.delete(path) }
+  async releaseLeases(leases: Lease[], strict = false): Promise<void> {
+    const ids = new Set(leases.map(lease => lease.id))
+    for (const [path, current] of this.leases) if (ids.has(current.id)) this.leases.delete(path)
+    let failure: unknown
+    for (const lease of leases) {
+      try { await request(this.connection, '/api/files/leases', 'DELETE', { path: lease.resourceId.slice(5), leaseId: lease.id }) }
+      catch (error) { if (!(error instanceof ServiceError && ['locked', 'not_found'].includes(error.code))) failure ??= error }
     }
+    if (strict && failure) throw failure
+  }
+  async release(): Promise<void> {
+    if (this.editing.pending) throw new Error('请等待写权申请或释放结束，再释放全部写权')
+    if (this.transactions.getSnapshot().queued) throw new Error('请等待当前提交结束，再释放写权')
+    this.editing.clear()
+    await this.releaseLeases([...this.leases.values()], true)
+    this.editing.changed()
   }
   async sourceCommand(path: string, destination: string | null, content?: string): Promise<void> {
     return this.sourceCommands([{path, destination, content}])

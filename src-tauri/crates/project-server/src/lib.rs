@@ -177,13 +177,27 @@ struct Heartbeat {
 async fn heartbeat(State(s): State<AppState>, h: HeaderMap, Json(i): Json<Heartbeat>) -> ApiResult {
     let v = access(&s, bearer(&h)?, true, move |e, id, now| {
         e.heartbeat(id, i.resource_id, i.lease_id.as_deref(), i.typing, now)?;
-        if !i.file_leases.is_empty() {
+        // A role downgrade must not break presence heartbeats sent with old lease IDs.
+        if !i.file_leases.is_empty() && e.role(id)?.can_write() {
             e.renew_files(id, &i.file_leases, now)?;
         }
         e.snapshot(id)
     })
     .await?;
     Ok(Json(json!(v)))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Presence {
+    path: Option<String>,
+}
+async fn presence(State(s): State<AppState>, h: HeaderMap, Json(i): Json<Presence>) -> ApiResult {
+    let snapshot = access(&s, bearer(&h)?, true, move |e, id, now| {
+        e.set_file_presence(id, i.path, now)?;
+        e.snapshot(id)
+    })
+    .await?;
+    Ok(Json(json!(snapshot)))
 }
 #[derive(Deserialize)]
 struct NewSubject {
@@ -413,7 +427,7 @@ pub async fn start(
     let mut router = Router::new()
         .route(
             "/health",
-            get(|| async { Json(json!({"service":"hanshu-project","protocol":3})) }),
+            get(|| async { Json(json!({"service":"hanshu-project","protocol":4})) }),
         )
         .route("/api/sessions", post(login))
         .route("/api/sessions/current", axum::routing::delete(logout))
@@ -431,6 +445,7 @@ pub async fn start(
             post(file_commit).layer(DefaultBodyLimit::max(48 * 1024 * 1024)),
         )
         .route("/api/heartbeat", post(heartbeat))
+        .route("/api/presence", post(presence))
         .route("/api/subjects", post(create_subject))
         .route("/api/subjects/{id}", axum::routing::patch(update_subject))
         .route("/api/events", get(events));

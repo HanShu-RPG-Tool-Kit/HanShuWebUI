@@ -3,6 +3,7 @@ use project_core::*;
 use serde_json::Value;
 use std::{
     fs,
+    io::Read,
     path::{Path, PathBuf},
 };
 
@@ -39,12 +40,16 @@ fn write(e: &mut project_core::Engine, sid: &str, path: &str, text: &str) -> Fil
 }
 
 fn stored(root: &Path, transaction: &str) -> (PathBuf, Value) {
-    fs::read_dir(root.join(".hanshu/service/file-transactions"))
+    fs::read_dir(root.join(".hanshu/service/file-transactions/archive"))
         .unwrap()
+        .flat_map(|entry| fs::read_dir(entry.unwrap().path()).unwrap())
         .map(|entry| entry.unwrap().path())
-        .filter(|path| path.extension().and_then(|s| s.to_str()) == Some("json"))
         .find_map(|path| {
-            let value: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            let mut bytes = Vec::new();
+            flate2::read::GzDecoder::new(fs::File::open(&path).unwrap())
+                .read_to_end(&mut bytes)
+                .unwrap();
+            let value: Value = serde_json::from_slice(&bytes).unwrap();
             (value["receipt"]["transactionId"] == transaction).then_some((path, value))
         })
         .unwrap()
@@ -110,6 +115,7 @@ fn transaction_id_binds_subject_and_payload_including_versions_and_operation_ord
             1000,
         )
         .unwrap();
+    evict_hot_receipts(&mut e, &editor.id);
     assert_eq!(
         e.file_transaction(&owner, "editor-transaction")
             .unwrap_err()
@@ -315,35 +321,287 @@ fn case_distinct_transaction_ids_do_not_alias_on_windows() {
 }
 
 #[test]
-fn receipt_capacity_rejects_new_attempts_without_forgetting_old_results() {
+fn more_than_1024_commits_remain_writable_and_evicted_receipts_stay_exact_after_restart() {
     let directory = tempfile::tempdir().unwrap();
     let (mut e, sid, _) = open(directory.path());
-    let bad = FileChange {
-        op: "write".into(),
-        path: "assets/a.txt".into(),
-        version: None,
-        content: Some(STANDARD.encode("one")),
-        destination: None,
-        destination_version: None,
-        lease_id: "none".into(),
-    };
+    let original = write(&mut e, &sid, "assets/a.txt", "one");
     let first = e
-        .commit_files(&sid, "capacity-0", vec![bad.clone()], 1000)
+        .commit_files(&sid, "capacity-0", vec![original.clone()], 1000)
         .unwrap();
-    for index in 1..1024 {
-        e.commit_files(&sid, &format!("capacity-{index}"), vec![bad.clone()], 1000)
+    for index in 1..1100 {
+        let change = write(&mut e, &sid, "assets/a.txt", &format!("value {index}"));
+        let receipt = e
+            .commit_files(&sid, &format!("capacity-{index}"), vec![change], 1000)
             .unwrap();
+        assert_eq!(receipt.status, FileTransactionStatus::Committed);
     }
-    assert_eq!(
-        e.commit_files(&sid, "one-too-many", vec![bad.clone()], 1000)
-            .unwrap_err()
-            .code,
-        "busy"
-    );
     assert_eq!(e.file_transaction(&sid, "capacity-0").unwrap(), first);
     assert_eq!(
-        e.commit_files(&sid, "capacity-0", vec![bad], 1000).unwrap(),
+        e.commit_files(&sid, "capacity-0", vec![original.clone()], 1000)
+            .unwrap(),
         first
+    );
+    drop(e);
+    let (mut e, sid, _) = open(directory.path());
+    assert_eq!(e.file_transaction(&sid, "capacity-0").unwrap(), first);
+    assert_eq!(
+        e.commit_files(&sid, "capacity-0", vec![original], 1000)
+            .unwrap(),
+        first
+    );
+    assert_eq!(
+        fs::read_to_string(directory.path().join("assets/a.txt")).unwrap(),
+        "value 1099"
+    );
+    let next = write(&mut e, &sid, "assets/a.txt", "after restart");
+    assert_eq!(
+        e.commit_files(&sid, "after-restart", vec![next], 1000)
+            .unwrap()
+            .status,
+        FileTransactionStatus::Committed
+    );
+}
+
+fn evict_hot_receipts(e: &mut project_core::Engine, sid: &str) {
+    for index in 0..70 {
+        let rejected = e
+            .commit_files(sid, &format!("eviction-{index}"), vec![], 1000)
+            .unwrap();
+        assert_eq!(rejected.status, FileTransactionStatus::Rejected);
+    }
+}
+
+#[test]
+fn cold_move_and_delete_replays_never_touch_recreated_resources() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut e, sid, _) = open(directory.path());
+    let a = write(&mut e, &sid, "assets/before.txt", "A");
+    let b = write(&mut e, &sid, "assets/delete.txt", "B");
+    e.commit_files(&sid, "initial", vec![a, b], 1000).unwrap();
+    let mut movement = write(&mut e, &sid, "assets/before.txt", "");
+    movement.op = "move".into();
+    movement.content = None;
+    movement.destination = Some("assets/after.txt".into());
+    e.acquire_files(&sid, &["assets/after.txt".into()], false, 1000)
+        .unwrap();
+    let mut removal = write(&mut e, &sid, "assets/delete.txt", "");
+    removal.op = "remove".into();
+    removal.content = None;
+    let edits = vec![movement, removal];
+    let receipt = e
+        .commit_files(&sid, "destructive", edits.clone(), 1000)
+        .unwrap();
+    let recreated_a = write(&mut e, &sid, "assets/before.txt", "new A");
+    let recreated_b = write(&mut e, &sid, "assets/delete.txt", "new B");
+    e.commit_files(&sid, "recreated", vec![recreated_a, recreated_b], 1000)
+        .unwrap();
+    evict_hot_receipts(&mut e, &sid);
+    assert_eq!(
+        e.commit_files(&sid, "destructive", edits.clone(), 1000)
+            .unwrap(),
+        receipt
+    );
+    drop(e);
+    let (mut e, sid, _) = open(directory.path());
+    assert_eq!(
+        e.commit_files(&sid, "destructive", edits, 1000).unwrap(),
+        receipt
+    );
+    assert_eq!(
+        fs::read_to_string(directory.path().join("assets/before.txt")).unwrap(),
+        "new A"
+    );
+    assert_eq!(
+        fs::read_to_string(directory.path().join("assets/delete.txt")).unwrap(),
+        "new B"
+    );
+    assert_eq!(
+        fs::read_to_string(directory.path().join("assets/after.txt")).unwrap(),
+        "A"
+    );
+}
+
+#[test]
+fn old_json_receipts_migrate_and_duplicate_copies_after_interruption_are_safe() {
+    for archive_already_published in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut e, sid, _) = open(directory.path());
+        let edit = write(&mut e, &sid, "assets/a.txt", "original");
+        let expected = e
+            .commit_files(&sid, "legacy", vec![edit.clone()], 1000)
+            .unwrap();
+        let (archive, record) = stored(directory.path(), "legacy");
+        drop(e);
+        let legacy = directory
+            .path()
+            .join(".hanshu/service/file-transactions")
+            .join(archive.file_stem().unwrap());
+        fs::write(&legacy, serde_json::to_vec(&record).unwrap()).unwrap();
+        if !archive_already_published {
+            fs::remove_file(&archive).unwrap();
+        }
+        let (mut e, sid, _) = open(directory.path());
+        assert!(!legacy.exists());
+        assert!(archive.exists());
+        assert_eq!(e.file_transaction(&sid, "legacy").unwrap(), expected);
+        assert_eq!(
+            e.commit_files(&sid, "legacy", vec![edit], 1000).unwrap(),
+            expected
+        );
+        assert_eq!(
+            e.files_snapshot(&sid).unwrap().revision,
+            expected.tree.unwrap().revision
+        );
+    }
+}
+
+#[test]
+fn inconsistent_legacy_and_archive_copies_fail_closed_without_deleting_evidence() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut e, sid, _) = open(directory.path());
+    e.commit_files(&sid, "legacy-conflict", vec![], 1000)
+        .unwrap();
+    let (archive, mut record) = stored(directory.path(), "legacy-conflict");
+    drop(e);
+    record["receipt"]["error"]["message"] = Value::String("different immutable outcome".into());
+    let legacy = directory
+        .path()
+        .join(".hanshu/service/file-transactions")
+        .join(archive.file_stem().unwrap());
+    fs::write(&legacy, serde_json::to_vec(&record).unwrap()).unwrap();
+    assert_eq!(
+        Engine::open_project(directory.path()).err().unwrap().code,
+        "storage"
+    );
+    assert!(legacy.exists());
+    assert!(archive.exists());
+}
+
+#[test]
+fn corrupted_cold_receipt_is_never_treated_as_an_unknown_id() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut e, sid, _) = open(directory.path());
+    let edit = write(&mut e, &sid, "assets/a.txt", "original");
+    e.commit_files(&sid, "cold", vec![edit.clone()], 1000)
+        .unwrap();
+    let (path, _) = stored(directory.path(), "cold");
+    evict_hot_receipts(&mut e, &sid);
+    fs::write(&path, b"incomplete archive").unwrap();
+    assert_eq!(
+        e.file_transaction(&sid, "cold").unwrap_err().code,
+        "storage"
+    );
+    assert_eq!(
+        e.commit_files(&sid, "cold", vec![edit], 1000)
+            .unwrap_err()
+            .code,
+        "storage"
+    );
+    assert_eq!(
+        fs::read_to_string(directory.path().join("assets/a.txt")).unwrap(),
+        "original"
+    );
+    drop(e);
+    assert_eq!(
+        Engine::open_project(directory.path()).err().unwrap().code,
+        "storage"
+    );
+}
+
+#[test]
+fn blocked_archive_publication_preserves_committed_journal_until_storage_is_repaired() {
+    let directory = tempfile::tempdir().unwrap();
+    let (movement, expected, record) = moved_file(directory.path());
+    interrupted_journal(directory.path(), true, record);
+    // The committed decision exists, but archive publication is unavailable.
+    let archive = directory
+        .path()
+        .join(".hanshu/service/file-transactions/archive");
+    let backup = directory.path().join("archive-backup");
+    fs::rename(&archive, &backup).unwrap();
+    fs::write(&archive, b"blocked by a file").unwrap();
+    assert_eq!(
+        Engine::open_project(directory.path()).err().unwrap().code,
+        "storage"
+    );
+    assert!(directory
+        .path()
+        .join(".hanshu/service/file-undo.json")
+        .exists());
+    // A later resource is deliberately created before recovery. Replaying the
+    // old move would destroy it, while publishing the original receipt will not.
+    fs::write(directory.path().join("assets/before.txt"), "new source").unwrap();
+    fs::remove_file(&archive).unwrap();
+    fs::rename(backup, archive).unwrap();
+    let (mut e, sid, _) = open(directory.path());
+    assert_eq!(e.file_transaction(&sid, "movement").unwrap(), expected);
+    assert_eq!(
+        e.commit_files(&sid, "movement", vec![movement], 1000)
+            .unwrap(),
+        expected
+    );
+    assert_eq!(
+        fs::read_to_string(directory.path().join("assets/before.txt")).unwrap(),
+        "new source"
+    );
+    assert!(!directory
+        .path()
+        .join(".hanshu/service/file-undo.json")
+        .exists());
+}
+
+#[test]
+fn contradictory_prepared_journal_never_rolls_back_a_committed_archive() {
+    let directory = tempfile::tempdir().unwrap();
+    let (_, expected, record) = moved_file(directory.path());
+    interrupted_journal(directory.path(), true, record.clone());
+    let (e, sid, _) = open(directory.path());
+    assert_eq!(e.file_transaction(&sid, "movement").unwrap(), expected);
+    drop(e);
+    interrupted_journal(directory.path(), false, record);
+    assert_eq!(
+        Engine::open_project(directory.path()).err().unwrap().code,
+        "storage"
+    );
+    assert!(!directory.path().join("assets/before.txt").exists());
+    assert_eq!(
+        fs::read_to_string(directory.path().join("assets/after.txt")).unwrap(),
+        "original"
+    );
+    assert!(directory
+        .path()
+        .join(".hanshu/service/file-undo.json")
+        .exists());
+}
+
+#[test]
+fn unavailable_archive_refuses_new_changes_before_mutation() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut e, sid, _) = open(directory.path());
+    let edit = write(&mut e, &sid, "assets/a.txt", "must not land yet");
+    let archive = directory
+        .path()
+        .join(".hanshu/service/file-transactions/archive");
+    fs::remove_dir(&archive).unwrap();
+    fs::write(&archive, b"unavailable").unwrap();
+    assert_eq!(
+        e.commit_files(&sid, "unavailable", vec![edit.clone()], 1000)
+            .unwrap_err()
+            .code,
+        "storage"
+    );
+    assert!(!directory.path().join("assets/a.txt").exists());
+    assert!(!directory
+        .path()
+        .join(".hanshu/service/file-undo.json")
+        .exists());
+    fs::remove_file(&archive).unwrap();
+    fs::create_dir(&archive).unwrap();
+    assert_eq!(
+        e.commit_files(&sid, "unavailable", vec![edit], 1000)
+            .unwrap()
+            .status,
+        FileTransactionStatus::Committed
     );
 }
 

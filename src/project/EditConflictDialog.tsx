@@ -34,7 +34,7 @@ export function EditConflictDialog({client,initial,onClose}:{client:ProjectClien
           {row.destination && <p>目标路径当前状态：{row.destination.kind??'不存在'}。移动和目标写入共用同一处理方式。</p>}
         </article>)}
       </div>
-      <footer>{error&&<p role="alert">{error}</p>}<button disabled={busy} onClick={()=>void run(async()=>setInspection(await inspectConflict(client,inspection.id)))}>重新载入服务器版本</button><button disabled={busy} onClick={onClose}>暂不处理</button><button disabled={busy||!client.writable} onClick={()=>void run(async()=>{await client.transactions.resolve(inspection.id,conflictEdits(inspection));onClose()})}>{busy?'正在处理…':'提交处理结果'}</button></footer>
+      <footer>{error&&<p role="alert">{error}</p>}<button disabled={busy} onClick={()=>void run(async()=>setInspection(await inspectConflict(client,inspection.id)))}>重新载入服务器版本</button><button disabled={busy} onClick={onClose}>暂不处理</button><button disabled={busy||!client.writable} onClick={()=>void run(async()=>{const edits=conflictEdits(inspection);client.assertEditingIntent(edits);await client.transactions.resolve(inspection.id,edits);onClose()})}>{busy?'正在处理…':'提交处理结果'}</button></footer>
     </section>
   </div>
 }

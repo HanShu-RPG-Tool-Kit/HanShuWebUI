@@ -18,6 +18,8 @@ async function login(page,key,name,navigate=true){
   await page.locator('.project-service-bar').getByText('统一工程验收',{exact:true}).waitFor()
 }
 async function progress(page){await page.getByRole('tab',{name:'进度流程',exact:true}).click();await page.getByRole('textbox',{name:'筛选资源',exact:true}).fill('example.progress');await page.locator('[role=treeitem][title="example.progress"]').click();await page.getByLabel('进度标题',{exact:true}).waitFor()}
+async function beginEditing(page){const bar=page.getByRole('region',{name:'当前文件协作者',exact:true});const resume=bar.getByRole('button',{name:'重新申请写权',exact:true});await (await resume.count()?resume:bar.getByRole('button',{name:'开始编辑',exact:true})).click();await until(()=>page.getByLabel('进度标题',{exact:true}).isEnabled(),'Progress editing did not begin')}
+async function endEditing(page){await page.getByRole('region',{name:'当前文件协作者',exact:true}).getByRole('button',{name:'结束编辑',exact:true}).click();await until(()=>page.getByLabel('进度标题',{exact:true}).isDisabled(),'Progress editing did not end')}
 try {
   const owner=await h.login(h.credential,'setup')
   ownerToken=owner.token
@@ -34,6 +36,7 @@ try {
   const [a,b,v]=pages
   await until(async()=>await a.getByLabel('进度标题',{exact:true}).inputValue()==='共同进度','Initial locale title missing')
   assert.ok(await v.getByLabel('进度标题',{exact:true}).isDisabled())
+  await beginEditing(a)
   await a.getByLabel('进度标题',{exact:true}).fill('从 A 保存的共同标题')
   // A language change remains a draft until the same save as its source.
   assert.equal(JSON.parse(await readFile(join(h.root,'assets/zh_cn/lang_progress/example.lang'),'utf8')).name,'共同进度')
@@ -59,19 +62,24 @@ try {
   await a.getByRole('button',{name:'提交记录',exact:true}).click()
   await until(async()=>JSON.parse(await readFile(join(h.root,'src/progress/example.progress'),'utf8')).completion==='any','Progress was not saved to the ordinary project')
   await until(()=>b.getByRole('button',{name:'完成任一',exact:true}).getAttribute('aria-pressed').then(v=>v==='true'),'B did not receive .progress change')
-  await a.locator('.project-service-bar').getByRole('button',{name:'释放写权',exact:true}).click()
+  await endEditing(a)
+  await beginEditing(b)
   await b.getByRole('button',{name:'完成全部',exact:true}).click();await b.keyboard.press('Control+s')
   await until(async()=>JSON.parse(await readFile(join(h.root,'src/progress/example.progress'),'utf8')).completion==='all','B could not save after release')
-  await b.locator('.project-service-bar').getByRole('button',{name:'释放写权',exact:true}).click()
+  await endEditing(b)
   // Two dirty resources must be handled as one conflict, including a resource
   // whose server version is adopted instead of being overwritten.
   await until(()=>a.getByRole('button',{name:'完成全部',exact:true}).getAttribute('aria-pressed').then(v=>v==='true'),'A did not receive latest completion')
+  await beginEditing(a)
   await a.getByLabel('进度标题',{exact:true}).fill('A 未提交的标题')
   await a.getByRole('button',{name:'完成任一',exact:true}).click()
+  await endEditing(a)
+  await beginEditing(b)
   await b.getByLabel('进度标题',{exact:true}).fill('B 已提交的标题')
   await b.getByRole('button',{name:'完成任一',exact:true}).click();await b.keyboard.press('Control+s')
   await until(async()=>JSON.parse(await readFile(join(h.root,'assets/zh_cn/lang_progress/example.lang'),'utf8')).name==='B 已提交的标题','B conflict fixture was not saved')
-  await b.locator('.project-service-bar').getByRole('button',{name:'释放写权',exact:true}).click()
+  await endEditing(b)
+  await beginEditing(a)
   await a.keyboard.press('Control+s')
   await a.getByRole('button',{name:'处理冲突',exact:true}).click()
   const conflict=a.getByRole('dialog',{name:'处理提交冲突',exact:true})
@@ -88,8 +96,9 @@ try {
   await languageRow.getByLabel(`合并结果 ${languagePath}`,{exact:true}).fill(mergedLanguage)
   const conflictOutput=resolve('../output/collaboration-v3');await mkdir(conflictOutput,{recursive:true})
   await a.screenshot({path:join(conflictOutput,'multi-file-conflict.png')})
-  // Updating the adopted server resource while this dialog is open must reject
-  // the entire mixed check+write resolution, rather than silently accepting it.
+  // An owner takeover while this dialog is open must suspend the entire
+  // resolution, preserve the conflict draft, and require explicit reacquisition.
+  // The API suite independently verifies stale mixed check+write atomicity.
   await h.api(owner.token,'/api/files/leases','POST',{paths:[sourcePath],force:true})
   const remoteSecond=JSON.parse(await readFile(join(h.root,sourcePath),'utf8'))
   remoteSecond.completion='all';remoteSecond.authorNotes='服务器在处理冲突期间再次修改'
@@ -97,6 +106,11 @@ try {
   await conflict.getByRole('button',{name:'提交处理结果',exact:true}).click()
   await conflict.getByRole('alert').waitFor()
   assert.equal(JSON.parse(await readFile(join(h.root,languagePath),'utf8')).name,'B 已提交的标题','A stale mixed resolution partially wrote its language file')
+  // The takeover also suspended A's explicit editing session. Re-enter it in
+  // the normal UI before reviewing the now-current server version.
+  await conflict.getByRole('button',{name:'关闭冲突处理',exact:true}).click()
+  await beginEditing(a)
+  await a.getByRole('button',{name:'处理冲突',exact:true}).click()
   await conflict.getByRole('button',{name:'重新载入服务器版本',exact:true}).click()
   await until(async()=>JSON.parse(await sourceRow.getByLabel(`服务器版本 ${sourcePath}`,{exact:true}).inputValue()).authorNotes===remoteSecond.authorNotes,'Conflict refresh did not obtain latest server source')
   await sourceRow.getByRole('button',{name:'采用服务器版本',exact:true}).click()
@@ -110,7 +124,7 @@ try {
   await until(async()=>await b.getByLabel('进度标题',{exact:true}).inputValue()==='共同处理后的标题','Peer did not receive merged language')
   assert.equal(await a.getByRole('button',{name:'完成全部',exact:true}).getAttribute('aria-pressed'),'true')
   assert.equal(JSON.parse(await readFile(join(h.root,sourcePath),'utf8')).authorNotes,remoteSecond.authorNotes)
-  await a.locator('.project-service-bar').getByRole('button',{name:'释放写权',exact:true}).click()
+  await a.locator('.project-service-bar').getByRole('button',{name:'释放全部写权',exact:true}).click()
   await until(async()=>!(await a.locator('.app-workspace-pane.active').innerText()).includes('保存异常'),'Workspace still reports save failure after successful conflict resolution')
   assert.ok(!(await a.locator('.app-workspace-pane.active').innerText()).includes('已被其他客户端修改，草稿仍保留'))
   await a.screenshot({path:join(conflictOutput,'resolved-multi-file.png')})
@@ -133,7 +147,7 @@ try {
   const countBefore=(await h.api(owner.token,'/api/project')).sessions.filter(s=>s.subjectId===editor.subject.id).length
   assert.equal(countBefore,2,'Switching workspaces created a separate session')
   // A local .progress draft survives service loss and re-authentication with its old base version.
-  await progress(b);await b.getByRole('button',{name:'完成任一',exact:true}).click();await b.getByLabel('进度标题',{exact:true}).fill('重启前的语言草稿')
+  await progress(b);await beginEditing(b);await b.getByRole('button',{name:'完成任一',exact:true}).click();await b.getByLabel('进度标题',{exact:true}).fill('重启前的语言草稿')
   const port=Number(new URL(h.base).port);await h.stop();await h.start(port)
   await until(async()=>(await b.locator('.project-service-bar').innerText()).includes('已断开'),'Client failed to notice restart')
   await login(b,editor.credential,'恢复后的窗口 B',false)
@@ -141,12 +155,13 @@ try {
   assert.equal(await b.getByRole('button',{name:'完成任一',exact:true}).getAttribute('aria-pressed'),'true')
   assert.equal(await b.getByLabel('进度标题',{exact:true}).inputValue(),'重启前的语言草稿')
   assert.equal(JSON.parse(await readFile(join(h.root,'src/progress/example.progress'),'utf8')).completion,'all','Draft leaked into authority')
+  await beginEditing(b)
   await b.keyboard.press('Control+s')
   await until(async()=>JSON.parse(await readFile(join(h.root,'src/progress/example.progress'),'utf8')).completion==='any','Restored draft could not save')
   await until(async()=>JSON.parse(await readFile(join(h.root,'assets/zh_cn/lang_progress/example.lang'),'utf8')).name==='重启前的语言草稿','Restored language draft could not save')
   for(const page of pages)assert.equal(await page.evaluate(()=>window.__directProjectIo),0,'C attempted direct OS project I/O')
   assert.deepEqual(errors,[])
   const output=resolve('../output/collaboration-v2');await mkdir(output,{recursive:true});await b.screenshot({path:join(output,'unified-project.png')})
-  console.log('通过：三个隔离客户端、正文与语言批量提交、失败重试使用新事务编号、三版本冲突处理、服务器再次变化阻止整批提交、采用服务器与手动合并原子保存、写权交接、剧本同步、皮肤共用会话、重启恢复正文及语言草稿；C 的直接文件系统写入调用为零。')
+  console.log('通过：三个隔离客户端、正文与语言批量提交、失败重试使用新事务编号、三版本冲突处理、接管后暂停冲突提交并重新申请编辑、采用服务器与手动合并原子保存、显式写权交接、剧本同步、皮肤共用会话、重启恢复正文及语言草稿；C 的直接文件系统写入调用为零。')
 } catch(e){const output=resolve('../output/collaboration-v3');await mkdir(output,{recursive:true});for(const [i,page]of pages.entries()){console.error(`CLIENT ${i}:`,(await page.locator('body').innerText()).slice(0,2400));await page.screenshot({path:join(output,`failed-client-${i}.png`)}).catch(()=>undefined);}throw e}
 finally {clearInterval(heartbeat);if(browser)await browser.close();await h.stop()}

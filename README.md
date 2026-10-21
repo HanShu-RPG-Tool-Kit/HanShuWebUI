@@ -34,6 +34,8 @@ npm run test:project-boundary
 npm run test:collaboration
 npm run build
 npm run test:collaboration:ui
+npm run test:collaboration:presence
+npm run test:file-editing
 npm run test:collaboration:network
 npm run lint
 ```

@@ -2,7 +2,10 @@
 //! A checked batch has an on-disk undo journal; interrupted batches roll back before serving clients.
 #[path = "file_transactions.rs"]
 mod transactions;
-use crate::{require, secret, Engine, Error, Lease, Result, LEASE_TTL};
+use crate::{
+    require, secret, Engine, Error, FileActivity, FilePresence, Lease, Result, Session, LEASE_TTL,
+    SESSION_TTL,
+};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -11,7 +14,7 @@ use std::{
     io::Write,
     path::{Path, PathBuf},
 };
-use transactions::{CommitJournal, TransactionRecord};
+use transactions::{CommitJournal, TransactionCache, TransactionRecord};
 pub use transactions::{FileTransactionError, FileTransactionReceipt, FileTransactionStatus};
 use ts_rs::TS;
 
@@ -63,8 +66,7 @@ pub(crate) struct ProjectFiles {
     root: PathBuf,
     pub revision: u64,
     healthy: bool,
-    transactions: BTreeMap<String, TransactionRecord>,
-    transaction_bytes: usize,
+    transactions: std::cell::RefCell<TransactionCache>,
 }
 
 fn path_ok(path: &str) -> Result<()> {
@@ -167,8 +169,7 @@ impl ProjectFiles {
             root: root.canonicalize()?,
             revision: 1,
             healthy: true,
-            transactions: BTreeMap::new(),
-            transaction_bytes: 0,
+            transactions: std::cell::RefCell::new(TransactionCache::default()),
         };
         out.prepare_staging()?;
         out.load_transactions()?;
@@ -664,6 +665,57 @@ impl Engine {
         )?;
         Ok((bytes, version))
     }
+    /// Focus is independent of a lease. Never accept an activity claim from a client.
+    pub fn set_file_presence(&mut self, sid: &str, path: Option<String>, now: u64) -> Result<()> {
+        self.expire(now);
+        self.role(sid)?;
+        let presence = if let Some(path) = path {
+            let store = self
+                .files
+                .as_ref()
+                .ok_or_else(|| Error::new("invalid", "未打开目录工程"))?;
+            let full = store.safe(&path)?;
+            match fs::metadata(full) {
+                Ok(metadata) => require(metadata.is_file(), "invalid", "查看对象必须是文件")?,
+                // A newly created document is local until its first successful submission.
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+            let authority_id = format!(
+                "file:{}",
+                related_source(&path).unwrap_or_else(|| path.clone())
+            );
+            Some(FilePresence {
+                path,
+                authority_id,
+                activity: FileActivity::Viewing,
+            })
+        } else {
+            None
+        };
+        let session = &mut self.sessions.get_mut(sid).unwrap().0;
+        session.file_presence = presence;
+        session.expires_at = now + SESSION_TTL;
+        Ok(())
+    }
+    /// Compute the visible activity from current server state so takeover, release and
+    /// permission changes cannot leave a stale "editing" badge in a snapshot.
+    pub(crate) fn session_snapshot(&self, session: &Session) -> Session {
+        let mut visible = session.clone();
+        if let Some(presence) = &mut visible.file_presence {
+            let owns = self.role(&session.id).is_ok_and(|role| role.can_write())
+                && self
+                    .leases
+                    .get(&presence.authority_id)
+                    .is_some_and(|lease| lease.session_id == session.id);
+            presence.activity = if owns {
+                FileActivity::Editing
+            } else {
+                FileActivity::Viewing
+            };
+        }
+        visible
+    }
     pub fn acquire_files(
         &mut self,
         sid: &str,
@@ -798,7 +850,9 @@ impl Engine {
         Ok(())
     }
     pub fn renew_files(&mut self, sid: &str, ids: &[String], now: u64) -> Result<()> {
+        self.expire(now);
         self.writer(sid)?;
+        require(ids.len() <= 4096, "invalid", "写权续期请求过大")?;
         for l in self.leases.values_mut() {
             if l.session_id == sid && ids.contains(&l.id) {
                 l.expires_at = now + LEASE_TTL;

@@ -329,6 +329,10 @@ export async function createProjectFromPicker(): Promise<LoadProjectResult> { re
 /** Save only changed, previously read resources. Omission from a client snapshot never deletes a file. */
 export async function saveProjectToDirectory(binding: BoundProject, workspace: Workspace): Promise<BoundProject> {
   const client = binding.handle.client
+  // A blocked editor gesture is not a failed submission. Check before creating
+  // an outbox entry; perform checks again after lease acquisition for races.
+  if (!client.writable) throw new Error(client.online ? '当前主体只有读取权限，草稿已保留' : '服务已断开，草稿保留在本窗口')
+  client.assertEditingIntent(client.transactions.getSnapshot().pendingPaths.map(path => ({ op: 'write', path })))
   let savedName = binding.manifest.name
   await client.transactions.submit('保存工程修改', async () => {
     // Preparation can update the workspace asynchronously. Read it AFTER the barrier,

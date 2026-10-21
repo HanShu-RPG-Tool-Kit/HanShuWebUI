@@ -7,6 +7,7 @@ pub use files::*;
 pub use model::*;
 use sha2::{Digest, Sha256};
 use std::{
+    cell::Cell,
     collections::BTreeMap,
     fs::{self, File, OpenOptions},
     io::Write,
@@ -54,6 +55,7 @@ pub struct Engine {
     sessions: BTreeMap<String, (Session, String)>,
     leases: BTreeMap<String, Lease>,
     files: Option<ProjectFiles>,
+    snapshot_sequence: Cell<u64>,
 }
 
 impl Engine {
@@ -128,6 +130,7 @@ impl Engine {
             sessions: BTreeMap::new(),
             leases: BTreeMap::new(),
             files: None,
+            snapshot_sequence: Cell::new(0),
         })
     }
     fn persist(root: &Path, data: &model::Project) -> Result<()> {
@@ -199,6 +202,7 @@ impl Engine {
             expires_at: now + SESSION_TTL,
             resource_id: None,
             activity: "viewing".into(),
+            file_presence: None,
         };
         self.sessions
             .insert(session.id.clone(), (session.clone(), digest(&token)));
@@ -251,8 +255,12 @@ impl Engine {
     }
     pub fn snapshot(&self, sid: &str) -> Result<Snapshot> {
         let role = self.role(sid)?;
-        let session = self.sessions[sid].0.clone();
+        let status_version = self.snapshot_sequence.get() + 1;
+        self.snapshot_sequence.set(status_version);
+        let session = self.session_snapshot(&self.sessions[sid].0);
         Ok(Snapshot {
+            status_version,
+            server_time: now_ms(),
             project_id: self.data.id.clone(),
             project_name: self.data.name.clone(),
             revision: self.data.revision,
@@ -274,7 +282,11 @@ impl Engine {
                 .values()
                 .map(ResourceInfo::from)
                 .collect(),
-            sessions: self.sessions.values().map(|(s, _)| s.clone()).collect(),
+            sessions: self
+                .sessions
+                .values()
+                .map(|(s, _)| self.session_snapshot(s))
+                .collect(),
             leases: self.leases.values().cloned().collect(),
         })
     }
@@ -290,6 +302,7 @@ impl Engine {
         typing: bool,
         now: u64,
     ) -> Result<()> {
+        self.expire(now);
         self.role(sid)?;
         if let Some(id) = resource.as_ref() {
             require(

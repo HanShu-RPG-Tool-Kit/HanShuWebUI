@@ -1,9 +1,54 @@
 //! Immutable receipts and the durable commit decision share the file undo journal.
 //! A prepared journal rolls back; a committed journal publishes its receipt without replaying writes.
 use super::*;
+use flate2::{read::GzDecoder, write::GzEncoder, Compression};
+use std::{collections::VecDeque, io::Read};
 
-const MAX_TRANSACTIONS: usize = 1024;
-const MAX_TRANSACTION_BYTES: usize = 128 * 1024 * 1024;
+const MAX_HOT_TRANSACTIONS: usize = 64;
+const MAX_HOT_BYTES: usize = 8 * 1024 * 1024;
+const MAX_RECORD_BYTES: usize = 128 * 1024 * 1024;
+
+/// Only this bounded cache owns complete trees in memory. The immutable archive
+/// remains the source of truth for every transaction ID, including evicted IDs.
+#[derive(Default)]
+pub(super) struct TransactionCache {
+    entries: BTreeMap<String, (TransactionRecord, usize)>,
+    order: VecDeque<String>,
+    bytes: usize,
+}
+
+impl TransactionCache {
+    fn get(&mut self, id: &str) -> Option<TransactionRecord> {
+        let record = self.entries.get(id)?.0.clone();
+        self.order.retain(|entry| entry != id);
+        self.order.push_back(id.into());
+        Some(record)
+    }
+
+    fn insert(&mut self, record: TransactionRecord, bytes: usize) {
+        if bytes > MAX_HOT_BYTES {
+            return;
+        }
+        let id = record.receipt.transaction_id.clone();
+        if self.entries.contains_key(&id) {
+            return;
+        }
+        while self.entries.len() >= MAX_HOT_TRANSACTIONS
+            || self.bytes.saturating_add(bytes) > MAX_HOT_BYTES
+        {
+            if let Some(oldest) = self.order.pop_front() {
+                if let Some((_, size)) = self.entries.remove(&oldest) {
+                    self.bytes -= size;
+                }
+            } else {
+                break;
+            }
+        }
+        self.bytes += bytes;
+        self.order.push_back(id.clone());
+        self.entries.insert(id, (record, bytes));
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, TS)]
 #[serde(rename_all = "camelCase")]
@@ -131,83 +176,199 @@ impl ProjectFiles {
         self.root.join(".hanshu/service/file-transactions")
     }
 
+    fn archive_directory(&self) -> PathBuf {
+        self.transaction_directory().join("archive")
+    }
+
     fn transaction_path(&self, id: &str) -> PathBuf {
-        // Hashing prevents case-insensitive filesystems from aliasing distinct IDs.
-        self.transaction_directory()
-            .join(format!("{}.json", hex_digest(id.as_bytes())))
+        // Hashing prevents case-insensitive filesystems from aliasing distinct IDs;
+        // sharding avoids an ever-growing single directory. No ID ever expires.
+        let hash = hex_digest(id.as_bytes());
+        self.archive_directory()
+            .join(&hash[..2])
+            .join(format!("{hash}.json.gz"))
+    }
+
+    fn checked_directory(path: &Path, create: bool) -> Result<()> {
+        match fs::symlink_metadata(path) {
+            Ok(meta) => require(
+                meta.is_dir() && !reparse(&meta),
+                "storage",
+                "事务记录目录无效或为链接",
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && create => {
+                fs::create_dir(path)?;
+                Ok(())
+            }
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    fn checked_archive(&self) -> Result<()> {
+        Self::checked_directory(&self.transaction_directory(), false)?;
+        Self::checked_directory(&self.archive_directory(), false)
+    }
+
+    fn decode_record(bytes: &[u8]) -> Result<TransactionRecord> {
+        require(
+            bytes.len() <= MAX_RECORD_BYTES,
+            "storage",
+            "事务回执超过单条大小限制",
+        )?;
+        let record: TransactionRecord = serde_json::from_slice(bytes)
+            .map_err(|_| Error::new("storage", "事务记录损坏，拒绝使用"))?;
+        record.validate()?;
+        Ok(record)
+    }
+
+    fn read_archive(&self, path: &Path) -> Result<(TransactionRecord, usize)> {
+        let meta = fs::symlink_metadata(path)?;
+        require(
+            meta.is_file()
+                && !reparse(&meta)
+                && meta.len() <= (MAX_RECORD_BYTES + 1024 * 1024) as u64,
+            "storage",
+            "事务归档无效、过大或为链接",
+        )?;
+        let mut bytes = Vec::new();
+        GzDecoder::new(fs::File::open(path)?)
+            .take((MAX_RECORD_BYTES + 1) as u64)
+            .read_to_end(&mut bytes)
+            .map_err(|_| Error::new("storage", "事务归档损坏，拒绝使用"))?;
+        let record = Self::decode_record(&bytes)?;
+        require(
+            path == self.transaction_path(&record.receipt.transaction_id),
+            "storage",
+            "事务记录名称无效",
+        )?;
+        Ok((record, bytes.len()))
+    }
+
+    fn transaction(&self, id: &str) -> Result<Option<TransactionRecord>> {
+        if let Some(record) = self.transactions.borrow_mut().get(id) {
+            return Ok(Some(record));
+        }
+        self.checked_archive()?;
+        let path = self.transaction_path(id);
+        match fs::symlink_metadata(path.parent().unwrap()) {
+            Ok(_) => Self::checked_directory(path.parent().unwrap(), false)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+        }
+        match fs::symlink_metadata(&path) {
+            Ok(_) => {
+                let (record, bytes) = self.read_archive(&path)?;
+                self.transactions.borrow_mut().insert(record.clone(), bytes);
+                Ok(Some(record))
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error.into()),
+        }
     }
 
     pub(super) fn load_transactions(&mut self) -> Result<()> {
         let directory = self.transaction_directory();
-        if let Ok(meta) = fs::symlink_metadata(&directory) {
-            require(!reparse(&meta), "storage", "事务记录目录不能是链接")?;
-        }
-        fs::create_dir_all(&directory)?;
-        for entry in fs::read_dir(directory)? {
+        Self::checked_directory(&directory, true)?;
+        Self::checked_directory(&self.archive_directory(), true)?;
+        // Upgrade old receipts one at a time. Publish and verify the immutable
+        // archive before deleting its old copy. A crash can safely leave both.
+        for entry in fs::read_dir(&directory)? {
             let path = entry?.path();
-            require(
-                !reparse(&fs::symlink_metadata(&path)?),
-                "storage",
-                "事务记录不能是链接",
-            )?;
+            let meta = fs::symlink_metadata(&path)?;
+            require(!reparse(&meta), "storage", "事务记录不能是链接")?;
             if path.extension().and_then(|s| s.to_str()) != Some("json") {
-                continue; // A process crash may leave an unpersisted tempfile.
+                continue;
             }
-            let bytes = fs::read(&path)?;
-            let record: TransactionRecord = serde_json::from_slice(&bytes)
-                .map_err(|_| Error::new("storage", "事务记录损坏，拒绝启动"))?;
-            record.validate()?;
             require(
-                path == self.transaction_path(&record.receipt.transaction_id),
+                meta.is_file() && meta.len() <= MAX_RECORD_BYTES as u64,
+                "storage",
+                "事务回执超过单条大小限制或类型无效",
+            )?;
+            let record = Self::decode_record(&fs::read(&path)?)?;
+            require(
+                path == directory.join(format!(
+                    "{}.json",
+                    hex_digest(record.receipt.transaction_id.as_bytes())
+                )),
                 "storage",
                 "事务记录名称无效",
             )?;
-            self.revision = self
-                .revision
-                .max(record.receipt.tree.as_ref().map_or(1, |t| t.revision));
-            self.transaction_bytes += bytes.len();
-            self.transactions
-                .insert(record.receipt.transaction_id.clone(), record);
+            self.persist_record(&record)?;
+            let (archived, _) =
+                self.read_archive(&self.transaction_path(&record.receipt.transaction_id))?;
+            Self::same_record(&record, &archived)?;
+            fs::remove_file(path)?;
+        }
+        // Scan one archive at a time to validate storage and recover the greatest
+        // revision. Startup I/O grows with history, but live memory stays bounded.
+        for shard in fs::read_dir(self.archive_directory())? {
+            let shard = shard?.path();
+            Self::checked_directory(&shard, false)?;
+            require(
+                shard
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|name| {
+                        name.len() == 2
+                            && name
+                                .bytes()
+                                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+                    }),
+                "storage",
+                "事务归档分片名称无效",
+            )?;
+            for entry in fs::read_dir(shard)? {
+                let path = entry?.path();
+                let (record, bytes) = self.read_archive(&path)?;
+                self.revision = self
+                    .revision
+                    .max(record.receipt.tree.as_ref().map_or(1, |t| t.revision));
+                self.transactions.borrow_mut().insert(record, bytes);
+            }
         }
         Ok(())
     }
 
-    fn capacity(&self, bytes: usize) -> Result<()> {
+    fn same_record(a: &TransactionRecord, b: &TransactionRecord) -> Result<()> {
         require(
-            self.transactions.len() < MAX_TRANSACTIONS
-                && self.transaction_bytes.saturating_add(bytes) <= MAX_TRANSACTION_BYTES,
-            "busy",
-            "事务回执已达容量上限，服务拒绝新提交；已有回执仍可查询",
+            a.subject_id == b.subject_id
+                && a.request_digest == b.request_digest
+                && a.receipt == b.receipt,
+            "storage",
+            "持久事务回执不一致，拒绝覆盖",
         )
     }
 
     fn record_bytes(&self, record: &TransactionRecord) -> Result<Vec<u8>> {
-        serde_json::to_vec(record).map_err(|_| Error::new("storage", "事务结果编码失败"))
+        let bytes =
+            serde_json::to_vec(record).map_err(|_| Error::new("storage", "事务结果编码失败"))?;
+        require(
+            bytes.len() <= MAX_RECORD_BYTES,
+            "invalid",
+            "单条事务回执超过 128 MiB，修改未提交",
+        )?;
+        Ok(bytes)
     }
 
     fn persist_record(&mut self, record: &TransactionRecord) -> Result<()> {
         record.validate()?;
-        if let Some(existing) = self.transactions.get(&record.receipt.transaction_id) {
-            require(
-                existing.subject_id == record.subject_id
-                    && existing.request_digest == record.request_digest
-                    && existing.receipt == record.receipt,
-                "storage",
-                "持久事务回执不一致，拒绝覆盖",
-            )?;
-            return Ok(());
+        if let Some(existing) = self.transaction(&record.receipt.transaction_id)? {
+            return Self::same_record(&existing, record);
         }
         let bytes = self.record_bytes(record)?;
-        self.atomic(
-            &self.transaction_path(&record.receipt.transaction_id),
-            &bytes,
-        )?;
-        self.transaction_bytes += bytes.len();
+        let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
+        encoder.write_all(&bytes)?;
+        let compressed = encoder.finish()?;
+        let path = self.transaction_path(&record.receipt.transaction_id);
+        self.checked_archive()?;
+        Self::checked_directory(path.parent().unwrap(), true)?;
+        self.atomic(&path, &compressed)?;
         self.revision = self
             .revision
             .max(record.receipt.tree.as_ref().map_or(1, |t| t.revision));
         self.transactions
-            .insert(record.receipt.transaction_id.clone(), record.clone());
+            .borrow_mut()
+            .insert(record.clone(), bytes.len());
         Ok(())
     }
 
@@ -251,30 +412,33 @@ impl ProjectFiles {
             "storage",
             "事务恢复日志缺少有效提交决议",
         )?;
-        if let Some(existing) = self
-            .transactions
-            .get(&journal.transaction.receipt.transaction_id)
-        {
+        if let Some(existing) = self.transaction(&journal.transaction.receipt.transaction_id)? {
             require(
                 existing.subject_id == journal.transaction.subject_id
                     && existing.request_digest == journal.transaction.request_digest,
                 "storage",
                 "事务日志与回执身份不一致",
             )?;
+            // A prepared journal cannot coexist with a committed receipt. Check
+            // before applying undo so corrupt metadata cannot roll back a save.
+            if !journal.committed {
+                require(
+                    existing.receipt.status == FileTransactionStatus::Rejected,
+                    "storage",
+                    "事务决议与回执矛盾",
+                )?;
+            }
         }
         if !journal.committed {
             self.apply(&Self::undo_values(&journal)?)?;
             // A rejection may have been persisted just before journal removal failed.
-            if let Some(record) = self
-                .transactions
-                .get(&journal.transaction.receipt.transaction_id)
-            {
+            if let Some(record) = self.transaction(&journal.transaction.receipt.transaction_id)? {
                 require(
                     record.receipt.status == FileTransactionStatus::Rejected,
                     "storage",
                     "事务决议与回执矛盾",
                 )?;
-                journal.transaction = record.clone();
+                journal.transaction = record;
             } else {
                 journal.transaction.reject(&Error::new(
                     "interrupted",
@@ -292,7 +456,9 @@ impl ProjectFiles {
         mut journal: CommitJournal,
         writes: &BTreeMap<String, Option<Option<Vec<u8>>>>,
     ) -> Result<FileTransactionReceipt> {
-        self.capacity(self.record_bytes(&journal.transaction)?.len())?;
+        // Reject an oversized individual receipt before the journal or files are
+        // changed. History count and aggregate archive size are not write limits.
+        self.record_bytes(&journal.transaction)?;
         self.write_journal(&journal)?;
         if let Err(error) = self.apply(writes) {
             if self.apply(&Self::undo_values(&journal)?).is_err() {
@@ -343,7 +509,7 @@ impl Engine {
             .files
             .as_ref()
             .ok_or_else(|| Error::new("invalid", "未打开目录工程"))?;
-        if let Some(record) = files.transactions.get(transaction_id) {
+        if let Some(record) = files.transaction(transaction_id)? {
             require(
                 record.subject_id == self.sessions[sid].0.subject_id,
                 "forbidden",
@@ -371,7 +537,7 @@ impl Engine {
             .files
             .as_ref()
             .ok_or_else(|| Error::new("invalid", "未打开目录工程"))?;
-        if let Some(previous) = store.transactions.get(transaction_id) {
+        if let Some(previous) = store.transaction(transaction_id)? {
             require(
                 previous.subject_id == record.subject_id,
                 "forbidden",
@@ -389,7 +555,6 @@ impl Engine {
             "storage",
             "事务结果待恢复，请重启服务后查询",
         )?;
-        store.capacity(0)?;
         let result = self
             .validate_file_changes(sid, &changes, now)
             .and_then(|_| {
@@ -407,10 +572,47 @@ impl Engine {
                     return Err(error);
                 }
                 record.reject(&error);
-                store.capacity(store.record_bytes(&record)?.len())?;
                 store.persist_record(&record)?;
                 Ok(record.receipt)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn rejected(id: &str) -> TransactionRecord {
+        let mut record = TransactionRecord::new("subject", id, &[]).unwrap();
+        record.reject(&Error::new("invalid", "test"));
+        record
+    }
+
+    #[test]
+    fn hot_cache_has_a_count_limit_and_keeps_recently_queried_receipts() {
+        let mut cache = TransactionCache::default();
+        for index in 0..MAX_HOT_TRANSACTIONS {
+            cache.insert(rejected(&format!("entry-{index}")), 100);
+        }
+        assert!(cache.get("entry-0").is_some());
+        cache.insert(rejected("next"), 100);
+        assert_eq!(cache.entries.len(), MAX_HOT_TRANSACTIONS);
+        assert!(cache.get("entry-0").is_some());
+        assert!(cache.get("entry-1").is_none());
+        assert!(cache.get("next").is_some());
+    }
+
+    #[test]
+    fn hot_cache_has_a_byte_budget_and_oversized_receipts_remain_disk_only() {
+        let mut cache = TransactionCache::default();
+        cache.insert(rejected("older"), MAX_HOT_BYTES);
+        cache.insert(rejected("newer"), 1);
+        assert_eq!(cache.bytes, 1);
+        assert!(cache.get("older").is_none());
+        cache.insert(rejected("large"), MAX_HOT_BYTES + 1);
+        assert!(cache.get("large").is_none());
+        assert_eq!(cache.entries.len(), 1);
+        assert_eq!(cache.bytes, 1);
     }
 }

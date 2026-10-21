@@ -56,6 +56,8 @@ import { setBoundProject } from '../project/bindingBus'
 import { saveProjectToDirectory } from '../project/projectFs'
 import { deleteSourceAssets } from '../agent/agentOps'
 import { randomId } from '../project/crypto'
+import { FilePresenceBar } from '../project/FilePresenceBar'
+import { useFileEditing } from '../project/useFileEditing'
 import { renameScriptAssets } from '../workspaceMove'
 import { registerAsset, saveWorkspace, sourcePathOf } from '../workspace'
 import { deleteAssetBlob, getAssetBlob, putAssetBlob } from '../assets/idb'
@@ -86,6 +88,8 @@ function dropZoneAt(event: DragEvent, splitOn: boolean): DropZone {
 
 export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolean; workspaceRef?: Ref<ProgressWorkspaceHandle> }) {
   const session = useProjectSession()
+  const client = session.binding?.handle.client
+  const fileEditing = useFileEditing(client)
   const projectBound = Boolean(session.binding)
   const editorFontSize = useEditorFontSize()
   const [ui, setUi] = useState(loadProgressUiState)
@@ -259,6 +263,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
   }
 
   function setLocaleText(key: string, value: string) {
+    if (progressDoc && !progressEditable) return
     textMapRef.current?.set(key, value)
     setLocaleTick((tick) => tick + 1)
   }
@@ -277,6 +282,12 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
   const scriptDoc = doc ? isScriptDocument(doc) : false
   const kitDoc = doc ? isKitDocument(doc) : false
   const progressDoc = doc ? isProgressDocument(doc) : false
+  const progressPath = progressDoc && doc ? sourcePathOf({ name: doc.name }) : null
+  const progressEditable = !!progressPath && !!fileEditing?.canEdit(progressPath)
+  useEffect(() => {
+    fileEditing?.setFocus(active ? progressPath : null)
+    return () => fileEditing?.setFocus(null)
+  }, [fileEditing, active, progressPath])
   const navigationDoc = doc ? isNavigationDocument(doc) : false
   const itemTableDoc = doc ? isItemLibraryTableKey(doc.key) : false
   const itemDoc = doc ? isItemDocument(doc) : false
@@ -319,7 +330,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
   const explorerState = useMemo(() => ({ ...state, activeKey: focusedKey }), [state, focusedKey])
   const issues = useMemo(() => parsed.flow ? validateFlow(parsed.flow) : [], [parsed.flow])
   const cycleWarning = issues.find(issue => issue.path === 'graph' && issue.message.includes('环'))
-  const readOnly = session.binding?.handle.client.snapshot.role === 'viewer'
+  const readOnly = !client?.writable
   const locked = !projectBound || editor !== null || propertiesKey !== null
   const propertiesDoc = propertiesKey ? state.documents.find((item) => item.key === propertiesKey) ?? null : null
   const flowLocalizable = Boolean(doc && !scriptDoc && !kitDoc && !progressDoc && !navigationDoc && !itemDoc && !itemTableDoc)
@@ -385,7 +396,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
       unsubscribe = map.subscribe(() => setLocaleTick((tick) => tick + 1))
       map.load()
       const pending = pendingSeedsRef.current.get(sourceDoc.key)
-      if (pending) {
+      if (pending && (!progressDoc || progressEditable)) {
         map.setMissing(Object.entries(pending))
         pendingSeedsRef.current.delete(sourceDoc.key)
       }
@@ -400,11 +411,11 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
         textDocKeyRef.current = null
       }
     }
-  }, [doc?.key, doc?.name, locale, projectBound, localeDoc, session.workspace.packages[0]?.id, session.binding?.handle.client.remoteEpoch])
+  }, [doc?.key, doc?.name, locale, projectBound, localeDoc, session.workspace.packages[0]?.id, client?.remoteEpoch, progressEditable])
 
   // 打开旧明文文档时迁移为语义键并灌默认语种子
   useEffect(() => {
-    if (!doc || !projectBound || session.binding?.handle.client.snapshot.role === 'viewer' || migratedKeysRef.current.has(`${doc.key}:${locale}`)) return
+    if (!doc || !projectBound || readOnly || (progressDoc && !progressEditable) || migratedKeysRef.current.has(`${doc.key}:${locale}`)) return
     if (progressDoc) {
       const parsedDoc = readProgressSource(doc.source).doc
       if (!parsedDoc) return
@@ -480,7 +491,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
         migratedKeysRef.current.add(`${doc.key}:${locale}`)
       }
     }
-  }, [doc?.key, doc?.source, locale, projectBound, progressDoc, navigationDoc, kitDoc, flowLocalizable])
+  }, [doc?.key, doc?.source, locale, projectBound, progressDoc, navigationDoc, kitDoc, flowLocalizable, progressEditable, readOnly])
 
   useEffect(() => {
     if (!pageDrag) return
@@ -526,7 +537,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
   function changeSource(source: string, group = false, key = doc?.key) {
     if (!key || isBuiltinGoalDocumentKey(key) || isItemLibraryTableKey(key)) return
     const current = state.documents.find((item) => item.key === key)
-    if (!current || source === current.source) return
+    if (!current || source === current.source || readOnly || (isProgressDocument(current) && !fileEditing?.canEdit(sourcePathOf({ name: current.name })))) return
     const previous = history.get(key)
     const entry: History = previous ? { ...previous, past: [...previous.past], future: [] } : { past: [], future: [], lastEdit: 0 }
     if (!group || Date.now() - entry.lastEdit > 600) entry.past = [...entry.past.slice(-49), current.source]
@@ -622,7 +633,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     if (next !== fixed) { changeFlow(next); setSelection({ kind: 'flow' }) }
   }
   function undo(redo = false) {
-    if (!doc || locked) return
+    if (!doc || locked || readOnly || (progressDoc && !progressEditable)) return
     const previous = history.get(doc.key)
     if (!previous) return
     const entry = { ...previous, past: [...previous.past], future: [...previous.future] }
@@ -998,7 +1009,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     const paneCycle = paneIssues.find((issue) => issue.path === 'graph' && issue.message.includes('环'))
     // 同一文档可同时开在两组，画布交互只交给焦点组
     const graphLive = group === focusedGroup
-    const disabledPane = locked || busy || readOnly
+    const disabledPane = locked || busy || readOnly || (paneProgress && (!graphLive || !fileEditing?.canEdit(sourcePathOf({ name: paneDoc.name }))))
 
     if (paneProgress && paneProgressParsed) {
       if (!paneProgressParsed.doc) return <ProgressSourceRepair key={paneDoc.key} source={paneDoc.source} error={paneProgressParsed.error} disabled={disabledPane}
@@ -1241,6 +1252,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     <div className="flow-layout">
       <FlowExplorer readOnly={readOnly} state={explorerState} active={active} disabled={locked || busy} onChange={(next) => setState((previous) => normalizeGroups({ ...previous, documents: next.documents, folders: next.folders }))} onSelect={(key) => selectDocument(key)} onNew={newFlow} onImport={requestImport} onImportFiles={(files, folderId, packageId) => { void importFiles(files, { folderId, package: packageId }) }} onExport={exportFlow} onDownload={downloadDraft} onRemove={removeResources} onProperties={setPropertiesKey} onViewSource={viewProgressSource} onNotice={setNotice} />
       <main className="flow-main">
+        {active && client && progressPath && <FilePresenceBar key={`${client.snapshot.session.id}:${progressPath}`} client={client} path={progressPath} />}
         {state.split ? (
           <EditorSplit
             direction={state.split.direction}

@@ -92,6 +92,23 @@ pub(crate) struct Project {
 
 #[derive(Clone, Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
+pub struct FilePresence {
+    /// A public project-relative file path. Unsaved files may be announced before creation.
+    pub path: String,
+    /// The server-derived authority shared by a source and its language/voice assets.
+    pub authority_id: String,
+    pub activity: FileActivity,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
+pub enum FileActivity {
+    Viewing,
+    Editing,
+}
+
+#[derive(Clone, Debug, Serialize, TS)]
+#[serde(rename_all = "camelCase")]
 pub struct Session {
     pub id: String,
     pub subject_id: String,
@@ -100,6 +117,8 @@ pub struct Session {
     pub expires_at: u64,
     pub resource_id: Option<String>,
     pub activity: String,
+    /// Focus only; opening a file never grants a write lease.
+    pub file_presence: Option<FilePresence>,
 }
 
 #[derive(Clone, Debug, Serialize, TS)]
@@ -122,6 +141,13 @@ pub struct Member {
 #[derive(Clone, Debug, Serialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub struct Snapshot {
+    /// Monotonic for this running service, including ephemeral presence/lease updates.
+    #[ts(type = "number")]
+    pub status_version: u64,
+    /// Server wall-clock milliseconds sampled when this snapshot is constructed.
+    /// Clients use this as an anchor for lease/session expiry, not their own wall clock.
+    #[ts(type = "number")]
+    pub server_time: u64,
     pub project_id: String,
     pub project_name: String,
     #[ts(type = "number")]

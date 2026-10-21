@@ -10,13 +10,38 @@ export type ResourceInfo = { id: string, parentId: string | null, name: string, 
 
 export type Resource = { id: string, parentId: string | null, name: string, kind: ResourceKind, revision: number, content: string | null, };
 
-export type Session = { id: string, subjectId: string, clientName: string, expiresAt: number, resourceId: string | null, activity: string, };
+export type FileActivity = "viewing" | "editing";
+
+export type FilePresence = {
+/**
+ * A public project-relative file path. Unsaved files may be announced before creation.
+ */
+path: string,
+/**
+ * The server-derived authority shared by a source and its language/voice assets.
+ */
+authorityId: string, activity: FileActivity, };
+
+export type Session = { id: string, subjectId: string, clientName: string, expiresAt: number, resourceId: string | null, activity: string,
+/**
+ * Focus only; opening a file never grants a write lease.
+ */
+filePresence: FilePresence | null, };
 
 export type Lease = { id: string, resourceId: string, sessionId: string, expiresAt: number, };
 
 export type Member = { subject: Subject, role: Role, };
 
-export type Snapshot = { projectId: string, projectName: string, revision: number, filesRevision: number, session: Session, role: Role, members: Array<Member>, resources: Array<ResourceInfo>, sessions: Array<Session>, leases: Array<Lease>, };
+export type Snapshot = {
+/**
+ * Monotonic for this running service, including ephemeral presence/lease updates.
+ */
+statusVersion: number,
+/**
+ * Server wall-clock milliseconds sampled when this snapshot is constructed.
+ * Clients use this as an anchor for lease/session expiry, not their own wall clock.
+ */
+serverTime: number, projectId: string, projectName: string, revision: number, filesRevision: number, session: Session, role: Role, members: Array<Member>, resources: Array<ResourceInfo>, sessions: Array<Session>, leases: Array<Lease>, };
 
 export type ProjectFile = { path: string, kind: string, version: string, size: number, };
 

@@ -54,7 +54,7 @@ export function EditTransactionPanel({ client }: { client: ProjectClient }) {
         {['failed', 'conflict', 'uncertain'].includes(t.phase) && <footer>
           {t.phase === 'uncertain' && <button disabled={state.queued>0} onClick={()=>void run(()=>client.transactions.confirm(t.id))}>查询提交结果</button>}
           {t.phase === 'conflict' && t.code !== 'locked' && <button disabled={!client.online||state.queued>0} onClick={()=>void run(async()=>setConflict(await inspectConflict(client,t.id)))}>处理冲突</button>}
-          <button disabled={!client.writable || state.queued > 0} onClick={() => void run(() => client.transactions.retry(t.id))}>重试原提交</button>
+          <button disabled={!client.writable || state.queued > 0} onClick={() => void run(() => { if (t.phase !== 'uncertain') client.assertEditingIntent(client.transactions.submission(t.id)); return client.transactions.retry(t.id) })}>重试原提交</button>
           <button onClick={() => void run(() => download(t.id))}>导出此提交</button>
           {t.phase!=='uncertain' && <button disabled={state.queued > 0} onClick={() => void run(()=>client.transactions.forget(t.id))}>移除记录，保留草稿</button>}
         </footer>}

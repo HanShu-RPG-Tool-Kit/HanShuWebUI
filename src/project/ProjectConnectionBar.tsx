@@ -113,7 +113,7 @@ export function ProjectConnectionBar() {
   useEffect(() => {
     if (!client) return
     let stopped = false; let socket: WebSocket | null = null; let retry: ReturnType<typeof setTimeout>
-    let lastSeen = Date.now(); let revision = client.tree.revision; let refreshing = false; let wanted = revision
+    let lastSeen = performance.now(); let revision = client.tree.revision; let refreshing = false; let wanted = revision
     async function reconcile() {
       if (refreshing || stopped || getProjectClient() !== client) return
       refreshing = true
@@ -137,13 +137,9 @@ export function ProjectConnectionBar() {
     function receive(state: Snapshot) {
       if (stopped) return
       const accessChanged = !client!.online || client!.snapshot.role !== state.role
-      lastSeen = Date.now(); client!.setStatus(true,state); setOnline(true); setSnapshot(state)
+      if (!client!.setStatus(true,state)) return
+      lastSeen = performance.now(); setOnline(true); setSnapshot(state)
       if (accessChanged) setProjectSession({})
-      for (const [p,l] of client!.leases) {
-        const refreshed = state.leases.find(current => current.id === l.id)
-        if (refreshed && refreshed.expiresAt > l.expiresAt) client!.leases.set(p,refreshed)
-        else if (l.expiresAt <= Date.now()) client!.leases.delete(p)
-      }
       wanted = state.filesRevision
       if (wanted !== revision) void reconcile()
     }
@@ -161,7 +157,7 @@ export function ProjectConnectionBar() {
     }
     watch(); void heartbeat()
     const timer = setInterval(() => { void heartbeat() },8000)
-    const stale = setInterval(() => { if (Date.now()-lastSeen>16000) {client.setStatus(false);setOnline(false)} },1000)
+    const stale = setInterval(() => { if (performance.now()-lastSeen>16000) {client.setStatus(false);setOnline(false)} },1000)
     return () => { stopped=true; clearInterval(timer); clearInterval(stale);clearTimeout(retry);socket?.close() }
   },[client])
 
@@ -172,7 +168,7 @@ export function ProjectConnectionBar() {
       <strong>{client ? projectLabel : '未打开工程'}</strong>
       <span>{client ? `${online ? '● 已连接' : '○ 已断开'} · ${labels[snapshot?.role ?? 'viewer']} · ${snapshot?.members.find(m => m.subject.id === snapshot.session.subjectId)?.subject.name ?? ''}` : '打开服务端工程，所有工作区使用同一份资源'}</span>
       <button onClick={open} disabled={busy}>打开工程…</button>
-      {client && <><button onClick={() => void run(() => client.release())} disabled={!online || busy}>释放写权</button><button onClick={() => setManage(!manage)}>在线主体与权限 · {snapshot?.sessions.length ?? 0}</button><button onClick={() => void run(async () => {
+      {client && <><button onClick={() => void run(() => client.release())} disabled={!online || busy}>释放全部写权</button><button onClick={() => setManage(!manage)}>在线主体与权限 · {snapshot?.sessions.length ?? 0}</button><button onClick={() => void run(async () => {
         if (client.transactions.getSnapshot().queued) throw new Error('请等待当前提交结束，再关闭工程')
         rememberProjectDraft(getProjectSession().workspace)
         await request(client.connection,'/api/sessions/current','DELETE'); client.setStatus(false);setProjectClient(null);setClient(null);setSnapshot(null);setOnline(false);setBoundProject(null);setProjectSession({binding:null,workspace:emptyWorkspace()})
