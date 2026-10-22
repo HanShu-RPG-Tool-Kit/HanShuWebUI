@@ -1,0 +1,322 @@
+.gds-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 6100;
+  display: grid;
+  place-items: center;
+  padding: 22px;
+  background: #080b12bc;
+}
+
+.gds-dialog {
+  width: min(1100px, 100%);
+  height: min(720px, calc(100vh - 44px));
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: #202329;
+  color: #e6e9ee;
+  border: 1px solid #464c58;
+  border-radius: 12px;
+  box-shadow: 0 28px 110px #0009;
+  font-size: 12px;
+}
+
+.gds-dialog button,
+.gds-dialog input {
+  font: inherit;
+  color: inherit;
+}
+
+.gds-dialog button {
+  padding: 6px 10px;
+  background: #303640;
+  border: 1px solid #4a5360;
+  border-radius: 5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.gds-dialog button:hover {
+  background: #3c4654;
+}
+
+.gds-dialog button.primary {
+  background: #426795;
+  border-color: #7196c6;
+  color: white;
+}
+
+.gds-dialog input:not([type='checkbox']) {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 7px 8px;
+  background: #191d23;
+  border: 1px solid #424c5a;
+  border-radius: 5px;
+}
+
+.gds-dialog input[type='checkbox'] {
+  accent-color: #83a8db;
+}
+
+.gds-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid #373e49;
+  background: #242931;
+  flex: none;
+}
+
+.gds-header h2 {
+  margin: 0 0 6px;
+  font-size: 17px;
+  font-weight: 650;
+}
+
+.gds-header p {
+  margin: 0;
+  color: #a9b4c5;
+  line-height: 1.55;
+  max-width: 68ch;
+}
+
+.gds-header code {
+  font-family: 'Cascadia Mono', 'JetBrains Mono', Consolas, monospace;
+  font-size: 11px;
+  color: #c5d4ec;
+}
+
+.gds-header > button {
+  font-size: 18px;
+  line-height: 1;
+  padding: 4px 10px;
+}
+
+.gds-layout {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+}
+
+.gds-config {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+  border-right: 1px solid #3b424d;
+  background: #1b1f25;
+  overflow: auto;
+}
+
+.gds-config h3 {
+  margin: 8px 0 2px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #c2ccdc;
+}
+
+.gds-config label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: #abb6c6;
+}
+
+.gds-config label.gds-check {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.gds-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.gds-phase {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 10px;
+  padding: 10px;
+  border-radius: 7px;
+  background: #232933;
+  border: 1px solid #363e4b;
+  line-height: 1.45;
+}
+
+.gds-phase.phase-open {
+  border-color: #5f8f6e;
+  background: #1f2c24;
+}
+
+.gds-phase.phase-reconnecting,
+.gds-phase.phase-connecting {
+  border-color: #8a7a4a;
+  background: #2a261c;
+}
+
+.gds-phase .gds-err {
+  color: #ffb7a4;
+}
+
+.gds-stats {
+  display: flex;
+  gap: 12px;
+  color: #9da9bc;
+  font-size: 11px;
+}
+
+.gds-methods {
+  margin: 0;
+  padding-left: 16px;
+  color: #a9b4c5;
+  line-height: 1.65;
+}
+
+.gds-methods code {
+  font-family: 'Cascadia Mono', 'JetBrains Mono', Consolas, monospace;
+  font-size: 11px;
+  color: #d0dceb;
+}
+
+.gds-console {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: #1e1e1e;
+}
+
+.gds-console-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid #3c4551;
+  background: #232932;
+  flex: none;
+}
+
+.gds-console-bar h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.gds-console-empty {
+  margin: 0;
+  padding: 24px 16px;
+  color: #9eacc1;
+  line-height: 1.6;
+}
+
+.gds-log-list {
+  list-style: none;
+  margin: 0;
+  padding: 8px;
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.gds-log-row {
+  border: 1px solid #2f3640;
+  border-radius: 6px;
+  margin-bottom: 6px;
+  background: #252b35;
+  overflow: hidden;
+}
+
+.gds-log-row.kind-error {
+  border-color: #6a3d3d;
+}
+
+.gds-log-row.kind-request {
+  border-color: #3d5470;
+}
+
+.gds-log-row.kind-response {
+  border-color: #3d6350;
+}
+
+.gds-log-summary {
+  display: grid;
+  grid-template-columns: 64px 72px minmax(0, 1fr);
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 8px 10px;
+  white-space: normal;
+  cursor: pointer;
+}
+
+.gds-log-summary:hover {
+  background: #2c3440;
+}
+
+.gds-log-summary time {
+  color: #8f9bb0;
+  font-variant-numeric: tabular-nums;
+}
+
+.gds-log-kind {
+  color: #a6bce2;
+  font-family: 'Cascadia Mono', 'JetBrains Mono', Consolas, monospace;
+  font-size: 11px;
+}
+
+.gds-log-text {
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+
+.gds-log-detail {
+  margin: 0;
+  padding: 8px 10px 10px;
+  border-top: 1px solid #343c47;
+  background: #191d23;
+  color: #c5d0e0;
+  font-family: 'Cascadia Mono', 'JetBrains Mono', Consolas, monospace;
+  font-size: 11px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 220px;
+  overflow: auto;
+}
+
+@media (max-width: 760px) {
+  .gds-backdrop {
+    padding: 6px;
+  }
+
+  .gds-dialog {
+    height: calc(100vh - 12px);
+    border-radius: 7px;
+  }
+
+  .gds-layout {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .gds-config {
+    border-right: 0;
+    border-bottom: 1px solid #3b424d;
+    max-height: 42%;
+  }
+}

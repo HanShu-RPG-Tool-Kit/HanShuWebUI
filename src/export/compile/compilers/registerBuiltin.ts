@@ -2,6 +2,7 @@ import { registerFileCompiler, registerPackagePass } from '../registry'
 import { activeSkinsPass } from './activeSkins'
 import { hanshuCompiler } from './hanshu'
 import { identityCompiler } from './identity'
+import { itemCompiler } from './item'
 import { localeAssetsPass } from './localeAssets'
 
 let registered = false
@@ -10,8 +11,9 @@ let registered = false
 export function ensureBuiltinCompilers(): void {
   if (registered) return
   registered = true
-  // identity 放前面；hanshu 用 match 抢 `.hs`（先匹配先生效）
+  // 专用编译器优先；identity 兜底（buildCompileGraph 会跳过 id=identity 再回退）
   registerFileCompiler(hanshuCompiler)
+  registerFileCompiler(itemCompiler)
   registerFileCompiler(identityCompiler)
   registerPackagePass(localeAssetsPass)
   registerPackagePass(activeSkinsPass)

@@ -74,6 +74,25 @@
 - 资源树有只读 **物品库表视图**：汇总文件名、引用名、ID、显示名、标签、组件数、快照状态。
 - 本地化：`.item` 的标签与指令类字段一样**不进** `lang_*`；玩家可见名称若在组件/快照里，由游戏侧处理。
 
+## 本机查询（游戏开发服务器）
+
+打开工程后，本机 mod 可通过 [游戏开发服务器](#game-dev-server) Control 方法 `items.list` / `items.get` / `items.query` 读取当前会话中的物品库（C 侧镜像，非绕过工程服务写盘）。
+
+## 导出
+
+导出 PAK 时，内置 **Item** 编译器把每个 `.item` 编成 server 平面的 **`.it`**（路径如 `items/apple.it`）：
+
+```json
+{
+  "item": {
+    "id": "minecraft:apple",
+    "components": {}
+  }
+}
+```
+
+只保留运行时 `item`；`format` / `schemaVersion` / `tags` / `display` 不进包。详见 [导出 PAK](#export-pak)。
+
 ## 与礼包的关系
 
 详见 [礼包：超参数与修饰器](#kit-guide)。礼包条目可以是：

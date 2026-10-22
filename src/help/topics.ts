@@ -10,6 +10,7 @@ import hscMachineFramework from './docs/hsc-machine-framework.md?raw'
 import kitGuide from './docs/kit-guide.md?raw'
 import kitExpr from './docs/kit-expr.md?raw'
 import itemGuide from './docs/item-guide.md?raw'
+import gameDevServer from './docs/game-dev-server.md?raw'
 import progressWorkspace from './docs/progress-workspace.md?raw'
 import progressFlowModel from './docs/progress-flow-model.md?raw'
 import progressDocument from './docs/progress-document.md?raw'
@@ -34,6 +35,7 @@ export type HelpTopicId =
   | 'kit-guide'
   | 'kit-expr'
   | 'item-guide'
+  | 'game-dev-server'
   | 'progress-workspace'
   | 'progress-flow-model'
   | 'progress-document'
@@ -119,6 +121,14 @@ export const HELP_TOPICS: HelpTopic[] = [
     audience: 'both',
     inDocs: true,
     body: itemGuide,
+  },
+  {
+    id: 'game-dev-server',
+    title: '游戏开发服务器',
+    group: '进度',
+    audience: 'dev',
+    inDocs: true,
+    body: gameDevServer,
   },
   {
     id: 'progress-workspace',

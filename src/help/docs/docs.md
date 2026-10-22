@@ -38,6 +38,7 @@
 | --- | --- | --- |
 | [进度工作区](#progress-workspace) | 用户 · 开发 | 资源树、工程目录、编辑与保存 |
 | [物品库：.item 与 .itemstack](#item-guide) | 用户 · 开发 | 物品定义、快照导入、标签、礼包链接 |
+| [游戏开发服务器](#game-dev-server) | 开发 | 本机 Control 连接、物品库查询 API、控制台 |
 | [进度流程模型](#progress-flow-model) | 开发 | 画布模型、信号运行时、校验 |
 | [.progress 文档与表单](#progress-document) | 用户 · 开发 | 委托文档字段与表单交互 |
 | [进度：任务与委托](#progress-design) | 草案 | 接取条件、目标组、冷却（尚未全部实现） |

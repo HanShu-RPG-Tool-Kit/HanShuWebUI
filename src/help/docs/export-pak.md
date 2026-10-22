@@ -18,7 +18,7 @@ PAK 是给引擎用的运行时包。流水线：**编译图 → 接线校验 �
 | 路径 | 职责 |
 | --- | --- |
 | `src/export/compile/` | 类型、注册表、接线、`buildCompileGraph` |
-| `src/export/compile/compilers/` | 内置 Hanshu / Identity / LocaleAssets / ActiveSkins |
+| `src/export/compile/compilers/` | 内置 Hanshu / Item / Identity / LocaleAssets / ActiveSkins |
 | `src/export/pack/exportPaks.ts` | 总入口 `exportPaks` |
 | `src/export/pack/planes.ts` | 平面过滤 |
 | `src/export/pack/encrypt.ts` | AES-256-GCM 整包加密 |
@@ -54,6 +54,8 @@ registerFileCompiler({
 
 包级后处理（依赖其它产物的 `requires`，如按键裁剪 lang）用 `registerPackagePass`。
 
+内置 **Item**：`.item` → server 平面 `items/….it`，只保留 `{ "item": { id, components } }`（去掉 format / schemaVersion / tags / display）。解析失败记 warning 并跳过该文件。
+
 内置 **ActiveSkins**：把工程皮肤库里已启用的皮肤打进 client 平面：
 
 - `assets/skin/<skinId>.png`（`skinId` = 内容 SHA-256）
@@ -66,7 +68,7 @@ registerFileCompiler({
 | 平面 | 含义 | 默认后缀（`FILE_PLANE`） |
 | --- | --- | --- |
 | `client` | 仅客户端 | `.hs` / `.char`；lang / voice 产物 |
-| `server` | 仅服务端 | `.py`（`script/` 与 `goal/`）/ `.progress` / `.item` / `.kit` |
+| `server` | 仅服务端 | `.py`（`script/` 与 `goal/`）/ `.progress` / `.item`（编成 `.it`）/ `.kit` |
 | `shared` | 两端都要 | `.hflow` / `.nav`；未列出后缀默认 shared |
 
 ### 源目录与 PAK 顶层

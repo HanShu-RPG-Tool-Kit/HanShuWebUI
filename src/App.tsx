@@ -13,8 +13,11 @@ import {
 import { APP_WORKSPACES } from './workspaces/registry.ts'
 import { McSkinWorkspace } from './workspaces/McSkinWorkspace.tsx'
 import { ProgressFlowWorkspace, type ProgressWorkspaceHandle } from './workspaces/ProgressFlowWorkspace.tsx'
-import { McStreamWorkspace } from './workspaces/McStreamWorkspace.tsx'
 import { ScriptWorkspace } from './workspaces/ScriptWorkspace.tsx'
+import {
+  ensureGameDevControlStarted,
+  GameDevServerPanel,
+} from './gameDevServer'
 import type { ScriptWorkspaceHandle } from './workspaces/scriptTypes.ts'
 import { HelpModal } from './help/HelpModal.tsx'
 import type { HelpTopicId } from './help/topics.ts'
@@ -73,7 +76,19 @@ const MENUS = [
   },
   {
     label: '编辑',
-    items: ['撤销', '重做', '—', '剪切', '复制', '粘贴', '—', '查找', '替换'],
+    items: [
+      '撤销',
+      '重做',
+      '—',
+      '剪切',
+      '复制',
+      '粘贴',
+      '—',
+      '查找',
+      '替换',
+      '—',
+      '游戏开发服务器',
+    ],
   },
   {
     label: '选择',
@@ -124,6 +139,7 @@ function isAlwaysEnabledMenuItem(item: string) {
     item.startsWith('界面比例 ') ||
     item === '恢复推荐大小（125%）' ||
     item === '历史版本' ||
+    item === '游戏开发服务器' ||
     ['分享工程…', '连接其他服务器…', '关闭工程', '协作面板', '打开工程…', '新建工程…'].includes(item) ||
     item === '退出'
   )
@@ -139,8 +155,6 @@ function renderToolWorkspace(
       return <ProgressFlowWorkspace active={active} workspaceRef={progressRef} />
     case 'mc-skin':
       return <McSkinWorkspace active={active} />
-    case 'mc-stream':
-      return <McStreamWorkspace active={active} />
     default:
       return null
   }
@@ -156,6 +170,12 @@ function App() {
   const [helpTopicId, setHelpTopicId] = useState<HelpTopicId | null>(null)
   const [historyOpen, setHistoryOpen] = useState(false)
   const closeHistory = useCallback(() => setHistoryOpen(false), [])
+  const [gameDevOpen, setGameDevOpen] = useState(false)
+  const closeGameDev = useCallback(() => setGameDevOpen(false), [])
+
+  useEffect(() => {
+    ensureGameDevControlStarted()
+  }, [])
   const [maximized, setMaximized] = useState(false)
   const [showSplash, setShowSplash] = useState(
     () => isDesktopShell && shouldShowSplash(),
@@ -284,6 +304,10 @@ function App() {
     if (item === '协作面板') { openProjectUi('collaboration'); return }
     if (item === '历史版本') {
       setHistoryOpen(true)
+      return
+    }
+    if (item === '游戏开发服务器') {
+      setGameDevOpen(true)
       return
     }
     const helpTopic = HELP_MENU_TOPIC[item]
@@ -446,6 +470,7 @@ function App() {
 
       <ProjectConnectionBar />
       {historyOpen && <ProjectHistory client={getProjectClient()} onClose={closeHistory} />}
+      {gameDevOpen && <GameDevServerPanel onClose={closeGameDev} />}
       <div className="app-body">
         <div
           className={`app-workspace-pane${
