@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { request, socketUrl, type Snapshot, type Role } from '../collab/protocol'
+import { request, socketUrl, type Snapshot } from '../collab/protocol'
 import { ProjectClient, getProjectClient, registerProjectConnector, requestProjectConnection, setProjectClient } from './serviceClient'
 import { loadServiceProject, refreshServiceProject, refreshProjectManifest } from './projectFs'
 import { getProjectSession, setProjectSession, useProjectSession } from './projectSession'
@@ -15,6 +15,8 @@ import { LocalProjectPicker } from './LocalProjectPicker'
 import { discoverLocalProjectHost, type LocalProjectHost, type LocalProjectConnection } from './localProjects'
 import { ProjectSharePanel } from './ProjectSharePanel'
 import { ProjectShareJoin } from './ProjectShareJoin'
+import { AccountManager } from './AccountManager'
+import { connectionUrl, recentConnections, rememberConnection, removeRecent } from './recentConnections'
 
 const defaultUrl = () => import.meta.env.DEV || window.location.port === '4173' ? '/__project' : window.location.origin
 
@@ -72,7 +74,9 @@ export function ProjectConnectionBar() {
   const [collabOpen, setCollabOpen] = useState(false)
   const [location, setLocation] = useState<{id:string;path:string}|null>(null)
   const [url, setUrl] = useState(() => localStorage.getItem('hanshu.serverUrl') || defaultUrl())
-  const [credential, setCredential] = useState('')
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [recents, setRecents] = useState(recentConnections)
   const [clientName] = useState(() => sessionStorage.getItem('hanshu.windowName') || '浏览器窗口')
   const [projectName, setProjectName] = useState('新工程')
   const [error, setError] = useState('')
@@ -81,10 +85,6 @@ export function ProjectConnectionBar() {
   const [busy, setBusy] = useState(false)
   const [localHost, setLocalHost] = useState<LocalProjectHost | null | undefined>(undefined)
   const [localPicker, setLocalPicker] = useState(false)
-  const [subjectName, setSubjectName] = useState('')
-  const [kind, setKind] = useState('account')
-  const [role, setRole] = useState<Role>('editor')
-  const [issued, setIssued] = useState('')
   const projectLabel = projectSession.workspace.packages.find(pkg => pkg.id === projectSession.binding?.manifest.id)?.name ?? projectSession.binding?.manifest.name ?? ''
   const pending = useRef<{resolve: (c: ProjectClient) => void; reject: (e: Error) => void} | null>(null)
   const booted = useRef(false)
@@ -96,10 +96,14 @@ export function ProjectConnectionBar() {
     try { await action() } catch (e) { setError(e instanceof Error ? e.message : String(e)) }
     finally { operation.current = false; setBusy(false) }
   }
-  async function connect(base: string, key: string, name: string, initialName = projectName) {
+  async function connectRemote() {
+    const base=connectionUrl(url)
     if (getProjectClient()?.transactions.getSnapshot().queued) throw new Error('请等待当前提交结束，再切换工程')
-    const login = await request<{token: string}>({url: base,token:''}, '/api/sessions', 'POST', { credential: key.trim(), clientName: name })
-    return connectSession(base, login.token, initialName)
+    const login=await request<{token:string}>({url:base,token:''},'/api/sessions','POST',{username:username.trim(),password,clientName})
+    setPassword(''); await connectSession(base,login.token)
+    const current=getProjectClient()
+    if(current)rememberConnection({url:base,username:username.trim(),projectId:current.snapshot.projectId,projectName:getProjectSession().binding?.manifest.name??current.snapshot.projectName})
+    setRecents(recentConnections())
   }
   async function connectSession(base: string, token: string, initialName = projectName) {
     const connection = {url:base.replace(/\/$/,''),token}
@@ -112,7 +116,7 @@ export function ProjectConnectionBar() {
       if(previous) rememberProjectDraft(getProjectSession().workspace)
       await openClient(candidate,initialName)
       setClient(candidate); setSnapshot(state); setOnline(true)
-      localStorage.setItem('hanshu.serverUrl',base); setCredential(''); setDialog(null)
+      localStorage.setItem('hanshu.serverUrl',base); setPassword(''); setDialog(null)
       pending.current?.resolve(candidate); pending.current = null
       if (previous && previous !== candidate) { previous.setStatus(false); void request(previous.connection,'/api/sessions/current','DELETE').catch(() => undefined) }
     } catch (e) { if(candidate)candidate.setStatus(false); void request(connection,'/api/sessions/current','DELETE').catch(() => undefined); throw e }
@@ -133,8 +137,8 @@ export function ProjectConnectionBar() {
     booted.current = true
     void run(async () => {
       const {invoke} = await import('@tauri-apps/api/core')
-      const local = await invoke<{url:string;credential:string}>('project_local_connection')
-      setUrl(local.url); await connect(local.url,local.credential,'桌面窗口')
+      const local = await invoke<{url:string;token:string}>('project_local_connection')
+      setUrl(local.url); await connectSession(local.url,local.token)
     })
     // The desktop bootstrap intentionally uses the initial connection form defaults once.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -210,29 +214,18 @@ export function ProjectConnectionBar() {
     if (action === 'share') { if (snapshot?.role === 'owner') setShareOpen(true); return }
     if (action === 'collaboration') { setCollabOpen(true); return }
     if (action === 'close') { void run(closeProject); return }
-    if (action === 'connect') { setError(''); setLocalPicker(false); setDialog('connect'); return }
+    if (action === 'connect') { setError(''); setLocalPicker(false); setRecents(recentConnections()); setPassword(''); setDialog('connect'); return }
     void requestProjectConnection(action).catch(e => { if (!/取消/.test(String(e))) { setError(String(e)); setCollabOpen(true) } })
   }
   useEffect(() => registerProjectUi(projectAction))
-  function cancel() { setDialog(null); pending.current?.reject(new Error('已取消连接')); pending.current=null }
+  function cancel() { setPassword('');setDialog(null); pending.current?.reject(new Error('已取消连接')); pending.current=null }
   async function nativeOpen(name?: string) {
     if (getProjectClient()?.transactions.getSnapshot().queued) throw new Error('请等待当前保存结束，再切换工程')
     const {invoke}=await import('@tauri-apps/api/core')
-    const local=await invoke<{url:string;credential:string}>('project_open_local',{name:name??null})
-    setUrl(local.url); await connect(local.url,local.credential,'桌面窗口',name)
+    const local=await invoke<{url:string;token:string}>('project_open_local',{name:name??null})
+    setUrl(local.url); await connectSession(local.url,local.token,name)
   }
-  const management = snapshot && client ? (<section className="project-members" aria-label="工程主体与权限">
-
-      <div className="project-presence">{snapshot.sessions.map(s => <span key={s.id}>{snapshot.members.find(m=>m.subject.id===s.subjectId)?.subject.name} · {s.clientName} · {s.filePresence?.activity === 'editing' ? '编辑中' : '查看中'}{s.filePresence ? ` · ${s.filePresence.entryId ? '皮肤条目' : s.filePresence.path === '.hanshu/skinmanager/library.json' ? '皮肤库' : s.filePresence.path.split('/').at(-1)}` : ''}{snapshot.leases.some(l=>l.sessionId===s.id) ? ' · 持有写权' : ''}</span>)}</div>
-      {snapshot.leases.filter(l=>l.resourceId.startsWith('file:')).map(l => <div key={l.id}>{l.resourceId.slice(5)} · {snapshot.sessions.find(s=>s.id===l.sessionId)?.clientName}{snapshot.role === 'owner' && l.sessionId !== snapshot.session.id && <button onClick={() => void run(async () => {
-        const leases = await request<import('../collab/protocol').Lease[]>(client.connection,'/api/files/leases','POST',{paths:[l.resourceId.slice(5)],force:true});for(const lease of leases)client.leases.set(lease.resourceId.slice(5),lease)
-      })}>接管写权</button>}</div>)}
-      {snapshot.role === 'owner' && <>
-        <div className="project-subject-create"><input aria-label="新主体名称" placeholder="主体名称" value={subjectName} onChange={e=>setSubjectName(e.target.value)}/><input aria-label="主体类型" value={kind} onChange={e=>setKind(e.target.value)}/><select aria-label="新主体权限" value={role} onChange={e=>setRole(e.target.value as Role)}><option value="editor">编辑者</option><option value="viewer">只读</option></select><button disabled={busy || !subjectName.trim()} onClick={()=>void run(async()=>{ const result=await request<{credential:string}>(client.connection,'/api/subjects','POST',{name:subjectName,kind,role});setIssued(result.credential);setSubjectName('') })}>创建主体</button></div>
-        {issued && <label>新主体凭证（仅此次显示）<input readOnly value={issued}/><button onClick={()=>setIssued('')}>隐藏</button></label>}
-        {snapshot.members.filter(m=>m.role!=='owner').map(m=><div key={m.subject.id}>{m.subject.name} · {m.subject.kind}<select aria-label={`${m.subject.name}权限`} value={m.role} onChange={e=>void run(async()=>{await request(client.connection,`/api/subjects/${m.subject.id}`,'PATCH',{role:e.target.value,enabled:m.subject.enabled})})}><option value="editor">编辑者</option><option value="viewer">只读</option></select><button onClick={()=>void run(async()=>{await request(client.connection,`/api/subjects/${m.subject.id}`,'PATCH',{role:m.role,enabled:!m.subject.enabled})})}>{m.subject.enabled?'停用':'启用'}</button></div>)}
-      </>}
-    </section>) : null
+  const management = client && snapshot?.role === 'owner' ? <AccountManager client={client} /> : null
   const title = dialog === 'create' ? '新建工程' : dialog === 'connect' ? '连接其他服务器' : '打开工程'
   return <>
     <CollaborationWidget client={client} snapshot={snapshot} projectName={projectLabel} open={collabOpen} onOpenChange={setCollabOpen}
@@ -243,7 +236,7 @@ export function ProjectConnectionBar() {
     {dialog && <div className="project-connect-backdrop"><form className="project-connect-dialog" aria-label={title} onKeyDown={event => {if(event.key==='Escape'&&!busy)cancel()}} onSubmit={event => {
       event.preventDefault()
       if (localPicker || busy) return
-      if (dialog === 'connect') void run(() => connect(url,credential,clientName))
+      if (dialog === 'connect') void run(connectRemote)
       if (dialog === 'create') void run(async () => {
         if (getProjectClient()?.transactions.getSnapshot().queued) throw new Error('请等待当前保存结束，再创建工程')
         if ('__TAURI_INTERNALS__' in window) return nativeOpen(projectName.trim())
@@ -268,9 +261,11 @@ export function ProjectConnectionBar() {
         <small>{'__TAURI_INTERNALS__' in window ? '下一步选择保存位置。' : localHost===undefined ? '正在准备本机目录…' : !localHost ? '请在运行 HanShu 的本机窗口新建工程。' : '会创建独立文件夹，不覆盖已有工程。'}</small>
         <footer><button type="button" disabled={busy} onClick={cancel}>取消</button><button type="submit" disabled={busy || !projectName.trim() || !('__TAURI_INTERNALS__' in window) && !location}>{busy?'正在创建…':'创建工程'}</button></footer>
       </> : dialog === 'connect' ? <>
-        <p>连接另一台设备上正在运行的工程服务。有邀请链接时，直接打开链接即可加入。</p>
+        <p>连接另一台设备上正在运行的工程服务。已有工程链接时，也可以直接打开链接登录。</p>
+        {recents.length>0 && <div className="recent-connections" aria-label="最近连接">{recents.map(recent=><div key={recent.url}><button type="button" onClick={()=>{setUrl(recent.url);setUsername(recent.username);setPassword('')}}><strong>{recent.projectName}</strong><small>{recent.url}</small></button><button type="button" aria-label={`移除最近连接 ${recent.projectName}`} onClick={()=>{removeRecent(recent.url);setRecents(recentConnections())}}>×</button></div>)}</div>}
         <label>服务地址<input autoFocus required aria-label="服务地址" value={url} onChange={event=>setUrl(event.target.value)} placeholder="http://…" /></label>
-        <label>访问凭证<input required type="password" autoComplete="off" aria-label="主体凭证" value={credential} onChange={event=>setCredential(event.target.value)} /></label>
+        <label>用户名<input required autoComplete="username" aria-label="用户名" value={username} onChange={event=>setUsername(event.target.value)} /></label>
+        <label>密码<input required type="password" autoComplete="current-password" aria-label="密码" value={password} onChange={event=>setPassword(event.target.value)} /></label>
         <footer><button type="button" disabled={busy} onClick={cancel}>取消</button><button type="submit" disabled={busy}>{busy?'正在连接…':'连接并打开工程'}</button></footer>
       </> : <>
         <p>选择一个已有的工程文件夹。</p>

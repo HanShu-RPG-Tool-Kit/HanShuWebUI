@@ -366,8 +366,15 @@ export async function saveProjectToDirectory(binding: BoundProject, workspace: W
     const live = getProjectSession()
     const current = live.binding?.handle.client === client ? live.workspace : workspace
     const pkg = current.packages.find(p => p.id === binding.manifest.id)
+    savedName = pkg?.name ?? binding.manifest.name
+    return collectProjectChanges(binding,current)
+  }, true)
+  return { ...binding, manifest: { ...binding.manifest, name: savedName } }
+}
+export async function collectProjectChanges(binding: BoundProject, current: Workspace): Promise<import('./serviceClient').FileEdit[]> {
+  const client = binding.handle.client
+    const pkg = current.packages.find(p => p.id === binding.manifest.id)
     if (!pkg) throw new Error('没有可保存的工程')
-    savedName = pkg.name
     const edits: import('./serviceClient').FileEdit[] = []
     if (pkg.name !== binding.manifest.name) edits.push({ op: 'write', path: PROJECT_FILE, data: serializeManifest({ ...binding.manifest, name: pkg.name }) })
     for (const source of pkg.scripts) {
@@ -385,8 +392,6 @@ export async function saveProjectToDirectory(binding: BoundProject, workspace: W
       else if (assetCacheEpoch(pkg.id, asset.path) === epoch) client.assetEpochs.set(asset.path, epoch)
     }
     return edits
-  }, true)
-  return { ...binding, manifest: { ...binding.manifest, name: savedName } }
 }
 export async function removeSourceFromDisk(handle: ProjectDirectory, sourceName: string, srcKind?: string | null): Promise<void> {
   await handle.client.sourceCommand(sourceRelativePath(sourceName, srcKind), null)

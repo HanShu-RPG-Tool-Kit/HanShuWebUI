@@ -30,7 +30,7 @@ const language = () => diskJson(h, languagePath)
 const history = token => h.api(token, '/api/history/stats')
 async function noLeases(token) { assert.equal((await h.api(token, '/api/project')).leases.length, 0, 'A semantic command retained a file lease') }
 try {
-  assert.equal((await h.api('', '/health')).protocol, 10)
+  assert.equal((await h.api('', '/health')).protocol, 11)
   const owner = await h.login(h.credential, 'progress setup')
   const editorA = await h.api(owner.token, '/api/subjects', 'POST', { name: '进度作者 A', kind: 'account', role: 'editor' })
   const editorB = await h.api(owner.token, '/api/subjects', 'POST', { name: '进度作者 B', kind: 'account', role: 'editor' })
@@ -173,6 +173,6 @@ try {
   passed('S 重启保留语义结果及撤销依据，同主体新会话确认原事务且不会重复执行')
 
   await mkdir(output, { recursive: true })
-  await writeFile(join(output, 'http-acceptance.json'), JSON.stringify({ protocol: 10, physicalHosts: 1, tests: results }, null, 2))
+  await writeFile(join(output, 'http-acceptance.json'), JSON.stringify({ protocol: 11, physicalHosts: 1, tests: results }, null, 2))
   console.log(`进度操作 HTTP 验收通过：${results.length} 组。`)
 } finally { clearInterval(heartbeat); await h.stop() }

@@ -175,4 +175,14 @@ await test('out of order remote notifications cannot move the base backwards', (
   session.observe(entry({ revision: 2, name: 'Stale' }))
   assert.deepEqual(session.getSnapshot().draft, draftFromEntry(entry({ revision: 3 })))
 })
+await test('bulk sync drops conflicting name and saves independent note against the checked remote revision', async () => {
+  const session=new EntryDraftSession('sync',entry(),storage())
+  session.edit({name:'Local name',note:'Keep this note'})
+  const calls:PatchEntryRequest[]=[]
+  session.bind(async body=>{calls.push(body);return entry({revision:3,name:'Remote name',note:body.note??''})})
+  await session.synchronize(entry({revision:2,name:'Remote name'}))
+  assert.equal(calls.length,1);assert.equal(calls[0].revision,2)
+  assert.equal(calls[0].name,undefined);assert.equal(calls[0].note,'Keep this note')
+  assert.equal(session.getSnapshot().draft.name,'Remote name');assert.equal(entryDraftDirty(session.getSnapshot()),false)
+})
 console.log(`Skin draft verification passed (${passed} scenarios).`)

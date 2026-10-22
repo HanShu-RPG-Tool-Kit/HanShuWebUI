@@ -182,6 +182,20 @@ export class EntryDraftSession {
     this.queued.clear()
     this.publish({ ...this.state, base, draft: draftFromEntry(base), remote: null, pending: null, error: null })
   }
+  async synchronize(latest: LibraryEntry) {
+    if (this.running) await this.running
+    const before = draftFromEntry(this.state.base), remote = draftFromEntry(latest), next = { ...remote }
+    const conflicts = new Set(fields(before).filter(field => !equal(before[field], remote[field])))
+    for (const group of [licenseFields, provenanceFields]) if (group.some(field => conflicts.has(field))) for (const field of group) conflicts.add(field)
+    for (const field of fields(next)) if (!conflicts.has(field) && !equal(before[field], this.state.draft[field])) Object.assign(next, { [field]: this.state.draft[field] })
+    this.queued.clear()
+    this.publish({ ...this.state, base: latest, draft: next, pending: null, remote: null, error: null, saving: false })
+    const patch = patchFromDraft(latest, next)
+    if (!Object.keys(patch).length) return
+    this.request(patch)
+    if (this.running) await this.running
+    if (this.state.pending || this.state.error) throw new Error(this.state.error || '皮肤修改尚未保存')
+  }
   /** Explicit user resolution: carry only locally edited fields onto the new base. */
   resubmit() {
     if (this.state.saving) return

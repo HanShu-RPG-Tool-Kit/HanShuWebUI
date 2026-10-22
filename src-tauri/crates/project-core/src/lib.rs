@@ -114,7 +114,8 @@ impl Engine {
             };
             let subject = Subject {
                 id: sid.clone(),
-                name: "工程管理者".into(),
+                username: "Admin".into(),
+                name: "Admin".into(),
                 kind: "account".into(),
                 enabled: true,
             };
@@ -134,6 +135,13 @@ impl Engine {
             Self::persist(root, &data)?;
             data
         };
+        let mut data = data;
+        for (id, subject) in data.subjects.iter_mut() {
+            if data.grants.get(id) == Some(&Role::Owner) {
+                subject.username = "Admin".into(); subject.name = "Admin".into();
+            }
+        }
+        Self::persist(root, &data)?;
         Ok(Self {
             root: root.into(),
             data,
@@ -205,10 +213,17 @@ impl Engine {
             "unauthorized",
             "主体已停用或未获工程权限",
         )?;
+        self.login_subject(&sid, client_name, now)
+    }
+    /// Only a trusted authentication provider calls this after verifying identity.
+    pub fn login_subject(&mut self, subject: &str, client_name: &str, now: u64) -> Result<(String, Session)> {
+        self.expire(now); text(client_name)?;
+        require(self.sessions.len() < 128, "busy", "在线会话数已达上限")?;
+        require(self.data.subjects.get(subject).is_some_and(|s| s.enabled) && self.data.grants.contains_key(subject), "forbidden", "此账号未获工程权限")?;
         let token = secret();
         let session = Session {
             id: id(),
-            subject_id: sid,
+            subject_id: subject.to_owned(),
             client_name: client_name.trim().into(),
             expires_at: now + SESSION_TTL,
             resource_id: None,
@@ -218,6 +233,18 @@ impl Engine {
         self.sessions
             .insert(session.id.clone(), (session.clone(), digest(&token)));
         Ok((token, session))
+    }
+    pub fn bind_account(&mut self, sid: &str, subject: Subject, role: Role) -> Result<()> {
+        self.owner(sid)?;
+        require(role != Role::Owner && self.data.grants.get(&subject.id) != Some(&Role::Owner), "forbidden", "Admin 不能修改")?;
+        text(&subject.name)?; text(&subject.username)?;
+        self.commit(|d| { d.grants.insert(subject.id.clone(), role); d.subjects.insert(subject.id.clone(), subject); Ok(()) })
+    }
+    pub fn account_grant(&self, subject: &str) -> Option<Role> { self.data.grants.get(subject).copied() }
+    pub fn sync_account(&mut self, subject: Subject) -> Result<()> {
+        require(self.data.subjects.contains_key(&subject.id), "forbidden", "此账号未获工程权限")?;
+        if self.data.subjects.get(&subject.id).is_some_and(|s| s.name == subject.name && s.username == subject.username && s.enabled == subject.enabled) { return Ok(()) }
+        self.commit(|d| { d.subjects.insert(subject.id.clone(), subject); Ok(()) })
     }
     pub fn authenticate(&mut self, token: &str, now: u64) -> Result<String> {
         self.expire(now);
@@ -362,6 +389,7 @@ impl Engine {
         require(role != Role::Owner, "invalid", "新主体可授予编辑或只读权限")?;
         let subject = Subject {
             id: id(),
+            username: String::new(),
             name: name.trim().into(),
             kind: kind.trim().into(),
             enabled: true,

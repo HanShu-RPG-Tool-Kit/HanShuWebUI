@@ -1,4 +1,4 @@
-import {projectMenu,waitProject,submission,closeCollaboration} from './project-ui-helpers.mjs'
+import {projectMenu,waitProject,submission,closeCollaboration,loginProject} from './project-ui-helpers.mjs'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { createServer, request as httpRequest } from 'node:http'
@@ -108,16 +108,8 @@ async function patch(token, entryId, changes) {
   finally { await h.release(token) }
 }
 async function browserLogin(page, credential, name, navigate = true) {
-  await page.addInitScript(value=>sessionStorage.setItem('hanshu.windowName',value),name)
-  if (navigate) await page.goto(base)
-  await projectMenu(page,'连接其他服务器…')
-  const form = page.getByRole('form',{name:'连接其他服务器',exact:true})
-  await form.getByLabel('服务地址', { exact: true }).fill(base)
-  await form.getByLabel('主体凭证', { exact: true }).fill(credential)
-
-  await form.getByRole('button', { name: '连接并打开工程', exact: true }).click()
-  await waitProject(page,'统一工程验收')
-  await page.getByRole('tab', { name: '皮肤管理器', exact: true }).click()
+  await loginProject(page,base,credential,name,navigate)
+  await page.getByRole('tab',{name:'皮肤管理器',exact:true}).click()
 }
 const card = (page, name) => page.locator('.skinWorkspaceCenter').getByRole('button').filter({ has: page.getByText(name, { exact: true }) }).first()
 async function selectCard(page, name) { await closeCollaboration(page);
@@ -144,7 +136,7 @@ async function openImport(page, skin, name) { await closeCollaboration(page);
 }
 
 try {
-  assert.equal((await h.api('', '/health')).protocol, 10)
+  assert.equal((await h.api('', '/health')).protocol, 11)
   const owner = await h.login(h.credential, 'skin management owner')
   const author = await h.api(owner.token, '/api/subjects', 'POST', { name: '皮肤管理协作者', kind: 'account', role: 'editor' })
   const a = await h.login(author.credential, 'skin management A'), b = await h.login(author.credential, 'skin management B')
@@ -375,7 +367,7 @@ try {
   }
   await mkdir(output, { recursive: true })
   for (const [i, page] of pages.entries()) await page.screenshot({ path: join(output, `client-${i}.png`) })
-  await writeFile(join(output, 'acceptance.json'), JSON.stringify({ date: new Date().toISOString(), protocol: 10, transport: 'HTTP/WebSocket', physicalDevices: 1, browserContexts: pages.length, scope: 'One local S with two isolated browser contexts', proxyFaults: ['truncated successful import/delete/move responses'], results, commitRequestsObserved: observed.length }, null, 2))
+  await writeFile(join(output, 'acceptance.json'), JSON.stringify({ date: new Date().toISOString(), protocol: 11, transport: 'HTTP/WebSocket', physicalDevices: 1, browserContexts: pages.length, scope: 'One local S with two isolated browser contexts', proxyFaults: ['truncated successful import/delete/move responses'], results, commitRequestsObserved: observed.length }, null, 2))
   console.log(`皮肤管理验收通过：${results.length} 组。`)
 } catch (error) {
   console.error('Recent commands:', observed.slice(-8).map(request => ({ id: request.transactionId, command: commandOf(request), changes: request.changes.map(change => ({ op: change.op, path: change.path })) })))

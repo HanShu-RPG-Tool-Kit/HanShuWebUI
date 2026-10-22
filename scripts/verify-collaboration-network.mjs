@@ -1,4 +1,5 @@
-import {projectMenu,waitProject,submission,closeCollaboration} from './project-ui-helpers.mjs'
+import {testAccount} from './test-accounts.mjs'
+import {submission,closeCollaboration,loginProject} from './project-ui-helpers.mjs'
 import assert from 'node:assert/strict'
 import { createServer, request as httpRequest } from 'node:http'
 import { connect } from 'node:net'
@@ -60,12 +61,14 @@ proxy.on('upgrade',(req,socket,head)=>{
 })
 await new Promise((r,j)=>{proxy.once('error',j);proxy.listen(0,lan.address,r)})
 const base=`http://${lan.address}:${proxy.address().port}`
-const h=await harness({web:true,host:lan.address,origins:[base]});upstream=h.base
+const h=await harness({web:true,origins:[base]});upstream=h.base
+const localTokens=new Set()
 async function api(token,path,method='GET',body,status=200){
+  if(localTokens.has(token))return h.api(token,path,method,body,status)
   const response=await fetch(base+path,{method,headers:{'Content-Type':'application/json',Origin:base,...token?{Authorization:`Bearer ${token}`}:{}} ,body:body===undefined?undefined:JSON.stringify(body),signal:AbortSignal.timeout(15000)})
   const value=await response.json();assert.equal(response.status,status,`${method} ${path}: ${JSON.stringify(value)}`);return value
 }
-async function login(credential,name){return api('','/api/sessions','POST',{credential,clientName:name})}
+async function login(credential,name){const account=testAccount(credential);if(account.local){const value=await h.login(credential,name);localTokens.add(value.token);return value}return api('','/api/sessions','POST',{username:account.username,password:account.password,clientName:name})}
 async function prepare(token,edits){
   const tree=await api(token,'/api/files')
   const plan=await api(token,'/api/files/plan','POST',{operations:edits.map(e=>({op:e.op??'write',path:e.path,destination:e.destination??null}))})
@@ -77,15 +80,7 @@ const receipt=(token,id,status=200)=>api(token,`/api/files/transactions/${id}`,'
 function passed(name){results.push({name,status:'passed'});console.log(`通过：${name}`)}
 async function until(fn,label,timeout=20000){const deadline=Date.now()+timeout;while(!await fn()){assert.ok(Date.now()<deadline,label);await sleep(100)}}
 async function browserLogin(page,key,name,navigate=true){
-  await page.addInitScript(value=>sessionStorage.setItem('hanshu.windowName',value),name)
-  if(navigate)await page.goto(base)
-  await projectMenu(page,'连接其他服务器…')
-  const form=page.getByRole('form',{name:'连接其他服务器',exact:true})
-  await form.getByLabel('服务地址',{exact:true}).fill(base)
-  await form.getByLabel('主体凭证',{exact:true}).fill(key)
-
-  await form.getByRole('button',{name:'连接并打开工程',exact:true}).click()
-  await waitProject(page,'统一工程验收')
+  return loginProject(page,base,key,name,navigate)
 }
 async function openProgress(page,name='example.progress'){ await closeCollaboration(page);
   await page.getByRole('tab',{name:'进度流程',exact:true}).click()
@@ -100,7 +95,7 @@ const pages=[],pageErrors=[]
 let apiTokens=[]
 const heartbeat=setInterval(()=>{for(const token of apiTokens)void api(token,'/api/heartbeat','POST',{resourceId:null,fileLeases:[]}).catch(()=>undefined)},8000)
 try{
-  assert.equal((await api('','/health')).protocol,10)
+  assert.equal((await api('','/health')).protocol,11)
   let owner=await login(h.credential,'LAN owner')
   const author=await api(owner.token,'/api/subjects','POST',{name:'LAN editor',kind:'account',role:'editor'})
   const spectator=await api(owner.token,'/api/subjects','POST',{name:'LAN viewer',kind:'agent',role:'viewer'})

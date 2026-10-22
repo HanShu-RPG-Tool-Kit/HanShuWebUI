@@ -104,6 +104,19 @@ export class EditTransactions {
     } catch (e) { this.journalError = `保存本地提交记录失败：${String(e)}。请导出修改，并检查浏览器存储空间。`; throw e }
   }
   stagedWrites(): FileEdit[] { return [...this.staged.values()].map(s => ({ ...s.edit })) }
+  async idle() { await this.tail; await this.settlePreparations(false) }
+  discardDraftPaths(paths: string[]) {
+    if (this.queued) throw new Error('仍有提交在途，不能清理草稿')
+    for (const path of paths) { this.staged.delete(path); this.dirty.delete(path); this.preparations.delete(path) }
+    this.changed()
+  }
+  clearSubmittedDrafts(edits: FileEdit[]) {
+    for(const edit of edits) {
+      const current=this.staged.get(edit.path)
+      if(current?.edit.data===edit.data)this.staged.delete(edit.path)
+    }
+    this.changed()
+  }
   editorDirtyPaths(): string[] { return [...new Set([...this.editorDirty.values()].flatMap(paths => [...paths]))] }
   private bindRestoredStaged(job: Job) {
     if (job.staged) return

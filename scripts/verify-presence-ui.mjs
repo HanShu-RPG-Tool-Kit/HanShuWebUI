@@ -1,4 +1,5 @@
-import {projectMenu,waitProject,collaboration,closeCollaboration} from './project-ui-helpers.mjs'
+import {testAccount} from './test-accounts.mjs'
+import {projectMenu,waitProject,collaboration,closeCollaboration,loginProject} from './project-ui-helpers.mjs'
 import assert from 'node:assert/strict'
 import { chromium } from 'playwright'
 import { networkInterfaces } from 'node:os'
@@ -11,10 +12,10 @@ import { harness, progress } from './collaboration-harness.mjs'
 const interfaces=Object.entries(networkInterfaces()).flatMap(([name,entries])=>(entries??[]).filter(e=>e.family==='IPv4'&&!e.internal).map(e=>({name,address:e.address})))
 const lan=process.env.HANSHU_TEST_HOST?interfaces.find(e=>e.address===process.env.HANSHU_TEST_HOST):interfaces.find(e=>!/vEthernet|virtual|docker|wsl|loopback|vpn|tun/i.test(e.name))??interfaces[0]
 assert.ok(lan,'An existing non-loopback IPv4 address is required')
-const h=await harness({web:true,host:lan.address})
+const h=await harness({web:true})
 const output=resolve('../output/collaboration-presence')
 const results=[],pages=[],errors=[],commits=[]
-let browser,setupToken=''
+let browser,setupToken='',sharedBase=''
 const heartbeat=setInterval(()=>{if(setupToken)void h.api(setupToken,'/api/heartbeat','POST',{resourceId:null,fileLeases:[]}).catch(()=>undefined)},8000)
 const source='src/progress/example.progress',secondSource='src/progress/second.progress'
 const language='assets/zh_cn/lang_progress/example.lang'
@@ -24,19 +25,8 @@ function passed(name){results.push({name,status:'passed'});console.log(`通过�
 const bar=page=>page.getByRole('region',{name:'协作面板',exact:true})
 const title=page=>page.getByLabel('进度标题',{exact:true})
 async function login(page,key,name){
-  await page.addInitScript(value=>sessionStorage.setItem('hanshu.windowName',value),name)
-  await page.goto(h.base)
-  await projectMenu(page,'连接其他服务器…')
-  const form=page.getByRole('form',{name:'连接其他服务器',exact:true})
-  await form.getByLabel('服务地址',{exact:true}).fill(h.base)
-  await form.getByLabel('主体凭证',{exact:true}).fill(key)
-
-  const response=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/sessions'&&r.request().method()==='POST')
-  await form.getByRole('button',{name:'连接并打开工程',exact:true}).click()
-  const {token}=await (await response).json()
-  await waitProject(page,'统一工程验收')
-  const snapshot=await h.api(token,'/api/project')
-  return {token,id:snapshot.session.id}
+  const {token}=await loginProject(page,testAccount(key).local?h.base:sharedBase,key,name)
+  return {token,id:(await h.api(token,'/api/project')).session.id}
 }
 async function openProgress(page,name='example.progress'){
   await page.getByRole('tab',{name:'进度流程',exact:true}).click()
@@ -59,6 +49,7 @@ try{
   await writeFile(join(h.root,'assets/zh_cn/lang_progress/second.lang'),JSON.stringify({name:'第二个进度',description:'用于切换编辑会话'}))
   const setup=await h.login(h.credential,'验收 API')
   setupToken=setup.token
+  sharedBase=(await h.api(setupToken,'/api/share/enable','POST')).urls[0]
   const author=await h.api(setupToken,'/api/subjects','POST',{name:'创作者',kind:'account',role:'editor'})
   browser=await chromium.launch({headless:true,...process.platform==='win32'?{channel:'msedge'}:{}})
   // A/B deliberately share one browser context as well as one subject.
@@ -148,7 +139,7 @@ try{
   assert.equal(await bar(a).getByRole('button',{name:'开始编辑',exact:true}).count(),0)
   passed('主体降权立即将全部会话夹为查看状态并禁止提交，未确认的本地输入仍保留')
   assert.deepEqual(errors,[])
-  await writeFile(join(output,'acceptance.json'),JSON.stringify({date:new Date().toISOString(),protocol:10,interface:lan.name,address:lan.address,physicalDevices:1,secondPhysicalDeviceTested:false,browserContexts:2,browserPages:3,browserClockOffsetsHours:[6,-4],results,commitRequestsObserved:commits.length},null,2))
+  await writeFile(join(output,'acceptance.json'),JSON.stringify({date:new Date().toISOString(),protocol:11,interface:lan.name,address:lan.address,physicalDevices:1,secondPhysicalDeviceTested:false,browserContexts:2,browserPages:3,browserClockOffsetsHours:[6,-4],results,commitRequestsObserved:commits.length},null,2))
   console.log(`协作编辑体验验收通过：${results.length} 组；${lan.name} ${lan.address}，同机真实 LAN HTTP。`)
 }catch(error){
   for(const [i,page]of pages.entries()){console.error(`PRESENCE CLIENT ${i}:`,(await page.locator('body').innerText().catch(()=>'' )).slice(0,4500));await page.screenshot({path:join(output,`failed-client-${i}.png`)}).catch(()=>undefined)}

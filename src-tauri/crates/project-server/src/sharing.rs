@@ -1,11 +1,8 @@
-//! Optional LAN listener over the SAME engine. Invitations admit separate guest
-//! subjects; recovery credentials and guest credentials remain on S.
+//! Optional LAN listener over the SAME engine. Shared URLs lead to password login;
+//! account creation and Admin sessions remain confined to the trusted local host.
 use super::*;
 use axum::extract::ConnectInfo;
-use std::{
-    collections::BTreeMap,
-    sync::atomic::{AtomicU64, Ordering},
-};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 pub type WebAssetResolver = Arc<dyn Fn(&str) -> Option<(Vec<u8>, String)> + Send + Sync>;
 #[derive(Clone)]
@@ -26,31 +23,8 @@ impl Drop for Running {
         self.task.abort();
     }
 }
-struct Invite {
-    id: String,
-    secret: String,
-    role: Role,
-    expires_at: u64,
-    uses: usize,
-}
-struct Guest {
-    subject_id: String,
-    credential: String,
-    invite_id: String,
-    sessions: Vec<String>,
-    revoked: bool,
-    resume_until: u64,
-}
-impl Guest {
-    fn remember(&mut self, session: String, engine: &Engine) {
-        self.sessions.retain(|id| engine.role(id).is_ok());
-        self.sessions.push(session);
-    }
-}
 struct Data {
     running: Option<Running>,
-    invites: BTreeMap<String, Invite>,
-    guests: BTreeMap<String, Guest>,
     firewall: String,
     firewall_message: String,
 }
@@ -60,9 +34,11 @@ pub(super) struct ShareControl {
     data: Mutex<Data>,
     generation: AtomicU64,
     next_generation: AtomicU64,
-    cookie: String,
 }
 impl ShareControl {
+    pub(super) fn root(&self) -> &FsPath {
+        &self.root
+    }
     pub(super) fn web_root(&self) -> Option<PathBuf> {
         self.assets
             .lock()
@@ -84,14 +60,11 @@ impl ShareControl {
             assets: Mutex::new(web.map(Assets::Directory)),
             data: Mutex::new(Data {
                 running: None,
-                invites: BTreeMap::new(),
-                guests: BTreeMap::new(),
                 firewall: "unknown".into(),
                 firewall_message: String::new(),
             }),
             generation: AtomicU64::new(0),
             next_generation: AtomicU64::new(1),
-            cookie: format!("hanshu_guest_{}", uuid::Uuid::new_v4().simple()),
         })
     }
     pub(super) fn set_web_assets(&self, resolver: WebAssetResolver) {
@@ -104,30 +77,17 @@ impl ShareControl {
     pub(super) fn is_active(&self, generation: u64) -> bool {
         generation != 0 && self.generation.load(Ordering::Acquire) == generation
     }
-    pub(super) fn shutdown(&self, engine: &Arc<Mutex<Engine>>) {
+    pub(super) fn shutdown(&self, _engine: &Arc<Mutex<Engine>>) {
         self.generation.store(0, Ordering::Release);
         if let Ok(mut data) = self.data.lock() {
             data.running.take();
-            if let Ok(mut engine) = engine.lock() {
-                for guest in data.guests.values() {
-                    for session in &guest.sessions {
-                        engine.logout(session);
-                    }
-                }
-            }
-            data.invites.clear();
-            data.guests.clear();
         }
     }
 }
-fn secret() -> String {
-    format!(
-        "{}{}",
-        uuid::Uuid::new_v4().simple(),
-        uuid::Uuid::new_v4().simple()
-    )
-}
-async fn owner(state: &AppState, headers: &HeaderMap) -> std::result::Result<String, ApiError> {
+pub(super) async fn owner(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> std::result::Result<String, ApiError> {
     access(state, bearer(headers)?, false, |engine, sid, _| {
         if engine.role(sid)? != Role::Owner {
             return Err(Error::new("forbidden", "需要工程管理权限"));
@@ -143,7 +103,7 @@ fn data(control: &ShareControl) -> Result<std::sync::MutexGuard<'_, Data>> {
         .map_err(|_| Error::new("storage", "共享状态不可用"))
 }
 fn snapshot_value(state: &AppState, sid: &str) -> Result<Value> {
-    let snapshot = state
+    let _snapshot = state
         .engine
         .lock()
         .map_err(|_| Error::new("storage", "工程状态不可用"))?
@@ -154,13 +114,8 @@ fn snapshot_value(state: &AppState, sid: &str) -> Result<Value> {
         .as_ref()
         .map(|running| running.urls.clone())
         .unwrap_or_default();
-    let invites: Vec<_> = data.invites.values().map(|invite| json!({"id": invite.id, "role": invite.role, "expiresAt": invite.expires_at, "uses": invite.uses,
-        "url": urls.first().map(|url| format!("{url}/#join={}", invite.secret))})).collect();
-    let guests: Vec<_> = data.guests.values().filter_map(|guest| snapshot.members.iter().find(|member| member.subject.id == guest.subject_id)
-        .map(|member| json!({"id": member.subject.id, "name": member.subject.name, "role": member.role, "enabled": member.subject.enabled && !guest.revoked,
-            "sessions": snapshot.sessions.iter().filter(|session| session.subject_id == guest.subject_id).count()}))).collect();
     Ok(
-        json!({"active": data.running.is_some(), "urls": urls, "invitations": invites, "guests": guests, "serverTime": now_ms(),
+        json!({"active": data.running.is_some(), "urls": urls, "serverTime": now_ms(),
         "firewall": {"supported": cfg!(windows), "phase": data.firewall, "message": data.firewall_message}}),
     )
 }
@@ -211,8 +166,17 @@ async fn enable(State(state): State<AppState>, headers: HeaderMap) -> ApiResult 
         }
     }
     let ip = lan_address()?;
-    let listener = TcpListener::bind("0.0.0.0:0").await.map_err(Error::from)?;
+    let port_file = state.sharing.root.join(".hanshu/service/share-port");
+    let preferred = std::fs::read_to_string(&port_file)
+        .ok()
+        .and_then(|s| s.trim().parse::<u16>().ok())
+        .unwrap_or(0);
+    let listener = match TcpListener::bind((std::net::Ipv4Addr::UNSPECIFIED, preferred)).await {
+        Ok(listener) => listener,
+        Err(_) => TcpListener::bind("0.0.0.0:0").await.map_err(Error::from)?,
+    };
     let port = listener.local_addr().map_err(Error::from)?.port();
+    std::fs::write(&port_file, port.to_string()).map_err(Error::from)?;
     let url = format!("http://{ip}:{port}");
     let mut remote = state.clone();
     remote.origins = Arc::new(vec![
@@ -230,6 +194,7 @@ async fn enable(State(state): State<AppState>, headers: HeaderMap) -> ApiResult 
         .next_generation
         .fetch_add(1, Ordering::Relaxed);
     remote.share_generation = Some(generation);
+    remote.remote_only = true;
     let mut router = super::project_router(None).merge(guest_routes());
     router = match assets {
         Assets::Directory(web) => {
@@ -276,29 +241,17 @@ async fn disable(State(state): State<AppState>, headers: HeaderMap) -> ApiResult
         if engine.role(&sid)? != Role::Owner {
             return Err(Error::new("forbidden", "需要工程管理权限"));
         }
-        let roles: BTreeMap<_, _> = engine
-            .snapshot(&sid)?
-            .members
-            .into_iter()
-            .map(|member| (member.subject.id, member.role))
-            .collect();
         clone.sharing.generation.store(0, Ordering::Release);
         data.running.take();
-        let mut failure = None;
-        for guest in data.guests.values() {
-            if let Some(role) = roles.get(&guest.subject_id) {
-                if let Err(error) = engine.update_subject(&sid, &guest.subject_id, *role, false) {
-                    failure.get_or_insert(error);
-                }
-            }
-            for session in &guest.sessions {
-                engine.logout(session);
-            }
-        }
-        data.invites.clear();
-        data.guests.clear();
-        if let Some(error) = failure {
-            return Err(error);
+        let sessions: Vec<_> = engine
+            .snapshot(&sid)?
+            .sessions
+            .into_iter()
+            .filter(|s| s.id != sid && engine.role(&s.id).is_ok_and(|role| role != Role::Owner))
+            .map(|s| s.id)
+            .collect();
+        for session in sessions {
+            engine.logout(&session);
         }
         Ok(())
     })
@@ -309,229 +262,16 @@ async fn disable(State(state): State<AppState>, headers: HeaderMap) -> ApiResult
     let sid = owner(&state, &headers).await?;
     Ok(Json(snapshot_value(&state, &sid)?))
 }
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-struct CreateInvite {
-    role: Role,
-    ttl_seconds: u64,
-}
-async fn invite(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(input): Json<CreateInvite>,
-) -> ApiResult {
-    let _ = owner(&state, &headers).await?;
-    if input.role == Role::Owner || !(1..=86400).contains(&input.ttl_seconds) {
-        return Err(Error::new("invalid", "请选择只读或可编辑权限，有效期最多 24 小时").into());
-    }
-    let mut data = data(&state.sharing)?;
-    if data.running.is_none() {
-        return Err(Error::new("conflict", "请先开启局域网共享").into());
-    }
-    data.invites
-        .retain(|_, invite| invite.expires_at > now_ms());
-    if data.invites.len() >= 64 {
-        return Err(Error::new("busy", "邀请数量已达上限，请先撤销旧邀请").into());
-    }
-    let id = uuid::Uuid::new_v4().to_string();
-    data.invites.insert(
-        id.clone(),
-        Invite {
-            id: id.clone(),
-            secret: secret(),
-            role: input.role,
-            expires_at: now_ms() + input.ttl_seconds * 1000,
-            uses: 0,
-        },
-    );
-    let invitation = &data.invites[&id];
-    Ok(Json(
-        json!({"id": id, "role": invitation.role, "expiresAt": invitation.expires_at,
-        "url": format!("{}/#join={}", data.running.as_ref().unwrap().urls[0], invitation.secret)}),
-    ))
-}
-async fn revoke(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Path(id): Path<String>,
-) -> ApiResult {
-    let _ = owner(&state, &headers).await?;
-    data(&state.sharing)?.invites.remove(&id);
-    Ok(Json(json!({"ok": true})))
-}
-fn cookie(headers: &HeaderMap, name: &str) -> Option<String> {
-    headers
-        .get(header::COOKIE)?
-        .to_str()
-        .ok()?
-        .split(';')
-        .find_map(|item| {
-            let (key, value) = item.trim().split_once('=')?;
-            (key == name && value.len() <= 128).then(|| value.to_owned())
-        })
-}
-fn live(state: &AppState) -> Result<u64> {
-    state
-        .share_generation
-        .filter(|generation| state.sharing.is_active(*generation))
-        .ok_or_else(|| Error::new("forbidden", "工程共享已关闭"))
-}
 async fn info(State(state): State<AppState>) -> ApiResult {
-    live(&state)?;
-    Ok(Json(
-        json!({"service": "hanshu-project-share", "active": true}),
-    ))
-}
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Join {
-    invitation: String,
-    name: String,
-}
-async fn join(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Json(input): Json<Join>,
-) -> std::result::Result<Response, ApiError> {
-    let generation = live(&state)?;
-    if input.invitation.len() > 128
-        || input.name.trim().is_empty()
-        || input.name.chars().count() > 120
+    if state
+        .share_generation
+        .is_none_or(|generation| !state.sharing.is_active(generation))
     {
-        return Err(Error::new("invalid", "请填写 1～120 个字符的显示名").into());
+        return Err(Error::new("forbidden", "Share unavailable").into());
     }
-    let resume = cookie(&headers, &state.sharing.cookie);
-    let cloned = state.clone();
-    let (key, token) = tokio::task::spawn_blocking(move || -> Result<(String, String)> {
-        let mut data = data(&cloned.sharing)?;
-        if !cloned.sharing.is_active(generation) {
-            return Err(Error::new("forbidden", "工程共享已关闭"));
-        }
-        let invite = data
-            .invites
-            .values()
-            .find(|invite| invite.secret == input.invitation && invite.expires_at > now_ms())
-            .ok_or_else(|| Error::new("forbidden", "邀请链接已失效或过期，请联系分享者"))?;
-        let invite_id = invite.id.clone();
-        let role = invite.role;
-        let mut engine = cloned
-            .engine
-            .lock()
-            .map_err(|_| Error::new("storage", "工程状态不可用"))?;
-        if let Some(key) = resume.as_ref().filter(|key| data.guests.contains_key(*key)) {
-            let guest = data.guests.get_mut(key).unwrap();
-            if guest.revoked {
-                return Err(Error::new("forbidden", "该加入身份已被移除，请联系分享者"));
-            }
-            if guest.invite_id == invite_id && guest.resume_until > now_ms() {
-                let (token, session) = engine.login(&guest.credential, &input.name, now_ms())?;
-                guest.remember(session.id, &engine);
-                return Ok((key.clone(), token));
-            }
-        }
-        if data.guests.len() >= 128 {
-            return Err(Error::new("busy", "加入人数已达上限"));
-        }
-        let owner_key =
-            std::fs::read_to_string(cloned.sharing.root.join(".hanshu/service/owner-key"))?;
-        let (_, admin) = engine.login(owner_key.trim(), "共享邀请授权", now_ms())?;
-        let created = engine.create_subject(&admin.id, input.name.clone(), "guest".into(), role);
-        engine.logout(&admin.id);
-        let (subject, credential) = created?;
-        let (token, session) = engine.login(&credential, &input.name, now_ms())?;
-        let key = secret();
-        data.guests.insert(
-            key.clone(),
-            Guest {
-                subject_id: subject.id,
-                credential,
-                invite_id: invite_id.clone(),
-                sessions: vec![session.id],
-                revoked: false,
-                resume_until: now_ms() + 12 * 60 * 60 * 1000,
-            },
-        );
-        data.invites.get_mut(&invite_id).unwrap().uses += 1;
-        Ok((key, token))
-    })
-    .await
-    .map_err(|_| Error::new("storage", "加入工程失败"))??;
-    let _ = state.events.send(());
-    let mut response = Json(json!({"token": token})).into_response();
-    response.headers_mut().insert(
-        header::SET_COOKIE,
-        HeaderValue::from_str(&format!(
-            "{}={key}; HttpOnly; SameSite=Strict; Path=/; Max-Age=43200",
-            state.sharing.cookie
-        ))
-        .map_err(|_| Error::new("storage", "加入会话建立失败"))?,
-    );
-    Ok(response)
-}
-async fn resume(State(state): State<AppState>, headers: HeaderMap) -> ApiResult {
-    let generation = live(&state)?;
-    let key = cookie(&headers, &state.sharing.cookie)
-        .ok_or_else(|| Error::new("unauthorized", "请使用邀请链接加入工程"))?;
-    let cloned = state.clone();
-    let token = tokio::task::spawn_blocking(move || -> Result<String> {
-        let mut data = data(&cloned.sharing)?;
-        if !cloned.sharing.is_active(generation) {
-            return Err(Error::new("forbidden", "工程共享已关闭"));
-        }
-        let guest = data
-            .guests
-            .get_mut(&key)
-            .filter(|guest| !guest.revoked && guest.resume_until > now_ms())
-            .ok_or_else(|| Error::new("unauthorized", "加入身份已失效，请使用新的邀请链接"))?;
-        let mut engine = cloned
-            .engine
-            .lock()
-            .map_err(|_| Error::new("storage", "工程状态不可用"))?;
-        let (token, session) = engine.login(&guest.credential, "协作窗口", now_ms())?;
-        guest.remember(session.id, &engine);
-        Ok(token)
-    })
-    .await
-    .map_err(|_| Error::new("storage", "恢复协作会话失败"))??;
-    let _ = state.events.send(());
-    Ok(Json(json!({"token": token})))
-}
-async fn remove_guest(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Path(id): Path<String>,
-) -> ApiResult {
-    let sid = owner(&state, &headers).await?;
-    let cloned = state.clone();
-    tokio::task::spawn_blocking(move || -> Result<()> {
-        let mut data = data(&cloned.sharing)?;
-        let guest = data
-            .guests
-            .values_mut()
-            .find(|guest| guest.subject_id == id)
-            .ok_or_else(|| Error::new("not_found", "加入者已不存在"))?;
-        let mut engine = cloned
-            .engine
-            .lock()
-            .map_err(|_| Error::new("storage", "工程状态不可用"))?;
-        let role = engine
-            .snapshot(&sid)?
-            .members
-            .iter()
-            .find(|member| member.subject.id == id)
-            .map(|member| member.role)
-            .ok_or_else(|| Error::new("not_found", "主体已不存在"))?;
-        engine.update_subject(&sid, &id, role, false)?;
-        guest.revoked = true;
-        for session in &guest.sessions {
-            engine.logout(session);
-        }
-        Ok(())
-    })
-    .await
-    .map_err(|_| Error::new("storage", "移除加入者失败"))??;
-    let _ = state.events.send(());
-    Ok(Json(json!({"ok": true})))
+    Ok(Json(
+        json!({"service":"hanshu-project-share","authentication":"password"}),
+    ))
 }
 async fn embedded_asset(State(state): State<AppState>, uri: axum::http::Uri) -> Response {
     let path = if uri.path() == "/" {
@@ -633,16 +373,10 @@ pub(super) fn management_routes() -> Router<AppState> {
         .route("/api/share/status", get(status))
         .route("/api/share/enable", post(enable))
         .route("/api/share/disable", post(disable))
-        .route("/api/share/invitations", post(invite))
-        .route("/api/share/invitations/{id}", axum::routing::delete(revoke))
-        .route("/api/share/guests/{id}/remove", post(remove_guest))
         .route("/api/share/firewall", post(firewall))
 }
 fn guest_routes() -> Router<AppState> {
-    Router::new()
-        .route("/api/share/info", get(info))
-        .route("/api/share/join", post(join))
-        .route("/api/share/resume", post(resume))
+    Router::new().route("/api/share/info", get(info))
 }
 
 #[cfg(test)]

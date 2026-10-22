@@ -26,6 +26,7 @@ pub(super) struct LocalHost {
     roots: Vec<Directory>,
     origins: Vec<String>,
     web_root: Option<PathBuf>,
+    accounts: Arc<Mutex<accounts::Accounts>>,
 }
 impl HostData {
     fn directory(&mut self, path: &FsPath, name: Option<&str>) -> Result<Directory> {
@@ -97,6 +98,7 @@ impl LocalHost {
         web: Option<&FsPath>,
         state: AppState,
     ) -> Result<Arc<Self>> {
+        let accounts = state.accounts.clone();
         let root = root.canonicalize()?;
         let mut data = HostData {
             directories: BTreeMap::new(),
@@ -149,6 +151,7 @@ impl LocalHost {
             roots,
             origins,
             web_root,
+            accounts,
         }))
     }
     fn authenticate(&self, headers: &HeaderMap) -> Result<()> {
@@ -172,8 +175,16 @@ fn loopback_host(value: &str) -> bool {
                     .is_ok_and(|ip| ip.is_loopback())
         })
 }
-async fn local_only(request: Request<axum::body::Body>, next: Next) -> Response {
-    let headers = request.headers();
+pub(super) fn local_headers(headers: &HeaderMap) -> bool {
+    let desktop_origin = headers
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| {
+            matches!(
+                value,
+                "tauri://localhost" | "http://tauri.localhost" | "https://tauri.localhost"
+            )
+        });
     let host_ok = headers
         .get(header::HOST)
         .and_then(|value| value.to_str().ok())
@@ -196,7 +207,28 @@ async fn local_only(request: Request<axum::body::Body>, next: Next) -> Response 
     let same_site = headers
         .get("sec-fetch-site")
         .is_none_or(|value| value != "cross-site");
-    if !host_ok || !origin_ok || !same_site {
+    host_ok
+        && (origin_ok || desktop_origin)
+        && (same_site || desktop_origin)
+        && ![
+            "x-hanshu-remote-client",
+            "forwarded",
+            "x-forwarded-for",
+            "x-forwarded-host",
+            "x-forwarded-proto",
+        ]
+        .iter()
+        .any(|name| headers.contains_key(*name))
+}
+pub(super) fn trusted_local(request: &Request<axum::body::Body>) -> bool {
+    request
+        .extensions()
+        .get::<axum::extract::ConnectInfo<SocketAddr>>()
+        .is_some_and(|peer| peer.0.ip().is_loopback())
+        && local_headers(request.headers())
+}
+pub(super) async fn local_only(request: Request<axum::body::Body>, next: Next) -> Response {
+    if !trusted_local(&request) {
         return ApiError(Error::new("forbidden", "请通过本机 WebUI 选择工程目录")).into_response();
     }
     next.run(request).await
@@ -335,12 +367,14 @@ async fn open_directory(
             )
             .into());
         }
-        let service = super::start(
+        let service = Box::pin(super::start_inner(
             &root,
             "127.0.0.1:0".parse().unwrap(),
             host.origins.clone(),
             None,
-        )
+            false,
+            Some(host.accounts.clone()),
+        ))
         .await?;
         data.projects.insert(
             root.clone(),

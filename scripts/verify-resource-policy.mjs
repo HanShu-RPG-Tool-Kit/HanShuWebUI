@@ -30,7 +30,7 @@ async function preparedPlan(token, operationPlan, { operations = operationPlan.o
 const submit = (token, batch) => h.api(token, '/api/files/commit', 'POST', batch)
 
 try {
-  assert.equal((await h.api('', '/health')).protocol, 10)
+  assert.equal((await h.api('', '/health')).protocol, 11)
   const owner = await h.login(h.credential, '关系策略验收')
   const reader = await h.api(owner.token, '/api/subjects', 'POST', { name: '关系查看者', kind: 'agent', role: 'viewer' })
   const viewer = await h.login(reader.credential, '只读方案查看')

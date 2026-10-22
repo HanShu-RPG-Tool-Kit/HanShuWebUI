@@ -4,7 +4,7 @@ import { connect } from 'node:net'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { progress } from './collaboration-harness.mjs'
-import { projectMenu, waitProject } from './project-ui-helpers.mjs'
+import { projectMenu, waitProject ,loginProject} from './project-ui-helpers.mjs'
 
 export const progressPath = 'src/progress/example.progress'
 export const languagePath = 'assets/zh_cn/lang_progress/example.lang'
@@ -103,14 +103,7 @@ export async function progressProxy() {
 
 export const active = page => page.locator('.app-workspace-pane.active')
 export async function login(page, base, credential, name, navigate = true) {
-  await page.addInitScript(value => sessionStorage.setItem('hanshu.windowName', value), name)
-  if (navigate) await page.goto(base)
-  await projectMenu(page, '连接其他服务器…')
-  const form = page.getByRole('form', { name: '连接其他服务器', exact: true })
-  await form.getByLabel('服务地址', { exact: true }).fill(base)
-  await form.getByLabel('主体凭证', { exact: true }).fill(credential)
-  await form.getByRole('button', { name: '连接并打开工程', exact: true }).click()
-  await waitProject(page, '统一工程验收')
+  return loginProject(page,base,credential,name,navigate)
 }
 export async function openProgress(page) {
   await page.getByRole('tab', { name: '进度流程', exact: true }).click()

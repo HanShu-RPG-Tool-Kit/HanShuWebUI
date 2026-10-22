@@ -29,7 +29,7 @@ async function undo(page) { await active(page).getByRole('button', { name: /^撤
 async function redo(page) { await active(page).getByRole('button', { name: /^重做/ }).click() }
 try {
   await mkdir(output, { recursive: true })
-  assert.equal((await h.api('', '/health')).protocol, 10)
+  assert.equal((await h.api('', '/health')).protocol, 11)
   const owner = await h.login(h.credential, 'progress browser setup'); ownerToken = owner.token
   const editorA = await h.api(ownerToken, '/api/subjects', 'POST', { name: '进度窗口作者 A', kind: 'account', role: 'editor' })
   const editorB = await h.api(ownerToken, '/api/subjects', 'POST', { name: '进度窗口作者 B', kind: 'account', role: 'editor' })
@@ -231,7 +231,7 @@ try {
   for (const page of pages) assert.equal(await page.evaluate(() => window.__directProjectIo), 0)
   assert.deepEqual(errors, [])
   await a.screenshot({ path: join(output, 'progress-autosubmit-collaboration.png') })
-  await writeFile(join(output, 'ui-acceptance.json'), JSON.stringify({ protocol: 10, physicalHosts: 1, isolatedBrowserContexts: 3, browserPages: 4, tests: results, pageErrors: errors }, null, 2))
+  await writeFile(join(output, 'ui-acceptance.json'), JSON.stringify({ protocol: 11, physicalHosts: 1, isolatedBrowserContexts: 3, browserPages: 4, tests: results, pageErrors: errors }, null, 2))
   console.log(`进度操作浏览器验收通过：${results.length} 组。`)
 } catch (error) {
   for (const [index, page] of pages.entries()) {

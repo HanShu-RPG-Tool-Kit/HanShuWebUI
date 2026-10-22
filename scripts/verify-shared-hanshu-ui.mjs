@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path'
 import { chromium } from 'playwright'
 import { harness } from './collaboration-harness.mjs'
 import { until } from './progress-collaboration-helpers.mjs'
+import { testAccount } from './test-accounts.mjs'
 
 const output = resolve('../output/collaboration-ui')
 await mkdir(output, { recursive: true })
@@ -18,13 +19,17 @@ try {
     { path: 'src/hanshu/原文剧本.hs', content: '标题：原文测试\n\nnarrator:共享原文自动本地化//\n\n' },
   ]); await h.release(owner.token)
   await h.api(owner.token, '/api/share/enable', 'POST')
-  const invitation = await h.api(owner.token, '/api/share/invitations', 'POST', { role: 'editor', ttlSeconds: 600 })
+  const share=await h.api(owner.token,'/api/share/status')
+  const invitation={url:share.urls[0]}
+  const author=await h.api(owner.token,'/api/subjects','POST',{name:'剧本协作者',kind:'account',role:'editor'})
+  const authorAccount=testAccount(author.credential)
   browser = await chromium.launch({ headless: true, ...(process.platform === 'win32' ? { channel: 'msedge' } : {}) })
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } })
   const errors = []; page.on('pageerror', e => errors.push(e.message))
   await page.goto(invitation.url)
-  await page.getByLabel('显示名', { exact: true }).fill('剧本协作者')
-  await page.getByRole('button', { name: '加入工程', exact: true }).click()
+  await page.getByLabel('用户名', { exact: true }).fill(authorAccount.username)
+  await page.getByLabel('密码',{exact:true}).fill(authorAccount.password)
+  await page.getByRole('button', { name: '登录工程', exact: true }).click()
   await page.locator('.monaco-editor').first().waitFor()
   await until(async()=>await page.locator('.hs-lang-box').count()>0,'Initial .hs did not initialize')
   await page.locator('.app-workspace-pane.active').getByText('未命名剧本.hs', {exact:true}).first().dblclick()
@@ -47,11 +52,14 @@ try {
   await page.keyboard.press('Control+s')
   await until(async () => JSON.parse(await readFile(join(h.root,'assets/zh_cn/lang_hs/未命名剧本.lang'),'utf8')).a1b2c3d4 === '在分享页面编辑台词', 'Inline .hs translation was not saved')
   console.log('通过：真实LAN邀请链接可显示、点击编辑并保存.hs台词')
-  const viewerInvite = await h.api(owner.token,'/api/share/invitations','POST',{role:'viewer',ttlSeconds:600})
+  const observer=await h.api(owner.token,'/api/subjects','POST',{name:'剧本审阅者',kind:'account',role:'viewer'})
+  const observerAccount=testAccount(observer.credential)
+  const viewerInvite=invitation
   const viewer = await browser.newPage({viewport:{width:1440,height:1000}})
   await viewer.goto(viewerInvite.url)
-  await viewer.getByLabel('显示名',{exact:true}).fill('剧本审阅者')
-  await viewer.getByRole('button',{name:'加入工程',exact:true}).click()
+  await viewer.getByLabel('用户名',{exact:true}).fill(observerAccount.username)
+  await viewer.getByLabel('密码',{exact:true}).fill(observerAccount.password)
+  await viewer.getByRole('button',{name:'登录工程',exact:true}).click()
   await viewer.locator('.monaco-editor').first().waitFor()
   await viewer.locator('.app-workspace-pane.active').getByText('未命名剧本.hs', {exact:true}).first().dblclick()
   await viewer.locator('.hs-lang-box').first().waitFor()

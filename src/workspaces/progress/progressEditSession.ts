@@ -195,6 +195,25 @@ export class ProgressEditSession {
     try { await this.resolveKnownFailure(keepMine) }
     finally { this.resolving = false; this.changed() }
   }
+  /** Explicit bulk policy: drop only incompatible fields, submit the rest with their original expectations. */
+  async synchronize() {
+    this.pauseText()
+    if (!this.snapshot.dirty) { try{await this.refresh()}catch(error){if(this.replaced)await this.openReplacement();else throw error}return }
+    if (this.current) await this.current.catch(() => undefined)
+    await this.reconcile()
+    const active = this.active
+    const record = active && this.adapter.record(active.id)
+    if (active && (!record || !['failed', 'conflict'].includes(record.phase))) throw new Error('进度操作结果尚未确认，不能放弃')
+    this.resolving = true; this.changed()
+    try {
+      const effects = coalesceProgressEffects(this.effects())
+      try { await this.refresh() } catch(error) { if(this.replaced) {await this.openReplacement();return} throw error }
+      const safe = effects.filter(effect => sameProgressValue(progressSlot(this.base, effect.target), effect.expected) && !sameProgressValue(effect.expected, effect.value))
+      if (active) await this.adapter.forget(active.id)
+      this.active = null; this.pending = safe; this.error = ''; this.undoStack = []; this.redoStack = []; this.changed()
+    } finally { this.resolving = false; this.changed() }
+    await this.flush()
+  }
   private async resolveKnownFailure(keepMine: boolean) {
     if (!this.active || this.current) return
     const record = this.adapter.record(this.active.id)

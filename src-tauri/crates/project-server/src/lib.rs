@@ -1,5 +1,6 @@
 //! Shared standalone / embedded server. No desktop APIs or client-side trust decisions.
 mod local_projects;
+mod accounts;
 pub use local_projects::create_project_directory;
 mod sharing;
 pub use sharing::WebAssetResolver;
@@ -36,6 +37,9 @@ struct AppState {
     origins: Arc<Vec<String>>,
     sharing: Arc<sharing::ShareControl>,
     share_generation: Option<u64>,
+    remote_only: bool,
+    accounts: Arc<Mutex<accounts::Accounts>>,
+    login_slots: Arc<tokio::sync::Semaphore>,
 }
 
 #[derive(Debug)]
@@ -77,12 +81,16 @@ async fn access<T: Send + 'static>(
     f: impl FnOnce(&mut Engine, &str, u64) -> Result<T> + Send + 'static,
 ) -> std::result::Result<T, ApiError> {
     let engine = state.engine.clone();
+    let accounts = state.accounts.clone();
+    let remote = state.remote_only || state.share_generation.is_some();
     let result = tokio::task::spawn_blocking(move || {
+        let mut accounts = accounts.lock().map_err(|_|Error::new("storage","账号服务不可用"))?;
         let mut e = engine
             .lock()
             .map_err(|_| Error::new("storage", "服务状态不可用"))?;
         let now = now_ms();
         let sid = e.authenticate(&token, now)?;
+        accounts.validate_session(&mut e, &sid, now, remote)?;
         f(&mut e, &sid, now)
     })
     .await
@@ -98,6 +106,16 @@ async fn origin_guard(
     request: Request<axum::body::Body>,
     next: Next,
 ) -> Response {
+    let local = !state.remote_only && state.share_generation.is_none() && local_projects::trusted_local(&request);
+    if !local {
+        if let Ok(token)=bearer(request.headers()) {
+            if let Ok(mut engine)=state.engine.lock() {
+                if engine.authenticate(&token,now_ms()).ok().is_some_and(|sid|matches!(engine.role(&sid),Ok(Role::Owner))) {
+                    return ApiError(Error::new("forbidden","Admin 只允许本机操作")).into_response();
+                }
+            }
+        }
+    }
     if state.share_generation.is_some_and(|generation| !state.sharing.is_active(generation)) {
         return ApiError(Error::new("forbidden", "工程共享已关闭")).into_response();
     }
@@ -144,7 +162,8 @@ struct Login {
     credential: String,
     client_name: String,
 }
-async fn login(State(state): State<AppState>, Json(input): Json<Login>) -> ApiResult {
+async fn local_login(State(state): State<AppState>, Json(input): Json<Login>) -> ApiResult {
+    if state.remote_only || state.share_generation.is_some() {return Err(Error::new("forbidden","Admin 只允许本机登录").into())}
     if input.credential.len() > 128 {
         return Err(Error::new("unauthorized", "访问凭证无效").into());
     }
@@ -165,11 +184,14 @@ async fn snapshot(State(s): State<AppState>, h: HeaderMap) -> ApiResult {
     Ok(Json(json!(v)))
 }
 async fn logout(State(s): State<AppState>, h: HeaderMap) -> ApiResult {
-    access(&s, bearer(&h)?, true, |e, id, _| {
+    let token = bearer(&h)?;
+    // The core logout revokes the session and all its leases.
+    let sid=access(&s, token, true, |e, id, _| {
         e.logout(id);
-        Ok(())
+        Ok(id.to_owned())
     })
     .await?;
+    accounts::lock(&s)?.revoke_session(&sid);
     Ok(Json(json!({"ok":true})))
 }
 
@@ -216,41 +238,8 @@ async fn presence(State(s): State<AppState>, h: HeaderMap, Json(i): Json<Presenc
     .await?;
     Ok(Json(json!(snapshot)))
 }
-#[derive(Deserialize)]
-struct NewSubject {
-    name: String,
-    kind: String,
-    role: Role,
-}
-async fn create_subject(
-    State(s): State<AppState>,
-    h: HeaderMap,
-    Json(i): Json<NewSubject>,
-) -> ApiResult {
-    let (subject, credential) = access(&s, bearer(&h)?, true, move |e, id, _| {
-        e.create_subject(id, i.name, i.kind, i.role)
-    })
-    .await?;
-    Ok(Json(json!({"subject":subject,"credential":credential})))
-}
-#[derive(Deserialize)]
-struct Grant {
-    role: Role,
-    enabled: bool,
-}
-async fn update_subject(
-    State(s): State<AppState>,
-    h: HeaderMap,
-    Path(target): Path<String>,
-    Json(i): Json<Grant>,
-) -> ApiResult {
-    access(&s, bearer(&h)?, true, move |e, id, _| {
-        e.update_subject(id, &target, i.role, i.enabled)
-    })
-    .await?;
-    Ok(Json(json!({"ok":true})))
-}
-async fn events(State(state): State<AppState>, ws: WebSocketUpgrade) -> Response {
+async fn events(State(mut state): State<AppState>, axum::extract::ConnectInfo(peer):axum::extract::ConnectInfo<SocketAddr>, h:HeaderMap, ws: WebSocketUpgrade) -> Response {
+    if !peer.ip().is_loopback() || !local_projects::local_headers(&h) {state.remote_only=true;}
     ws.max_message_size(1024)
         .on_upgrade(move |socket| watch(socket, state))
 }
@@ -454,8 +443,16 @@ impl Drop for Service {
     }
 }
 impl Service {
+    pub fn local_connection(&self, name:&str)->Result<LocalConnection> {
+        let key=std::fs::read_to_string(self.state.sharing.root().join(".hanshu/service/owner-key"))?;
+        let (token,_)=self.state.engine.lock().map_err(|_|Error::new("storage","工程状态不可用"))?.login(key.trim(),name,now_ms())?;
+        Ok(LocalConnection{url:format!("http://127.0.0.1:{}",self.address.port()),token})
+    }
     pub fn set_share_web_assets(&self, resolver: WebAssetResolver) {
         self.state.sharing.set_web_assets(resolver);
+    }
+    pub async fn open_project(&self,root:&FsPath,address:SocketAddr,origins:Vec<String>,web:Option<PathBuf>)->Result<Service> {
+        start_inner(root,address,origins,web,false,Some(self.state.accounts.clone())).await
     }
 }
 
@@ -465,7 +462,7 @@ pub async fn start(
     origins: Vec<String>,
     web_root: Option<PathBuf>,
 ) -> Result<Service> {
-    start_inner(root, address, origins, web_root, false).await
+    start_inner(root, address, origins, web_root, false, None).await
 }
 
 /// Explicit local host mode. Never enabled for a network project server.
@@ -478,16 +475,17 @@ pub async fn start_local(
     if !address.ip().is_loopback() {
         return Err(Error::new("invalid", "本机工程入口只允许监听回环地址"));
     }
-    start_inner(root, address, origins, web_root, true).await
+    start_inner(root, address, origins, web_root, true, None).await
 }
 
 fn project_router(web_root: Option<PathBuf>) -> Router<AppState> {
     let mut router = Router::new()
         .route(
             "/health",
-            get(|| async { Json(json!({"service":"hanshu-project","protocol":10})) }),
+            get(|| async { Json(json!({"service":"hanshu-project","protocol":11})) }),
         )
-        .route("/api/sessions", post(login))
+        .route("/api/sessions", post(accounts::login).layer(DefaultBodyLimit::max(4096)))
+        .route("/api/local-session",post(local_login).layer(DefaultBodyLimit::max(4096)).layer(middleware::from_fn(local_projects::local_only)))
         .route("/api/sessions/current", axum::routing::delete(logout))
         .route("/api/project", get(snapshot))
         .route("/api/history", get(history_list))
@@ -514,14 +512,12 @@ fn project_router(web_root: Option<PathBuf>) -> Router<AppState> {
         )
         .route("/api/heartbeat", post(heartbeat))
         .route("/api/presence", post(presence))
-        .route("/api/subjects", post(create_subject))
-        .route("/api/subjects/{id}", axum::routing::patch(update_subject))
         .route("/api/events", get(events));
     if let Some(root) = web_root {
         router =
             router.fallback_service(ServeDir::new(root).append_index_html_on_directories(true));
     }
-    router.merge(sharing::management_routes())
+    router.merge(sharing::management_routes()).merge(accounts::management_routes())
 }
 
 async fn start_inner(
@@ -530,6 +526,7 @@ async fn start_inner(
     mut origins: Vec<String>,
     web_root: Option<PathBuf>,
     local_projects: bool,
+    accounts: Option<Arc<Mutex<accounts::Accounts>>>,
 ) -> Result<Service> {
     if let Some(web) = &web_root {
         std::fs::create_dir_all(root)?;
@@ -558,6 +555,9 @@ async fn start_inner(
         origins: Arc::new(origins.clone()),
         sharing: sharing::ShareControl::new(root, web_root.as_deref()),
         share_generation: None,
+        remote_only: false,
+        accounts: match accounts {Some(accounts)=>accounts,None=>accounts::Accounts::open(root)?},
+        login_slots: Arc::new(tokio::sync::Semaphore::new(8)),
     };
     let local_host = if local_projects {
         Some(local_projects::LocalHost::new(
@@ -598,5 +598,5 @@ async fn start_inner(
 #[serde(rename_all = "camelCase")]
 pub struct LocalConnection {
     pub url: String,
-    pub credential: String,
+    pub token: String,
 }

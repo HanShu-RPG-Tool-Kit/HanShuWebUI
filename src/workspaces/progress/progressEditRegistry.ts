@@ -51,6 +51,7 @@ export function getProgressEditor(client: ProjectClient, path: string, name: str
     persist: value => { if (value) sessionStorage.setItem(storageKey, JSON.stringify(value)); else sessionStorage.removeItem(storageKey) },
   }, recovery)
   client.registerProgressEditor(path, () => session.flush())
+  client.registerSyncParticipant(`progress:${path}`, () => session.synchronize())
   client.transactions.subscribe(() => { void session.reconcile() })
   let started = false
   const record: EditorRecord = { session, locales, start: async () => {

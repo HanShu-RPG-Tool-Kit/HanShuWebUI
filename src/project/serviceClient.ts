@@ -45,6 +45,13 @@ export class ProjectClient {
   assetPackageId = ''
   online = true
   remoteEpoch = 0
+  discardEpoch = 0
+  readonly discardVersions = new Map<string, number>()
+  readonly syncParticipants = new Map<string, () => Promise<void>>()
+  registerSyncParticipant(key: string, sync: () => Promise<void>) {
+    this.syncParticipants.set(key, sync)
+    return () => { if (this.syncParticipants.get(key) === sync) this.syncParticipants.delete(key) }
+  }
   private ownVersions = new Map<string, Map<string | null,string | null>>()
   private entryResults = new Map<string, unknown>()
   private libraryResults = new Map<string, Record<string, unknown>>()
@@ -165,6 +172,7 @@ export class ProjectClient {
     const captured = this.capture(edits)
     return this.transactions.submit(label, () => captured)
   }
+  captureEdits(edits: FileEdit[]): FileEdit[] { return this.capture(edits) }
   private progressEdit(path: string, command: ProgressCommand): FileEdit {
     normalizeProjectPath(path)
     // C's conservative recovery scope only. S independently derives the exact

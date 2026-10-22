@@ -184,4 +184,15 @@ await test('取消失败操作时移除记录的通知不会重新恢复已取�
   assert.equal(f.session.getSnapshot().error, '')
   assert.equal(f.session.getSnapshot().view.languages.zh_cn.name, '标题')
 })
+await test('批量同步只丢冲突字段，保留并提交其他字段', async () => {
+  const f=fixture();await f.session.initialize();f.session.composition(true)
+  const next=parseProgress(f.session.getSnapshot().view.source);next.authorNotes='本机备注';next.completion='any'
+  f.session.editSource(stringifyProgress(next));f.session.pauseText()
+  f.peer({authorNotes:'远端备注'});await f.session.refresh();f.session.composition(false)
+  await assert.rejects(f.session.flush())
+  await f.session.synchronize()
+  assert.equal(parseProgress(f.state.source).authorNotes,'远端备注')
+  assert.equal(parseProgress(f.state.source).completion,'any')
+  assert.equal(f.session.getSnapshot().dirty,false)
+})
 console.log(`进度编辑会话 ${passed} 组通过。`)

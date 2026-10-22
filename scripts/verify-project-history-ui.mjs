@@ -1,4 +1,4 @@
-import {projectMenu,waitProject} from './project-ui-helpers.mjs'
+import {projectMenu,waitProject,loginProject} from './project-ui-helpers.mjs'
 import assert from 'node:assert/strict'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
@@ -23,15 +23,14 @@ async function commit(edits) {
   finally { await h.release(ownerToken) }
 }
 async function login(page, credential, name) {
-  await page.addInitScript(value=>sessionStorage.setItem('hanshu.windowName',value),name)
-  await page.goto(proxy.base)
-  await projectMenu(page,'连接其他服务器…')
-  const form = page.getByRole('form',{name:'连接其他服务器',exact:true})
-  await form.getByLabel('服务地址', { exact: true }).fill(proxy.base)
-  await form.getByLabel('主体凭证', { exact: true }).fill(credential)
-
-  await form.getByRole('button', { name: '连接并打开工程', exact: true }).click()
-  await waitProject(page,'统一工程验收')
+  const login=await loginProject(page,proxy.base,credential,name)
+  // Local Admin opens via the trusted host, whose returned service URL is direct.
+  // Keep explicit file-operation fault injection on that real local connection.
+  await page.route('**/api/files/**',route=>{
+    const url=new URL(route.request().url())
+    return route.continue({url:proxy.base+url.pathname+url.search})
+  })
+  return login
 }
 async function openHistory(page) {
   await page.getByRole('button', { name: '工程历史', exact: true }).click()
@@ -53,7 +52,7 @@ async function openProgress(page) {
 async function editorText(page) { return (await active(page).locator('.monaco-editor .view-lines').allTextContents()).join('\n').replace(/\u00a0/g, ' ') }
 try {
   await mkdir(output, { recursive: true })
-  assert.equal((await h.api('', '/health')).protocol, 10)
+  assert.equal((await h.api('', '/health')).protocol, 11)
   const owner = await h.login(h.credential, '历史验收 API'); ownerToken = owner.token
   const editor = await h.api(ownerToken, '/api/subjects', 'POST', { name: '历史协作者', kind: 'account', role: 'editor' })
   const viewer = await h.api(ownerToken, '/api/subjects', 'POST', { name: '历史审阅者', kind: 'agent', role: 'viewer' })
@@ -169,6 +168,6 @@ try {
   passed('工程历史入口覆盖剧本、进度流程和皮肤；当前资源快捷筛选准确，窄窗口无横向溢出')
 
   assert.deepEqual(pageErrors, [])
-  await writeFile(join(output, 'ui-acceptance.json'), JSON.stringify({ protocol: 10, physicalHosts: 1, isolatedBrowserContexts: 3, tests: results, pageErrors }, null, 2))
+  await writeFile(join(output, 'ui-acceptance.json'), JSON.stringify({ protocol: 11, physicalHosts: 1, isolatedBrowserContexts: 3, tests: results, pageErrors }, null, 2))
   console.log(`工程历史浏览器验收通过：${results.length} 组。`)
 } finally { clearInterval(heartbeat); await browser?.close(); await h.stop(); await proxy.close() }

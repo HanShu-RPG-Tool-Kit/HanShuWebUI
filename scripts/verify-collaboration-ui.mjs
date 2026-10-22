@@ -1,4 +1,4 @@
-import {projectMenu,waitProject,collaboration} from './project-ui-helpers.mjs'
+import {projectMenu,waitProject,collaboration,loginProject} from './project-ui-helpers.mjs'
 import assert from 'node:assert/strict'
 import { chromium } from 'playwright'
 import { readFile, mkdir, writeFile } from 'node:fs/promises'
@@ -15,11 +15,7 @@ async function until(fn,label){const deadline=Date.now()+20000;while(!await fn()
 const active=page=>page.locator('.app-workspace-pane.active'),title=page=>active(page).getByLabel('进度标题',{exact:true}),status=page=>page.getByRole('region',{name:'工程提交状态',exact:true})
 const passed=name=>{results.push({name,status:'passed'});console.log(`通过：${name}`)}
 async function login(page,key,name){
-  await page.addInitScript(value=>sessionStorage.setItem('hanshu.windowName',value),name)
-  await page.goto(h.base);await projectMenu(page,'连接其他服务器…')
-  const form=page.getByRole('form',{name:'连接其他服务器',exact:true})
-  await form.getByLabel('服务地址',{exact:true}).fill(h.base);await form.getByLabel('主体凭证',{exact:true}).fill(key);
-  await form.getByRole('button',{name:'连接并打开工程',exact:true}).click();await waitProject(page,'统一工程验收')
+  return loginProject(page,h.base,key,name)
 }
 async function progress(page){await page.getByRole('tab',{name:'进度流程',exact:true}).click();await page.getByRole('textbox',{name:'筛选资源',exact:true}).fill('example.progress');await page.locator('[role=treeitem][title="example.progress"]').click();await title(page).waitFor()}
 try{
@@ -76,6 +72,6 @@ try{
   for(const page of pages)assert.equal(await page.evaluate(()=>window.__directProjectIo),0,'C attempted direct OS project I/O')
   assert.deepEqual(errors,[]);await b.screenshot({path:join(output,'unified-project.png')})
   passed('皮肤与进度、剧本共用工程会话；皮肤操作同步，所有客户端直接工程文件系统写入为零')
-  await writeFile(join(output,'acceptance.json'),JSON.stringify({date:new Date().toISOString(),protocol:10,browserContexts:3,results,progressDetailSuite:'verify-progress-collaboration-ui.mjs'},null,2))
+  await writeFile(join(output,'acceptance.json'),JSON.stringify({date:new Date().toISOString(),protocol:11,browserContexts:3,results,progressDetailSuite:'verify-progress-collaboration-ui.mjs'},null,2))
 }catch(error){for(const[i,page]of pages.entries()){console.error(`CLIENT ${i}:`,(await page.locator('body').innerText().catch(()=>'' )).slice(0,3500));await page.screenshot({path:join(output,`failed-client-${i}.png`)}).catch(()=>undefined)}throw error}
 finally{clearInterval(heartbeat);if(browser)await browser.close();await h.stop()}

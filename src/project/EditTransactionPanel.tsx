@@ -7,6 +7,7 @@ import type { TransactionPhase } from './editTransactions'
 import { inspectConflict, isSkinSemanticEdit, type ConflictInspection } from './editConflicts'
 import { EditConflictDialog } from './EditConflictDialog'
 import { skinTransactionDescription } from './skinTransactionPresentation'
+import { synchronizeProject } from './syncProject'
 
 const labels: Record<TransactionPhase, string> = {
   preparing: '准备修改', submitting: '正在提交', saved: '已保存', failed: '提交失败', conflict: '提交冲突', uncertain: '结果待确认',
@@ -16,6 +17,13 @@ export function EditTransactionPanel({ client }: { client: ProjectClient }) {
   const [expanded, setExpanded] = useState(false)
   const [error, setError] = useState('')
   const [conflict,setConflict] = useState<ConflictInspection|null>(null)
+  const [syncing,setSyncing] = useState(false)
+  const [syncMessage,setSyncMessage] = useState('')
+  async function synchronize() {
+    if(syncing || !window.confirm('放弃与服务器冲突的本机修改，提交其余可提交修改，并同步服务器状态。结果待确认的提交会先查询。是否继续？'))return
+    setSyncing(true);setSyncMessage('');setError('')
+    try {setSyncMessage(await synchronizeProject(client))} catch(e) {setError(e instanceof Error?e.message:String(e))} finally {setSyncing(false)}
+  }
   const failures = state.transactions.filter(t => ['failed', 'conflict', 'uncertain'].includes(t.phase))
   const current = state.transactions.find(t => t.phase === 'submitting') ?? state.transactions.find(t => t.phase === 'preparing')
   const message = current ? labels[current.phase] : failures.length ? `${failures.length} 次提交待处理` : state.pendingPaths.length ? `${state.pendingPaths.length} 个文件待保存` : '修改已保存'
@@ -51,11 +59,14 @@ export function EditTransactionPanel({ client }: { client: ProjectClient }) {
       <span role="status" className={failures.length ? 'project-service-error' : ''}>{message}</span>
       <button onClick={() => void run(save)} disabled={!client.writable || state.queued > 0 || (!state.pendingPaths.length && !failures.length)}>保存修改</button>
       <button onClick={() => setExpanded(!expanded)} aria-expanded={expanded}>提交记录{failures.length ? ` · ${failures.length}` : ''}</button>
+      <button disabled={!client.writable||state.queued>0||syncing} onClick={()=>void synchronize()}>放弃冲突修改并同步修改</button>
       {state.preparing > 0 && <span>正在整理本地草稿…</span>}
     </div>
     {state.journalError && <p role="alert">{state.journalError}</p>}
+    {syncMessage&&<p role="status">{syncMessage}</p>}
+    {error&&<p role="alert">{error}</p>}
+    {syncing&&<div className="project-connect-backdrop" onKeyDown={e=>{e.preventDefault();e.stopPropagation()}}><section role="dialog" aria-modal="true" aria-label="正在同步修改" className="project-connect-dialog"><h2>正在同步修改</h2><p>查询提交结果、去掉冲突修改并保存其余修改。请稍候。</p><button autoFocus aria-disabled="true">正在同步…</button></section></div>}
     {(expanded || failures.length > 0) && <div className="project-edit-records">
-      {error && <p role="alert">{error}</p>}
       {state.transactions.length === 0 && <p>尚无提交记录。语言修改随正文一起保存。</p>}
       {[...(expanded ? state.transactions : failures)].reverse().map(t => {
         const submission = client.transactions.submission(t.id)

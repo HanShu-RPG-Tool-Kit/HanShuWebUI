@@ -43,7 +43,7 @@ async function proxiedSubmit(token, request) {
 }
 try {
   await mkdir(output, { recursive: true })
-  assert.equal((await h.api('', '/health')).protocol, 10)
+  assert.equal((await h.api('', '/health')).protocol, 11)
   owner = await h.login(h.credential, '历史管理员')
   const author = await h.api(owner.token, '/api/subjects', 'POST', { name: '历史作者 A', kind: 'account', role: 'editor' })
   const collaborator = await h.api(owner.token, '/api/subjects', 'POST', { name: '历史作者 B', kind: 'agent', role: 'editor' })
@@ -272,6 +272,6 @@ try {
     passed('不同工程即使有同名文件和相同清单标识，服务历史身份及命名版本仍相互隔离')
   } finally { await otherProject.stop() }
 
-  await writeFile(join(output, 'http-acceptance.json'), JSON.stringify({ protocol: 10, transport: 'real HTTP with one fault-injecting proxy on a single host', tests: results, stats: await stats() }, null, 2))
+  await writeFile(join(output, 'http-acceptance.json'), JSON.stringify({ protocol: 11, transport: 'real HTTP with one fault-injecting proxy on a single host', tests: results, stats: await stats() }, null, 2))
   console.log(`工程历史 HTTP 验收通过：${results.length} 组。`)
 } finally { clearInterval(heartbeat); await h.stop(); await proxy.close() }

@@ -364,6 +364,17 @@ export const ScriptWorkspace = forwardRef<
     editorRef.current?.setValue(content)
     setSavedAt(updatedAt ?? nowStamp())
   }
+  const activeDiscardVersion=active?serviceSession.binding?.handle.client.discardVersions.get(sourcePathOf(active.script))??0:0
+  useEffect(() => {
+    if (!activeDiscardVersion) return
+    const live=getProjectSession().workspace
+    const selected=live.activeScriptId && findScript(live,live.activeScriptId)
+    if(selected)loadEditorContent(selected.script.id,selected.script.content,selected.script.updatedAt)
+    else loadEditorContent(null,'')
+    setLangEdit(null)
+    // Explicit bulk adoption must reset the source buffer and its local undo.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[activeDiscardVersion])
 
   /**
    * 把编辑器里那份正文并回**它属于的**那一份文件（换文件、导出、写盘前都先做这一步）。
@@ -3446,7 +3457,7 @@ export const ScriptWorkspace = forwardRef<
                 )}
                 <div className="editor-pane">
                   <Editor
-                    key={`${presenceClient?.snapshot.projectId ?? 'unbound'}:${active?.script.id ?? 'empty'}:${titleName}`}
+                    key={`${presenceClient?.snapshot.projectId ?? 'unbound'}:${presenceClient?.discardVersions.get(presencePath ?? '') ?? 0}:${active?.script.id ?? 'empty'}:${titleName}`}
                     height="100%"
                     language={editorLanguageForFile(titleName)}
                     theme={

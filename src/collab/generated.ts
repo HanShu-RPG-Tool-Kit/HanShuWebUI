@@ -22,7 +22,11 @@ export type HistoryRestoreChange = { path: string, action: string, beforeVersion
 
 export type Role = "owner" | "editor" | "viewer";
 
-export type Subject = { id: string, name: string, kind: string, enabled: boolean, };
+export type Subject = { id: string,
+/**
+ * Login identifier; `name` is the display nickname.
+ */
+username: string, name: string, kind: string, enabled: boolean, };
 
 export type ResourceKind = "folder" | "progress" | "goalDefinition";
 

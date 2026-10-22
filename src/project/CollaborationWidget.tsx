@@ -66,7 +66,7 @@ export function CollaborationWidget({ client, snapshot, projectName, open, onOpe
       </header>
       <div className={`collab-status${attention ? ' is-warning' : ''}`} role="status"><i className={!client?.online ? 'is-offline' : ''} />{status}<small>{snapshot ? ({owner:'管理者',editor:'可编辑',viewer:'只读'}[snapshot.role]) : ''}</small></div>
       {client && snapshot ? <>
-        <nav className="collab-tabs" aria-label="协作视图"><button aria-pressed={tab === 'people'} onClick={() => setTab('people')}>成员 <span>{members.length}</span></button><button aria-pressed={tab === 'changes'} onClick={() => setTab('changes')}>修改 {state.pendingPaths.length + failures.length > 0 && <span>{failures.length || state.pendingPaths.length}</span>}</button>{snapshot.role === 'owner' && <button aria-pressed={tab === 'manage'} onClick={() => setTab('manage')}>管理</button>}</nav>
+        <nav className="collab-tabs" aria-label="协作视图"><button aria-pressed={tab === 'people'} onClick={() => setTab('people')}>成员 <span>{members.length}</span></button><button aria-pressed={tab === 'changes'} onClick={() => setTab('changes')}>修改 {state.pendingPaths.length + failures.length > 0 && <span>{failures.length || state.pendingPaths.length}</span>}</button>{snapshot.role === 'owner' && <button aria-pressed={tab === 'manage'} onClick={() => setTab('manage')}>用户管理</button>}</nav>
         <div className="collab-body">
           {error && <p className="collab-error" role="alert">{error}</p>}
           {tab === 'people' && <><div className="collab-section-heading">整个工程 <small>各窗口的当前焦点</small></div><div className="collab-members">{members.map(member => <article key={member.subject.id}>

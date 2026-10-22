@@ -7,7 +7,9 @@ export function localProjectBoundary(): Plugin {
     let path = new URL(request.url ?? '/', 'http://localhost').pathname
     try { path = decodeURIComponent(path).replace(/\/+/g, '/') } catch { /* Invalid paths will not match a service endpoint. */ }
     const local = request.socket.remoteAddress ?? ''
-    if (/^\/__project\/api\/(?:local(?:\/|$)|share\/firewall(?:\/|$))/.test(path) && !(local === '::1' || local.startsWith('127.') || local.startsWith('::ffff:127.'))) {
+    if (!(local === '::1' || local.startsWith('127.') || local.startsWith('::ffff:127.'))) request.headers['x-hanshu-remote-client'] = '1'
+    else delete request.headers['x-hanshu-remote-client']
+    if (/^\/__project\/api\/(?:local(?:\/|-|$)|accounts(?:\/|$)|share\/firewall(?:\/|$))/.test(path) && !(local === '::1' || local.startsWith('127.') || local.startsWith('::ffff:127.'))) {
       response.writeHead(403, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' })
       response.end(JSON.stringify({ code: 'forbidden', message: '请通过本机 WebUI 打开本机工程' }))
       return

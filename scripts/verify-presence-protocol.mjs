@@ -9,7 +9,7 @@ const script = 'src/hanshu/story.hs'
 let count = 0
 const passed = name => { count++; console.log(`通过：${name}`) }
 try {
-  assert.equal((await h.api('', '/health')).protocol, 10)
+  assert.equal((await h.api('', '/health')).protocol, 11)
   const owner = await h.login(h.credential, '管理员')
   const subject = await h.api(owner.token, '/api/subjects', 'POST', { name: '协作者', kind: 'agent', role: 'editor' })
   const a = await h.login(subject.credential, '窗口 A')

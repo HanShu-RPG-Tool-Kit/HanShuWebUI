@@ -23,6 +23,9 @@ impl Role {
 #[serde(rename_all = "camelCase")]
 pub struct Subject {
     pub id: String,
+    /// Login identifier; `name` is the display nickname.
+    #[serde(default)]
+    pub username: String,
     pub name: String,
     pub kind: String,
     pub enabled: bool,

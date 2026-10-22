@@ -1,4 +1,4 @@
-import {projectMenu,waitProject,collaboration,closeCollaboration,submission} from './project-ui-helpers.mjs'
+import {projectMenu,waitProject,collaboration,closeCollaboration,submission,loginProject} from './project-ui-helpers.mjs'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { createServer, request as httpRequest } from 'node:http'
@@ -90,18 +90,8 @@ async function assertFree(page) {
   assert.equal(await bar(page).getByRole('button', { name: /^(开始编辑|重新申请写权|结束编辑)$/ }).count(), 0, 'Optimistic editor exposes manual write ownership')
 }
 async function login(page, credential, name) {
-  await page.addInitScript(value=>sessionStorage.setItem('hanshu.windowName',value),name)
-  await page.goto(base)
-  await projectMenu(page,'连接其他服务器…')
-  const form = page.getByRole('form',{name:'连接其他服务器',exact:true})
-  await form.getByLabel('服务地址', { exact: true }).fill(base)
-  await form.getByLabel('主体凭证', { exact: true }).fill(credential)
-
-  const reply = page.waitForResponse(response => new URL(response.url()).pathname === '/api/sessions' && response.request().method() === 'POST')
-  await form.getByRole('button', { name: '连接并打开工程', exact: true }).click()
-  const { token } = await (await reply).json()
-  await waitProject(page,'统一工程验收')
-  return { token, id: (await h.api(token, '/api/project')).session.id, name }
+  const {token}=await loginProject(page,base,credential,name)
+  return {token,id:(await h.api(token,'/api/project')).session.id,name}
 }
 async function openProgressFile(page, name) {
   await page.getByRole('tab', { name: '进度流程', exact: true }).click()
@@ -134,7 +124,7 @@ function skinFixture() {
 
 try {
   await mkdir(output, { recursive: true })
-  assert.equal((await h.api('', '/health')).protocol, 10)
+  assert.equal((await h.api('', '/health')).protocol, 11)
   const owner = await h.login(h.credential, '验收 API'); ownerToken = owner.token
   const editor = await h.api(ownerToken, '/api/subjects', 'POST', { name: '创作者', kind: 'account', role: 'editor' })
   const viewer = await h.api(ownerToken, '/api/subjects', 'POST', { name: '审阅主体', kind: 'agent', role: 'viewer' })
@@ -238,7 +228,7 @@ try {
   await (await editSkinName(a, '成功回复丢失的名称')).press('Enter')
   await until(async () => /待确认|结果未知|尚未确认/.test(await (await submission(a)).innerText()), 'Lost reply did not become uncertain inline')
   assert.equal((await diskEntry('presence-skin-a')).name, '成功回复丢失的名称')
-  assert.equal(await (await submission(a)).getByRole('button', { name: /放弃|丢弃/ }).count(), 0, 'Unknown outcome can be discarded from inline status')
+  assert.equal(await (await submission(a)).getByRole('button', { name: /放弃原操作|移除记录|丢弃/ }).count(), 0, 'Unknown outcome can be discarded from inline status')
   const beforeConfirm = observed.length
   await a.screenshot({ path: join(output, 'skin-inline-uncertain.png') })
   await (await submission(a)).getByRole('button', { name: /查询.*结果|确认.*结果/ }).click()
@@ -294,7 +284,7 @@ try {
   passed('跨工作区更新窗口焦点，隐藏编辑器不清除新焦点；窄窗口悬浮面板不溢出')
 
   assert.deepEqual(pageErrors, [])
-  await writeFile(join(output, 'acceptance.json'), JSON.stringify({ date: new Date().toISOString(), protocol: 10, transport: 'real HTTP/WebSocket through loopback fault proxy', physicalDevices: 1, secondPhysicalDeviceTested: false, browserContexts: 3, browserPages: 3, results, observedCommitRequests: observed.length }, null, 2))
+  await writeFile(join(output, 'acceptance.json'), JSON.stringify({ date: new Date().toISOString(), protocol: 11, transport: 'real HTTP/WebSocket through loopback fault proxy', physicalDevices: 1, secondPhysicalDeviceTested: false, browserContexts: 3, browserPages: 3, results, observedCommitRequests: observed.length }, null, 2))
   console.log(`统一协作体验验收通过：${results.length} 组；同机三个隔离浏览器环境。`)
 } catch (error) {
   for (const [index, page] of pages.entries()) { console.error(`CLIENT ${index}:`, (await page.locator('body').innerText().catch(() => '')).slice(0, 6500)); await page.screenshot({ path: join(output, `failed-client-${index}.png`) }).catch(() => undefined) }

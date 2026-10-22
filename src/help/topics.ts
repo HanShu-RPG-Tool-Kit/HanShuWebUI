@@ -1,4 +1,5 @@
 import collaborationService from './docs/collaboration-service.md?raw'
+import collaborationGuide from './docs/collaboration-guide.md?raw'
 import collaborationProgramming from './docs/collaboration-programming.md?raw'
 import welcome from './docs/welcome.md?raw'
 import docs from './docs/docs.md?raw'
@@ -21,6 +22,7 @@ import about from './docs/about.md?raw'
 
 /** 帮助条目 id；正文用 `[标题](#topic-id)` 互链 */
 export type HelpTopicId =
+  | 'collaboration-guide'
   | 'collaboration-service'
   | 'collaboration-programming'
   | 'welcome'
@@ -57,6 +59,7 @@ export type HelpTopic = {
 }
 
 export const HELP_TOPICS: HelpTopic[] = [
+  { id:'collaboration-guide',title:'连接与协作',group:'开始',audience:'user',inDocs:true,body:collaborationGuide },
   { id:'collaboration-service',title:'工程服务与多人协作',group:'开始',audience:'both',inDocs:true,body:collaborationService },
   { id:'collaboration-programming',title:'多人协作编程指南',group:'开始',audience:'dev',inDocs:true,body:collaborationProgramming },
   { id: 'welcome', title: '欢迎', group: '开始', audience: 'user', inDocs: false, body: welcome },

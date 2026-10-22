@@ -1,12 +1,11 @@
 //! Desktop host only: the project service itself has no Tauri dependency.
 use project_server::{LocalConnection, Service};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 
 pub struct ProjectService {
-    connection: Mutex<LocalConnection>,
-    _service: Mutex<Service>,
+    _service: tokio::sync::Mutex<Service>,
 }
 fn share_assets(service: &Service, app: &tauri::AppHandle) {
     let resolver = app.asset_resolver();
@@ -43,28 +42,23 @@ impl ProjectService {
             tauri::async_runtime::block_on(project_server::start(&root, address, origins, None))
                 .map_err(|e| e.to_string())?;
         share_assets(&service, app);
-        let credential = std::fs::read_to_string(root.join(".hanshu/service/owner-key"))
-            .map_err(|e| e.to_string())?;
         Ok(Self {
-            connection: Mutex::new(LocalConnection {
-                url: format!("http://127.0.0.1:{}", service.address.port()),
-                credential,
-            }),
-            _service: Mutex::new(service),
+            _service: tokio::sync::Mutex::new(service),
         })
     }
 }
 
 /// Local desktop IPC only. The network server never exposes the bootstrap credential.
 #[tauri::command]
-pub fn project_local_connection(
+pub async fn project_local_connection(
     state: tauri::State<'_, ProjectService>,
 ) -> Result<LocalConnection, String> {
-    Ok(state
-        .connection
+    state
+        ._service
         .lock()
-        .map_err(|_| "工程状态不可用")?
-        .clone())
+        .await
+        .local_connection("Desktop")
+        .map_err(|e| e.to_string())
 }
 
 /// The trusted native host chooses the directory. C cannot pass a path or obtain a writable handle.
@@ -91,25 +85,23 @@ pub async fn project_open_local(
     } else {
         parent
     };
-    let service = project_server::start(
-        &root,
-        "127.0.0.1:0".parse().unwrap(),
-        vec![
-            "http://localhost:5173".into(),
-            "http://127.0.0.1:5173".into(),
-        ],
-        None,
-    )
-    .await
-    .map_err(|e| e.to_string())?;
-    share_assets(&service, &app);
-    let credential = std::fs::read_to_string(root.join(".hanshu/service/owner-key"))
+    let mut running = state._service.lock().await;
+    let service = running
+        .open_project(
+            &root,
+            "127.0.0.1:0".parse().unwrap(),
+            vec![
+                "http://localhost:5173".into(),
+                "http://127.0.0.1:5173".into(),
+            ],
+            None,
+        )
+        .await
         .map_err(|e| e.to_string())?;
-    let connection = LocalConnection {
-        url: format!("http://127.0.0.1:{}", service.address.port()),
-        credential,
-    };
-    *state.connection.lock().map_err(|_| "工程状态不可用")? = connection.clone();
-    *state._service.lock().map_err(|_| "工程状态不可用")? = service;
+    share_assets(&service, &app);
+    let connection = service
+        .local_connection("Desktop")
+        .map_err(|e| e.to_string())?;
+    *running = service;
     Ok(connection)
 }
