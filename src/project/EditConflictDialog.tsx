@@ -14,7 +14,7 @@ export function EditConflictDialog({client,initial,onClose}:{client:ProjectClien
   function choose(group:number,choice:ConflictChoice) {
     setInspection(current=>({...current,rows:current.rows.map(row=>row.group===group?{...row,choice}:row)}))
   }
-  const operation = {write:'写入',mkdir:'目录',remove:'删除',move:'移动'}
+  const operation = {write:'写入',mkdir:'目录',remove:'删除',move:'移动','skin-entry-patch':'修改皮肤条目','skin-library-command':'皮肤库操作','history-restore':'恢复历史版本'}
   return <div className="project-conflict-backdrop">
     <section className="project-conflict-dialog" role="dialog" aria-modal="true" aria-label="处理提交冲突">
       <header><div><h2>处理提交冲突</h2><p>逐项选择处理方式，最后作为一批提交。服务器版本再次变化时会停止提交。</p></div><button disabled={busy} onClick={onClose} aria-label="关闭冲突处理">×</button></header>
@@ -34,7 +34,7 @@ export function EditConflictDialog({client,initial,onClose}:{client:ProjectClien
           {row.destination && <p>目标路径当前状态：{row.destination.kind??'不存在'}。移动和目标写入共用同一处理方式。</p>}
         </article>)}
       </div>
-      <footer>{error&&<p role="alert">{error}</p>}<button disabled={busy} onClick={()=>void run(async()=>setInspection(await inspectConflict(client,inspection.id)))}>重新载入服务器版本</button><button disabled={busy} onClick={onClose}>暂不处理</button><button disabled={busy||!client.writable} onClick={()=>void run(async()=>{const edits=conflictEdits(inspection);client.assertEditingIntent(edits);await client.transactions.resolve(inspection.id,edits);onClose()})}>{busy?'正在处理…':'提交处理结果'}</button></footer>
+      <footer>{error&&<p role="alert">{error}</p>}<button disabled={busy} onClick={()=>void run(async()=>setInspection(await inspectConflict(client,inspection.id)))}>重新载入服务器版本</button><button disabled={busy} onClick={onClose}>暂不处理</button><button disabled={busy||!client.writable} onClick={()=>void run(async()=>{const edits=conflictEdits(inspection);await client.assertEditingIntent(edits);await client.transactions.resolve(inspection.id,edits);onClose()})}>{busy?'正在处理…':'提交处理结果'}</button></footer>
     </section>
   </div>
 }

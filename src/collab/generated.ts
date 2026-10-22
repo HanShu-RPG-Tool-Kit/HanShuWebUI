@@ -1,5 +1,13 @@
 // Generated from project-core. Run npm run generate:protocol; do not edit.
 
+export type HistoryRestoreSelection = { sequence: number, paths: Array<string> | null, skinEntryId: string | null, includeRelated: boolean, };
+
+export type HistoryRestoreRequest = { sequence: number, paths: Array<string> | null, skinEntryId: string | null, includeRelated: boolean, expectedHead: string, };
+
+export type HistoryRestorePlan = { request: HistoryRestoreRequest, changes: Array<HistoryRestoreChange>, leasePaths: Array<string>, warnings: Array<string>, };
+
+export type HistoryRestoreChange = { path: string, action: string, beforeVersion: string | null, afterVersion: string | null, };
+
 export type Role = "owner" | "editor" | "viewer";
 
 export type Subject = { id: string, name: string, kind: string, enabled: boolean, };
@@ -20,7 +28,17 @@ path: string,
 /**
  * The server-derived authority shared by a source and its language/voice assets.
  */
-authorityId: string, activity: FileActivity, };
+authorityId: string,
+/**
+ * An opaque skin entry identity used only for collaborator display, never for authority.
+ * It may reference a deleted entry whose local draft is being recovered.
+ */
+entryId: string | null,
+/**
+ * Editor intent for free editors; managed progress editors derive this from their lease.
+ * This field never grants or proves write authority.
+ */
+activity: FileActivity, };
 
 export type Session = { id: string, subjectId: string, clientName: string, expiresAt: number, resourceId: string | null, activity: string,
 /**
@@ -53,7 +71,49 @@ export type FileTransactionStatus = "committed" | "rejected";
 
 export type FileTransactionError = { code: string, message: string, };
 
-export type FileTransactionReceipt = { transactionId: string, status: FileTransactionStatus, tree: ProjectFileTree | null, error: FileTransactionError | null, };
+export type FileTransactionReceipt = { transactionId: string, status: FileTransactionStatus, tree: ProjectFileTree | null, error: FileTransactionError | null,
+/**
+ * Exact entry result at commit time, retained by immutable transaction receipts.
+ */
+skinEntries?: Array<Record<string, unknown>>,
+/**
+ * Exact semantic operation result, persisted atomically with the commit decision.
+ */
+skinCommandResult?: { command: string; result: Record<string, unknown> }, };
 
-export type SourceFileMove = { path: string, destination: string | null, };
+export type HistoryActor = { subjectId: string, name: string, clientName: string, sessionId: string, };
+
+export type HistoryObject = { kind: string, hash: string | null, size: number, };
+
+export type HistoryChange = { path: string, before: HistoryObject | null, after: HistoryObject | null, };
+
+export type HistoryMove = { from: string, to: string, };
+
+export type HistoryEntry = { sequence: number, projectId: string, time: number, kind: string, transactionId: string | null, actor: HistoryActor | null, changes: Array<HistoryChange>, moves: Array<HistoryMove>, groupId: number, label: string | null, };
+
+export type HistoryPage = { entries: Array<HistoryEntry>, nextBefore: number | null, head: number, projectId: string, };
+
+export type HistoryTree = { sequence: number, scopePath: string | null, entries: Array<ProjectFile>, };
+
+export type HistoryContent = { sequence: number, path: string, content: string, version: string, size: number, };
+
+export type HistoryStats = { head: number, revisions: number, objects: number, storedBytes: number, rawBytes: number, namedVersions: number, };
+
+export type FileOperationKind = "history-restore" | "write" | "skin-entry-patch" | "skin-library-command" | "mkdir" | "check" | "move" | "remove";
+
+export type FileOperationRequest = { op: FileOperationKind, path: string, destination: string | null, };
+
+export type PlannedFileOperation = { op: FileOperationKind, path: string, destination: string | null, version: string | null, destinationVersion: string | null, originPath: string, };
+
+export type ResourceRelationKind = "ownership" | "reference";
+
+export type ResourceRelationRole = "language" | "voice" | "rewardKit";
+
+export type ResourceRelation = { kind: ResourceRelationKind, role: ResourceRelationRole, from: string, to: string, };
+
+export type FileEditAuthority = { path: string, authorityPath: string, sourceKind: string | null, };
+
+export type ResourceOperationPlan = { revision: number, operations: Array<PlannedFileOperation>, leasePaths: Array<string>, authorities: Array<FileEditAuthority>, relations: Array<ResourceRelation>, };
+
+export type ResourceRelations = { path: string, relations: Array<ResourceRelation>, };
 

@@ -24,6 +24,8 @@ npm run dev
 
 完整启动、中心服务部署、存储边界、协议和验证见 [工程协作服务](src/help/docs/collaboration-service.md)。
 
+全局「工程历史」由 S 保存，所有工作区和协作者读取同一份历史。每笔有效事务立即留档，界面按编辑时段聚合；可命名版本、比较文件、恢复资源或整个工程。恢复经过权限、写权与版本校验，并生成新版本。旧浏览器本地历史可单独导出。
+
 ## 验证
 
 ```sh
@@ -32,9 +34,19 @@ cargo build -p project-server --manifest-path src-tauri/Cargo.toml
 npm run check:protocol
 npm run test:project-boundary
 npm run test:collaboration
+npm run test:resource-policy
+npm run test:project-history
+npm run test:project-history:ui
+npm run test:skin-drafts
+npm run test:skin-collaboration
+npm run test:skin-operation-ui
+npm run verify:skin-management
 npm run build
 npm run test:collaboration:ui
 npm run test:collaboration:presence
+npm run test:presence-protocol
+npm run test:resource-status
+npm run test:collaboration:unified
 npm run test:file-editing
 npm run test:collaboration:network
 npm run lint

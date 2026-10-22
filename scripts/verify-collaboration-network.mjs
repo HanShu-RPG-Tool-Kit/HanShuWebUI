@@ -67,8 +67,8 @@ async function api(token,path,method='GET',body,status=200){
 async function login(credential,name){return api('','/api/sessions','POST',{credential,clientName:name})}
 async function prepare(token,edits){
   const tree=await api(token,'/api/files')
-  const paths=[...new Set(edits.flatMap(e=>e.destination?[e.path,e.destination]:[e.path]))]
-  const leases=await api(token,'/api/files/leases','POST',{paths})
+  const plan=await api(token,'/api/files/plan','POST',{operations:edits.map(e=>({op:e.op??'write',path:e.path,destination:e.destination??null}))})
+  const leases=await api(token,'/api/files/leases','POST',{paths:plan.leasePaths})
   return {transactionId:randomUUID(),changes:edits.map(e=>({op:e.op??'write',path:e.path,version:tree.entries.find(f=>f.path===e.path)?.version??null,content:e.content===undefined?null:Buffer.from(e.content).toString('base64'),destination:e.destination??null,destinationVersion:tree.entries.find(f=>f.path===e.destination)?.version??null,leaseId:leases.find(l=>l.resourceId===`file:${e.path}`).id,...e.version!==undefined?{version:e.version}:{}}))}
 }
 const submit=(token,request)=>api(token,'/api/files/commit','POST',request)
@@ -98,7 +98,7 @@ const pages=[],pageErrors=[]
 let apiTokens=[]
 const heartbeat=setInterval(()=>{for(const token of apiTokens)void api(token,'/api/heartbeat','POST',{resourceId:null,fileLeases:[]}).catch(()=>undefined)},8000)
 try{
-  assert.equal((await api('','/health')).protocol,4)
+  assert.equal((await api('','/health')).protocol,9)
   let owner=await login(h.credential,'LAN owner')
   const author=await api(owner.token,'/api/subjects','POST',{name:'LAN editor',kind:'account',role:'editor'})
   const spectator=await api(owner.token,'/api/subjects','POST',{name:'LAN viewer',kind:'agent',role:'viewer'})
@@ -282,6 +282,7 @@ try{
     if(item.path.endsWith('.progress'))await beginEditing(pageA)
     await pageA.keyboard.press('Control+s')
     await until(async()=>(await api(a.token,'/api/files')).entries.some(e=>e.path===item.path),`LAN creation failed: ${item.path}`)
+    await until(async()=>await pageA.getByRole('region',{name:'工程提交状态',exact:true}).getByRole('status').innerText()==='修改已保存',`Client did not finish acknowledging creation: ${item.path}`)
   }
   acceptRemoval=true;dropCommitResponse=true
   const beforeRemove=observed.length

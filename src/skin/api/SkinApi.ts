@@ -11,6 +11,7 @@ import type {
   CreateFolderRequest,
   EntryExport,
   FolderNode,
+  FolderScopeSnapshot,
   FolderTreeResponse,
   ImportJob,
   LibraryEntry,
@@ -49,13 +50,13 @@ export interface SkinApi {
   listFolders(): Promise<FolderTreeResponse>
   createFolder(body: CreateFolderRequest): Promise<FolderNode>
   patchFolder(folderId: string, body: PatchFolderRequest): Promise<FolderNode>
-  deleteFolder(folderId: string): Promise<{ deleted: boolean }>
+  deleteFolder(folderId: string, expectedFolder?: FolderNode): Promise<{ deleted: boolean }>
   /** Delete every entry in the folder and its descendant folders (nodes kept). */
-  deleteEntriesInFolder(folderId: string): Promise<{ deleted: number }>
+  deleteEntriesInFolder(folderId: string, expectedScope?: FolderScopeSnapshot): Promise<{ deleted: number }>
   saveEntry(body: SaveEntryRequest): Promise<LibraryEntry>
   patchEntry(entryId: string, body: PatchEntryRequest): Promise<LibraryEntry>
   batchPatchEntries(body: BatchPatchRequest): Promise<BatchPatchResponse>
-  deleteEntry(entryId: string): Promise<{ deleted: boolean }>
+  deleteEntry(entryId: string, expectedRevision?: number): Promise<{ deleted: boolean }>
   startImport(
     kind: 'png-url' | 'player-name' | 'skin-code' | 'skin-file',
     text: string,

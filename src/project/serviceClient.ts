@@ -1,15 +1,17 @@
 import { request, ServiceError, type Connection, type Lease, type Snapshot } from '../collab/protocol'
-import type { FileChange, FileTransactionReceipt, ProjectFile, ProjectFileTree } from '../collab/generated'
+import type { FileChange, FileEditAuthority, FileOperationRequest, FileTransactionReceipt, ProjectFile, ProjectFileTree, ResourceOperationPlan, ResourceRelations, HistoryRestorePlan } from '../collab/generated'
 import { EditTransactions, type SendAttempt } from './editTransactions'
 import { assetCacheEpoch } from '../assets/idb'
-import { FileEditing, progressEditingPath } from './fileEditing'
+import { FileEditing } from './fileEditing'
 
 export type FileEdit = {
-  op: 'write' | 'mkdir' | 'remove' | 'move'; path: string; data?: string | Blob | Uint8Array
+  op: 'write' | 'mkdir' | 'remove' | 'move' | 'skin-entry-patch' | 'skin-library-command' | 'history-restore'; path: string; data?: string | Blob | Uint8Array
   destination?: string; version?: string | null; destinationVersion?: string | null; cacheEpoch?: number
   /** C-only recovery/three-way comparison data; never sent as authority to S. */
   baseData?: string | Blob | Uint8Array; adopt?: boolean
   localContents?: Record<string, string>; localEpochs?: Record<string, number>
+  /** Frozen preview scope, used for C draft/recovery boundaries; S derives it independently. */
+  affectedPaths?: string[]
 }
 export function normalizeProjectPath(path: string): string {
   const parts = path.split('/')
@@ -42,6 +44,17 @@ export class ProjectClient {
   online = true
   remoteEpoch = 0
   private ownVersions = new Map<string, Map<string | null,string | null>>()
+  private entryResults = new Map<string, unknown>()
+  private libraryResults = new Map<string, Record<string, unknown>>()
+  private importResults = new Map<string, unknown>()
+  skinLibraryResult(command: string) { return this.libraryResults.get(command) }
+  skinImportResult(entryId: string): unknown { return this.importResults.get(entryId) }
+  private entryAcknowledgements = new Map<string, { command: string; requestId: string; entry: unknown }>()
+  /** Exact acknowledged command result, including when the original response was lost. */
+  skinEntryResult(command: string): unknown { return this.entryResults.get(command) }
+  skinEntryAcknowledgement(entryId: string) { return this.entryAcknowledgements.get(entryId) }
+  private authorities = new Map<string, FileEditAuthority>()
+  private authorityRevision = -1
   private serverClock = 0
   private serverClockAt = 0
   serverNow = () => this.serverClock + Math.max(0, performance.now() - this.serverClockAt)
@@ -89,10 +102,33 @@ export class ProjectClient {
     }
   }
   get writable() { return this.online && this.snapshot.role !== 'viewer' }
-  assertEditingIntent(edits: FileEdit[], uncertain = false) {
+  /** This cache only decorates C's view. Every submission obtains a fresh S plan. */
+  editingAuthority(path: string) { return this.authorities.get(path)?.authorityPath }
+  async planOperations(operations: FileOperationRequest[]): Promise<ResourceOperationPlan> {
+    if (!operations.length) return { revision: this.tree.revision, operations: [], leasePaths: [], authorities: [], relations: [] }
+    const plan = await request<ResourceOperationPlan>(this.connection, '/api/files/plan', 'POST', { operations })
+    if (plan.revision >= this.authorityRevision) {
+      if (plan.revision > this.authorityRevision) this.authorities.clear()
+      this.authorityRevision = plan.revision
+      for (const authority of plan.authorities) this.authorities.set(authority.path, authority)
+    }
+    return plan
+  }
+  resourceRelations(path: string): Promise<ResourceRelations> {
+    return request(this.connection, `/api/files/relations?path=${encodeURIComponent(path)}`)
+  }
+  async assertEditingIntent(edits: FileEdit[], uncertain = false) {
+    if (edits.length === 1 && edits[0].op === 'history-restore') return { revision: this.tree.revision, operations: [], leasePaths: [], authorities: [], relations: [] }
+    const plan = await this.planOperations(edits.map(edit => ({ op: edit.adopt ? 'check' : edit.op, path: edit.path, destination: edit.destination ?? null })))
+    this.assertPlanEditingIntent(edits, plan, uncertain)
+    return plan
+  }
+  private assertPlanEditingIntent(edits: FileEdit[], plan: ResourceOperationPlan, uncertain = false) {
     for (const edit of edits) {
-      const path = progressEditingPath(edit.path)
-      const structural = path && edits.some(item => (item.op === 'move' || item.op === 'remove') && (item.path === path || item.destination === path))
+      const authority = plan.authorities.find(item => item.path === edit.path)
+      const path = authority?.sourceKind === 'progress' ? authority.authorityPath : null
+      const contains = (root: string | undefined, path: string) => root && (path === root || path.startsWith(`${root}/`))
+      const structural = path && edits.some(item => !item.adopt && (item.op === 'move' || item.op === 'remove') && (contains(item.path, path) || contains(item.destination, path)))
       if (path && edit.op === 'write' && !structural && !this.editing.canEdit(path)) {
         throw new ServiceError(uncertain ? 'commit_uncertain' : 'editing_required', `请先打开 ${path.split('/').at(-1)} 并申请编辑；本窗口的草稿已保留`)
       }
@@ -105,6 +141,10 @@ export class ProjectClient {
     if (initial) { this.baseline.clear(); for (const e of this.tree.entries) this.baseline.set(e.path, e.version) }
   }
   async read(path: string, track = true, expected?: string): Promise<File> {
+    return (await this.readSnapshot(path, track, expected)).file
+  }
+  /** Return content together with its version; consumers must bind both to the same snapshot. */
+  async readSnapshot(path: string, track = true, expected?: string): Promise<{ file: File; version: string }> {
     normalizeProjectPath(path)
     const result = await request<{ content: string; version: string }>(this.connection, `/api/files/content?path=${encodeURIComponent(path)}${expected ? `&version=${encodeURIComponent(expected)}` : ''}`)
     if (track && !this.transactions.hasDraft(path)) this.baseline.set(path, result.version)
@@ -112,7 +152,7 @@ export class ProjectClient {
     const file = new File([bytes as BlobPart], path.split('/').at(-1)!, { lastModified: 0 })
     // An untracked conflict inspection must not replace the base of a local draft.
     if (track && !this.transactions.hasDraft(path)) this.originals.set(path, { version: result.version, data: file })
-    return file
+    return { file, version: result.version }
   }
   async text(path: string, track = true): Promise<string | null> {
     try { const text = await (await this.read(path, track)).text(); if (track && !this.transactions.hasDraft(path)) { this.texts.set(path, text); const version=this.baseline.get(path); if(version)this.originals.set(path,{version,data:text}) }; return text }
@@ -120,6 +160,7 @@ export class ProjectClient {
   }
   private capture(edits: FileEdit[]): FileEdit[] {
     return edits.map(e => {
+      if (e.op === 'history-restore') return { ...e, affectedPaths: [...(e.affectedPaths ?? [])] }
       const version = this.expected(e.path, e.version === undefined ? this.baseline.get(e.path) ?? null : e.version)
       const original = this.originals.get(e.path)
       const captured = { ...e, data: e.data instanceof Uint8Array ? e.data.slice() : e.data, cacheEpoch: e.cacheEpoch ?? (e.path.startsWith('assets/') ? assetCacheEpoch(this.assetPackageId, e.path) : undefined), version,
@@ -132,11 +173,52 @@ export class ProjectClient {
     const captured = this.capture(edits)
     return this.transactions.submit(label, () => captured)
   }
+  restoreHistory(plan: HistoryRestorePlan): Promise<void> {
+    const edit: FileEdit = { op: 'history-restore', path: 'project.json', version: null, data: JSON.stringify(plan.request), affectedPaths: plan.changes.map(change => change.path) }
+    return this.transactions.submit(`恢复历史版本 #${plan.request.sequence}`, () => {
+      this.assertRestoreDrafts(edit)
+      return [edit]
+    })
+  }
+  private assertRestoreDrafts(edit: FileEdit) {
+    const overlaps = (a: string, b: string) => a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`)
+    const path = this.transactions.getSnapshot().pendingPaths.find(path => edit.affectedPaths?.some(target => overlaps(path, target)))
+    if (path) throw new ServiceError('drafts_pending', `${path} 有本地未保存修改。请先保存或另存草稿，再恢复历史；当前输入不会被清除。`)
+  }
+  private async performHistoryRestore(edits: FileEdit[], attempt: SendAttempt): Promise<void> {
+    const edit = edits[0]
+    if (edits.length !== 1 || edit.op !== 'history-restore' || typeof edit.data !== 'string') throw new ServiceError('invalid', '历史恢复不能和其他编辑混合')
+    let receipt: FileTransactionReceipt | null = null
+    if (attempt.uncertain) {
+      try { receipt = await this.receipt(attempt.transactionId) }
+      catch { throw new ServiceError('commit_uncertain', '暂时无法查询恢复结果；原恢复请求已保留') }
+      if (!receipt && attempt.queryOnly) throw new ServiceError('commit_uncertain', '服务暂无恢复回执，可重试原恢复请求')
+    }
+    if (!receipt) {
+      if (!this.writable) throw new ServiceError(attempt.uncertain ? 'commit_uncertain' : 'forbidden', '当前不能提交恢复，原请求已保留')
+      if (!attempt.uncertain) this.assertRestoreDrafts(edit)
+      try {
+        receipt = validateReceipt(await request<FileTransactionReceipt>(this.connection, '/api/files/commit', 'POST', { transactionId: attempt.transactionId, changes: [{ op: edit.op, path: 'project.json', version: null, leaseId: '', content: bytesToBase64(new TextEncoder().encode(edit.data)), destination: null, destinationVersion: null }] }), attempt.transactionId)
+      } catch (error) {
+        if (!attempt.uncertain && error instanceof ServiceError && ['unauthorized', 'forbidden', 'invalid'].includes(error.code)) throw error
+        throw new ServiceError('commit_uncertain', '恢复结果待确认。请查询原回执，不要重新创建恢复操作。')
+      }
+    }
+    if (receipt.status === 'rejected') throw new ServiceError(receipt.error!.code, receipt.error!.message)
+    // Treat a restore like a remote update: never advance a newer local draft's
+    // baseline to the restored content or interpret command JSON as project.json.
+    try {
+      await this.refresh()
+      this.remoteEpoch++
+      await this.onCommitted?.(edits, true)
+    } catch { throw new ServiceError('commit_uncertain', '服务已恢复，本地视图尚未刷新；请查询原回执继续恢复视图') }
+  }
   async receipt(transactionId: string): Promise<FileTransactionReceipt | null> {
     try { return validateReceipt(await request<FileTransactionReceipt>(this.connection, `/api/files/transactions/${encodeURIComponent(transactionId)}`),transactionId) }
     catch (error) { if (error instanceof ServiceError && error.code === 'not_found') return null; throw error }
   }
   private async perform(edits: FileEdit[], attempt: SendAttempt) {
+    if (edits.some(edit => edit.op === 'history-restore')) return this.performHistoryRestore(edits, attempt)
     let receipt: FileTransactionReceipt | null = null
     if (attempt.uncertain) {
       try { receipt = await this.receipt(attempt.transactionId) }
@@ -145,44 +227,89 @@ export class ProjectClient {
     }
     if (receipt?.status === 'rejected') throw new ServiceError(receipt.error!.code, receipt.error!.message)
     if (!receipt) {
-      if (!this.writable) throw new ServiceError(attempt.uncertain ? 'commit_uncertain' : this.online ? 'forbidden' : 'offline', this.online ? '当前主体只有读取权限' : '服务已断开，草稿保留在本窗口')
-      const mutations = edits
-      this.assertEditingIntent(mutations, attempt.uncertain)
-      const paths = [...new Set(mutations.flatMap(e => e.destination ? [e.path, e.destination] : [e.path]))]
-      for (const path of paths) normalizeProjectPath(path)
-      const existing = new Set([...this.leases.values()].map(lease => lease.id))
-      const acquired = paths.length ? await request<Lease[]>(this.connection, '/api/files/leases', 'POST', { paths }).catch(error => { if (attempt.uncertain) throw new ServiceError('commit_uncertain', '尚未确认原提交结果，暂时无法取得写权；请继续查询结果'); throw error }) : []
-      const acquiredByPath = new Map(acquired.map(lease => [lease.resourceId.slice(5), lease]))
-      for (const l of acquired) this.leases.set(l.resourceId.slice(5), l)
       try {
-        // An expired/taken-over editor token must not be silently replaced by this
-        // transaction's acquire request, even if the resource is free again.
-        this.assertEditingIntent(mutations, attempt.uncertain)
-        const changes: FileChange[] = []
-        for (const edit of mutations) {
-          const data = edit.adopt ? undefined : edit.data
-          const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data instanceof Blob ? new Uint8Array(await data.arrayBuffer()) : data
-          const lease = acquiredByPath.get(edit.path)
-          if (!lease) throw new ServiceError('locked', '服务没有返回完整的文件写权，请重新申请后重试')
-          changes.push({ op: edit.adopt ? 'check' : edit.op, path: edit.path, version: edit.version ?? null, leaseId: lease.id, content: bytes ? bytesToBase64(bytes) : null, destination: edit.destination ?? null, destinationVersion: edit.destinationVersion ?? null })
-        }
-        // No retries with a newer version: that would silently overwrite another client's work.
+        if (!this.writable) throw new ServiceError(attempt.uncertain ? 'commit_uncertain' : this.online ? 'forbidden' : 'offline', this.online ? '当前主体只有读取权限' : '服务已断开，草稿保留在本窗口')
+        const mutations = edits
+        const plan = await this.assertEditingIntent(mutations, attempt.uncertain)
+        const paths = plan.leasePaths
+        for (const path of paths) normalizeProjectPath(path)
+        const existing = new Set([...this.leases.values()].map(lease => lease.id))
+        const acquired = paths.length ? await request<Lease[]>(this.connection, '/api/files/leases', 'POST', { paths }).catch(error => { if (attempt.uncertain) throw new ServiceError('commit_uncertain', '尚未确认原提交结果，暂时无法取得写权；请继续查询结果'); throw error }) : []
+        const acquiredByPath = new Map(acquired.map(lease => [lease.resourceId.slice(5), lease]))
+        for (const l of acquired) this.leases.set(l.resourceId.slice(5), l)
         try {
-          receipt = validateReceipt(await request<FileTransactionReceipt>(this.connection, '/api/files/commit', 'POST', { transactionId: attempt.transactionId, changes }),attempt.transactionId)
-        } catch (error) {
-          // Only a definitive protocol rejection can start a new attempt. Network,
-          // storage and malformed responses retain identity, even across a reload.
-          if (!attempt.uncertain && error instanceof ServiceError && (['unauthorized','forbidden','invalid','busy','transaction_mismatch','transaction_limit'].includes(error.code) || [400,413,415].includes(error.status ?? 0))) throw error
-          throw new ServiceError('commit_uncertain', '提交结果待确认：服务可能已经保存。请查询结果，或重试同一提交')
+          // An expired/taken-over editor token must not be silently replaced by this
+          // transaction's acquire request, even if the resource is free again.
+          this.assertPlanEditingIntent(mutations, plan, attempt.uncertain)
+          const changes: FileChange[] = []
+          for (const edit of mutations) {
+            const data = edit.adopt ? undefined : edit.data
+            const bytes = typeof data === 'string' ? new TextEncoder().encode(data) : data instanceof Blob ? new Uint8Array(await data.arrayBuffer()) : data
+            const lease = acquiredByPath.get(edit.path)
+            if (!lease) throw new ServiceError('locked', '服务没有返回完整的文件写权，请重新申请后重试')
+            changes.push({ op: edit.adopt ? 'check' : edit.op, path: edit.path, version: edit.version ?? null, leaseId: lease.id, content: bytes ? bytesToBase64(bytes) : null, destination: edit.destination ?? null, destinationVersion: edit.destinationVersion ?? null })
+          }
+          // No retries with a newer version: that would silently overwrite another client's work.
+          try {
+            receipt = validateReceipt(await request<FileTransactionReceipt>(this.connection, '/api/files/commit', 'POST', { transactionId: attempt.transactionId, changes }),attempt.transactionId)
+          } catch (error) {
+            // Only a definitive protocol rejection can start a new attempt. Network,
+            // storage and malformed responses retain identity, even across a reload.
+            if (!attempt.uncertain && error instanceof ServiceError && (['unauthorized','forbidden','invalid','busy','transaction_mismatch','transaction_limit'].includes(error.code) || [400,413,415].includes(error.status ?? 0))) throw error
+            throw new ServiceError('commit_uncertain', '提交结果待确认：服务可能已经保存。请查询结果，或重试同一提交')
+          }
+        } finally {
+          // A language/binary sidecar must not keep blocking peers after its batch.
+          // Editor-owned leases and pre-existing leases belong to separate actions.
+          await this.releaseLeases(acquired.filter(lease => !existing.has(lease.id) && !this.editing.retained(lease.id)))
         }
-      } finally {
-        // A language/binary sidecar must not keep blocking peers after its batch.
-        // Editor-owned leases and pre-existing leases belong to separate actions.
-        await this.releaseLeases(acquired.filter(lease => !existing.has(lease.id) && !this.editing.retained(lease.id)))
+      } catch (error) {
+        // A missing receipt is not proof that the original send failed. Planning,
+        // permission and lease failures cannot authorize a new transaction identity.
+        if (attempt.uncertain && !receipt) throw new ServiceError('commit_uncertain', `原提交结果仍待确认：${error instanceof Error ? error.message : String(error)}`)
+        throw error
       }
     }
     if (receipt?.status === 'rejected') throw new ServiceError(receipt.error!.code, receipt.error!.message)
     if (receipt && (receipt.status !== 'committed' || !receipt.tree)) throw new ServiceError('commit_uncertain', '服务返回的提交结果无效，请重新查询')
+    for (const edit of edits.filter(edit => edit.op === 'skin-entry-patch')) {
+      const command = typeof edit.data === 'string' ? JSON.parse(edit.data) : null
+      const entries = receipt?.skinEntries
+      const entry = Array.isArray(entries) ? entries.find(value => value && typeof value === 'object' && 'entryId' in value && value.entryId === command?.entryId) : null
+      if (!command || !entry || !('revision' in entry) || entry.revision !== command.expectedRevision + 1) {
+        throw new ServiceError('commit_uncertain', '服务没有返回完整的皮肤修改结果，请查询原提交')
+      }
+      this.entryResults.set(edit.data as string, entry)
+      this.entryAcknowledgements.set(command.entryId, { command: edit.data as string, requestId: attempt.transactionId, entry })
+      if (this.entryResults.size > 64) this.entryResults.delete(this.entryResults.keys().next().value!)
+      if (this.entryAcknowledgements.size > 64) this.entryAcknowledgements.delete(this.entryAcknowledgements.keys().next().value!)
+    }
+    for (const edit of edits.filter(edit => edit.op === 'skin-library-command')) {
+      const command = typeof edit.data === 'string' ? JSON.parse(edit.data) : null
+      const result = receipt?.skinCommandResult
+      if (!command || !result || result.command !== command.command || !result.result || typeof result.result !== 'object' || Array.isArray(result.result) || !Number.isSafeInteger(result.result.revision) || Number(result.result.revision) < 1) {
+        throw new ServiceError('commit_uncertain', '服务没有返回完整的皮肤操作结果，请查询原提交')
+      }
+      const value = result.result
+      const count = (key: string) => Number.isSafeInteger(value[key]) && Number(value[key]) >= 0
+      const folder = value.folder as { folderId?: string; name?: string } | undefined
+      const valid = command.command === 'ensure-library' ? typeof value.created === 'boolean'
+        : command.command === 'create-folder' || command.command === 'patch-folder' ? folder?.folderId === (command.folderId ?? command.expectedFolder?.folderId) && typeof folder?.name === 'string'
+          : command.command === 'delete-folder' ? value.deleted === true
+            : command.command === 'delete-entries' || command.command === 'delete-folder-entries' ? count('deleted')
+              : command.command === 'batch-patch' ? count('updated') && Array.isArray(value.entries)
+                : command.command === 'rename-tag' || command.command === 'delete-tag' ? count('affectedEntries')
+                  : command.command === 'import-entry'
+      if (!valid) throw new ServiceError('commit_uncertain', '服务返回的皮肤操作明细不完整，请查询原提交')
+      if (command.command === 'import-entry') {
+        const entry = result.result.entry as { entryId?: string; skinId?: string; revision?: number } | undefined
+        if (!entry || entry.entryId !== command.entry?.entryId || entry.skinId !== command.entry?.skinId || entry.revision !== 1) throw new ServiceError('commit_uncertain', '导入结果与原提交不匹配，请查询原提交')
+        this.importResults.set(entry.entryId!, entry)
+        if (this.importResults.size > 64) this.importResults.delete(this.importResults.keys().next().value!)
+      }
+      this.libraryResults.set(edit.data as string, result.result)
+      if (this.libraryResults.size > 64) this.libraryResults.delete(this.libraryResults.keys().next().value!)
+    }
     // Server adoption is a version-checked no-op in the same atomic batch.
     const acknowledged = receipt?.tree ?? this.tree
     // A receipt describes the original acknowledgement, not today's project.
@@ -190,6 +317,13 @@ export class ProjectClient {
     await this.refresh().catch(() => undefined)
     const paths = [...new Set(edits.flatMap(e => e.destination ? [e.path, e.destination] : [e.path]))]
     for (const edit of edits) {
+      if (edit.op === 'skin-entry-patch' || edit.op === 'skin-library-command') {
+        // A semantic command is not the new file body. In particular, never let
+        // its acknowledgement advance a stale whole-index draft onto a new hash.
+        this.texts.delete(edit.path)
+        this.originals.delete(edit.path)
+        continue
+      }
       const previous=edit.version ?? null
       const current=edit.adopt ? edit.version ?? null : acknowledged.entries.find(e => e.path === edit.path)?.version ?? null
       const history=this.ownVersions.get(edit.path)??new Map<string|null,string|null>()
@@ -238,7 +372,6 @@ export class ProjectClient {
     return this.sourceCommands([{path, destination, content}])
   }
   async sourceCommands(commands: Array<{path: string; destination: string | null; content?: string}>): Promise<void> {
-    for (const command of commands) this.assertSourceDraftsSaved(command.path)
     const versions = new Map(this.baseline)
     const originals = new Map(this.originals)
     // Freeze C's projection before fetching any plan: editing can continue while
@@ -249,25 +382,36 @@ export class ProjectClient {
       return { ...command, localContents: source?.localContents, localEpochs: source?.localEpochs || assetSnapshot?.localEpochs
         ? { ...assetSnapshot?.localEpochs, ...source?.localEpochs } : undefined }
     })
+    await this.assertSourceDraftsSaved(...captured.map(command => command.path))
+    const plan = await this.planOperations(captured.map(command => ({ op: command.destination ? 'move' : 'remove', path: command.path, destination: command.destination })))
+    // Editing can continue while planning. Check newly staged dependent drafts as well.
+    await this.assertSourceDraftsSaved(...captured.map(command => command.path))
     const edits: FileEdit[] = []
-    for (const {path, destination, content, localContents, localEpochs} of captured) {
-      const plan = await request<Array<{path: string; destination: string | null}>>(this.connection, `/api/files/source-plan?path=${encodeURIComponent(path)}${destination ? `&destination=${encodeURIComponent(destination)}` : ''}`)
-      edits.push(...plan.filter(p => p.path !== p.destination).map((p): FileEdit => ({ op: p.destination ? 'move' : 'remove', path: p.path, destination: p.destination ?? undefined, version:versions.get(p.path) ?? null, destinationVersion:p.destination ? versions.get(p.destination) ?? null : null, baseData:originals.get(p.path)?.data, localContents, localEpochs })))
+    for (const operation of plan.operations) {
+      const capturedSource = captured.find(command => command.path === operation.originPath)
+      if (!capturedSource || (operation.op !== 'move' && operation.op !== 'remove')) throw new Error('服务返回了无效的资源操作计划')
+      if (operation.path === operation.destination) continue
+      edits.push({ op: operation.op, path: operation.path, destination: operation.destination ?? undefined,
+        // A plan observes today's versions; it must never rebase an older C draft.
+        version: versions.get(operation.path) ?? null, destinationVersion: operation.destination ? versions.get(operation.destination) ?? null : null,
+        baseData: originals.get(operation.path)?.data, localContents: capturedSource.localContents, localEpochs: capturedSource.localEpochs })
+    }
+    for (const {destination, content, localContents, localEpochs} of captured) {
       if (destination && content !== undefined) edits.push({op:'write',path:destination,data:content,version:versions.get(destination) ?? null,baseData:originals.get(destination)?.data,localContents,localEpochs})
     }
     if (edits.length) await this.apply(edits, '修改源文件及关联资源')
   }
-  /** Structural edits must not strand an unsaved language draft at its old path.
+  /** Structural edits must not strand an unsaved owned-resource draft at its old path.
    * This is a UI precondition, not authority; S still derives the actual move plan.
    */
-  assertSourceDraftsSaved(path: string) {
-    const source = /^src\/[^/]+\/(.+)\.([^./]+)$/.exec(path)
-    if (!source) return
-    const [, stem, ext] = source
-    if (this.transactions.stagedWrites().some(e => {
-      const asset = /^assets\/[^/]+\/lang_([^/]+)\/(.+)\.lang$/.exec(e.path)
-      return asset && asset[1] === ext && asset[2] === stem
-    })) throw new Error('该资源还有未保存的语言修改，请先保存，再改名或删除；草稿保持原状')
+  async assertSourceDraftsSaved(...paths: string[]) {
+    const drafts = this.transactions.stagedWrites()
+    if (!drafts.length || !paths.length) return
+    const plan = await this.planOperations(drafts.map(edit => ({ op: 'write', path: edit.path, destination: null })))
+    if (plan.relations.some(relation => relation.kind === 'ownership' && paths.some(path => relation.from === path || relation.from.startsWith(`${path}/`))
+      && this.transactions.stagedWrites().some(edit => edit.path === relation.to || edit.path.startsWith(`${relation.to}/`)))) {
+      throw new Error('该资源还有未保存的关联修改，请先保存，再改名或删除；草稿保持原状')
+    }
   }
 }
 

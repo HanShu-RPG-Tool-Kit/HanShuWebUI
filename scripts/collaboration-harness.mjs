@@ -32,8 +32,9 @@ export async function harness(web = false) {
   async function login(key,name){return api('','/api/sessions','POST',{credential:key,clientName:name})}
   async function files(token){return api(token,'/api/files')}
   async function prepare(token,edits){
-    const tree=await files(token);const paths=[...new Set(edits.flatMap(e=>e.destination?[e.path,e.destination]:[e.path]))]
-    const leases=await api(token,'/api/files/leases','POST',{paths})
+    const tree=await files(token)
+    const plan=await api(token,'/api/files/plan','POST',{operations:edits.map(e=>({op:e.op??'write',path:e.path,destination:e.destination??null}))})
+    const leases=await api(token,'/api/files/leases','POST',{paths:plan.leasePaths})
     const changes=edits.map(e=>({op:e.op??'write',path:e.path,version:tree.entries.find(f=>f.path===e.path)?.version??null,content:e.content===undefined?null:Buffer.from(e.content).toString('base64'),destination:e.destination??null,destinationVersion:tree.entries.find(f=>f.path===e.destination)?.version??null,leaseId:leases.find(l=>l.resourceId===`file:${e.path}`).id,...e.version!==undefined?{version:e.version}:{}}))
     return {transactionId:randomUUID(),changes}
   }

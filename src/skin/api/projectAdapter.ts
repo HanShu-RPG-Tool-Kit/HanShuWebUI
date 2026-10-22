@@ -22,9 +22,14 @@ let session: SkinLibrarySession | null = null
 let sessionRoot: ProjectDirectory | null = null
 /** Serialize init so concurrent list/create never sees a half-ready session. */
 let sessionInit: Promise<SkinLibrarySession> | null = null
+let initializingSession: SkinLibrarySession | null = null
+let sessionGeneration = 0
 
-async function getSession(): Promise<SkinLibrarySession> {
+async function getBoundSession(expectedRoot: ProjectDirectory | null): Promise<SkinLibrarySession> {
   const handle = getBoundProjectHandle()
+  if (handle?.client !== expectedRoot?.client) {
+    throw new SkinApiError({ code: 'PROJECT_CHANGED', message: '工程连接已变化，原皮肤草稿仍保留，请回到原工程后继续' })
+  }
   if (!handle) {
     throw new SkinApiError({
       code: 'PROJECT_REQUIRED',
@@ -40,33 +45,49 @@ async function getSession(): Promise<SkinLibrarySession> {
   }
 
   session?.dispose()
+  initializingSession?.dispose()
   session = null
   sessionRoot = handle
+  const generation = ++sessionGeneration
   const created = new SkinLibrarySession(handle)
+  initializingSession = created
   sessionInit = created
     .init()
     .then(() => {
+      if (generation !== sessionGeneration || sessionRoot !== handle) {
+        created.dispose()
+        throw new SkinApiError({ code: 'PROJECT_CHANGED', message: '皮肤视图已刷新，请重试；原草稿仍保留' })
+      }
       session = created
       sessionInit = null
+      initializingSession = null
       return created
     })
     .catch((e) => {
-      sessionInit = null
-      session = null
-      sessionRoot = null
+      if (generation === sessionGeneration) {
+        sessionInit = null
+        initializingSession = null
+        session = null
+        sessionRoot = null
+      }
       throw e
     })
   return sessionInit
 }
 
 export function resetProjectSkinSession(): void {
+  sessionGeneration++
   session?.dispose()
+  initializingSession?.dispose()
   session = null
   sessionRoot = null
   sessionInit = null
+  initializingSession = null
 }
 
 export function createProjectSkinApi(): SkinApi {
+  const root = getBoundProjectHandle()
+  const getSession = () => getBoundSession(root)
   return {
     capabilities: async () => {
       try {
@@ -104,10 +125,10 @@ export function createProjectSkinApi(): SkinApi {
       (await getSession()).createFolder(body),
     patchFolder: async (folderId: string, body: PatchFolderRequest) =>
       (await getSession()).patchFolder(folderId, body),
-    deleteFolder: async (folderId) =>
-      (await getSession()).deleteFolder(folderId),
-    deleteEntriesInFolder: async (folderId) =>
-      (await getSession()).deleteEntriesInFolder(folderId),
+    deleteFolder: async (folderId, expected) =>
+      (await getSession()).deleteFolder(folderId, expected),
+    deleteEntriesInFolder: async (folderId, scope) =>
+      (await getSession()).deleteEntriesInFolder(folderId, scope),
 
     saveEntry: async (body: SaveEntryRequest) =>
       (await getSession()).saveEntry(body),
@@ -115,7 +136,7 @@ export function createProjectSkinApi(): SkinApi {
       (await getSession()).patchEntry(entryId, body),
     batchPatchEntries: async (body: BatchPatchRequest) =>
       (await getSession()).batchPatchEntries(body),
-    deleteEntry: async (entryId) => (await getSession()).deleteEntry(entryId),
+    deleteEntry: async (entryId, revision) => (await getSession()).deleteEntry(entryId, revision),
 
     startImport: async (kind, text, model?: SkinModel) => {
       const s = await getSession()

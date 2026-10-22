@@ -97,10 +97,15 @@ pub struct FilePresence {
     pub path: String,
     /// The server-derived authority shared by a source and its language/voice assets.
     pub authority_id: String,
+    /// An opaque skin entry identity used only for collaborator display, never for authority.
+    /// It may reference a deleted entry whose local draft is being recovered.
+    pub entry_id: Option<String>,
+    /// Editor intent for free editors; managed progress editors derive this from their lease.
+    /// This field never grants or proves write authority.
     pub activity: FileActivity,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, TS)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub enum FileActivity {
     Viewing,

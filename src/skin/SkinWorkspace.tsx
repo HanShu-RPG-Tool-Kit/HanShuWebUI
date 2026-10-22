@@ -28,11 +28,20 @@ import { ContextMenu, type ContextMenuItem } from './components/ContextMenu.tsx'
 import { LibraryFilters } from './components/LibraryFilters.tsx'
 import { LibraryTable } from './components/LibraryTable.tsx'
 import { EntryDetails } from './components/EntryDetails.tsx'
+import { recoverableEntryDrafts } from './local/entryDraft'
+import { captureFolderScope, folderSnapshot } from './local/operationSnapshot'
+import { FilePresenceBar } from '../project/FilePresenceBar'
+import { useFileEditing } from '../project/useFileEditing'
+import { ResourceSaveStatus } from '../project/ResourceSaveStatus'
+import type { ProjectClient } from '../project/serviceClient'
+import { SKIN_INDEX_PATH } from './local/entrySubmission'
+import { useOperationRecovery } from './components/useOperationRecovery'
 import { TagPicker } from './components/TagPicker.tsx'
 import { TextureViewerDialog } from './components/TextureViewerDialog.tsx'
 import type {
   EntrySortBy,
   FolderWithStats,
+  FolderScopeSnapshot,
   LibraryEntry,
   SkinEvent,
   SkinModel,
@@ -63,10 +72,13 @@ interface ContextMenuState {
 
 export function SkinWorkspace({ active }: SkinWorkspaceProps) {
   const [api, setApi] = useState<SkinApi | null>(null)
+  const [apiOwner, setApiOwner] = useState<BoundProject['handle']['client'] | null>(null)
   const [initError, setInitError] = useState<string | null>(null)
   const [project, setProject] = useState<BoundProject | null>(() =>
     getBoundProject(),
   )
+  useFileEditing(project?.handle.client)
+  const readOnly = project?.handle.client.snapshot.role === 'viewer'
 
   const [tags, setTags] = useState<CollectedTag[]>([])
   const [textureSizes, setTextureSizes] = useState<CollectedTextureSize[]>([])
@@ -91,27 +103,35 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc')
 
   const [pinned, setPinned] = useState<LibraryEntry | null>(null)
+  const [detailDirty, setDetailDirty] = useState<Record<string, boolean>>({})
+  const reportDetailDirty = useCallback((entryId: string, dirty: boolean) => {
+    setDetailDirty(previous => previous[entryId] === dirty ? previous : { ...previous, [entryId]: dirty })
+  }, [])
   const [hovered, setHovered] = useState<LibraryEntry | null>(null)
-  const [checked, setChecked] = useState<Set<string>>(new Set())
+  // Selection carries the revisions that were visible when selected, including
+  // off-page entries; a remote refresh cannot silently approve newer contents.
+  const [checked, setChecked] = useState<Map<string, number>>(new Map())
 
   const [showImport, setShowImport] = useState(false)
   const [showOuter, setShowOuter] = useState(true)
   const [walking, setWalking] = useState(true)
   const [autoRotate, setAutoRotate] = useState(true)
   const [notice, setNotice] = useState<string | null>(null)
+  const [recoveryDrafts, setRecoveryDrafts] = useState<ReturnType<typeof recoverableEntryDrafts>>([])
   const [listError, setListError] = useState<string | null>(null)
   const [layoutMode, setLayoutMode] = useState<LayoutMode>('large')
   const [thumbType, setThumbType] = useState<ThumbType>('full')
-  const [moveDialog, setMoveDialog] = useState<{ entryIds: string[] } | null>(null)
+  const [moveDialog, setMoveDialog] = useState<{ entryIds: string[]; expectedRevisions: number[] } | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
   const [textureViewerFor, setTextureViewerFor] = useState<LibraryEntry | null>(null)
   const [newFolderUnder, setNewFolderUnder] = useState<string | null | 'root' | undefined>(undefined)
   const [newFolderName, setNewFolderName] = useState('')
+  const [renameFolderDialog, setRenameFolderDialog] = useState<{ folder: FolderWithStats; name: string } | null>(null)
   const [moveFolderTarget, setMoveFolderTarget] = useState<FolderWithStats | null>(null)
   /** 删除文件夹内全部皮肤：三次确认 */
   const [wipeFolderDialog, setWipeFolderDialog] = useState<
     | null
-    | { folder: FolderWithStats; step: 1 | 2 | 3; busy?: boolean; error?: string }
+    | { folder: FolderWithStats; scope: FolderScopeSnapshot; step: 1 | 2 | 3; busy?: boolean; error?: string }
   >(null)
   /** 清理黑户：确认 → 运行中锁定 → 结果 */
   const [gcDialog, setGcDialog] = useState<
@@ -132,6 +152,7 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
   const lastRevisionRef = useRef<number>(0)
   const searchDebounceRef = useRef<number | null>(null)
   const requestSeqRef = useRef(0)
+  const apiClientRef = useRef(project?.handle.client)
 
   const folderById = useMemo(() => new Map(folders.map((f) => [f.folderId, f])), [folders])
 
@@ -141,7 +162,16 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
   useEffect(() => {
     let cancelled = false
     resetSkinApiCache()
-    setApi(null)
+    // A remote library refresh keeps the same editor mounted, including its focus.
+    // Only changing the actual project connection resets the workspace selection.
+    if (apiClientRef.current !== project?.handle.client) {
+      apiClientRef.current = project?.handle.client
+      setApi(null)
+      setPinned(null)
+      setDetailDirty({})
+      setHovered(null)
+      setRecoveryDrafts([])
+    }
     setInitError(null)
     if (!project) {
       setEntries([])
@@ -154,7 +184,7 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
     }
     void getSkinApi()
       .then((a) => {
-        if (!cancelled) setApi(a)
+        if (!cancelled) { setApi(a); setApiOwner(project.handle.client) }
       })
       .catch((e) => {
         if (!cancelled) setInitError((e as Error).message)
@@ -166,16 +196,20 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
 
   const refreshTags = useCallback(async () => {
     if (!api) return
-    const tree = await api.listTags()
-    setTags(tree.tags)
-    setTextureSizes(tree.textureSizes ?? [])
-    lastRevisionRef.current = tree.revision
+    try {
+      const tree = await api.listTags()
+      setTags(tree.tags)
+      setTextureSizes(tree.textureSizes ?? [])
+      lastRevisionRef.current = tree.revision
+    } catch (e) { setListError((e as Error)?.message ?? '加载皮肤标签失败') }
   }, [api])
 
   const refreshFolders = useCallback(async () => {
     if (!api) return
-    const tree = await api.listFolders()
-    setFolders(tree.folders)
+    try {
+      const tree = await api.listFolders()
+      setFolders(tree.folders)
+    } catch (e) { setListError((e as Error)?.message ?? '加载皮肤文件夹失败') }
   }, [api])
 
   // Search input is debounced (~250ms); the debounced value drives the query
@@ -313,6 +347,7 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
           unsub = off
         }
       })
+      .catch(e => { if (!disposed) setListError((e as Error)?.message ?? '订阅皮肤库更新失败') })
     return () => {
       disposed = true
       unsub?.()
@@ -342,7 +377,7 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
 
   useEffect(() => {
     setPage(1)
-    setChecked(new Set())
+    setChecked(new Map())
   }, [debouncedSearch, scope, currentFolderId, selectedTags, activeFilter, modelFilter, textureWidthFilter, licenseFilter, authorFilter])
 
   /* ---------- hover / pinned ---------- */
@@ -410,18 +445,20 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
   }, [folders, scope, currentFolderId])
 
   /* ---------- preview URL helper (object URL cache) ---------- */
-  const previewUrlRef = useRef(new Map<string, Promise<string>>())
+  const previewUrls = useMemo(() => new Map<string, Promise<string>>(), [api])
   const getPreviewUrl = useCallback(
     (skinId: string): Promise<string> => {
-      let p = previewUrlRef.current.get(skinId)
+      let p = previewUrls.get(skinId)
       if (!p) {
         p = api?.getPreviewUrl(skinId)
         if (!p) return Promise.reject(new Error('皮肤 API 尚未就绪'))
-        previewUrlRef.current.set(skinId, p)
+        const request = p
+        p = request.catch(error => { previewUrls.delete(skinId); throw error })
+        previewUrls.set(skinId, p)
       }
       return p
     },
-    [api],
+    [api, previewUrls],
   )
 
   // TextureViewer needs a resolved URL for its locked entry.
@@ -434,7 +471,7 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
     let cancelled = false
     void getPreviewUrl(textureViewerFor.skinId).then((u) => {
       if (!cancelled) setTexturePreviewUrl(u)
-    })
+    }).catch(e => { if (!cancelled) { setTexturePreviewUrl(null); setNotice((e as Error)?.message ?? '加载皮肤预览失败') } })
     return () => {
       cancelled = true
     }
@@ -467,7 +504,7 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
     )
   }
 
-  if (!api) {
+  if (!api || apiOwner !== project.handle.client) {
     return (
       <div className={`skinWorkspace ${styles.workspace}`} data-active={active ? '1' : '0'}>
         <p className={styles.empty} style={{ padding: 24 }}>
@@ -506,46 +543,55 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
       return asError(e)
     }
   }
-  const renameFolder = async (folderId: string, name: string): Promise<string | null> => {
+  const renameFolder = async (folder: FolderWithStats, name: string): Promise<string | null> => {
     try {
-      await api.patchFolder(folderId, { name })
+      await api.patchFolder(folder.folderId, { name, expectedFolder: folderSnapshot(folder) })
       await refreshFolders()
       return null
     } catch (e) {
       return asError(e)
     }
   }
-  const moveFolder = async (folderId: string, parentId: string | null): Promise<string | null> => {
+  const moveFolder = async (folder: FolderWithStats, parentId: string | null): Promise<string | null> => {
     try {
-      await api.patchFolder(folderId, { parentId })
+      await api.patchFolder(folder.folderId, { parentId, expectedFolder: folderSnapshot(folder) })
       await refreshFolders()
       return null
     } catch (e) {
       return asError(e)
     }
   }
-  const sortFolderSiblings = async (folderId: string): Promise<string | null> => {
+  const sortFolderSiblings = async (folder: FolderWithStats): Promise<void> => {
     try {
-      await api.patchFolder(folderId, { sortSiblingsByName: true })
+      await api.patchFolder(folder.folderId, {
+        sortSiblingsByName: true,
+        expectedFolder: folderSnapshot(folder),
+        expectedSiblings: folders.filter(sibling => sibling.parentId === folder.parentId).map(folderSnapshot),
+      })
       await refreshFolders()
-      return null
     } catch (e) {
-      return asError(e)
+      showNotice(`排序失败：${asError(e)}`)
     }
   }
-  const deleteFolder = async (folderId: string): Promise<string | null> => {
+  const deleteFolder = async (folder: FolderWithStats): Promise<void> => {
     try {
-      await api.deleteFolder(folderId)
-      if (currentFolderId === folderId) {
+      await api.deleteFolder(folder.folderId, folderSnapshot(folder))
+      if (currentFolderId === folder.folderId) {
         setScope('folder')
         setCurrentFolderId(null)
       }
       await refreshFolders()
       await refresh()
-      return null
     } catch (e) {
-      return asError(e)
+      showNotice(`删除文件夹失败：${asError(e)}`)
     }
+  }
+  const beginWipeFolder = async (folder: FolderWithStats) => {
+    try {
+      const snapshot = await captureFolderScope(api, folder.folderId, folder)
+      const current = snapshot.folders.find(item => item.folderId === folder.folderId)!
+      setWipeFolderDialog({ folder: { ...folder, ...current, subtreeCount: snapshot.entries.length }, scope: snapshot, step: 1 })
+    } catch (e) { showNotice(asError(e)) }
   }
 
   /* ---- 面包屑 ---- */
@@ -598,10 +644,11 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
   }
 
   const toggleChecked = (entryId: string) => {
+    const revision = entries.find(entry => entry.entryId === entryId)?.revision
     setChecked((prev) => {
-      const next = new Set(prev)
+      const next = new Map(prev)
       if (next.has(entryId)) next.delete(entryId)
-      else next.add(entryId)
+      else if (revision !== undefined) next.set(entryId, revision)
       return next
     })
   }
@@ -615,11 +662,12 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
 
   /* ---------- 移动条目 ---------- */
-  const doMoveEntries = async (targetFolderId: string | null) => {
-    if (!moveDialog) return
+  const doMoveEntries = async (targetFolderId: string | null): Promise<string | null> => {
+    if (!moveDialog) return null
     try {
       await api.batchPatchEntries({
         entryIds: moveDialog.entryIds,
+        expectedRevisions: moveDialog.expectedRevisions,
         folderId: targetFolderId,
       })
       const targetLabel =
@@ -628,11 +676,12 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
           : (folderById.get(targetFolderId)?.path.join(' / ') ?? '')
       showNotice(`已移动 ${moveDialog.entryIds.length} 个条目到 ${targetLabel}`)
       setMoveDialog(null)
-      setChecked(new Set())
+      setChecked(new Map())
       await refresh()
       await refreshFolders()
+      return null
     } catch (e) {
-      showNotice(`移动失败:${asError(e)}`)
+      return `移动失败：${asError(e)}`
     }
   }
 
@@ -668,10 +717,10 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
   /* ---------- 反转当前页选择 ---------- */
   const invertSelection = () => {
     setChecked((prev) => {
-      const next = new Set(prev)
+      const next = new Map(prev)
       for (const e of entries) {
         if (next.has(e.entryId)) next.delete(e.entryId)
-        else next.add(e.entryId)
+        else next.set(e.entryId, e.revision)
       }
       return next
     })
@@ -681,13 +730,10 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
   const batchSetActive = async (active: boolean) => {
     if (checked.size === 0) return
     try {
-      const entryIds = [...checked]
-      const expectedRevisions = entryIds.map((id) => {
-        const e = entries.find((x) => x.entryId === id)
-        return e?.revision ?? 0
-      })
+      const entryIds = [...checked.keys()]
+      const expectedRevisions = [...checked.values()]
       await api.batchPatchEntries({ entryIds, active, expectedRevisions })
-      setChecked(new Set())
+      setChecked(new Map())
       await refresh()
       showNotice(active ? '已启用选中条目' : '已禁用选中条目')
     } catch (e) {
@@ -701,50 +747,18 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
     active: boolean,
   ) => {
     if (!api) return
-    const scope = new Set<string>([folder.folderId])
-    let grew = true
-    while (grew) {
-      grew = false
-      for (const f of folders) {
-        if (f.parentId && scope.has(f.parentId) && !scope.has(f.folderId)) {
-          scope.add(f.folderId)
-          grew = true
-        }
-      }
-    }
     try {
-      const targets: { entryId: string; revision: number }[] = []
-      let page = 1
-      for (;;) {
-        const res = await api.listEntries({
-          scope: 'all',
-          page,
-          pageSize: 200,
-        })
-        for (const e of res.entries) {
-          if (e.folderId && scope.has(e.folderId)) {
-            targets.push({ entryId: e.entryId, revision: e.revision })
-          }
-        }
-        if (res.entries.length < 200 || page * 200 >= res.total) break
-        page += 1
-        if (page > 500) break
-      }
-      if (targets.length === 0) {
+      const snapshot = await captureFolderScope(api, folder.folderId, folder)
+      if (snapshot.entries.length === 0) {
         showNotice(`「${folder.name}」内没有皮肤`)
         return
       }
-      const CHUNK = 200
-      let updated = 0
-      for (let i = 0; i < targets.length; i += CHUNK) {
-        const chunk = targets.slice(i, i + CHUNK)
-        const r = await api.batchPatchEntries({
-          entryIds: chunk.map((t) => t.entryId),
-          active,
-          expectedRevisions: chunk.map((t) => t.revision),
-        })
-        updated += r.updated
-      }
+      const result = await api.batchPatchEntries({
+        entryIds: snapshot.entries.map(entry => entry.entryId),
+        expectedRevisions: snapshot.entries.map(entry => entry.revision),
+        active,
+      })
+      const updated = result.updated
       await refresh()
       await refreshFolders()
       showNotice(
@@ -903,9 +917,10 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
   }
 
   const blankContextMenuItems: ContextMenuItem[] = [
-    { label: '导入到这里', onClick: () => setShowImport(true) },
+    { label: '导入到这里', disabled: readOnly, onClick: () => setShowImport(true) },
     {
       label: '新建文件夹',
+      disabled: readOnly,
       onClick: () => {
         // 聚合视图默认根目录;文件夹内建在当前位置。弹窗显示目标位置。
         setNewFolderUnder(
@@ -920,7 +935,7 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
     { label: '小图标', onClick: () => setLayoutMode('small') },
     { label: '列表', onClick: () => setLayoutMode('list') },
     { separator: true, label: '', onClick: () => {} },
-    { label: '清理黑户对象/缓存…', onClick: () => startGcOrphans() },
+    { label: '清理黑户对象/缓存…', disabled: readOnly, onClick: () => startGcOrphans() },
     { label: '刷新', onClick: () => void refresh() },
   ]
 
@@ -935,10 +950,7 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
     },
     {
       label: '重命名…',
-      onClick: () => {
-        const name = prompt('重命名文件夹:', f.name)
-        if (name && name.trim()) void renameFolder(f.folderId, name.trim())
-      },
+      onClick: () => setRenameFolderDialog({ folder: f, name: f.name }),
     },
     {
       label: '移动到…',
@@ -946,7 +958,7 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
         setMoveFolderTarget(f)
       },
     },
-    { label: '同级按名称排序', onClick: () => void sortFolderSiblings(f.folderId) },
+    { label: '同级按名称排序', onClick: () => void sortFolderSiblings(f) },
     { separator: true, label: '', onClick: () => {} },
     {
       label: '全部启用',
@@ -959,27 +971,27 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
     { separator: true, label: '', onClick: () => {} },
     {
       label: '清空皮肤…',
-      onClick: () => setWipeFolderDialog({ folder: f, step: 1 }),
+      onClick: () => void beginWipeFolder(f),
       danger: true,
     },
-    { label: '删除空文件夹', onClick: () => void deleteFolder(f.folderId), danger: true },
-  ]
+    { label: '删除空文件夹', onClick: () => void deleteFolder(f), danger: true },
+  ].map(item => readOnly && !item.separator && item.label !== '打开' ? { ...item, disabled: true } : item)
 
   const entryContextMenuItems = (e: LibraryEntry): ContextMenuItem[] => {
     const isMulti = checked.size > 1 && checked.has(e.entryId)
     if (isMulti) {
       return [
-        { label: `批量启用 (${checked.size})`, onClick: () => void batchSetActive(true) },
-        { label: `批量禁用 (${checked.size})`, onClick: () => void batchSetActive(false) },
-        { label: '移动到文件夹…', onClick: () => setMoveDialog({ entryIds: [...checked] }) },
+        { label: `批量启用 (${checked.size})`, disabled: readOnly, onClick: () => void batchSetActive(true) },
+        { label: `批量禁用 (${checked.size})`, disabled: readOnly, onClick: () => void batchSetActive(false) },
+        { label: '移动到文件夹…', disabled: readOnly, onClick: () => setMoveDialog({ entryIds: [...checked.keys()], expectedRevisions: [...checked.values()] }) },
         { separator: true, label: '', onClick: () => {} },
-        { label: '取消选择', onClick: () => setChecked(new Set()) },
+        { label: '取消选择', onClick: () => setChecked(new Map()) },
       ]
     }
     return [
-      { label: e.active ? '禁用' : '启用', onClick: () => void toggleEntryActive(e) },
-      { label: '在右侧编辑', onClick: () => setPinned(e) },
-      { label: e.favorite ? '取消收藏' : '收藏', onClick: () => void toggleEntryFavorite(e) },
+      { label: e.active ? '禁用' : '启用', disabled: readOnly, onClick: () => void toggleEntryActive(e) },
+      { label: readOnly ? '在右侧查看' : '在右侧编辑', onClick: () => setPinned(e) },
+      { label: e.favorite ? '取消收藏' : '收藏', disabled: readOnly, onClick: () => void toggleEntryFavorite(e) },
       { separator: true, label: '', onClick: () => {} },
       { label: '复制内容 ID', onClick: () => void copyContentId(e.skinId) },
       { label: '复制皮肤码', onClick: () => void copySkinCode(e.skinId) },
@@ -989,7 +1001,7 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
       { label: '导出 .skin.json', onClick: () => void exportPortable(e) },
       { label: '查看展开图', onClick: () => { setPinned(e); setTextureViewerFor(e) } },
       { separator: true, label: '', onClick: () => {} },
-      { label: '删除', onClick: () => void deleteEntry(e), danger: true },
+      { label: '删除', disabled: readOnly, onClick: () => void deleteEntry(e), danger: true },
     ]
   }
 
@@ -1024,7 +1036,7 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
   const deleteEntry = async (e: LibraryEntry) => {
     if (!confirm(`删除「${e.name}」?对象文件保留供其他条目使用。`)) return
     try {
-      await api.deleteEntry(e.entryId)
+      await api.deleteEntry(e.entryId, e.revision)
       if (pinned?.entryId === e.entryId) setPinned(null)
       if (hovered?.entryId === e.entryId) setHovered(null)
       void refresh()
@@ -1053,6 +1065,7 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
   /* ---------- 主界面 ---------- */
   return (
     <div className={`skinWorkspace ${styles.workspace}`}>
+      {active && <FilePresenceBar client={project.handle.client} path={SKIN_INDEX_PATH} mode="optimistic" entryId={pinned?.entryId} dirty={pinned ? detailDirty[pinned.entryId] ?? false : false} label={pinned?.name ?? '皮肤库'} />}
       <main className={`skinWorkspaceLayout ${styles.layout}`}>
         <aside className={`skinWorkspaceLeft ${styles.left}`}>
           <div className={styles.leftTop}>
@@ -1072,6 +1085,18 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
               onChange={(e) => setSearch(e.target.value)}
               aria-label="搜索皮肤"
             />
+            <details className={styles.recoveryDrafts} onToggle={e => {
+              if (e.currentTarget.open) setRecoveryDrafts(recoverableEntryDrafts(JSON.stringify([
+                project.handle.client.connection.url, project.handle.client.snapshot.projectId, project.handle.client.snapshot.session.subjectId,
+              ])))
+            }}>
+              <summary>本窗口草稿</summary>
+              {recoveryDrafts.length ? recoveryDrafts.map(recovered => (
+                <button type="button" key={recovered.entry.entryId} onClick={() => {
+                  setHovered(null); setPinned(recovered.entry)
+                }}>{recovered.name || '未命名皮肤'}</button>
+              )) : <p>暂无未保存的皮肤详情。</p>}
+            </details>
             <nav className={styles.quickNav} aria-label="快速访问">
               <div className={styles.quickNavHead}>
                 <span>快速访问</span>
@@ -1257,23 +1282,25 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
           {checked.size > 0 && (
             <div className={styles.batchBar} role="toolbar" aria-label="批量操作">
               <span>已勾选 {checked.size} 项</span>
-              <button onClick={() => setMoveDialog({ entryIds: [...checked] })}>
+              <button disabled={readOnly} onClick={() => setMoveDialog({ entryIds: [...checked.keys()], expectedRevisions: [...checked.values()] })}>
                 移动到文件夹…
               </button>
-              <button onClick={() => void batchSetActive(true)}>批量启用</button>
-              <button onClick={() => void batchSetActive(false)}>批量禁用</button>
+              <button disabled={readOnly} onClick={() => void batchSetActive(true)}>批量启用</button>
+              <button disabled={readOnly} onClick={() => void batchSetActive(false)}>批量禁用</button>
               <button onClick={invertSelection}>反转选择</button>
-              <BatchTagBar
+              {!readOnly && <BatchTagBar
+                client={project.handle.client}
                 api={api}
                 tags={tags}
-                entryIds={[...checked]}
+                entryIds={[...checked.keys()]}
+                expectedRevisions={[...checked.values()]}
                 onDone={() => {
-                  setChecked(new Set())
+                  setChecked(new Map())
                   void refresh()
                   void refreshTags()
                 }}
-              />
-              <button onClick={() => setChecked(new Set())}>取消选择</button>
+              />}
+              <button onClick={() => setChecked(new Map())}>取消选择</button>
               <button onClick={() => void exportUsableManifest()}>导出已启用清单</button>
             </div>
           )}
@@ -1363,7 +1390,7 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
             <LibraryTable
               entries={entries}
               folders={folders}
-              checked={checked}
+              checked={new Set(checked.keys())}
               onToggleChecked={toggleChecked}
               onSelect={(e) => setPinned(e)}
               onContextMenu={(ev, e) => openContextMenu(ev, entryContextMenuItems(e))}
@@ -1394,6 +1421,8 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
         <aside className={`skinWorkspaceRight ${styles.right}`} onMouseEnter={onRightEnter} onMouseLeave={onRightLeave}>
           {displayed ? (
             <EntryDetails
+              key={`${project!.handle.client.connection.url}:${project!.handle.client.snapshot.projectId}:${project!.handle.client.snapshot.session.subjectId}:${displayed.entryId}`}
+              client={project!.handle.client}
               entry={displayed}
               folders={folders}
               tags={tags}
@@ -1415,6 +1444,12 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
               onDelete={() => void deleteEntry(displayed)}
               getPreviewUrl={getPreviewUrl}
               onPatch={(entryId, body) => api.patchEntry(entryId, body)}
+              onDirtyChange={reportDetailDirty}
+              onInteract={() => {
+                // A hover only previews. Actual interaction selects the entry for presence.
+                if (pinned?.entryId !== displayed.entryId) setPinned(displayed)
+                if (hovered) setHovered(null)
+              }}
               onUpdated={(updated) => {
                 if (pinned?.entryId === updated.entryId) setPinned(updated)
                 if (hovered?.entryId === updated.entryId) setHovered(updated)
@@ -1433,6 +1468,7 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
 
         {showImport && (
           <ImportQueuePanel
+            client={project.handle.client}
             api={api}
             folders={folders}
             tags={tags}
@@ -1449,9 +1485,10 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
 
         {moveDialog && (
           <MoveToFolderDialog
+            client={project.handle.client}
             folders={folders}
             count={moveDialog.entryIds.length}
-            onPick={(fid) => void doMoveEntries(fid)}
+            onPick={doMoveEntries}
             onClose={() => setMoveDialog(null)}
           />
         )}
@@ -1505,6 +1542,7 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
                 try {
                   const r = await api.deleteEntriesInFolder(
                     wipeFolderDialog.folder.folderId,
+                    wipeFolderDialog.scope,
                   )
                   showNotice(
                     `已删除「${wipeFolderDialog.folder.name}」及子夹内 ${r.deleted} 个皮肤条目`,
@@ -1549,6 +1587,8 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
 
         {newFolderUnder !== undefined && (
           <NewFolderDialog
+            client={project.handle.client}
+            command="create-folder"
             title={newFolderUnder === 'root' ? '在根目录新建文件夹' : '新建子文件夹'}
             parentLabel={
               newFolderUnder === 'root' || newFolderUnder === null
@@ -1559,32 +1599,54 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
             onNameChange={setNewFolderName}
             onConfirm={async () => {
               const name = newFolderName.trim()
-              if (!name) return
+              if (!name) return '名称不能为空'
               const err = await createFolder(
                 name,
                 newFolderUnder === 'root' ? null : newFolderUnder,
               )
-              if (err) showNotice(`新建失败:${err}`)
-              else showNotice('文件夹已创建')
+              if (err) return `新建失败：${err}`
+              showNotice('文件夹已创建')
               setNewFolderUnder(undefined)
               setNewFolderName('')
+              return null
             }}
             onCancel={() => setNewFolderUnder(undefined)}
           />
         )}
 
+        {renameFolderDialog && (
+          <NewFolderDialog
+            client={project.handle.client}
+            command="patch-folder"
+            title="重命名文件夹"
+            parentLabel={renameFolderDialog.folder.path.join(' / ')}
+            initialName={renameFolderDialog.name}
+            confirmLabel="保存名称"
+            onNameChange={name => setRenameFolderDialog({ ...renameFolderDialog, name })}
+            onConfirm={async () => {
+              const error = await renameFolder(renameFolderDialog.folder, renameFolderDialog.name.trim())
+              if (error) return `重命名失败：${error}`
+              setRenameFolderDialog(null)
+              showNotice('文件夹已重命名')
+              return null
+            }}
+            onCancel={() => setRenameFolderDialog(null)}
+          />
+        )}
+
         {moveFolderTarget && (
           <MoveToFolderDialog
+            client={project.handle.client}
             folders={folders}
             count={0}
             excludeFolderId={moveFolderTarget.folderId}
             title={`移动文件夹「${moveFolderTarget.name}」到:`}
-            onPick={(fid) => {
-              void moveFolder(moveFolderTarget.folderId, fid).then((err) => {
-                if (err) showNotice(`移动失败:${err}`)
-                else showNotice('文件夹已移动')
-              })
+            onPick={async (fid) => {
+              const error = await moveFolder(moveFolderTarget, fid)
+              if (error) return `移动失败：${error}`
+              showNotice('文件夹已移动')
               setMoveFolderTarget(null)
+              return null
             }}
             onClose={() => setMoveFolderTarget(null)}
           />
@@ -1625,7 +1687,7 @@ function PreviewImage({
     let cancelled = false
     void getPreviewUrl(skinId).then((u) => {
       if (!cancelled) setUrl(u)
-    })
+    }).catch(() => { if (!cancelled) setUrl(null) })
     return () => {
       cancelled = true
     }
@@ -1653,31 +1715,43 @@ function PreviewImage({
 /* ========================================================================== */
 
 function BatchTagBar({
+  client,
   api,
   tags,
   entryIds,
+  expectedRevisions,
   onDone,
 }: {
+  client: ProjectClient
   api: SkinApi
   tags: CollectedTag[]
   entryIds: string[]
+  expectedRevisions: number[]
   onDone: () => void
 }) {
+  const recovery = useOperationRecovery(client)
   const [mode, setMode] = useState<'add' | 'remove' | null>(null)
   const [picked, setPicked] = useState<string[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [sending, setBusy] = useState(false)
+  const busy = sending || recovery.blocked
+  useEffect(() => { if (recovery.recovered) onDone() }, [recovery.recovered, onDone])
 
   const run = async () => {
-    if (picked.length === 0) return
+    if (picked.length === 0 || busy) return
+    setBusy(true); setError(null)
     try {
-      await api.batchPatchEntries({
+      await recovery.run('batch-patch', () => api.batchPatchEntries({
         entryIds,
+        expectedRevisions,
         addTags: mode === 'add' ? picked : undefined,
         removeTags: mode === 'remove' ? picked : undefined,
-      })
+      }))
       onDone()
     } catch (e) {
       setError((e as Error).message)
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -1707,11 +1781,12 @@ function BatchTagBar({
     <div className={styles.batchPicker}>
       <strong>{mode === 'add' ? '为选中条目添加:' : '从选中条目移除:'}</strong>
       <TagPicker tags={tags} selected={picked} onChange={setPicked} />
-      <button disabled={picked.length === 0} onClick={() => void run()}>
+      <button disabled={picked.length === 0 || busy} onClick={() => void run()}>
         应用
       </button>
-      <button onClick={() => setMode(null)}>返回</button>
-      {error && <p className={styles.error}>{error}</p>}
+      <button disabled={busy} onClick={() => setMode(null)}>返回</button>
+      {error && <p role="alert" className={styles.error}>{error}</p>}
+      {recovery.transactionId !== undefined && <ResourceSaveStatus client={client} path={SKIN_INDEX_PATH} transactionId={recovery.transactionId} compact />}
     </div>
   )
 }
@@ -1721,6 +1796,7 @@ function BatchTagBar({
 /* ========================================================================== */
 
 function MoveToFolderDialog({
+  client,
   folders,
   count,
   title,
@@ -1728,14 +1804,27 @@ function MoveToFolderDialog({
   onPick,
   onClose,
 }: {
+  client: ProjectClient
   folders: FolderWithStats[]
   count: number
   title?: string
   /** When moving a folder: itself and its descendants are invalid targets. */
   excludeFolderId?: string
-  onPick: (folderId: string | null) => void
+  onPick: (folderId: string | null) => Promise<string | null>
   onClose: () => void
 }) {
+  const recovery = useOperationRecovery(client)
+  const [sending, setBusy] = useState(false)
+  const busy = sending || recovery.blocked
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => { if (recovery.recovered) onClose() }, [recovery.recovered, onClose])
+  async function pick(folderId: string | null) {
+    if (busy) return
+    setBusy(true); setError(null)
+    try { setError(await recovery.run(excludeFolderId ? 'patch-folder' : 'batch-patch', () => onPick(folderId))) }
+    catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) }
+    finally { setBusy(false) }
+  }
   // A folder cannot move into itself or any of its descendants.
   const excluded = useMemo(() => {
     if (!excludeFolderId) return new Set<string>()
@@ -1754,7 +1843,7 @@ function MoveToFolderDialog({
   }, [folders, excludeFolderId])
 
   return (
-    <div className={styles.modalBackdrop} onClick={onClose}>
+    <div className={styles.modalBackdrop} onClick={sending ? undefined : onClose}>
       <div
         className={styles.modal}
         onClick={(e) => e.stopPropagation()}
@@ -1763,12 +1852,15 @@ function MoveToFolderDialog({
       >
         <header className={styles.modalHead}>
           <h3>{title ?? `移动 ${count} 个条目到:`}</h3>
-          <button className={styles.iconBtn} onClick={onClose} aria-label="关闭">
+          <button className={styles.iconBtn} disabled={sending} onClick={onClose} aria-label="关闭">
             ✕
           </button>
         </header>
         <div className={styles.modalBody}>
-          <button className={styles.folderOption} onClick={() => onPick(null)}>
+          {error && <p role="alert" className={styles.errorText}>{error}</p>}
+          {recovery.transactionId !== undefined && <ResourceSaveStatus client={client} path={SKIN_INDEX_PATH} transactionId={recovery.transactionId} compact />}
+          {sending && <p role="status">正在移动…</p>}
+          <button className={styles.folderOption} disabled={busy} onClick={() => void pick(null)}>
             皮肤库{excludeFolderId ? '（根目录）' : ''}
           </button>
           {folders.map((f) => (
@@ -1776,8 +1868,8 @@ function MoveToFolderDialog({
               key={f.folderId}
               className={styles.folderOption}
               style={{ paddingLeft: 12 + (f.path.length - 1) * 16 }}
-              disabled={excluded.has(f.folderId)}
-              onClick={() => onPick(f.folderId)}
+              disabled={busy || excluded.has(f.folderId)}
+              onClick={() => void pick(f.folderId)}
             >
               {f.path.join(' / ')}
             </button>
@@ -2014,23 +2106,40 @@ function GcOrphansDialog({
 /* ========================================================================== */
 
 function NewFolderDialog({
+  client,
+  command,
   title,
   parentLabel,
   initialName,
+  confirmLabel = '创建',
   onNameChange,
   onConfirm,
   onCancel,
 }: {
+  client: ProjectClient
+  command: 'create-folder' | 'patch-folder'
   title: string
   parentLabel: string
   initialName: string
+  confirmLabel?: string
   onNameChange: (name: string) => void
-  onConfirm: () => Promise<void> | void
+  onConfirm: () => Promise<string | null>
   onCancel: () => void
 }) {
-  const [busy, setBusy] = useState(false)
+  const recovery = useOperationRecovery(client)
+  const [sending, setBusy] = useState(false)
+  const busy = sending || recovery.blocked
+  const [error, setError] = useState<string | null>(null)
+  useEffect(() => { if (recovery.recovered) onCancel() }, [recovery.recovered, onCancel])
+  async function confirm() {
+    if (busy || !initialName.trim()) return
+    setBusy(true); setError(null)
+    try { setError(await recovery.run(command, onConfirm)) }
+    catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) }
+    finally { setBusy(false) }
+  }
   return (
-    <div className={styles.modalBackdrop} onClick={onCancel}>
+    <div className={styles.modalBackdrop} onClick={sending ? undefined : onCancel}>
       <div
         className={styles.modal}
         onClick={(e) => e.stopPropagation()}
@@ -2039,7 +2148,7 @@ function NewFolderDialog({
       >
         <header className={styles.modalHead}>
           <h3>{title}</h3>
-          <button className={styles.iconBtn} onClick={onCancel} aria-label="关闭">
+          <button className={styles.iconBtn} disabled={sending} onClick={onCancel} aria-label="关闭">
             ✕
           </button>
         </header>
@@ -2049,28 +2158,27 @@ function NewFolderDialog({
             autoFocus
             type="text"
             value={initialName}
+            disabled={busy}
             placeholder="文件夹名称"
             onChange={(e) => onNameChange(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && initialName.trim() && !busy) {
-                setBusy(true)
-                void Promise.resolve(onConfirm()).finally(() => setBusy(false))
+                void confirm()
               }
-              if (e.key === 'Escape') onCancel()
+              if (e.key === 'Escape' && !sending) onCancel()
             }}
           />
+          {error && <p role="alert" className={styles.errorText}>{error}</p>}
+          {recovery.transactionId !== undefined && <ResourceSaveStatus client={client} path={SKIN_INDEX_PATH} transactionId={recovery.transactionId} compact />}
         </div>
         <footer className={styles.modalFoot}>
-          <button onClick={onCancel}>取消</button>
+          <button disabled={sending} onClick={onCancel}>取消</button>
           <button
             className={styles.primary}
             disabled={!initialName.trim() || busy}
-            onClick={() => {
-              setBusy(true)
-              void Promise.resolve(onConfirm()).finally(() => setBusy(false))
-            }}
+            onClick={() => void confirm()}
           >
-            创建
+            {sending ? '正在提交…' : recovery.phase === 'uncertain' ? '结果待确认' : recovery.blocked ? '请先处理原操作' : confirmLabel}
           </button>
         </footer>
       </div>

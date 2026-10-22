@@ -1,4 +1,4 @@
-/** Protocol v4: server-owned files, durable transactions and session-scoped file presence. */
+/** Protocol v9: shared project history and atomic, version-checked historical restoration. */
 export type { Role, Subject, Session, Lease, ResourceInfo, Resource, Snapshot } from './generated'
 export type Connection = { url: string; token: string }
 

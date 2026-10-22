@@ -96,6 +96,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
   const [locale, setLocale] = useState(loadLocale)
   const [localeTick, setLocaleTick] = useState(0)
   const textMapRef = useRef<TextMap | null>(null)
+  const textMapClientRef = useRef(client)
   const textDocKeyRef = useRef<string | null>(null)
   const textCacheRef = useRef<string | null>(null)
   const pendingSeedsRef = useRef(new Map<string, Record<string, string>>())
@@ -167,7 +168,6 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     }
     if (!binding || (!renames.length && !removed.length)) { applyUi(live.workspace); return }
     try {
-      for (const old of [...renames.map(item => item.old), ...removed]) binding.handle.client.assertSourceDraftsSaved(sourcePathOf(old))
       for (const { doc } of renames) {
         const renamed = renameScriptAssets(live.workspace, doc.key, doc.name)
         if (renamed.kind === 'blocked') throw new Error(`关联文件 ${renamed.path} 已存在`)
@@ -284,10 +284,10 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
   const progressDoc = doc ? isProgressDocument(doc) : false
   const progressPath = progressDoc && doc ? sourcePathOf({ name: doc.name }) : null
   const progressEditable = !!progressPath && !!fileEditing?.canEdit(progressPath)
-  useEffect(() => {
-    fileEditing?.setFocus(active ? progressPath : null)
-    return () => fileEditing?.setFocus(null)
-  }, [fileEditing, active, progressPath])
+  const presenceSource = doc && !isBuiltinGoalDocumentKey(doc.key) && !isItemLibraryTableKey(doc.key)
+    ? session.workspace.packages.flatMap(pkg => pkg.scripts).find(script => script.id === doc.key)
+    : null
+  const presencePath = presenceSource ? sourcePathOf(presenceSource) : null
   const navigationDoc = doc ? isNavigationDocument(doc) : false
   const itemTableDoc = doc ? isItemLibraryTableKey(doc.key) : false
   const itemDoc = doc ? isItemDocument(doc) : false
@@ -341,6 +341,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     const sourceDoc = localeDoc ? doc : null
     if (!sourceDoc || !projectBound) {
       textMapRef.current = null
+      textMapClientRef.current = undefined
       textDocKeyRef.current = null
       textCacheRef.current = null
       return
@@ -350,6 +351,11 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     const packageId = session.workspace.packages[0]?.id
     if (!packageId) return
     const sourceClient = session.binding?.handle.client
+    if (textMapClientRef.current !== sourceClient || textDocKeyRef.current !== sourceDoc.key || textMapRef.current?.fileName !== fileName) {
+      textMapRef.current = null
+      textDocKeyRef.current = null
+      textCacheRef.current = null
+    }
 
     const virtualSink = {
       read: () => textCacheRef.current,
@@ -376,9 +382,8 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
 
     let cancelled = false
     let unsubscribe: (() => void) | null = null
-    let created: TextMap | null = null
 
-    void (async () => {
+    const initialize = async () => {
       const blob = await getAssetBlob(packageId, fileName)
       const content = blob ? await blob.text() : null
       if (cancelled || getProjectSession().binding?.handle.client !== sourceClient) return
@@ -390,8 +395,8 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
       })
       if (cancelled) return
       const map = new TextMap({ fileName, locale, sink, keyStyle: 'literal' })
-      created = map
       textMapRef.current = map
+      textMapClientRef.current = sourceClient
       textDocKeyRef.current = sourceDoc.key
       unsubscribe = map.subscribe(() => setLocaleTick((tick) => tick + 1))
       map.load()
@@ -401,17 +406,21 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
         pendingSeedsRef.current.delete(sourceDoc.key)
       }
       setLocaleTick((tick) => tick + 1)
-    })()
+    }
+    // Source creation and its default language seeds are one save. Register the
+    // asynchronous read now, before TextMap can stage its first language write.
+    const ready = sourceClient?.writable && (!progressDoc || progressEditable)
+      ? sourceClient.transactions.prepareDraft(fileName, initialize)
+      : initialize()
+    void ready.catch(error => { if (!cancelled) setNotice(`语言资源准备失败：${String(error)}`) })
 
     return () => {
       cancelled = true
       unsubscribe?.()
-      if (textMapRef.current === created) {
-        textMapRef.current = null
-        textDocKeyRef.current = null
-      }
+      // Losing a lease or refreshing the same document must not blank its fields
+      // while the replacement map loads. Its sink still reads the staged draft.
     }
-  }, [doc?.key, doc?.name, locale, projectBound, localeDoc, session.workspace.packages[0]?.id, client?.remoteEpoch, progressEditable])
+  }, [doc?.key, doc?.name, locale, projectBound, localeDoc, session.workspace.packages[0]?.id, client, client?.remoteEpoch, progressEditable])
 
   // 打开旧明文文档时迁移为语义键并灌默认语种子
   useEffect(() => {
@@ -1252,7 +1261,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     <div className="flow-layout">
       <FlowExplorer readOnly={readOnly} state={explorerState} active={active} disabled={locked || busy} onChange={(next) => setState((previous) => normalizeGroups({ ...previous, documents: next.documents, folders: next.folders }))} onSelect={(key) => selectDocument(key)} onNew={newFlow} onImport={requestImport} onImportFiles={(files, folderId, packageId) => { void importFiles(files, { folderId, package: packageId }) }} onExport={exportFlow} onDownload={downloadDraft} onRemove={removeResources} onProperties={setPropertiesKey} onViewSource={viewProgressSource} onNotice={setNotice} />
       <main className="flow-main">
-        {active && client && progressPath && <FilePresenceBar key={`${client.snapshot.session.id}:${progressPath}`} client={client} path={progressPath} />}
+        {active && client && presencePath && <FilePresenceBar key={`${client.snapshot.session.id}:${presencePath}`} client={client} path={presencePath} mode={progressDoc ? 'managed' : 'optimistic'} label={doc?.name} />}
         {state.split ? (
           <EditorSplit
             direction={state.split.direction}

@@ -10,6 +10,7 @@ import { rememberProjectDraft, restoreProjectDraft } from './drafts'
 import { EditTransactionPanel } from './EditTransactionPanel'
 import { openEditJournal } from './editJournal'
 import { attachReconciliation } from './reconcileEdits'
+import { parseManifestJson } from './manifest'
 
 const labels: Record<Role,string> = { owner: '管理者', editor: '编辑者', viewer: '只读' }
 const defaultUrl = () => import.meta.env.DEV || window.location.port === '4173' ? '/__project' : window.location.origin
@@ -39,8 +40,28 @@ async function openClient(client: ProjectClient, initialName: string) {
     if (replayed && getProjectClient() === client && live.binding?.handle.client === client) {
       // The immutable receipt may be older than a peer's later edit. Advance
       // only the now-clean resources; subsequent local drafts remain protected.
-      const workspace = await refreshServiceProject(live.binding,live.workspace).catch(()=>null)
-      if (workspace && getProjectClient() === client) setProjectSession({workspace})
+      const historyRestore = edits.some(edit => edit.op === 'history-restore')
+      const refreshed = refreshServiceProject(live.binding,live.workspace)
+      const workspace = historyRestore ? await refreshed : await refreshed.catch(()=>null)
+      if (workspace && getProjectClient() === client) {
+        setProjectSession({workspace})
+        if (historyRestore) {
+          const entry = client.entry('project.json')
+          const raw = entry ? await (await client.read(entry.path, false, entry.version)).text() : null
+          const current = getProjectSession()
+          if (getProjectClient() !== client || current.binding?.handle.client !== client) return
+          const binding = {...current.binding}
+          const pkg = current.workspace.packages.find(pkg => pkg.id === binding.manifest.id)
+          if (raw && entry && pkg?.name === binding.manifest.name && !client.transactions.hasDraft('project.json')) {
+            const manifest = parseManifestJson(raw)
+            if (manifest.id !== binding.manifest.id) throw new Error('恢复后的工程清单身份已变化，请重新打开工程')
+            binding.manifest = manifest; binding.folderName = manifest.name
+            client.baseline.set('project.json', entry.version); client.texts.set('project.json', raw); client.originals.set('project.json', {version: entry.version, data: raw})
+            setProjectSession({binding, workspace: {...current.workspace, packages: current.workspace.packages.map(value => value.id === manifest.id ? {...value, name:manifest.name} : value)}})
+          } else setProjectSession({binding})
+          setBoundProject(binding)
+        }
+      }
     }
   }
   return loaded
@@ -57,6 +78,8 @@ export function ProjectConnectionBar() {
   const [clientName, setClientName] = useState('浏览器窗口')
   const [projectName, setProjectName] = useState('新工程')
   const [error, setError] = useState('')
+  const [connectionError, setConnectionError] = useState<{ client: ProjectClient; message: string } | null>(null)
+  const [refreshError, setRefreshError] = useState<{ client: ProjectClient; message: string } | null>(null)
   const [busy, setBusy] = useState(false)
   const [subjectName, setSubjectName] = useState('')
   const [kind, setKind] = useState('account')
@@ -131,7 +154,8 @@ export function ProjectConnectionBar() {
           }
           revision = client.tree.revision
         } while (wanted > revision && !stopped)
-      } catch (e) { if (!stopped) setError(String(e)) }
+        setRefreshError(current => current?.client === client ? null : current)
+      } catch (e) { if (!stopped) setRefreshError({ client: client!, message: `工程刷新失败：${String(e)}` }) }
       finally { refreshing = false }
     }
     function receive(state: Snapshot) {
@@ -139,6 +163,7 @@ export function ProjectConnectionBar() {
       const accessChanged = !client!.online || client!.snapshot.role !== state.role
       if (!client!.setStatus(true,state)) return
       lastSeen = performance.now(); setOnline(true); setSnapshot(state)
+      setConnectionError(current => current?.client === client ? null : current)
       if (accessChanged) setProjectSession({})
       wanted = state.filesRevision
       if (wanted !== revision) void reconcile()
@@ -147,13 +172,14 @@ export function ProjectConnectionBar() {
       if (stopped) return
       socket = new WebSocket(socketUrl(client!.connection.url))
       socket.onopen = () => socket?.send(JSON.stringify({token:client!.connection.token}))
-      socket.onmessage = event => { try { const v = JSON.parse(event.data); if (v.type === 'snapshot') receive(v.data) } catch { setError('工程状态消息无效') } }
+      socket.onmessage = event => { try { const v = JSON.parse(event.data); if (v.type === 'snapshot') receive(v.data) } catch { if (!stopped) setConnectionError({ client: client!, message: '工程状态消息无效' }) } }
       socket.onclose = () => { if (stopped) return; client!.setStatus(false);setOnline(false);retry=setTimeout(watch,3000) }
-      socket.onerror = () => { client!.setStatus(false);setOnline(false) }
+      socket.onerror = () => { if (stopped) return; client!.setStatus(false);setOnline(false) }
     }
     const heartbeat = async () => {
+      const seenWhenSent = lastSeen
       try { receive(await request<Snapshot>(client.connection,'/api/heartbeat','POST',{resourceId:null,fileLeases:[...client.leases.values()].map(l => l.id)})) }
-      catch (e) { if (!stopped) { client.setStatus(false);setOnline(false);setError(e instanceof Error ? e.message : String(e)) } }
+      catch (e) { if (!stopped && lastSeen <= seenWhenSent) { client.setStatus(false);setOnline(false);setConnectionError({ client, message: e instanceof Error ? e.message : String(e) }) } }
     }
     watch(); void heartbeat()
     const timer = setInterval(() => { void heartbeat() },8000)
@@ -174,11 +200,13 @@ export function ProjectConnectionBar() {
         await request(client.connection,'/api/sessions/current','DELETE'); client.setStatus(false);setProjectClient(null);setClient(null);setSnapshot(null);setOnline(false);setBoundProject(null);setProjectSession({binding:null,workspace:emptyWorkspace()})
       })}>关闭工程</button></>}
       {error && <span className="project-service-error" role="alert">{error}</span>}
+      {connectionError?.client === client && <span className="project-service-error" role="alert">{connectionError.message}</span>}
+      {refreshError?.client === client && <span className="project-service-error" role="alert">{refreshError.message}</span>}
     </div>
     {client && <EditTransactionPanel client={client} />}
     {manage && snapshot && client && <section className="project-members" aria-label="工程主体与权限">
       <button onClick={() => setManage(false)}>收起</button>
-      <div className="project-presence">{snapshot.sessions.map(s => <span key={s.id}>{snapshot.members.find(m=>m.subject.id===s.subjectId)?.subject.name} · {s.clientName}{snapshot.leases.some(l=>l.sessionId===s.id) ? ' · 持有写权' : ' · 查看'}</span>)}</div>
+      <div className="project-presence">{snapshot.sessions.map(s => <span key={s.id}>{snapshot.members.find(m=>m.subject.id===s.subjectId)?.subject.name} · {s.clientName} · {s.filePresence?.activity === 'editing' ? '编辑中' : '查看中'}{s.filePresence ? ` · ${s.filePresence.entryId ? '皮肤条目' : s.filePresence.path === '.hanshu/skinmanager/library.json' ? '皮肤库' : s.filePresence.path.split('/').at(-1)}` : ''}{snapshot.leases.some(l=>l.sessionId===s.id) ? ' · 持有写权' : ''}</span>)}</div>
       {snapshot.leases.filter(l=>l.resourceId.startsWith('file:')).map(l => <div key={l.id}>{l.resourceId.slice(5)} · {snapshot.sessions.find(s=>s.id===l.sessionId)?.clientName}{snapshot.role === 'owner' && l.sessionId !== snapshot.session.id && <button onClick={() => void run(async () => {
         const leases = await request<import('../collab/protocol').Lease[]>(client.connection,'/api/files/leases','POST',{paths:[l.resourceId.slice(5)],force:true});for(const lease of leases)client.leases.set(lease.resourceId.slice(5),lease)
       })}>接管写权</button>}</div>)}

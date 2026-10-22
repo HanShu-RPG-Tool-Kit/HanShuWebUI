@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import { ProjectClient, type FileEdit } from '../src/project/serviceClient'
-import { progressEditingPath } from '../src/project/fileEditing'
 import { ServiceError, type Snapshot, type Lease } from '../src/collab/protocol'
-import type { FileChange, FileTransactionReceipt, ProjectFileTree } from '../src/collab/generated'
+import type { FileChange, FileTransactionReceipt, ProjectFileTree, ResourceOperationPlan } from '../src/collab/generated'
+import { resourcePlanFixture } from './resource-plan-fixture'
+import { saveProjectToDirectory } from '../src/project/projectFs'
 
 const SOURCE = 'src/progress/chapter/arrival.progress'
 const LANGUAGE = 'assets/zh_cn/lang_progress/chapter/arrival.lang'
@@ -32,6 +33,9 @@ class Service {
   leases = new Map<string, Lease>()
   receipts = new Map<string, FileTransactionReceipt>()
   versions = new Map([[SOURCE, 'source-v1'], [LANGUAGE, 'lang-v1'], [OTHER, 'other-v1']])
+  owners = new Map([[LANGUAGE, SOURCE], [VOICE, SOURCE]])
+  sourceKinds = new Map([[SOURCE, 'progress'], [NEXT, 'progress'], [OTHER, 'hs']])
+  transformPlan?: (plan: ResourceOperationPlan) => ResourceOperationPlan
   role: Snapshot['role'] = 'editor'
   focus: string | null = null
   statusVersion = 1
@@ -52,7 +56,7 @@ class Service {
     const session = {
       id: SESSION, subjectId: 'same-subject', clientName: 'Window A', expiresAt: this.now() + 60000,
       resourceId: null, activity: 'viewing', filePresence: this.focus ? {
-        path: this.focus, authorityId: `file:${this.focus}`,
+        path: this.focus, authorityId: `file:${this.focus}`, entryId: null,
         activity: this.leases.get(this.focus)?.sessionId === SESSION ? 'editing' as const : 'viewing' as const,
       } : null,
     }
@@ -84,11 +88,19 @@ class Service {
       return json(this.beforeProjectResponse ? await this.beforeProjectResponse(snapshot) : snapshot)
     }
     if (path === '/api/files') return json(this.tree())
+    if (path === '/api/files/plan') {
+      const plan = resourcePlanFixture(body.operations, { versions: this.versions, owners: this.owners, sourceKinds: this.sourceKinds })
+      return json(this.transformPlan ? this.transformPlan(plan) : plan)
+    }
+    if (path === '/api/files/relations') {
+      const resource = new URL(String(input)).searchParams.get('path')!
+      const relations = [...this.owners].filter(([child, owner]) => child === resource || owner === resource).map(([child, owner]) => ({ kind: 'ownership', role: 'language', from: owner, to: child }))
+      return json({ path: resource, relations })
+    }
     if (path === '/api/files/leases' && method === 'POST') {
       this.beforeAcquire?.()
       const requested = new Set<string>(body.paths)
-      // The fake service groups these known sidecars independently of the C mapper.
-      if (requested.has(LANGUAGE) || requested.has(VOICE)) requested.add(SOURCE)
+      // Lease storage accepts the explicit policy plan; it knows no ownership rules.
       for (const resource of requested) {
         const held = this.leases.get(resource)
         if (held && held.sessionId !== SESSION && !body.force) return json({ code: 'locked', message: 'Owned by another window' }, 423)
@@ -163,13 +175,25 @@ await test('打开和清除焦点不申请写权，焦点更新按用户最后�
 
 await test('进度、语言及配音写入都必须明确开始编辑，普通剧本不受此入口策略影响', () => fixture(async (client, service) => {
   for (const path of [SOURCE, LANGUAGE, VOICE]) {
-    await assert.rejects(client.apply([write(path)]), error => error instanceof ServiceError && error.code === 'editing_required')
+    await assert.rejects(client.assertEditingIntent([write(path)]), error => error instanceof ServiceError && error.code === 'editing_required')
   }
   assert.equal(service.count('/api/files/leases', 'POST'), 0)
   assert.equal(service.count('/api/files/commit'), 0)
+  assert.equal(client.transactions.getSnapshot().transactions.length, 0, 'Missing editor intent must be rejected before creating a frozen submission')
   await client.apply([write(OTHER)])
   assert.equal(service.count('/api/files/commit'), 1)
   assert.equal(service.leases.has(OTHER), false)
+}))
+
+await test('工程保存入口等待S编辑策略预检，未取得进度写权不创建失败提交', () => fixture(async (client, service) => {
+  await client.transactions.stageWrite(write(LANGUAGE, 'unsaved title'))
+  const binding = { handle: client.root(), folderName: 'test', manifest: { version: 1, id: 'pkg', name: 'test' } } as never
+  const workspace = { packages: [], activeScriptId: null, activeAssetId: null }
+  await assert.rejects(saveProjectToDirectory(binding, workspace), error => error instanceof ServiceError && error.code === 'editing_required')
+  assert.equal(client.transactions.getSnapshot().transactions.length, 0)
+  assert.equal(client.transactions.stagedText(LANGUAGE), 'unsaved title')
+  assert.equal(service.count('/api/files/leases', 'POST'), 0)
+  assert.equal(service.count('/api/files/commit'), 0)
 }))
 
 await test('源文档和语言整批保存后只保留显式编辑锁，临时语言锁立即释放', () => fixture(async (client, service) => {
@@ -424,13 +448,65 @@ await test('显式移动源文档及重写目标内容可作为一个结构事�
   assert.equal(client.leases.size, 0)
 }))
 
-await test('进度sidecar的UI映射保留嵌套路径并排除其它编辑器资源', async () => {
-  assert.equal(progressEditingPath(SOURCE), SOURCE)
-  assert.equal(progressEditingPath(LANGUAGE), SOURCE)
-  assert.equal(progressEditingPath(VOICE), SOURCE)
-  assert.equal(progressEditingPath('assets/zh_cn/lang_hs/chapter/arrival.lang'), null)
-  assert.equal(progressEditingPath(OTHER), null)
-})
+await test('C按S给出的编辑authority检查任意路径，不猜测语言目录约定', () => fixture(async (client, service) => {
+  const resource = 'assets/shared/custom-labels.json'
+  service.owners.set(resource, SOURCE)
+  await assert.rejects(client.assertEditingIntent([write(resource)]), error => error instanceof ServiceError && error.code === 'editing_required')
+  assert.equal(client.transactions.getSnapshot().transactions.length, 0)
+  await client.editing.begin(SOURCE)
+  await client.apply([write(resource)])
+  const acquire = service.calls.filter(call => call.path === '/api/files/leases' && call.method === 'POST').at(-1)!
+  assert.deepEqual(new Set(acquire.body.paths as string[]), new Set([resource, SOURCE]))
+  assert.equal(service.count('/api/files/commit'), 1)
+  assert.equal(client.editing.canEdit(SOURCE), true)
+}))
+
+await test('关系存在不等于必须同锁，C仅按计划申请所需路径', () => fixture(async (client, service) => {
+  service.transformPlan = plan => ({ ...plan, leasePaths: plan.leasePaths.filter(path => path !== SOURCE), authorities: plan.authorities.map(item => item.path === LANGUAGE ? { ...item, authorityPath: LANGUAGE, sourceKind: null } : item) })
+  await client.apply([write(LANGUAGE)])
+  const acquire = service.calls.find(call => call.path === '/api/files/leases' && call.method === 'POST')!
+  assert.deepEqual(acquire.body.paths, [LANGUAGE])
+  assert.equal(service.count('/api/files/commit'), 1)
+  assert.equal(service.leases.has(SOURCE), false)
+}))
+
+await test('计划当前版本不能替换C冻结的已读版本', () => fixture(async (client, service) => {
+  client.baseline.set(OTHER, 'read-version')
+  service.versions.set(OTHER, 'newer-peer-version')
+  await client.apply([write(OTHER)])
+  const submitted = service.calls.find(call => call.path === '/api/files/commit')!.body.changes as FileChange[]
+  assert.equal(submitted[0].version, 'read-version')
+}))
+
+await test('编辑计划要求多个写权时全部保留，任何一个丢失均暂停且不自动复活', () => fixture(async (client, service) => {
+  service.transformPlan = plan => ({ ...plan, leasePaths: [...new Set([...plan.leasePaths, LANGUAGE])] })
+  await client.editing.begin(SOURCE)
+  assert.equal(client.editing.canEdit(SOURCE), true)
+  const retained = client.leases.get(LANGUAGE)!.id
+  await client.apply([write(SOURCE)])
+  assert.equal(service.leases.get(LANGUAGE)?.id, retained, 'The plan dependency stays leased throughout editing')
+  const replacement = service.lease(LANGUAGE, 'window-b')
+  client.setStatus(true, service.snapshot())
+  assert.equal(client.editing.canEdit(SOURCE), false)
+  assert.equal(client.editing.state(SOURCE)?.lost, true)
+  assert.equal(client.leases.has(SOURCE), false)
+  await client.editing.end(SOURCE)
+  assert.equal(service.leases.get(LANGUAGE)?.id, replacement.id, 'Ending a suspended edit cannot release a peer dependency')
+}))
+
+await test('多个编辑计划共享同一写权时，结束一个不释放另一个仍需持有的路径', () => fixture(async (client, service) => {
+  service.transformPlan = plan => ({ ...plan, leasePaths: [...new Set([...plan.leasePaths, LANGUAGE])] })
+  await client.editing.begin(SOURCE)
+  await client.editing.begin(NEXT)
+  const shared = client.leases.get(LANGUAGE)!.id
+  await client.editing.end(SOURCE)
+  assert.equal(service.leases.has(SOURCE), false)
+  assert.equal(service.leases.get(LANGUAGE)?.id, shared)
+  assert.equal(client.editing.canEdit(NEXT), true)
+  await client.editing.end(NEXT)
+  assert.equal(service.leases.has(LANGUAGE), false)
+  assert.equal(service.leases.has(NEXT), false)
+}))
 
 if (failures.length) throw new Error(`${failures.length} 项编辑会话回归失败：${failures.join('；')}`)
 console.log(`编辑会话与写权生命周期 ${checks} 项检查通过。`)

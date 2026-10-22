@@ -70,6 +70,17 @@ pub struct FileTransactionReceipt {
     pub status: FileTransactionStatus,
     pub tree: Option<ProjectFileTree>,
     pub error: Option<FileTransactionError>,
+    /// Exact entry result at commit time, retained by immutable transaction receipts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "Array<Record<string, unknown>>")]
+    pub skin_entries: Option<Vec<serde_json::Value>>,
+    /// Exact semantic operation result, persisted atomically with the commit decision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(
+        optional,
+        type = "{ command: string; result: Record<string, unknown> }"
+    )]
+    pub skin_command_result: Option<serde_json::Value>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -86,6 +97,8 @@ pub(super) struct CommitJournal {
     pub(super) committed: bool,
     pub(super) transaction: TransactionRecord,
     pub(super) undo: BTreeMap<String, UndoEntry>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) history: Option<history::HistoryRevision>,
 }
 
 fn transaction_id_ok(id: &str) -> Result<()> {
@@ -118,6 +131,8 @@ impl TransactionRecord {
                 }
                 FileTransactionStatus::Rejected => {
                     self.receipt.tree.is_none()
+                        && self.receipt.skin_entries.is_none()
+                        && self.receipt.skin_command_result.is_none()
                         && self
                             .receipt
                             .error
@@ -127,7 +142,18 @@ impl TransactionRecord {
             },
             "storage",
             "事务记录结果无效",
-        )
+        )?;
+        if let Some(result) = &self.receipt.skin_command_result {
+            require(
+                result["command"]
+                    .as_str()
+                    .is_some_and(|command| !command.is_empty())
+                    && result["result"].is_object(),
+                "storage",
+                "持久皮肤业务回执无效",
+            )?;
+        }
+        Ok(())
     }
 
     fn new(subject: &str, id: &str, changes: &[FileChange]) -> Result<Self> {
@@ -157,6 +183,8 @@ impl TransactionRecord {
                 status: FileTransactionStatus::Committed,
                 tree: None,
                 error: None,
+                skin_entries: None,
+                skin_command_result: None,
             },
         })
     }
@@ -164,6 +192,8 @@ impl TransactionRecord {
     fn reject(&mut self, error: &Error) {
         self.receipt.status = FileTransactionStatus::Rejected;
         self.receipt.tree = None;
+        self.receipt.skin_entries = None;
+        self.receipt.skin_command_result = None;
         self.receipt.error = Some(FileTransactionError {
             code: error.code.into(),
             message: error.message.clone(),
@@ -189,7 +219,7 @@ impl ProjectFiles {
             .join(format!("{hash}.json.gz"))
     }
 
-    fn checked_directory(path: &Path, create: bool) -> Result<()> {
+    pub(super) fn checked_directory(path: &Path, create: bool) -> Result<()> {
         match fs::symlink_metadata(path) {
             Ok(meta) => require(
                 meta.is_dir() && !reparse(&meta),
@@ -407,6 +437,13 @@ impl ProjectFiles {
         let mut journal: CommitJournal = serde_json::from_slice(&fs::read(self.journal())?)
             .map_err(|_| Error::new("storage", "事务恢复日志损坏，拒绝启动"))?;
         journal.transaction.validate()?;
+        if let Some(revision) = &journal.history {
+            self.validate_history_transaction(
+                revision,
+                &journal.transaction.receipt,
+                &journal.transaction.subject_id,
+            )?;
+        }
         require(
             journal.transaction.receipt.status == FileTransactionStatus::Committed,
             "storage",
@@ -444,6 +481,11 @@ impl ProjectFiles {
                     "interrupted",
                     "服务在确认提交前中断，修改已回滚；可重新提交",
                 ));
+            }
+        }
+        if journal.committed {
+            if let Some(revision) = &journal.history {
+                self.publish_history(revision)?;
             }
         }
         self.persist_record(&journal.transaction)?;
@@ -484,6 +526,10 @@ impl ProjectFiles {
         // the original receipt, including its exact versions, and never replays a move/delete.
         journal.committed = true;
         if self.write_journal(&journal).is_err()
+            || journal
+                .history
+                .as_ref()
+                .is_some_and(|revision| self.publish_history(revision).is_err())
             || self.persist_record(&journal.transaction).is_err()
             || fs::remove_file(self.journal()).is_err()
         {
@@ -555,14 +601,62 @@ impl Engine {
             "storage",
             "事务结果待恢复，请重启服务后查询",
         )?;
-        let result = self
-            .validate_file_changes(sid, &changes, now)
-            .and_then(|_| {
-                self.files
-                    .as_mut()
-                    .unwrap()
-                    .commit(&changes, record.clone())
-            });
+        store.sync_history_at(now)?;
+        let session = &self.sessions[sid].0;
+        let context = HistoryContext {
+            actor: Some(HistoryActor {
+                subject_id: session.subject_id.clone(),
+                name: self.data.subjects[&session.subject_id].name.clone(),
+                client_name: session.client_name.clone(),
+                session_id: session.id.clone(),
+            }),
+            now,
+            kind: if changes.iter().any(|change| change.op == "history-restore") {
+                "restore"
+            } else {
+                "edit"
+            }
+            .into(),
+            transaction_id: Some(transaction_id.into()),
+            isolated: changes.iter().any(history::isolated_operation) || changes.len() > 8,
+            moves: changes
+                .iter()
+                .filter(|change| change.op == "move")
+                .filter_map(|change| {
+                    change.destination.as_ref().map(|to| HistoryMove {
+                        from: change.path.clone(),
+                        to: to.clone(),
+                    })
+                })
+                .collect(),
+        };
+        let mut temporary = Vec::new();
+        let trusted_restore = changes.iter().any(|change| change.op == "history-restore");
+        let result = (|| {
+            let expanded;
+            let changes = if trusted_restore {
+                let (next, acquired) = self.expand_history_restore(sid, &changes, now)?;
+                temporary = acquired;
+                expanded = next;
+                &expanded
+            } else {
+                &changes
+            };
+            let tree = self.validate_file_changes(sid, changes, now, trusted_restore)?;
+            self.files
+                .as_mut()
+                .unwrap()
+                .commit(changes, record.clone(), tree, context)
+        })();
+        for lease in temporary {
+            if self
+                .leases
+                .get(&lease.resource_id)
+                .is_some_and(|current| current.id == lease.id)
+            {
+                self.leases.remove(&lease.resource_id);
+            }
+        }
         match result {
             Ok(receipt) => Ok(receipt),
             Err(error) => {

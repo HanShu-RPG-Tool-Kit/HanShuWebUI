@@ -3,8 +3,19 @@
 mod files;
 mod model;
 mod progress;
+mod resource_policy;
+mod resource_relations;
+mod skin_commands;
+mod skin_patch;
 pub use files::*;
 pub use model::*;
+pub use resource_policy::{
+    FileEditAuthority, FileOperationKind, FileOperationRequest, PlannedFileOperation,
+    ResourceOperationPlan,
+};
+pub use resource_relations::{
+    ResourceRelation, ResourceRelationKind, ResourceRelationRole, ResourceRelations,
+};
 use sha2::{Digest, Sha256};
 use std::{
     cell::Cell,
@@ -395,6 +406,15 @@ impl Engine {
             if !enabled {
                 for session in affected {
                     self.sessions.remove(&session);
+                }
+            } else {
+                // Re-granting permission must not revive editing intent from before revocation.
+                for session in affected {
+                    if let Some(presence) =
+                        &mut self.sessions.get_mut(&session).unwrap().0.file_presence
+                    {
+                        presence.activity = FileActivity::Viewing;
+                    }
                 }
             }
         }

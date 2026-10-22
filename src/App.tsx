@@ -41,6 +41,8 @@ import { shouldShowSplash } from './splashSession.ts'
 import appWordmarkUrl from './brand/hanshu-wordmark.svg'
 import './App.css'
 import { ProjectConnectionBar } from './project/ProjectConnectionBar'
+import { ProjectHistory } from './project/ProjectHistory'
+import { getProjectClient } from './project/serviceClient'
 
 const isDesktopShell = isTauriRuntime()
 
@@ -115,6 +117,7 @@ function isAlwaysEnabledMenuItem(item: string) {
     HELP_MENU_ITEMS.has(item) ||
     item.startsWith('界面比例 ') ||
     item === '恢复推荐大小（125%）' ||
+    item === '历史版本' ||
     item === '退出'
   )
 }
@@ -143,6 +146,8 @@ function App() {
   )
   const [uiScale, setUiScale] = useState<UiScale>(() => loadUiScale())
   const [helpTopicId, setHelpTopicId] = useState<HelpTopicId | null>(null)
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const closeHistory = useCallback(() => setHistoryOpen(false), [])
   const [maximized, setMaximized] = useState(false)
   const [showSplash, setShowSplash] = useState(
     () => isDesktopShell && shouldShowSplash(),
@@ -265,6 +270,10 @@ function App() {
 
   const handleMenuAction = (item: string) => {
     setOpenMenu(null)
+    if (item === '历史版本') {
+      setHistoryOpen(true)
+      return
+    }
     const helpTopic = HELP_MENU_TOPIC[item]
     if (helpTopic) {
       setHelpTopicId(helpTopic)
@@ -391,6 +400,7 @@ function App() {
           </div>
         </div>
         <div className="titlebar-center" data-tauri-drag-region />
+        <button type="button" className="project-history-launch" onClick={() => setHistoryOpen(true)}>工程历史</button>
         {isDesktopShell && (
           <div className="titlebar-right">
             <button
@@ -422,6 +432,7 @@ function App() {
       </header>
 
       <ProjectConnectionBar />
+      {historyOpen && <ProjectHistory client={getProjectClient()} onClose={closeHistory} />}
       <div className="app-body">
         <div
           className={`app-workspace-pane${

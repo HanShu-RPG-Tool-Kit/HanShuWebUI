@@ -3,19 +3,23 @@
  * 字段变更即保存，不再另开「编辑资料」对话框。
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type {
   CollectedTag,
   FolderWithStats,
   LibraryEntry,
   PatchEntryRequest,
-  SkinModel,
 } from '../contracts/types.ts'
+import { getProjectClient, type ProjectClient } from '../../project/serviceClient'
+import { useFileEditing } from '../../project/useFileEditing'
+import { entryDraftDirty, entryDraftSession, type EntryDraft as Draft } from '../local/entryDraft'
+import { discardEntrySubmission, entrySubmissionState } from '../local/entrySubmission'
 import { SkinPreview3D } from './SkinPreview3D.tsx'
 import { TagPicker } from './TagPicker.tsx'
 import styles from '../styles/workspace.module.css'
 
 export interface EntryDetailsProps {
+  client: ProjectClient
   entry: LibraryEntry
   folders: FolderWithStats[]
   tags: CollectedTag[]
@@ -38,45 +42,12 @@ export interface EntryDetailsProps {
   getPreviewUrl: (skinId: string) => Promise<string>
   onPatch: (entryId: string, body: PatchEntryRequest) => Promise<LibraryEntry>
   onUpdated: (updated: LibraryEntry) => void
-}
-
-type Draft = {
-  name: string
-  folderId: string | null
-  model: SkinModel
-  tags: string[]
-  licenseStatus: 'unspecified' | 'declared'
-  licenseName: string
-  licenseUrl: string
-  licenseNote: string
-  author: string
-  sourceName: string
-  sourceUrl: string
-  sourceNote: string
-  note: string
-  customId: string
-}
-
-function draftFromEntry(entry: LibraryEntry): Draft {
-  return {
-    name: entry.name,
-    folderId: entry.folderId,
-    model: entry.model,
-    tags: [...entry.tags],
-    licenseStatus: entry.license.status,
-    licenseName: entry.license.name ?? '',
-    licenseUrl: entry.license.url ?? '',
-    licenseNote: entry.license.note ?? '',
-    author: entry.provenance.author ?? '',
-    sourceName: entry.provenance.sourceName ?? '',
-    sourceUrl: entry.provenance.sourceUrl ?? '',
-    sourceNote: entry.provenance.sourceNote ?? '',
-    note: entry.note,
-    customId: entry.customId ?? '',
-  }
+  onDirtyChange?: (entryId: string, dirty: boolean) => void
+  onInteract?: () => void
 }
 
 export function EntryDetails({
+  client,
   entry,
   folders,
   tags,
@@ -99,39 +70,54 @@ export function EntryDetails({
   getPreviewUrl,
   onPatch,
   onUpdated,
+  onDirtyChange,
+  onInteract,
 }: EntryDetailsProps) {
+  useFileEditing(client)
+  const readOnly = client.snapshot.role === 'viewer'
   const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [previewError, setPreviewError] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<'model' | 'flat'>('model')
   const [editingName, setEditingName] = useState(false)
-  const [draft, setDraft] = useState<Draft>(() => draftFromEntry(entry))
-  const [, setRevision] = useState(entry.revision)
-  const [error, setError] = useState<string | null>(null)
-  const [saving, setSaving] = useState(false)
-  const entryIdRef = useRef(entry.entryId)
-  const revisionRef = useRef(entry.revision)
-  const saveSeq = useRef(0)
+  const scope = JSON.stringify([client.connection.url, client.snapshot.projectId, client.snapshot.session.subjectId])
+  const session = entryDraftSession(scope, entry)
+  session.bind(body => {
+    if (getProjectClient() !== client) return Promise.reject(new Error('工程连接已切换，修改保留在原工程的本窗口草稿中。'))
+    if (client.snapshot.role === 'viewer') return Promise.reject(new Error('当前主体为只读访问，已有草稿保留在本窗口。'))
+    return onPatch(entry.entryId, body)
+  })
+  const state = useSyncExternalStore(session.subscribe, session.getSnapshot, session.getSnapshot)
+  const transactions = useSyncExternalStore(client.transactions.subscribe, client.transactions.getSnapshot, client.transactions.getSnapshot)
+  const { draft, error, saving } = state
+  const setDraft = (update: Draft | ((draft: Draft) => Draft)) => session.edit(update)
+  const submission = entrySubmissionState(client, entry.entryId)
+  const transaction = submission.transaction
+  const uncertain = transaction?.phase === 'uncertain'
+  const busy = saving || transaction?.phase === 'preparing' || transaction?.phase === 'submitting'
+  const unresolved = transaction && ['failed', 'conflict', 'uncertain'].includes(transaction.phase)
   const nameInputRef = useRef<HTMLInputElement>(null)
+  const dirty = entryDraftDirty(state)
+
+  useEffect(() => { onDirtyChange?.(entry.entryId, dirty) }, [entry.entryId, dirty, onDirtyChange])
 
   useEffect(() => {
     let cancelled = false
     void getPreviewUrl(entry.skinId).then((u) => {
-      if (!cancelled) setPreviewUrl(u)
+      if (!cancelled) { setPreviewUrl(u); setPreviewError(null) }
+    }).catch(error => {
+      if (!cancelled) { setPreviewUrl(null); setPreviewError(error instanceof Error ? error.message : String(error)) }
     })
     return () => {
       cancelled = true
     }
   }, [entry.skinId, getPreviewUrl])
 
+  useEffect(() => { session.observe(entry) }, [session, entry])
   useEffect(() => {
-    if (entry.entryId !== entryIdRef.current || entry.revision !== revisionRef.current) {
-      entryIdRef.current = entry.entryId
-      revisionRef.current = entry.revision
-      setDraft(draftFromEntry(entry))
-      setRevision(entry.revision)
-      setError(null)
-      setEditingName(false)
-    }
-  }, [entry])
+    const latest = entrySubmissionState(client, entry.entryId)
+    if (latest.result && latest.command) session.confirm(latest.command.expectedRevision, latest.command.changes, latest.result)
+  }, [client, session, entry.entryId, transactions])
+  useEffect(() => { if (state.saved && state.saved.revision > entry.revision) onUpdated(state.saved) }, [state.saved, entry.revision, onUpdated])
 
   useEffect(() => {
     if (!editingName) return
@@ -142,40 +128,44 @@ export function EntryDetails({
   }, [editingName])
 
   const commitName = () => {
-    const name = draft.name.trim() || entry.name
+    const name = session.getSnapshot().draft.name.trim() || state.base.name
     setEditingName(false)
-    if (name === entry.name) {
-      setDraft((d) => ({ ...d, name: entry.name }))
-      return
-    }
+    setDraft((d) => ({ ...d, name }))
     void applyPatch({ name })
   }
 
-  const applyPatch = async (body: Omit<PatchEntryRequest, 'revision'>) => {
-    const targetId = entry.entryId
-    const seq = ++saveSeq.current
-    setSaving(true)
-    setError(null)
+  const applyPatch = (body: Omit<PatchEntryRequest, 'revision' | 'resolvePending'>) => session.request(body)
+  const adoptRemote = async () => {
+    try { await discardEntrySubmission(client, entry.entryId); session.adoptRemote(); setEditingName(false) }
+    catch (e) { session.setError(e) }
+  }
+  const retryOriginal = async () => {
+    if (!transaction) return
     try {
-      const updated = await onPatch(targetId, {
-        revision: revisionRef.current,
-        ...body,
-      })
-      if (seq !== saveSeq.current || entryIdRef.current !== targetId) return
-      revisionRef.current = updated.revision
-      setRevision(updated.revision)
-      setDraft(draftFromEntry(updated))
-      onUpdated(updated)
-    } catch (e) {
-      if (seq !== saveSeq.current || entryIdRef.current !== targetId) return
-      setError((e as Error).message)
-    } finally {
-      if (seq === saveSeq.current) setSaving(false)
-    }
+      if (uncertain) await client.transactions.confirm(transaction.id)
+      else await client.transactions.retry(transaction.id)
+    } catch (e) { session.setError(e) }
+  }
+  const resubmit = async () => {
+    if (uncertain || busy) return
+    try {
+      // A user who reverted every field still needs to resolve the old failed record.
+      if (!entryDraftDirty(session.getSnapshot())) {
+        await discardEntrySubmission(client, entry.entryId)
+        session.adoptRemote()
+      } else session.resubmit()
+    } catch (e) { session.setError(e) }
+  }
+  const exportDraft = () => {
+    const current = session.getSnapshot()
+    const url = URL.createObjectURL(new Blob([JSON.stringify({ entryId: entry.entryId, base: current.base, draft: current.draft }, null, 2)], { type: 'application/json' }))
+    const link = document.createElement('a')
+    link.href = url; link.download = `${current.draft.name.replace(/[\\/:*?"<>|]/g, '_').slice(0, 64) || 'skin'}.draft.json`
+    link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
 
   const patchLicense = (next: Partial<Draft>) => {
-    const d = { ...draft, ...next }
+    const d = { ...session.getSnapshot().draft, ...next }
     setDraft(d)
     void applyPatch({
       license: {
@@ -188,7 +178,7 @@ export function EntryDetails({
   }
 
   const patchProvenance = (next: Partial<Draft>) => {
-    const d = { ...draft, ...next }
+    const d = { ...session.getSnapshot().draft, ...next }
     setDraft(d)
     void applyPatch({
       provenance: {
@@ -196,17 +186,18 @@ export function EntryDetails({
         sourceName: d.sourceName.trim() || null,
         sourceUrl: d.sourceUrl.trim() || null,
         sourceNote: d.sourceNote.trim() || null,
-        originalCreatedAt: entry.provenance.originalCreatedAt,
+        originalCreatedAt: state.base.provenance.originalCreatedAt,
       },
     })
   }
 
   return (
-    <div className={styles.detailsPanel}>
+    <div className={styles.detailsPanel} onFocusCapture={onInteract} onPointerDownCapture={onInteract}>
       <div className={styles.detailsTop}>
         <header className={styles.detailsHead}>
           {editingName ? (
             <input
+              disabled={readOnly}
               ref={nameInputRef}
               className={styles.detailsNameInput}
               value={draft.name}
@@ -219,7 +210,7 @@ export function EntryDetails({
                   commitName()
                 } else if (e.key === 'Escape') {
                   e.preventDefault()
-                  setDraft((d) => ({ ...d, name: entry.name }))
+                  setDraft((d) => ({ ...d, name: state.base.name }))
                   setEditingName(false)
                 }
               }}
@@ -228,6 +219,7 @@ export function EntryDetails({
             <button
               type="button"
               className={styles.detailsNameBtn}
+              disabled={readOnly}
               title="点击编辑名称"
               onClick={() => setEditingName(true)}
             >
@@ -238,6 +230,7 @@ export function EntryDetails({
             <button
               type="button"
               className={`${styles.statusPill} ${entry.active ? styles.statusActive : styles.statusInactive}`}
+              disabled={readOnly}
               onClick={onToggleActive}
               title={entry.active ? '已启用，点击禁用' : '已禁用，点击启用'}
               aria-pressed={entry.active}
@@ -247,6 +240,7 @@ export function EntryDetails({
             <button
               type="button"
               className={`${styles.favoriteBtn}${entry.favorite ? ` ${styles.favoriteOn}` : ''}`}
+              disabled={readOnly}
               onClick={onToggleFavorite}
               title={entry.favorite ? '取消收藏' : '收藏'}
               aria-pressed={entry.favorite}
@@ -256,6 +250,7 @@ export function EntryDetails({
             </button>
           </div>
         </header>
+        {previewError && <p className={styles.notice}>预览暂时不可用：{previewError}</p>}
 
         {previewUrl && (
           <div className={styles.previewStage}>
@@ -326,17 +321,32 @@ export function EntryDetails({
       </div>
 
       <div className={styles.detailsScroll}>
+        {(state.remote || state.pending || entryDraftDirty(state) || state.storageError) && (
+          <div className={styles.draftStatus} role="status">
+            <p>{uncertain ? '提交结果尚未确认，本地输入已保留。请先查询原提交结果。'
+              : state.remote ? '远端已有更新，本地输入已保留。'
+                : saving ? '保存中，后续输入会继续保留。' : '本窗口有尚未保存的修改。'}</p>
+            {state.remote && <p className={styles.draftHint}>采用远端会放弃本地修改；重新提交只覆盖你编辑过的字段。</p>}
+            {state.storageError && <p className={styles.error}>{state.storageError}</p>}
+            <div className={styles.draftActions} onMouseDown={e => e.preventDefault()}>
+              {unresolved && <button type="button" disabled={busy || (!uncertain && readOnly)} onClick={() => void retryOriginal()}>{uncertain ? '查询提交结果' : '重试原提交'}</button>}
+              {!uncertain && <button type="button" disabled={busy} onClick={() => void adoptRemote()}>采用远端</button>}
+              {!uncertain && <button type="button" disabled={busy || readOnly} onClick={() => void resubmit()}>保留修改并重新提交</button>}
+              <button type="button" onClick={exportDraft}>导出草稿</button>
+            </div>
+          </div>
+        )}
         <div className={styles.detailsFields}>
           <label className={styles.detailsField}>
             <span>自定义 ID</span>
             <input
+              disabled={readOnly}
               value={draft.customId}
               placeholder="可选，库内唯一"
               spellCheck={false}
               onChange={(e) => setDraft((d) => ({ ...d, customId: e.target.value }))}
               onBlur={() => {
                 const customId = draft.customId.trim() || null
-                if (customId === (entry.customId ?? null)) return
                 void applyPatch({ customId })
               }}
             />
@@ -345,6 +355,7 @@ export function EntryDetails({
           <label className={styles.detailsField}>
             <span>位置</span>
             <select
+              disabled={readOnly}
               value={draft.folderId ?? ''}
               onChange={(e) => {
                 const folderId = e.target.value || null
@@ -367,6 +378,7 @@ export function EntryDetails({
               <button
                 type="button"
                 className={draft.model === 'classic' ? styles.active : undefined}
+                disabled={readOnly}
                 onClick={() => {
                   if (draft.model === 'classic') return
                   setDraft((d) => ({ ...d, model: 'classic' }))
@@ -378,6 +390,7 @@ export function EntryDetails({
               <button
                 type="button"
                 className={draft.model === 'slim' ? styles.active : undefined}
+                disabled={readOnly}
                 onClick={() => {
                   if (draft.model === 'slim') return
                   setDraft((d) => ({ ...d, model: 'slim' }))
@@ -404,6 +417,7 @@ export function EntryDetails({
           <div className={styles.detailsField}>
             <span>标签</span>
             <TagPicker
+              disabled={readOnly}
               tags={tags}
               selected={draft.tags}
               onChange={(next) => {
@@ -416,6 +430,7 @@ export function EntryDetails({
           <label className={styles.detailsField}>
             <span>协议</span>
             <select
+              disabled={readOnly}
               value={draft.licenseStatus}
               onChange={(e) =>
                 patchLicense({
@@ -433,6 +448,7 @@ export function EntryDetails({
               <label className={styles.detailsField}>
                 <span>协议名称</span>
                 <input
+                  disabled={readOnly}
                   value={draft.licenseName}
                   placeholder="如 MIT、CC BY 4.0"
                   onChange={(e) => setDraft((d) => ({ ...d, licenseName: e.target.value }))}
@@ -442,6 +458,7 @@ export function EntryDetails({
               <label className={styles.detailsField}>
                 <span>协议链接</span>
                 <input
+                  disabled={readOnly}
                   value={draft.licenseUrl}
                   placeholder="https://…"
                   onChange={(e) => setDraft((d) => ({ ...d, licenseUrl: e.target.value }))}
@@ -454,6 +471,7 @@ export function EntryDetails({
           <label className={styles.detailsField}>
             <span>作者</span>
             <input
+              disabled={readOnly}
               value={draft.author}
               onChange={(e) => setDraft((d) => ({ ...d, author: e.target.value }))}
               onBlur={() => patchProvenance({})}
@@ -463,12 +481,12 @@ export function EntryDetails({
           <label className={styles.detailsField}>
             <span>备注</span>
             <textarea
+              disabled={readOnly}
               rows={3}
               value={draft.note}
               onChange={(e) => setDraft((d) => ({ ...d, note: e.target.value }))}
               onBlur={() => {
                 const note = draft.note.trim()
-                if (note === entry.note) return
                 void applyPatch({ note })
               }}
             />
@@ -491,6 +509,7 @@ export function EntryDetails({
           <label className={styles.detailsField}>
             <span>出处名称</span>
             <input
+              disabled={readOnly}
               value={draft.sourceName}
               placeholder="原作品页面/站点名称"
               onChange={(e) => setDraft((d) => ({ ...d, sourceName: e.target.value }))}
@@ -500,6 +519,7 @@ export function EntryDetails({
           <label className={styles.detailsField}>
             <span>出处链接</span>
             <input
+              disabled={readOnly}
               value={draft.sourceUrl}
               placeholder="https://…"
               onChange={(e) => setDraft((d) => ({ ...d, sourceUrl: e.target.value }))}
@@ -509,6 +529,7 @@ export function EntryDetails({
           <label className={styles.detailsField}>
             <span>出处说明</span>
             <textarea
+              disabled={readOnly}
               rows={2}
               value={draft.sourceNote}
               onChange={(e) => setDraft((d) => ({ ...d, sourceNote: e.target.value }))}
@@ -518,6 +539,7 @@ export function EntryDetails({
           <label className={styles.detailsField}>
             <span>协议说明</span>
             <textarea
+              disabled={readOnly}
               rows={2}
               value={draft.licenseNote}
               onChange={(e) => setDraft((d) => ({ ...d, licenseNote: e.target.value }))}
@@ -558,7 +580,7 @@ export function EntryDetails({
           <button type="button" onClick={onExportPortable}>
             导出 .skin.json
           </button>
-          <button type="button" className={styles.danger} onClick={onDelete}>
+          <button type="button" className={styles.danger} disabled={readOnly} onClick={onDelete}>
             删除
           </button>
         </div>

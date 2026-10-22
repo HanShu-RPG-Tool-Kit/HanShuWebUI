@@ -225,6 +225,8 @@ export function repairDuplicateSiblingFolders(lib: LibraryFile): boolean {
       for (const e of lib.entries) {
         if (e.folderId && dupIds.has(e.folderId)) {
           e.folderId = keeper.folderId
+          e.revision += 1
+          e.updatedAt = nowIso()
           changed = true
         }
       }
@@ -244,6 +246,33 @@ export function repairDuplicateSiblingFolders(lib: LibraryFile): boolean {
     if (!mergedThisPass) break
   }
 
+  return changed
+}
+
+function sameJson(a: unknown, b: unknown): boolean {
+  if (a === b) return true
+  if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false
+  if (Array.isArray(a) || Array.isArray(b)) return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((value, index) => sameJson(value, b[index]))
+  const left = a as Record<string, unknown>, right = b as Record<string, unknown>
+  const keys = Object.keys(left)
+  return keys.length === Object.keys(right).length && keys.every(key => Object.hasOwn(right, key) && sameJson(left[key], right[key]))
+}
+
+/** Normalizing old defaults is an entry change too. Keep conditional entry edits
+ * safe when a whole-index rewrite repairs an older or incomplete schema-v5 file. */
+export function repairNormalizedEntryRevisions(lib: LibraryFile, previous: unknown[]): boolean {
+  const byId = new Map(previous.filter((value): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value)).map(value => [value.entryId, value]))
+  let changed = false
+  for (const entry of lib.entries) {
+    const before = byId.get(entry.entryId)
+    if (!before || sameJson(before, entry)) continue
+    changed = true
+    const previousRevision = typeof before.revision === 'number' && Number.isSafeInteger(before.revision) ? before.revision : 1
+    if (entry.revision <= previousRevision) {
+      entry.revision = previousRevision + 1
+      entry.updatedAt = nowIso()
+    }
+  }
   return changed
 }
 

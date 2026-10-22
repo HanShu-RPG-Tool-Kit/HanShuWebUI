@@ -124,7 +124,7 @@ try{
   assert.ok(await title(a).isDisabled())
   await start(a)
   await a.getByRole('tab',{name:'剧本',exact:true}).click()
-  await presence(sa,null)
+  await presence(sa,'src/hanshu/story.hs','viewing')
   assert.ok((await state()).leases.some(l=>l.sessionId===sa.id&&l.resourceId===`file:${secondSource}`),'Switching workspaces unexpectedly dropped an explicit editing session')
   assert.ok((await state()).leases.some(l=>l.id===unrelated.id),'Workspace switch released a lease belonging to a separate operation')
   await openProgress(a,'second.progress')
@@ -187,7 +187,7 @@ try{
   assert.ok(!await bar(a).getByRole('button',{name:'开始编辑',exact:true}).count()||await bar(a).getByRole('button',{name:'开始编辑',exact:true}).isDisabled())
   passed('主体降为只读时全部会话失去写权，当前草稿仍然保留')
   assert.deepEqual(errors,[])
-  await writeFile(join(output,'acceptance.json'),JSON.stringify({date:new Date().toISOString(),protocol:4,interface:lan.name,address:lan.address,physicalDevices:1,secondPhysicalDeviceTested:false,browserContexts:2,browserPages:3,browserClockOffsetsHours:[6,-4],results,commitRequestsObserved:commits.length},null,2))
+  await writeFile(join(output,'acceptance.json'),JSON.stringify({date:new Date().toISOString(),protocol:9,interface:lan.name,address:lan.address,physicalDevices:1,secondPhysicalDeviceTested:false,browserContexts:2,browserPages:3,browserClockOffsetsHours:[6,-4],results,commitRequestsObserved:commits.length},null,2))
   console.log(`协作编辑体验验收通过：${results.length} 组；${lan.name} ${lan.address}，同机真实 LAN HTTP。`)
 }catch(error){
   for(const [i,page]of pages.entries()){console.error(`PRESENCE CLIENT ${i}:`,(await page.locator('body').innerText().catch(()=>'' )).slice(0,4500));await page.screenshot({path:join(output,`failed-client-${i}.png`)}).catch(()=>undefined)}

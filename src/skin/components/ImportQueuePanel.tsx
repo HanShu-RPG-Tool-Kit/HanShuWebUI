@@ -7,13 +7,18 @@
  *   - 重复检测按 skinId 全库查询(不是当前页);同内容默认跳过,可另存
  */
 
-import { useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type DragEvent } from 'react'
+import type { ProjectClient } from '../../project/serviceClient'
+import { ResourceSaveStatus } from '../../project/ResourceSaveStatus'
+import { SKIN_INDEX_PATH } from '../local/entrySubmission'
+import { libraryCommand } from '../local/libraryCommands'
 import type { SkinApi } from '../api/SkinApi.ts'
 import type {
   FolderWithStats,
   ImportJob,
   LicenseInfo,
   Provenance,
+  SaveEntryRequest,
   SkinModel,
   CollectedTag,
 } from '../contracts/types.ts'
@@ -58,13 +63,19 @@ export interface QueueRow {
   job?: ImportJob
   state: RowState
   errorMessage?: string
+  errorCode?: string
+  /** Retrying a row replays the original user choices, including its folder.
+   * Changed global defaults must never turn an uncertain import into a new one. */
+  submittedRequest?: SaveEntryRequest
   duplicateOf?: { entryId: string; name: string; folderId: string | null; folderPath: string }
   savedEntryId?: string
+  transactionId?: number
   checked: boolean
   suggestedTagPaths?: string[][]
 }
 
 interface Props {
+  client: ProjectClient
   api: SkinApi
   folders: FolderWithStats[]
   tags: CollectedTag[]
@@ -136,6 +147,7 @@ function pickedToRow(p: PickedFile): QueueRow {
 }
 
 export function ImportQueuePanel({
+  client,
   api,
   folders,
   tags,
@@ -145,6 +157,16 @@ export function ImportQueuePanel({
   onClose,
 }: Props) {
   const [rows, setRows] = useState<QueueRow[]>([])
+  const transactions = useSyncExternalStore(client.transactions.subscribe, client.transactions.getSnapshot, client.transactions.getSnapshot)
+  useEffect(() => {
+    const savedIds = new Set(transactions.transactions.filter(item => item.phase === 'saved').map(item => item.id))
+    if (!rows.some(row => row.state === 'failed' && row.transactionId !== undefined && savedIds.has(row.transactionId))) return
+    // A recovery button can confirm the original import without running saveRow again.
+    setRows(previous => previous.map(row => row.state === 'failed' && row.transactionId !== undefined && savedIds.has(row.transactionId) && row.job
+      ? { ...row, state: 'done', savedEntryId: `entry_${row.job.jobId}`, errorMessage: undefined, errorCode: undefined }
+      : row))
+    onSaved()
+  }, [transactions, rows, onSaved])
   const [targetFolderId, setTargetFolderId] = useState<string | null>(defaultFolderId)
   const [commonTags, setCommonTags] = useState<string[]>([])
   const [defaultModel, setDefaultModel] = useState<'auto' | SkinModel>('auto')
@@ -502,15 +524,16 @@ export function ImportQueuePanel({
 
   const saveRow = async (row: QueueRow): Promise<boolean> => {
     if (!row.job?.result) return false
+    if (row.savedEntryId) return true
     const name = (row.overrideName ?? row.job.result.suggestedName).trim()
     if (!name) {
       patchRow(row.rowId, { state: 'failed', errorMessage: '名称不能为空' })
       return false
     }
-    patchRow(row.rowId, { state: 'importing' })
+    patchRow(row.rowId, { state: 'importing', errorMessage: undefined, errorCode: undefined })
     try {
-      const folderId = await resolveRowFolderId(row)
-      const saved = await api.saveEntry({
+      const folderId = row.submittedRequest ? row.submittedRequest.folderId ?? null : await resolveRowFolderId(row)
+      const submission: SaveEntryRequest = row.submittedRequest ?? {
         jobId: row.job.jobId,
         name,
         tags: commonTags.length > 0 ? commonTags : undefined,
@@ -525,17 +548,25 @@ export function ImportQueuePanel({
         provenance: row.provenance ?? EMPTY_PROVENANCE,
         note: row.note ?? '',
         customId: row.customId ?? null,
-      })
+      }
+      patchRow(row.rowId, { submittedRequest: submission })
+      const saved = await api.saveEntry(submission)
       patchRow(row.rowId, {
         state: 'done',
         savedEntryId: saved.entryId,
-        overrideFolderId: folderId,
+        overrideFolderId: submission.folderId,
       })
       return true
     } catch (e) {
+      const transaction = client.transactions.getSnapshot().transactions.find(item => client.transactions.submission(item.id).some(edit => {
+        const command = libraryCommand(edit)
+        return command?.command === 'import-entry' && command.entry.entryId === `entry_${row.job!.jobId}`
+      }))
       patchRow(row.rowId, {
         state: 'failed',
+        transactionId: transaction?.id,
         errorMessage: (e as Error).message,
+        errorCode: e instanceof Error && 'code' in e ? String(e.code) : undefined,
       })
       return false
     }
@@ -1142,9 +1173,11 @@ export function ImportQueuePanel({
                       {r.state === 'done' && <span className={styles.okText}>已导入</span>}
                       {r.state === 'failed' && (
                         <span className={styles.errorText} title={r.errorMessage}>
-                          保存失败{r.errorMessage ? `：${r.errorMessage}` : ''}
+                          {r.errorCode === 'commit_uncertain' ? '结果待确认' : '保存失败'}{r.errorMessage ? `：${r.errorMessage}` : ''}
+                          {r.submittedRequest && <span className={styles.mutedHint}>原导入参数已保留；重试沿用原请求。</span>}
                         </span>
                       )}
+                      {r.state === 'failed' && r.transactionId !== undefined && <ResourceSaveStatus client={client} path={SKIN_INDEX_PATH} transactionId={r.transactionId} entryId={r.job ? `entry_${r.job.jobId}` : undefined} compact />}
                     </td>
                     <td>
                       {(r.state === 'ready' || r.state === 'duplicate') && renderRowMeta(r)}
@@ -1227,7 +1260,7 @@ export function ImportQueuePanel({
           {failCount > 0 && <button onClick={removeFailed}>移除失败项</button>}
           {rows.some((r) => r.state === 'failed') && (
             <button disabled={busy || !!scanStatus} onClick={() => void retryFailed()}>
-              重试失败项
+              重试原导入
             </button>
           )}
           <button onClick={onClose} disabled={!!scanStatus}>

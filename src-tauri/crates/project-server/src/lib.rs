@@ -10,7 +10,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use project_core::{now_ms, Engine, Error, Result, Role};
+use project_core::{now_ms, Engine, Error, FileActivity, Result, Role};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
@@ -187,13 +187,21 @@ async fn heartbeat(State(s): State<AppState>, h: HeaderMap, Json(i): Json<Heartb
     Ok(Json(json!(v)))
 }
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Presence {
     path: Option<String>,
+    entry_id: Option<String>,
+    activity: Option<FileActivity>,
 }
 async fn presence(State(s): State<AppState>, h: HeaderMap, Json(i): Json<Presence>) -> ApiResult {
     let snapshot = access(&s, bearer(&h)?, true, move |e, id, now| {
-        e.set_file_presence(id, i.path, now)?;
+        e.set_file_presence(
+            id,
+            i.path,
+            i.entry_id,
+            i.activity.unwrap_or(FileActivity::Viewing),
+            now,
+        )?;
         e.snapshot(id)
     })
     .await?;
@@ -243,6 +251,33 @@ async fn files(State(s): State<AppState>, h: HeaderMap) -> ApiResult {
     Ok(Json(json!(v)))
 }
 #[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct HistoryQuery { before: Option<u64>, limit: Option<usize>, path: Option<String> }
+async fn history_list(State(s): State<AppState>, h: HeaderMap, Query(i): Query<HistoryQuery>) -> ApiResult {
+    Ok(Json(json!(access(&s, bearer(&h)?, false, move |e, id, _| e.history_list(id, i.before, i.limit.unwrap_or(60), i.path.as_deref())).await?)))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HistoryTreeQuery { path: Option<String> }
+async fn history_tree(State(s): State<AppState>, h: HeaderMap, Path(sequence): Path<u64>, Query(i): Query<HistoryTreeQuery>) -> ApiResult {
+    Ok(Json(json!(access(&s, bearer(&h)?, false, move |e, id, _| e.history_tree_scoped(id, sequence, i.path.as_deref())).await?)))
+}
+async fn history_content(State(s): State<AppState>, h: HeaderMap, Path(sequence): Path<u64>, Query(i): Query<FileRelations>) -> ApiResult {
+    Ok(Json(json!(access(&s, bearer(&h)?, false, move |e, id, _| e.history_content(id, sequence, &i.path)).await?)))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HistoryLabel { label: Option<String> }
+async fn history_label(State(s): State<AppState>, h: HeaderMap, Path(sequence): Path<u64>, Json(i): Json<HistoryLabel>) -> ApiResult {
+    Ok(Json(json!(access(&s, bearer(&h)?, true, move |e, id, now| e.history_label(id, sequence, i.label, now)).await?)))
+}
+async fn history_stats(State(s): State<AppState>, h: HeaderMap) -> ApiResult {
+    Ok(Json(json!(access(&s, bearer(&h)?, false, |e, id, _| e.history_stats(id)).await?)))
+}
+async fn history_restore_plan(State(s): State<AppState>, h: HeaderMap, Json(i): Json<project_core::HistoryRestoreSelection>) -> ApiResult {
+    Ok(Json(json!(access(&s, bearer(&h)?, false, move |e, id, _| e.plan_history_restore(id, i)).await?)))
+}
+#[derive(Deserialize)]
 struct FileRead {
     path: String,
     version: Option<String>,
@@ -262,17 +297,29 @@ async fn file_read(
     ))
 }
 #[derive(Deserialize)]
-struct SourcePlan {
+#[serde(deny_unknown_fields)]
+struct FileRelations {
     path: String,
-    destination: Option<String>,
 }
-async fn source_plan(
+async fn file_relations(
     State(s): State<AppState>,
     h: HeaderMap,
-    Query(i): Query<SourcePlan>,
+    Query(i): Query<FileRelations>,
 ) -> ApiResult {
+    let relations = access(&s, bearer(&h)?, false, move |e, id, _| {
+        e.resource_relations(id, &i.path)
+    })
+    .await?;
+    Ok(Json(json!(relations)))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FilePlan {
+    operations: Vec<project_core::FileOperationRequest>,
+}
+async fn file_plan(State(s): State<AppState>, h: HeaderMap, Json(i): Json<FilePlan>) -> ApiResult {
     let plan = access(&s, bearer(&h)?, false, move |e, id, _| {
-        e.source_plan(id, &i.path, i.destination.as_deref())
+        e.plan_file_operations(id, &i.operations)
     })
     .await?;
     Ok(Json(json!(plan)))
@@ -427,14 +474,24 @@ pub async fn start(
     let mut router = Router::new()
         .route(
             "/health",
-            get(|| async { Json(json!({"service":"hanshu-project","protocol":4})) }),
+            get(|| async { Json(json!({"service":"hanshu-project","protocol":9})) }),
         )
         .route("/api/sessions", post(login))
         .route("/api/sessions/current", axum::routing::delete(logout))
         .route("/api/project", get(snapshot))
+        .route("/api/history", get(history_list))
+        .route("/api/history/stats", get(history_stats))
+        .route("/api/history/{sequence}/tree", get(history_tree))
+        .route("/api/history/{sequence}/content", get(history_content))
+        .route("/api/history/{sequence}/label", post(history_label))
+        .route("/api/history/restore-plan", post(history_restore_plan).layer(DefaultBodyLimit::max(256 * 1024)))
         .route("/api/files", get(files))
         .route("/api/files/content", get(file_read))
-        .route("/api/files/source-plan", get(source_plan))
+        .route("/api/files/relations", get(file_relations))
+        .route(
+            "/api/files/plan",
+            post(file_plan).layer(DefaultBodyLimit::max(256 * 1024)),
+        )
         .route(
             "/api/files/transactions/{transaction_id}",
             get(file_transaction),

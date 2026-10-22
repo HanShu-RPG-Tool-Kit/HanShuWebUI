@@ -35,9 +35,27 @@ type Job = {
   replayed?: boolean
   unresolved?: boolean
 }
-const pathsOf = (edits: FileEdit[]) => [...new Set(edits.flatMap(e => e.destination ? [e.path, e.destination] : [e.path]))]
+const pathsOf = (edits: FileEdit[]) => [...new Set(edits.flatMap(e => [e.path, ...(e.destination ? [e.destination] : []), ...(e.affectedPaths ?? [])]))]
 const overlaps = (a: string, b: string) => a === b || a.startsWith(`${b}/`) || b.startsWith(`${a}/`)
 const unsuccessful = (phase: TransactionPhase) => phase === 'failed' || phase === 'conflict' || phase === 'uncertain'
+function editsOverlap(a: FileEdit, b: FileEdit): boolean {
+  if (a.path === b.path) {
+    try {
+      const targets = (edit: FileEdit): string[] | null => {
+        if (typeof edit.data !== 'string') return null
+        const command = JSON.parse(edit.data)
+        if (edit.op === 'skin-entry-patch' && typeof command.entryId === 'string') return [command.entryId]
+        if (edit.op !== 'skin-library-command') return null
+        if (command.command === 'import-entry' && typeof command.entry?.entryId === 'string') return [command.entry.entryId]
+        if (['batch-patch', 'delete-entries'].includes(command.command) && Array.isArray(command.expectedEntries) && command.expectedEntries.every((entry: { entryId?: string }) => typeof entry.entryId === 'string')) return command.expectedEntries.map((entry: { entryId: string }) => entry.entryId)
+        return null
+      }
+      const left = targets(a), right = targets(b)
+      if (left && right) return left.some(id => right.includes(id))
+    } catch { /* Invalid commands retain the conservative path boundary. */ }
+  }
+  return pathsOf([a]).some(p => pathsOf([b]).some(q => overlaps(p, q)))
+}
 
 /** C-side editing boundary. Resource ownership is deliberately not inferred here.
  * Editors supply changes; this layer waits for local preparation and freezes a batch
@@ -123,6 +141,14 @@ export class EditTransactions {
   }
   /** Call even when the set of dirty paths stays the same: their contents may change. */
   changed() { this.revision++; this.emit() }
+  /** Register asynchronous initialization before it produces a staged draft. Saves
+   * must wait for this work as well as any cache mirrors it subsequently enqueues.
+   */
+  prepareDraft(path: string, run: () => void | Promise<void>) {
+    const completion = this.prepare(path, run)
+    this.emit()
+    return completion
+  }
   stageWrite(edit: FileEdit, prepare?: () => void | Promise<void>) {
     if (edit.op !== 'write') throw new Error('草稿暂存只接受文件内容；移动和删除请提交显式事务')
     const previous = this.staged.get(edit.path)
@@ -190,7 +216,8 @@ export class EditTransactions {
         job.edits = this.capture([...collected.filter(e => !stagedPaths.has(e.path)), ...[...job.staged.values()].map(s => ({ ...s.edit, cacheEpoch: undefined, localEpochs: undefined }))])
         job.info.paths = pathsOf(job.edits)
       }
-      const blocking = this.jobs.find(other => other !== job && (other.unresolved || unsuccessful(other.info.phase)) && other.info.paths.some(p => job.info.paths.some(q => overlaps(p, q))))
+      const blocking = this.jobs.find(other => other !== job && (other.unresolved || unsuccessful(other.info.phase)) &&
+        (other.edits?.length ? other.edits.some(a => job.edits!.some(b => editsOverlap(a, b))) : other.info.paths.some(p => job.info.paths.some(q => overlaps(p, q)))))
       if (blocking) throw new ServiceError('pending_transaction', `相关资源有未处理的提交「${blocking.info.label}」，请先处理该记录`)
       if (job.edits.length) {
         // Recover staged identity after a browser reload. Only the exact restored

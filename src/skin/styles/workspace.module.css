@@ -2578,3 +2578,18 @@
   padding: 10px 12px;
   font-size: var(--sk-font-sm);
 }
+.draftStatus {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--skin-warn) 40%, transparent);
+  border-radius: var(--skin-radius);
+  background: color-mix(in srgb, var(--skin-warn) 8%, transparent);
+  font-size: var(--sk-font-xs);
+}
+.draftStatus p { margin: 0 0 8px; }
+.draftHint { opacity: .75; line-height: 1.5; }
+.draftActions { display: flex; flex-wrap: wrap; gap: 6px; }
+.draftActions button { font: inherit; padding: 4px 8px; border-radius: var(--skin-radius-sm); }
+.recoveryDrafts { padding: 8px; color: var(--skin-text-dim); font-size: var(--sk-font-xs); }
+.recoveryDrafts summary { cursor: pointer; }
+.recoveryDrafts button { display: block; width: 100%; text-align: left; margin-top: 5px; overflow-wrap: anywhere; }

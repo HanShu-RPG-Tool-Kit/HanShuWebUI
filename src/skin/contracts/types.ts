@@ -74,10 +74,19 @@ export interface CreateFolderRequest {
 }
 
 export interface PatchFolderRequest {
+  /** Snapshot shown when the user began this operation; never rebase silently. */
+  expectedFolder?: FolderNode
+  /** Complete sibling snapshot for an explicit sibling-sort operation. */
+  expectedSiblings?: FolderNode[]
   name?: string
   parentId?: string | null
   sortOrder?: number
   sortSiblingsByName?: boolean
+}
+
+export interface FolderScopeSnapshot {
+  folders: FolderNode[]
+  entries: Array<{ entryId: string; revision: number }>
 }
 
 /* ---------- library entries ---------- */
@@ -229,6 +238,8 @@ export interface SaveEntryRequest {
 
 export interface PatchEntryRequest {
   revision: number
+  /** C-only: the user explicitly resolved a known failed submission against this revision. */
+  resolvePending?: boolean
   name?: string
   tags?: string[]
   addTags?: string[]

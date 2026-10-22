@@ -6,7 +6,9 @@ import { ProjectClient } from '../src/project/serviceClient'
 import type { FileEdit } from '../src/project/serviceClient'
 import type { Snapshot } from '../src/collab/protocol'
 import type { EditJournal, PendingSubmission } from '../src/project/editJournal'
-import type { FileChange, FileTransactionReceipt, ProjectFileTree } from '../src/collab/generated'
+import type { FileChange, FileOperationRequest, FileTransactionReceipt, ProjectFileTree, HistoryRestorePlan } from '../src/collab/generated'
+import { inspectConflict } from '../src/project/editConflicts'
+import { resourcePlanFixture } from './resource-plan-fixture'
 
 function deferred() {
   let resolve!: () => void
@@ -42,6 +44,37 @@ await test('等待异步语言镜像，源文件与语言仅发送一次批量�
   assert.equal(sent.length, 1)
   assert.deepEqual(sent[0].map(e => e.path), ['src/hanshu/a.hs', 'assets/zh_cn/lang_hs/a.lang'])
   assert.equal(tx.stagedWrites().length, 0)
+})
+await test('语言初始化尚未产出草稿时保存也等待，种子与异步镜像随源文件一次提交', async () => {
+  const { tx, sent } = fixture()
+  const initialize = deferred(); const mirror = deferred(); let mirrored = false
+  const preparing = tx.prepareDraft('assets/zh_cn/lang_hflow/new.lang', async () => {
+    await initialize.promise
+    void tx.stageWrite(write('assets/zh_cn/lang_hflow/new.lang', '{"name":"新流程"}'), async () => { await mirror.promise; mirrored = true })
+  })
+  const saving = tx.submit('新建流程', () => [write('src/story/new.hflow', 'flow')], true)
+  await Promise.resolve(); await Promise.resolve()
+  assert.equal(sent.length, 0)
+  initialize.resolve(); await preparing
+  assert.equal(sent.length, 0, 'Finishing initialization alone must not bypass the subsequent same-path local mirror')
+  mirror.resolve(); await saving
+  assert.equal(mirrored, true)
+  assert.equal(sent.length, 1)
+  assert.deepEqual(sent[0].map(edit => edit.path), ['src/story/new.hflow', 'assets/zh_cn/lang_hflow/new.lang'])
+  assert.equal(tx.stagedWrites().length, 0)
+})
+await test('语言初始化失败阻止源文件先落盘，重试初始化成功后再整批提交', async () => {
+  const { tx, sent } = fixture(); let attempts = 0
+  await assert.rejects(tx.prepareDraft('assets/zh_cn/lang_hflow/new.lang', async () => {
+    if (++attempts === 1) throw new Error('initial language read failed')
+    void tx.stageWrite(write('assets/zh_cn/lang_hflow/new.lang', '{"name":"初始化后标题"}'))
+  }), /initial language read failed/)
+  await assert.rejects(tx.submit('新建流程', () => [write('src/story/new.hflow', 'flow')], true), /准备草稿失败/)
+  assert.equal(sent.length, 0)
+  await tx.retry(tx.getSnapshot().transactions[0].id)
+  assert.equal(attempts, 2)
+  assert.equal(sent.length, 1)
+  assert.deepEqual(sent[0].map(edit => edit.path), ['src/story/new.hflow', 'assets/zh_cn/lang_hflow/new.lang'])
 })
 await test('准备资源失败阻止整批提交，重试重新准备后再提交', async () => {
   const { tx, sent } = fixture(); let attempts = 0
@@ -123,6 +156,7 @@ await test('真实 TextSink 只暂存语言，ProjectClient 将正文与语言�
     const body = JSON.parse(init?.body as string || '{}')
     const json = (value: unknown) => new Response(JSON.stringify(value), {status:200,headers:{'Content-Type':'application/json'}})
     if (path.includes('/api/files/content')) return json({ content:btoa('{}'),version:'old-lang' })
+    if (path.endsWith('/api/files/plan')) return json(resourcePlanFixture(body.operations))
     if (path.endsWith('/api/files/leases')) return json(body.paths.map((p: string) => ({id:`lease:${p}`,resourceId:`file:${p}`})))
     if (path.endsWith('/api/files/commit')) { commits.push(body); return json({transactionId:body.transactionId,status:'committed',error:null,tree:{revision:2,entries:body.changes.map((e: FileEdit) => ({path:e.path,kind:'file',version:'new',size:1}))}}) }
     if (path.endsWith('/api/files')) return json({revision:2,entries:commits.flatMap(c=>c.changes.map(e=>({path:e.path,kind:'file',version:'new',size:1})))})
@@ -238,6 +272,7 @@ type WireFixture = {
   onCommit:(body:CommitBody)=>Response|Promise<Response>
   onQuery:(id:string)=>Response|Promise<Response>
   onLease:(paths:string[])=>Response|Promise<Response>
+  onPlan:(operations:FileOperationRequest[])=>Response|Promise<Response>
   currentTree:ProjectFileTree
 }
 async function wireTest(run: (mock:WireFixture)=>Promise<void>) {
@@ -249,12 +284,14 @@ async function wireTest(run: (mock:WireFixture)=>Promise<void>) {
     onCommit: body => json(committed(body.transactionId)),
     onQuery: () => json({code:'not_found',message:'unknown'},404),
     onLease: paths => json(paths.map(path => ({id:`lease:${path}`,resourceId:`file:${path}`,sessionId:'session',expiresAt:Date.now()+30000}))),
+    onPlan: operations => json(resourcePlanFixture(operations, { versions: new Map(mock.currentTree.entries.map(entry => [entry.path, entry.version])) })),
   }
   globalThis.fetch = async (input, init) => {
     const path = new URL(String(input)).pathname
     const body = JSON.parse(init?.body as string || '{}')
     const method = init?.method ?? 'GET'
     mock.calls.push({path,method,body})
+    if (path === '/api/files/plan') return mock.onPlan(body.operations)
     if (path === '/api/files/leases') return method === 'DELETE' ? json({ok:true}) : mock.onLease(body.paths)
     if (path === '/api/files/commit') return mock.onCommit(body)
     if (path.startsWith('/api/files/transactions/')) return mock.onQuery(decodeURIComponent(path.split('/').at(-1)!))
@@ -307,7 +344,18 @@ await test('未知查询401和查询404后的写权失败均保留原提交身�
   await assert.rejects(mock.client.transactions.retry(1))
   assert.equal(mock.client.transactions.getSnapshot().transactions[0].phase,'uncertain')
   assert.equal(mock.client.transactions.getSnapshot().transactions[0].requestId,initialId)
-  assert.deepEqual(mock.calls.slice(-2).map(c=>c.path),[`/api/files/transactions/${initialId}`,'/api/files/leases'])
+  assert.deepEqual(mock.calls.slice(-3).map(c=>c.path),[`/api/files/transactions/${initialId}`,'/api/files/plan','/api/files/leases'])
+}))
+
+await test('未知提交查询未命中后计划请求失败仍保持未知与原提交编号', async () => wireTest(async mock => {
+  mock.onCommit = () => { throw new TypeError('lost response') }
+  await assert.rejects(mock.client.apply([write('src/a.hs', 'draft')]))
+  const initialId = mock.client.transactions.getSnapshot().transactions[0].requestId
+  mock.onPlan = () => { throw new TypeError('planning disconnected') }
+  await assert.rejects(mock.client.transactions.retry(1))
+  assert.equal(mock.client.transactions.getSnapshot().transactions[0].phase, 'uncertain')
+  assert.equal(mock.client.transactions.getSnapshot().transactions[0].requestId, initialId)
+  await assert.rejects(mock.client.transactions.forget(1), /确认|未知|结果/)
 }))
 
 for (const [label, invalid] of [
@@ -341,7 +389,8 @@ await test('未知重放保留最终已冻结版本，正文和二进制内容�
   const beforeRetry = mock.calls.length
   await mock.client.transactions.retry(1)
   assert.ok(mock.calls[beforeRetry].path.startsWith('/api/files/transactions/'))
-  assert.equal(mock.calls[beforeRetry+1].path,'/api/files/leases')
+  assert.equal(mock.calls[beforeRetry+1].path,'/api/files/plan')
+  assert.equal(mock.calls[beforeRetry+2].path,'/api/files/leases')
 }))
 
 await test('采用服务器的部分与实际写入组成同一个版本检查事务', async () => wireTest(async mock => {
@@ -483,6 +532,146 @@ await test('请求体被HTTP大小限制拒绝时是确定失败，允许移除�
   assert.equal(mock.client.transactions.getSnapshot().transactions[0].code,'payload_too_large')
   await mock.client.transactions.forget(1)
   assert.equal(mock.client.transactions.stagedText('src/a.hs'),'draft')
+}))
+
+await test('皮肤失败提交只阻止同条目或整库操作，不阻止另一条目', async () => {
+  const skin = (entryId: string): FileEdit => ({ op: 'skin-entry-patch', path: '.hanshu/skinmanager/library.json', data: JSON.stringify({ entryId, expectedRevision: 1, changes: { name: 'new' } }) })
+  const { tx, sent } = fixture(async edits => { if (JSON.parse(String(edits[0].data)).entryId === 'a') throw new ServiceError('conflict', '条目已变化') })
+  await assert.rejects(tx.submit('A', () => [skin('a')]), /条目已变化/)
+  await tx.submit('B', () => [skin('b')])
+  await assert.rejects(tx.submit('A again', () => [skin('a')]), /未处理/)
+  await assert.rejects(tx.submit('whole index', () => [write('.hanshu/skinmanager/library.json', '{}')]), /未处理/)
+  assert.equal(sent.length, 2)
+  assert.equal(tx.getSnapshot().transactions.filter(record => record.phase === 'saved').length, 1)
+})
+
+await test('皮肤语义回执保留精确条目结果，不把命令当正文，也不提升旧整库版本', async () => wireTest(async mock => {
+  const path = '.hanshu/skinmanager/library.json'
+  const command = JSON.stringify({ entryId: 'a', expectedRevision: 1, changes: { name: 'mine' } })
+  mock.client.baseline.set(path, 'old-index')
+  mock.client.texts.set(path, 'old library')
+  mock.client.originals.set(path, { version: 'old-index', data: 'old library' })
+  let sentVersion: string | null = null
+  mock.onCommit = body => {
+    if (body.changes[0].op === 'skin-entry-patch') return json({ ...committed(body.transactionId, { revision: 2, entries: [{ path, kind: 'file', version: 'merged-index', size: 20 }] }), skinEntries: [{ entryId: 'a', name: 'mine', revision: 2 }] })
+    sentVersion = body.changes[0].version
+    return json({ transactionId: body.transactionId, status: 'rejected', tree: null, error: { code: 'conflict', message: 'old index' } })
+  }
+  await mock.client.apply([{ op: 'skin-entry-patch', path, data: command }])
+  assert.deepEqual(mock.client.skinEntryResult(command), { entryId: 'a', name: 'mine', revision: 2 })
+  assert.equal(mock.client.texts.has(path), false)
+  assert.equal(mock.client.originals.has(path), false)
+  await assert.rejects(mock.client.apply([{ op: 'write', path, data: 'old snapshot plus folder', version: 'old-index' }]), /old index/)
+  assert.equal(sentVersion, 'old-index')
+}))
+
+await test('皮肤提交响应丢失后查询原回执取得条目结果，不重新执行命令', async () => wireTest(async mock => {
+  const path = '.hanshu/skinmanager/library.json'
+  const command = JSON.stringify({ entryId: 'a', expectedRevision: 1, changes: { note: 'mine' } })
+  let id = ''; let commits = 0
+  mock.onCommit = body => { id = body.transactionId; commits++; throw new TypeError('response lost') }
+  await assert.rejects(mock.client.apply([{ op: 'skin-entry-patch', path, data: command }]), /结果待确认/)
+  mock.onQuery = requested => { assert.equal(requested, id); return json({ ...committed(id), skinEntries: [{ entryId: 'a', revision: 2, note: 'mine' }] }) }
+  await mock.client.transactions.confirm(1)
+  assert.equal(commits, 1)
+  assert.deepEqual(mock.client.skinEntryResult(command), { entryId: 'a', revision: 2, note: 'mine' })
+}))
+
+await test('皮肤管理批次与失败单条修改按目标相交阻塞，文件夹作用域保持保守', async () => {
+  const path = '.hanshu/skinmanager/library.json'
+  const command = (value: object): FileEdit => ({ op: 'skin-library-command', path, data: JSON.stringify(value) })
+  const { tx, sent } = fixture(async edits => { if (edits[0].op === 'skin-entry-patch') throw new ServiceError('conflict', 'old entry') })
+  await assert.rejects(tx.submit('A', () => [{ op: 'skin-entry-patch', path, data: JSON.stringify({ entryId: 'a' }) }]), /old entry/)
+  await tx.submit('unrelated batch', () => [command({ command: 'batch-patch', expectedEntries: [{ entryId: 'b', revision: 1 }], changes: { active: true } })])
+  await tx.submit('unrelated import', () => [command({ command: 'import-entry', entry: { entryId: 'c' } })])
+  await assert.rejects(tx.submit('overlap delete', () => [command({ command: 'delete-entries', expectedEntries: [{ entryId: 'a', revision: 1 }] })]), /未处理/)
+  await assert.rejects(tx.submit('folder scope', () => [command({ command: 'delete-folder', expectedFolder: {} })]), /未处理/)
+  assert.equal(sent.length, 3)
+})
+
+await test('皮肤管理丢失响应保留原命令，查询精确回执不前移旧索引基线', async () => wireTest(async mock => {
+  const path = '.hanshu/skinmanager/library.json'
+  const command = JSON.stringify({ command: 'import-entry', entry: { entryId: 'import-a' } })
+  mock.client.baseline.set(path, 'old-index')
+  mock.client.texts.set(path, 'old-body')
+  let id = ''; let commits = 0
+  mock.onCommit = body => { id = body.transactionId; commits++; throw new TypeError('lost') }
+  await assert.rejects(mock.client.apply([{ op: 'skin-library-command', path, data: command }]), /结果待确认/)
+  const result = { entry: { entryId: 'import-a', revision: 1, name: 'original import' }, revision: 2 }
+  mock.onQuery = requested => { assert.equal(requested, id); return json({ ...committed(id), skinCommandResult: { command: 'import-entry', result } }) }
+  await mock.client.transactions.confirm(1)
+  assert.equal(commits, 1)
+  assert.deepEqual(mock.client.skinLibraryResult(command), result)
+  assert.deepEqual(mock.client.skinImportResult('import-a'), result.entry)
+  assert.equal(mock.client.baseline.get(path), 'old-index')
+  assert.equal(mock.client.texts.has(path), false)
+}))
+
+await test('缺失或不匹配的皮肤管理结果保持待确认状态', async () => wireTest(async mock => {
+  mock.onCommit = body => json({ ...committed(body.transactionId), skinCommandResult: { command: 'delete-entries', result: { deleted: 1 } } })
+  await assert.rejects(mock.client.apply([{ op: 'skin-library-command', path: '.hanshu/skinmanager/library.json', data: JSON.stringify({ command: 'create-folder', folderId: 'folder', name: 'name', parentId: null }) }]), /完整的皮肤操作结果/)
+  assert.equal(mock.client.transactions.getSnapshot().transactions[0].phase, 'uncertain')
+}))
+
+const restorePlan = (): HistoryRestorePlan => ({
+  request: { sequence: 1, paths: ['src/a.hs'], skinEntryId: null, includeRelated: true, expectedHead: 'preview-head' },
+  changes: [{ path: 'src/a.hs', action: 'write', beforeVersion: baseVersion, afterVersion: nextVersion }],
+  leasePaths: ['src/a.hs'], warnings: [],
+})
+
+await test('历史恢复未知结果查原回执，不申请客户端租约或把命令写入草稿基线', async () => wireTest(async mock => {
+  let id = ''; let posts = 0; let reconciled = 0
+  const plan = restorePlan()
+  mock.onCommit = body => {
+    id = body.transactionId; posts++
+    assert.equal(body.changes.length, 1)
+    assert.equal(body.changes[0].op, 'history-restore')
+    assert.deepEqual(JSON.parse(atob(body.changes[0].content!)), plan.request)
+    throw new TypeError('successful response lost')
+  }
+  mock.client.onCommitted = async (edits, replayed) => { assert.equal(edits[0].op, 'history-restore'); assert.equal(replayed, true); reconciled++ }
+  await assert.rejects(mock.client.restoreHistory(plan), /恢复结果待确认/)
+  assert.equal(mock.client.transactions.getSnapshot().transactions[0].phase, 'uncertain')
+  await assert.rejects(mock.client.transactions.forget(1), /不能移除/)
+  mock.onQuery = requested => { assert.equal(requested, id); return json(committed(id)) }
+  mock.client.snapshot.role = 'viewer'
+  await mock.client.transactions.confirm(1)
+  assert.equal(posts, 1); assert.equal(reconciled, 1)
+  assert.equal(mock.client.baseline.get('src/a.hs'), baseVersion)
+  assert.equal(mock.client.texts.get('src/a.hs'), 'base')
+  assert.equal(mock.client.texts.has('project.json'), false)
+  assert.equal(mock.calls.some(call => ['/api/files/plan', '/api/files/leases'].includes(call.path)), false)
+}))
+
+await test('历史恢复阻止相关未保存草稿，无关暂存不随恢复提交或清空', async () => wireTest(async mock => {
+  mock.client.transactions.setDirtyPaths(['src/a.hs'])
+  await assert.rejects(mock.client.restoreHistory(restorePlan()), /本地未保存/)
+  assert.equal(mock.calls.length, 0)
+  await mock.client.transactions.forget(1)
+  mock.client.transactions.setDirtyPaths([])
+  await mock.client.transactions.stageWrite(write('assets/unrelated.lang', 'keep local'))
+  mock.onCommit = body => { assert.equal(body.changes.length, 1); return json(committed(body.transactionId)) }
+  await mock.client.restoreHistory(restorePlan())
+  assert.equal(mock.client.transactions.stagedText('assets/unrelated.lang'), 'keep local')
+}))
+
+await test('待确认历史恢复阻止其实际资源的新提交，命令不允许进入文本冲突合并', async () => wireTest(async mock => {
+  mock.onCommit = () => { throw new TypeError('lost') }
+  await assert.rejects(mock.client.restoreHistory(restorePlan()))
+  await assert.rejects(mock.client.apply([write('src/a.hs', 'must not bypass')]), /未处理的提交/)
+  await assert.rejects(inspectConflict(mock.client, 1), /不能当作文件内容/)
+  assert.equal(mock.calls.filter(call => call.path === '/api/files/commit').length, 1)
+}))
+
+await test('历史恢复成功后本地刷新失败，确认回执只重建视图不再次恢复', async () => wireTest(async mock => {
+  let id = ''; let posts = 0; let refreshes = 0
+  mock.onCommit = body => { id = body.transactionId; posts++; return json(committed(id)) }
+  mock.client.onCommitted = async () => { if (++refreshes === 1) throw new Error('local refresh failed') }
+  await assert.rejects(mock.client.restoreHistory(restorePlan()), /本地视图尚未刷新/)
+  mock.onQuery = requested => { assert.equal(requested, id); return json(committed(id)) }
+  await mock.client.transactions.confirm(1)
+  assert.equal(posts, 1); assert.equal(refreshes, 2)
+  assert.equal(mock.client.transactions.getSnapshot().transactions[0].phase, 'saved')
 }))
 
 console.log(`编辑事务验证完成：${checks} 项通过，${failures.length} 项失败。`)

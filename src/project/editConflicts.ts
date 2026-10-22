@@ -6,6 +6,10 @@ export type ConflictChoice = 'server' | 'local' | 'manual'
 export type ConflictVersion = { path: string; version: string | null; kind: 'file' | 'directory' | null; data?: Blob; text?: string }
 export type ConflictRow = { edit: FileEdit; baseText?: string; localText?: string; remote: ConflictVersion; destination?: ConflictVersion; choice: ConflictChoice; merged: string; group: number }
 export type ConflictInspection = { id: number; rows: ConflictRow[]; revision: number }
+export function isSkinSemanticEdit(edit: FileEdit): boolean {
+  return edit.op === 'skin-entry-patch' || edit.op === 'skin-library-command'
+}
+const skinConflictMessage = '皮肤操作需要在皮肤库中处理：请先确认或放弃原操作，刷新后重新选择对象。不能将操作请求作为整个索引文件覆盖。'
 const textPath = /\.(hs|py|md|json|lang|ref|voice|char|item|kit|progress|hflow|nav|tts|ttsservice|txt)$/i
 async function textOf(path: string, data: FileEdit['data']): Promise<string | undefined> {
   if (typeof data === 'string') return data
@@ -17,6 +21,8 @@ async function textOf(path: string, data: FileEdit['data']): Promise<string | un
 export async function inspectConflict(client: ProjectClient, id: number): Promise<ConflictInspection> {
   const edits = client.transactions.submission(id)
   if (!edits.length) throw new Error('原提交还未准备完成，请先重试准备或导出草稿')
+  if (edits.some(isSkinSemanticEdit)) throw new Error(skinConflictMessage)
+  if (edits.some(edit => edit.op === 'history-restore')) throw new Error('工程已变化，请在历史版本中重新预览恢复范围。历史恢复请求不能当作文件内容合并。')
   const tree = await request<ProjectFileTree>(client.connection, '/api/files')
   const versions = new Map<string, ConflictVersion>()
   for (const path of [...new Set(edits.flatMap(e => e.destination ? [e.path, e.destination] : [e.path]))]) {
@@ -44,6 +50,8 @@ export async function inspectConflict(client: ProjectClient, id: number): Promis
   return {id,rows,revision:client.transactions.getRevision()}
 }
 export function conflictEdits(inspection: ConflictInspection): FileEdit[] {
+  if (inspection.rows.some(row => isSkinSemanticEdit(row.edit))) throw new Error(skinConflictMessage)
+  if (inspection.rows.some(row => row.edit.op === 'history-restore')) throw new Error('请在历史版本中重新预览恢复范围')
   const edits: FileEdit[] = []
   const adopted = new Set<string>()
   for (const row of inspection.rows) {

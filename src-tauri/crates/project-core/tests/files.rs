@@ -39,10 +39,22 @@ fn change(e: &mut project_core::Engine, sid: &str, path: &str, data: &str) -> Fi
         .iter()
         .find(|f| f.path == path)
         .map(|f| f.version.clone());
+    let plan = e
+        .plan_file_operations(
+            sid,
+            &[FileOperationRequest {
+                op: FileOperationKind::Write,
+                path: path.into(),
+                destination: None,
+            }],
+        )
+        .unwrap();
     let lease = e
-        .acquire_files(sid, &[path.into()], false, 1000)
+        .acquire_files(sid, &plan.lease_paths, false, 1000)
         .unwrap()
-        .remove(0);
+        .into_iter()
+        .find(|lease| lease.resource_id == format!("file:{path}"))
+        .unwrap();
     FileChange {
         op: "write".into(),
         path: path.into(),
@@ -210,10 +222,18 @@ fn association_plan_is_derived_from_all_server_files() {
         commit(&mut e, &sid, vec![c], 1000).unwrap();
     }
     let plan = e
-        .source_plan(&sid, "src/hanshu/a.hs", Some("src/hanshu/b.hs"))
+        .plan_file_operations(
+            &sid,
+            &[FileOperationRequest {
+                op: FileOperationKind::Move,
+                path: "src/hanshu/a.hs".into(),
+                destination: Some("src/hanshu/b.hs".into()),
+            }],
+        )
         .unwrap();
-    assert_eq!(plan.len(), 3);
+    assert_eq!(plan.operations.len(), 3);
     assert!(plan
+        .operations
         .iter()
         .any(|p| p.destination.as_deref() == Some("assets/en_us/voice_hs/b")));
     let mut removal = change(&mut e, &sid, "src/hanshu/a.hs", "");
@@ -244,7 +264,16 @@ fn localizations_and_voice_share_the_source_write_authority() {
     assert_eq!(
         e.acquire_files(
             &b.id,
-            &["assets/zh_cn/lang_progress/example.lang".into()],
+            &e.plan_file_operations(
+                &b.id,
+                &[FileOperationRequest {
+                    op: FileOperationKind::Write,
+                    path: "assets/zh_cn/lang_progress/example.lang".into(),
+                    destination: None
+                }]
+            )
+            .unwrap()
+            .lease_paths,
             false,
             1000
         )
@@ -255,7 +284,16 @@ fn localizations_and_voice_share_the_source_write_authority() {
     assert_eq!(
         e.acquire_files(
             &b.id,
-            &["assets/zh_cn/voice_progress/example/line.ogg".into()],
+            &e.plan_file_operations(
+                &b.id,
+                &[FileOperationRequest {
+                    op: FileOperationKind::Write,
+                    path: "assets/zh_cn/voice_progress/example/line.ogg".into(),
+                    destination: None
+                }]
+            )
+            .unwrap()
+            .lease_paths,
             false,
             1000
         )

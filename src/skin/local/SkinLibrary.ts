@@ -1,4 +1,7 @@
 import type { FileEdit, ProjectDirectory } from '../../project/serviceClient'
+import { ServiceError } from '../../collab/protocol'
+import { entryRef, folderRef, libraryCommand, type SkinLibraryCommand } from './libraryCommands'
+import { entrySubmissionState, SKIN_INDEX_PATH, type SkinEntryCommand } from './entrySubmission'
 /**
  * Skin library session under project `.hanshu/skinmanager`
  */
@@ -6,6 +9,9 @@ import type { FileEdit, ProjectDirectory } from '../../project/serviceClient'
 import { SkinApiError } from '../contracts/types'
 import type {
   CreateFolderRequest,
+  BatchPatchRequest,
+  FolderNode,
+  FolderScopeSnapshot,
   EntrySource,
   ImportJob,
   LibraryEntry,
@@ -30,28 +36,20 @@ import {
   ensureDir,
   listChildNames,
   readBytesAt,
-  readTextAt,
-  writeBytesAt,
-  writeTextAt,
 } from './fsIo'
 import {
   collectTags,
   collectTextureSizes,
-  deleteTagInLibrary,
   emptyLibrary,
   emptyLicense,
   emptyProvenance,
   folderDescendants,
   foldersWithStats,
   normalizeCustomId,
-  normalizeFolderName,
-  normalizeTagList,
   normalizeTagName,
   nowIso,
   parseLibraryJson,
   queryEntries,
-  renameTagInLibrary,
-  repairDuplicateSiblingFolders,
   resolveEntryTags,
   uid,
   type LibraryFile,
@@ -60,14 +58,16 @@ import { fetchPlayerSkinPng, fetchPngBytes } from './net'
 import { normalizePngBytes, rgbaToPngBlob } from './normalize'
 import {
   CACHE_PNG_DIR,
-  LIBRARY_FILE,
   OBJECTS_DIR,
   SCHEMA_VERSION,
   SKIN_ROOT,
   TMP_DIR,
 } from './paths'
 
-const IMPORT_JOBS_FILE = `${SKIN_ROOT}/${TMP_DIR}/import-jobs.json`
+type ImportJobsSnapshot = { jobs: ImportJob[]; seq: number; sources: Array<[string, EntrySource]> }
+// A remote index refresh replaces SkinLibrarySession, not the user's open import
+// queue. Keep all prepared jobs in this window even when recovery storage is full.
+const importJobsByClient = new WeakMap<ProjectDirectory['client'], ImportJobsSnapshot>()
 
 function objectPath(skinId: string): string {
   return `${SKIN_ROOT}/${OBJECTS_DIR}/${skinId.slice(0, 2)}/${skinId}.skin`
@@ -85,6 +85,8 @@ function emitJob(job: ImportJob): SkinEvent {
 export class SkinLibrarySession {
   private root: ProjectDirectory
   private lib: LibraryFile = emptyLibrary()
+  private libVersion: string | null = null
+  private needsLibraryRefresh = false
   private readableLib: LibraryFile | null = null
   private mutationTail: Promise<unknown> = Promise.resolve()
   private pendingDomain: 'entries' | 'tags' | 'folders' | null = null
@@ -94,7 +96,14 @@ export class SkinLibrarySession {
   private mutateLibrary<T>(action: () => Promise<T>): Promise<T> {
     const run = this.mutationTail.then(async () => {
       this.ensureReady()
+      if (this.needsLibraryRefresh) {
+        const raw = await this.readLibrary()
+        if (!raw) throw new SkinApiError({ code: 'NOT_FOUND', message: '皮肤库已被删除，请刷新工程' })
+        this.lib = this.parseCurrentLibrary(raw)
+        this.needsLibraryRefresh = false
+      }
       const previous = this.lib
+      const previousVersion = this.libVersion
       this.lib = structuredClone(previous)
       this.readableLib = previous
       try {
@@ -104,6 +113,7 @@ export class SkinLibrarySession {
         return result
       } catch (error) {
         this.lib = previous
+        this.libVersion = previousVersion
         throw error
       } finally { this.readableLib = null; this.pendingDomain = null }
     })
@@ -116,12 +126,12 @@ export class SkinLibrarySession {
   deleteTag(name: string) { return this.mutateLibrary(() => this.deleteTagDraft(name)) }
   createFolder(body: CreateFolderRequest) { return this.mutateLibrary(() => this.createFolderDraft(body)) }
   patchFolder(id: string, body: PatchFolderRequest) { return this.mutateLibrary(() => this.patchFolderDraft(id, body)) }
-  deleteFolder(id: string) { return this.mutateLibrary(() => this.deleteFolderDraft(id)) }
+  deleteFolder(id: string, expected?: FolderNode) { return this.mutateLibrary(() => this.deleteFolderDraft(id, expected)) }
   saveEntry(body: SaveEntryRequest) { return this.mutateLibrary(() => this.saveEntryDraft(body)) }
   patchEntry(id: string, body: PatchEntryRequest) { return this.mutateLibrary(() => this.patchEntryDraft(id, body)) }
   batchPatchEntries(body: Parameters<SkinLibrarySession['batchPatchEntriesDraft']>[0]) { return this.mutateLibrary(() => this.batchPatchEntriesDraft(body)) }
-  deleteEntry(id: string) { return this.mutateLibrary(() => this.deleteEntryDraft(id)) }
-  deleteEntriesInFolder(id: string) { return this.mutateLibrary(() => this.deleteEntriesInFolderDraft(id)) }
+  deleteEntry(id: string, revision?: number) { return this.mutateLibrary(() => this.deleteEntryDraft(id, revision)) }
+  deleteEntriesInFolder(id: string, scope?: FolderScopeSnapshot) { return this.mutateLibrary(() => this.deleteEntriesInFolderDraft(id, scope)) }
   gcOrphans(progress?: Parameters<SkinLibrarySession['gcOrphansDraft']>[0]) { return this.mutateLibrary(() => this.gcOrphansDraft(progress)) }
   private jobs = new Map<string, ImportJob>()
   private jobSources = new Map<string, EntrySource>()
@@ -133,6 +143,15 @@ export class SkinLibrarySession {
   private ready = false
   private disposed = false
   private persistJobsTimer: ReturnType<typeof setTimeout> | null = null
+  private jobsLoaded = false
+
+  private get jobsStorageKey(): string | null {
+    const client = this.root.client
+    if (typeof sessionStorage === 'undefined' || !client.connection || !client.snapshot?.session) return null
+    return `hanshu.skinImportJobs.v1:${JSON.stringify([
+      client.connection.url, client.snapshot.projectId, client.snapshot.session.subjectId, this.root.resolve(SKIN_ROOT),
+    ])}`
+  }
 
   constructor(root: ProjectDirectory) {
     this.root = root
@@ -147,48 +166,49 @@ export class SkinLibrarySession {
     await ensureDir(this.root, `${SKIN_ROOT}/${OBJECTS_DIR}`)
     await ensureDir(this.root, `${SKIN_ROOT}/${CACHE_PNG_DIR}`)
     await ensureDir(this.root, `${SKIN_ROOT}/${TMP_DIR}`)
-    const raw = await readTextAt(this.root, `${SKIN_ROOT}/${LIBRARY_FILE}`)
+    const raw = await this.readLibrary()
     if (raw) {
-      let needsRewrite = false
-      try {
-        const peek = JSON.parse(raw) as { schemaVersion?: number; tags?: unknown }
-        if (Number(peek.schemaVersion ?? 0) < SCHEMA_VERSION || Array.isArray(peek.tags)) {
-          needsRewrite = true
-        }
-      } catch {
-        needsRewrite = true
-      }
-      this.lib = parseLibraryJson(raw)
-      this.lib.schemaVersion = SCHEMA_VERSION
-      if (repairDuplicateSiblingFolders(this.lib)) {
-        needsRewrite = true
-      }
-      if (needsRewrite) {
-        this.bump()
-        await this.persistLibrary('entries')
-      }
+      this.lib = this.parseCurrentLibrary(raw)
     } else {
       this.lib = emptyLibrary()
-      if (this.root.client.writable) await this.persistLibrary('folders')
+      if (this.root.client.writable) await this.command({ command: 'ensure-library' }, '初始化皮肤库', 'folders')
     }
     await this.loadJobs()
     this.ready = true
   }
 
   private async loadJobs(): Promise<void> {
-    const raw = await readTextAt(this.root, IMPORT_JOBS_FILE)
-    if (!raw) return
+    if (this.disposed) return
     try {
-      const data = JSON.parse(raw) as { jobs?: ImportJob[]; seq?: number }
+      const cached = importJobsByClient.get(this.root.client)
+      const key = this.jobsStorageKey
+      const raw = !cached && key ? sessionStorage.getItem(key) : null
+      if (!cached && !raw) return
+      const data = (cached ? structuredClone(cached) : JSON.parse(raw!)) as Partial<ImportJobsSnapshot>
       if (Array.isArray(data.jobs)) {
         this.jobs.clear()
         for (const job of data.jobs) {
-          if (job?.jobId) this.jobs.set(job.jobId, job)
+          if (typeof job?.jobId !== 'string' || !Number.isSafeInteger(job.seq)) continue
+          // A disposed view cannot resume network/decoder work. Ready jobs retain
+          // their share code, so they can still be saved after a library refresh.
+          if (!['ready', 'failed', 'cancelled'].includes(job.state)) {
+            job.state = 'failed'
+            job.error = { code: 'IMPORT_INTERRUPTED', message: '导入准备已中断，请重新添加来源。' }
+          }
+          this.jobs.set(job.jobId, job)
         }
       }
-      if (typeof data.seq === 'number') this.jobSeq = data.seq
-    } catch {
-      // ignore corrupt job file
+      this.jobSources.clear()
+      if (Array.isArray(data.sources)) {
+        for (const pair of data.sources) {
+          if (Array.isArray(pair) && pair.length === 2 && this.jobs.has(pair[0]) && typeof pair[1]?.kind === 'string') this.jobSources.set(pair[0], pair[1])
+        }
+      }
+      if (Number.isSafeInteger(data.seq) && data.seq! >= 0) this.jobSeq = data.seq!
+    } catch (error) {
+      console.warn('[hanshu] 本窗口导入准备记录无法恢复，请重新添加来源', error)
+    } finally {
+      this.jobsLoaded = true
     }
   }
 
@@ -196,15 +216,20 @@ export class SkinLibrarySession {
     if (this.persistJobsTimer != null) return
     this.persistJobsTimer = setTimeout(() => {
       this.persistJobsTimer = null
-      void this.persistJobsNow().catch(error => console.warn('[hanshu] 导入队列提交失败，记录保留在事务列表', error))
+      void this.persistJobsNow().catch(error => console.warn('[hanshu] 本窗口导入准备记录保存失败；已提交操作仍由工程提交记录恢复', error))
     }, 400)
   }
 
   private async persistJobsNow(): Promise<void> {
-    if(this.disposed || !this.root.client.writable)return
-    const jobs = [...this.jobs.values()].sort((a, b) => b.seq - a.seq).slice(0, 50)
-    const json = `${JSON.stringify({ seq: this.jobSeq, jobs })}\n`
-    await writeTextAt(this.root, IMPORT_JOBS_FILE, json)
+    if (this.disposed || !this.jobsLoaded) return
+    const allJobs = [...this.jobs.values()].sort((a, b) => b.seq - a.seq)
+    importJobsByClient.set(this.root.client, structuredClone({ seq: this.jobSeq, jobs: allJobs, sources: [...this.jobSources] }))
+    const key = this.jobsStorageKey
+    if (!key) return
+    const jobs = allJobs.slice(0, 50)
+    const ids = new Set(jobs.map(job => job.jobId))
+    const sources = [...this.jobSources].filter(([id]) => ids.has(id))
+    sessionStorage.setItem(key, JSON.stringify({ seq: this.jobSeq, jobs, sources }))
   }
 
   /** @deprecated use schedulePersistJobs; kept name for call sites */
@@ -221,9 +246,9 @@ export class SkinLibrarySession {
     }
   }
 
-  private bump(): number {
-    this.lib.revision += 1
-    return this.lib.revision
+  private parseCurrentLibrary(raw: string): LibraryFile {
+    if (JSON.parse(raw).schemaVersion !== SCHEMA_VERSION) throw new SkinApiError({ code: 'UNSUPPORTED_SCHEMA', message: '皮肤库版本不受支持，请先转换工程；客户端不会自动改写索引' })
+    return parseLibraryJson(raw)
   }
 
   private emit(event: SkinEvent) {
@@ -236,16 +261,56 @@ export class SkinLibrarySession {
     }
   }
 
-  private async persistLibrary(domain: 'entries' | 'tags' | 'folders' = 'entries', extra: FileEdit[] = []): Promise<void> {
+  private async readLibrary(): Promise<string | null> {
+    try {
+      const { file, version } = await this.root.client.readSnapshot(this.root.resolve(SKIN_INDEX_PATH))
+      const raw = await file.text()
+      this.libVersion = version
+      return raw
+    } catch (error) {
+      if (error instanceof ServiceError && error.code === 'not_found') { this.libVersion = null; return null }
+      throw error
+    }
+  }
+
+  /** Freeze intent, then let S validate and update its current library atomically. */
+  private async command<T>(command: SkinLibraryCommand, label: string, domain: 'entries' | 'tags' | 'folders', extra: FileEdit[] = []): Promise<T> {
     if (this.disposed) throw new Error('皮肤工程会话已关闭，未提交修改')
-    const objects = [...new Set(this.lib.entries.map(entry => entry.skinId))]
-      .filter(id => this.pendingObjects.has(id) && !this.root.client.entry(this.root.resolve(objectPath(id))))
-    const edits: FileEdit[] = objects.map(id => ({ op: 'write', path: this.root.resolve(objectPath(id)), data: encodeDiskFile(this.pendingObjects.get(id)!) }))
-    edits.push(...extra, { op: 'write', path: this.root.resolve(`${SKIN_ROOT}/${LIBRARY_FILE}`), data: `${JSON.stringify(this.lib, null, 2)}\n` })
-    await this.root.client.apply(edits, extra.length ? '清理皮肤对象及索引' : '保存皮肤对象及索引')
-    for (const id of objects) this.pendingObjects.delete(id)
+    const client = this.root.client
+    const data = JSON.stringify(command)
+    const edits: FileEdit[] = [...extra, { op: 'skin-library-command', path: this.root.resolve(SKIN_INDEX_PATH), data, version: this.libVersion }]
+    const pending = client.transactions.getSnapshot().transactions.find(transaction => transaction.phase !== 'saved' && client.transactions.submission(transaction.id).some(edit => {
+      const previous = libraryCommand(edit)
+      if (!previous || edit.path !== this.root.resolve(SKIN_INDEX_PATH)) return false
+      return edit.data === data || (command.command === 'import-entry' && previous.command === 'import-entry' && previous.entry.entryId === command.entry.entryId)
+    }))
+    if (pending) {
+      const same = client.transactions.submission(pending.id).some(edit => edit.op === 'skin-library-command' && edit.data === data)
+      if (!same) throw new ServiceError('pending_transaction', '存在参数不同的原导入，请先在提交列表处理原操作；不能修改原提交后直接重发')
+      await client.transactions.retry(pending.id)
+    } else await client.apply(edits, label)
+    const result = client.skinLibraryResult(data)
+    if (!result) throw new ServiceError('commit_uncertain', '未能载入皮肤操作的确认结果，请查询原提交')
+    this.needsLibraryRefresh = true
+    try {
+      const raw = await this.readLibrary()
+      if (raw) { this.lib = this.parseCurrentLibrary(raw); this.needsLibraryRefresh = false }
+    } catch { /* An acknowledged operation stays successful; refresh before the next mutation. */ }
     if (this.readableLib) this.pendingDomain = domain
     else this.emit({ type: 'library-updated', revision: this.lib.revision, domain })
+    return structuredClone(result) as T
+  }
+
+  private expectedEntry(entryId: string, revision?: number) {
+    const entry = this.lib.entries.find(item => item.entryId === entryId)
+    if (revision === undefined && !entry) throw new SkinApiError({ code: 'NOT_FOUND', message: '皮肤条目不存在，请刷新列表' })
+    return { entryId, revision: revision ?? entry!.revision }
+  }
+
+  private expectedFolder(folderId: string, expected?: FolderNode): FolderNode {
+    const folder = expected ?? this.lib.folders.find(item => item.folderId === folderId)
+    if (!folder || folder.folderId !== folderId) throw new SkinApiError({ code: 'NOT_FOUND', message: '文件夹不存在，请刷新列表' })
+    return folderRef(folder)
   }
 
   private previewCachePath(skinId: string): string {
@@ -322,38 +387,14 @@ export class SkinLibrarySession {
     }
   }
 
-  private async renameTagDraft(from: string, to: string) {
-    this.ensureReady()
-    const fromN = normalizeTagName(from)
-    const toN = normalizeTagName(to)
-    if (!fromN || !toN) {
-      throw new SkinApiError({ code: 'BAD_REQUEST', message: 'tag name empty' })
-    }
-    if (fromN.toLowerCase() === toN.toLowerCase() && fromN !== toN) {
-      // case-only rename still rewrites display form
-    } else if (fromN.toLowerCase() === toN.toLowerCase()) {
-      return { affectedEntries: 0 }
-    }
-    const affected = renameTagInLibrary(this.lib, fromN, toN)
-    if (affected > 0) {
-      this.bump()
-      await this.persistLibrary('tags')
-    }
-    return { affectedEntries: affected }
+  private async renameTagDraft(from: string, to: string): Promise<{ affectedEntries: number }> {
+    const key = normalizeTagName(from)?.toLowerCase()
+    return this.command({ command: 'rename-tag', from, to, expectedEntries: this.lib.entries.filter(entry => entry.tags.some(tag => tag.toLowerCase() === key)).map(entryRef) }, '重命名皮肤标签', 'tags')
   }
 
-  private async deleteTagDraft(name: string) {
-    this.ensureReady()
-    const n = normalizeTagName(name)
-    if (!n) {
-      throw new SkinApiError({ code: 'BAD_REQUEST', message: 'tag name empty' })
-    }
-    const affected = deleteTagInLibrary(this.lib, n)
-    if (affected > 0) {
-      this.bump()
-      await this.persistLibrary('tags')
-    }
-    return { affectedEntries: affected }
+  private async deleteTagDraft(name: string): Promise<{ affectedEntries: number }> {
+    const key = normalizeTagName(name)?.toLowerCase()
+    return this.command({ command: 'delete-tag', name, expectedEntries: this.lib.entries.filter(entry => entry.tags.some(tag => tag.toLowerCase() === key)).map(entryRef) }, '删除皮肤标签', 'tags')
   }
 
   listFolders() {
@@ -361,102 +402,21 @@ export class SkinLibrarySession {
     return { revision: this.visibleLibrary.revision, folders: foldersWithStats(this.visibleLibrary) }
   }
 
-  private assertUniqueSiblingFolderName(
-    name: string,
-    parentId: string | null,
-    excludeFolderId?: string,
-  ) {
-    const norm = normalizeFolderName(name)
-    const clash = this.lib.folders.some(
-      (f) =>
-        f.folderId !== excludeFolderId &&
-        (f.parentId ?? null) === parentId &&
-        normalizeFolderName(f.name) === norm,
-    )
-    if (clash) {
-      throw new SkinApiError({
-        code: 'FOLDER_NAME_CONFLICT',
-        message: `????????${norm}?`,
-      })
-    }
+  private async createFolderDraft(body: CreateFolderRequest): Promise<FolderNode> {
+    const result = await this.command<{ folder: FolderNode }>({ command: 'create-folder', folderId: uid('folder'), name: body.name, parentId: body.parentId ?? null }, '新建皮肤文件夹', 'folders')
+    return result.folder
   }
 
-  private async createFolderDraft(body: CreateFolderRequest) {
-    this.ensureReady()
-    const name = normalizeFolderName(body.name)
-    if (!name) {
-      throw new SkinApiError({
-        code: 'BAD_REQUEST',
-        message: 'folder name empty',
-      })
-    }
-    const parentId = body.parentId ?? null
-    if (parentId && !this.lib.folders.some((f) => f.folderId === parentId)) {
-      throw new SkinApiError({
-        code: 'NOT_FOUND',
-        message: 'parent folder not found',
-      })
-    }
-    this.assertUniqueSiblingFolderName(name, parentId)
-    const folder = {
-      folderId: uid('folder'),
-      name,
-      parentId,
-      sortOrder: this.lib.folders.filter((f) => (f.parentId ?? null) === parentId)
-        .length,
-    }
-    this.lib.folders.push(folder)
-    this.bump()
-    await this.persistLibrary('folders')
-    return folder
+  private async patchFolderDraft(folderId: string, body: PatchFolderRequest): Promise<FolderNode> {
+    const { expectedFolder, expectedSiblings, ...changes } = body
+    const folder = this.expectedFolder(folderId, expectedFolder)
+    const siblings = changes.sortSiblingsByName ? (expectedSiblings ?? this.lib.folders.filter(item => item.parentId === (changes.parentId !== undefined ? changes.parentId : folder.parentId))).map(folderRef) : undefined
+    const result = await this.command<{ folder: FolderNode }>({ command: 'patch-folder', expectedFolder: folder, changes, ...(siblings ? { expectedSiblings: siblings } : {}) }, '修改皮肤文件夹', 'folders')
+    return result.folder
   }
 
-  private async patchFolderDraft(folderId: string, body: PatchFolderRequest) {
-    this.ensureReady()
-    const folder = this.lib.folders.find((f) => f.folderId === folderId)
-    if (!folder) {
-      throw new SkinApiError({ code: 'NOT_FOUND', message: 'folder not found' })
-    }
-    const nextName =
-      body.name != null
-        ? normalizeFolderName(body.name) || folder.name
-        : folder.name
-    const nextParent =
-      body.parentId !== undefined ? body.parentId : (folder.parentId ?? null)
-    if (
-      nextName !== folder.name ||
-      nextParent !== (folder.parentId ?? null)
-    ) {
-      this.assertUniqueSiblingFolderName(nextName, nextParent, folderId)
-    }
-    if (body.name != null) folder.name = nextName
-    if (body.parentId !== undefined) folder.parentId = body.parentId
-    if (body.sortOrder != null) folder.sortOrder = body.sortOrder
-    this.bump()
-    await this.persistLibrary('folders')
-    return folder
-  }
-
-  private async deleteFolderDraft(folderId: string) {
-    this.ensureReady()
-    const before = this.lib.folders.length
-    this.lib.folders = this.lib.folders.filter((f) => f.folderId !== folderId)
-    this.lib.entries = this.lib.entries.map((e) =>
-      e.folderId === folderId
-        ? {
-            ...e,
-            folderId: null,
-            updatedAt: nowIso(),
-            revision: e.revision + 1,
-          }
-        : e,
-    )
-    if (this.lib.folders.length === before) {
-      return { deleted: false }
-    }
-    this.bump()
-    await this.persistLibrary('folders')
-    return { deleted: true }
+  private async deleteFolderDraft(folderId: string, expected?: FolderNode): Promise<{ deleted: boolean }> {
+    return this.command({ command: 'delete-folder', expectedFolder: this.expectedFolder(folderId, expected) }, '删除空皮肤文件夹', 'folders')
   }
 
   private failJob(job: ImportJob, e: unknown): void {
@@ -750,24 +710,6 @@ export class SkinLibrarySession {
     return { jobId }
   }
 
-  private assertCustomIdAvailable(
-    customId: string | null,
-    exceptEntryId?: string,
-  ): void {
-    if (!customId) return
-    const clash = this.lib.entries.find(
-      (e) =>
-        e.customId === customId &&
-        (!exceptEntryId || e.entryId !== exceptEntryId),
-    )
-    if (clash) {
-      throw new SkinApiError({
-        code: 'CONFLICT',
-        message: `自定义 ID「${customId}」已被「${clash.name}」占用`,
-      })
-    }
-  }
-
   getImport(jobId: string): ImportJob {
     const job = this.jobs.get(jobId)
     if (!job) {
@@ -857,10 +799,9 @@ export class SkinLibrarySession {
         message: e instanceof Error ? e.message : String(e),
       })
     }
-    this.assertCustomIdAvailable(customId)
-    const now = nowIso()
+    const now = job.createdAt
     const entry: LibraryEntry = {
-      entryId: uid('entry'),
+      entryId: `entry_${body.jobId}`,
       skinId,
       name: body.name.trim() || job.result.suggestedName,
       active: body.active ?? job.result.suggestedActive ?? false,
@@ -879,12 +820,29 @@ export class SkinLibrarySession {
       updatedAt: now,
       revision: 1,
     }
-    this.lib.entries.push(entry)
-    this.bump()
-    await this.persistLibrary('entries')
+    const client = this.root.client
+    const existingResult = client.skinImportResult(entry.entryId) as LibraryEntry | undefined
+    // A restored completed job must not create another entry. This is a current
+    // lookup, not an acknowledgement of any later metadata edits.
+    const existing = this.lib.entries.find(item => item.entryId === entry.entryId)
+    const pending = client.transactions.getSnapshot().transactions.some(transaction => transaction.phase !== 'saved' && client.transactions.submission(transaction.id).some(edit => {
+      const original = libraryCommand(edit)
+      return original?.command === 'import-entry' && original.entry.entryId === entry.entryId
+    }))
+    if (!pending && (existingResult || existing)) {
+      this.pendingObjects.delete(skinId)
+      this.jobSources.delete(body.jobId)
+      this.jobDecoded.delete(body.jobId)
+      return structuredClone((existingResult ?? existing)!)
+    }
+    const path = this.root.resolve(objectPath(skinId))
+    const decoded = this.pendingObjects.get(skinId)
+    const objects: FileEdit[] = decoded && !client.entry(path) ? [{ op: 'write', path, data: encodeDiskFile(decoded), version: null }] : []
+    const result = await this.command<{ entry: LibraryEntry }>({ command: 'import-entry', entry }, `导入皮肤「${entry.name}」`, 'entries', objects)
+    this.pendingObjects.delete(skinId)
     this.jobSources.delete(body.jobId)
     this.jobDecoded.delete(body.jobId)
-    return entry
+    return result.entry
   }
 
   private async patchEntryDraft(
@@ -892,131 +850,52 @@ export class SkinLibrarySession {
     body: PatchEntryRequest,
   ): Promise<LibraryEntry> {
     this.ensureReady()
-    const idx = this.lib.entries.findIndex((e) => e.entryId === entryId)
-    if (idx < 0) {
-      throw new SkinApiError({ code: 'NOT_FOUND', message: 'entry not found' })
-    }
-    const entry = this.lib.entries[idx]!
-    if (entry.revision !== body.revision) {
-      throw new SkinApiError({
-        code: 'CONFLICT',
-        message: `revision mismatch expected ${body.revision} got ${entry.revision}`,
-      })
-    }
-    if (body.name != null) entry.name = body.name
-    if (body.favorite != null) entry.favorite = body.favorite
-    if (body.folderId !== undefined) entry.folderId = body.folderId
-    if (body.active != null) entry.active = body.active
-    if (body.model != null) entry.model = body.model
-    if (body.license) entry.license = body.license
-    if (body.provenance) entry.provenance = body.provenance
-    if (body.note != null) entry.note = body.note
-    if (body.customId !== undefined) {
-      let next: string | null
-      try {
-        next = normalizeCustomId(body.customId)
-      } catch (e) {
-        throw new SkinApiError({
-          code: 'BAD_REQUEST',
-          message: e instanceof Error ? e.message : String(e),
-        })
+    const { revision, resolvePending, ...changes } = body
+    const command: SkinEntryCommand = { entryId, expectedRevision: revision, changes }
+    const data = JSON.stringify(command)
+    const client = this.root.client
+    const edit: FileEdit = { op: 'skin-entry-patch', path: this.root.resolve(SKIN_INDEX_PATH), data,
+      version: this.libVersion, baseData: JSON.stringify(this.lib.entries.find(entry => entry.entryId === entryId) ?? null) }
+    const pending = entrySubmissionState(client, entryId).transaction
+    if (resolvePending && pending && pending.phase !== 'saved') {
+      if (pending.phase !== 'failed' && pending.phase !== 'conflict') {
+        throw new ServiceError('pending_transaction', '这次修改的结果尚未确认，请先查询提交结果')
       }
-      this.assertCustomIdAvailable(next, entryId)
-      entry.customId = next
+      await client.transactions.resolve(pending.id, [edit])
+    } else {
+      await client.apply([edit], `修改皮肤「${this.lib.entries.find(entry => entry.entryId === entryId)?.name ?? entryId}」`)
     }
-    if (body.tags) entry.tags = normalizeTagList(body.tags)
-    if (body.addTags?.length) {
-      entry.tags = normalizeTagList([...entry.tags, ...body.addTags])
-    }
-    if (body.removeTags?.length) {
-      const ban = new Set(
-        body.removeTags
-          .map((t) => normalizeTagName(t)?.toLowerCase())
-          .filter((t): t is string => Boolean(t)),
-      )
-      entry.tags = entry.tags.filter((t) => !ban.has(t.toLowerCase()))
-    }
-    entry.updatedAt = nowIso()
-    entry.revision += 1
-    this.bump()
-    await this.persistLibrary('entries')
-    return entry
+    const acknowledged = client.skinEntryResult(data) as LibraryEntry | undefined
+    if (!acknowledged) throw new Error('皮肤修改已提交，未能载入确认结果，请刷新工程')
+    // The receipt describes exactly this save, even when a peer has since made
+    // another change. Never return a later entry as if it acknowledged our draft.
+    this.lib.entries = this.lib.entries.map(entry => entry.entryId === entryId ? structuredClone(acknowledged) : entry)
+    this.needsLibraryRefresh = true
+    try {
+      const raw = await this.readLibrary()
+      if (raw) { this.lib = this.parseCurrentLibrary(raw); this.needsLibraryRefresh = false }
+    } catch { /* The command is acknowledged. Refresh before the next mutation. */ }
+    this.pendingDomain = 'entries'
+    return structuredClone(acknowledged)
   }
 
-  private async batchPatchEntriesDraft(body: {
-    entryIds: string[]
-    addTags?: string[]
-    removeTags?: string[]
-    folderId?: string | null
-    active?: boolean
-    expectedRevisions?: number[]
-  }) {
-    this.ensureReady()
-    let updated = 0
-    const conflicts: Array<{
-      entryId: string
-      expectedRevision: number
-      actualRevision: number
-    }> = []
-    const removeBan = new Set(
-      (body.removeTags ?? [])
-        .map((t) => normalizeTagName(t)?.toLowerCase())
-        .filter((t): t is string => Boolean(t)),
-    )
-    for (let i = 0; i < body.entryIds.length; i++) {
-      const id = body.entryIds[i]!
-      const entry = this.lib.entries.find((e) => e.entryId === id)
-      if (!entry) continue
-      const expected = body.expectedRevisions?.[i]
-      if (expected != null && entry.revision !== expected) {
-        conflicts.push({
-          entryId: id,
-          expectedRevision: expected,
-          actualRevision: entry.revision,
-        })
-        continue
-      }
-      if (body.addTags?.length) {
-        entry.tags = normalizeTagList([...entry.tags, ...body.addTags])
-      }
-      if (removeBan.size) {
-        entry.tags = entry.tags.filter((t) => !removeBan.has(t.toLowerCase()))
-      }
-      if (body.folderId !== undefined) entry.folderId = body.folderId
-      if (body.active != null) entry.active = body.active
-      entry.updatedAt = nowIso()
-      entry.revision += 1
-      updated += 1
-    }
-    if (updated > 0) {
-      this.bump()
-      await this.persistLibrary('entries')
-    }
-    return { updated, revision: this.lib.revision, conflicts }
+  private async batchPatchEntriesDraft(body: BatchPatchRequest): Promise<{ updated: number; revision: number }> {
+    const { entryIds, expectedRevisions, ...changes } = body
+    if (expectedRevisions && expectedRevisions.length !== entryIds.length) throw new SkinApiError({ code: 'BAD_REQUEST', message: '批量修改缺少完整的条目版本，请重新选择' })
+    return this.command({ command: 'batch-patch', expectedEntries: entryIds.map((id, i) => this.expectedEntry(id, expectedRevisions?.[i])), changes }, '批量修改皮肤', 'entries')
   }
 
-  private async deleteEntryDraft(entryId: string) {
-    this.ensureReady()
-    const before = this.lib.entries.length
-    this.lib.entries = this.lib.entries.filter((e) => e.entryId !== entryId)
-    if (this.lib.entries.length === before) return { deleted: false }
-    this.bump()
-    await this.persistLibrary('entries')
-    return { deleted: true }
+  private async deleteEntryDraft(entryId: string, revision?: number): Promise<{ deleted: boolean }> {
+    const result = await this.command<{ deleted: number }>({ command: 'delete-entries', expectedEntries: [this.expectedEntry(entryId, revision)] }, '删除皮肤条目', 'entries')
+    return { deleted: result.deleted > 0 }
   }
 
-  private async deleteEntriesInFolderDraft(folderId: string): Promise<{ deleted: number }> {
-    this.ensureReady()
+  private async deleteEntriesInFolderDraft(folderId: string, expected?: FolderScopeSnapshot): Promise<{ deleted: number }> {
     const scope = folderDescendants(this.lib.folders, folderId)
-    const before = this.lib.entries.length
-    this.lib.entries = this.lib.entries.filter(
-      (e) => e.folderId == null || !scope.has(e.folderId),
-    )
-    const deleted = before - this.lib.entries.length
-    if (deleted === 0) return { deleted: 0 }
-    this.bump()
-    await this.persistLibrary('entries')
-    return { deleted }
+    return this.command({ command: 'delete-folder-entries', folderId,
+      expectedFolders: (expected?.folders ?? this.lib.folders.filter(folder => scope.has(folder.folderId))).map(folderRef),
+      expectedEntries: expected?.entries ?? this.lib.entries.filter(entry => entry.folderId != null && scope.has(entry.folderId)).map(entryRef),
+    }, '清空文件夹内皮肤', 'entries')
   }
 
   async getPreviewUrl(skinId: string): Promise<string> {
@@ -1043,9 +922,8 @@ export class SkinLibrarySession {
       decoded.width,
       decoded.height,
     )
-    if (this.root.client.entry(this.root.resolve(objectPath(skinId))) && this.root.client.writable) {
-      void writeBytesAt(this.root, this.previewCachePath(skinId), new Uint8Array(await png.arrayBuffer())).catch(() => {})
-    }
+    // A generated preview is a local projection. Merely viewing a skin must not
+    // acquire a project lease or leave a failed shared-cache write in the outbox.
     const url = URL.createObjectURL(png)
     this.previewUrls.set(skinId, url)
     return url
@@ -1213,7 +1091,7 @@ export class SkinLibrarySession {
       report('objects', 0, edits.length, '正在提交清理事务…')
       // Include the index to validate its version and hold its lease: a concurrent
       // newly added reference must prevent deleting that client's object.
-      await this.persistLibrary('entries', edits)
+      await this.root.client.apply([...edits, { op: 'write', path: this.root.resolve(SKIN_INDEX_PATH), adopt: true, version: this.libVersion }], '清理未引用的皮肤对象')
       for (const victim of previewVictims) {
         const skinId = victim.name.slice(0, -4)
         const url = this.previewUrls.get(skinId)
@@ -1234,6 +1112,9 @@ export class SkinLibrarySession {
   }
 
   dispose() {
+    // Flush synchronously before disposal; a remote library refresh can replace
+    // this session before the short debounce expires.
+    void this.persistJobsNow().catch(error => console.warn('[hanshu] 本窗口导入准备记录保存失败', error))
     this.disposed=true
     if(this.persistJobsTimer!==null)clearTimeout(this.persistJobsTimer)
     for (const url of this.previewUrls.values()) URL.revokeObjectURL(url)

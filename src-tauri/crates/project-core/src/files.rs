@@ -1,5 +1,9 @@
 //! The server owns the ordinary project directory. Clients receive names/versions, never OS handles.
 //! A checked batch has an on-disk undo journal; interrupted batches roll back before serving clients.
+#[path = "history.rs"]
+mod history;
+#[path = "history_restore.rs"]
+mod history_restore;
 #[path = "file_transactions.rs"]
 mod transactions;
 use crate::{
@@ -7,6 +11,14 @@ use crate::{
     SESSION_TTL,
 };
 use base64::{engine::general_purpose::STANDARD, Engine as _};
+pub use history::{
+    HistoryActor, HistoryChange, HistoryContent, HistoryEntry, HistoryMove, HistoryObject,
+    HistoryPage, HistoryStats, HistoryTree,
+};
+use history::{HistoryContext, HistoryState};
+pub use history_restore::{
+    HistoryRestoreChange, HistoryRestorePlan, HistoryRestoreRequest, HistoryRestoreSelection,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
@@ -18,7 +30,7 @@ use transactions::{CommitJournal, TransactionCache, TransactionRecord};
 pub use transactions::{FileTransactionError, FileTransactionReceipt, FileTransactionStatus};
 use ts_rs::TS;
 
-type Tree = BTreeMap<String, Option<Vec<u8>>>;
+pub(crate) type Tree = BTreeMap<String, Option<Vec<u8>>>;
 const MAX_FILE: usize = 32 * 1024 * 1024;
 const MAX_TREE: usize = 256 * 1024 * 1024;
 
@@ -49,13 +61,6 @@ pub struct FileChange {
     pub destination_version: Option<String>,
     pub lease_id: String,
 }
-#[derive(Clone, Debug, Serialize, TS)]
-#[serde(rename_all = "camelCase")]
-pub struct SourceFileMove {
-    pub path: String,
-    pub destination: Option<String>,
-}
-
 #[derive(Clone, Serialize, Deserialize)]
 struct UndoEntry {
     kind: String,
@@ -67,9 +72,10 @@ pub(crate) struct ProjectFiles {
     pub revision: u64,
     healthy: bool,
     transactions: std::cell::RefCell<TransactionCache>,
+    history: std::cell::RefCell<HistoryState>,
 }
 
-fn path_ok(path: &str) -> Result<()> {
+pub(crate) fn path_ok(path: &str) -> Result<()> {
     require(
         !path.is_empty() && path.len() <= 1024,
         "invalid",
@@ -104,33 +110,10 @@ fn path_ok(path: &str) -> Result<()> {
         "路径不属于可访问的工程资源；服务数据不可访问",
     )
 }
-fn nested(a: &str, b: &str) -> bool {
+pub(crate) fn nested(a: &str, b: &str) -> bool {
     a == b || b.starts_with(&format!("{a}/"))
 }
-fn related_source(path: &str) -> Option<String> {
-    let rest = path.strip_prefix("assets/")?;
-    let (_, tail) = rest.split_once('/')?;
-    let (kind, logical) = tail.split_once('/')?;
-    let (ext, stem) = if let Some(ext) = kind.strip_prefix("lang_") {
-        (ext, logical.strip_suffix(".lang")?)
-    } else if let Some(ext) = kind.strip_prefix("voice_") {
-        (ext, logical.rsplit_once('/')?.0)
-    } else {
-        return None;
-    };
-    let directory = match ext {
-        "hs" => "hanshu",
-        "char" => "character",
-        "progress" => "progress",
-        "hflow" => "story",
-        "nav" => "navigator",
-        "kit" => "gift",
-        "item" => "items",
-        _ => return None,
-    };
-    Some(format!("src/{directory}/{stem}.{ext}"))
-}
-fn version(tree: &Tree, path: &str) -> Option<String> {
+pub(crate) fn version(tree: &Tree, path: &str) -> Option<String> {
     tree.get(path).map(|bytes| match bytes {
         Some(bytes) => hex_digest(bytes),
         None => hex_digest(
@@ -164,17 +147,19 @@ fn reparse(meta: &fs::Metadata) -> bool {
     }
 }
 impl ProjectFiles {
-    fn open(root: &Path) -> Result<Self> {
+    fn open(root: &Path, project_id: &str) -> Result<Self> {
         let mut out = Self {
             root: root.canonicalize()?,
             revision: 1,
             healthy: true,
             transactions: std::cell::RefCell::new(TransactionCache::default()),
+            history: Self::history_state(project_id),
         };
         out.prepare_staging()?;
         out.load_transactions()?;
+        out.load_history()?;
         out.recover_transaction()?;
-        out.scan()?;
+        out.sync_history()?;
         Ok(out)
     }
     fn journal(&self) -> PathBuf {
@@ -187,7 +172,11 @@ impl ProjectFiles {
             current.push(part);
             match fs::symlink_metadata(&current) {
                 Ok(m) => require(!reparse(&m), "forbidden", "工程内不允许符号链接或目录联接")?,
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e)
+                    if matches!(
+                        e.kind(),
+                        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                    ) => {}
                 Err(e) => return Err(e.into()),
             }
         }
@@ -254,6 +243,7 @@ impl ProjectFiles {
     }
     fn snapshot(&self) -> Result<ProjectFileTree> {
         let tree = self.scan()?;
+        self.sync_history_tree(&tree, crate::now_ms())?;
         Ok(self.tree_snapshot(&tree, self.revision))
     }
     fn tree_snapshot(&self, tree: &Tree, revision: u64) -> ProjectFileTree {
@@ -315,14 +305,28 @@ impl ProjectFiles {
         let mut paths = changes.keys().collect::<Vec<_>>();
         paths.sort_by_key(|p| std::cmp::Reverse(p.len()));
         for p in &paths {
-            if changes[*p].is_none() {
-                let full = self.safe(p)?;
-                match fs::symlink_metadata(&full) {
-                    Ok(m) if m.is_dir() => fs::remove_dir(full)?,
-                    Ok(_) => fs::remove_file(full)?,
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(e) => return Err(e.into()),
+            let full = self.safe(p)?;
+            match fs::symlink_metadata(&full) {
+                Ok(meta) => {
+                    // A checked history replacement may change file/directory type.
+                    // Descendants are removed first; rollback uses this same path.
+                    let remove = changes[*p]
+                        .as_ref()
+                        .is_none_or(|next| meta.is_dir() == next.is_some());
+                    if remove {
+                        if meta.is_dir() {
+                            fs::remove_dir(full)?;
+                        } else {
+                            fs::remove_file(full)?;
+                        }
+                    }
                 }
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                    ) => {}
+                Err(error) => return Err(error.into()),
             }
         }
         paths.reverse();
@@ -341,22 +345,100 @@ impl ProjectFiles {
         &mut self,
         changes: &[FileChange],
         mut record: TransactionRecord,
+        old: Tree,
+        context: HistoryContext,
     ) -> Result<FileTransactionReceipt> {
-        let old = self.scan()?;
+        self.sync_history_tree(&old, context.now)?;
         let mut next = old.clone();
         require(
             !changes.is_empty() && changes.len() <= 4096,
             "invalid",
             "文件事务为空或过大",
         )?;
+        let importing = changes
+            .iter()
+            .filter(|c| c.op == "skin-library-command")
+            .filter_map(|c| STANDARD.decode(c.content.as_deref()?).ok())
+            .filter_map(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+            .find(|value| value["command"] == "import-entry")
+            .and_then(|value| value["entry"]["skinId"].as_str().map(str::to_owned))
+            .filter(|id| skin_core::codec::is_valid_skin_id(id))
+            .map(|id| format!(".hanshu/skinmanager/objects/{}/{id}.skin", &id[..2]));
         for c in changes {
             path_ok(&c.path)?;
-            require(
-                version(&old, &c.path) == c.version,
-                "conflict",
-                format!("{} 已被其他客户端修改，草稿仍保留", c.path).as_str(),
-            )?;
+            let identical_import_object = c.op == "write"
+                && importing.as_ref() == Some(&c.path)
+                && c.content
+                    .as_ref()
+                    .and_then(|content| STANDARD.decode(content).ok())
+                    .as_ref()
+                    .is_some_and(|bytes| old.get(&c.path).and_then(Option::as_ref) == Some(bytes));
+            if !matches!(c.op.as_str(), "skin-entry-patch" | "skin-library-command")
+                && !identical_import_object
+            {
+                require(
+                    version(&old, &c.path) == c.version,
+                    "conflict",
+                    format!("{} 已被其他客户端修改，草稿仍保留", c.path).as_str(),
+                )?;
+            }
             match c.op.as_str() {
+                "skin-library-command" => {
+                    require(
+                        c.path == crate::skin_patch::LIBRARY_PATH
+                            && c.destination.is_none()
+                            && c.destination_version.is_none(),
+                        "invalid",
+                        "皮肤业务操作不能指定其他路径或移动目标",
+                    )?;
+                    let bytes = STANDARD
+                        .decode(
+                            c.content
+                                .as_deref()
+                                .ok_or_else(|| Error::new("invalid", "皮肤业务命令缺少内容"))?,
+                        )
+                        .map_err(|_| Error::new("invalid", "皮肤业务命令编码无效"))?;
+                    let (library, result, entries) = crate::skin_commands::apply(
+                        old.get(&c.path).and_then(Option::as_deref),
+                        &bytes,
+                    )?;
+                    require(
+                        library.len() <= MAX_FILE,
+                        "invalid",
+                        "皮肤库索引超过 32 MiB",
+                    )?;
+                    next.insert(c.path.clone(), Some(library));
+                    record.receipt.skin_command_result = Some(result);
+                    record.receipt.skin_entries = Some(entries);
+                }
+                "skin-entry-patch" => {
+                    require(
+                        c.path == crate::skin_patch::LIBRARY_PATH
+                            && c.destination.is_none()
+                            && c.destination_version.is_none(),
+                        "invalid",
+                        "皮肤条目修改不能指定其他路径或移动目标",
+                    )?;
+                    let bytes = STANDARD
+                        .decode(
+                            c.content
+                                .as_deref()
+                                .ok_or_else(|| Error::new("invalid", "皮肤条目修改缺少内容"))?,
+                        )
+                        .map_err(|_| Error::new("invalid", "皮肤条目修改编码无效"))?;
+                    let before = old
+                        .get(&c.path)
+                        .and_then(Option::as_ref)
+                        .ok_or_else(|| Error::new("conflict", "皮肤库索引不存在或已被删除"))?;
+                    let (library, entry) = crate::skin_patch::apply(before, &bytes)?;
+                    require(
+                        library.len() <= MAX_FILE,
+                        "invalid",
+                        "皮肤库索引超过 32 MiB",
+                    )?;
+                    next.insert(c.path.clone(), Some(library));
+                    record.receipt.skin_entries = Some(vec![entry]);
+                }
                 // A read-set assertion participates in the same checked batch.
                 // It lets a conflict resolution adopt some server resources while
                 // modifying others, without racing a second writer in between.
@@ -378,7 +460,7 @@ impl ProjectFiles {
                         .decode(c.content.as_deref().unwrap_or(""))
                         .map_err(|_| Error::new("invalid", "文件编码无效"))?;
                     require(bytes.len() <= MAX_FILE, "invalid", "文件超过 32 MiB")?;
-                    if c.path.ends_with(".progress") {
+                    if c.path.to_ascii_lowercase().ends_with(".progress") {
                         super::progress::validate(
                             std::str::from_utf8(&bytes)
                                 .map_err(|_| Error::new("invalid", "进度须为 UTF-8"))?,
@@ -408,6 +490,10 @@ impl ProjectFiles {
                                 && library["folders"].is_array(),
                             "invalid",
                             "皮肤库索引结构无效",
+                        )?;
+                        crate::skin_patch::validate_replacement(
+                            old.get(&c.path).and_then(Option::as_deref),
+                            &library,
                         )?;
                     }
                     next.insert(c.path.clone(), Some(bytes));
@@ -462,6 +548,15 @@ impl ProjectFiles {
                 _ => return Err(Error::new("invalid", "未知工程操作")),
             }
         }
+        if let Some(entries) = &record.receipt.skin_entries {
+            for entry in entries {
+                crate::skin_patch::validate_object(entry, &next)?;
+                if importing.is_some() {
+                    crate::skin_commands::validate_import_object(entry, &next)?;
+                }
+            }
+        }
+        crate::skin_commands::validate_removed_objects(&old, &next)?;
         let mut parents = Vec::new();
         for path in next.keys() {
             let mut p = path.as_str();
@@ -528,10 +623,12 @@ impl ProjectFiles {
             })
             .collect::<BTreeMap<_, _>>();
         record.receipt.tree = Some(self.tree_snapshot(&next, self.revision + 1));
+        let history = self.prepare_history(&next, context)?;
         self.execute_transaction(
             CommitJournal {
                 committed: false,
                 transaction: record,
+                history,
                 undo: encoded
                     .into_iter()
                     .map(|(p, entry)| (p.clone(), entry))
@@ -543,72 +640,43 @@ impl ProjectFiles {
 }
 
 impl Engine {
-    /// Associations are derived by S, including language/audio files not loaded by this client.
-    pub fn source_plan(
-        &self,
-        sid: &str,
-        path: &str,
-        destination: Option<&str>,
-    ) -> Result<Vec<SourceFileMove>> {
+    /// Read-only resource facts; relations by themselves never imply a write lease.
+    pub fn resource_relations(&self, sid: &str, path: &str) -> Result<crate::ResourceRelations> {
         self.role(sid)?;
-        path_ok(path)?;
-        require(
-            path.starts_with("src/") || path.starts_with("meta/"),
-            "invalid",
-            "只能操作工程源文件",
-        )?;
-        if let Some(dest) = destination {
-            path_ok(dest)?;
-            require(
-                dest.starts_with("src/") || dest.starts_with("meta/"),
-                "invalid",
-                "目标不是源文件路径",
-            )?;
-        }
-        let tree = self
+        let store = self
             .files
             .as_ref()
-            .ok_or_else(|| Error::new("invalid", "未打开工程"))?
-            .scan()?;
-        let mut plan = if tree.contains_key(path) {
-            vec![SourceFileMove {
-                path: path.into(),
-                destination: destination.map(str::to_owned),
-            }]
-        } else {
-            Vec::new()
-        };
-        let logical = |p: &str| p.split('/').skip(2).collect::<Vec<_>>().join("/");
-        let old = logical(path);
-        let (old_stem, ext) = old
-            .rsplit_once('.')
-            .ok_or_else(|| Error::new("invalid", "源文件没有后缀"))?;
-        let dest = destination.map(logical);
-        let target = dest.as_deref().and_then(|d| d.rsplit_once('.'));
-        for (p, b) in &tree {
-            if !p.starts_with("assets/") {
-                continue;
-            }
-            let Some((locale, tail)) = p[7..].split_once('/') else {
-                continue;
-            };
-            let lang = format!("lang_{ext}/{old_stem}.lang");
-            let voice = format!("voice_{ext}/{old_stem}");
-            if (tail == lang && b.is_some()) || (tail == voice && b.is_none()) {
-                let next = target.map(|(stem, ext)| {
-                    if b.is_some() {
-                        format!("assets/{locale}/lang_{ext}/{stem}.lang")
-                    } else {
-                        format!("assets/{locale}/voice_{ext}/{stem}")
-                    }
-                });
-                plan.push(SourceFileMove {
-                    path: p.clone(),
-                    destination: next,
-                });
+            .ok_or_else(|| Error::new("invalid", "未打开目录工程"))?;
+        store.safe(path)?;
+        let mut tree = store.scan()?;
+        // A new source or child is meaningful before its first save.
+        tree.entry(path.into()).or_insert_with(|| Some(Vec::new()));
+        Ok(crate::ResourceRelations {
+            path: path.into(),
+            relations: crate::resource_relations::resolve(&tree)
+                .into_iter()
+                .filter(|relation| crate::resource_relations::related_to(relation, path))
+                .collect(),
+        })
+    }
+    /// Observational plan only. Commit always rederives policy from the current server tree.
+    pub fn plan_file_operations(
+        &self,
+        sid: &str,
+        requests: &[crate::FileOperationRequest],
+    ) -> Result<crate::ResourceOperationPlan> {
+        self.role(sid)?;
+        let store = self
+            .files
+            .as_ref()
+            .ok_or_else(|| Error::new("invalid", "未打开目录工程"))?;
+        for request in requests {
+            store.safe(&request.path)?;
+            if let Some(destination) = &request.destination {
+                store.safe(destination)?;
             }
         }
-        Ok(plan)
+        crate::resource_policy::plan(&store.scan()?, store.revision, requests)
     }
     pub fn open_project(root: &Path) -> Result<Self> {
         fs::create_dir_all(root)?;
@@ -619,7 +687,7 @@ impl Engine {
             }
         }
         let mut engine = Self::open(&root.join(".hanshu/service"))?;
-        engine.files = Some(ProjectFiles::open(root)?);
+        engine.files = Some(ProjectFiles::open(root, &engine.data.id)?);
         Ok(engine)
     }
     pub fn files_snapshot(&self, sid: &str) -> Result<ProjectFileTree> {
@@ -665,10 +733,31 @@ impl Engine {
         )?;
         Ok((bytes, version))
     }
-    /// Focus is independent of a lease. Never accept an activity claim from a client.
-    pub fn set_file_presence(&mut self, sid: &str, path: Option<String>, now: u64) -> Result<()> {
+    /// Focus and free-editor intent are informational; neither acquires a lease.
+    pub fn set_file_presence(
+        &mut self,
+        sid: &str,
+        path: Option<String>,
+        entry_id: Option<String>,
+        activity: FileActivity,
+        now: u64,
+    ) -> Result<()> {
         self.expire(now);
-        self.role(sid)?;
+        let role = self.role(sid)?;
+        if let Some(entry_id) = &entry_id {
+            require(
+                path.as_deref() == Some(crate::skin_patch::LIBRARY_PATH),
+                "invalid",
+                "条目查看状态只能用于皮肤库",
+            )?;
+            require(
+                !entry_id.is_empty()
+                    && entry_id.len() <= 256
+                    && !entry_id.chars().any(char::is_control),
+                "invalid",
+                "皮肤条目身份无效",
+            )?;
+        }
         let presence = if let Some(path) = path {
             let store = self
                 .files
@@ -683,12 +772,17 @@ impl Engine {
             }
             let authority_id = format!(
                 "file:{}",
-                related_source(&path).unwrap_or_else(|| path.clone())
+                crate::resource_policy::edit_authority(&path, &store.scan()?).authority_path
             );
             Some(FilePresence {
                 path,
                 authority_id,
-                activity: FileActivity::Viewing,
+                entry_id,
+                activity: if role.can_write() {
+                    activity
+                } else {
+                    FileActivity::Viewing
+                },
             })
         } else {
             None
@@ -698,21 +792,29 @@ impl Engine {
         session.expires_at = now + SESSION_TTL;
         Ok(())
     }
-    /// Compute the visible activity from current server state so takeover, release and
-    /// permission changes cannot leave a stale "editing" badge in a snapshot.
+    /// Managed progress editing follows actual authority. Free editor intent remains
+    /// independent from temporary transaction leases and is always clamped by permission.
     pub(crate) fn session_snapshot(&self, session: &Session) -> Session {
         let mut visible = session.clone();
         if let Some(presence) = &mut visible.file_presence {
-            let owns = self.role(&session.id).is_ok_and(|role| role.can_write())
-                && self
+            let can_write = self.role(&session.id).is_ok_and(|role| role.can_write());
+            if !can_write {
+                presence.activity = FileActivity::Viewing;
+            } else if presence
+                .authority_id
+                .to_ascii_lowercase()
+                .ends_with(".progress")
+            {
+                let owns = self
                     .leases
                     .get(&presence.authority_id)
                     .is_some_and(|lease| lease.session_id == session.id);
-            presence.activity = if owns {
-                FileActivity::Editing
-            } else {
-                FileActivity::Viewing
-            };
+                presence.activity = if owns {
+                    FileActivity::Editing
+                } else {
+                    FileActivity::Viewing
+                };
+            }
         }
         visible
     }
@@ -733,22 +835,13 @@ impl Engine {
             "invalid",
             "写权请求无效",
         )?;
-        let mut expanded = paths
+        // The lease mechanism knows only paths. Related locks are selected by operation policy.
+        let unique = paths
             .iter()
             .cloned()
-            .chain(paths.iter().filter_map(|p| related_source(p)))
             .collect::<std::collections::BTreeSet<_>>();
-        if let Some(store) = &self.files {
-            for (path, bytes) in store.scan()? {
-                if bytes.is_some() && paths.iter().any(|p| nested(p, &path)) {
-                    if let Some(source) = related_source(&path) {
-                        expanded.insert(source);
-                    }
-                }
-            }
-        }
-        let expanded = expanded.into_iter().collect::<Vec<_>>();
-        let paths = expanded.as_slice();
+        let paths = unique.into_iter().collect::<Vec<_>>();
+        let paths = paths.as_slice();
         for p in paths {
             path_ok(p)?;
             for l in self.leases.values() {
@@ -788,66 +881,69 @@ impl Engine {
         }
         Ok(out)
     }
-    fn validate_file_changes(&self, sid: &str, changes: &[FileChange], now: u64) -> Result<()> {
+    fn validate_file_changes(
+        &self,
+        sid: &str,
+        changes: &[FileChange],
+        now: u64,
+        trusted_restore: bool,
+    ) -> Result<Tree> {
         self.writer(sid)?;
-        for c in changes {
-            path_ok(&c.path)?;
-            self.require_lease(sid, &format!("file:{}", c.path), &c.lease_id, now)?;
-            for path in std::iter::once(c.path.as_str()).chain(c.destination.as_deref()) {
-                if let Some(source) = related_source(path) {
+        let store = self
+            .files
+            .as_ref()
+            .ok_or_else(|| Error::new("invalid", "未打开目录工程"))?;
+        let tree = store.scan()?;
+        let requests = changes
+            .iter()
+            .map(|change| {
+                Ok(crate::FileOperationRequest {
+                    op: crate::FileOperationKind::parse(&change.op)?,
+                    path: change.path.clone(),
+                    destination: change.destination.clone(),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let plan = if trusted_restore {
+            crate::resource_policy::plan_restore(&tree, store.revision, &requests)?
+        } else {
+            crate::resource_policy::plan(&tree, store.revision, &requests)?
+        };
+        for operation in &plan.operations {
+            require(
+                changes.iter().any(|change| {
+                    change.path == operation.path
+                        && crate::FileOperationKind::parse(&change.op).ok() == Some(operation.op)
+                        && change.destination == operation.destination
+                }),
+                "invalid",
+                "操作必须包含服务器策略推导的全部关联资源",
+            )?;
+        }
+        for path in &plan.lease_paths {
+            require(
+                self.leases
+                    .get(&format!("file:{path}"))
+                    .is_some_and(|lease| lease.session_id == sid && lease.expires_at > now),
+                "locked",
+                "缺少资源操作策略要求的写权",
+            )?;
+            for lease in self.leases.values() {
+                if let Some(other) = lease.resource_id.strip_prefix("file:") {
                     require(
-                        self.leases
-                            .get(&format!("file:{source}"))
-                            .is_some_and(|l| l.session_id == sid && l.expires_at > now),
-                        "locked",
-                        "源文档及其语言/配音资源共用写权",
-                    )?;
-                }
-            }
-            if ["move", "remove"].contains(&c.op.as_str())
-                && (c.path.starts_with("src/") || c.path.starts_with("meta/"))
-            {
-                let plan = self.source_plan(sid, &c.path, c.destination.as_deref())?;
-                for associated in plan.iter().filter(|p| {
-                    p.path != c.path && p.destination.as_deref() != Some(p.path.as_str())
-                }) {
-                    require(
-                        changes.iter().any(|item| {
-                            item.path == associated.path
-                                && item.op == c.op
-                                && item.destination == associated.destination
-                        }),
-                        "invalid",
-                        "源文件操作必须包含服务器推导的全部语言与配音资源",
-                    )?;
-                }
-            }
-            if let Some(dest) = c.destination.as_ref() {
-                path_ok(dest)?;
-                require(
-                    self.leases
-                        .get(&format!("file:{dest}"))
-                        .is_some_and(|l| l.session_id == sid && l.expires_at > now),
-                    "locked",
-                    "缺少目标路径写权",
-                )?;
-            }
-            for l in self.leases.values() {
-                if let Some(p) = l.resource_id.strip_prefix("file:") {
-                    require(
-                        l.session_id == sid
-                            || !(nested(&c.path, p)
-                                || nested(p, &c.path)
-                                || c.destination
-                                    .as_ref()
-                                    .is_some_and(|d| nested(d, p) || nested(p, d))),
+                        lease.session_id == sid || !(nested(path, other) || nested(other, path)),
                         "locked",
                         "相关目录有其他编辑者",
                     )?;
                 }
             }
         }
-        Ok(())
+        for change in changes {
+            self.require_lease(sid, &format!("file:{}", change.path), &change.lease_id, now)?;
+        }
+        // The policy check and application share this scan so version checks and relationship
+        // closure are evaluated against the same authoritative state.
+        Ok(tree)
     }
     pub fn renew_files(&mut self, sid: &str, ids: &[String], now: u64) -> Result<()> {
         self.expire(now);

@@ -132,8 +132,6 @@ import {
   AgentDiffModal,
   type AgentDiffSnapshot,
 } from '../AgentDiffModal'
-import { pushFileBackup, pushFileVersion } from '../agent/fileBackup'
-import { HistoryModal } from '../HistoryModal'
 import {
   type BoundProject,
   createProjectFromPicker,
@@ -150,6 +148,7 @@ import type {
   ScriptWorkspaceHandle,
 } from './scriptTypes'
 import { LocaleSelect } from '../LocaleSelect'
+import { FilePresenceBar } from '../project/FilePresenceBar'
 import { TextEditBox } from '../TextEditBox'
 import {
   TextMap,
@@ -277,7 +276,6 @@ export const ScriptWorkspace = forwardRef<
   const [agentOpen, setAgentOpen] = useState(true)
   const [agentDiffs, setAgentDiffs] = useState<AgentDiffSnapshot[]>([])
   const [diffOpen, setDiffOpen] = useState(false)
-  const [historyOpen, setHistoryOpen] = useState(false)
   const [agentPercent, setAgentPercent] = useState(() => {
     const saved = Number(localStorage.getItem('hanshu.agentPercent'))
     return Number.isFinite(saved) && saved >= 25 && saved <= 70 ? saved : 45
@@ -311,6 +309,10 @@ export const ScriptWorkspace = forwardRef<
   const lineCount = value.split('\n').length
   const charCount = value.length
   const viewingAsset = Boolean(activeAssetHit)
+  const presenceClient = serviceSession.binding?.handle.client
+  const presencePath = activeAssetHit?.asset.path ?? (active ? sourcePathOf(active.script) : null)
+  // The editor buffer precedes its debounced workspace mirror by 400 ms.
+  const presenceDirty = !viewingAsset && !!active && bufferOwnerRef.current === active.script.id && value !== active.script.content
   const titleName = viewingAsset
     ? activeAssetHit!.asset.path
     : (active?.script.name ?? '未命名剧本.hs')
@@ -1717,11 +1719,6 @@ export const ScriptWorkspace = forwardRef<
     const name = findScript(workspaceRef.current, id)?.script.name ?? ''
     if (isHanshuFile(name)) syncRolesFromText(text)
 
-    // 手动保存前记一版历史（.hs 尤其重要）
-    if (name) {
-      pushFileVersion(name, text, 'manual-save', { force: true })
-    }
-
     let next = updateScriptContent(workspaceRef.current, id, text)
 
     commitWorkspace(next)
@@ -1950,9 +1947,6 @@ export const ScriptWorkspace = forwardRef<
     if (projectBusy) return { ok: false, error: '工程操作进行中，请稍候' }
     const oldName = hit.script.name
 
-    try { projectRef.current?.handle.client.assertSourceDraftsSaved(sourcePathOf(hit.script)) }
-    catch (error) { return { ok: false, error: error instanceof Error ? error.message : String(error) } }
-
     // 连带改名：每种语言的文本资产与音频目录都跟着走（见 renameScriptAssets）
     let renamed = renameScriptAssets(workspaceRef.current, scriptId, newName)
     if (renamed.kind === 'blocked') {
@@ -2077,8 +2071,6 @@ export const ScriptWorkspace = forwardRef<
     if (!hit) return null
     const sourceName = hit.script.name
     if (projectBusy) return null
-    try { projectRef.current?.handle.client.assertSourceDraftsSaved(sourcePathOf(hit.script)) }
-    catch (error) { window.alert(error instanceof Error ? error.message : String(error)); return null }
     const bound = projectRef.current
     setProjectBusy(true)
     try {
@@ -2320,18 +2312,6 @@ export const ScriptWorkspace = forwardRef<
     return () => window.clearTimeout(timer)
   }, [value, workspace.activeScriptId, workspace.activeAssetId])
 
-  // .hs 自动历史快照（防抖，与手动/Agent 备份互补）
-  useEffect(() => {
-    if (workspace.activeAssetId) return
-    const name =
-      findScript(workspace, workspace.activeScriptId)?.script.name ?? ''
-    if (!isHanshuFile(name) || !value) return
-    const timer = window.setTimeout(() => {
-      pushFileVersion(name, value, 'auto-hs')
-    }, 12000)
-    return () => window.clearTimeout(timer)
-  }, [value, workspace.activeScriptId, workspace.activeAssetId])
-
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (isActive && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
@@ -2420,10 +2400,6 @@ export const ScriptWorkspace = forwardRef<
       persistNow()
       return
     }
-    if (item === '历史版本') {
-      setHistoryOpen(true)
-      return
-    }
     if (item === '导出PAK') {
       void handleExportResourcePack()
       return
@@ -2457,60 +2433,6 @@ export const ScriptWorkspace = forwardRef<
       toggleStudio()
       return
     }
-  }
-
-  const handleRestoreHistory = (fileName: string, content: string) => {
-    // 恢复前再拍一版当前内容
-    const currentName =
-      findScript(workspaceRef.current, activeIdRef.current)?.script.name ?? ''
-    if (currentName) {
-      pushFileVersion(currentName, valueRef.current, 'restore-point', {
-        force: true,
-      })
-    }
-
-    const hit = findScriptByName(workspaceRef.current, fileName)
-    if (!hit) {
-      // 文件已删：在当前包重建
-      const pkgId =
-        findScript(workspaceRef.current, activeIdRef.current)?.pkg.id ??
-        workspaceRef.current.packages[0]?.id
-      if (!pkgId) {
-        window.alert('没有可用的包，无法恢复')
-        return
-      }
-      let base = flushEditorInto(workspaceRef.current)
-      const script = createScript(fileName, content)
-      const nextPackages = base.packages.map((pkg) =>
-        pkg.id === pkgId
-          ? { ...pkg, collapsed: false, scripts: [...pkg.scripts, script] }
-          : pkg,
-      )
-      commitWorkspace({
-        packages: nextPackages,
-        activeScriptId: script.id,
-        activeAssetId: null,
-      })
-      loadEditorContent(script.id, content)
-      setHistoryOpen(false)
-      return
-    }
-
-    pushFileVersion(fileName, hit.script.content, 'restore-point', {
-      force: true,
-    })
-    const next = updateScriptContent(
-      flushEditorInto(workspaceRef.current),
-      hit.script.id,
-      content,
-    )
-    commitWorkspace({
-      ...next,
-      activeScriptId: hit.script.id,
-      activeAssetId: null,
-    })
-    loadEditorContent(hit.script.id, content)
-    setHistoryOpen(false)
   }
 
   /** 导出 PAK：combined（兼容）；走编译图 */
@@ -2761,18 +2683,16 @@ export const ScriptWorkspace = forwardRef<
     return model.getValueInRange(sel)
   }
 
-  /** Agent 写入已有文件：留历史、并回编辑器、记 diff */
+  /** Agent 写入已有文件：并回编辑器、记 diff；工程历史由 S 在提交成功时记录。 */
   const applyAgentFileWrite = (
     scriptId: string,
     content: string,
-    tool: string,
   ): { file: string } | null => {
     const hit = findScript(workspaceRef.current, scriptId)
     if (!hit) return null
     // "编辑器里这份正文就是它" —— 判据是正文归属
     const inEditor = hit.script.id === bufferOwnerRef.current
     const before = inEditor ? valueRef.current : hit.script.content
-    pushFileBackup(hit.script.name, before, tool)
     commitWorkspace(updateScriptContent(workspaceRef.current, scriptId, content))
     if (inEditor) {
       loadEditorContent(scriptId, content)
@@ -2963,7 +2883,6 @@ export const ScriptWorkspace = forwardRef<
       const written = applyAgentFileWrite(
         existing.script.id,
         content,
-        'agent.write_source',
       )
       if (!written) return { ok: false, error: '写入失败' }
       return { ok: true, source: written.file, created: false, changed: true }
@@ -2977,7 +2896,6 @@ export const ScriptWorkspace = forwardRef<
       const written = applyAgentFileWrite(
         hit.script.id,
         edited.content,
-        'agent.edit_source',
       )
       if (!written) return { ok: false, error: '写入失败' }
       return { ok: true, source: written.file, changed: true, replaced: edited.count }
@@ -3270,7 +3188,6 @@ export const ScriptWorkspace = forwardRef<
       const written = applyAgentFileWrite(
         hit.script.id,
         parsed.content,
-        'agent.parse_hs',
       )
       if (!written) return { ok: false, error: '写入失败' }
       return {
@@ -3308,7 +3225,6 @@ export const ScriptWorkspace = forwardRef<
       const written = applyAgentFileWrite(
         hit.script.id,
         unparsed.content,
-        'agent.unparse_hs',
       )
       if (!written) return { ok: false, error: '写入失败' }
       return {
@@ -3455,6 +3371,14 @@ export const ScriptWorkspace = forwardRef<
               </button>
             )}
           </div>
+          {isActive && presenceClient && presencePath && <FilePresenceBar
+            key={`${presenceClient.snapshot.session.id}:${presencePath}`}
+            client={presenceClient}
+            path={presencePath}
+            mode="optimistic"
+            dirty={presenceDirty}
+            label={titleName}
+          />}
           <main
             className={`editor-shell${
               editingMarkdown && mdPreviewOn ? ' split-md' : ''
@@ -3737,20 +3661,6 @@ export const ScriptWorkspace = forwardRef<
           onUndo={undoAgentDiff}
           onAcceptAll={acceptAllAgentDiffs}
           onUndoAll={undoAllAgentDiffs}
-        />
-      )}
-
-      {historyOpen && (
-        <HistoryModal
-          open={historyOpen}
-          initialFileName={
-            viewingAsset
-              ? (active?.script.name ?? 'cp1.hs')
-              : titleName
-          }
-          currentContent={value}
-          onClose={() => setHistoryOpen(false)}
-          onRestore={handleRestoreHistory}
         />
       )}
 
