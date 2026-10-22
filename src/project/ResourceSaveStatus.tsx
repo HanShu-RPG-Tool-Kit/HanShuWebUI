@@ -27,6 +27,7 @@ export function ResourceSaveStatus({ client, dirty = false, compact = false, ...
   const semantic = edits.some(isSkinSemanticEdit)
   const management = edits.some(edit => edit.op === 'skin-library-command')
   const history = edits.some(edit => edit.op === 'history-restore')
+  const progress = edits.some(edit => edit.op === 'progress-command')
   const failed = record && ['failed', 'conflict', 'uncertain'].includes(record.phase)
   const conflicting = record?.phase === 'conflict' && record.code !== 'locked'
   const disabled = working?.client === client && working.key === key || transactions.queued > 0
@@ -50,6 +51,7 @@ export function ResourceSaveStatus({ client, dirty = false, compact = false, ...
     : record.phase === 'uncertain' ? '服务可能已经保存。原提交已保留，请先查询结果，避免重复操作。'
       : record.code === 'locked' ? '写权暂被占用，输入和原提交已保留。释放后可重试原提交。'
         : conflicting ? history ? '工程已经变化，请在历史版本中重新预览恢复范围；当前输入保留。'
+          : progress ? '同一字段已有更新。请在进度表单中对照并处理，后续输入仍保留。'
           : management ? '操作范围已经变化。放弃原操作并刷新后，重新核对对象；当前输入保留。'
           : semantic ? '条目已经变化，本地输入已保留。请在皮肤详情中对照并处理。'
             : '服务器内容已经变化，本地修改已保留。请对照版本后处理冲突。'
@@ -61,7 +63,7 @@ export function ResourceSaveStatus({ client, dirty = false, compact = false, ...
       {failed && <div className="resource-save-actions">
         {record.phase === 'uncertain' && <button type="button" disabled={disabled || !client.online} onClick={() => void run(() => client.transactions.confirm(record.id))}>查询提交结果</button>}
         {(!conflicting || record.phase === 'uncertain') && <button type="button" disabled={disabled || !client.writable} onClick={() => void run(() => client.transactions.retry(record.id))}>重试原提交</button>}
-        {conflicting && !semantic && !history && <button type="button" disabled={disabled || !client.online} onClick={() => void run(async () => setConflict({ client, key, inspection: await inspectConflict(client, record.id) }))}>处理冲突</button>}
+        {conflicting && !semantic && !history && !progress && <button type="button" disabled={disabled || !client.online} onClick={() => void run(async () => setConflict({ client, key, inspection: await inspectConflict(client, record.id) }))}>处理冲突</button>}
         {management && record.phase !== 'uncertain' && <button type="button" disabled={disabled || !client.online} onClick={() => void run(() => abandon(record.id))}>放弃原操作并刷新</button>}
       </div>}
     </div>

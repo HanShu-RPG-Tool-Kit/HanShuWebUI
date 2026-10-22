@@ -26,7 +26,8 @@ import {
   withBuiltinGoalDefinitions,
 } from './progress/goalDefinitions'
 import { KitEditor } from './progress/KitEditor'
-import { ProgressEditor } from './progress/ProgressEditor'
+import { ProgressCollaborativeEditor } from './progress/ProgressCollaborativeEditor'
+import { progressEditorSession } from './progress/progressEditRegistry'
 import { NavigationEditor } from './progress/NavigationEditor'
 import { ItemEditor } from './progress/ItemEditor'
 import { ItemLibraryTable } from './progress/ItemLibraryTable'
@@ -38,7 +39,6 @@ import {
   ensureFlowLocaleKeys,
   ensureKitLocaleKeys,
   ensureNavLocaleKeys,
-  ensureProgressLocaleKeys,
   isProgressLocaleKey,
 } from './progress/progressLocale'
 import {
@@ -57,7 +57,6 @@ import { saveProjectToDirectory } from '../project/projectFs'
 import { deleteSourceAssets } from '../agent/agentOps'
 import { randomId } from '../project/crypto'
 import { FilePresenceBar } from '../project/FilePresenceBar'
-import { useFileEditing } from '../project/useFileEditing'
 import { renameScriptAssets } from '../workspaceMove'
 import { registerAsset, saveWorkspace, sourcePathOf } from '../workspace'
 import { deleteAssetBlob, getAssetBlob, putAssetBlob } from '../assets/idb'
@@ -89,7 +88,6 @@ function dropZoneAt(event: DragEvent, splitOn: boolean): DropZone {
 export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolean; workspaceRef?: Ref<ProgressWorkspaceHandle> }) {
   const session = useProjectSession()
   const client = session.binding?.handle.client
-  const fileEditing = useFileEditing(client)
   const projectBound = Boolean(session.binding)
   const editorFontSize = useEditorFontSize()
   const [ui, setUi] = useState(loadProgressUiState)
@@ -108,7 +106,15 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
       session.workspace.packages[0]?.scripts ?? [],
       ui.documentFolders,
     ).map((doc) => {
-      const folderId = doc.folderId && folderKeys.has(doc.folderId) ? doc.folderId : null
+      let folderId = doc.folderId && (folderKeys.has(doc.folderId) || isSectionFolder(doc.folderId)) ? doc.folderId : null
+      const source = session.workspace.packages[0]?.scripts.find(source => source.id === doc.key)
+      if (doc.name.toLowerCase().endsWith('.py')) {
+        const inGoalFolder = isGoalDefinitionDocument({ documents: [], folders, activeKey: null }, { ...doc, folderId })
+        // Resource kind comes from S. A missing/stale UI folder must never turn
+        // merely opening a page into a move between src/goal and src/script.
+        if (source?.srcKind === 'goal' && !inGoalFolder) folderId = 'section:script:goal-def'
+        else if (source?.srcKind !== 'goal' && inGoalFolder) folderId = null
+      }
       return folderId === (doc.folderId ?? null) ? doc : { ...doc, folderId }
     })
   }, [session.workspace, ui.documentFolders, ui.folders])
@@ -283,7 +289,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
   const kitDoc = doc ? isKitDocument(doc) : false
   const progressDoc = doc ? isProgressDocument(doc) : false
   const progressPath = progressDoc && doc ? sourcePathOf({ name: doc.name }) : null
-  const progressEditable = !!progressPath && !!fileEditing?.canEdit(progressPath)
+  const progressEditable = !!progressPath && !!client?.writable
   const presenceSource = doc && !isBuiltinGoalDocumentKey(doc.key) && !isItemLibraryTableKey(doc.key)
     ? session.workspace.packages.flatMap(pkg => pkg.scripts).find(script => script.id === doc.key)
     : null
@@ -334,7 +340,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
   const locked = !projectBound || editor !== null || propertiesKey !== null
   const propertiesDoc = propertiesKey ? state.documents.find((item) => item.key === propertiesKey) ?? null : null
   const flowLocalizable = Boolean(doc && !scriptDoc && !kitDoc && !progressDoc && !navigationDoc && !itemDoc && !itemTableDoc)
-  const localeDoc = Boolean(doc && (progressDoc || flowLocalizable || kitDoc || navigationDoc))
+  const localeDoc = Boolean(doc && (flowLocalizable || kitDoc || navigationDoc))
 
   // 当前焦点文档的语义键 TextMap（literal）
   useEffect(() => {
@@ -424,23 +430,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
 
   // 打开旧明文文档时迁移为语义键并灌默认语种子
   useEffect(() => {
-    if (!doc || !projectBound || readOnly || (progressDoc && !progressEditable) || migratedKeysRef.current.has(`${doc.key}:${locale}`)) return
-    if (progressDoc) {
-      const parsedDoc = readProgressSource(doc.source).doc
-      if (!parsedDoc) return
-      const { doc: next, seeds } = ensureProgressLocaleKeys(parsedDoc)
-      migratedKeysRef.current.add(`${doc.key}:${locale}`)
-      if (Object.keys(seeds).length && stringifyProgress(next) !== doc.source) {
-        setState((previous) => ({
-          ...previous,
-          documents: previous.documents.map((item) =>
-            item.key === doc.key ? stampDocument({ ...item, source: stringifyProgress(next) }) : item,
-          ),
-        }))
-      }
-      queueLocaleSeeds(doc.key, seeds)
-      return
-    }
+    if (!doc || !projectBound || readOnly || progressDoc || migratedKeysRef.current.has(`${doc.key}:${locale}`)) return
     if (navigationDoc) {
       const parsedNav = readNavigationSource(doc.source)
       if (parsedNav.error) {
@@ -546,7 +536,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
   function changeSource(source: string, group = false, key = doc?.key) {
     if (!key || isBuiltinGoalDocumentKey(key) || isItemLibraryTableKey(key)) return
     const current = state.documents.find((item) => item.key === key)
-    if (!current || source === current.source || readOnly || (isProgressDocument(current) && !fileEditing?.canEdit(sourcePathOf({ name: current.name })))) return
+    if (!current || source === current.source || readOnly) return
     const previous = history.get(key)
     const entry: History = previous ? { ...previous, past: [...previous.past], future: [] } : { past: [], future: [], lastEdit: 0 }
     if (!group || Date.now() - entry.lastEdit > 600) entry.past = [...entry.past.slice(-49), current.source]
@@ -643,6 +633,10 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
   }
   function undo(redo = false) {
     if (!doc || locked || readOnly || (progressDoc && !progressEditable)) return
+    if (progressDoc && progressPath) {
+      const current = progressEditorSession(client, progressPath)
+      if (current) { void current.undo(redo).catch(error => setNotice(String(error))); return }
+    }
     const previous = history.get(doc.key)
     if (!previous) return
     const entry = { ...previous, past: [...previous.past], future: [...previous.future] }
@@ -868,7 +862,8 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     const item = state.documents.find((d) => d.key === key)
     if (!item) return
     if (isScriptDocument(item) || isKitDocument(item) || isProgressDocument(item) || isNavigationDocument(item) || isItemDocument(item)) {
-      downloadFlowFile(item.name, item.source)
+      const progress = isProgressDocument(item) ? progressEditorSession(client, sourcePathOf({ name: item.name })) : undefined
+      downloadFlowFile(item.name, progress?.getSnapshot().view.source ?? item.source)
       setNotice(isItemDocument(item) ? '已下载物品。' : isKitDocument(item) ? '已下载礼包。' : isProgressDocument(item) ? '已下载进度。' : isNavigationDocument(item) ? '已下载导航点。' : '已下载脚本。')
       return
     }
@@ -883,6 +878,12 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     if (locked || busy) return
     const item = state.documents.find((d) => d.key === key)
     if (!item) return
+    const progress = isProgressDocument(item) ? progressEditorSession(client, sourcePathOf({ name: item.name })) : undefined
+    if (progress) {
+      downloadFlowFile(`${item.name}.draft.json`, JSON.stringify({ ...progress.backup(), projectId: client?.snapshot.projectId, path: sourcePathOf({ name: item.name }) }, null, 2) + '\n')
+      setNotice('已下载完整进度草稿，包含源文件、语言文本与未完成提交。')
+      return
+    }
     downloadFlowFile(item.name, item.source)
     setNotice('已下载当前草稿。')
   }
@@ -1018,7 +1019,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     const paneCycle = paneIssues.find((issue) => issue.path === 'graph' && issue.message.includes('环'))
     // 同一文档可同时开在两组，画布交互只交给焦点组
     const graphLive = group === focusedGroup
-    const disabledPane = locked || busy || readOnly || (paneProgress && (!graphLive || !fileEditing?.canEdit(sourcePathOf({ name: paneDoc.name }))))
+    const disabledPane = locked || busy || readOnly || (paneProgress && !graphLive)
 
     if (paneProgress && paneProgressParsed) {
       if (!paneProgressParsed.doc) return <ProgressSourceRepair key={paneDoc.key} source={paneDoc.source} error={paneProgressParsed.error} disabled={disabledPane}
@@ -1034,7 +1035,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
               height="100%"
               language="json"
               theme={HANSHU_THEME_ID}
-              value={paneDoc.source}
+              value={progressEditorSession(client, sourcePathOf({ name: paneDoc.name }))?.getSnapshot().view.source ?? paneDoc.source}
               path={`progress-source://g${group}/${paneDoc.key}/${paneDoc.name}`}
               beforeMount={registerHanshuLanguage}
               options={{ fontSize: editorFontSize, mouseWheelZoom: true, minimap: { enabled: false }, wordWrap: 'on', automaticLayout: true, scrollBeyondLastLine: false, padding: { top: 8 }, readOnly: true, domReadOnly: true }}
@@ -1043,16 +1044,19 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
         </div>
       }
       return <div className="flow-kit-pane">
-        <ProgressEditor
+        {client && <ProgressCollaborativeEditor
           key={paneDoc.key}
-          doc={paneProgressParsed.doc}
+          client={client}
+          path={sourcePathOf({ name: paneDoc.name })}
+          name={paneDoc.name}
+          source={paneDoc.source}
+          locale={locale}
+          initialSeeds={pendingSeedsRef.current.get(paneDoc.key)}
+          onCreated={() => pendingSeedsRef.current.delete(paneDoc.key)}
           goalCatalog={goalCatalog}
           kitOptions={kitCatalog.options}
           disabled={disabledPane}
-          resolveText={paneDoc.key === focusedKey ? resolveLocaleText : undefined}
-          setText={paneDoc.key === focusedKey ? setLocaleText : undefined}
-          onChange={(source, discrete) => { if (!disabledPane) changeSource(source, !discrete, paneDoc.key) }}
-        />
+        />}
       </div>
     }
     if (paneNavigation && paneNavigationParsed) {
@@ -1261,7 +1265,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     <div className="flow-layout">
       <FlowExplorer readOnly={readOnly} state={explorerState} active={active} disabled={locked || busy} onChange={(next) => setState((previous) => normalizeGroups({ ...previous, documents: next.documents, folders: next.folders }))} onSelect={(key) => selectDocument(key)} onNew={newFlow} onImport={requestImport} onImportFiles={(files, folderId, packageId) => { void importFiles(files, { folderId, package: packageId }) }} onExport={exportFlow} onDownload={downloadDraft} onRemove={removeResources} onProperties={setPropertiesKey} onViewSource={viewProgressSource} onNotice={setNotice} />
       <main className="flow-main">
-        {active && client && presencePath && <FilePresenceBar key={`${client.snapshot.session.id}:${presencePath}`} client={client} path={presencePath} mode={progressDoc ? 'managed' : 'optimistic'} label={doc?.name} />}
+        {active && client && presencePath && <FilePresenceBar key={`${client.snapshot.session.id}:${presencePath}`} client={client} path={presencePath} mode="optimistic" label={doc?.name} />}
         {state.split ? (
           <EditorSplit
             direction={state.split.direction}

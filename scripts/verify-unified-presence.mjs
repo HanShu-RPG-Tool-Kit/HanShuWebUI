@@ -131,7 +131,7 @@ function skinFixture() {
 
 try {
   await mkdir(output, { recursive: true })
-  assert.equal((await h.api('', '/health')).protocol, 9)
+  assert.equal((await h.api('', '/health')).protocol, 10)
   const owner = await h.login(h.credential, '验收 API'); ownerToken = owner.token
   const editor = await h.api(ownerToken, '/api/subjects', 'POST', { name: '创作者', kind: 'account', role: 'editor' })
   const viewer = await h.api(ownerToken, '/api/subjects', 'POST', { name: '审阅主体', kind: 'agent', role: 'viewer' })
@@ -178,15 +178,27 @@ try {
   passed('流程节点移动采用相同的编辑意图、未保存和已保存状态，仍由保存时短租约保护')
 
   await Promise.all([openProgressFile(a, 'example.progress'), openProgressFile(b, 'example.progress'), openProgressFile(v, 'example.progress')])
-  await presence(sa, progressPath, 'viewing'); assert.ok(await title(a).isDisabled()); assert.ok(await title(v).isDisabled())
-  await bar(a).getByRole('button', { name: '开始编辑', exact: true }).click()
-  await until(() => title(a).isEnabled(), 'Progress did not obtain editing authority')
+  await presence(sa, progressPath, 'viewing'); assert.ok(await title(a).isEnabled()); assert.ok(await title(v).isDisabled())
+  await assertFree(a); await assertFree(b); await noLease(sa)
+  // Hold the command before S sees it so the meaningful editing interval is
+  // observable even when a local service commits faster than a browser frame.
+  let resumeProgress, heldProgress = false
+  await a.route('**/api/files/commit', async route => {
+    if (!heldProgress && route.request().postDataJSON().changes.some(change => change.op === 'progress-command')) {
+      heldProgress = true
+      await new Promise(resolve => { resumeProgress = resolve })
+    }
+    await route.continue()
+  })
+  await title(a).fill('进度自动提交的在线状态')
   await presence(sa, progressPath, 'editing'); await capsule(b, '窗口 A', '编辑中')
-  assert.ok((await state()).leases.some(lease => lease.sessionId === sa.id && lease.resourceId === `file:${progressPath}`))
-  assert.ok(await title(b).isDisabled()); assert.ok(await title(v).isDisabled())
-  await bar(a).getByRole('button', { name: '结束编辑', exact: true }).click()
-  await until(() => title(a).isDisabled(), 'Progress ending editing did not disable form'); await noLease(sa)
-  passed('进度仍显式申请和释放写权；统一状态栏没有改变互斥编辑和只读权限')
+  await until(() => Boolean(resumeProgress), 'Progress did not start its automatic command')
+  await noLease(sa); assert.ok(await title(b).isEnabled()); assert.ok(await title(v).isDisabled())
+  resumeProgress()
+  await until(async () => JSON.parse(await readFile(join(h.root, 'assets/zh_cn/lang_progress/example.lang'), 'utf8')).name === '进度自动提交的在线状态', 'Progress title did not autosubmit')
+  await saved(a); await presence(sa, progressPath, 'viewing'); await noLease(sa)
+  await a.unroute('**/api/files/commit')
+  passed('进度自动提交期间显示编辑中，两个写者都可输入；确认后返回查看状态且无长期写权')
 
   await Promise.all([openSkin(a, '协作皮肤 A'), openSkin(b, '协作皮肤 A'), openSkin(v, '协作皮肤 B')])
   await Promise.all([presence(sa, indexPath, 'viewing', 'presence-skin-a'), presence(sb, indexPath, 'viewing', 'presence-skin-a'), presence(sv, indexPath, 'viewing', 'presence-skin-b')])
@@ -276,7 +288,7 @@ try {
   passed('跨工作区切换准确转移当前资源，隐藏编辑器不清除新焦点；窄窗口头像状态栏不溢出')
 
   assert.deepEqual(pageErrors, [])
-  await writeFile(join(output, 'acceptance.json'), JSON.stringify({ date: new Date().toISOString(), protocol: 9, transport: 'real HTTP/WebSocket through loopback fault proxy', physicalDevices: 1, secondPhysicalDeviceTested: false, browserContexts: 3, browserPages: 3, results, observedCommitRequests: observed.length }, null, 2))
+  await writeFile(join(output, 'acceptance.json'), JSON.stringify({ date: new Date().toISOString(), protocol: 10, transport: 'real HTTP/WebSocket through loopback fault proxy', physicalDevices: 1, secondPhysicalDeviceTested: false, browserContexts: 3, browserPages: 3, results, observedCommitRequests: observed.length }, null, 2))
   console.log(`统一协作体验验收通过：${results.length} 组；同机三个隔离浏览器环境。`)
 } catch (error) {
   for (const [index, page] of pages.entries()) { console.error(`CLIENT ${index}:`, (await page.locator('body').innerText().catch(() => '')).slice(0, 6500)); await page.screenshot({ path: join(output, `failed-client-${index}.png`) }).catch(() => undefined) }

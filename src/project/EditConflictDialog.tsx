@@ -14,7 +14,7 @@ export function EditConflictDialog({client,initial,onClose}:{client:ProjectClien
   function choose(group:number,choice:ConflictChoice) {
     setInspection(current=>({...current,rows:current.rows.map(row=>row.group===group?{...row,choice}:row)}))
   }
-  const operation = {write:'写入',mkdir:'目录',remove:'删除',move:'移动','skin-entry-patch':'修改皮肤条目','skin-library-command':'皮肤库操作','history-restore':'恢复历史版本'}
+  const operation = {write:'写入',mkdir:'目录',remove:'删除',move:'移动','skin-entry-patch':'修改皮肤条目','skin-library-command':'皮肤库操作','history-restore':'恢复历史版本','progress-command':'进度操作'}
   return <div className="project-conflict-backdrop">
     <section className="project-conflict-dialog" role="dialog" aria-modal="true" aria-label="处理提交冲突">
       <header><div><h2>处理提交冲突</h2><p>逐项选择处理方式，最后作为一批提交。服务器版本再次变化时会停止提交。</p></div><button disabled={busy} onClick={onClose} aria-label="关闭冲突处理">×</button></header>

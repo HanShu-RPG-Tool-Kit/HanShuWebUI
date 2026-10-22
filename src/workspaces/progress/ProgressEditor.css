@@ -187,6 +187,16 @@
 .progress-editor { background: #282828; }
 .progress-info-card, .progress-card { min-width: 0; border: 1px solid var(--border, #454545); border-radius: var(--fl-radius, 0); background: var(--fl-panel, #303030); }
 .progress-document-head { gap: 12px; }
+.progress-collaborative-editor { display: flex; flex-direction: column; min-height: 0; height: 100%; }
+.progress-collaborative-editor > .progress-editor { flex: 1; min-height: 0; }
+.progress-autosave-bar { display: flex; align-items: center; gap: 7px; padding: 6px 12px; border-bottom: 1px solid #454545; background: #303030; font-size: 12px; }
+.progress-autosave-bar > span { margin-right: auto; color: #adb8b0; }
+.progress-autosave-bar button, .progress-autosave-error button { background: #3a3a3a; color: #ddd; border: 1px solid #505050; padding: 3px 9px; font-size: 12px; }
+.progress-autosave-bar button:disabled, .progress-autosave-error button:disabled { opacity: .4; }
+.progress-autosave-error { padding: 9px 12px; background: #46342b; border-bottom: 1px solid #8c6247; font-size: 12px; max-height: 220px; overflow: auto; }
+.progress-autosave-error p { margin: 0 0 7px; }
+.progress-autosave-error li { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 5px; overflow-wrap: anywhere; }
+.progress-autosave-actions { display: flex; gap: 8px; }
 .progress-info-card { padding: 14px; }
 .progress-card-head { display: flex; align-items: center; gap: 8px; min-height: 35px; padding: 0 10px; border-bottom: 1px solid var(--border, #454545); background: var(--fl-head, #383838); }
 .progress-card-head h2 { font-size: 13px; font-weight: 400; }

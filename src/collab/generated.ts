@@ -1,5 +1,17 @@
 // Generated from project-core. Run npm run generate:protocol; do not edit.
 
+export type ProgressSlot = { present: boolean, value: unknown, };
+
+export type ProgressTarget = { "kind": "field", field: 'name' | 'description' | 'authorNotes' | 'tags' | 'completion' | 'visibility' | 'acceptance' | 'abandonable' | 'repeat' | 'rewardKits', } | { "kind": "goal-config", goalId: string, goalKind: string, key: string, } | { "kind": "goal-body", goalId: string, } | { "kind": "goal", goalId: string, } | { "kind": "goal-order", } | { "kind": "locale", locale: string, key: string, };
+
+export type ProgressEffect = { target: ProgressTarget, expected: ProgressSlot, value: ProgressSlot, };
+
+export type ProgressCommand = { "command": "apply", documentId: string, changes: Array<ProgressEffect>, } | { "command": "revert", transactionId: string, };
+
+export type ProgressLanguage = { path: string, content: string | null, };
+
+export type ProgressCommandResult = { path: string, documentId: string, effects: Array<ProgressEffect>, source: string, languages: Array<ProgressLanguage>, };
+
 export type HistoryRestoreSelection = { sequence: number, paths: Array<string> | null, skinEntryId: string | null, includeRelated: boolean, };
 
 export type HistoryRestoreRequest = { sequence: number, paths: Array<string> | null, skinEntryId: string | null, includeRelated: boolean, expectedHead: string, };
@@ -79,7 +91,11 @@ skinEntries?: Array<Record<string, unknown>>,
 /**
  * Exact semantic operation result, persisted atomically with the commit decision.
  */
-skinCommandResult?: { command: string; result: Record<string, unknown> }, };
+skinCommandResult?: { command: string; result: Record<string, unknown> },
+/**
+ * Authoritative selective edit/undo result, part of the durable commit decision.
+ */
+progressResult?: ProgressCommandResult, };
 
 export type HistoryActor = { subjectId: string, name: string, clientName: string, sessionId: string, };
 
@@ -99,7 +115,7 @@ export type HistoryContent = { sequence: number, path: string, content: string, 
 
 export type HistoryStats = { head: number, revisions: number, objects: number, storedBytes: number, rawBytes: number, namedVersions: number, };
 
-export type FileOperationKind = "history-restore" | "write" | "skin-entry-patch" | "skin-library-command" | "mkdir" | "check" | "move" | "remove";
+export type FileOperationKind = "progress-command" | "history-restore" | "write" | "skin-entry-patch" | "skin-library-command" | "mkdir" | "check" | "move" | "remove";
 
 export type FileOperationRequest = { op: FileOperationKind, path: string, destination: string | null, };
 

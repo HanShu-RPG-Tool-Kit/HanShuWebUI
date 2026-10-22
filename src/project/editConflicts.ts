@@ -22,6 +22,7 @@ export async function inspectConflict(client: ProjectClient, id: number): Promis
   const edits = client.transactions.submission(id)
   if (!edits.length) throw new Error('原提交还未准备完成，请先重试准备或导出草稿')
   if (edits.some(isSkinSemanticEdit)) throw new Error(skinConflictMessage)
+  if (edits.some(edit => edit.op === 'progress-command')) throw new Error('请在进度表单内对照并处理字段冲突；进度操作不能作为文件正文合并。')
   if (edits.some(edit => edit.op === 'history-restore')) throw new Error('工程已变化，请在历史版本中重新预览恢复范围。历史恢复请求不能当作文件内容合并。')
   const tree = await request<ProjectFileTree>(client.connection, '/api/files')
   const versions = new Map<string, ConflictVersion>()
@@ -51,6 +52,7 @@ export async function inspectConflict(client: ProjectClient, id: number): Promis
 }
 export function conflictEdits(inspection: ConflictInspection): FileEdit[] {
   if (inspection.rows.some(row => isSkinSemanticEdit(row.edit))) throw new Error(skinConflictMessage)
+  if (inspection.rows.some(row => row.edit.op === 'progress-command')) throw new Error('请在进度表单内处理字段冲突')
   if (inspection.rows.some(row => row.edit.op === 'history-restore')) throw new Error('请在历史版本中重新预览恢复范围')
   const edits: FileEdit[] = []
   const adopted = new Set<string>()

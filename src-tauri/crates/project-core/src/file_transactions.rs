@@ -81,6 +81,10 @@ pub struct FileTransactionReceipt {
         type = "{ command: string; result: Record<string, unknown> }"
     )]
     pub skin_command_result: Option<serde_json::Value>,
+    /// Authoritative selective edit/undo result, part of the durable commit decision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub progress_result: Option<ProgressCommandResult>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -133,6 +137,7 @@ impl TransactionRecord {
                     self.receipt.tree.is_none()
                         && self.receipt.skin_entries.is_none()
                         && self.receipt.skin_command_result.is_none()
+                        && self.receipt.progress_result.is_none()
                         && self
                             .receipt
                             .error
@@ -152,6 +157,19 @@ impl TransactionRecord {
                 "storage",
                 "持久皮肤业务回执无效",
             )?;
+        }
+        if let Some(result) = &self.receipt.progress_result {
+            path_ok(&result.path).map_err(|_| Error::new("storage", "持久进度回执路径无效"))?;
+            require(
+                crate::resource_relations::source(&result.path)
+                    .is_some_and(|source| source.kind == "progress")
+                    && !result.document_id.is_empty()
+                    && result.effects.len() <= 256,
+                "storage",
+                "持久进度回执无效",
+            )?;
+            crate::progress::validate(&result.source)
+                .map_err(|_| Error::new("storage", "持久进度回执内容无效"))?;
         }
         Ok(())
     }
@@ -185,6 +203,7 @@ impl TransactionRecord {
                 error: None,
                 skin_entries: None,
                 skin_command_result: None,
+                progress_result: None,
             },
         })
     }
@@ -194,6 +213,7 @@ impl TransactionRecord {
         self.receipt.tree = None;
         self.receipt.skin_entries = None;
         self.receipt.skin_command_result = None;
+        self.receipt.progress_result = None;
         self.receipt.error = Some(FileTransactionError {
             code: error.code.into(),
             message: error.message.clone(),
@@ -637,6 +657,13 @@ impl Engine {
             let changes = if trusted_restore {
                 let (next, acquired) = self.expand_history_restore(sid, &changes, now)?;
                 temporary = acquired;
+                expanded = next;
+                &expanded
+            } else if changes.iter().any(|change| change.op == "progress-command") {
+                let (next, acquired, progress_result) =
+                    self.expand_progress_command(sid, &changes, now)?;
+                temporary = acquired;
+                record.receipt.progress_result = Some(progress_result);
                 expanded = next;
                 &expanded
             } else {

@@ -145,7 +145,7 @@ async function saved(page) {
 }
 
 try {
-  assert.equal((await h.api('', '/health')).protocol, 9)
+  assert.equal((await h.api('', '/health')).protocol, 10)
   const owner = await h.login(h.credential, 'skin setup')
   const author = await h.api(owner.token, '/api/subjects', 'POST', { name: '皮肤协作编辑者', kind: 'account', role: 'editor' })
   const a = await h.login(author.credential, 'skin API A'), b = await h.login(author.credential, 'skin API B')
@@ -311,7 +311,7 @@ try {
   }
   await mkdir(output, { recursive: true })
   for (const [i, page] of pages.entries()) await page.screenshot({ path: join(output, `client-${i}.png`) })
-  await writeFile(join(output, 'acceptance.json'), JSON.stringify({ date: new Date().toISOString(), protocol: 9, transport: 'HTTP/WebSocket', physicalDevices: 1, browserContexts: pages.length, scope: 'One local S with two isolated browser contexts', proxyFaults: ['held successful patch response', 'truncated successful patch response'], results, commitRequestsObserved: observed.length }, null, 2))
+  await writeFile(join(output, 'acceptance.json'), JSON.stringify({ date: new Date().toISOString(), protocol: 10, transport: 'HTTP/WebSocket', physicalDevices: 1, browserContexts: pages.length, scope: 'One local S with two isolated browser contexts', proxyFaults: ['held successful patch response', 'truncated successful patch response'], results, commitRequestsObserved: observed.length }, null, 2))
   console.log(`皮肤协作验收通过：${results.length} 组。`)
 } catch (error) {
   console.error('Recent commits:', observed.slice(-5).map(request => ({ transactionId: request.transactionId, changes: request.changes.map(change => ({ op: change.op, path: change.path })) })))

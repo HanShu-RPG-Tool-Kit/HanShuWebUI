@@ -16,7 +16,6 @@ function NumberInput({ value, onChange, label, integer = false, min, allowUnset 
 }) {
   const [draft, setDraft] = useState<string | null>(null)
   const [error, setError] = useState(false)
-  useEffect(() => { setDraft(null); setError(false) }, [value])
   const valid = (text: string) => text.trim() !== '' && Number.isFinite(Number(text)) && (!integer || Number.isInteger(Number(text))) && (min === undefined || Number(text) >= min)
   function commit() {
     if (draft === null) return
@@ -37,7 +36,7 @@ function NumberInput({ value, onChange, label, integer = false, min, allowUnset 
 }
 
 function Parameter({ field, value, onChange }: {
-  field: GoalConfigField; value: ProgressConfigValue | undefined; onChange: (value: ProgressConfigValue | undefined) => void
+  field: GoalConfigField; value: ProgressConfigValue | undefined; onChange: (value: ProgressConfigValue | undefined, immediate?: boolean) => void
 }) {
   const name = field.label || field.key
   const current = value ?? field.default
@@ -47,14 +46,14 @@ function Parameter({ field, value, onChange }: {
     <span className="progress-parameter-name">{name}{field.required && <sup>*</sup>}</span>
     <div className="progress-parameter-control">
       <div className="progress-parameter-input">
-        {field.type === 'bool' ? <label className="progress-bool"><input type="checkbox" role="switch" aria-label={name} checked={Boolean(current)} onChange={event => onChange(event.target.checked)} /><span>{current ? '开启' : '关闭'}</span></label>
+        {field.type === 'bool' ? <label className="progress-bool"><input type="checkbox" role="switch" aria-label={name} checked={Boolean(current)} onChange={event => onChange(event.target.checked, true)} /><span>{current ? '开启' : '关闭'}</span></label>
           : field.type === 'int' || field.type === 'float'
-            ? <NumberInput label={name} value={typeof current === 'number' ? current : undefined} integer={field.type === 'int'} allowUnset onChange={onChange} />
-            : options ? <select aria-label={name} value={String(current ?? '')} onChange={event => onChange(event.target.value)}><option value="" disabled>请选择</option>{current !== undefined && !options.includes(String(current)) && current !== '' && <option value={String(current)}>{String(current)}（无效）</option>}{options.map(option => <option key={option} value={option}>{option}</option>)}</select>
+            ? <NumberInput label={name} value={typeof current === 'number' ? current : undefined} integer={field.type === 'int'} allowUnset onChange={value => onChange(value, true)} />
+            : options ? <select aria-label={name} value={String(current ?? '')} onChange={event => onChange(event.target.value, true)}><option value="" disabled>请选择</option>{current !== undefined && !options.includes(String(current)) && current !== '' && <option value={String(current)}>{String(current)}（无效）</option>}{options.map(option => <option key={option} value={option}>{option}</option>)}</select>
               : <input aria-label={name} value={String(current ?? '')} placeholder="请输入" onChange={event => onChange(event.target.value)} />}
       </div>
       <span className="progress-value-origin">{inherited ? (field.default === undefined ? '未填写' : '默认') : '已填写'}</span>
-      <button type="button" className="progress-reset-value" disabled={inherited} aria-label={`${name}：${field.default === undefined ? '清除填写' : '恢复默认值'}`} title={field.default === undefined ? '清除填写' : `恢复默认值：${String(field.default)}`} onClick={() => onChange(undefined)}>↶</button>
+      <button type="button" className="progress-reset-value" disabled={inherited} aria-label={`${name}：${field.default === undefined ? '清除填写' : '恢复默认值'}`} title={field.default === undefined ? '清除填写' : `恢复默认值：${String(field.default)}`} onClick={() => onChange(undefined, true)}>↶</button>
     </div>
   </div>
 }
@@ -87,9 +86,11 @@ function GoalPicker({ definitions, current, onChoose, onClose }: {
   </dialog>
 }
 
-export function ProgressEditor({ doc, goalCatalog, kitOptions = [], disabled, onChange, resolveText, setText }: {
+export function ProgressEditor({ doc, goalCatalog, kitOptions = [], disabled, onChange, resolveText, setText, onFlush, onComposition }: {
   doc: ProgressDocument; goalCatalog: GoalDefinitionCatalog; kitOptions?: KitOption[]; disabled?: boolean
   onChange: (source: string, discrete?: boolean) => void
+  onFlush?: () => void
+  onComposition?: (active: boolean) => void
   /** 当前语言下解析语义键；缺省时回退显示键名/明文 */
   resolveText?: (key: string) => string
   /** 写入当前语言译文（不改文档里的键） */
@@ -112,12 +113,10 @@ export function ProgressEditor({ doc, goalCatalog, kitOptions = [], disabled, on
     else if (key === 'name' || key === doc.name) onChange(stringifyProgress({ ...doc, name: value }), false)
     else if (key === 'description' || key === doc.description) onChange(stringifyProgress({ ...doc, description: value }), false)
   }
-  const update = (patch: Partial<ProgressDocument>) => {
-    const identity = (goals: ProgressGoal[]) => goals.map(goal => [goal.id, goal.kind])
-    const discrete = patch.completion !== undefined || (!!patch.goals && JSON.stringify(identity(patch.goals)) !== JSON.stringify(identity(doc.goals)))
-    if (!disabled) onChange(stringifyProgress({ ...doc, ...patch }), discrete)
+  const update = (patch: Partial<ProgressDocument>, immediate = true) => {
+    if (!disabled) onChange(stringifyProgress({ ...doc, ...patch }), immediate)
   }
-  const changeGoal = (goal: ProgressGoal) => update({ goals: doc.goals.map(item => item.id === goal.id ? goal : item) })
+  const changeGoal = (goal: ProgressGoal, immediate = true) => update({ goals: doc.goals.map(item => item.id === goal.id ? goal : item) }, immediate)
   const issues = progressIssues(doc, definitions, resolveText ? (key) => resolveText(key) : null)
   const count = doc.goals.length
   const pickerGoal = doc.goals.find(goal => goal.id === picker?.goalId)
@@ -167,7 +166,9 @@ export function ProgressEditor({ doc, goalCatalog, kitOptions = [], disabled, on
     onPointerCancel: cancelDrag,
     onLostPointerCapture: cancelDrag,
   })
-  return <div className="progress-editor" onClick={event => {
+  return <div className="progress-editor" onBlurCapture={event => {
+    if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) queueMicrotask(() => onFlush?.())
+  }} onCompositionStartCapture={() => onComposition?.(true)} onCompositionEndCapture={() => queueMicrotask(() => onComposition?.(false))} onClick={event => {
     if (event.target instanceof Element && event.target.closest('button')) event.target.closest('.progress-menu')?.removeAttribute('open')
   }}>
     <div className="progress-form-scroll">
@@ -184,7 +185,7 @@ export function ProgressEditor({ doc, goalCatalog, kitOptions = [], disabled, on
         <section className="progress-info-card progress-extra-info" aria-label="文档信息">
             <label className="progress-field"><span>文档 ID</span><input aria-label="文档 ID" className="progress-document-id" readOnly value={doc.id} /></label>
             <label className="progress-field"><span>标签</span><input aria-label="标签" placeholder="用逗号分隔" key={doc.tags.join(',')} defaultValue={doc.tags.join(', ')} onBlur={event => update({ tags: [...new Set(event.target.value.split(/[,，]/).map(tag => tag.trim()).filter(Boolean))] })} /></label>
-            <label className="progress-field"><span>作者备注 <small>不向玩家展示</small></span><textarea rows={2} value={doc.authorNotes} onChange={event => update({ authorNotes: event.target.value })} /></label>
+            <label className="progress-field"><span>作者备注 <small>不向玩家展示</small></span><textarea rows={2} value={doc.authorNotes} onChange={event => update({ authorNotes: event.target.value }, false)} /></label>
         </section>
       </header>
 
@@ -231,11 +232,11 @@ export function ProgressEditor({ doc, goalCatalog, kitOptions = [], disabled, on
                 {open && <div className="progress-goal-body">
                   {!definition && <p className="progress-inline-warning">请在「脚本 → 目标定义」中恢复此类型的定义脚本，或更换类型。原参数已保留。</p>}
                   {definition && Object.keys(goal.config).some(key => !fields.some(field => field.key === key)) && <p className="progress-inline-warning">已保留脚本中不再声明的旧参数；可编辑字段仅来自定义脚本。</p>}
-                  <div className="progress-parameters">{fields.map(field => <Parameter key={`${goal.kind}:${field.key}`} field={field} value={goal.config[field.key]} onChange={value => {
+                  <div className="progress-parameters">{fields.map(field => <Parameter key={`${goal.kind}:${field.key}`} field={field} value={goal.config[field.key]} onChange={(value, immediate) => {
                     const config = { ...goal.config }
                     if (value === undefined) delete config[field.key]
-                    else config[field.key] = value
-                    changeGoal({ ...goal, config })
+                    else Object.defineProperty(config, field.key, { value, writable: true, enumerable: true, configurable: true })
+                    changeGoal({ ...goal, config }, !!immediate)
                   }} />)}</div>
                   {definition && !fields.length && <p className="progress-node-empty">此目标无需配置参数</p>}
                 </div>}
@@ -253,7 +254,7 @@ export function ProgressEditor({ doc, goalCatalog, kitOptions = [], disabled, on
           {doc[field].map((rule, index) => <div className="progress-visibility-row" key={index}>
             <select aria-label={`${title} ${index + 1} 对象类型`} value={rule.kind} onChange={event => update({ [field]: doc[field].map((item, i) => i !== index ? item : createConditionRule(event.target.value as ProgressConditionRule['kind'])) })}><option value="task">任务</option><option value="dialogue">对话</option><option value="expr">求值</option></select>
             <select aria-label={`${title} ${index + 1} 状态`} value={rule.state} onChange={event => update({ [field]: doc[field].map((item, i) => i !== index ? item : { ...rule, state: event.target.value } as ProgressConditionRule) })}>{Object.entries(conditionStatesFor(rule.kind)).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
-            <input aria-label={`${title} ${index + 1} 对象`} placeholder={rule.kind === 'task' ? '任务对象' : rule.kind === 'dialogue' ? '对话对象' : '条件表达式'} value={rule.target} onChange={event => update({ [field]: doc[field].map((item, i) => i !== index ? item : { ...rule, target: event.target.value }) })} />
+            <input aria-label={`${title} ${index + 1} 对象`} placeholder={rule.kind === 'task' ? '任务对象' : rule.kind === 'dialogue' ? '对话对象' : '条件表达式'} value={rule.target} onChange={event => update({ [field]: doc[field].map((item, i) => i !== index ? item : { ...rule, target: event.target.value }) }, false)} />
             <button type="button" className="progress-remove" aria-label={`删除${title} ${index + 1}`} onClick={() => update({ [field]: doc[field].filter((_, i) => i !== index) })}>×</button>
           </div>)}
           {!doc[field].length && <p className="progress-card-empty">没有条件，直接满足。</p>}

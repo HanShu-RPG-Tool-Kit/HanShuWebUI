@@ -474,7 +474,7 @@ pub async fn start(
     let mut router = Router::new()
         .route(
             "/health",
-            get(|| async { Json(json!({"service":"hanshu-project","protocol":9})) }),
+            get(|| async { Json(json!({"service":"hanshu-project","protocol":10})) }),
         )
         .route("/api/sessions", post(login))
         .route("/api/sessions/current", axum::routing::delete(logout))

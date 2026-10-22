@@ -5,6 +5,12 @@ fn main() {
     let config = ts_rs::Config::default();
     println!("// Generated from project-core. Run npm run generate:protocol; do not edit.\n");
     for declaration in [
+        ProgressSlot::decl(&config),
+        ProgressTarget::decl(&config),
+        ProgressEffect::decl(&config),
+        ProgressCommand::decl(&config),
+        ProgressLanguage::decl(&config),
+        ProgressCommandResult::decl(&config),
         HistoryRestoreSelection::decl(&config),
         HistoryRestoreRequest::decl(&config),
         HistoryRestorePlan::decl(&config),

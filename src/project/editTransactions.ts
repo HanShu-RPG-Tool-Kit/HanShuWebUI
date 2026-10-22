@@ -67,6 +67,7 @@ export class EditTransactions {
   private staged = new Map<string, Staged>()
   private preparations = new Map<string, Preparation>()
   private dirty = new Set<string>()
+  private editorDirty = new Map<string, Set<string>>()
   private revision = 0
   private nextId = 1
   private jobs: Job[] = []
@@ -103,6 +104,7 @@ export class EditTransactions {
     } catch (e) { this.journalError = `保存本地提交记录失败：${String(e)}。请导出修改，并检查浏览器存储空间。`; throw e }
   }
   stagedWrites(): FileEdit[] { return [...this.staged.values()].map(s => ({ ...s.edit })) }
+  editorDirtyPaths(): string[] { return [...new Set([...this.editorDirty.values()].flatMap(paths => [...paths]))] }
   private bindRestoredStaged(job: Job) {
     if (job.staged) return
     job.staged = new Map()
@@ -122,11 +124,11 @@ export class EditTransactions {
     const data = this.staged.get(path)?.edit.data
     return typeof data === 'string' ? data : undefined
   }
-  hasDraft(path: string): boolean { return this.dirty.has(path) || this.staged.has(path) }
+  hasDraft(path: string): boolean { return this.dirty.has(path) || this.staged.has(path) || [...this.editorDirty.values()].some(paths => paths.has(path)) }
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
   private emit() {
     this.state = {
-      pendingPaths: [...new Set([...this.dirty, ...this.staged.keys()])],
+      pendingPaths: [...new Set([...this.dirty, ...this.staged.keys(), ...[...this.editorDirty.values()].flatMap(paths => [...paths])])],
       preparing: [...this.preparations.values()].filter(p => !p.failed).length,
       queued: this.queued,
       transactions: this.jobs.map(j => ({ ...j.info, paths: [...j.info.paths] })),
@@ -138,6 +140,28 @@ export class EditTransactions {
     const next = new Set(paths)
     if (next.size === this.dirty.size && paths.every(p => this.dirty.has(p))) return
     this.dirty = next; this.changed()
+  }
+  /** Independent semantic drafts must survive workspace refreshes and dirty scans. */
+  setEditorDirty(owner: string, paths: string[]) {
+    const previous = this.editorDirty.get(owner)
+    const next = new Set(paths)
+    if ((previous?.size ?? 0) === next.size && [...next].every(path => previous?.has(path))) return
+    if (next.size) this.editorDirty.set(owner, next)
+    else this.editorDirty.delete(owner)
+    this.changed()
+  }
+  /** Restore a frozen request whose editor journal survived its outbox entry.
+   * No send is implied: the original receipt must be queried or replayed by ID.
+   */
+  async recoverSubmission(label: string, edits: FileEdit[], requestId: string): Promise<number> {
+    const existing = this.jobs.find(job => job.info.requestId === requestId)
+    if (existing) return existing.info.id
+    const frozen = this.capture(edits)
+    const job: Job = { info: { id: this.nextId++, requestId, label, phase: 'uncertain', paths: pathsOf(frozen), message: '已恢复原提交，请查询结果', code: 'commit_uncertain' }, collect: () => [], includeStaged: false, edits: frozen, staged: new Map(), uncertain: true, replayed: true, unresolved: true }
+    this.jobs.push(job)
+    await this.persist()
+    this.emit()
+    return job.info.id
   }
   /** Call even when the set of dirty paths stays the same: their contents may change. */
   changed() { this.revision++; this.emit() }

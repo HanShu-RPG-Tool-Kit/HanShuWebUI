@@ -674,5 +674,81 @@ await test('历史恢复成功后本地刷新失败，确认回执只重建视�
   assert.equal(mock.client.transactions.getSnapshot().transactions[0].phase, 'saved')
 }))
 
+await test('语义编辑器脏状态独立于工程快照，不能被远端刷新清除', async () => {
+  const { tx } = fixture()
+  tx.setEditorDirty('progress:a', ['src/progress/a.progress', 'assets/en/lang_progress/a.lang'])
+  tx.setDirtyPaths(['src/a.hs']); tx.setDirtyPaths([])
+  assert.equal(tx.hasDraft('src/progress/a.progress'), true)
+  assert.equal(tx.getSnapshot().pendingPaths.length, 2)
+  assert.deepEqual(tx.stagedWrites(), [])
+  tx.setEditorDirty('progress:b', ['src/progress/a.progress'])
+  tx.setEditorDirty('progress:a', [])
+  assert.equal(tx.hasDraft('src/progress/a.progress'), true)
+  tx.setEditorDirty('progress:b', [])
+  assert.deepEqual(tx.getSnapshot().pendingPaths, [])
+})
+
+const progressCommand = { command: 'apply' as const, documentId: 'doc-a', changes: [{ target: { kind: 'field' as const, field: 'abandonable' as const }, expected: { present: true, value: false }, value: { present: true, value: true } }] }
+const progressPath = 'src/progress/a.progress'
+const progressReceipt = (id: string): FileTransactionReceipt => ({ ...committed(id), progressResult: { path: progressPath, documentId: 'doc-a', effects: progressCommand.changes, source: '{"id":"doc-a","abandonable":true}', languages: [] } })
+
+await test('进度按操作提交绕过C租约和整文件基线，保留服务精确效果', async () => wireTest(async mock => {
+  mock.onCommit = body => {
+    assert.equal(body.changes.length, 1)
+    assert.equal(body.changes[0].op, 'progress-command')
+    assert.equal(body.changes[0].version, null)
+    assert.equal(body.changes[0].leaseId, '')
+    assert.deepEqual(JSON.parse(atob(body.changes[0].content!)), progressCommand)
+    return json(progressReceipt(body.transactionId))
+  }
+  const pending = mock.client.submitProgress(progressPath, progressCommand, 'edit progress')
+  assert.equal(mock.client.transactions.getSnapshot().transactions.length, 1, 'Editor can freeze local/request IDs synchronously')
+  const ack = await pending
+  assert.deepEqual(ack.result.effects, progressCommand.changes)
+  assert.equal(mock.client.texts.has(progressPath), false)
+  assert.equal(mock.calls.some(call => ['/api/files/plan', '/api/files/leases'].includes(call.path)), false)
+}))
+
+await test('进度未知结果查原回执，权限降级仍可确认且不重复发送', async () => wireTest(async mock => {
+  let id = ''; let posts = 0
+  mock.onCommit = body => { id = body.transactionId; posts++; throw new TypeError('response lost') }
+  await assert.rejects(mock.client.submitProgress(progressPath, progressCommand, 'edit progress'), /结果待确认/)
+  await assert.rejects(inspectConflict(mock.client, 1), /不能作为文件正文/)
+  mock.onQuery = requested => { assert.equal(requested, id); return json(progressReceipt(id)) }
+  mock.client.snapshot.role = 'viewer'
+  await mock.client.transactions.confirm(1)
+  assert.equal(posts, 1)
+  assert.equal(mock.client.progressAcknowledgement(id)?.transactionId, id)
+  assert.equal(mock.client.transactions.getSnapshot().transactions[0].phase, 'saved')
+}))
+
+await test('缺失进度结果或刷新失败保持原请求待确认，查询恢复后才完成', async () => wireTest(async mock => {
+  let id = ''; let posts = 0; let refreshes = 0
+  mock.onCommit = body => { id = body.transactionId; posts++; return json(progressReceipt(id)) }
+  mock.client.onCommitted = async () => { if (++refreshes === 1) throw new Error('view failed') }
+  await assert.rejects(mock.client.submitProgress(progressPath, progressCommand, 'edit progress'), /尚未刷新/)
+  mock.onQuery = requested => { assert.equal(requested, id); return json(progressReceipt(id)) }
+  await mock.client.transactions.confirm(1)
+  assert.equal(posts, 1); assert.equal(refreshes, 2)
+  mock.onCommit = body => json(committed(body.transactionId))
+  await assert.rejects(mock.client.submitProgress(progressPath, progressCommand, 'bad receipt'), /不完整/)
+  assert.equal(mock.client.transactions.getSnapshot().transactions.at(-1)?.phase, 'uncertain')
+}))
+
+await test('编辑器恢复原请求不立即发包，持久保存同ID并阻止覆盖范围的新提交', async () => wireTest(async mock => {
+  let stored: PendingSubmission[] = []
+  await mock.client.transactions.restore({ load: async () => [], save: async records => { stored = structuredClone(records) } })
+  const command = { command: 'apply' as const, documentId: 'doc-a', changes: [{ target: { kind: 'locale' as const, locale: 'en', key: 'name' }, expected: { present: false, value: null }, value: { present: true, value: 'Hello' } }] }
+  const id = await mock.client.recoverProgress(progressPath, command, 'original-progress-id', 'restore progress')
+  assert.equal(stored.length, 1); assert.equal(stored[0].requestId, 'original-progress-id')
+  assert.equal(mock.calls.length, 0)
+  assert.equal(await mock.client.recoverProgress(progressPath, command, 'original-progress-id', 'duplicate'), id)
+  await assert.rejects(mock.client.apply([write('assets/en/lang_progress/a.lang', 'unsafe')]), /未处理的提交/)
+  await assert.rejects(mock.client.transactions.forget(id), /不能移除/)
+  await assert.rejects(mock.client.transactions.confirm(id), /暂无进度回执/)
+  assert.equal(mock.calls.filter(call => call.path === '/api/files/commit').length, 0)
+  assert.equal(mock.client.transactions.getSnapshot().transactions[0].requestId, 'original-progress-id')
+}))
+
 console.log(`编辑事务验证完成：${checks} 项通过，${failures.length} 项失败。`)
 if (failures.length) throw new Error(`编辑事务验证失败：${failures.join('；')}`)

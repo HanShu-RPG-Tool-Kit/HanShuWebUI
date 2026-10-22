@@ -51,7 +51,7 @@ async function openProgress(page) {
 async function editorText(page) { return (await active(page).locator('.monaco-editor .view-lines').allTextContents()).join('\n').replace(/\u00a0/g, ' ') }
 try {
   await mkdir(output, { recursive: true })
-  assert.equal((await h.api('', '/health')).protocol, 9)
+  assert.equal((await h.api('', '/health')).protocol, 10)
   const owner = await h.login(h.credential, '历史验收 API'); ownerToken = owner.token
   const editor = await h.api(ownerToken, '/api/subjects', 'POST', { name: '历史协作者', kind: 'account', role: 'editor' })
   const viewer = await h.api(ownerToken, '/api/subjects', 'POST', { name: '历史审阅者', kind: 'agent', role: 'viewer' })
@@ -167,6 +167,6 @@ try {
   passed('工程历史入口覆盖剧本、进度流程和皮肤；当前资源快捷筛选准确，窄窗口无横向溢出')
 
   assert.deepEqual(pageErrors, [])
-  await writeFile(join(output, 'ui-acceptance.json'), JSON.stringify({ protocol: 9, physicalHosts: 1, isolatedBrowserContexts: 3, tests: results, pageErrors }, null, 2))
+  await writeFile(join(output, 'ui-acceptance.json'), JSON.stringify({ protocol: 10, physicalHosts: 1, isolatedBrowserContexts: 3, tests: results, pageErrors }, null, 2))
   console.log(`工程历史浏览器验收通过：${results.length} 组。`)
 } finally { clearInterval(heartbeat); await browser?.close(); await h.stop(); await proxy.close() }

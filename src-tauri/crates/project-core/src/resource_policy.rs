@@ -11,6 +11,8 @@ use ts_rs::TS;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 pub enum FileOperationKind {
+    #[serde(rename = "progress-command")]
+    ProgressCommand,
     #[serde(rename = "history-restore")]
     HistoryRestore,
     Write,
@@ -26,6 +28,7 @@ pub enum FileOperationKind {
 impl FileOperationKind {
     pub(crate) fn parse(value: &str) -> Result<Self> {
         Ok(match value {
+            "progress-command" => Self::ProgressCommand,
             "history-restore" => Self::HistoryRestore,
             "write" => Self::Write,
             "skin-entry-patch" => Self::SkinEntryPatch,
@@ -144,9 +147,12 @@ fn plan_inner(
     let mut context = tree.clone();
     for request in requests {
         require(
-            request.op != FileOperationKind::HistoryRestore,
+            !matches!(
+                request.op,
+                FileOperationKind::HistoryRestore | FileOperationKind::ProgressCommand
+            ),
             "invalid",
-            "历史恢复须先查询专用恢复计划",
+            "业务命令须通过专用受校验事务提交",
         )?;
         path_ok(&request.path)?;
         if matches!(

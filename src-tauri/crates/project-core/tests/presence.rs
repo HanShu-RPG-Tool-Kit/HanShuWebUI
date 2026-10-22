@@ -91,7 +91,7 @@ fn unsaved_public_files_are_allowed_but_directories_and_private_paths_are_not() 
 }
 
 #[test]
-fn editing_is_server_derived_and_related_files_share_source_authority() {
+fn progress_intent_is_independent_from_short_leases_and_related_files_share_authority() {
     let dir = tempfile::tempdir().unwrap();
     let (mut engine, owner, _) = setup(dir.path());
     engine
@@ -115,6 +115,10 @@ fn editing_is_server_derived_and_related_files_share_source_authority() {
     let leases = engine
         .acquire_files(&owner, &plan.lease_paths, false, 1002)
         .unwrap();
+    assert_eq!(presence(&engine, &owner).activity, FileActivity::Viewing);
+    engine
+        .set_file_presence(&owner, Some(LANG.into()), None, FileActivity::Editing, 1002)
+        .unwrap();
     assert_eq!(presence(&engine, &owner).activity, FileActivity::Editing);
     let source = leases
         .iter()
@@ -123,7 +127,7 @@ fn editing_is_server_derived_and_related_files_share_source_authority() {
     engine
         .release(&owner, &source.resource_id, &source.id, 1003)
         .unwrap();
-    assert_eq!(presence(&engine, &owner).activity, FileActivity::Viewing);
+    assert_eq!(presence(&engine, &owner).activity, FileActivity::Editing);
     assert!(engine
         .snapshot(&owner)
         .unwrap()
@@ -133,7 +137,7 @@ fn editing_is_server_derived_and_related_files_share_source_authority() {
 }
 
 #[test]
-fn same_subject_windows_have_independent_focus_and_takeover_immediately_demotes_old_editor() {
+fn same_subject_windows_have_independent_focus_and_intent_while_leases_remain_exclusive() {
     let dir = tempfile::tempdir().unwrap();
     let (mut engine, owner, key) = setup(dir.path());
     let (_, second) = engine.login(&key, "second window", 1001).unwrap();
@@ -142,7 +146,7 @@ fn same_subject_windows_have_independent_focus_and_takeover_immediately_demotes_
             &owner,
             Some(SOURCE.into()),
             None,
-            FileActivity::Viewing,
+            FileActivity::Editing,
             1002,
         )
         .unwrap();
@@ -151,7 +155,7 @@ fn same_subject_windows_have_independent_focus_and_takeover_immediately_demotes_
             &second.id,
             Some(SOURCE.into()),
             None,
-            FileActivity::Viewing,
+            FileActivity::Editing,
             1002,
         )
         .unwrap();
@@ -165,7 +169,7 @@ fn same_subject_windows_have_independent_focus_and_takeover_immediately_demotes_
     assert_eq!(presence(&engine, &owner).activity, FileActivity::Editing);
     assert_eq!(
         presence(&engine, &second.id).activity,
-        FileActivity::Viewing
+        FileActivity::Editing
     );
     assert_eq!(
         engine
@@ -177,7 +181,7 @@ fn same_subject_windows_have_independent_focus_and_takeover_immediately_demotes_
     engine
         .acquire_files(&second.id, &[SOURCE.into()], true, 1004)
         .unwrap();
-    assert_eq!(presence(&engine, &owner).activity, FileActivity::Viewing);
+    assert_eq!(presence(&engine, &owner).activity, FileActivity::Editing);
     assert_eq!(
         presence(&engine, &second.id).activity,
         FileActivity::Editing
@@ -203,7 +207,7 @@ fn viewer_can_announce_focus_but_cannot_claim_editing_and_revocation_removes_pre
             &editor.id,
             Some(SOURCE.into()),
             None,
-            FileActivity::Viewing,
+            FileActivity::Editing,
             1002,
         )
         .unwrap();
@@ -375,14 +379,14 @@ fn free_editor_intent_is_independent_of_temporary_leases_and_survives_heartbeat(
 }
 
 #[test]
-fn managed_progress_ignores_client_editing_claim_without_authority() {
+fn progress_intent_survives_without_a_retained_write_lease() {
     let dir = tempfile::tempdir().unwrap();
     let (mut engine, owner, _) = setup(dir.path());
     for path in [SOURCE, LANG] {
         engine
             .set_file_presence(&owner, Some(path.into()), None, FileActivity::Editing, 1001)
             .unwrap();
-        assert_eq!(presence(&engine, &owner).activity, FileActivity::Viewing);
+        assert_eq!(presence(&engine, &owner).activity, FileActivity::Editing);
         assert!(engine.snapshot(&owner).unwrap().leases.is_empty());
         let lease = engine
             .acquire_files(&owner, &[SOURCE.into()], false, 1002)
@@ -392,7 +396,7 @@ fn managed_progress_ignores_client_editing_claim_without_authority() {
         engine
             .release(&owner, &lease.resource_id, &lease.id, 1003)
             .unwrap();
-        assert_eq!(presence(&engine, &owner).activity, FileActivity::Viewing);
+        assert_eq!(presence(&engine, &owner).activity, FileActivity::Editing);
     }
 }
 

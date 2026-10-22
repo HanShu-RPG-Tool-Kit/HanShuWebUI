@@ -1,4 +1,4 @@
-/** Protocol v9: shared project history and atomic, version-checked historical restoration. */
+/** Protocol v10: field-checked progress commands and receipt-based collaborative undo. */
 export type { Role, Subject, Session, Lease, ResourceInfo, Resource, Snapshot } from './generated'
 export type Connection = { url: string; token: string }
 

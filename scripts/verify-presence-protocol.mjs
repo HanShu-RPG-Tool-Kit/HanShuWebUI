@@ -9,7 +9,7 @@ const script = 'src/hanshu/story.hs'
 let count = 0
 const passed = name => { count++; console.log(`通过：${name}`) }
 try {
-  assert.equal((await h.api('', '/health')).protocol, 9)
+  assert.equal((await h.api('', '/health')).protocol, 10)
   const owner = await h.login(h.credential, '管理员')
   const subject = await h.api(owner.token, '/api/subjects', 'POST', { name: '协作者', kind: 'agent', role: 'editor' })
   const a = await h.login(subject.credential, '窗口 A')
@@ -44,12 +44,15 @@ try {
   passed('自由编辑器意图经心跳保留，与另一窗口的临时写权独立')
 
   await focus(a.token, source, null, 'editing')
-  assert.equal((await state(a.token)).session.filePresence.activity, 'viewing')
+  assert.equal((await state(a.token)).session.filePresence.activity, 'editing')
+  assert.equal((await state(a.token)).leases.length, 0)
   const [progressLease] = await h.api(a.token, '/api/files/leases', 'POST', { paths: [source] })
   assert.equal((await state(a.token)).session.filePresence.activity, 'editing')
   await h.api(a.token, '/api/files/leases', 'DELETE', { path: source, leaseId: progressLease.id })
+  assert.equal((await state(a.token)).session.filePresence.activity, 'editing')
+  await focus(a.token, source, null, 'viewing')
   assert.equal((await state(a.token)).session.filePresence.activity, 'viewing')
-  passed('受写权管理的进度表单仍由服务端实际写权决定编辑状态')
+  passed('进度表单发布编辑意图无需长期写权，短租约释放不改变意图；保存后可显式返回查看状态')
 
   await focus(a.token, skin, 'entry_keep', 'editing')
   for (const body of [

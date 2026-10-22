@@ -34,6 +34,7 @@ fn changes(
         .iter()
         .map(|operation| FileChange {
             op: match operation.op {
+                FileOperationKind::ProgressCommand => "progress-command",
                 FileOperationKind::HistoryRestore => "history-restore",
                 FileOperationKind::Write => "write",
                 FileOperationKind::SkinEntryPatch => "skin-entry-patch",

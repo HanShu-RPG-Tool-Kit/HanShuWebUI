@@ -19,6 +19,11 @@ let generation = 0
 let lifecycleInstalled = false
 let pageActive = true
 const liveScopes = new Set<Scope>()
+/** A claimed page scope survives reload but is replaced for a live duplicate tab. */
+export function currentEditWindowId(): string {
+  if (!scope?.active) throw new Error('本窗口的提交记录尚未初始化，暂不能恢复进度草稿')
+  return scope.id
+}
 function loseScope(owner: Scope) {
   owner.active = false; owner.channel.close(); liveScopes.delete(owner)
   if (scope === owner) scope = undefined

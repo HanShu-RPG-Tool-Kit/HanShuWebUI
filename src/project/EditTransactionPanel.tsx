@@ -62,7 +62,8 @@ export function EditTransactionPanel({ client }: { client: ProjectClient }) {
         const skinOperation = skinTransactionDescription(submission)
         const semantic = submission.some(isSkinSemanticEdit)
         const history = submission.some(edit => edit.op === 'history-restore')
-        const needsNewOperation = (!!skinOperation || history) && t.phase === 'conflict' && t.code !== 'locked'
+        const progress = submission.some(edit => edit.op === 'progress-command')
+        const needsNewOperation = (!!skinOperation || history || progress) && t.phase === 'conflict' && t.code !== 'locked'
         return <article key={t.id}>
         <div><strong>{t.label}</strong><span>{labels[t.phase]}</span></div>
         {skinOperation && <p>{skinOperation}</p>}
@@ -72,7 +73,8 @@ export function EditTransactionPanel({ client }: { client: ProjectClient }) {
         {skinOperation && t.phase === 'uncertain' && <p>服务器可能已经完成此操作。请查询结果或重试原提交，确认前不要重新创建同一项。</p>}
         {['failed', 'conflict', 'uncertain'].includes(t.phase) && <footer>
           {t.phase === 'uncertain' && <button disabled={state.queued>0} onClick={()=>void run(()=>client.transactions.confirm(t.id))}>查询提交结果</button>}
-          {t.phase === 'conflict' && t.code !== 'locked' && !semantic && !history && <button disabled={!client.online||state.queued>0} onClick={()=>void run(async()=>setConflict(await inspectConflict(client,t.id)))}>处理冲突</button>}
+          {t.phase === 'conflict' && t.code !== 'locked' && !semantic && !history && !progress && <button disabled={!client.online||state.queued>0} onClick={()=>void run(async()=>setConflict(await inspectConflict(client,t.id)))}>处理冲突</button>}
+          {progress && t.phase === 'conflict' && t.code !== 'locked' && <span>请在进度表单中对照并处理字段冲突。</span>}
           {!needsNewOperation && <button disabled={!client.writable || state.queued > 0} onClick={() => void run(async () => { if (t.phase !== 'uncertain') await client.assertEditingIntent(submission); return client.transactions.retry(t.id) })}>重试原提交</button>}
           <button onClick={() => void run(() => download(t.id))}>导出此提交</button>
           {t.phase!=='uncertain' && <button disabled={state.queued > 0 || (!!skinOperation && !client.online)} onClick={() => void run(()=>skinOperation ? abandonSkinOperation(t.id) : client.transactions.forget(t.id))}>{skinOperation ? '放弃原操作，刷新皮肤库' : '移除记录，保留草稿'}</button>}

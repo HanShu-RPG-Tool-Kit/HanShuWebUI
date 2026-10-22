@@ -173,23 +173,25 @@ await test('打开和清除焦点不申请写权，焦点更新按用户最后�
   assert.equal(client.editing.canEdit(SOURCE), false)
 }))
 
-await test('进度、语言及配音写入都必须明确开始编辑，普通剧本不受此入口策略影响', () => fixture(async (client, service) => {
+await test('进度、语言及配音写入使用S计划的短租约，无需手动开始编辑', () => fixture(async (client, service) => {
   for (const path of [SOURCE, LANGUAGE, VOICE]) {
-    await assert.rejects(client.assertEditingIntent([write(path)]), error => error instanceof ServiceError && error.code === 'editing_required')
+    await client.assertEditingIntent([write(path)])
+    await client.apply([write(path)])
+    assert.equal(service.leases.size, 0)
   }
-  assert.equal(service.count('/api/files/leases', 'POST'), 0)
-  assert.equal(service.count('/api/files/commit'), 0)
-  assert.equal(client.transactions.getSnapshot().transactions.length, 0, 'Missing editor intent must be rejected before creating a frozen submission')
+  assert.equal(service.count('/api/files/commit'), 3)
   await client.apply([write(OTHER)])
-  assert.equal(service.count('/api/files/commit'), 1)
+  assert.equal(service.count('/api/files/commit'), 4)
   assert.equal(service.leases.has(OTHER), false)
 }))
 
-await test('工程保存入口等待S编辑策略预检，未取得进度写权不创建失败提交', () => fixture(async (client, service) => {
+await test('工程保存等待语义编辑器完成，失败时不创建整工程提交或清除其他草稿', () => fixture(async (client, service) => {
   await client.transactions.stageWrite(write(LANGUAGE, 'unsaved title'))
   const binding = { handle: client.root(), folderName: 'test', manifest: { version: 1, id: 'pkg', name: 'test' } } as never
   const workspace = { packages: [], activeScriptId: null, activeAssetId: null }
-  await assert.rejects(saveProjectToDirectory(binding, workspace), error => error instanceof ServiceError && error.code === 'editing_required')
+  const unregister = client.registerProgressEditor(SOURCE, async () => { throw new Error('progress pending') })
+  await assert.rejects(saveProjectToDirectory(binding, workspace), /progress pending/)
+  unregister()
   assert.equal(client.transactions.getSnapshot().transactions.length, 0)
   assert.equal(client.transactions.stagedText(LANGUAGE), 'unsaved title')
   assert.equal(service.count('/api/files/leases', 'POST'), 0)
@@ -228,12 +230,12 @@ await test('取得临时写权之前生成的心跳迟到时，二进制提交�
   assert.equal(client.editing.canEdit(SOURCE), true)
 }))
 
-await test('提交期间旧编辑锁失效时拒绝自动重新取得写权，不发送commit并释放新临时锁', () => fixture(async (client, service) => {
+await test('旧显式锁失效后原始写入仍走新的短租约，完成后释放', () => fixture(async (client, service) => {
   await client.editing.begin(SOURCE)
   const retained = client.leases.get(SOURCE)!.id
   service.beforeAcquire = () => { service.leases.delete(SOURCE); service.beforeAcquire = undefined }
-  await assert.rejects(client.apply([write(SOURCE), write(LANGUAGE)]), error => error instanceof ServiceError && error.code === 'editing_required')
-  assert.equal(service.count('/api/files/commit'), 0)
+  await client.apply([write(SOURCE), write(LANGUAGE)])
+  assert.equal(service.count('/api/files/commit'), 1)
   assert.notEqual(service.leases.get(SOURCE)?.id, retained)
   assert.equal(service.leases.has(SOURCE), false)
   assert.equal(service.leases.has(LANGUAGE), false)
@@ -251,7 +253,7 @@ await test('旧快照不能恢复已经被接管的写权，同主体不同窗�
   assert.equal(client.setStatus(true, before), false)
   assert.equal(client.snapshot.statusVersion, after.statusVersion)
   assert.equal(client.editing.canEdit(SOURCE), false)
-  await assert.rejects(client.apply([write(SOURCE)]), error => error instanceof ServiceError && error.code === 'editing_required')
+  await assert.rejects(client.apply([write(SOURCE)]), error => error instanceof ServiceError && error.code === 'locked')
   assert.equal(service.count('/api/files/commit'), 0)
 }))
 
@@ -411,17 +413,13 @@ await test('已提交但丢响应的结果可在失去编辑权后确认，不�
   assert.equal(service.count('/api/files/commit'), 1)
 }))
 
-await test('未被服务记录的不确定提交必须重新申请编辑后才能重发，仍沿用原提交编号', () => fixture(async (client, service) => {
+await test('未被服务记录的不确定提交自动取得短租约重发，仍沿用原提交编号', () => fixture(async (client, service) => {
   await client.editing.begin(SOURCE)
   service.beforeCommit = async () => { throw new Error('Disconnected before the server recorded the operation') }
   await assert.rejects(client.apply([write(SOURCE)]))
   const job = client.transactions.getSnapshot().transactions.at(-1)!
   client.setStatus(false); client.setStatus(true, service.snapshot())
-  const before = service.count('/api/files/leases', 'POST')
-  await assert.rejects(client.transactions.retry(job.id), error => error instanceof ServiceError && error.code === 'commit_uncertain')
-  assert.equal(service.count('/api/files/leases', 'POST'), before)
   service.beforeCommit = undefined
-  await client.editing.begin(SOURCE)
   await client.transactions.retry(job.id)
   const ids = service.calls.filter(call => call.path === '/api/files/commit').map(call => call.body.transactionId)
   assert.deepEqual(ids, [job.requestId, job.requestId])
@@ -448,17 +446,16 @@ await test('显式移动源文档及重写目标内容可作为一个结构事�
   assert.equal(client.leases.size, 0)
 }))
 
-await test('C按S给出的编辑authority检查任意路径，不猜测语言目录约定', () => fixture(async (client, service) => {
+await test('C按S计划为任意关联路径取得短租约，不猜测语言目录约定', () => fixture(async (client, service) => {
   const resource = 'assets/shared/custom-labels.json'
   service.owners.set(resource, SOURCE)
-  await assert.rejects(client.assertEditingIntent([write(resource)]), error => error instanceof ServiceError && error.code === 'editing_required')
+  await client.assertEditingIntent([write(resource)])
   assert.equal(client.transactions.getSnapshot().transactions.length, 0)
-  await client.editing.begin(SOURCE)
   await client.apply([write(resource)])
   const acquire = service.calls.filter(call => call.path === '/api/files/leases' && call.method === 'POST').at(-1)!
   assert.deepEqual(new Set(acquire.body.paths as string[]), new Set([resource, SOURCE]))
   assert.equal(service.count('/api/files/commit'), 1)
-  assert.equal(client.editing.canEdit(SOURCE), true)
+  assert.equal(service.leases.size, 0)
 }))
 
 await test('关系存在不等于必须同锁，C仅按计划申请所需路径', () => fixture(async (client, service) => {

@@ -42,7 +42,7 @@ async function openClient(client: ProjectClient, initialName: string) {
       // only the now-clean resources; subsequent local drafts remain protected.
       const historyRestore = edits.some(edit => edit.op === 'history-restore')
       const refreshed = refreshServiceProject(live.binding,live.workspace)
-      const workspace = historyRestore ? await refreshed : await refreshed.catch(()=>null)
+      const workspace = historyRestore || edits.some(edit => edit.op === 'progress-command') ? await refreshed : await refreshed.catch(()=>null)
       if (workspace && getProjectClient() === client) {
         setProjectSession({workspace})
         if (historyRestore) {

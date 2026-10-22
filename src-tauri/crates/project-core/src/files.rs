@@ -4,6 +4,8 @@
 mod history;
 #[path = "history_restore.rs"]
 mod history_restore;
+#[path = "progress_commands.rs"]
+mod progress_commands;
 #[path = "file_transactions.rs"]
 mod transactions;
 use crate::{
@@ -18,6 +20,10 @@ pub use history::{
 use history::{HistoryContext, HistoryState};
 pub use history_restore::{
     HistoryRestoreChange, HistoryRestorePlan, HistoryRestoreRequest, HistoryRestoreSelection,
+};
+pub use progress_commands::{
+    ProgressCommand, ProgressCommandResult, ProgressEffect, ProgressLanguage, ProgressSlot,
+    ProgressTarget,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -792,28 +798,14 @@ impl Engine {
         session.expires_at = now + SESSION_TTL;
         Ok(())
     }
-    /// Managed progress editing follows actual authority. Free editor intent remains
-    /// independent from temporary transaction leases and is always clamped by permission.
+    /// Editing intent is independent from temporary transaction leases and is always
+    /// clamped by current permission. A lease grants write authority, not UI activity.
     pub(crate) fn session_snapshot(&self, session: &Session) -> Session {
         let mut visible = session.clone();
         if let Some(presence) = &mut visible.file_presence {
             let can_write = self.role(&session.id).is_ok_and(|role| role.can_write());
             if !can_write {
                 presence.activity = FileActivity::Viewing;
-            } else if presence
-                .authority_id
-                .to_ascii_lowercase()
-                .ends_with(".progress")
-            {
-                let owns = self
-                    .leases
-                    .get(&presence.authority_id)
-                    .is_some_and(|lease| lease.session_id == session.id);
-                presence.activity = if owns {
-                    FileActivity::Editing
-                } else {
-                    FileActivity::Viewing
-                };
             }
         }
         visible

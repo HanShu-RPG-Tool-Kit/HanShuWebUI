@@ -1,11 +1,13 @@
 import { request, ServiceError, type Connection, type Lease, type Snapshot } from '../collab/protocol'
-import type { FileChange, FileEditAuthority, FileOperationRequest, FileTransactionReceipt, ProjectFile, ProjectFileTree, ResourceOperationPlan, ResourceRelations, HistoryRestorePlan } from '../collab/generated'
+import type { FileChange, FileEditAuthority, FileOperationRequest, FileTransactionReceipt, ProjectFile, ProjectFileTree, ResourceOperationPlan, ResourceRelations, HistoryRestorePlan, ProgressCommand, ProgressCommandResult } from '../collab/generated'
 import { EditTransactions, type SendAttempt } from './editTransactions'
 import { assetCacheEpoch } from '../assets/idb'
 import { FileEditing } from './fileEditing'
+export type { ProgressCommand, ProgressCommandResult } from '../collab/generated'
+export type ProgressAcknowledgement = { transactionId: string; result: ProgressCommandResult }
 
 export type FileEdit = {
-  op: 'write' | 'mkdir' | 'remove' | 'move' | 'skin-entry-patch' | 'skin-library-command' | 'history-restore'; path: string; data?: string | Blob | Uint8Array
+  op: 'write' | 'mkdir' | 'remove' | 'move' | 'skin-entry-patch' | 'skin-library-command' | 'history-restore' | 'progress-command'; path: string; data?: string | Blob | Uint8Array
   destination?: string; version?: string | null; destinationVersion?: string | null; cacheEpoch?: number
   /** C-only recovery/three-way comparison data; never sent as authority to S. */
   baseData?: string | Blob | Uint8Array; adopt?: boolean
@@ -47,6 +49,8 @@ export class ProjectClient {
   private entryResults = new Map<string, unknown>()
   private libraryResults = new Map<string, Record<string, unknown>>()
   private importResults = new Map<string, unknown>()
+  private progressResults = new Map<string, ProgressAcknowledgement>()
+  private progressEditors = new Map<string, Set<() => Promise<void>>>()
   skinLibraryResult(command: string) { return this.libraryResults.get(command) }
   skinImportResult(entryId: string): unknown { return this.importResults.get(entryId) }
   private entryAcknowledgements = new Map<string, { command: string; requestId: string; entry: unknown }>()
@@ -117,22 +121,10 @@ export class ProjectClient {
   resourceRelations(path: string): Promise<ResourceRelations> {
     return request(this.connection, `/api/files/relations?path=${encodeURIComponent(path)}`)
   }
-  async assertEditingIntent(edits: FileEdit[], uncertain = false) {
-    if (edits.length === 1 && edits[0].op === 'history-restore') return { revision: this.tree.revision, operations: [], leasePaths: [], authorities: [], relations: [] }
+  async assertEditingIntent(edits: FileEdit[], _uncertain = false) {
+    if (edits.length === 1 && ['history-restore', 'progress-command'].includes(edits[0].op)) return { revision: this.tree.revision, operations: [], leasePaths: [], authorities: [], relations: [] }
     const plan = await this.planOperations(edits.map(edit => ({ op: edit.adopt ? 'check' : edit.op, path: edit.path, destination: edit.destination ?? null })))
-    this.assertPlanEditingIntent(edits, plan, uncertain)
     return plan
-  }
-  private assertPlanEditingIntent(edits: FileEdit[], plan: ResourceOperationPlan, uncertain = false) {
-    for (const edit of edits) {
-      const authority = plan.authorities.find(item => item.path === edit.path)
-      const path = authority?.sourceKind === 'progress' ? authority.authorityPath : null
-      const contains = (root: string | undefined, path: string) => root && (path === root || path.startsWith(`${root}/`))
-      const structural = path && edits.some(item => !item.adopt && (item.op === 'move' || item.op === 'remove') && (contains(item.path, path) || contains(item.destination, path)))
-      if (path && edit.op === 'write' && !structural && !this.editing.canEdit(path)) {
-        throw new ServiceError(uncertain ? 'commit_uncertain' : 'editing_required', `请先打开 ${path.split('/').at(-1)} 并申请编辑；本窗口的草稿已保留`)
-      }
-    }
   }
   root() { return new ProjectDirectory(this, '') }
   entry(path: string): ProjectFile | undefined { return this.tree.entries.find(e => e.path === path) }
@@ -160,7 +152,7 @@ export class ProjectClient {
   }
   private capture(edits: FileEdit[]): FileEdit[] {
     return edits.map(e => {
-      if (e.op === 'history-restore') return { ...e, affectedPaths: [...(e.affectedPaths ?? [])] }
+      if (e.op === 'history-restore' || e.op === 'progress-command') return { ...e, affectedPaths: [...(e.affectedPaths ?? [])] }
       const version = this.expected(e.path, e.version === undefined ? this.baseline.get(e.path) ?? null : e.version)
       const original = this.originals.get(e.path)
       const captured = { ...e, data: e.data instanceof Uint8Array ? e.data.slice() : e.data, cacheEpoch: e.cacheEpoch ?? (e.path.startsWith('assets/') ? assetCacheEpoch(this.assetPackageId, e.path) : undefined), version,
@@ -172,6 +164,98 @@ export class ProjectClient {
   apply(edits: FileEdit[], label = '资源修改'): Promise<void> {
     const captured = this.capture(edits)
     return this.transactions.submit(label, () => captured)
+  }
+  private progressEdit(path: string, command: ProgressCommand): FileEdit {
+    normalizeProjectPath(path)
+    // C's conservative recovery scope only. S independently derives the exact
+    // resources from the command and its archived receipt.
+    const stem = path.replace(/^src\/progress\//, '').replace(/\.progress$/, '')
+    const languages = command.command === 'apply'
+      ? command.changes.flatMap(effect => effect.target.kind === 'locale' ? [`assets/${effect.target.locale}/lang_progress/${stem}.lang`] : [])
+      : this.tree.entries.filter(entry => entry.path.startsWith('assets/') && entry.path.endsWith(`/lang_progress/${stem}.lang`)).map(entry => entry.path)
+    return { op: 'progress-command', path, data: JSON.stringify(command), version: null, affectedPaths: [...new Set([path, ...languages])] }
+  }
+  async submitProgress(path: string, command: ProgressCommand, label: string): Promise<ProgressAcknowledgement> {
+    const edit = this.progressEdit(path, command)
+    // submit publishes its local ID synchronously, before the first await.
+    const completion = this.transactions.submit(label, () => [edit])
+    const requestId = this.transactions.getSnapshot().transactions.at(-1)!.requestId
+    await completion
+    const ack = this.progressAcknowledgement(requestId)
+    if (!ack) throw new ServiceError('commit_uncertain', '服务没有返回进度操作结果，请查询原提交')
+    return ack
+  }
+  progressAcknowledgement(requestId: string): ProgressAcknowledgement | undefined { return this.progressResults.get(requestId) }
+  private rememberProgress(receipt: FileTransactionReceipt, path?: string): ProgressAcknowledgement {
+    const result = receipt.progressResult
+    if (receipt.status === 'rejected') throw new ServiceError(receipt.error!.code, receipt.error!.message)
+    if (!result || (path && result.path !== path) || typeof result.path !== 'string' || typeof result.documentId !== 'string' || typeof result.source !== 'string' || !Array.isArray(result.effects) || !Array.isArray(result.languages) || !result.languages.every(language => typeof language.path === 'string' && (language.content === null || typeof language.content === 'string'))) {
+      throw new ServiceError('commit_uncertain', '服务返回的进度操作结果不完整，请查询原提交')
+    }
+    const ack = { transactionId: receipt.transactionId, result }
+    this.progressResults.set(receipt.transactionId, ack)
+    if (this.progressResults.size > 512) this.progressResults.delete(this.progressResults.keys().next().value!)
+    return ack
+  }
+  async loadProgressAcknowledgement(requestId: string): Promise<ProgressAcknowledgement | null> {
+    const receipt = await this.receipt(requestId)
+    return receipt ? this.rememberProgress(receipt) : null
+  }
+  recoverProgress(path: string, command: ProgressCommand, requestId: string, label: string): Promise<number> {
+    return this.transactions.recoverSubmission(label, [this.progressEdit(path, command)], requestId)
+  }
+  registerProgressEditor(path: string, flush: () => Promise<void>): () => void {
+    const editors = this.progressEditors.get(path) ?? new Set()
+    editors.add(flush); this.progressEditors.set(path, editors)
+    return () => { editors.delete(flush); if (!editors.size) this.progressEditors.delete(path) }
+  }
+  async flushProgressEdits(path?: string): Promise<void> {
+    const editors = path ? [...(this.progressEditors.get(path) ?? [])] : [...this.progressEditors.values()].flatMap(set => [...set])
+    for (const flush of editors) await flush()
+  }
+  async readProgressState(path: string, languagePaths: string[]): Promise<{ source: string; languages: Record<string, string | null>; versions: Record<string, string | null>; revision: number }> {
+    const paths = [...new Set([path, ...languagePaths])]
+    paths.forEach(normalizeProjectPath)
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const before = await request<ProjectFileTree>(this.connection, '/api/files')
+      const versions = Object.fromEntries(paths.map(path => [path, before.entries.find(entry => entry.path === path && entry.kind === 'file')?.version ?? null]))
+      if (!versions[path]) throw new ServiceError('not_found', '进度文档已不存在；本地输入仍保留')
+      let contents: Array<readonly [string, string | null]>
+      try { contents = await Promise.all(paths.map(async path => [path, versions[path] ? await (await this.readSnapshot(path, false, versions[path]!)).file.text() : null] as const)) }
+      catch (error) { if (error instanceof ServiceError && ['conflict', 'not_found'].includes(error.code)) continue; throw error }
+      const after = await request<ProjectFileTree>(this.connection, '/api/files')
+      if (paths.some(path => (after.entries.find(entry => entry.path === path && entry.kind === 'file')?.version ?? null) !== versions[path])) continue
+      const content = Object.fromEntries(contents)
+      return { source: content[path]!, languages: Object.fromEntries(languagePaths.map(path => [path, content[path]])), versions, revision: after.revision }
+    }
+    throw new ServiceError('conflict', '读取期间进度持续变化，请稍后重试；本地输入保留')
+  }
+  private async performProgress(edits: FileEdit[], attempt: SendAttempt): Promise<void> {
+    const edit = edits[0]
+    if (edits.length !== 1 || edit.op !== 'progress-command' || typeof edit.data !== 'string') throw new ServiceError('invalid', '进度操作不能和其他文件操作混合')
+    let receipt: FileTransactionReceipt | null = null
+    if (attempt.uncertain) {
+      try { receipt = await this.receipt(attempt.transactionId) }
+      catch { throw new ServiceError('commit_uncertain', '暂时无法查询进度操作结果；原请求已保留') }
+      if (!receipt && attempt.queryOnly) throw new ServiceError('commit_uncertain', '服务暂无进度回执，可重试原请求')
+    }
+    if (!receipt) {
+      if (!this.writable) throw new ServiceError(attempt.uncertain ? 'commit_uncertain' : this.online ? 'forbidden' : 'offline', '当前不能提交进度修改；输入与原请求已保留')
+      try {
+        receipt = validateReceipt(await request<FileTransactionReceipt>(this.connection, '/api/files/commit', 'POST', { transactionId: attempt.transactionId, changes: [{ op: edit.op, path: edit.path, version: null, leaseId: '', content: bytesToBase64(new TextEncoder().encode(edit.data)), destination: null, destinationVersion: null }] }), attempt.transactionId)
+      } catch (error) {
+        if (!attempt.uncertain && error instanceof ServiceError && (['unauthorized', 'forbidden', 'invalid', 'busy', 'transaction_mismatch', 'transaction_limit'].includes(error.code) || [400, 413, 415].includes(error.status ?? 0))) throw error
+        throw new ServiceError('commit_uncertain', '进度操作结果待确认。请查询原提交；后续输入已保留。')
+      }
+    }
+    this.rememberProgress(receipt, edit.path)
+    // Exact receipts supply inverse effects. Current views come from fresh reads,
+    // never from a delayed receipt that may precede another subject's edits.
+    try {
+      await this.refresh()
+      this.remoteEpoch++
+      await this.onCommitted?.(edits, true)
+    } catch { throw new ServiceError('commit_uncertain', '进度已保存，本地视图尚未刷新；请查询原提交继续') }
   }
   restoreHistory(plan: HistoryRestorePlan): Promise<void> {
     const edit: FileEdit = { op: 'history-restore', path: 'project.json', version: null, data: JSON.stringify(plan.request), affectedPaths: plan.changes.map(change => change.path) }
@@ -218,6 +302,7 @@ export class ProjectClient {
     catch (error) { if (error instanceof ServiceError && error.code === 'not_found') return null; throw error }
   }
   private async perform(edits: FileEdit[], attempt: SendAttempt) {
+    if (edits.some(edit => edit.op === 'progress-command')) return this.performProgress(edits, attempt)
     if (edits.some(edit => edit.op === 'history-restore')) return this.performHistoryRestore(edits, attempt)
     let receipt: FileTransactionReceipt | null = null
     if (attempt.uncertain) {
@@ -238,9 +323,6 @@ export class ProjectClient {
         const acquiredByPath = new Map(acquired.map(lease => [lease.resourceId.slice(5), lease]))
         for (const l of acquired) this.leases.set(l.resourceId.slice(5), l)
         try {
-          // An expired/taken-over editor token must not be silently replaced by this
-          // transaction's acquire request, even if the resource is free again.
-          this.assertPlanEditingIntent(mutations, plan, attempt.uncertain)
           const changes: FileChange[] = []
           for (const edit of mutations) {
             const data = edit.adopt ? undefined : edit.data
@@ -405,6 +487,9 @@ export class ProjectClient {
    * This is a UI precondition, not authority; S still derives the actual move plan.
    */
   async assertSourceDraftsSaved(...paths: string[]) {
+    if (this.transactions.editorDirtyPaths().some(draft => paths.some(path => draft === path || draft.startsWith(`${path}/`)))) {
+      throw new Error('该资源还有未完成的自动提交，请先处理，再改名或删除；输入保持原状')
+    }
     const drafts = this.transactions.stagedWrites()
     if (!drafts.length || !paths.length) return
     const plan = await this.planOperations(drafts.map(edit => ({ op: 'write', path: edit.path, destination: null })))

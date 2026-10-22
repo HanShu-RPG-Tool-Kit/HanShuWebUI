@@ -91,14 +91,14 @@ async function openProgress(page,name='example.progress'){
   await page.locator(`[role=treeitem][title="${name}"]`).click()
   await page.getByLabel('进度标题',{exact:true}).waitFor()
 }
-async function beginEditing(page){const bar=page.getByRole('region',{name:'当前文件协作者',exact:true});const resume=bar.getByRole('button',{name:'重新申请写权',exact:true});await (await resume.count()?resume:bar.getByRole('button',{name:'开始编辑',exact:true})).click();await until(()=>page.getByLabel('进度标题',{exact:true}).isEnabled(),'Progress editing did not begin')}
-async function endEditing(page){await page.getByRole('region',{name:'当前文件协作者',exact:true}).getByRole('button',{name:'结束编辑',exact:true}).click();await until(()=>page.getByLabel('进度标题',{exact:true}).isDisabled(),'Progress editing did not end')}
+async function beginEditing(page){await until(()=>page.getByLabel('进度标题',{exact:true}).isEnabled(),'Progress form must be editable without manually acquiring a lease');assert.equal(await page.getByRole('region',{name:'当前文件协作者',exact:true}).getByRole('button',{name:'开始编辑',exact:true}).count(),0)}
+async function settled(page){await until(async()=>await page.getByRole('region',{name:'工程提交状态',exact:true}).getByRole('status').innerText()==='修改已保存','Client did not acknowledge operation')}
 let browser,acceptRemoval=false,browserContexts=0
 const pages=[],pageErrors=[]
 let apiTokens=[]
 const heartbeat=setInterval(()=>{for(const token of apiTokens)void api(token,'/api/heartbeat','POST',{resourceId:null,fileLeases:[]}).catch(()=>undefined)},8000)
 try{
-  assert.equal((await api('','/health')).protocol,9)
+  assert.equal((await api('','/health')).protocol,10)
   let owner=await login(h.credential,'LAN owner')
   const author=await api(owner.token,'/api/subjects','POST',{name:'LAN editor',kind:'account',role:'editor'})
   const spectator=await api(owner.token,'/api/subjects','POST',{name:'LAN viewer',kind:'agent',role:'viewer'})
@@ -200,77 +200,29 @@ try{
   await Promise.all(pages.map(page=>openProgress(page)))
   assert.equal(await pageA.evaluate(()=>window.isSecureContext),false,'This must exercise ordinary LAN HTTP without a secure-origin override')
   await until(async()=>await pageA.getByLabel('进度标题',{exact:true}).inputValue()==='共同进度','Initial progress locale missing')
-  await beginEditing(pageA)
-  await pageA.getByLabel('进度标题',{exact:true}).fill('LAN 回复丢失后的标题')
-  await pageA.getByRole('button',{name:'完成任一',exact:true}).click()
+  await beginEditing(pageA);await beginEditing(pageB)
   const priorRequests=observed.length
   delayMs=120;dropCommitResponse=true
-  await pageA.keyboard.press('Control+s')
+  await pageA.getByLabel('进度标题',{exact:true}).fill('LAN 回复丢失后的标题')
   await pageA.getByRole('region',{name:'工程提交状态',exact:true}).getByText('结果待确认',{exact:true}).waitFor()
   const uncertainRequest=observed[priorRequests]
   assert.ok(uncertainRequest?.transactionId)
-  await pageA.reload()
-  await browserLogin(pageA,author.credential,'LAN A restored outbox',false)
-  await openProgress(pageA)
+  assert.equal(uncertainRequest.changes[0].op,'progress-command')
+  await until(async()=>await pageB.getByLabel('进度标题',{exact:true}).inputValue()==='LAN 回复丢失后的标题','Peer failed to synchronize committed unknown outcome')
+  // A newer operation must survive confirming an older receipt after reload.
+  await pageB.getByRole('button',{name:'完成任一',exact:true}).click()
+  await until(async()=>JSON.parse(await readFile(join(h.root,'src/progress/example.progress'),'utf8')).completion==='any','Peer could not continue during unknown outcome')
+  await settled(pageB)
+  await pageA.reload();await browserLogin(pageA,author.credential,'LAN A restored outbox',false);await openProgress(pageA)
   await pageA.getByRole('region',{name:'工程提交状态',exact:true}).getByText('结果待确认',{exact:true}).waitFor()
-  await pageA.getByRole('button',{name:'查询提交结果',exact:true}).click()
-  await until(async()=>await pageA.getByRole('region',{name:'工程提交状态',exact:true}).getByRole('status').innerText()==='修改已保存','Client failed to confirm lost response')
-  assert.equal(observed.filter(r=>r.transactionId===uncertainRequest.transactionId).length,1,'Confirmed transaction must not be sent again')
-  await until(async()=>await pageB.getByLabel('进度标题',{exact:true}).inputValue()==='LAN 回复丢失后的标题','Peer failed to synchronize through proxy')
+  await pageA.getByRole('region',{name:'工程提交状态',exact:true}).getByRole('button',{name:'查询提交结果',exact:true}).click()
+  await settled(pageA)
+  assert.equal(observed.filter(r=>r.transactionId===uncertainRequest.transactionId).length,1,'Confirmed transaction was sent again')
+  await until(async()=>await pageA.getByRole('button',{name:'完成任一',exact:true}).getAttribute('aria-pressed')==='true','Historical receipt overwrote newer peer state')
   assert.equal(JSON.parse(await readFile(join(h.root,'src/progress/example.progress'),'utf8')).completion,'any')
   delayMs=0
-  await pageA.locator('.project-service-bar').getByRole('button',{name:'释放全部写权',exact:true}).click()
-  // A reload creates a distinct login session. It must not impersonate the old
-  // lease owner; the owner explicitly reclaims that test session's leases.
-  await api(owner.token,'/api/files/leases','POST',{paths:uncertainRequest.changes.map(c=>c.path),force:true})
-  await h.release(owner.token)
-  passed('两个隔离浏览器在普通 LAN HTTP 上保存正文和语言，丢失回复后刷新页面恢复 outbox、按事务编号确认且不重复提交')
-
-  // A durable receipt is an acknowledgement of the past. A later peer version
-  // must remain authoritative when the first client finally confirms that receipt.
-  await beginEditing(pageA)
-  await pageA.getByLabel('进度标题',{exact:true}).fill('等待确认的第一版标题')
-  await pageA.getByRole('button',{name:'完成全部',exact:true}).click()
-  const beforeHistorical=observed.length;dropCommitResponse=true
-  await pageA.keyboard.press('Control+s')
-  await pageA.getByRole('region',{name:'工程提交状态',exact:true}).getByText('结果待确认',{exact:true}).waitFor()
-  const historicalRequest=observed[beforeHistorical]
-  await api(owner.token,'/api/files/leases','POST',{paths:historicalRequest.changes.map(c=>c.path),force:true})
-  const newerSource=JSON.parse(await readFile(join(h.root,'src/progress/example.progress'),'utf8'));newerSource.completion='any';newerSource.authorNotes='另一端在旧回执确认前更新'
-  const newerLanguage=JSON.parse(await readFile(join(h.root,'assets/zh_cn/lang_progress/example.lang'),'utf8'));newerLanguage.name='另一端更新后的第二版标题'
-  const newerRequest=await prepare(owner.token,[{path:'src/progress/example.progress',content:JSON.stringify(newerSource)},{path:'assets/zh_cn/lang_progress/example.lang',content:JSON.stringify(newerLanguage)}])
-  assert.equal((await submit(owner.token,newerRequest)).status,'committed');await h.release(owner.token)
-  await until(async()=>await pageB.getByLabel('进度标题',{exact:true}).inputValue()===newerLanguage.name,'Peer did not receive newer version while A awaited its old receipt')
-  await pageA.getByRole('button',{name:'查询提交结果',exact:true}).click()
-  await until(async()=>await pageA.getByRole('region',{name:'工程提交状态',exact:true}).getByRole('status').innerText()==='修改已保存','Historical receipt did not settle')
-  await until(async()=>await pageA.getByLabel('进度标题',{exact:true}).inputValue()===newerLanguage.name,'Confirming an old receipt failed to adopt newer remote content')
-  await until(async()=>await pageA.getByRole('button',{name:'完成任一',exact:true}).getAttribute('aria-pressed')==='true','Historical receipt failed to refresh newer source state')
-  assert.equal(JSON.parse(await readFile(join(h.root,'src/progress/example.progress'),'utf8')).authorNotes,newerSource.authorNotes)
-  assert.equal(observed.filter(r=>r.transactionId===historicalRequest.transactionId).length,1)
-  passed('旧成功回执确认时保留并刷新他端之后保存的版本，不回退正文或语言')
-
-  // Drafts made under a live editing session survive disconnection. Once the
-  // owner reclaims the unavailable writer's lease, another client can continue.
-  await beginEditing(pageB)
-  await pageB.getByLabel('进度标题',{exact:true}).fill('断线期间保留的标题')
-  await pageB.context().setOffline(true)
-  await until(()=>pageB.getByLabel('进度标题',{exact:true}).isDisabled(),'Disconnected editing session did not become read-only',25000)
-  await api(owner.token,'/api/files/leases','POST',{paths:['src/progress/example.progress'],force:true});await h.release(owner.token)
-  await beginEditing(pageA)
-  await pageA.getByRole('button',{name:'完成全部',exact:true}).click();await pageA.keyboard.press('Control+s')
-  await until(async()=>JSON.parse(await readFile(join(h.root,'src/progress/example.progress'),'utf8')).completion==='all','Connected peer could not save while B was offline')
-  await endEditing(pageA)
-  await until(async()=>!(await api(a.token,'/api/project')).leases.some(l=>l.resourceId==='file:src/progress/example.progress'||l.resourceId==='file:assets/zh_cn/lang_progress/example.lang'),'A write leases were not released')
-  await pageB.context().setOffline(false)
-  await until(async()=>!(await pageB.locator('.project-service-bar').innerText()).includes('已断开'),'Browser did not reconnect')
-  assert.equal(await pageB.getByLabel('进度标题',{exact:true}).inputValue(),'断线期间保留的标题')
-  assert.ok(await pageB.getByLabel('进度标题',{exact:true}).isDisabled(),'Reconnect silently resumed editing')
-  await beginEditing(pageB)
-  await pageB.keyboard.press('Control+s')
-  await until(async()=>JSON.parse(await readFile(join(h.root,'assets/zh_cn/lang_progress/example.lang'),'utf8')).name==='断线期间保留的标题','Offline language draft was lost')
-  await endEditing(pageB)
-  passed('单客户端断网后暂停编辑，管理者接管后另一端继续保存，重连显式申请写权后提交保留的草稿')
-
+  assert.ok(!(await api(owner.token,'/api/project')).leases.some(l=>l.resourceId.endsWith('.progress')))
+  passed('普通 LAN HTTP 自动提交丢失成功回复后刷新恢复 outbox，按原事务确认且不重复写入，并保留他端之后的修改')
   // Exercise UUID generation and SHA-256 from an insecure LAN origin, including
   // newly-created source documents and a real binary skin resource.
   await pageA.getByLabel('筛选资源',{exact:true}).fill('')
@@ -294,7 +246,7 @@ try{
   assert.ok(removeRequest.changes.some(c=>c.op==='remove'&&c.path==='src/story/lan-flow.hflow'))
   await pageA.reload();await browserLogin(pageA,author.credential,'LAN A restored removal',false)
   await pageA.getByRole('region',{name:'工程提交状态',exact:true}).getByText('结果待确认',{exact:true}).waitFor()
-  await pageA.getByRole('button',{name:'查询提交结果',exact:true}).click()
+  await pageA.getByRole('region',{name:'工程提交状态',exact:true}).getByRole('button',{name:'查询提交结果',exact:true}).click()
   await until(async()=>await pageA.getByRole('region',{name:'工程提交状态',exact:true}).getByRole('status').innerText()==='修改已保存','Restored deletion was not confirmed')
   assert.equal(observed.filter(r=>r.transactionId===removeRequest.transactionId).length,1)
   assert.ok(!(await api(a.token,'/api/files')).entries.some(e=>e.path==='src/story/lan-flow.hflow'))
@@ -327,32 +279,28 @@ try{
   await browserLogin(tabA,author.credential,'same-context tab A');await openProgress(tabA,'shared-tabs.progress')
   await until(async()=>await tabA.getByLabel('进度标题',{exact:true}).inputValue()==='共享浏览器里的服务器标题','Shared-context initial title missing')
   await browserLogin(tabB,author.credential,'same-context tab B');await openProgress(tabB,'shared-tabs.progress')
-  await beginEditing(tabA)
-  await tabA.getByLabel('进度标题',{exact:true}).fill('只有 A 修改且还没保存的标题')
-  await until(async()=>!(await tabA.getByRole('region',{name:'工程提交状态',exact:true}).innerText()).includes('正在整理本地草稿'),'A local language mirror did not settle')
-  await until(async()=>await tabB.getByLabel('进度标题',{exact:true}).inputValue()==='共享浏览器里的服务器标题','B read another tab’s unsaved language from shared IndexedDB')
-  await endEditing(tabA)
-  await beginEditing(tabB)
+  await beginEditing(tabA);await beginEditing(tabB)
+  await tabA.getByLabel('进度标题',{exact:true}).dispatchEvent('compositionstart',{data:''})
+  await tabA.getByLabel('进度标题',{exact:true}).fill('只有 A 尚在输入的标题')
+  await sleep(800)
+  assert.equal(await tabB.getByLabel('进度标题',{exact:true}).inputValue(),'共享浏览器里的服务器标题','B read another tab’s unfinished language draft')
   const beforeTabB=observed.length
-  await tabB.getByRole('button',{name:'完成任一',exact:true}).click();await tabB.keyboard.press('Control+s')
-  await until(async()=>JSON.parse(await readFile(join(h.root,sharedSource),'utf8')).completion==='any','B source save did not complete')
-  assert.equal(JSON.parse(await readFile(join(h.root,sharedLang),'utf8')).name,'共享浏览器里的服务器标题','B accidentally submitted A’s unsaved language')
-  assert.ok(observed.slice(beforeTabB).every(r=>!r.changes.some(c=>c.path===sharedLang)),'Unchanged language was included in B’s source transaction')
-  assert.equal(await tabA.getByLabel('进度标题',{exact:true}).inputValue(),'只有 A 修改且还没保存的标题','B loading the project overwrote A’s local language cache')
-  await endEditing(tabB)
-  await until(async()=>!(await api(a.token,'/api/project')).leases.some(l=>l.resourceId===`file:${sharedSource}`||l.resourceId===`file:${sharedLang}`),'B tab did not release authoritative leases')
-  await beginEditing(tabA)
-  await tabA.keyboard.press('Control+s')
-  await until(async()=>JSON.parse(await readFile(join(h.root,sharedLang),'utf8')).name==='只有 A 修改且还没保存的标题','A could not save its isolated language draft')
-  await endEditing(tabA)
-  await until(async()=>!(await api(a.token,'/api/project')).leases.some(l=>l.resourceId===`file:${sharedSource}`||l.resourceId===`file:${sharedLang}`),'A tab did not release authoritative leases')
-  passed('同一浏览器上下文双标签页共享 IndexedDB 时，语言草稿互不串写、互不覆盖')
-
+  await tabB.getByRole('button',{name:'完成任一',exact:true}).click()
+  await until(async()=>JSON.parse(await readFile(join(h.root,sharedSource),'utf8')).completion==='any','B source operation did not complete')
+  await settled(tabB)
+  assert.equal(JSON.parse(await readFile(join(h.root,sharedLang),'utf8')).name,'共享浏览器里的服务器标题','B accidentally submitted A draft')
+  assert.ok(observed.slice(beforeTabB).every(r=>r.changes.every(c=>c.op!=='progress-command'||!JSON.parse(Buffer.from(c.content,'base64').toString()).changes.some(e=>e.target.kind==='locale'))),'B source operation contained another tab language effects')
+  assert.equal(await tabA.getByLabel('进度标题',{exact:true}).inputValue(),'只有 A 尚在输入的标题','Peer source update overwrote A draft')
+  await tabA.getByLabel('进度标题',{exact:true}).dispatchEvent('compositionend',{data:'只有 A 尚在输入的标题'})
+  await until(async()=>JSON.parse(await readFile(join(h.root,sharedLang),'utf8')).name==='只有 A 尚在输入的标题','A did not autosubmit its isolated draft')
+  await settled(tabA)
+  assert.equal(JSON.parse(await readFile(join(h.root,sharedSource),'utf8')).completion,'any')
+  assert.ok(!(await api(a.token,'/api/project')).leases.some(l=>l.resourceId===`file:${sharedSource}`||l.resourceId===`file:${sharedLang}`))
+  passed('同一浏览器上下文双标签共享 IndexedDB 时，组合输入草稿隔离，双方独立字段自动提交且不串写')
   if(!process.argv.includes('--skip-duplicate-tab')){
   await beginEditing(tabA)
-  await tabA.getByLabel('进度标题',{exact:true}).fill('仅原标签页持有的待确认提交')
   const beforeDuplicate=observed.length;dropCommitResponse=true
-  await tabA.keyboard.press('Control+s')
+  await tabA.getByLabel('进度标题',{exact:true}).fill('仅原标签页持有的待确认提交')
   await tabA.getByRole('region',{name:'工程提交状态',exact:true}).getByText('结果待确认',{exact:true}).waitFor()
   const originalRequest=observed[beforeDuplicate]
   const originalWindowId=await tabA.evaluate(()=>sessionStorage.getItem('hanshu.editWindow'))
@@ -364,7 +312,7 @@ try{
   assert.ok(!(await duplicateTab.getByRole('region',{name:'工程提交状态',exact:true}).innerText()).includes('结果待确认'),'Duplicate tab restored the original tab’s pending outbox')
   await tabA.reload();await browserLogin(tabA,author.credential,'original tab reloaded',false)
   await tabA.getByRole('region',{name:'工程提交状态',exact:true}).getByText('结果待确认',{exact:true}).waitFor()
-  await tabA.getByRole('button',{name:'查询提交结果',exact:true}).click()
+  await tabA.getByRole('region',{name:'工程提交状态',exact:true}).getByRole('button',{name:'查询提交结果',exact:true}).click()
   await until(async()=>await tabA.getByRole('region',{name:'工程提交状态',exact:true}).getByRole('status').innerText()==='修改已保存','Original tab lost its outbox after another tab was cloned')
   assert.equal(observed.filter(r=>r.transactionId===originalRequest.transactionId).length,1)
   assert.deepEqual(pageErrors,[])
