@@ -9,7 +9,7 @@ export const progress = {format:'hanshu.progress',version:1,id:'progress-test',n
 export async function harness(web = false) {
   const options=typeof web==='object'?web:{web}
   const host=options.host??'127.0.0.1'
-  const root=await mkdtemp(join(tmpdir(),'hanshu-project-test-'))
+  const root=options.root??await mkdtemp(join(tmpdir(),'hanshu-project-test-'))
   const fixtures={
     'project.json':JSON.stringify({version:1,id:'shared-test-project',name:'统一工程验收'}),
     'src/hanshu/story.hs':'标题：协作测试\n\n第一场\n\n',
@@ -23,7 +23,7 @@ export async function harness(web = false) {
   const binary=resolve('src-tauri/target/debug',process.platform==='win32'?'project-server.exe':'project-server')
   let child; let base
   async function start(port=0){
-    child=spawn(binary,['--project',root,'--listen',`${host}:${port}`,...(options.origins??[]).flatMap(origin=>['--origin',origin]),...options.web?['--web-root',resolve('dist')]:[]],{stdio:['ignore','pipe','pipe'],windowsHide:true})
+    child=spawn(binary,['--project',root,'--listen',`${host}:${port}`,...(options.origins??[]).flatMap(origin=>['--origin',origin]),...options.localProjects?['--local-projects','true']:[],...options.web?['--web-root',resolve('dist')]:[]],{stdio:['ignore','pipe','pipe'],windowsHide:true})
     let output='';let errors=''
     base=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(new Error('S startup timed out')),15000);child.stdout.on('data',c=>{output+=c;const match=/HanShu S: (http:\/\/[^\s]+)/.exec(output);if(match){clearTimeout(timer);resolve(match[1])}});child.stderr.on('data',c=>{errors+=c});child.on('error',reject);child.once('exit',code=>{clearTimeout(timer);reject(new Error(`S exit ${code}: ${errors}`))})})
   }

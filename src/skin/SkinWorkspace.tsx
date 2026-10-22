@@ -107,6 +107,12 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
   const reportDetailDirty = useCallback((entryId: string, dirty: boolean) => {
     setDetailDirty(previous => previous[entryId] === dirty ? previous : { ...previous, [entryId]: dirty })
   }, [])
+  const skinClient = project?.handle.client
+  useEffect(() => {
+    if (!skinClient || apiOwner !== skinClient) return
+    skinClient.transactions.setEditorDirty('skin:details', Object.values(detailDirty).some(Boolean) ? [SKIN_INDEX_PATH] : [])
+    return () => skinClient.transactions.setEditorDirty('skin:details', [])
+  }, [skinClient, apiOwner, detailDirty])
   const [hovered, setHovered] = useState<LibraryEntry | null>(null)
   // Selection carries the revisions that were visible when selected, including
   // off-page entries; a remote refresh cannot silently approve newer contents.

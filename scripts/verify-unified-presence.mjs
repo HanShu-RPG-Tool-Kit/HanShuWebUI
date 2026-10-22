@@ -1,3 +1,4 @@
+import {projectMenu,waitProject,collaboration,closeCollaboration,submission} from './project-ui-helpers.mjs'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { createServer, request as httpRequest } from 'node:http'
@@ -64,8 +65,8 @@ async function until(check, label, timeout = 25000) {
   while (!await check()) { assert.ok(Date.now() < deadline, label); await sleep(100) }
 }
 const active = page => page.locator('.app-workspace-pane.active')
-const bar = page => active(page).getByRole('region', { name: '当前文件协作者', exact: true })
-const resourceState = page => bar(page).getByRole('region', { name: '当前资源保存状态', exact: true })
+const bar = page => page.getByRole('region', { name: '协作面板', exact: true })
+
 const details = page => active(page).locator('aside.skinWorkspaceRight')
 const title = page => active(page).getByLabel('进度标题', { exact: true })
 const state = () => h.api(ownerToken, '/api/project')
@@ -78,47 +79,49 @@ async function presence(session, path, activity, entryId = null) {
   }, `Wrong presence for ${session.name}: ${path}/${entryId} ${activity ?? ''}`)
 }
 async function capsule(page, clientName, activity) {
-  await until(async () => await bar(page).locator(`[aria-label*="${clientName}"][aria-label*="${activity}"]`).count() > 0, `Missing ${activity} capsule for ${clientName}`)
+  await collaboration(page);await until(async () => await bar(page).locator(`[aria-label*="${clientName}"][aria-label*="${activity}"]`).count() > 0, `Missing ${activity} capsule for ${clientName}`)
 }
-async function absentCapsule(page, clientName) {
-  await until(async () => await bar(page).locator(`[aria-label*="${clientName}"]`).count() === 0, `Unrelated ${clientName} is shown for this resource`)
+async function visibleWindow(page, clientName) {
+  await collaboration(page)
+  await until(async () => await bar(page).locator(`[aria-label*="${clientName}"]`).count() > 0, `Project window ${clientName} disappeared`)
 }
 async function noLease(session) { assert.equal((await state()).leases.filter(lease => lease.sessionId === session.id).length, 0, 'Editing intent acquired a persistent write lease') }
 async function assertFree(page) {
   assert.equal(await bar(page).getByRole('button', { name: /^(开始编辑|重新申请写权|结束编辑)$/ }).count(), 0, 'Optimistic editor exposes manual write ownership')
 }
 async function login(page, credential, name) {
+  await page.addInitScript(value=>sessionStorage.setItem('hanshu.windowName',value),name)
   await page.goto(base)
-  await page.getByRole('button', { name: '打开工程…', exact: true }).click()
-  const form = page.getByRole('form', { name: '打开工程', exact: true })
+  await projectMenu(page,'连接其他服务器…')
+  const form = page.getByRole('form',{name:'连接其他服务器',exact:true})
   await form.getByLabel('服务地址', { exact: true }).fill(base)
   await form.getByLabel('主体凭证', { exact: true }).fill(credential)
-  await form.getByLabel('本端名称', { exact: true }).fill(name)
+
   const reply = page.waitForResponse(response => new URL(response.url()).pathname === '/api/sessions' && response.request().method() === 'POST')
   await form.getByRole('button', { name: '连接并打开工程', exact: true }).click()
   const { token } = await (await reply).json()
-  await page.locator('.project-service-bar').getByText('统一工程验收', { exact: true }).waitFor()
+  await waitProject(page,'统一工程验收')
   return { token, id: (await h.api(token, '/api/project')).session.id, name }
 }
 async function openProgressFile(page, name) {
   await page.getByRole('tab', { name: '进度流程', exact: true }).click()
   await active(page).getByLabel('筛选资源', { exact: true }).fill(name)
   await active(page).locator(`[role=treeitem][title="${name}"]`).click()
-  await bar(page).waitFor(); await resourceState(page).waitFor()
+  await closeCollaboration(page)
 }
-async function openSkin(page, name) {
+async function openSkin(page, name) { await closeCollaboration(page)
   await page.getByRole('tab', { name: '皮肤管理器', exact: true }).click()
   await active(page).locator('.skinWorkspaceCenter').getByRole('button').filter({ has: page.getByText(name, { exact: true }) }).first().click()
   await details(page).getByTitle('点击编辑名称', { exact: true }).waitFor()
-  await bar(page).waitFor(); await resourceState(page).waitFor()
+  await closeCollaboration(page)
 }
-async function editSkinName(page, value) {
+async function editSkinName(page, value) { await closeCollaboration(page)
   const input = details(page).getByLabel('名称', { exact: true })
   if (!await input.count()) await details(page).getByTitle('点击编辑名称', { exact: true }).click()
   await input.fill(value)
   return input
 }
-async function saved(page) { await until(async () => /^(已同步|修改已保存|已保存)$/.test(await resourceState(page).getByRole('status').innerText()), 'Current resource did not settle') }
+async function saved(page) { await until(async () => /^(已同步|修改已保存|已保存)$/.test(await (await submission(page)).getByRole('status').innerText()), 'Current resource did not settle');await closeCollaboration(page) }
 function skinFixture() {
   const rgba = Buffer.alloc(64 * 64 * 4, 255), canonical = Buffer.alloc(15 + rgba.length)
   canonical.write('HSKN'); canonical[4] = 1; canonical.writeUInt16BE(64, 7); canonical.writeUInt16BE(64, 9); canonical.writeUInt32BE(rgba.length, 11); rgba.copy(canonical, 15)
@@ -146,17 +149,17 @@ try {
   }
   const [a, b, v] = pages
   const [sa, sb, sv] = await Promise.all([login(a, editor.credential, '窗口 A'), login(b, editor.credential, '窗口 B'), login(v, viewer.credential, '审阅窗口')])
-  await Promise.all(pages.map(async page => { await page.getByRole('tab', { name: '剧本', exact: true }).click(); await bar(page).waitFor(); await resourceState(page).waitFor() }))
+  await Promise.all(pages.map(async page => { await page.getByRole('tab', { name: '剧本', exact: true }).click(); await collaboration(page) }))
   await Promise.all([presence(sa, scriptPath, 'viewing'), presence(sb, scriptPath, 'viewing'), presence(sv, scriptPath, 'viewing')])
   for (const page of pages) { await capsule(page, '窗口 A', '查看中'); await capsule(page, '窗口 B', '查看中'); await capsule(page, '审阅窗口', '查看中'); await assertFree(page) }
   await noLease(sa); await noLease(sb); await noLease(sv)
   assert.match(await bar(v).innerText(), /只读/)
-  passed('剧本使用统一头像和保存状态；两个编辑窗口与只读主体可见，查看不获取写权')
+  passed('剧本使用统一悬浮协作面板；两个编辑窗口与只读主体可见，查看不获取写权')
 
   await active(a).locator('.monaco-editor .view-lines').first().click()
   await a.keyboard.press('Control+a'); await a.keyboard.type('shared script presence draft\n')
   await presence(sa, scriptPath, 'editing'); await capsule(b, '窗口 A', '编辑中'); await noLease(sa)
-  assert.match(await resourceState(a).innerText(), /未保存/)
+  assert.match(await (await submission(a)).innerText(), /待保存/)
   assert.equal(await readFile(join(h.root, scriptPath), 'utf8'), h.fixtures[scriptPath])
   await a.keyboard.press('Control+s')
   await until(async () => (await readFile(join(h.root, scriptPath), 'utf8')).includes('shared script presence draft'), 'Script did not save')
@@ -166,19 +169,19 @@ try {
   passed('剧本本地输入显示编辑中和未保存，不持有长期写权；提交成功同步内容并清除草稿状态')
 
   await Promise.all([openProgressFile(a, 'presence.hflow'), openProgressFile(b, 'presence.hflow')])
-  await presence(sa, flowPath, 'viewing'); await presence(sb, flowPath, 'viewing'); await absentCapsule(a, '审阅窗口'); await assertFree(a)
+  await presence(sa, flowPath, 'viewing'); await presence(sb, flowPath, 'viewing'); await visibleWindow(a, '审阅窗口'); await assertFree(a)
   const startNode = active(a).getByRole('button', { name: '开始节点（信号源），不可删除；Ctrl+点击发出 S(未激活 → 已激活)', exact: true })
   const rect = await startNode.boundingBox(); assert.ok(rect)
   await a.mouse.move(rect.x + 45, rect.y + 15); await a.mouse.down(); await a.mouse.move(rect.x + 130, rect.y + 60, { steps: 10 }); await a.mouse.up()
   await presence(sa, flowPath, 'editing'); await capsule(b, '窗口 A', '编辑中'); await noLease(sa)
-  assert.match(await resourceState(a).innerText(), /未保存/)
+  assert.match(await (await submission(a)).innerText(), /待保存/)
   await a.keyboard.press('Control+s')
   await until(async () => JSON.parse(await readFile(join(h.root, flowPath), 'utf8')).layout.positions.entry.x !== 80, 'Flow movement did not save')
   await saved(a); await presence(sa, flowPath, 'viewing')
   passed('流程节点移动采用相同的编辑意图、未保存和已保存状态，仍由保存时短租约保护')
 
   await Promise.all([openProgressFile(a, 'example.progress'), openProgressFile(b, 'example.progress'), openProgressFile(v, 'example.progress')])
-  await presence(sa, progressPath, 'viewing'); assert.ok(await title(a).isEnabled()); assert.ok(await title(v).isDisabled())
+  await presence(sa, progressPath, 'viewing'); await until(()=>title(a).isEnabled(),'Progress writer not ready'); assert.ok(await title(v).isDisabled())
   await assertFree(a); await assertFree(b); await noLease(sa)
   // Hold the command before S sees it so the meaningful editing interval is
   // observable even when a local service commits faster than a browser frame.
@@ -202,42 +205,43 @@ try {
 
   await Promise.all([openSkin(a, '协作皮肤 A'), openSkin(b, '协作皮肤 A'), openSkin(v, '协作皮肤 B')])
   await Promise.all([presence(sa, indexPath, 'viewing', 'presence-skin-a'), presence(sb, indexPath, 'viewing', 'presence-skin-a'), presence(sv, indexPath, 'viewing', 'presence-skin-b')])
-  await capsule(a, '窗口 B', '查看中'); await absentCapsule(a, '审阅窗口'); await absentCapsule(v, '窗口 A'); await assertFree(a)
+  await capsule(a, '窗口 B', '查看中'); await visibleWindow(a, '审阅窗口'); await visibleWindow(v, '窗口 A'); await assertFree(a)
   assert.ok(await details(v).getByTitle('点击编辑名称', { exact: true }).isDisabled(), 'A read-only skin visitor can edit metadata')
   const draftName = await editSkinName(a, '皮肤 A 的本地草稿')
   await presence(sa, indexPath, 'editing', 'presence-skin-a'); await capsule(b, '窗口 A', '编辑中'); await noLease(sa)
-  assert.match(await resourceState(a).innerText(), /未保存/)
+  assert.match(await a.getByRole('button', {name:'打开协作面板',exact:true}).getAttribute('title'), /待保存/)
   assert.equal((await diskEntry('presence-skin-a')).name, '协作皮肤 A')
   await openSkin(b, '协作皮肤 B'); await presence(sb, indexPath, 'viewing', 'presence-skin-b')
-  await absentCapsule(a, '窗口 B'); await capsule(b, '审阅窗口', '查看中')
+  await capsule(b, '审阅窗口', '查看中')
   await draftName.press('Enter'); await until(async () => (await diskEntry('presence-skin-a')).name === '皮肤 A 的本地草稿', 'Skin draft did not save')
+  await visibleWindow(a, '窗口 B')
   await saved(a); await presence(sa, indexPath, 'viewing', 'presence-skin-a')
-  passed('皮肤以选中条目区分协作者；同条目编辑意图可见，不同条目互不混淆且不因在线状态加锁')
+  passed('皮肤显示各窗口的选中条目；编辑意图可见且不因在线状态加锁')
 
   await h.api(ownerToken, '/api/files/leases', 'POST', { paths: [indexPath] })
   await (await editSkinName(a, '写权冲突后保留的名称')).press('Enter')
-  await until(async () => /冲突|写权|锁定/.test(await resourceState(a).innerText()), 'Skin failure did not appear at current resource')
+  await until(async () => /冲突|写权|锁定/.test(await (await submission(a)).innerText()), 'Skin failure did not appear at current resource')
   assert.equal((await diskEntry('presence-skin-a')).name, '皮肤 A 的本地草稿')
   await a.screenshot({ path: join(output, 'skin-inline-conflict.png') })
   await openSkin(a, '协作皮肤 B'); await presence(sa, indexPath, 'viewing', 'presence-skin-b')
-  assert.ok(!/提交冲突|提交失败|结果待确认|重试原提交/.test(await resourceState(a).innerText()), 'Another skin inherited the first skin failure')
+  assert.match(await (await submission(a)).innerText(), /提交冲突|写权/, 'Switching resources must not hide a recoverable project failure')
   await openSkin(a, '皮肤 A 的本地草稿')
-  await resourceState(a).getByRole('button', { name: '重试原提交', exact: true }).waitFor()
+  await (await submission(a)).getByRole('button', { name: '重试原提交', exact: true }).waitFor()
   assert.ok((await details(a).innerText()).includes('写权冲突后保留的名称') || await details(a).getByLabel('名称', { exact: true }).inputValue().catch(() => '') === '写权冲突后保留的名称', 'Skin input was lost during resource switch')
   await h.release(ownerToken)
-  await resourceState(a).getByRole('button', { name: '重试原提交', exact: true }).click()
+  await (await submission(a)).getByRole('button', { name: '重试原提交', exact: true }).click()
   await until(async () => (await diskEntry('presence-skin-a')).name === '写权冲突后保留的名称', 'Inline retry did not save original input')
   await saved(a)
-  passed('失败状态留在对应皮肤现场，切换条目不误报；返回后输入仍在并可原地重试')
+  passed('悬浮窗保留原皮肤的失败记录，切换后仍可查找；输入保留并可重试原提交')
 
   dropNextPatch = true
   await (await editSkinName(a, '成功回复丢失的名称')).press('Enter')
-  await until(async () => /待确认|结果未知|尚未确认/.test(await resourceState(a).innerText()), 'Lost reply did not become uncertain inline')
+  await until(async () => /待确认|结果未知|尚未确认/.test(await (await submission(a)).innerText()), 'Lost reply did not become uncertain inline')
   assert.equal((await diskEntry('presence-skin-a')).name, '成功回复丢失的名称')
-  assert.equal(await resourceState(a).getByRole('button', { name: /放弃|丢弃/ }).count(), 0, 'Unknown outcome can be discarded from inline status')
+  assert.equal(await (await submission(a)).getByRole('button', { name: /放弃|丢弃/ }).count(), 0, 'Unknown outcome can be discarded from inline status')
   const beforeConfirm = observed.length
   await a.screenshot({ path: join(output, 'skin-inline-uncertain.png') })
-  await resourceState(a).getByRole('button', { name: /查询.*结果|确认.*结果/ }).click()
+  await (await submission(a)).getByRole('button', { name: /查询.*结果|确认.*结果/ }).click()
   await saved(a)
   assert.equal(observed.length, beforeConfirm, 'Querying an unknown result resubmitted a new mutation')
   passed('成功回复丢失在当前条目标记待确认，可原地查询原回执且不会重复提交或丢弃未知结果')
@@ -261,31 +265,33 @@ try {
 
   const offlineDraft = await editSkinName(a, '断线保留的皮肤输入')
   await a.context().setOffline(true)
-  await until(async () => /断开|离线/.test(await bar(a).innerText()), 'Offline state not shown at resource', 30000)
+  await until(async () => await a.locator('.collab-widget').getAttribute('data-online') === 'false', 'Offline state not shown at resource', 30000)
   assert.equal(await offlineDraft.inputValue(), '断线保留的皮肤输入')
   await a.context().setOffline(false)
-  await until(async () => !/断开|离线/.test(await bar(a).innerText()), 'Connection did not recover', 30000)
+  await until(async () => await a.locator('.collab-widget').getAttribute('data-online') === 'true', 'Connection did not recover', 30000)
   await presence(sa, indexPath, 'editing', 'presence-skin-a'); await noLease(sa)
   assert.equal(await offlineDraft.inputValue(), '断线保留的皮肤输入')
   await offlineDraft.press('Enter'); await until(async () => (await diskEntry('presence-skin-a')).name === '断线保留的皮肤输入', 'Reconnected skin draft did not save')
   await saved(a)
-  await until(async () => !/Failed to fetch/.test(await a.locator('.project-service-bar').innerText()), 'A recovered connection still displays its previous network failure')
+  await collaboration(a)
+  await until(async () => !/Failed to fetch/.test(await bar(a).innerText()), 'A recovered connection still displays its previous network failure')
   passed('断线保留皮肤输入；重连恢复当前条目编辑意图，不凭在线状态恢复或持有写锁')
 
   await a.getByRole('tab', { name: '剧本', exact: true }).click(); await presence(sa, scriptPath, 'viewing')
-  await absentCapsule(b, '窗口 A')
+  await visibleWindow(b, '窗口 A')
   await openProgressFile(a, 'presence.hflow'); await presence(sa, flowPath, 'viewing')
   await (await editSkinName(b, '另一窗口更新的皮肤 B')).press('Enter'); await saved(b)
   await sleep(1200); await presence(sa, flowPath, 'viewing')
   await openSkin(a, '另一窗口更新的皮肤 B'); await presence(sa, indexPath, 'viewing', 'presence-skin-b'); await capsule(b, '窗口 A', '查看中')
   await sleep(1200); await presence(sa, indexPath, 'viewing', 'presence-skin-b')
   assert.equal((await state()).sessions.filter(session => session.subjectId === editor.subject.id).length, 2, 'Changing workspaces created new sessions')
+  await collaboration(a)
   await a.screenshot({ path: join(output, 'unified-skin-wide.png') })
   await a.setViewportSize({ width: 900, height: 950 })
   await a.screenshot({ path: join(output, 'unified-skin-narrow.png') })
   const bounds = await bar(a).boundingBox(); assert.ok(bounds && bounds.x >= 0 && bounds.x + bounds.width <= 901, 'Collaborator bar overflows narrow viewport')
   await a.setViewportSize({ width: 1500, height: 1060 })
-  passed('跨工作区切换准确转移当前资源，隐藏编辑器不清除新焦点；窄窗口头像状态栏不溢出')
+  passed('跨工作区更新窗口焦点，隐藏编辑器不清除新焦点；窄窗口悬浮面板不溢出')
 
   assert.deepEqual(pageErrors, [])
   await writeFile(join(output, 'acceptance.json'), JSON.stringify({ date: new Date().toISOString(), protocol: 10, transport: 'real HTTP/WebSocket through loopback fault proxy', physicalDevices: 1, secondPhysicalDeviceTested: false, browserContexts: 3, browserPages: 3, results, observedCommitRequests: observed.length }, null, 2))

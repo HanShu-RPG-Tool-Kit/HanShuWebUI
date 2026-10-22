@@ -11,7 +11,15 @@ npm install
 npm run dev
 ```
 
-一条命令启动 Vite 与 Rust S。浏览器访问 `http://localhost:5173`，点击全局「打开工程…」连接服务。Web 开发的管理者凭证在 `.hanshu-project/.hanshu/service/owner-key`，不写进前端代码或公开接口。
+一条命令启动 Vite 与 Rust S。浏览器访问 `http://localhost:5173`，使用「文件 → 打开工程…」。Web 开发的管理者凭证在 `.hanshu-project/.hanshu/service/owner-key`，不写进前端代码或公开接口。
+
+本机使用「文件 → 打开工程… → 打开本机工程…」，选择工程文件夹，由本机 S 打开并自动连接，无需手填地址和凭证。新建使用「文件 → 新建工程…」，填写工程名称、选择保存位置，S 创建独立子文件夹；已有目录不会被覆盖。目录浏览与取消不写入候选文件夹。同一目录复用服务，切换工程不影响其他窗口正在使用的工程。
+
+多人使用：「文件 → 分享工程…」，开启局域网共享，选择「可编辑／只读」和有效期，生成并复制邀请链接。对方在同一局域网的浏览器打开链接，只需填写显示名即可加入；刷新会恢复同一身份。面板可调整权限、移除加入者和撤销邀请；关闭共享不影响本机继续编辑。无需手工重启 S、查 IP 或填写凭证。Windows 若阻止连接，可在本机面板点击「允许防火墙访问」，按系统提示授权。
+
+右下角协作浮球可拖动，点击展开成员、各窗口焦点和本机修改。多个窗口按同一主体分组，多文件草稿与失败恢复集中在「修改」页；收起时保存失败仍有提示。连接其他已有服务的地址与凭证位于「文件 → 连接其他服务器…」。
+
+开发启动会先构建供局域网浏览器使用的网页资源；本机 Vite 继续热更新。桌面发行版直接使用内置资源，不附带 Node.js。当前共享提供局域网 HTTP，不包含公网穿透。
 
 - `npm run dev:ui`：只启动前端。
 - `npm run server`：只启动 Rust 服务，开发源码修改后自动重建。
@@ -20,9 +28,11 @@ npm run dev
 
 连接服务即打开整个工程。剧本、进度、流程图、脚本、礼包、物品、导航点、语言/音频资产和皮肤库共用一套工程服务。C 只保存窗口草稿与缓存；S 持有工程目录，执行经过主体权限、写权和版本验证的修改。客户端不再持有工程目录的文件系统写句柄，也不通过皮肤 IPC 旁路写入。
 
-开发服务默认管理 `.hanshu-project/`，可用 `HANSHU_PROJECT_DIR` 指向已有的普通工程目录。桌面版自动连接内置 S，也可在打开窗口中选择「由本机服务打开文件夹…」或连接远端 S。
+开发服务默认工程为 `.hanshu-project/`，可用 `HANSHU_PROJECT_DIR` 指定启动时的默认目录，也可从本机目录选择器打开其他工程。桌面版自动连接内置 S，也可在打开窗口中选择「由本机服务打开文件夹…」或连接远端 S。
 
 完整启动、中心服务部署、存储边界、协议和验证见 [工程协作服务](src/help/docs/collaboration-service.md)。
+
+开发或让 Agent 修改工程编辑功能前，先读 [多人协作编程指南](src/help/docs/collaboration-programming.md)：所有工程资源的接入范围、版本与事务规则、失败恢复及验证入口均在这里。
 
 全局「工程历史」由 S 保存，所有工作区和协作者读取同一份历史。每笔有效事务立即留档，界面按编辑时段聚合；可命名版本、比较文件、恢复资源或整个工程。恢复经过权限、写权与版本校验，并生成新版本。旧浏览器本地历史可单独导出。
 
@@ -35,6 +45,11 @@ cargo test -p project-core --manifest-path src-tauri/Cargo.toml
 cargo build -p project-server --manifest-path src-tauri/Cargo.toml
 npm run check:protocol
 npm run test:project-boundary
+npm run test:local-projects
+npm run test:local-projects:ui
+npm run test:local-projects:proxy
+npm run test:project-sharing
+npm run test:project-sharing:ui
 npm run test:collaboration
 npm run test:resource-policy
 npm run test:project-history

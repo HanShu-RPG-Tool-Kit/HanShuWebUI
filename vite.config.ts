@@ -1,12 +1,13 @@
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
+import { localProjectBoundary } from './scripts/local-project-proxy.js'
 
 const host = process.env.TAURI_DEV_HOST
 const isTauri = Boolean(process.env.TAURI_ENV_PLATFORM)
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react()],
+  plugins: [localProjectBoundary(), react()],
   // 避免清屏盖住 Rust / Tauri 报错
   clearScreen: false,
   server: {

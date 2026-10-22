@@ -10,8 +10,8 @@ const rust = rustCommand(root)
 const children = new Set()
 let shuttingDown = false; let server; let building = false; let pending = false; let timer
 const watchers = []
-function launch(command, args) {
-  const child = spawn(command, args, { cwd: root, env: rust.env, stdio: 'inherit', windowsHide: true })
+function launch(command, args, env = {}) {
+  const child = spawn(command, args, { cwd: root, env: {...rust.env, ...env}, stdio: 'inherit', windowsHide: true })
   children.add(child); child.on('exit', () => children.delete(child)); return child
 }
 function stop(child) {
@@ -30,7 +30,7 @@ async function rebuild() {
   building = false
   if (shuttingDown) return
   if (code !== 0) { console.error('S 编译失败，修复后保存 Rust 文件会重试。'); return }
-  const running = launch(resolve(root, 'src-tauri/target/debug', executable('project-server')), ['--project', process.env.HANSHU_PROJECT_DIR ?? '.hanshu-project', '--listen', '127.0.0.1:47831'])
+  const running = launch(resolve(root, 'src-tauri/target/debug', executable('project-server')), ['--project', process.env.HANSHU_PROJECT_DIR ?? '.hanshu-project', '--listen', '127.0.0.1:47831', '--local-projects', 'true'], {HANSHU_WEB_ROOT: resolve(root, 'dist')})
   server = running
   running.once('exit', code => { if (server === running && !shuttingDown) { console.error(`工程服务退出：${code}`); shutdown(code ?? 1) } })
   if (pending) void rebuild()
@@ -42,4 +42,7 @@ if (!process.argv.includes('--server-only')) {
   const vite = launch(process.execPath, ['node_modules/vite/bin/vite.js'])
   vite.once('error', e => { console.error(e.message); shutdown(1) }); vite.once('exit', code => shutdown(code ?? 0))
 }
-void rebuild()
+// LAN guests receive the built application directly from S, without a dev proxy.
+const web = launch(process.execPath, ['node_modules/vite/bin/vite.js', 'build'])
+web.once('error', e => { console.error(e.message); shutdown(1) })
+web.once('exit', code => { if (code === 0) void rebuild(); else shutdown(code ?? 1) })

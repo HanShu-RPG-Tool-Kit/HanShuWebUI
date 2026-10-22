@@ -1,3 +1,4 @@
+import {projectMenu,waitProject,submission,closeCollaboration} from './project-ui-helpers.mjs'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { createServer, request as httpRequest } from 'node:http'
@@ -107,30 +108,30 @@ async function patch(token, entryId, changes) {
   finally { await h.release(token) }
 }
 async function browserLogin(page, credential, name, navigate = true) {
+  await page.addInitScript(value=>sessionStorage.setItem('hanshu.windowName',value),name)
   if (navigate) await page.goto(base)
-  await page.getByRole('button', { name: '打开工程…', exact: true }).click()
-  const form = page.getByRole('form', { name: '打开工程', exact: true })
+  await projectMenu(page,'连接其他服务器…')
+  const form = page.getByRole('form',{name:'连接其他服务器',exact:true})
   await form.getByLabel('服务地址', { exact: true }).fill(base)
   await form.getByLabel('主体凭证', { exact: true }).fill(credential)
-  await form.getByLabel('本端名称', { exact: true }).fill(name)
+
   await form.getByRole('button', { name: '连接并打开工程', exact: true }).click()
-  await page.locator('.project-service-bar').getByText('统一工程验收', { exact: true }).waitFor()
+  await waitProject(page,'统一工程验收')
   await page.getByRole('tab', { name: '皮肤管理器', exact: true }).click()
 }
-const submitState = page => page.getByRole('region', { name: '工程提交状态', exact: true })
 const card = (page, name) => page.locator('.skinWorkspaceCenter').getByRole('button').filter({ has: page.getByText(name, { exact: true }) }).first()
-async function selectCard(page, name) {
+async function selectCard(page, name) { await closeCollaboration(page);
   await card(page, name).hover()
   await page.getByRole('checkbox', { name: `选择 ${name}`, exact: true }).check()
 }
-async function saved(page) { await until(async () => await submitState(page).getByRole('status').innerText() === '修改已保存', 'Client did not settle') }
-async function skinRoot(page) { await page.getByRole('navigation', { name: '快速访问' }).getByRole('button', { name: '皮肤库', exact: true }).click() }
-async function openNewFolder(page) {
+async function saved(page) { await until(async () => await (await submission(page)).getByRole('status').innerText() === '修改已保存', 'Client did not settle'); await closeCollaboration(page) }
+async function skinRoot(page) { await closeCollaboration(page); await page.getByRole('navigation', { name: '快速访问' }).getByRole('button', { name: '皮肤库', exact: true }).click() }
+async function openNewFolder(page) { await closeCollaboration(page);
   await page.locator('.skinWorkspaceLeft').getByText('文件夹', { exact: true }).click({ button: 'right' })
   await page.getByRole('menuitem', { name: '新建文件夹', exact: true }).click()
   return page.getByRole('dialog', { name: '在根目录新建文件夹', exact: true })
 }
-async function openImport(page, skin, name) {
+async function openImport(page, skin, name) { await closeCollaboration(page);
   await skinRoot(page)
   await page.locator('.skinWorkspaceCenter [class*="browsePane"]').dispatchEvent('contextmenu', { clientX: 500, clientY: 400 })
   await page.getByRole('menuitem', { name: '导入到这里', exact: true }).click()
@@ -245,11 +246,11 @@ try {
     await h.api(owner.token, '/api/files/leases', 'POST', { paths: [indexPath] })
     const beforeLocked = observed.length
     await newFolder.getByRole('button', { name: '创建', exact: true }).click()
-    await submitState(pageA).getByText('提交冲突', { exact: true }).waitFor()
+    await (await submission(pageA)).getByText('提交冲突', { exact: true }).waitFor()
     assert.equal(await newFolder.getByPlaceholder('文件夹名称', { exact: true }).inputValue(), '保留创建输入')
     assert.equal(observed.slice(beforeLocked).filter(commandOf).length, 0)
     await h.release(owner.token)
-    await submitState(pageA).getByRole('button', { name: '重试原提交', exact: true }).click()
+    await (await submission(pageA)).getByRole('button', { name: '重试原提交', exact: true }).click()
     await saved(pageA)
     await until(async () => (await diskIndex()).folders.some(folder => folder.name === '保留创建输入'), 'Folder retry did not persist')
     if (await newFolder.isVisible()) await newFolder.getByRole('button', { name: '取消', exact: true }).click()
@@ -289,11 +290,11 @@ try {
     const move = pageA.getByRole('dialog', { name: '移动到文件夹', exact: true })
     await h.api(owner.token, '/api/files/leases', 'POST', { paths: [indexPath] })
     await move.getByRole('button', { name: '保留创建输入', exact: true }).click()
-    await submitState(pageA).getByText('提交冲突', { exact: true }).waitFor()
+    await (await submission(pageA)).getByText('提交冲突', { exact: true }).waitFor()
     assert.ok(await move.isVisible()); await toolbar.getByText('已勾选 1 项', { exact: true }).waitFor()
     assert.equal((await diskEntry('browser-a')).folderId, null)
     await h.release(owner.token)
-    await submitState(pageA).getByRole('button', { name: '重试原提交', exact: true }).click(); await saved(pageA)
+    await (await submission(pageA)).getByRole('button', { name: '重试原提交', exact: true }).click(); await saved(pageA)
     const destination = (await diskIndex()).folders.find(folder => folder.name === '保留创建输入')
     assert.equal((await diskEntry('browser-a')).folderId, destination.folderId)
     if (await move.isVisible()) await move.getByRole('button', { name: '关闭', exact: true }).click()
@@ -309,12 +310,12 @@ try {
     await bDetails.getByLabel('名称', { exact: true }).press('Enter'); await saved(pageB)
     await card(pageA, '浏览器 B 更新被选项').waitFor()
     await toolbar.getByRole('button', { name: '批量禁用', exact: true }).click()
-    await submitState(pageA).getByText('提交冲突', { exact: true }).waitFor()
+    await (await submission(pageA)).getByText('提交冲突', { exact: true }).waitFor()
     assert.equal((await diskEntry('browser-b')).active, true)
     await toolbar.getByText('已勾选 1 项', { exact: true }).waitFor()
-    assert.equal(await submitState(pageA).getByRole('button', { name: '处理冲突', exact: true }).count(), 0)
-    assert.equal(await submitState(pageA).getByRole('button', { name: '重试原提交', exact: true }).count(), 0)
-    await submitState(pageA).getByRole('button', { name: '放弃原操作，刷新皮肤库', exact: true }).click(); await saved(pageA)
+    assert.equal(await (await submission(pageA)).getByRole('button', { name: '处理冲突', exact: true }).count(), 0)
+    assert.equal(await (await submission(pageA)).getByRole('button', { name: '重试原提交', exact: true }).count(), 0)
+    await (await submission(pageA)).getByRole('button', { name: '放弃原操作，刷新皮肤库', exact: true }).click(); await saved(pageA)
     if (await toolbar.isVisible()) await toolbar.getByRole('button', { name: '取消选择', exact: true }).click()
     passed('勾选时的条目版本不会被远端刷新静默替换；过期批量操作拒绝并保留选择，不提供整库 JSON 覆盖')
 
@@ -329,13 +330,13 @@ try {
     await importButton.waitFor()
     const beforeImport = observed.length
     dropCommand = 'import-entry'; await importButton.click()
-    await submitState(pageA).getByText('结果待确认', { exact: true }).waitFor()
+    await (await submission(pageA)).getByText('结果待确认', { exact: true }).waitFor()
     const imported = observed.slice(beforeImport).find(request => commandOf(request)?.command === 'import-entry')
     assert.ok(imported)
     const importedId = commandOf(imported).entry.entryId
     assert.ok(await diskEntry(importedId)); assert.ok((await h.files(a.token)).entries.some(entry => entry.path === uiSkin.objectPath))
     await importer.getByRole('button', { name: '关闭', exact: true }).last().click()
-    await submitState(pageA).getByRole('button', { name: '查询提交结果', exact: true }).click(); await saved(pageA)
+    await (await submission(pageA)).getByRole('button', { name: '查询提交结果', exact: true }).click(); await saved(pageA)
     assert.equal(observed.filter(request => request.transactionId === imported.transactionId).length, 1)
     assert.equal((await diskIndex()).entries.filter(entry => entry.entryId === importedId).length, 1)
     await card(pageB, (await diskEntry(importedId)).name).waitFor()
@@ -345,11 +346,11 @@ try {
     const beforeDelete = observed.length
     acceptDeletion = true; dropCommand = 'delete-entries'
     await pageA.getByRole('menuitem', { name: '删除', exact: true }).click()
-    await submitState(pageA).getByText('结果待确认', { exact: true }).waitFor(); acceptDeletion = false
+    await (await submission(pageA)).getByText('结果待确认', { exact: true }).waitFor(); acceptDeletion = false
     const deleted = observed.slice(beforeDelete).find(request => commandOf(request)?.command === 'delete-entries')
     assert.ok(deleted); assert.ok(!(await diskEntry(importedId)))
     await pageA.reload(); await browserLogin(pageA, author.credential, '管理 A 恢复删除回执', false)
-    await submitState(pageA).getByRole('button', { name: '查询提交结果', exact: true }).click(); await saved(pageA)
+    await (await submission(pageA)).getByRole('button', { name: '查询提交结果', exact: true }).click(); await saved(pageA)
     assert.equal(observed.filter(request => request.transactionId === deleted.transactionId).length, 1)
     assert.ok(!(await diskEntry(importedId))); assert.ok((await h.files(a.token)).entries.some(entry => entry.path === uiSkin.objectPath))
     passed('浏览器删除成功回复丢失后刷新恢复事务并查询确认，不重复删除，也不误删共享对象')

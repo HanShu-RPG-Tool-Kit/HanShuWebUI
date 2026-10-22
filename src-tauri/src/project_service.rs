@@ -1,12 +1,20 @@
 //! Desktop host only: the project service itself has no Tauri dependency.
 use project_server::{LocalConnection, Service};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 
 pub struct ProjectService {
     connection: Mutex<LocalConnection>,
     _service: Mutex<Service>,
+}
+fn share_assets(service: &Service, app: &tauri::AppHandle) {
+    let resolver = app.asset_resolver();
+    service.set_share_web_assets(Arc::new(move |path| {
+        resolver
+            .get(path.to_owned())
+            .map(|asset| (asset.bytes, asset.mime_type))
+    }));
 }
 impl ProjectService {
     pub fn init(app: &tauri::AppHandle) -> Result<Self, String> {
@@ -34,6 +42,7 @@ impl ProjectService {
         let service =
             tauri::async_runtime::block_on(project_server::start(&root, address, origins, None))
                 .map_err(|e| e.to_string())?;
+        share_assets(&service, app);
         let credential = std::fs::read_to_string(root.join(".hanshu/service/owner-key"))
             .map_err(|e| e.to_string())?;
         Ok(Self {
@@ -63,9 +72,12 @@ pub fn project_local_connection(
 pub async fn project_open_local(
     app: tauri::AppHandle,
     state: tauri::State<'_, ProjectService>,
+    name: Option<String>,
 ) -> Result<LocalConnection, String> {
+    let chooser = app.clone();
     let selected = tauri::async_runtime::spawn_blocking(move || {
-        app.dialog()
+        chooser
+            .dialog()
             .file()
             .set_title("由本机服务打开工程目录")
             .blocking_pick_folder()
@@ -73,7 +85,12 @@ pub async fn project_open_local(
     .await
     .map_err(|e| e.to_string())?
     .ok_or("已取消打开工程")?;
-    let root = selected.into_path().map_err(|e| e.to_string())?;
+    let parent = selected.into_path().map_err(|e| e.to_string())?;
+    let root = if let Some(name) = name {
+        project_server::create_project_directory(&parent, &name).map_err(|e| e.to_string())?
+    } else {
+        parent
+    };
     let service = project_server::start(
         &root,
         "127.0.0.1:0".parse().unwrap(),
@@ -85,6 +102,7 @@ pub async fn project_open_local(
     )
     .await
     .map_err(|e| e.to_string())?;
+    share_assets(&service, &app);
     let credential = std::fs::read_to_string(root.join(".hanshu/service/owner-key"))
         .map_err(|e| e.to_string())?;
     let connection = LocalConnection {

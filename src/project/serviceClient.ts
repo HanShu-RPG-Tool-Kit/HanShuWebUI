@@ -529,11 +529,11 @@ export class ProjectDirectory {
 }
 
 let connected: ProjectClient | null = null
-let connector: (() => Promise<ProjectClient>) | null = null
+let connector: ((mode: 'open' | 'create') => Promise<ProjectClient>) | null = null
 export function getProjectClient() { return connected }
 export function setProjectClient(client: ProjectClient | null) { connected = client }
-export function registerProjectConnector(fn: () => Promise<ProjectClient>) { connector = fn; return () => { if (connector === fn) connector = null } }
-export function requestProjectConnection(): Promise<ProjectClient> {
+export function registerProjectConnector(fn: (mode: 'open' | 'create') => Promise<ProjectClient>) { connector = fn; return () => { if (connector === fn) connector = null } }
+export function requestProjectConnection(mode: 'open' | 'create' = 'open'): Promise<ProjectClient> {
   if (!connector) return Promise.reject(new Error('工程连接窗口尚未就绪'))
-  return connector()
+  return connector(mode)
 }

@@ -1,3 +1,4 @@
+import {projectMenu,waitProject,submission,closeCollaboration} from './project-ui-helpers.mjs'
 import assert from 'node:assert/strict'
 import { createHash, randomUUID } from 'node:crypto'
 import { createServer, request as httpRequest } from 'node:http'
@@ -117,23 +118,23 @@ function skinFixture() {
   return { objectPath: `.hanshu/skinmanager/objects/${skinId.slice(0, 2)}/${skinId}.skin`, object, pngPath: `.hanshu/skinmanager/cache/png/${skinId}.png`, png, index: { schemaVersion: 5, revision: 1, folders: [], entries: [entry('skin-entry-a', '皮肤 A'), entry('skin-entry-b', '皮肤 B')] } }
 }
 async function browserLogin(page, credential, name, navigate = true) {
+  await page.addInitScript(value=>sessionStorage.setItem('hanshu.windowName',value),name)
   if (navigate) await page.goto(base)
-  await page.getByRole('button', { name: '打开工程…', exact: true }).click()
-  const form = page.getByRole('form', { name: '打开工程', exact: true })
+  await projectMenu(page,'连接其他服务器…')
+  const form = page.getByRole('form',{name:'连接其他服务器',exact:true})
   await form.getByLabel('服务地址', { exact: true }).fill(base)
   await form.getByLabel('主体凭证', { exact: true }).fill(credential)
-  await form.getByLabel('本端名称', { exact: true }).fill(name)
+
   await form.getByRole('button', { name: '连接并打开工程', exact: true }).click()
-  await page.locator('.project-service-bar').getByText('统一工程验收', { exact: true }).waitFor()
+  await waitProject(page,'统一工程验收')
 }
 const details = page => page.locator('aside.skinWorkspaceRight')
-const submitState = page => page.getByRole('region', { name: '工程提交状态', exact: true })
-async function openSkin(page, name) {
+async function openSkin(page, name) { await closeCollaboration(page);
   await page.getByRole('tab', { name: '皮肤管理器', exact: true }).click()
   await page.getByRole('button').filter({ has: page.getByText(name, { exact: true }) }).first().click()
   await details(page).getByTitle('点击编辑名称', { exact: true }).waitFor()
 }
-async function editName(page, name) {
+async function editName(page, name) { await closeCollaboration(page);
   const field = details(page).getByLabel('名称', { exact: true })
   if (!await field.count()) await details(page).getByTitle('点击编辑名称', { exact: true }).click()
   await field.fill(name)
@@ -141,7 +142,7 @@ async function editName(page, name) {
 }
 async function saveName(page, name) { const field = await editName(page, name); await field.press('Enter') }
 async function saved(page) {
-  await until(async () => await submitState(page).getByRole('status').innerText() === '修改已保存', 'Client submission did not settle')
+  await until(async () => await (await submission(page)).getByRole('status').innerText() === '修改已保存', 'Client submission did not settle'); await closeCollaboration(page)
 }
 
 try {
@@ -230,7 +231,7 @@ try {
       await until(async () => (await diskEntry('skin-entry-a')).name === 'B 在 A 提交前保存的新名称', 'B could not save during A planning')
       await saved(pageB)
     } finally { releasePlan() }
-    await submitState(pageA).getByText('提交冲突', { exact: true }).waitFor()
+    await (await submission(pageA)).getByText('提交冲突', { exact: true }).waitFor()
     await pageA.unroute('**/api/files/plan', gatePlan)
     assert.equal(await details(pageA).getByTitle('点击编辑名称', { exact: true }).innerText(), 'A 需要处理冲突的名称')
     assert.equal((await diskEntry('skin-entry-a')).name, 'B 在 A 提交前保存的新名称')
@@ -248,7 +249,8 @@ try {
     await until(() => Boolean(heldPatchId), 'Did not intercept the successful skin response')
     const continuing = await editName(pageA, '保存期间继续输入的名称')
     releaseHeldPatch(); releaseHeldPatch = undefined
-    await saved(pageA)
+    await until(() => h.api(a.token, `/api/files/transactions/${heldPatchId}`).then(value=>value.status==='committed'), 'Held save did not commit')
+    await pageA.waitForTimeout(250)
     assert.equal(await continuing.inputValue(), '保存期间继续输入的名称', 'Save acknowledgement overwrote later local input')
     assert.equal((await diskEntry('skin-entry-a')).name, '先提交的名称')
     await continuing.press('Enter')
@@ -259,7 +261,7 @@ try {
     await h.api(owner.token, '/api/files/leases', 'POST', { paths: [indexPath] })
     const beforeLocked = observed.length
     await saveName(pageA, '获取写权失败的草稿')
-    await submitState(pageA).getByText('提交冲突', { exact: true }).waitFor()
+    await (await submission(pageA)).getByText('提交冲突', { exact: true }).waitFor()
     assert.equal(observed.length, beforeLocked, 'A lease acquisition failure sent a commit anyway')
     assert.equal((await diskEntry('skin-entry-a')).name, '保存期间继续输入的名称')
     assert.equal(await details(pageA).getByTitle('点击编辑名称', { exact: true }).innerText(), '获取写权失败的草稿')
@@ -267,10 +269,10 @@ try {
     await openSkin(pageA, 'HTTP B')
     await saveName(pageA, '同客户端另一条目仍可编辑')
     await until(async () => (await diskEntry('skin-entry-b')).name === '同客户端另一条目仍可编辑', 'A failed patch blocked an unrelated entry in the same client')
-    await until(async () => await submitState(pageA).getByRole('status').innerText() === '1 次提交待处理', 'Independent entry save did not settle while the original failure stayed recoverable')
+    await until(async () => await (await submission(pageA)).getByRole('status').innerText() === '1 次提交待处理', 'Independent entry save did not settle while the original failure stayed recoverable')
     await openSkin(pageA, '保存期间继续输入的名称')
     assert.equal(await details(pageA).getByTitle('点击编辑名称', { exact: true }).innerText(), '获取写权失败的草稿')
-    await submitState(pageA).getByRole('button', { name: '重试原提交', exact: true }).click()
+    await (await submission(pageA)).getByRole('button', { name: '重试原提交', exact: true }).click()
     await until(async () => (await diskEntry('skin-entry-a')).name === '获取写权失败的草稿', 'Retry after lease release did not persist original draft')
     await saved(pageA)
     passed('写权失败不发送提交、不丢草稿；独立条目可继续编辑，原请求释放写权后可重试')
@@ -278,13 +280,13 @@ try {
     const beforeUnknown = observed.length
     dropNextPatch = true
     await saveName(pageA, '丢失回复但已保存的名称')
-    await submitState(pageA).getByText('结果待确认', { exact: true }).waitFor()
+    await (await submission(pageA)).getByText('结果待确认', { exact: true }).waitFor()
     const unknown = observed.slice(beforeUnknown).find(request => request.changes.some(change => change.op === 'skin-entry-patch'))
     assert.ok(unknown)
     assert.equal((await diskEntry('skin-entry-a')).name, '丢失回复但已保存的名称')
     await pageA.reload(); await browserLogin(pageA, author.credential, '皮肤浏览器 A 恢复回执', false)
     await openSkin(pageA, '丢失回复但已保存的名称')
-    await submitState(pageA).getByRole('button', { name: '查询提交结果', exact: true }).click()
+    await (await submission(pageA)).getByRole('button', { name: '查询提交结果', exact: true }).click()
     await saved(pageA)
     assert.equal(observed.filter(request => request.transactionId === unknown.transactionId).length, 1, 'Receipt confirmation submitted the patch twice')
     assert.equal(await details(pageA).getByTitle('点击编辑名称', { exact: true }).innerText(), '丢失回复但已保存的名称')
@@ -293,14 +295,14 @@ try {
     const beforeHistorical = observed.length
     dropNextPatch = true
     await saveName(pageA, '等待确认的历史皮肤名称')
-    await submitState(pageA).getByText('结果待确认', { exact: true }).waitFor()
+    await (await submission(pageA)).getByText('结果待确认', { exact: true }).waitFor()
     const historical = observed.slice(beforeHistorical).find(request => request.changes.some(change => change.op === 'skin-entry-patch'))
     assert.ok(historical)
     const historicalEntry = await diskEntry('skin-entry-a')
     const newer = await patch(b.token, 'skin-entry-a', historicalEntry.revision, { name: '历史回执之后的远端新名称' })
     assert.equal(newer.status, 'committed')
     await pageA.locator('.skinWorkspaceCenter').getByText('历史回执之后的远端新名称', { exact: true }).waitFor()
-    await submitState(pageA).getByRole('button', { name: '查询提交结果', exact: true }).click()
+    await (await submission(pageA)).getByRole('button', { name: '查询提交结果', exact: true }).click()
     await saved(pageA)
     await until(async () => await details(pageA).getByTitle('点击编辑名称', { exact: true }).innerText() === '历史回执之后的远端新名称', 'An old successful receipt rolled the clean entry view back over a later peer revision')
     assert.equal(observed.filter(request => request.transactionId === historical.transactionId).length, 1)

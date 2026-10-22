@@ -173,4 +173,15 @@ await test('冲突处理等待服务器期间独立禁用输入，结束后恢�
   held.release(); await resolving; assert.equal(f.session.getSnapshot().resolving, false)
   f.session.editText('zh_cn', 'description', '恢复编辑'); f.session.pauseText(); assert.equal(f.session.getSnapshot().view.languages.zh_cn.description, '恢复编辑')
 })
+await test('取消失败操作时移除记录的通知不会重新恢复已取消的请求', async () => {
+  const f = fixture(); await f.session.initialize(); f.setFail('conflict')
+  f.session.editText('zh_cn', 'name', '失败草稿'); await assert.rejects(f.session.flush())
+  let reinstated = 0
+  f.adapter.reinstate = async () => { reinstated++; return 99 }
+  f.adapter.forget = async id => { f.records.delete(id); void f.session.reconcile() }
+  await f.session.resolveFailure(false); await wait()
+  assert.equal(reinstated, 0); assert.equal(f.session.getSnapshot().active, null)
+  assert.equal(f.session.getSnapshot().error, '')
+  assert.equal(f.session.getSnapshot().view.languages.zh_cn.name, '标题')
+})
 console.log(`进度编辑会话 ${passed} 组通过。`)

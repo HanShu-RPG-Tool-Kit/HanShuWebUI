@@ -1,0 +1,111 @@
+import assert from 'node:assert/strict'
+import { chromium } from 'playwright'
+import { mkdir, mkdtemp, readFile } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
+import { harness } from './collaboration-harness.mjs'
+import { until, active } from './progress-collaboration-helpers.mjs'
+import { login } from './progress-collaboration-helpers.mjs'
+
+const output = resolve('../output/collaboration-ui')
+await mkdir(output,{recursive:true})
+const workspace=await mkdtemp(join(output,'chrome-'))
+const h=await harness({root:join(workspace,'default'),web:true,localProjects:true})
+let browser
+const menu=async(page,item)=>{await page.getByRole('button',{name:'文件',exact:true}).click();await page.getByRole('menuitem',{name:item,exact:true}).click()}
+const panel=page=>page.getByRole('region',{name:'协作面板',exact:true})
+const connected=async(page,name)=>until(async()=>await page.locator('.collab-widget').getAttribute('data-project-name')===name,'Project did not connect')
+try {
+  const owner=await h.login(h.credential,'验收准备')
+  const host=await h.api('','/api/local/bootstrap')
+  const directoryId=host.roots.find(root=>root.name==='工程所在目录').id
+  await h.api('','/api/local/create','POST',{directoryId,name:'no-auth',clientName:'test'},401)
+  for(const name of ['../outside','a/b','CON','x:ads','..']) await h.api(host.token,'/api/local/create','POST',{directoryId,name,clientName:'test'},400)
+  await h.api(host.token,'/api/local/create','POST',{directoryId,name:'default',clientName:'test'},409)
+  await h.commit(owner.token,[{path:'src/script/alpha.py',content:'print("alpha")\n'},{path:'src/script/beta.py',content:'print("beta")\n'}]);await h.release(owner.token)
+  browser=await chromium.launch({headless:true,...process.platform==='win32'?{channel:'msedge'}:{}})
+  const page=await browser.newPage({viewport:{width:1440,height:1000}})
+  const errors=[];page.on('pageerror',error=>errors.push(error.message))
+  page.on('dialog', dialog => dialog.dismiss())
+  await page.goto(h.base)
+  assert.equal(await page.locator('.project-service-bar,.file-presence-bar,.project-edit-state').count(),0)
+  await menu(page,'打开工程…')
+  const form=page.getByRole('form',{name:'打开工程',exact:true})
+  assert.equal(await form.locator('input').count(),0)
+  await form.getByRole('button',{name:'打开本机工程…',exact:true}).click()
+  const picker=page.getByRole('region',{name:'选择本机工程目录',exact:true})
+  await picker.getByRole('button',{name:'默认工程',exact:true}).click()
+  await picker.getByRole('button',{name:'打开此文件夹',exact:true}).click()
+  await connected(page,'统一工程验收')
+  assert.equal(await page.locator('.project-service-bar,.file-presence-bar,.project-edit-state').count(),0)
+  console.log('通过：文件菜单打开工程，简化表单不暴露地址凭证，编辑区不再嵌入协作栏')
+
+  const orb=page.getByRole('button',{name:'打开协作面板',exact:true})
+  const before=await orb.boundingBox()
+  await page.mouse.move(before.x+25,before.y+22);await page.mouse.down();await page.mouse.move(before.x-180,before.y-140,{steps:8});await page.mouse.up()
+  assert.equal(await panel(page).count(),0)
+  assert.ok((await orb.boundingBox()).x<before.x-100)
+  await orb.click()
+  await page.waitForTimeout(100)
+  const expanded=await panel(page).boundingBox()
+  const header=await panel(page).locator('header').boundingBox()
+  await page.mouse.move(header.x+50,header.y+20);await page.mouse.down();await page.mouse.move(header.x-80,header.y-50,{steps:8});await page.mouse.up()
+  assert.ok((await panel(page).boundingBox()).x<expanded.x-60)
+  await panel(page).getByRole('button',{name:'收起协作面板',exact:true}).click()
+  console.log('通过：浮球与面板可自由拖动，拖动不误触展开，位置限制在窗口内')
+
+  for(const name of ['alpha.py','beta.py']) {
+    await active(page).getByText(name,{exact:true}).first().click()
+    await active(page).locator('.monaco-editor .view-lines').first().click()
+    await page.keyboard.press('Control+End');await page.keyboard.type('\n# local draft')
+  }
+  await orb.click();await panel(page).getByRole('button',{name:/^修改/}).click()
+  await panel(page).locator('.collab-draft-files').getByText('alpha.py',{exact:true}).waitFor()
+  await panel(page).locator('.collab-draft-files').getByText('beta.py',{exact:true}).waitFor()
+  assert.ok(!(await readFile(join(h.root,'src/script/alpha.py'),'utf8')).includes('local draft'))
+  await panel(page).getByRole('button',{name:'保存修改',exact:true}).click()
+  await until(async()=> (await readFile(join(h.root,'src/script/alpha.py'),'utf8')).includes('local draft')&&(await readFile(join(h.root,'src/script/beta.py'),'utf8')).includes('local draft'),'Multiple draft save failed')
+  await page.screenshot({path:join(output,'floating-changes.png')})
+  console.log('通过：悬浮面板列出多个文件草稿，统一保存经过S落盘')
+
+  const peer=await browser.newPage({viewport:{width:1440,height:1000}})
+  await login(peer,h.base,h.credential,'同身份另一窗口')
+  await active(peer).getByText('example.py',{exact:true}).first().click()
+  await panel(page).getByRole('button',{name:/^成员/}).click()
+  await until(async()=>await panel(page).locator('.collab-session').filter({hasText:'example.py'}).count()>0,'Other window focus was not shown')
+  assert.equal(await panel(page).locator('.collab-members article').count(),1)
+  assert.ok(await panel(page).locator('.collab-session').count()>=2)
+  await page.screenshot({path:join(output,'floating-people.png')})
+  console.log('通过：同一身份的多个窗口合并在一个成员下，分别显示不同文件焦点')
+
+  await panel(page).getByRole('button',{name:'收起协作面板',exact:true}).click()
+  await active(page).locator('.monaco-editor .view-lines').first().click();await page.keyboard.press('Control+End');await page.keyboard.type('\n# retry me')
+  let reject=true
+  await page.route('**/api/files/commit',async route=>{if(reject){reject=false;const input=route.request().postDataJSON();await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({transactionId:input.transactionId,status:'rejected',tree:null,error:{code:'locked',message:'临时写权冲突'}})})}else await route.continue()})
+  await page.keyboard.press('Control+s')
+  await page.locator('.collab-attention-label').waitFor()
+  await orb.click();await panel(page).getByRole('button',{name:/^修改/}).click()
+  await panel(page).getByRole('button',{name:'重试原提交',exact:true}).click()
+  await until(async()=>(await readFile(join(h.root,'src/script/beta.py'),'utf8')).includes('retry me'),'Floating recovery did not save original edit')
+  await page.unroute('**/api/files/commit')
+  console.log('通过：收起时保存失败仍有提示，面板内可重试原操作')
+
+  await panel(page).getByRole('button',{name:'收起协作面板',exact:true}).click()
+  await menu(page,'新建工程…')
+  const create=page.getByRole('form',{name:'新建工程',exact:true})
+  assert.equal(await create.locator('input').count(),1)
+  await create.getByLabel('工程名称',{exact:true}).fill('新建验收')
+  await create.getByRole('button',{name:'选择位置…',exact:true}).click()
+  await picker.getByRole('button',{name:'工程所在目录',exact:true}).click()
+  await picker.getByRole('button',{name:'选择此位置',exact:true}).click()
+  await page.screenshot({path:join(output,'create-project.png')})
+  await create.getByRole('button',{name:'创建工程',exact:true}).click()
+  await connected(page,'新建验收')
+  assert.equal(JSON.parse(await readFile(join(h.root,'../新建验收/project.json'),'utf8')).name,'新建验收')
+  await menu(page,'分享工程…')
+  await page.getByRole('dialog',{name:'分享工程',exact:true}).waitFor()
+  await page.getByRole('button',{name:'完成',exact:true}).click()
+  await orb.click();await panel(page).getByRole('button',{name:/^成员/}).click()
+  await page.screenshot({path:join(output,'new-project-floating.png')})
+  assert.deepEqual(errors,[])
+  console.log('通过：新建独立目录并按名称初始化，分享入口在文件菜单，无页面异常')
+} finally {await browser?.close();await h.stop()}

@@ -72,16 +72,25 @@ fn all_file_types_are_server_owned_and_stale_versions_cannot_overwrite() {
     let (mut e, sid) = setup(dir.path());
     for path in [
         "src/hanshu/story.hs",
+        "src/character/npc.char",
+        "src/script/action.py",
+        "src/goal/goal.py",
+        "src/progress/quest.progress",
         "src/story/tree.hflow",
+        "src/navigator/point.nav",
         "src/items/apple.item",
         "src/gift/reward.kit",
         "meta/docs/notes.md",
+        "meta/voice/plan.tts",
+        "meta/voice/service/provider.ttsservice",
         "assets/zh_cn/lang_hs/story.lang",
         "assets/sound.ogg",
         ".hanshu/skinmanager/library.json",
     ] {
         let content = if path == ".hanshu/skinmanager/library.json" {
             r#"{"schemaVersion":5,"revision":1,"folders":[],"entries":[]}"#
+        } else if path.ends_with(".progress") {
+            r#"{"format":"hanshu.progress","version":1,"id":"quest","name":"name","description":"description","tags":[],"completion":"all","goals":[],"visibility":[],"acceptance":[],"abandonable":true,"repeat":{"kind":"once"},"rewardKits":[]}"#
         } else {
             "original"
         };

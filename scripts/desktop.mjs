@@ -4,6 +4,12 @@ import { rustCommand } from './rust-command.mjs'
 
 const root = resolve(import.meta.dirname, '..')
 const rust = rustCommand(root)
+// The native service publishes these same assets to invited browsers in dev.
+if (process.argv.slice(2).includes('dev')) {
+  const web = spawn(process.execPath, [resolve(root, 'node_modules/vite/bin/vite.js'), 'build'], { cwd: root, env: rust.env, stdio: 'inherit', windowsHide: true })
+  const code = await new Promise(resolve => { web.on('error', error => { console.error(error.message); resolve(1) }); web.on('exit', resolve) })
+  if (code !== 0) process.exit(code ?? 1)
+}
 const cli = spawn(process.execPath, [resolve(root, 'node_modules/@tauri-apps/cli/tauri.js'), ...process.argv.slice(2)], { cwd: root, env: rust.env, stdio: 'inherit', windowsHide: true })
 cli.on('error', error => { console.error(error.message); process.exitCode = 1 })
 cli.on('exit', code => { process.exitCode = code ?? 1 })

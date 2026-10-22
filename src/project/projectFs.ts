@@ -1,7 +1,8 @@
 import { sha256Hex } from './crypto'
 import { ServiceError } from '../collab/protocol'
-import { getProjectSession } from './projectSession'
-import type { ProjectDirectory } from './serviceClient'
+import { getProjectSession, setProjectSession } from './projectSession'
+import type { ProjectClient, ProjectDirectory } from './serviceClient'
+import { setBoundProject } from './bindingBus'
 /**
  * 文件夹工程：打开 / 新建 / 保存
  * 一个目录 = 一个 Project；文本在 `src/`（源）与 `meta/`（创作资料），二进制在 `assets/`
@@ -251,6 +252,30 @@ export async function loadServiceProject(handle: ProjectDirectory): Promise<Load
   const { pkg, manifest, activeScriptId } = await readPackageFromDirectory(handle, handle.name)
   return { binding: { handle, folderName: manifest.name, manifest }, workspace: workspaceFromPackage(pkg, activeScriptId) }
 }
+/** Adopt remote metadata only while both the manifest and its editor projection are clean. */
+export async function refreshProjectManifest(client: ProjectClient): Promise<void> {
+  const before = getProjectSession()
+  const binding = before.binding
+  if (binding?.handle.client !== client) return
+  const pkg = before.workspace.packages.find(pkg => pkg.id === binding.manifest.id)
+  const entry = client.entry(PROJECT_FILE)
+  if (!entry) throw new Error('工程清单已不存在，请重新打开工程')
+  if (!pkg || pkg.name !== binding.manifest.name || client.transactions.hasDraft(PROJECT_FILE) || client.baseline.get(PROJECT_FILE) === entry.version) return
+  const raw = await (await client.read(PROJECT_FILE, false, entry.version)).text()
+  const manifest = parseManifestJson(raw)
+  if (manifest.id !== binding.manifest.id) throw new Error('工程清单身份已变化，请重新打开工程')
+  const live = getProjectSession()
+  const current = live.binding
+  const currentPkg = live.workspace.packages.find(pkg => pkg.id === manifest.id)
+  if (current?.handle.client !== client || !currentPkg || currentPkg.name !== current.manifest.name || client.transactions.hasDraft(PROJECT_FILE)) return
+  if (client.entry(PROJECT_FILE)?.version !== entry.version) throw new ServiceError('conflict', '读取期间工程清单发生变化，请重试')
+  const nextBinding = { ...current, manifest, folderName: manifest.name }
+  client.baseline.set(PROJECT_FILE, entry.version)
+  client.texts.set(PROJECT_FILE, raw)
+  client.originals.set(PROJECT_FILE, { version: entry.version, data: raw })
+  setProjectSession({ binding: nextBinding, workspace: { ...live.workspace, packages: live.workspace.packages.map(pkg => pkg.id === manifest.id ? { ...pkg, name: manifest.name } : pkg) } })
+  setBoundProject(nextBinding)
+}
 /** Merge remote changes only into clean resources; dirty text/binary drafts retain their read versions. */
 export async function refreshServiceProject(binding: BoundProject, current: Workspace): Promise<Workspace> {
   const client = binding.handle.client
@@ -324,7 +349,7 @@ export async function refreshServiceProject(binding: BoundProject, current: Work
   return { ...latest, packages, activeScriptId }
 }
 export async function openProjectFromPicker(): Promise<LoadProjectResult> { return loadServiceProject(await pickProjectDirectory()) }
-export async function createProjectFromPicker(): Promise<LoadProjectResult> { return openProjectFromPicker() }
+export async function createProjectFromPicker(): Promise<LoadProjectResult> { return loadServiceProject(await pickProjectDirectory('create')) }
 
 /** Save only changed, previously read resources. Omission from a client snapshot never deletes a file. */
 export async function saveProjectToDirectory(binding: BoundProject, workspace: Workspace): Promise<BoundProject> {

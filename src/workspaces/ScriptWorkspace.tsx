@@ -693,6 +693,17 @@ export const ScriptWorkspace = forwardRef<
   // 工具卸载时解绑编辑器
   useEffect(() => () => textBindingRef.current?.dispose(), [])
 
+  // A shared project arrives after the initial empty editor. Bind its model by
+  // project/file identity and repaint when a previously hidden workspace opens.
+  useEffect(() => {
+    if (!isActive || projectBusy) return
+    const frame = requestAnimationFrame(() => {
+      editorRef.current?.layout()
+      textBindingRef.current?.refresh()
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [isActive, textBindingSeq, projectBusy, serviceSession.binding?.handle.client.snapshot.role])
+
   /** 活动文件所在包（音频映射管理要读它的资产清单与包 id） */
   const activePackage = () => {
     const base = workspaceRef.current
@@ -3435,7 +3446,7 @@ export const ScriptWorkspace = forwardRef<
                 )}
                 <div className="editor-pane">
                   <Editor
-                    key={titleName}
+                    key={`${presenceClient?.snapshot.projectId ?? 'unbound'}:${active?.script.id ?? 'empty'}:${titleName}`}
                     height="100%"
                     language={editorLanguageForFile(titleName)}
                     theme={

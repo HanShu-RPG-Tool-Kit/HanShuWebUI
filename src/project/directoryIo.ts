@@ -3,7 +3,7 @@ import { ProjectDirectory, requestProjectConnection } from './serviceClient'
 import { ServiceError } from '../collab/protocol'
 export { ProjectDirectory }
 export function supportsDirectoryPicker(): boolean { return true }
-export async function pickProjectDirectory(): Promise<ProjectDirectory> { return (await requestProjectConnection()).root() }
+export async function pickProjectDirectory(mode: 'open' | 'create' = 'open'): Promise<ProjectDirectory> { return (await requestProjectConnection(mode)).root() }
 export async function ensureReadWritePermission(dir: ProjectDirectory): Promise<boolean> { return dir.client.writable }
 export async function readTextFile(dir: ProjectDirectory, name: string): Promise<string | null> { return dir.client.text(dir.resolve(name)) }
 export async function writeTextFile(dir: ProjectDirectory, name: string, content: string): Promise<void> { await writeFileAtPath(dir, name, content) }

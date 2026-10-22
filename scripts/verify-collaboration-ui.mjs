@@ -1,3 +1,4 @@
+import {projectMenu,waitProject,collaboration} from './project-ui-helpers.mjs'
 import assert from 'node:assert/strict'
 import { chromium } from 'playwright'
 import { readFile, mkdir, writeFile } from 'node:fs/promises'
@@ -14,10 +15,11 @@ async function until(fn,label){const deadline=Date.now()+20000;while(!await fn()
 const active=page=>page.locator('.app-workspace-pane.active'),title=page=>active(page).getByLabel('进度标题',{exact:true}),status=page=>page.getByRole('region',{name:'工程提交状态',exact:true})
 const passed=name=>{results.push({name,status:'passed'});console.log(`通过：${name}`)}
 async function login(page,key,name){
-  await page.goto(h.base);await page.getByRole('button',{name:'打开工程…',exact:true}).click()
-  const form=page.getByRole('form',{name:'打开工程',exact:true})
-  await form.getByLabel('服务地址',{exact:true}).fill(h.base);await form.getByLabel('主体凭证',{exact:true}).fill(key);await form.getByLabel('本端名称',{exact:true}).fill(name)
-  await form.getByRole('button',{name:'连接并打开工程',exact:true}).click();await page.locator('.project-service-bar').getByText('统一工程验收',{exact:true}).waitFor()
+  await page.addInitScript(value=>sessionStorage.setItem('hanshu.windowName',value),name)
+  await page.goto(h.base);await projectMenu(page,'连接其他服务器…')
+  const form=page.getByRole('form',{name:'连接其他服务器',exact:true})
+  await form.getByLabel('服务地址',{exact:true}).fill(h.base);await form.getByLabel('主体凭证',{exact:true}).fill(key);
+  await form.getByRole('button',{name:'连接并打开工程',exact:true}).click();await waitProject(page,'统一工程验收')
 }
 async function progress(page){await page.getByRole('tab',{name:'进度流程',exact:true}).click();await page.getByRole('textbox',{name:'筛选资源',exact:true}).fill('example.progress');await page.locator('[role=treeitem][title="example.progress"]').click();await title(page).waitFor()}
 try{
@@ -53,7 +55,7 @@ try{
   const before=await readFile(join(h.root,'src/hanshu/story.hs'),'utf8')
   let reject=true;const batches=[]
   await a.route('**/api/files/commit',async route=>{const body=route.request().postDataJSON();batches.push(body);if(reject){reject=false;await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({transactionId:body.transactionId,status:'rejected',tree:null,error:{code:'locked',message:'测试中的临时写权冲突'}})})}else await route.continue()})
-  await a.keyboard.press('Control+s');await status(a).getByText('测试中的临时写权冲突',{exact:true}).waitFor()
+  await collaboration(a,'修改');await a.keyboard.press('Control+s');await status(a).getByText('测试中的临时写权冲突',{exact:true}).waitFor()
   assert.equal(await readFile(join(h.root,'src/hanshu/story.hs'),'utf8'),before)
   await status(a).getByRole('button',{name:'重试原提交',exact:true}).click()
   await until(async()=>(await readFile(join(h.root,'src/hanshu/story.hs'),'utf8')).includes('shared script from client A'),'Script retry did not save through S')

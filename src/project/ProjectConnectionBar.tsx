@@ -1,18 +1,21 @@
 import { useEffect, useRef, useState } from 'react'
 import { request, socketUrl, type Snapshot, type Role } from '../collab/protocol'
 import { ProjectClient, getProjectClient, registerProjectConnector, requestProjectConnection, setProjectClient } from './serviceClient'
-import { loadServiceProject, refreshServiceProject } from './projectFs'
-import { getProjectSession, setProjectSession } from './projectSession'
+import { loadServiceProject, refreshServiceProject, refreshProjectManifest } from './projectFs'
+import { getProjectSession, setProjectSession, useProjectSession } from './projectSession'
 import { setBoundProject } from './bindingBus'
 import { emptyWorkspace } from '../workspace'
 import './project-connection.css'
 import { rememberProjectDraft, restoreProjectDraft } from './drafts'
-import { EditTransactionPanel } from './EditTransactionPanel'
+import { CollaborationWidget } from './CollaborationWidget'
+import { registerProjectUi, type ProjectUiAction } from './projectUi'
 import { openEditJournal } from './editJournal'
 import { attachReconciliation } from './reconcileEdits'
-import { parseManifestJson } from './manifest'
+import { LocalProjectPicker } from './LocalProjectPicker'
+import { discoverLocalProjectHost, type LocalProjectHost, type LocalProjectConnection } from './localProjects'
+import { ProjectSharePanel } from './ProjectSharePanel'
+import { ProjectShareJoin } from './ProjectShareJoin'
 
-const labels: Record<Role,string> = { owner: '管理者', editor: '编辑者', viewer: '只读' }
 const defaultUrl = () => import.meta.env.DEV || window.location.port === '4173' ? '/__project' : window.location.origin
 
 async function openClient(client: ProjectClient, initialName: string) {
@@ -46,19 +49,11 @@ async function openClient(client: ProjectClient, initialName: string) {
       if (workspace && getProjectClient() === client) {
         setProjectSession({workspace})
         if (historyRestore) {
-          const entry = client.entry('project.json')
-          const raw = entry ? await (await client.read(entry.path, false, entry.version)).text() : null
+          await refreshProjectManifest(client)
           const current = getProjectSession()
           if (getProjectClient() !== client || current.binding?.handle.client !== client) return
           const binding = {...current.binding}
-          const pkg = current.workspace.packages.find(pkg => pkg.id === binding.manifest.id)
-          if (raw && entry && pkg?.name === binding.manifest.name && !client.transactions.hasDraft('project.json')) {
-            const manifest = parseManifestJson(raw)
-            if (manifest.id !== binding.manifest.id) throw new Error('恢复后的工程清单身份已变化，请重新打开工程')
-            binding.manifest = manifest; binding.folderName = manifest.name
-            client.baseline.set('project.json', entry.version); client.texts.set('project.json', raw); client.originals.set('project.json', {version: entry.version, data: raw})
-            setProjectSession({binding, workspace: {...current.workspace, packages: current.workspace.packages.map(value => value.id === manifest.id ? {...value, name:manifest.name} : value)}})
-          } else setProjectSession({binding})
+          setProjectSession({binding})
           setBoundProject(binding)
         }
       }
@@ -68,24 +63,29 @@ async function openClient(client: ProjectClient, initialName: string) {
 }
 
 export function ProjectConnectionBar() {
+  const projectSession = useProjectSession()
   const [client, setClient] = useState<ProjectClient | null>(null)
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null)
   const [online, setOnline] = useState(false)
-  const [dialog, setDialog] = useState(false)
-  const [manage, setManage] = useState(false)
+  const [dialog, setDialog] = useState<'open' | 'create' | 'connect' | null>(null)
+  const [shareOpen, setShareOpen] = useState(false)
+  const [collabOpen, setCollabOpen] = useState(false)
+  const [location, setLocation] = useState<{id:string;path:string}|null>(null)
   const [url, setUrl] = useState(() => localStorage.getItem('hanshu.serverUrl') || defaultUrl())
   const [credential, setCredential] = useState('')
-  const [clientName, setClientName] = useState('浏览器窗口')
+  const [clientName] = useState(() => sessionStorage.getItem('hanshu.windowName') || '浏览器窗口')
   const [projectName, setProjectName] = useState('新工程')
   const [error, setError] = useState('')
   const [connectionError, setConnectionError] = useState<{ client: ProjectClient; message: string } | null>(null)
   const [refreshError, setRefreshError] = useState<{ client: ProjectClient; message: string } | null>(null)
   const [busy, setBusy] = useState(false)
+  const [localHost, setLocalHost] = useState<LocalProjectHost | null | undefined>(undefined)
+  const [localPicker, setLocalPicker] = useState(false)
   const [subjectName, setSubjectName] = useState('')
   const [kind, setKind] = useState('account')
   const [role, setRole] = useState<Role>('editor')
   const [issued, setIssued] = useState('')
-  const [projectLabel, setProjectLabel] = useState('')
+  const projectLabel = projectSession.workspace.packages.find(pkg => pkg.id === projectSession.binding?.manifest.id)?.name ?? projectSession.binding?.manifest.name ?? ''
   const pending = useRef<{resolve: (c: ProjectClient) => void; reject: (e: Error) => void} | null>(null)
   const booted = useRef(false)
   const operation = useRef(false)
@@ -96,28 +96,38 @@ export function ProjectConnectionBar() {
     try { await action() } catch (e) { setError(e instanceof Error ? e.message : String(e)) }
     finally { operation.current = false; setBusy(false) }
   }
-  async function connect(base: string, key: string, name: string) {
+  async function connect(base: string, key: string, name: string, initialName = projectName) {
     if (getProjectClient()?.transactions.getSnapshot().queued) throw new Error('请等待当前提交结束，再切换工程')
     const login = await request<{token: string}>({url: base,token:''}, '/api/sessions', 'POST', { credential: key.trim(), clientName: name })
-    const connection = {url:base.replace(/\/$/,''),token:login.token}
+    return connectSession(base, login.token, initialName)
+  }
+  async function connectSession(base: string, token: string, initialName = projectName) {
+    const connection = {url:base.replace(/\/$/,''),token}
     let candidate: ProjectClient | null = null
     try {
+      if (getProjectClient()?.transactions.getSnapshot().queued) throw new Error('请等待当前提交结束，再切换工程')
       const state = await request<Snapshot>(connection, '/api/project')
       candidate = new ProjectClient(connection,state)
       const previous = getProjectClient()
       if(previous) rememberProjectDraft(getProjectSession().workspace)
-      const loaded = await openClient(candidate,projectName)
-      setClient(candidate); setSnapshot(state); setOnline(true); setProjectLabel(loaded.binding.manifest.name)
-      localStorage.setItem('hanshu.serverUrl',base); setCredential(''); setDialog(false)
+      await openClient(candidate,initialName)
+      setClient(candidate); setSnapshot(state); setOnline(true)
+      localStorage.setItem('hanshu.serverUrl',base); setCredential(''); setDialog(null)
       pending.current?.resolve(candidate); pending.current = null
       if (previous && previous !== candidate) { previous.setStatus(false); void request(previous.connection,'/api/sessions/current','DELETE').catch(() => undefined) }
     } catch (e) { if(candidate)candidate.setStatus(false); void request(connection,'/api/sessions/current','DELETE').catch(() => undefined); throw e }
   }
-  useEffect(() => registerProjectConnector(() => {
+  useEffect(() => registerProjectConnector(mode => {
     if (pending.current) return Promise.reject(new Error('工程连接窗口已打开'))
-    setError(''); setDialog(true)
+    setError(''); setLocalPicker(false); setLocation(null); setDialog(mode)
     return new Promise<ProjectClient>((resolve,reject) => { pending.current = {resolve,reject} })
   }), [])
+  useEffect(() => {
+    if (!dialog || dialog === 'connect' || '__TAURI_INTERNALS__' in window) return
+    let stopped = false
+    void discoverLocalProjectHost().then(host => { if (!stopped) setLocalHost(host) })
+    return () => { stopped = true }
+  }, [dialog])
   useEffect(() => {
     if (booted.current || !('__TAURI_INTERNALS__' in window)) return
     booted.current = true
@@ -152,6 +162,7 @@ export function ProjectConnectionBar() {
           if (skin !== previousSkin && !client.leases.has('.hanshu/skinmanager/library.json')) {
             const binding = {...live.binding}; setProjectSession({binding}); setBoundProject(binding)
           }
+          await refreshProjectManifest(client)
           revision = client.tree.revision
         } while (wanted > revision && !stopped)
         setRefreshError(current => current?.client === client ? null : current)
@@ -187,25 +198,31 @@ export function ProjectConnectionBar() {
     return () => { stopped=true; clearInterval(timer); clearInterval(stale);clearTimeout(retry);socket?.close() }
   },[client])
 
-  const open = () => { void requestProjectConnection().catch(e => { if (!/取消/.test(String(e))) setError(String(e)) }) }
-  function cancel() { setDialog(false); pending.current?.reject(new Error('已取消连接'));pending.current=null }
-  return <>
-    <div className="project-service-bar" aria-label="当前工程">
-      <strong>{client ? projectLabel : '未打开工程'}</strong>
-      <span>{client ? `${online ? '● 已连接' : '○ 已断开'} · ${labels[snapshot?.role ?? 'viewer']} · ${snapshot?.members.find(m => m.subject.id === snapshot.session.subjectId)?.subject.name ?? ''}` : '打开服务端工程，所有工作区使用同一份资源'}</span>
-      <button onClick={open} disabled={busy}>打开工程…</button>
-      {client && <><button onClick={() => void run(() => client.release())} disabled={!online || busy}>释放全部写权</button><button onClick={() => setManage(!manage)}>在线主体与权限 · {snapshot?.sessions.length ?? 0}</button><button onClick={() => void run(async () => {
-        if (client.transactions.getSnapshot().queued) throw new Error('请等待当前提交结束，再关闭工程')
-        rememberProjectDraft(getProjectSession().workspace)
-        await request(client.connection,'/api/sessions/current','DELETE'); client.setStatus(false);setProjectClient(null);setClient(null);setSnapshot(null);setOnline(false);setBoundProject(null);setProjectSession({binding:null,workspace:emptyWorkspace()})
-      })}>关闭工程</button></>}
-      {error && <span className="project-service-error" role="alert">{error}</span>}
-      {connectionError?.client === client && <span className="project-service-error" role="alert">{connectionError.message}</span>}
-      {refreshError?.client === client && <span className="project-service-error" role="alert">{refreshError.message}</span>}
-    </div>
-    {client && <EditTransactionPanel client={client} />}
-    {manage && snapshot && client && <section className="project-members" aria-label="工程主体与权限">
-      <button onClick={() => setManage(false)}>收起</button>
+  async function closeProject() {
+    if (!client) return
+    if (client.transactions.getSnapshot().queued) throw new Error('请等待当前保存结束，再关闭工程')
+    rememberProjectDraft(getProjectSession().workspace)
+    await request(client.connection,'/api/sessions/current','DELETE')
+    client.setStatus(false); setProjectClient(null); setClient(null); setSnapshot(null); setOnline(false)
+    setBoundProject(null); setProjectSession({binding:null,workspace:emptyWorkspace()})
+  }
+  function projectAction(action: ProjectUiAction) {
+    if (action === 'share') { if (snapshot?.role === 'owner') setShareOpen(true); return }
+    if (action === 'collaboration') { setCollabOpen(true); return }
+    if (action === 'close') { void run(closeProject); return }
+    if (action === 'connect') { setError(''); setLocalPicker(false); setDialog('connect'); return }
+    void requestProjectConnection(action).catch(e => { if (!/取消/.test(String(e))) { setError(String(e)); setCollabOpen(true) } })
+  }
+  useEffect(() => registerProjectUi(projectAction))
+  function cancel() { setDialog(null); pending.current?.reject(new Error('已取消连接')); pending.current=null }
+  async function nativeOpen(name?: string) {
+    if (getProjectClient()?.transactions.getSnapshot().queued) throw new Error('请等待当前保存结束，再切换工程')
+    const {invoke}=await import('@tauri-apps/api/core')
+    const local=await invoke<{url:string;credential:string}>('project_open_local',{name:name??null})
+    setUrl(local.url); await connect(local.url,local.credential,'桌面窗口',name)
+  }
+  const management = snapshot && client ? (<section className="project-members" aria-label="工程主体与权限">
+
       <div className="project-presence">{snapshot.sessions.map(s => <span key={s.id}>{snapshot.members.find(m=>m.subject.id===s.subjectId)?.subject.name} · {s.clientName} · {s.filePresence?.activity === 'editing' ? '编辑中' : '查看中'}{s.filePresence ? ` · ${s.filePresence.entryId ? '皮肤条目' : s.filePresence.path === '.hanshu/skinmanager/library.json' ? '皮肤库' : s.filePresence.path.split('/').at(-1)}` : ''}{snapshot.leases.some(l=>l.sessionId===s.id) ? ' · 持有写权' : ''}</span>)}</div>
       {snapshot.leases.filter(l=>l.resourceId.startsWith('file:')).map(l => <div key={l.id}>{l.resourceId.slice(5)} · {snapshot.sessions.find(s=>s.id===l.sessionId)?.clientName}{snapshot.role === 'owner' && l.sessionId !== snapshot.session.id && <button onClick={() => void run(async () => {
         const leases = await request<import('../collab/protocol').Lease[]>(client.connection,'/api/files/leases','POST',{paths:[l.resourceId.slice(5)],force:true});for(const lease of leases)client.leases.set(lease.resourceId.slice(5),lease)
@@ -215,18 +232,57 @@ export function ProjectConnectionBar() {
         {issued && <label>新主体凭证（仅此次显示）<input readOnly value={issued}/><button onClick={()=>setIssued('')}>隐藏</button></label>}
         {snapshot.members.filter(m=>m.role!=='owner').map(m=><div key={m.subject.id}>{m.subject.name} · {m.subject.kind}<select aria-label={`${m.subject.name}权限`} value={m.role} onChange={e=>void run(async()=>{await request(client.connection,`/api/subjects/${m.subject.id}`,'PATCH',{role:e.target.value,enabled:m.subject.enabled})})}><option value="editor">编辑者</option><option value="viewer">只读</option></select><button onClick={()=>void run(async()=>{await request(client.connection,`/api/subjects/${m.subject.id}`,'PATCH',{role:m.role,enabled:!m.subject.enabled})})}>{m.subject.enabled?'停用':'启用'}</button></div>)}
       </>}
-    </section>}
-    {dialog && <div className="project-connect-backdrop"><form className="project-connect-dialog" aria-label="打开工程" onSubmit={e=>{e.preventDefault();void run(()=>connect(url,credential,clientName))}}>
-      <h2>打开工程</h2><p>连接中心服务后，剧本、进度、资产与皮肤使用同一工程。</p>
-      {'__TAURI_INTERNALS__' in window && <button type="button" disabled={busy} onClick={()=>void run(async()=>{
-        const {invoke}=await import('@tauri-apps/api/core');const local=await invoke<{url:string;credential:string}>('project_open_local');setUrl(local.url);await connect(local.url,local.credential,'桌面窗口')
-      })}>由本机服务打开文件夹…</button>}
-      <label>服务地址<input required aria-label="服务地址" value={url} onChange={e=>setUrl(e.target.value)}/></label>
-      <label>主体凭证<input required type="password" autoComplete="off" aria-label="主体凭证" value={credential} onChange={e=>setCredential(e.target.value)}/></label>
-      <label>本端名称<input required aria-label="本端名称" value={clientName} onChange={e=>setClientName(e.target.value)}/></label>
-      <label>新工程名称<input aria-label="新工程名称" value={projectName} onChange={e=>setProjectName(e.target.value)}/><small>仅在服务端目录尚无工程清单时使用</small></label>
+    </section>) : null
+  const title = dialog === 'create' ? '新建工程' : dialog === 'connect' ? '连接其他服务器' : '打开工程'
+  return <>
+    <CollaborationWidget client={client} snapshot={snapshot} projectName={projectLabel} open={collabOpen} onOpenChange={setCollabOpen}
+      error={error || (connectionError?.client === client ? connectionError?.message ?? '' : '') || (refreshError?.client === client ? refreshError?.message ?? '' : '')}
+      management={management} onProjectAction={projectAction} />
+    {client && snapshot?.role === 'owner' && <ProjectSharePanel key={client.connection.url} connection={client.connection} online={online} open={shareOpen} onClose={() => setShareOpen(false)} />}
+    {!('__TAURI_INTERNALS__' in window) && <ProjectShareJoin onConnect={connectSession} connected={!!client} />}
+    {dialog && <div className="project-connect-backdrop"><form className="project-connect-dialog" aria-label={title} onKeyDown={event => {if(event.key==='Escape'&&!busy)cancel()}} onSubmit={event => {
+      event.preventDefault()
+      if (localPicker || busy) return
+      if (dialog === 'connect') void run(() => connect(url,credential,clientName))
+      if (dialog === 'create') void run(async () => {
+        if (getProjectClient()?.transactions.getSnapshot().queued) throw new Error('请等待当前保存结束，再创建工程')
+        if ('__TAURI_INTERNALS__' in window) return nativeOpen(projectName.trim())
+        if (!localHost || !location) throw new Error('请先选择保存位置')
+        const local = await request<LocalProjectConnection>(localHost.connection,'/api/local/create','POST',{directoryId:location.id,name:projectName.trim(),clientName})
+        setUrl(local.url); await connectSession(local.url,local.token,projectName.trim())
+      })
+    }}>
+      <h2>{title}</h2>
+      {localPicker && localHost ? <LocalProjectPicker host={localHost} mode={dialog === 'create' ? 'location' : 'open'} opening={busy}
+        onCancel={() => {setLocalPicker(false);setError('')}} onOpen={(directoryId,path) => {
+          if (dialog === 'create') {setLocation({id:directoryId,path});setLocalPicker(false);return}
+          void run(async () => {
+            if (getProjectClient()?.transactions.getSnapshot().queued) throw new Error('请等待当前保存结束，再切换工程')
+            const local=await request<LocalProjectConnection>(localHost.connection,'/api/local/open','POST',{directoryId,clientName})
+            setUrl(local.url);await connectSession(local.url,local.token,local.path.split(/[\\/]/).filter(Boolean).at(-1)||projectName)
+          })
+        }} /> : dialog === 'create' ? <>
+        <p>为工程命名，再选择保存位置。</p>
+        <label>工程名称<input autoFocus required aria-label="工程名称" maxLength={100} value={projectName} onChange={event=>setProjectName(event.target.value)} /></label>
+        {!('__TAURI_INTERNALS__' in window) && <label>保存位置<div className="project-location"><span>{location?.path || '尚未选择'}</span><button type="button" aria-label="选择位置…" disabled={busy || !localHost} onClick={()=>setLocalPicker(true)}>选择位置…</button></div></label>}
+        <small>{'__TAURI_INTERNALS__' in window ? '下一步选择保存位置。' : localHost===undefined ? '正在准备本机目录…' : !localHost ? '请在运行 HanShu 的本机窗口新建工程。' : '会创建独立文件夹，不覆盖已有工程。'}</small>
+        <footer><button type="button" disabled={busy} onClick={cancel}>取消</button><button type="submit" disabled={busy || !projectName.trim() || !('__TAURI_INTERNALS__' in window) && !location}>{busy?'正在创建…':'创建工程'}</button></footer>
+      </> : dialog === 'connect' ? <>
+        <p>连接另一台设备上正在运行的工程服务。有邀请链接时，直接打开链接即可加入。</p>
+        <label>服务地址<input autoFocus required aria-label="服务地址" value={url} onChange={event=>setUrl(event.target.value)} placeholder="http://…" /></label>
+        <label>访问凭证<input required type="password" autoComplete="off" aria-label="主体凭证" value={credential} onChange={event=>setCredential(event.target.value)} /></label>
+        <footer><button type="button" disabled={busy} onClick={cancel}>取消</button><button type="submit" disabled={busy}>{busy?'正在连接…':'连接并打开工程'}</button></footer>
+      </> : <>
+        <p>选择一个已有的工程文件夹。</p>
+        <div className="project-open-choice"><button type="button" aria-label="打开本机工程…" disabled={busy || !('__TAURI_INTERNALS__' in window) && !localHost} onClick={() => void run(async()=>{
+          if ('__TAURI_INTERNALS__' in window) return nativeOpen()
+          const host=await discoverLocalProjectHost();setLocalHost(host)
+          if(host)setLocalPicker(true);else throw new Error('本机服务暂不可用，请启动 HanShu 后重试')
+        })}>打开本机工程…<small>{localHost===undefined&&!('__TAURI_INTERNALS__' in window)?'正在准备本机目录…':'浏览并选择工程文件夹'}</small></button></div>
+        <button type="button" className="project-open-remote" onClick={()=>setDialog('connect')}>连接其他服务器…</button>
+        <footer><button type="button" disabled={busy} onClick={cancel}>取消</button></footer>
+      </>}
       {error && <p role="alert">{error}</p>}
-      <footer><button type="button" onClick={cancel} disabled={busy}>取消</button><button type="submit" disabled={busy}>{busy?'正在连接…':'连接并打开工程'}</button></footer>
     </form></div>}
   </>
 }

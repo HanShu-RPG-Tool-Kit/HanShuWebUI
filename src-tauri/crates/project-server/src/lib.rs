@@ -1,4 +1,8 @@
 //! Shared standalone / embedded server. No desktop APIs or client-side trust decisions.
+mod local_projects;
+pub use local_projects::create_project_directory;
+mod sharing;
+pub use sharing::WebAssetResolver;
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -30,6 +34,8 @@ struct AppState {
     engine: Arc<Mutex<Engine>>,
     events: broadcast::Sender<()>,
     origins: Arc<Vec<String>>,
+    sharing: Arc<sharing::ShareControl>,
+    share_generation: Option<u64>,
 }
 
 #[derive(Debug)]
@@ -92,6 +98,9 @@ async fn origin_guard(
     request: Request<axum::body::Body>,
     next: Next,
 ) -> Response {
+    if state.share_generation.is_some_and(|generation| !state.sharing.is_active(generation)) {
+        return ApiError(Error::new("forbidden", "工程共享已关闭")).into_response();
+    }
     let origin = request.headers().get(header::ORIGIN).cloned();
     if let Some(origin) = &origin {
         if !origin
@@ -402,6 +411,10 @@ async fn watch(mut socket: WebSocket, state: AppState) {
     let mut updates = state.events.subscribe();
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
     loop {
+        if state.share_generation.is_some_and(|generation| !state.sharing.is_active(generation)) {
+            let _ = socket.send(Message::Close(None)).await;
+            return;
+        }
         let result = access(&state, token.clone(), false, |e, id, _| e.snapshot(id)).await;
         let Ok(snapshot) = result else {
             let _ = socket.send(Message::Close(None)).await;
@@ -430,47 +443,45 @@ pub struct Service {
     pub address: SocketAddr,
     stop: Option<oneshot::Sender<()>>,
     pub task: JoinHandle<std::io::Result<()>>,
+    state: AppState,
 }
 impl Drop for Service {
     fn drop(&mut self) {
+        self.state.sharing.shutdown(&self.state.engine);
         if let Some(stop) = self.stop.take() {
             let _ = stop.send(());
         }
+    }
+}
+impl Service {
+    pub fn set_share_web_assets(&self, resolver: WebAssetResolver) {
+        self.state.sharing.set_web_assets(resolver);
     }
 }
 
 pub async fn start(
     root: &FsPath,
     address: SocketAddr,
-    mut origins: Vec<String>,
+    origins: Vec<String>,
     web_root: Option<PathBuf>,
 ) -> Result<Service> {
-    if let Some(web) = &web_root {
-        std::fs::create_dir_all(root)?;
-        let project_path = root.canonicalize()?;
-        let web_path = web.canonicalize()?;
-        if project_path.starts_with(&web_path) {
-            return Err(Error::new(
-                "invalid",
-                "静态网页目录不能包含工程服务的数据或凭证目录",
-            ));
-        }
+    start_inner(root, address, origins, web_root, false).await
+}
+
+/// Explicit local host mode. Never enabled for a network project server.
+pub async fn start_local(
+    root: &FsPath,
+    address: SocketAddr,
+    origins: Vec<String>,
+    web_root: Option<PathBuf>,
+) -> Result<Service> {
+    if !address.ip().is_loopback() {
+        return Err(Error::new("invalid", "本机工程入口只允许监听回环地址"));
     }
-    let engine = Engine::open_project(root)?;
-    let listener = TcpListener::bind(address).await?;
-    let address = listener.local_addr()?;
-    origins.extend([
-        format!("http://{address}"),
-        format!("http://localhost:{}", address.port()),
-        "tauri://localhost".into(),
-        "http://tauri.localhost".into(),
-        "https://tauri.localhost".into(),
-    ]);
-    let state = AppState {
-        engine: Arc::new(Mutex::new(engine)),
-        events: broadcast::channel(128).0,
-        origins: Arc::new(origins),
-    };
+    start_inner(root, address, origins, web_root, true).await
+}
+
+fn project_router(web_root: Option<PathBuf>) -> Router<AppState> {
     let mut router = Router::new()
         .route(
             "/health",
@@ -510,13 +521,66 @@ pub async fn start(
         router =
             router.fallback_service(ServeDir::new(root).append_index_html_on_directories(true));
     }
-    let app = router
+    router.merge(sharing::management_routes())
+}
+
+async fn start_inner(
+    root: &FsPath,
+    address: SocketAddr,
+    mut origins: Vec<String>,
+    web_root: Option<PathBuf>,
+    local_projects: bool,
+) -> Result<Service> {
+    if let Some(web) = &web_root {
+        std::fs::create_dir_all(root)?;
+        let project_path = root.canonicalize()?;
+        let web_path = web.canonicalize()?;
+        if project_path.starts_with(&web_path) {
+            return Err(Error::new(
+                "invalid",
+                "静态网页目录不能包含工程服务的数据或凭证目录",
+            ));
+        }
+    }
+    let engine = Engine::open_project(root)?;
+    let listener = TcpListener::bind(address).await?;
+    let address = listener.local_addr()?;
+    origins.extend([
+        format!("http://{address}"),
+        format!("http://localhost:{}", address.port()),
+        "tauri://localhost".into(),
+        "http://tauri.localhost".into(),
+        "https://tauri.localhost".into(),
+    ]);
+    let state = AppState {
+        engine: Arc::new(Mutex::new(engine)),
+        events: broadcast::channel(128).0,
+        origins: Arc::new(origins.clone()),
+        sharing: sharing::ShareControl::new(root, web_root.as_deref()),
+        share_generation: None,
+    };
+    let local_host = if local_projects {
+        Some(local_projects::LocalHost::new(
+            root,
+            address,
+            origins.clone(),
+            web_root.as_deref(),
+            state.clone(),
+        )?)
+    } else {
+        None
+    };
+    let router = project_router(web_root);
+    let mut app = router.with_state(state.clone());
+    if let Some(host) = local_host {
+        app = app.merge(local_projects::router(host));
+    }
+    let app = app
         .layer(DefaultBodyLimit::max(2 * 1024 * 1024))
-        .layer(middleware::from_fn_with_state(state.clone(), origin_guard))
-        .with_state(state);
+        .layer(middleware::from_fn_with_state(state.clone(), origin_guard));
     let (stop, receiver) = oneshot::channel();
     let task = tokio::spawn(async move {
-        axum::serve(listener, app)
+        axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
             .with_graceful_shutdown(async {
                 let _ = receiver.await;
             })
@@ -526,6 +590,7 @@ pub async fn start(
         address,
         stop: Some(stop),
         task,
+        state,
     })
 }
 

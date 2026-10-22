@@ -1,3 +1,4 @@
+import {projectMenu,waitProject,collaboration,closeCollaboration} from './project-ui-helpers.mjs'
 import assert from 'node:assert/strict'
 import { chromium } from 'playwright'
 import { networkInterfaces } from 'node:os'
@@ -20,19 +21,20 @@ const language='assets/zh_cn/lang_progress/example.lang'
 const sleep=ms=>new Promise(r=>setTimeout(r,ms))
 async function until(fn,label,timeout=20000){const deadline=Date.now()+timeout;while(!await fn()){assert.ok(Date.now()<deadline,label);await sleep(100)}}
 function passed(name){results.push({name,status:'passed'});console.log(`通过：${name}`)}
-const bar=page=>page.getByRole('region',{name:'当前文件协作者',exact:true})
+const bar=page=>page.getByRole('region',{name:'协作面板',exact:true})
 const title=page=>page.getByLabel('进度标题',{exact:true})
 async function login(page,key,name){
+  await page.addInitScript(value=>sessionStorage.setItem('hanshu.windowName',value),name)
   await page.goto(h.base)
-  await page.getByRole('button',{name:'打开工程…',exact:true}).click()
-  const form=page.getByRole('form',{name:'打开工程',exact:true})
+  await projectMenu(page,'连接其他服务器…')
+  const form=page.getByRole('form',{name:'连接其他服务器',exact:true})
   await form.getByLabel('服务地址',{exact:true}).fill(h.base)
   await form.getByLabel('主体凭证',{exact:true}).fill(key)
-  await form.getByLabel('本端名称',{exact:true}).fill(name)
+
   const response=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/sessions'&&r.request().method()==='POST')
   await form.getByRole('button',{name:'连接并打开工程',exact:true}).click()
   const {token}=await (await response).json()
-  await page.locator('.project-service-bar').getByText('统一工程验收',{exact:true}).waitFor()
+  await waitProject(page,'统一工程验收')
   const snapshot=await h.api(token,'/api/project')
   return {token,id:snapshot.session.id}
 }
@@ -41,11 +43,11 @@ async function openProgress(page,name='example.progress'){
   await page.getByLabel('筛选资源',{exact:true}).fill(name)
   await page.locator(`[role=treeitem][title="${name}"]`).click()
   await title(page).waitFor()
-  await bar(page).waitFor()
+  await closeCollaboration(page)
   await until(()=>title(page).isEnabled(),'Progress snapshot did not finish loading')
 }
 async function capsule(page,client,activity){
-  await until(async()=>await bar(page).locator(`[aria-label*="${client}"][aria-label*="${activity}"]`).count()>0,`Missing accessible ${activity} capsule for ${client}`)
+  await collaboration(page);await until(async()=>await bar(page).locator(`[aria-label*="${client}"][aria-label*="${activity}"]`).count()>0,`Missing accessible ${activity} capsule for ${client}`)
 }
 async function state(){return h.api(setupToken,'/api/project')}
 async function presence(session,path,activity){await until(async()=>{const p=(await state()).sessions.find(s=>s.id===session.id)?.filePresence;return path===null?p===null:p?.path===path&&(!activity||p.activity===activity)},`Wrong presence for ${session.id}: ${path} ${activity??''}`)}
@@ -71,24 +73,20 @@ try{
   await Promise.all(pages.map(page=>openProgress(page)))
   assert.equal(await a.evaluate(()=>window.isSecureContext),false,'This must be ordinary insecure LAN HTTP')
   await Promise.all([presence(sa,source,'viewing'),presence(sb,source,'viewing'),presence(so,source,'viewing')])
-  for(const page of pages){await until(()=>title(page).isEnabled(),'Progress snapshot did not finish loading');await capsule(page,'窗口 A','查看中');await capsule(page,'窗口 B','查看中');await capsule(page,'管理窗口','查看中')}
+  for(const page of pages){await collaboration(page);await until(()=>title(page).isEnabled(),'Progress snapshot did not finish loading');await capsule(page,'窗口 A','查看中');await capsule(page,'窗口 B','查看中');await capsule(page,'管理窗口','查看中')}
   assert.equal((await state()).leases.length,0,'Viewing a progress document acquired a write lease')
   assert.ok(await bar(a).locator('[aria-label*="窗口 A"][aria-label*="自己"]').count(),'Current session needs an accessible self marker')
   passed('两个主体三个会话可见，同主体的两个标签分别显示；查看不占写权，写者可直接操作表单')
 
   const extra=[]
   for(let i=1;i<=4;i++){const session=await h.login(author.credential,`附加查看窗口 ${i}`);extra.push(session);await h.api(session.token,'/api/presence','POST',{path:source})}
-  const overflow=bar(a).getByLabel('另外 2 个窗口',{exact:true})
-  // Exercise the native details/summary disclosure through its accessible name.
-  await overflow.waitFor();await overflow.focus();await a.keyboard.press('Enter')
-  assert.equal(await bar(a).locator('.file-presence-overflow').getAttribute('open'),'')
-  await a.screenshot({path:join(output,'avatars-overflow.png')})
-  const overflowBounds=await bar(a).locator('.file-presence-overflow > div').boundingBox()
-  assert.ok(overflowBounds&&overflowBounds.width>=160,'Additional collaborators are squeezed into the width of the count badge')
-  await a.keyboard.press('Enter')
+  await collaboration(a)
+  await until(async()=>await bar(a).locator('.collab-session').count()===8,'All windows must be listed')
+  assert.equal(await bar(a).locator('.collab-members article').count(),2,'Windows of one identity should be grouped')
+  await a.screenshot({path:join(output,'floating-many-windows.png')})
   for(const session of extra)await h.api(session.token,'/api/sessions/current','DELETE')
-  await until(async()=>await bar(a).locator('.file-presence-person').count()===3,'Departed viewers remained in the collaborator list')
-  passed('更多查看者折叠为数量胶囊，可用键盘展开；会话离开后及时移除')
+  await until(async()=>await bar(a).locator('.collab-session').count()===4,'Departed viewers remained')
+  passed('悬浮窗按主体分组多个窗口，完整列出焦点并及时移除离开的窗口')
 
   // Hold an IME composition long enough to observe editing intent without
   // submitting half-composed text or retaining a source lease.
@@ -105,7 +103,7 @@ try{
   await a.setViewportSize({width:850,height:950});await a.screenshot({path:join(output,'avatars-narrow.png')})
   const bounds=await bar(a).boundingBox();assert.ok(bounds&&bounds.x>=0&&bounds.x+bounds.width<=851,'Collaborator bar overflows its narrow viewport')
   await a.setViewportSize({width:1500,height:1050})
-  await save(b,'B 可以直接继续编辑')
+  await closeCollaboration(b);await save(b,'B 可以直接继续编辑')
   await until(async()=>await title(a).inputValue()==='B 可以直接继续编辑','A did not observe B operation')
   passed('输入意图显示编辑胶囊，双方表单保持可用；组合输入结束自动保存，完成后回到查看状态且不占写权')
 

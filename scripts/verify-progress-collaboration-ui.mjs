@@ -1,3 +1,4 @@
+import {submission,closeCollaboration} from './project-ui-helpers.mjs'
 import assert from 'node:assert/strict'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
@@ -18,12 +19,11 @@ const source = () => diskJson(h, progressPath)
 const language = () => diskJson(h, languagePath)
 const title = page => active(page).getByLabel('进度标题', { exact: true })
 const number = (page, name) => active(page).getByLabel(name, { exact: true })
-const status = page => page.getByRole('region', { name: '工程提交状态', exact: true })
 const semanticRequests = () => proxy.observed.filter(request => request.changes.some(change => change.op === 'progress-command'))
 async function saved(page) {
-  await until(async () => await status(page).getByRole('status').innerText() === '修改已保存', 'Client did not settle its semantic operation')
+  await until(async () => await (await submission(page)).getByRole('status').innerText() === '修改已保存', 'Client did not settle its semantic operation'); await closeCollaboration(page)
 }
-async function setNumber(page, label, value) { await number(page, label).fill(String(value)); await number(page, label).press('Enter') }
+async function setNumber(page, label, value) { await closeCollaboration(page); await number(page, label).fill(String(value)); await number(page, label).press('Enter') }
 async function noLeases() { assert.equal((await h.api(ownerToken, '/api/project')).leases.length, 0, 'Progress form held long-lived leases') }
 async function undo(page) { await active(page).getByRole('button', { name: /^撤销/ }).click() }
 async function redo(page) { await active(page).getByRole('button', { name: /^重做/ }).click() }
@@ -52,7 +52,7 @@ try {
   await Promise.all([login(a, proxy.base, editorA.credential, '进度窗口 A'), login(b, proxy.base, editorB.credential, '进度窗口 B'), login(v, proxy.base, viewer.credential, '进度只读窗口')])
   await Promise.all(pages.map(openProgress))
   await until(() => title(a).isEnabled(), 'Writer progress form still requires manually taking write ownership')
-  assert.ok(await title(b).isEnabled()); assert.ok(await title(v).isDisabled())
+  await until(() => title(b).isEnabled(), 'Second writer is not ready'); assert.ok(await title(v).isDisabled())
   assert.equal(await active(a).getByRole('button', { name: '开始编辑', exact: true }).count(), 0)
   assert.equal(proxy.observed.length, 0, 'Merely opening a progress form issued a project mutation')
   const initialFiles = (await h.files(ownerToken)).entries
@@ -116,7 +116,7 @@ try {
   const beforeLost = await h.api(ownerToken, '/api/history/stats')
   proxy.dropNextResponse()
   await title(a).fill('成功但回复丢失的标题')
-  await until(async () => /结果待确认|结果未知|尚未确认|待确认/.test(await active(a).innerText()) || /结果待确认/.test(await status(a).innerText()), 'Lost successful response was not presented as uncertain')
+  await until(async () => /结果待确认|结果未知|尚未确认|待确认/.test(await active(a).innerText()) || /结果待确认/.test(await (await submission(a)).innerText()), 'Lost successful response was not presented as uncertain')
   assert.equal((await language()).name, '成功但回复丢失的标题')
   await until(async () => await title(b).inputValue() === '成功但回复丢失的标题', 'B did not observe the committed unknown outcome')
   await title(b).fill('另一作者在旧回执确认前提交的标题')
@@ -139,7 +139,7 @@ try {
   await setNumber(b, '目标数量', 40)
   await until(async () => (await source()).goals[0].config.target === 40, 'B same-field edit did not save')
   await saved(b); proxy.release()
-  await until(async () => /冲突/.test(await active(a).innerText()) || /提交冲突/.test(await status(a).innerText()), 'Stale same-field operation did not surface conflict')
+  await until(async () => /冲突/.test(await active(a).innerText()) || /提交冲突/.test(await (await submission(a)).innerText()), 'Stale same-field operation did not surface conflict')
   assert.equal(await number(a, '目标数量').inputValue(), '30', 'Conflict discarded local field input')
   assert.equal((await source()).goals[0].config.target, 40)
   await a.screenshot({ path: join(output, 'progress-conflict-keeps-input.png') })
@@ -157,7 +157,7 @@ try {
   await saved(b)
   const beforeUndoConflict = (await h.api(ownerToken, '/api/history/stats')).revisions
   await undo(a)
-  await until(async () => /冲突/.test(await status(a).innerText()), 'Undo over a peer same-field edit was not rejected')
+  await until(async () => /冲突/.test(await (await submission(a)).innerText()), 'Undo over a peer same-field edit was not rejected')
   assert.equal((await source()).goals[0].config.bonus, 9)
   assert.equal((await h.api(ownerToken, '/api/history/stats')).revisions, beforeUndoConflict)
   await active(a).getByRole('button', { name: '取消本次撤销', exact: true }).click()
@@ -166,13 +166,13 @@ try {
 
   await h.api(ownerToken, '/api/files/leases', 'POST', { paths: [progressPath] })
   await setNumber(b, '额外数量', 12)
-  await until(async () => /写权|锁定|占用/.test(await status(b).innerText()), 'Locked autosubmit did not surface recoverable failure')
+  await until(async () => /写权|锁定|占用/.test(await (await submission(b)).innerText()), 'Locked autosubmit did not surface recoverable failure')
   assert.equal((await source()).goals[0].config.bonus, 9)
   await b.reload(); await login(b, proxy.base, editorB.credential, '进度窗口 B 刷新恢复', false); await openProgress(b)
   await until(async () => await number(b, '额外数量').inputValue() === '12', 'Reload lost unconfirmed local progress parameter')
   assert.equal((await source()).goals[0].config.bonus, 9)
   await h.release(ownerToken)
-  await b.getByRole('button', { name: '重试原提交', exact: true }).first().click()
+  await (await submission(b)).getByRole('button', { name: '重试原提交', exact: true }).first().click()
   await until(async () => (await source()).goals[0].config.bonus === 12, 'Restored locked command did not retry')
   await saved(b); await noLeases()
   passed('临时写权失败保留操作和字段草稿；刷新恢复原提交，释放锁后重试成功')

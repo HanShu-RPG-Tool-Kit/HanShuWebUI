@@ -159,7 +159,7 @@ export class ProgressEditSession {
   }
   /** A recovered outbox retry settles the same session even after the first Promise rejected. */
   async reconcile() {
-    if (!this.active || this.current || this.recovering) return
+    if (!this.active || this.current || this.recovering || this.resolving) return
     this.recovering = true
     try {
       const record = this.adapter.record(this.active.id)

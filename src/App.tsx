@@ -43,6 +43,8 @@ import './App.css'
 import { ProjectConnectionBar } from './project/ProjectConnectionBar'
 import { ProjectHistory } from './project/ProjectHistory'
 import { getProjectClient } from './project/serviceClient'
+import { openProjectUi } from './project/projectUi'
+import { useProjectSession } from './project/projectSession'
 
 const isDesktopShell = isTauriRuntime()
 
@@ -52,6 +54,9 @@ const MENUS = [
     items: [
       '打开工程…',
       '新建工程…',
+      '分享工程…',
+      '连接其他服务器…',
+      '关闭工程',
       '—',
       '新建剧本',
       '新建包',
@@ -78,6 +83,7 @@ const MENUS = [
     label: '查看',
     items: [
       'Agent 窗口',
+      '协作面板',
       '录音棚',
       '命令面板...',
       '外观',
@@ -118,6 +124,7 @@ function isAlwaysEnabledMenuItem(item: string) {
     item.startsWith('界面比例 ') ||
     item === '恢复推荐大小（125%）' ||
     item === '历史版本' ||
+    ['分享工程…', '连接其他服务器…', '关闭工程', '协作面板', '打开工程…', '新建工程…'].includes(item) ||
     item === '退出'
   )
 }
@@ -140,6 +147,7 @@ function renderToolWorkspace(
 }
 
 function App() {
+  const projectSession = useProjectSession()
   const [openMenu, setOpenMenu] = useState<string | null>(null)
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<AppWorkspaceId>(
     () => loadActiveWorkspaceId(WORKSPACE_IDS),
@@ -270,6 +278,10 @@ function App() {
 
   const handleMenuAction = (item: string) => {
     setOpenMenu(null)
+    if (item === '分享工程…') { openProjectUi('share'); return }
+    if (item === '连接其他服务器…') { openProjectUi('connect'); return }
+    if (item === '关闭工程') { openProjectUi('close'); return }
+    if (item === '协作面板') { openProjectUi('collaboration'); return }
     if (item === '历史版本') {
       setHistoryOpen(true)
       return
@@ -351,7 +363,8 @@ function App() {
                           <button
                             type="button"
                             role="menuitem"
-                            disabled={activeWorkspaceId === 'progress-flow' &&
+                            disabled={(menuItem === '分享工程…' && projectSession.binding?.handle.client.snapshot.role !== 'owner') ||
+                              (menuItem === '关闭工程' && !projectSession.binding) || activeWorkspaceId === 'progress-flow' &&
                               !['保存', '撤销', '重做', '打开工程…', '新建工程…'].includes(menuItem) &&
                               !isAlwaysEnabledMenuItem(menuItem)}
                             aria-checked={

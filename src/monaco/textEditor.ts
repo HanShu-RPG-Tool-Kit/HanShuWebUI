@@ -1358,6 +1358,7 @@ export function bindText(
     forced?: TextEditMode,
     caretIndex?: number,
   ): boolean => {
+    if (ed.getOption(monaco.editor.EditorOption.readOnly)) return false
     const map = host.getMap()
     if (!map) return false
     const key = normalizeLocaleKey(span.value)
@@ -1395,7 +1396,7 @@ export function bindText(
      * （或键名模式出现"初始值本身就非法"的入口），这里就是最后一道防线，别删。
      */
     const writeDraft = (target: TextEditMode, next: string): boolean => {
-      if (disposed) return false
+      if (disposed || ed.getOption(monaco.editor.EditorOption.readOnly)) return false
       // 文档里已经没有这个键了（被删 / 被换掉）：宁可不写，也别写到一个猜出来的位置
       const live = spanFor(key)
       if (!live) return false
@@ -2452,7 +2453,7 @@ export function bindText(
           }
           // 缺失 / 无效：没有可播的东西，点它就是"配一条音频" —— 打开录音棚
           if (voiceState === 'missing' || voiceState === 'invalid') {
-            host.onEditVoice?.(key)
+            if (!ed.getOption(monaco.editor.EditorOption.readOnly)) host.onEditVoice?.(key)
             return
           }
           voice?.togglePlay(key)
@@ -2621,6 +2622,7 @@ export function bindText(
    * 只动正文，映射条目（.lang / .voice）不动 —— 与手工删键的行为一致。
    */
   const deleteUnit = (key: string) => {
+    if (ed.getOption(monaco.editor.EditorOption.readOnly)) return
     const model = ed.getModel()
     const span = entryFor(key)?.span ?? spanFor(key)
     if (!model || !span) return
@@ -2654,6 +2656,7 @@ export function bindText(
    * 只改正文（同 deleteUnit 的口径），映射条目不动 —— 换完之后这个片段按新键名取文本。
    */
   const replaceUnitKey = (targetKey: string, nextKey: string) => {
+    if (ed.getOption(monaco.editor.EditorOption.readOnly)) return
     const model = ed.getModel()
     const span = entryFor(targetKey)?.span ?? spanFor(targetKey)
     const normalized = normalizeLocaleKey(nextKey)
@@ -2758,7 +2761,7 @@ export function bindText(
    * 打开文件 / 刷新这类批量路径不带这个选项。
    */
   const migrateNow = (options?: { skipEditing?: boolean }) => {
-    if (disposed || migrating) return
+    if (disposed || migrating || ed.getOption(monaco.editor.EditorOption.readOnly)) return
     const model = ed.getModel()
     const map = host.getMap()
     if (!model || !map) return

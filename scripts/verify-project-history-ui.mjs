@@ -1,3 +1,4 @@
+import {projectMenu,waitProject} from './project-ui-helpers.mjs'
 import assert from 'node:assert/strict'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
@@ -22,14 +23,15 @@ async function commit(edits) {
   finally { await h.release(ownerToken) }
 }
 async function login(page, credential, name) {
+  await page.addInitScript(value=>sessionStorage.setItem('hanshu.windowName',value),name)
   await page.goto(proxy.base)
-  await page.getByRole('button', { name: '打开工程…', exact: true }).click()
-  const form = page.getByRole('form', { name: '打开工程', exact: true })
+  await projectMenu(page,'连接其他服务器…')
+  const form = page.getByRole('form',{name:'连接其他服务器',exact:true})
   await form.getByLabel('服务地址', { exact: true }).fill(proxy.base)
   await form.getByLabel('主体凭证', { exact: true }).fill(credential)
-  await form.getByLabel('本端名称', { exact: true }).fill(name)
+
   await form.getByRole('button', { name: '连接并打开工程', exact: true }).click()
-  await page.locator('.project-service-bar').getByText('统一工程验收', { exact: true }).waitFor()
+  await waitProject(page,'统一工程验收')
 }
 async function openHistory(page) {
   await page.getByRole('button', { name: '工程历史', exact: true }).click()

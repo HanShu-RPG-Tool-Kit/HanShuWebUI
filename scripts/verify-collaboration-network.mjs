@@ -1,3 +1,4 @@
+import {projectMenu,waitProject,submission,closeCollaboration} from './project-ui-helpers.mjs'
 import assert from 'node:assert/strict'
 import { createServer, request as httpRequest } from 'node:http'
 import { connect } from 'node:net'
@@ -76,23 +77,24 @@ const receipt=(token,id,status=200)=>api(token,`/api/files/transactions/${id}`,'
 function passed(name){results.push({name,status:'passed'});console.log(`通过：${name}`)}
 async function until(fn,label,timeout=20000){const deadline=Date.now()+timeout;while(!await fn()){assert.ok(Date.now()<deadline,label);await sleep(100)}}
 async function browserLogin(page,key,name,navigate=true){
+  await page.addInitScript(value=>sessionStorage.setItem('hanshu.windowName',value),name)
   if(navigate)await page.goto(base)
-  await page.getByRole('button',{name:'打开工程…',exact:true}).click()
-  const form=page.getByRole('form',{name:'打开工程',exact:true})
+  await projectMenu(page,'连接其他服务器…')
+  const form=page.getByRole('form',{name:'连接其他服务器',exact:true})
   await form.getByLabel('服务地址',{exact:true}).fill(base)
   await form.getByLabel('主体凭证',{exact:true}).fill(key)
-  await form.getByLabel('本端名称',{exact:true}).fill(name)
+
   await form.getByRole('button',{name:'连接并打开工程',exact:true}).click()
-  await page.locator('.project-service-bar').getByText('统一工程验收',{exact:true}).waitFor()
+  await waitProject(page,'统一工程验收')
 }
-async function openProgress(page,name='example.progress'){
+async function openProgress(page,name='example.progress'){ await closeCollaboration(page);
   await page.getByRole('tab',{name:'进度流程',exact:true}).click()
   await page.getByLabel('筛选资源',{exact:true}).fill(name)
   await page.locator(`[role=treeitem][title="${name}"]`).click()
   await page.getByLabel('进度标题',{exact:true}).waitFor()
 }
-async function beginEditing(page){await until(()=>page.getByLabel('进度标题',{exact:true}).isEnabled(),'Progress form must be editable without manually acquiring a lease');assert.equal(await page.getByRole('region',{name:'当前文件协作者',exact:true}).getByRole('button',{name:'开始编辑',exact:true}).count(),0)}
-async function settled(page){await until(async()=>await page.getByRole('region',{name:'工程提交状态',exact:true}).getByRole('status').innerText()==='修改已保存','Client did not acknowledge operation')}
+async function beginEditing(page){await until(()=>page.getByLabel('进度标题',{exact:true}).isEnabled(),'Progress form must be editable without manually acquiring a lease');assert.equal(await page.locator('.app-workspace-pane.active').getByRole('button',{name:'开始编辑',exact:true}).count(),0)}
+async function settled(page){await until(async()=>await (await submission(page)).getByRole('status').innerText()==='修改已保存','Client did not acknowledge operation'); await closeCollaboration(page)}
 let browser,acceptRemoval=false,browserContexts=0
 const pages=[],pageErrors=[]
 let apiTokens=[]
@@ -204,7 +206,7 @@ try{
   const priorRequests=observed.length
   delayMs=120;dropCommitResponse=true
   await pageA.getByLabel('进度标题',{exact:true}).fill('LAN 回复丢失后的标题')
-  await pageA.getByRole('region',{name:'工程提交状态',exact:true}).getByText('结果待确认',{exact:true}).waitFor()
+  await (await submission(pageA)).getByText('结果待确认',{exact:true}).waitFor()
   const uncertainRequest=observed[priorRequests]
   assert.ok(uncertainRequest?.transactionId)
   assert.equal(uncertainRequest.changes[0].op,'progress-command')
@@ -214,8 +216,8 @@ try{
   await until(async()=>JSON.parse(await readFile(join(h.root,'src/progress/example.progress'),'utf8')).completion==='any','Peer could not continue during unknown outcome')
   await settled(pageB)
   await pageA.reload();await browserLogin(pageA,author.credential,'LAN A restored outbox',false);await openProgress(pageA)
-  await pageA.getByRole('region',{name:'工程提交状态',exact:true}).getByText('结果待确认',{exact:true}).waitFor()
-  await pageA.getByRole('region',{name:'工程提交状态',exact:true}).getByRole('button',{name:'查询提交结果',exact:true}).click()
+  await (await submission(pageA)).getByText('结果待确认',{exact:true}).waitFor()
+  await (await submission(pageA)).getByRole('button',{name:'查询提交结果',exact:true}).click()
   await settled(pageA)
   assert.equal(observed.filter(r=>r.transactionId===uncertainRequest.transactionId).length,1,'Confirmed transaction was sent again')
   await until(async()=>await pageA.getByRole('button',{name:'完成任一',exact:true}).getAttribute('aria-pressed')==='true','Historical receipt overwrote newer peer state')
@@ -234,20 +236,20 @@ try{
     if(item.path.endsWith('.progress'))await beginEditing(pageA)
     await pageA.keyboard.press('Control+s')
     await until(async()=>(await api(a.token,'/api/files')).entries.some(e=>e.path===item.path),`LAN creation failed: ${item.path}`)
-    await until(async()=>await pageA.getByRole('region',{name:'工程提交状态',exact:true}).getByRole('status').innerText()==='修改已保存',`Client did not finish acknowledging creation: ${item.path}`)
+    await until(async()=>await (await submission(pageA)).getByRole('status').innerText()==='修改已保存',`Client did not finish acknowledging creation: ${item.path}`)
   }
   acceptRemoval=true;dropCommitResponse=true
   const beforeRemove=observed.length
   await pageA.locator('[role=treeitem][title="lan-flow.hflow"]').click({button:'right'})
   await pageA.getByRole('menuitem',{name:'移除流程…',exact:true}).click()
-  await pageA.getByRole('region',{name:'工程提交状态',exact:true}).getByText('结果待确认',{exact:true}).waitFor()
+  await (await submission(pageA)).getByText('结果待确认',{exact:true}).waitFor()
   acceptRemoval=false
   const removeRequest=observed[beforeRemove]
   assert.ok(removeRequest.changes.some(c=>c.op==='remove'&&c.path==='src/story/lan-flow.hflow'))
   await pageA.reload();await browserLogin(pageA,author.credential,'LAN A restored removal',false)
-  await pageA.getByRole('region',{name:'工程提交状态',exact:true}).getByText('结果待确认',{exact:true}).waitFor()
-  await pageA.getByRole('region',{name:'工程提交状态',exact:true}).getByRole('button',{name:'查询提交结果',exact:true}).click()
-  await until(async()=>await pageA.getByRole('region',{name:'工程提交状态',exact:true}).getByRole('status').innerText()==='修改已保存','Restored deletion was not confirmed')
+  await (await submission(pageA)).getByText('结果待确认',{exact:true}).waitFor()
+  await (await submission(pageA)).getByRole('button',{name:'查询提交结果',exact:true}).click()
+  await until(async()=>await (await submission(pageA)).getByRole('status').innerText()==='修改已保存','Restored deletion was not confirmed')
   assert.equal(observed.filter(r=>r.transactionId===removeRequest.transactionId).length,1)
   assert.ok(!(await api(a.token,'/api/files')).entries.some(e=>e.path==='src/story/lan-flow.hflow'))
   passed('删除回复丢失后刷新页面，从持久 outbox 确认同一事务，未重复执行删除')
@@ -301,7 +303,7 @@ try{
   await beginEditing(tabA)
   const beforeDuplicate=observed.length;dropCommitResponse=true
   await tabA.getByLabel('进度标题',{exact:true}).fill('仅原标签页持有的待确认提交')
-  await tabA.getByRole('region',{name:'工程提交状态',exact:true}).getByText('结果待确认',{exact:true}).waitFor()
+  await (await submission(tabA)).getByText('结果待确认',{exact:true}).waitFor()
   const originalRequest=observed[beforeDuplicate]
   const originalWindowId=await tabA.evaluate(()=>sessionStorage.getItem('hanshu.editWindow'))
   const popupPromise=sharedContext.waitForEvent('page')
@@ -309,11 +311,11 @@ try{
   const duplicateTab=await popupPromise;pages.push(duplicateTab);duplicateTab.on('pageerror',e=>pageErrors.push(e.message));duplicateTab.on('dialog',d=>d.dismiss())
   await browserLogin(duplicateTab,author.credential,'duplicate tab',false)
   assert.notEqual(await duplicateTab.evaluate(()=>sessionStorage.getItem('hanshu.editWindow')),originalWindowId,'window.open copied the original outbox owner ID')
-  assert.ok(!(await duplicateTab.getByRole('region',{name:'工程提交状态',exact:true}).innerText()).includes('结果待确认'),'Duplicate tab restored the original tab’s pending outbox')
+  assert.ok(!(await (await submission(duplicateTab)).innerText()).includes('结果待确认'),'Duplicate tab restored the original tab’s pending outbox')
   await tabA.reload();await browserLogin(tabA,author.credential,'original tab reloaded',false)
-  await tabA.getByRole('region',{name:'工程提交状态',exact:true}).getByText('结果待确认',{exact:true}).waitFor()
-  await tabA.getByRole('region',{name:'工程提交状态',exact:true}).getByRole('button',{name:'查询提交结果',exact:true}).click()
-  await until(async()=>await tabA.getByRole('region',{name:'工程提交状态',exact:true}).getByRole('status').innerText()==='修改已保存','Original tab lost its outbox after another tab was cloned')
+  await (await submission(tabA)).getByText('结果待确认',{exact:true}).waitFor()
+  await (await submission(tabA)).getByRole('button',{name:'查询提交结果',exact:true}).click()
+  await until(async()=>await (await submission(tabA)).getByRole('status').innerText()==='修改已保存','Original tab lost its outbox after another tab was cloned')
   assert.equal(observed.filter(r=>r.transactionId===originalRequest.transactionId).length,1)
   assert.deepEqual(pageErrors,[])
   passed('真实 window.open 复制 sessionStorage 后分离 outbox 所有权，原标签刷新仍可恢复并确认自己的提交')

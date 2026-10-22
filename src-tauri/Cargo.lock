@@ -2774,6 +2774,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tower-http",
+ "uuid",
 ]
 
 [[package]]
