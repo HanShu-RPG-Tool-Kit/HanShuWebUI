@@ -18,7 +18,9 @@ async function port() {
   const port = server.address().port; await new Promise(resolve => server.close(resolve)); return port
 }
 const devPort = await port(), previewPort = await port()
-const bases = [`http://127.0.0.1:${devPort}`, `http://127.0.0.1:${previewPort}`]
+// Opening localhost must also work when the host returns a 127.0.0.1 URL.
+// Browsers send Sec-Fetch-Site: cross-site on that otherwise-local connection.
+const bases = [`http://localhost:${devPort}`, `http://127.0.0.1:${previewPort}`]
 const h = await harness({ root: join(workspace, 'default'), localProjects: true, origins: bases })
 let dev, built, browser
 const results = []

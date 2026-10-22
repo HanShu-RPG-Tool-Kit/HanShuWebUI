@@ -209,7 +209,10 @@ pub(super) fn local_headers(headers: &HeaderMap) -> bool {
         .is_none_or(|value| value != "cross-site");
     host_ok
         && (origin_ok || desktop_origin)
-        && (same_site || desktop_origin)
+        // localhost and 127.0.0.1 are different browser sites, but both are
+        // valid local UI origins. The outer origin guard still checks the
+        // configured allowlist, and peer/Host/forwarded checks remain required.
+        && (same_site || desktop_origin || (headers.contains_key(header::ORIGIN) && origin_ok))
         && ![
             "x-hanshu-remote-client",
             "forwarded",
