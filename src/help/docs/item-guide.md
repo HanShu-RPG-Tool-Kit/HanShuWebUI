@@ -55,7 +55,7 @@
 - **miss / 过期**：自动刷新开启时，编辑器先用 WebUI 近似渲染并登记 needed；连上游戏开发服务器后 drain。
 - **count**：数量变化不改指纹、不触发重新快照（发放数量由礼包等决定）。
 
-Mod 已升级 `.itemstack` v3、快照与 IBE 编辑交换协议；两端需使用同一新版。旧版 Mod 的 v1/v2 文件仍拒绝导入，不自动推断迁移。`.it` 运行时消费者不属于本轮范围。
+Mod 已升级 `.itemstack` v3、快照与 IBE 编辑交换协议；两端需使用同一新版。旧版 Mod 的 v1/v2 文件仍拒绝导入，不自动推断迁移。`.it` 模板使用独立的版本化运行时格式，见下方模板同步。
 
 ## `.itemstack` 文件格式
 
@@ -118,20 +118,67 @@ Mod 已升级 `.itemstack` v3、快照与 IBE 编辑交换协议；两端需使�
 - **入站**：`items.list` / `items.get` / `items.query` 读当前会话物品库（C 侧镜像）；`items.edit.done` 为 IBE 完成通知。
 - **出站（WebUI→mod）**：`items.renderSnapshots` 批量拉展示快照；`items.edit.open` 呼出客户端 IBE（资源树 `.item` 右键「在游戏中编辑…」）。写回只认 `hash` 乐观锁，见 [游戏开发服务器](#game-dev-server)。
 
-## 导出
+## 模板同步与导出
 
-导出 PAK 时，内置 **Item** 编译器把每个 `.item` 编成 server 平面的 **`.it`**（路径如 `items/apple.it`）：
+`.item` 是模板的作者文档。编辑器的「模板同步」卡片与物品定义一起保存，沿用工程草稿、保存和协作事务；规则不进入展示快照指纹。
+
+- 默认所有组件锁定，且不允许未声明的额外组件。
+- 点击组件右侧「模板锁定」可切换为「实例管理」：创建实例时使用模板初值，此后保留实例当前值；实例删除该组件也会保持删除。
+- 展开 compound 后可开放单个字段。开放父字段意味着开放整棵子树，包含后来新增的子字段；子节点显示「随父节点」。只想保留子弹数，就只开放对应的 ammo 字段。
+- list 和数值数组只能整体开放，不按下标设置规则。
+- 「允许组件」可以声明模板初始集合里没有的实例组件，例如允许玩家附魔。它不向模板添加空组件。
+- 「允许未声明的额外组件」是更宽泛的开放：只保留模板之外的组件，不会让已有模板组件自动变成实例管理。
+- 删除或改变字段类型后，失效规则会明确报错；恢复字段或点击「收回开放」，修复前不能导出该模板。
+
+`.item` v2 可选的 `sync` 字段如下；未填写时为默认封闭规则：
 
 ```json
 {
+  "allowExtraComponents": false,
+  "instanceComponents": ["minecraft:damage", "minecraft:enchantments"],
+  "instanceFields": [
+    { "component": "example:gun", "path": ["magazine", "ammo"] }
+  ]
+}
+```
+
+路径按 compound 的真实键名保存为数组，空键、带点号的键不会被误拆。父规则覆盖子规则；整组件开放覆盖该组件所有字段规则。
+
+导出 PAK 时，内置 Item 编译器把 `apple.item` 编成 server 平面的 `items/apple.it`：
+
+```json
+{
+  "format": "rpgtoolkit:item-template",
+  "schemaVersion": 1,
+  "componentFormat": "tnbt-json-v1",
+  "componentMode": "complete",
   "item": {
     "id": "minecraft:apple",
     "components": {}
+  },
+  "sync": {
+    "allowExtraComponents": false,
+    "instanceComponents": [],
+    "instanceFields": []
   }
 }
 ```
 
-只保留运行时 `item`；`format` / `schemaVersion` / `tags` / `display` 不进包。详见 [导出 PAK](#export-pak)。
+空组件集合仅演示结构，不会继承原版默认组件。作者标签和展示快照不进入 `.it`。没有 revision 或 follow 模式。
+
+模板 ID 就是扁平文件名去掉 `.it`，如 `apple`，不含命名空间和子目录。改文件名就是改模板 ID。Minecraft 底层物品 ID 则可以修改：同步时重建新类型，再恢复允许的实例状态与数量。
+
+Mod 在实例的持久化组件 `rpgtoolkit:item_template` 中保存模板 ID（字符串）。`.itemstack` 导出会保留此绑定；将它导入为一个新的 `.item` 时会移除绑定，避免把实例身份写进模板。
+
+运行时先用当前模板重建完整组件集合，再恢复允许的实例组件／字段；未开放的旧组件随之移除。最终校验失败会保留原物品。数量不由模板同步覆盖；堆叠上限降低时仍保留原数量，原位更新，不拆栈、不检查空余槽位，也不因此延后同步。主动调用同步入口时同样保留原数量。
+
+服务端启动及 `/rpgtoolkit pak reload` 会加载 `.it`。本机开发发版目前仍需执行该服务端重载命令。管理员可用 `/rpgtoolkit item give apple 1` 创建绑定实例，用 `/rpgtoolkit item sync` 主动同步自身背包。
+
+实例采用惰性同步：登录、拾取完成和每 20 tick 检查玩家背包与玩家装备；容器只在打开时检查一次。使用、攻击和持续使用时只检查实际使用的那只手，不扫描背包。掉落物、生物装备和当前容器没有周期扫描；它们可能暂时保留旧模板，物品进入玩家侧后再同步。换物品导致手持引用变化时会取消当次操作并提示重试，避免继续使用旧实例。模板缺失时不删除物品，但会阻止其参与已接入的手持关键操作。
+
+运行时模板会预编译为原生组件；未变化实例使用服务端内存缓存，不执行 JSON／整物品 NBT 往返。字段例外只处理对应组件的局部 NBT，文件格式不增加 revision。
+
+第一版不会扫描离线玩家、未打开的箱子或自定义仓库内部存档；物品进入已接入槽位后再同步。嵌套物品与第三方容器不做通用递归同步。礼包中的作者链接仍按下节展开，不会因此自动变成运行时模板绑定。
 
 ## 与礼包的关系
 

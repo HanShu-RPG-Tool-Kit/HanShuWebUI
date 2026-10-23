@@ -1,3 +1,4 @@
+import { ItemSyncEditor } from './ItemSyncEditor'
 import {
   useMemo,
   useRef,
@@ -180,6 +181,7 @@ export function ItemEditor({ doc, error, disabled, onChange }: {
       schemaVersion: doc.schemaVersion,
       tags: 'tags' in patch ? unionItemTags(patch.tags ?? []) : doc.tags,
       item: nextItem,
+      sync: 'sync' in patch ? patch.sync : doc.sync,
     }
     onChange(stringifyItem(next))
   }
@@ -218,6 +220,7 @@ export function ItemEditor({ doc, error, disabled, onChange }: {
           </Section>
           <ItemComponentCards components={doc.item.components} disabled={disabled}
               onChange={(components) => update({ item: { components } })} />
+          <ItemSyncEditor components={doc.item.components} value={doc.sync} disabled={disabled} onChange={(sync) => update({ sync })} />
           <Section title="组件树" hint="右键管理 · 双击键名重命名"
             action={<span className="item-count">{Object.keys(doc.item.components).length}</span>}>
             <ComponentsTree value={doc.item.components} disabled={disabled}

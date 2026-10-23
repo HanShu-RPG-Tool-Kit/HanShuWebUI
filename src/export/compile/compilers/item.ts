@@ -1,6 +1,17 @@
-import { isItemFileName, parseItem } from '../../../workspaces/progress/itemDoc'
+import { readItemSync, syncRuleErrors } from '../../../workspaces/progress/itemSync'
+import { isItemFileName, parseItem, type ItemDocument } from '../../../workspaces/progress/itemDoc'
 import { sourcePathOf } from '../../../workspace'
 import type { FileCompiler } from '../types'
+
+export function itemTemplateArtifact(doc: ItemDocument) {
+  const sync=readItemSync(doc.sync), errors=syncRuleErrors(sync,doc.item.components)
+  if(errors.length)throw Error(errors.join('；'))
+  return {
+    format: 'rpgtoolkit:item-template', schemaVersion: 1,
+    componentFormat: 'tnbt-json-v1', componentMode: 'complete',
+    sync, item: doc.item,
+  }
+}
 
 /** `src/items/foo.item` → pak 内 `items/foo.it` */
 function itemArtifactPath(file: { name: string; srcKind?: string | null }): string {
@@ -10,8 +21,8 @@ function itemArtifactPath(file: { name: string; srcKind?: string | null }): stri
 }
 
 /**
- * `.item` → `.it`：只保留运行时 `item`（id + components），
- * 去掉 format / schemaVersion / tags / display。
+ * `.item` → `.it`：输出运行时 item、同步规则与协议版本，
+ * 不携带作者标签和展示快照。
  */
 export const itemCompiler: FileCompiler = {
   id: 'item',
@@ -22,9 +33,11 @@ export const itemCompiler: FileCompiler = {
     let doc
     try {
       doc = parseItem(file.content)
+      const errors = syncRuleErrors(readItemSync(doc.sync), doc.item.components)
+      if (errors.length) throw Error(errors.join('；'))
     } catch (err) {
       ctx.report({
-        severity: 'warning',
+        severity: 'error',
         code: 'item_compile',
         message: err instanceof Error ? err.message : String(err),
         sourcePath: file.name,
@@ -33,12 +46,7 @@ export const itemCompiler: FileCompiler = {
       return []
     }
 
-    const body = `${JSON.stringify({
-      item: {
-        id: doc.item.id,
-        components: doc.item.components,
-      },
-    }, null, 2)}\n`
+    const body = `${JSON.stringify(itemTemplateArtifact(doc), null, 2)}\n`
 
     return [
       {
