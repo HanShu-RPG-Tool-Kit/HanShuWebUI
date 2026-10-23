@@ -1,3 +1,4 @@
+import { readItemSync, TEMPLATE_COMPONENT, type ItemSync } from './itemSync'
 /**
  * `.item` 物品库文档：与 `.itemstack` 同源，但不存 count。
  * format / schemaVersion / item.id 为必填；缺一即非法。
@@ -30,6 +31,7 @@ export type ItemDocument = {
   /** 游戏标签：引擎可按标签查询；空则不写入文件 */
   tags: string[]
   item: ItemData
+  sync?: ItemSync
   display?: ItemStackDisplay
 }
 
@@ -86,6 +88,7 @@ export function createItem(id = DEFAULT_ITEM_ID): ItemDocument {
     format: ITEM_FORMAT,
     schemaVersion: ITEM_SCHEMA_VERSION,
     tags: [],
+    sync: readItemSync(undefined),
     item: { id, components: {} },
   }
 }
@@ -94,6 +97,7 @@ export function stringifyItem(doc: ItemDocument): string {
   const body: Record<string, unknown> = {
     format: ITEM_FORMAT,
     schemaVersion: ITEM_SCHEMA_VERSION,
+    sync: readItemSync(doc.sync),
     item: {
       id: doc.item.id.trim() || DEFAULT_ITEM_ID,
       components: readComponents(doc.item.components),
@@ -121,7 +125,7 @@ export function parseItem(source: string): ItemDocument {
   const tags = readItemTags(raw.tags)
   const legacyDisplay = readItemStackDisplay(raw.display)
   if (legacyDisplay) ingestDisplay(item, legacyDisplay)
-  return { format, schemaVersion, tags, item }
+  return { format, schemaVersion, tags, item, sync: readItemSync(raw.sync) }
 }
 
 export function readItemSource(source: string): { doc: ItemDocument; error: string } {
@@ -141,12 +145,14 @@ export function itemFromItemStack(file: ItemStackFile): ItemDocument {
     id: file.item.id.trim(),
     components: readComponents(file.item.components),
   }
+  delete item.components[TEMPLATE_COMPONENT]
   if (!item.id) throw new Error('item.id 不能为空')
   if (file.display) ingestDisplay(item, file.display)
   return {
     format: ITEM_FORMAT,
     schemaVersion: ITEM_SCHEMA_VERSION,
     tags: [],
+    sync: readItemSync(undefined),
     item,
   }
 }
@@ -158,7 +164,7 @@ export function itemFromItemStackSource(source: string): ItemDocument {
 /** @deprecated display 已出文件；保留空操作以免旧调用方报错 */
 export function withStaleAwareDisplay(doc: ItemDocument): ItemDocument {
   if (doc.display) ingestDisplay(doc.item, doc.display)
-  return { format: doc.format, schemaVersion: doc.schemaVersion, tags: doc.tags, item: doc.item }
+  return { format: doc.format, schemaVersion: doc.schemaVersion, tags: doc.tags, item: doc.item, sync: readItemSync(doc.sync) }
 }
 
 export function itemPresentable(doc: ItemDocument): {
