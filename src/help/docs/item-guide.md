@@ -152,6 +152,7 @@ Mod 已升级 `.itemstack` v3、快照与 IBE 编辑交换协议；两端需使�
   "schemaVersion": 1,
   "componentFormat": "tnbt-json-v1",
   "componentMode": "complete",
+  "tags": ["food"],
   "item": {
     "id": "minecraft:apple",
     "components": {}
@@ -164,7 +165,7 @@ Mod 已升级 `.itemstack` v3、快照与 IBE 编辑交换协议；两端需使�
 }
 ```
 
-空组件集合仅演示结构，不会继承原版默认组件。作者标签和展示快照不进入 `.it`。没有 revision 或 follow 模式。
+空组件集合仅演示结构，不会继承原版默认组件。物品标签 `tags` 会保留到 `.it`，展示快照不进入 `.it`。标签去首尾空白、NFC 规范化并按大小写不敏感去重；没有标签时导出空数组。它是 HanShu 模板标签，与 Minecraft 注册表标签独立。没有 revision 或 follow 模式。
 
 模板 ID 就是扁平文件名去掉 `.it`，如 `apple`，不含命名空间和子目录。改文件名就是改模板 ID。Minecraft 底层物品 ID 则可以修改：同步时重建新类型，再恢复允许的实例状态与数量。
 
@@ -175,6 +176,8 @@ Mod 在实例的持久化组件 `rpgtoolkit:item_template` 中保存模板 ID（
 服务端启动及 `/rpgtoolkit pak reload` 会加载 `.it`。本机开发发版目前仍需执行该服务端重载命令。管理员可用 `/rpgtoolkit item give apple 1` 创建绑定实例，用 `/rpgtoolkit item sync` 主动同步自身背包。
 
 实例采用惰性同步：登录、拾取完成和每 20 tick 检查玩家背包与玩家装备；容器只在打开时检查一次。使用、攻击和持续使用时只检查实际使用的那只手，不扫描背包。掉落物、生物装备和当前容器没有周期扫描；它们可能暂时保留旧模板，物品进入玩家侧后再同步。换物品导致手持引用变化时会取消当次操作并提示重试，避免继续使用旧实例。模板缺失时不删除物品，但会阻止其参与已接入的手持关键操作。
+
+Mod 的服务入口 `ItemTemplates.forServer(server)` 可查询模板、按标签过滤、创建和发放实例；ItemStack 标签查询通过绑定 ID 读取当前目录，不在实例中复制标签。
 
 运行时模板会预编译为原生组件；未变化实例使用服务端内存缓存，不执行 JSON／整物品 NBT 往返。字段例外只处理对应组件的局部 NBT，文件格式不增加 revision。
 
