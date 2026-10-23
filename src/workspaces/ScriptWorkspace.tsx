@@ -87,6 +87,12 @@ import {
   downloadBlob,
   exportPaks,
 } from '../export/resourcePack'
+import {
+  AUTO_PUBLISH_PAK_NAME,
+  publishPakBlob,
+  summarizePublishResult,
+} from '../gameDevServer/publish'
+import { pushActivity, updateActivity } from '../activity'
 import { buildProjectPackZip } from '../export/projectPack'
 import { normalizeAssetPath, normalizeFolderPath } from '../assets/paths'
 import {
@@ -2426,6 +2432,9 @@ export const ScriptWorkspace = forwardRef<
       case 'export-pak-planes':
         void handleExportResourcePackPlanes()
         return
+      case 'auto-publish-pak':
+        void handleAutoPublishPak()
+        return
       case 'export-project-pack':
         void handleExportProjectPack()
         return
@@ -2476,6 +2485,54 @@ export const ScriptWorkspace = forwardRef<
       window.alert(
         `导出 PAK 失败：${err instanceof Error ? err.message : String(err)}`,
       )
+    }
+  }
+
+  /** 编译 combined PAK 并 POST /publish 为 auto.pak（本机游戏开发服务器） */
+  const handleAutoPublishPak = async () => {
+    persistNow()
+    const activityId = 'pak.auto-publish'
+    pushActivity({
+      id: activityId,
+      kind: 'progress',
+      title: '自动发版',
+      detail: `编译并上传 ${AUTO_PUBLISH_PAK_NAME}`,
+      source: 'export',
+      progress: 'indeterminate',
+      done: false,
+    })
+    try {
+      const { blob, fileCount, warnings } = await buildResourcePackZip(
+        workspaceRef.current,
+      )
+      updateActivity(activityId, {
+        detail: `上传 ${AUTO_PUBLISH_PAK_NAME}（${fileCount} 个文件）…`,
+      })
+      const result = await publishPakBlob(blob, AUTO_PUBLISH_PAK_NAME)
+      const summary = summarizePublishResult(result)
+      const retained = result.publishedOrSkipped === false
+      updateActivity(activityId, {
+        kind: retained || warnings.length > 0 ? 'warning' : 'success',
+        title: retained ? '自动发版完成（部分保留旧表）' : '自动发版完成',
+        detail: [
+          summary,
+          warnings.length
+            ? `编译警告 ${warnings.length} 条：${warnings.slice(0, 3).join('；')}`
+            : '',
+        ]
+          .filter(Boolean)
+          .join('\n'),
+        progress: undefined,
+        done: true,
+      })
+    } catch (err) {
+      updateActivity(activityId, {
+        kind: 'error',
+        title: '自动发版失败',
+        detail: err instanceof Error ? err.message : String(err),
+        progress: undefined,
+        done: true,
+      })
     }
   }
 

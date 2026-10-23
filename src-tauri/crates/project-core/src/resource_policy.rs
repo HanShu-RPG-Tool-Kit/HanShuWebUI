@@ -205,9 +205,12 @@ fn plan_inner(
         }
         if let Some(destination) = &request.destination {
             require(
-                destination != "project.json"
-                    && !nested(&request.path, destination)
-                    && tree.contains_key(&request.path),
+                tree.contains_key(&request.path),
+                "invalid",
+                "移动源不存在（文件可能尚未保存到工程，请先保存再改名）",
+            )?;
+            require(
+                destination != "project.json" && !nested(&request.path, destination),
                 "invalid",
                 "移动目标无效",
             )?;

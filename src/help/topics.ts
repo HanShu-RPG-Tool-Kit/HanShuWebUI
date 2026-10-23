@@ -12,6 +12,7 @@ import hscMachine from './docs/hsc-machine.md?raw'
 import hscMachineFramework from './docs/hsc-machine-framework.md?raw'
 import kitGuide from './docs/kit-guide.md?raw'
 import kitExpr from './docs/kit-expr.md?raw'
+import kitRuntime from './docs/kit-runtime.md?raw'
 import tnbtJson from './docs/tnbt-json.md?raw'
 import itemGuide from './docs/item-guide.md?raw'
 import gameDevServer from './docs/game-dev-server.md?raw'
@@ -41,6 +42,7 @@ export type HelpTopicId =
   | 'hsc-machine-framework'
   | 'kit-guide'
   | 'kit-expr'
+  | 'kit-runtime'
   | 'item-guide'
   | 'tnbt-json'
   | 'game-dev-server'
@@ -124,6 +126,14 @@ export const HELP_TOPICS: HelpTopic[] = [
     audience: 'dev',
     inDocs: true,
     body: kitExpr,
+  },
+  {
+    id: 'kit-runtime',
+    title: '引擎发放契约',
+    group: '礼包',
+    audience: 'dev',
+    inDocs: true,
+    body: kitRuntime,
   },
   {
     id: 'tnbt-json',

@@ -192,13 +192,33 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
         if (renamed.kind === 'blocked') throw new Error(`关联文件 ${renamed.path} 已存在`)
       }
     } catch (error) { setNotice(String(error)); return }
+    // 尚未写入 S 的草稿不能 move（会报「移动目标无效」）；只改本机名，等下次保存落新路径
+    const onServer = (file: { name: string; srcKind?: string | null }) => {
+      const path = sourcePathOf(file)
+      return Boolean(binding.handle.client.entry(path) || binding.handle.client.baseline.has(path))
+    }
+    const serverRenames = renames.filter(({ old }) => onServer(old))
+    const serverRemoves = removed.filter((old) => onServer(old))
+    if (!serverRenames.length && !serverRemoves.length) {
+      applyUi(live.workspace)
+      if (removed.length) {
+        const ids = new Set(removed.map((old) => old.id))
+        setHistory((items) => new Map([...items].filter(([key]) => !ids.has(key))))
+        if (ids.has(previous.activeKey ?? '')) setSelection({ kind: 'flow' })
+      }
+      setNotice(renames.length ? '已改名（尚未保存到工程的草稿，保存时会写入新文件名）。' : '已更新工程结构。')
+      return
+    }
+    // 先更新树名，再等 S 落盘；失败则按提交前工作区回滚（避免像「改了没反应」）
+    const revertWorkspace = live.workspace
+    applyUi(live.workspace)
     structuralPendingRef.current = true
     setBusy(true)
     let acknowledged = false
     void (async () => {
       await binding.handle.client.sourceCommands([
-        ...renames.map(({ old, doc, srcKind }) => ({ path: sourcePathOf(old), destination: sourcePathOf({ name: doc.name, srcKind }), content: doc.source })),
-        ...removed.map(old => ({ path: sourcePathOf(old), destination: null })),
+        ...serverRenames.map(({ old, doc, srcKind }) => ({ path: sourcePathOf(old), destination: sourcePathOf({ name: doc.name, srcKind }), content: doc.source })),
+        ...serverRemoves.map((old) => ({ path: sourcePathOf(old), destination: null })),
       ])
       acknowledged = true
       // A project switch while S was working must not replace the new project's view.
@@ -224,7 +244,23 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
         if (ids.has(previous.activeKey ?? '')) setSelection({ kind: 'flow' })
       }
       setNotice('工程结构已保存。')
-    })().catch(error => setNotice(`${acknowledged ? '服务器已保存，本地视图更新失败，请重新打开工程' : '操作未提交，原文件和草稿已保留'}：${String(error)}`))
+    })().catch(error => {
+      if (!acknowledged && getProjectSession().binding?.handle.client === binding.handle.client) {
+        setProjectSession({ workspace: revertWorkspace })
+        const revertDocs = stripItemLibraryTable(stripBuiltinGoalDefinitions(previous)).documents
+        const revertUi = {
+          openKeys: previous.openKeys ?? [],
+          activeKey: previous.activeKey ?? null,
+          pinnedKeys: previous.pinnedKeys ?? [],
+          split: previous.split,
+          folders: previous.folders ?? [],
+          documentFolders: documentFoldersFromDocuments(revertDocs),
+        }
+        setUi(revertUi)
+        saveProgressUiState(revertUi)
+      }
+      setNotice(`${acknowledged ? '服务器已保存，本地视图更新失败，请重新打开工程' : '操作未提交，原文件和草稿已保留'}：${String(error)}`)
+    })
       .finally(() => { structuralPendingRef.current = false; setBusy(false) })
   }
 

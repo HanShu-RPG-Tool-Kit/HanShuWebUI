@@ -28,6 +28,7 @@ PAK 是给引擎用的运行时包。流水线：**编译图 → 接线校验 �
 
 - **导出PAK** → combined 单文件（兼容旧行为）
 - **导出PAK（分平面）** → client + server + shared，打成外层 zip；可提示口令加密 server
+- **自动发版（auto.pak）** → 同样编译 combined，命名 `auto.pak`，经本机 [游戏开发服务器](#game-dev-server) `POST /publish` 写入客户端 `rpgtoolkit/pak/` 并重载（门户密码鉴权；不下载到本机）
 
 ## 3. 注册编译器
 

@@ -24,6 +24,7 @@ export const scriptMenuContribution: MenuContribution = {
         { type: 'separator' },
         cmd('export-pak', '导出PAK'),
         cmd('export-pak-planes', '导出PAK（分平面）'),
+        cmd('auto-publish-pak', '自动发版（auto.pak）'),
         cmd('export-project-pack', '导出工程包'),
       ],
     },

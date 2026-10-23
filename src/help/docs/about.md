@@ -9,6 +9,7 @@
 | 规范 | 条目 |
 | --- | --- |
 | `hanshu.kit.expr` V1 | [表达式标准 V1](#kit-expr) |
+| `hanshu.kit.runtime` V1（草案） | [引擎发放契约](#kit-runtime) |
 | `.hs` 语法 | [.hs 语法说明](#hanshu-syntax) |
 | `.char` 角色卡 | [.char 角色卡语法](#char-syntax) |
 | HSC 执行模型 | [抽象汉书自动机](#hsc-machine) |

@@ -30,8 +30,8 @@
 | --- | --- | --- | --- |
 | `intensity` | float | 1 | 奖励强度 |
 | `difficulty` | int | 0 | 难度 |
-| `distributionCount` | int | 1 | 本次礼包由几个人分配 |
-| `distributionId` | int | 0 | 当前玩家在本次分配中的序号，从 0 开始，取值 `0 … distributionCount-1` |
+| `distributionCount` | int | 1 | 本次礼包由几个人分配；一次 `grant` 多名玩家时引擎默认可注入为人数 |
+| `distributionId` | int | 0 | 当前玩家在本次分配中的序号，从 0 开始，取值 `0 … distributionCount-1`；多人一次 `grant` 时引擎默认可按列表下标注入 |
 
 ## 2. 编写修饰器
 
@@ -55,7 +55,7 @@ x * lerp(intensity, 0, 0.5, 1, 1, 3, 2)     强度 0→0.5 倍，1→1 倍，3�
 clamp(loot(x), 1, 64)                       在另一个修饰器的基础上限制范围
 ```
 
-多人分配时，`x` 是整份礼包的总量，修饰器算出当前玩家该拿的那一份：
+多人分配时（一次 `grant` 传入多名玩家，或调用方自填分配超参数），`x` 是整份礼包的总量，修饰器按该玩家的 `distributionId` 算出该拿的那一份：
 
 ```text
 floor(x / distributionCount)                                          平分，余数丢弃
@@ -95,9 +95,9 @@ step(distributionId, 1, x, 0)                                         只有 0 �
 give @s minecraft:apple ${round(loot(5))}
 ```
 
-需要输出字面量 `${` 时写 `$${`。插值出错的指令行左侧会显示红条，悬停可以看到原因。
+需要输出字面量 `${` 时写 `$${`。插值出错的指令行左侧会显示红条，悬停可以看到原因。游戏内执行时 `@s` 为领取玩家，由引擎以服务端身份跑指令（见 [引擎发放契约](#kit-runtime)）。
 
-内联脚本里，引擎会注入 `kit` 对象：`kit.param("intensity")`、`kit.mod("loot", 5)`、`kit.expr("round(loot(5))")`。详见 [表达式标准 V1](#kit-expr) 第 12 节。
+内联脚本里，引擎会注入 `kit`、裸 `ServerPlayer` 的 `player`（以及本次 `grant` 的 `players` 列表）：`kit.param("intensity")`、`kit.mod("loot", 5)`，物品请直接调玩家库存等游戏 API。表达式接口见 [表达式标准 V1](#kit-expr) 第 12 节；**多人一次 grant、注入表、发放顺序、失败语义**以 [引擎发放契约](#kit-runtime) 为准。
 
 ## 5. 编译结果
 
@@ -133,6 +133,6 @@ give @s minecraft:apple ${round(loot(5))}
 
 ## 内嵌物品的组件
 
-内嵌 ItemStack 与物品库共用 [TNBT JSON](#tnbt-json) 完整组件集合；`.itemstack` v3 导入后保留数量与所有带类型的值。物品链接仍只保存引用与数量，不复制组件。编辑界面复用彩色常用组件卡片和 type / key / value 类型树，支持多级右键添加、删除与键名编辑；引用物品的展开组件只读，需回物品库修改。
+内嵌 ItemStack 与物品库共用 [TNBT JSON](#tnbt-json) 完整组件集合；`.itemstack` v3 导入后保留数量与所有带类型的值。物品链接仍只保存引用与数量，不复制组件。点行内 `{ }` 打开**弹窗表单**编辑组件（复用常用组件卡片与 type / key / value 类型树）；链接物品的组件弹窗只读，需回物品库修改。
 
 旧版普通 JSON 组件值不再推断转换。旧 `.itemstack` 需从支持 TNBT JSON v3 的新版 Mod 重新导出。组件集合为空表示没有组件，不会补齐原版默认值。

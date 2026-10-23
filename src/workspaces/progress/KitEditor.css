@@ -576,7 +576,103 @@
   opacity: 1;
 }
 
-/* ---------- 组件 JSON ---------- */
+/* ---------- 物品组件弹窗 ---------- */
+
+.kit-components-dialog {
+  width: min(920px, calc(100vw - 32px));
+  max-height: calc(100dvh - 40px);
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--fl-radius, 8px);
+  background: var(--fl-panel, var(--bg-panel, #1e2228));
+  color: var(--text);
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+
+.kit-components-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.kit-components-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.55);
+}
+
+.kit-components-dialog-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--fl-head, transparent);
+  flex-shrink: 0;
+}
+
+.kit-components-dialog-head h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-bright, var(--text));
+}
+
+.kit-components-dialog-head p {
+  margin: 4px 0 0;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.kit-components-dialog-close {
+  border: 0;
+  padding: 0 4px;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.kit-components-dialog-body {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 12px 16px 16px;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+  color-scheme: dark;
+}
+
+.kit-components-dialog-body::-webkit-scrollbar,
+.kit-components-dialog-body *::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.kit-components-dialog-body::-webkit-scrollbar-thumb,
+.kit-components-dialog-body *::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.kit-components-dialog-body::-webkit-scrollbar-thumb:hover,
+.kit-components-dialog-body *::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.2);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+.kit-components-dialog-body::-webkit-scrollbar-track,
+.kit-components-dialog-body *::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.kit-components-dialog-body .item-editor,
+.kit-components-dialog-body .item-components-shared {
+  max-width: none;
+}
 
 .kit-components {
   grid-column: 3 / -1;

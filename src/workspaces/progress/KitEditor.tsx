@@ -1,5 +1,7 @@
 import { NbtComponentsEditor } from './NbtComponentsEditor'
-import { createContext, useContext, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useId, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
+import type { ItemComponents } from './tnbtJson'
 import Editor from '@monaco-editor/react'
 import { HANSHU_THEME_ID, registerHanshuLanguage } from '../../monaco/hanshuLanguage'
 import { useEditorFontSize } from './editorFont'
@@ -267,6 +269,51 @@ function ItemDropZone({ disabled, hint, className = '', onDropItems, children }:
 }
 
 
+function KitItemComponentsDialog({
+  title,
+  hint,
+  value,
+  disabled,
+  onChange,
+  onClose,
+}: {
+  title: string
+  hint?: string
+  value: Record<string, unknown>
+  disabled?: boolean
+  onChange: (components: ItemComponents) => void
+  onClose: () => void
+}) {
+  const dialog = useRef<HTMLDialogElement>(null)
+  const titleId = useId()
+  useEffect(() => {
+    const element = dialog.current
+    if (!element) return
+    element.showModal()
+    return () => { element.close() }
+  }, [])
+  return createPortal(
+    <dialog
+      ref={dialog}
+      className="kit-components-dialog"
+      aria-labelledby={titleId}
+      onCancel={(event) => { event.preventDefault(); onClose() }}
+    >
+      <header className="kit-components-dialog-head">
+        <div>
+          <h2 id={titleId}>{title}</h2>
+          {hint && <p>{hint}</p>}
+        </div>
+        <button type="button" className="kit-components-dialog-close" aria-label="关闭" onClick={onClose}>×</button>
+      </header>
+      <div className="kit-components-dialog-body">
+        <NbtComponentsEditor value={value} disabled={disabled} onChange={onChange} />
+      </div>
+    </dialog>,
+    document.body,
+  )
+}
+
 function ItemRow({ item, index, open, disabled, onToggle, onChange, onRemove, onDropReplace }: {
   item: KitItem
   index: number
@@ -337,17 +384,28 @@ function ItemRow({ item, index, open, disabled, onToggle, onChange, onRemove, on
       <input className="kit-num" type="number" min={0} step={1} value={item.count} disabled={disabled} aria-label={`物品 ${index + 1} 数量`} onChange={(event) => onChange({ count: toCount(event.target.value) })} />
       <ModChip raw={item.count} mod={item.mods?.count} rule={KIT_NUMBER_RULES.count} label={`物品 ${index + 1} 数量`} disabled={disabled} onChange={(id) => onChange({ mods: setMod(item.mods, 'count', id) })} />
     </span>
-    <button type="button" className={`kit-chip${componentCount ? ' has-value' : ''}`} aria-expanded={open} title={linked ? '组件（来自物品库，只读）' : '组件'} onClick={onToggle}>
+    <button
+      type="button"
+      className={`kit-chip${componentCount ? ' has-value' : ''}`}
+      aria-haspopup="dialog"
+      aria-expanded={open}
+      title={linked ? '查看组件（来自物品库，只读）' : '编辑组件'}
+      onClick={onToggle}
+    >
       {'{ }'}{componentCount > 0 && <span>{componentCount}</span>}
     </button>
     <RemoveButton label={`移除物品 ${index + 1}`} disabled={disabled} onClick={onRemove} />
     {open && (
-      linked
-        ? <div className="kit-item-link-components">
-          <p className="kit-hint">组件来自物品库链接，只读；改定义请打开对应 `.item`。</p>
-          <NbtComponentsEditor value={resolved.components} disabled onChange={() => {}} />
-        </div>
-        : <NbtComponentsEditor value={item.components} disabled={disabled} onChange={(components) => onChange({ components })} />
+      <KitItemComponentsDialog
+        title={linked ? `物品 ${index + 1} · 链接组件` : `物品 ${index + 1} · 组件`}
+        hint={linked
+          ? '组件来自物品库链接，只读；改定义请打开对应 .item。'
+          : '与物品库共用常用组件卡片与组件树；修改即时写入本行内嵌 ItemStack。'}
+        value={linked ? resolved.components : item.components}
+        disabled={linked || disabled}
+        onChange={(components) => { if (!linked) onChange({ components }) }}
+        onClose={onToggle}
+      />
     )}
   </li>
 }

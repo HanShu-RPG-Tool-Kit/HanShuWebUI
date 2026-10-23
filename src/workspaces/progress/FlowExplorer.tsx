@@ -204,17 +204,25 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
     }
     const result: Row[] = []
     const visit = (pkg: FlowPackageId, parent: string | null, depth: number) => {
+      const docsHere = state.documents
+        .filter((d) => d.package === pkg && (d.folderId ?? null) === parent)
+        .sort((a, b) => {
+          const aTable = isItemLibraryTableKey(a.key), bTable = isItemLibraryTableKey(b.key)
+          if (aTable !== bTable) return aTable ? -1 : 1
+          return a.name.localeCompare(b.name, 'zh-CN', { numeric: true })
+        })
+      // 物品库表视图固定在同级文件夹之前（此前只在文档组内置顶，仍会被文件夹压到后面）
+      for (const doc of docsHere.filter((d) => isItemLibraryTableKey(d.key))) {
+        const entry: FlowEntry = { kind: 'document', key: doc.key }
+        if (!query || visible.has(entryId(entry))) result.push({ entry, name: doc.name, depth, parent, pkg })
+      }
       for (const folder of state.folders.filter((f) => f.package === pkg && f.parentId === parent).sort((a, b) => compareFolders(pkg, a, b))) {
         const entry: FlowEntry = { kind: 'folder', key: folder.key }, id = entryId(entry)
         if (query && !visible.has(id)) continue
         result.push({ entry, name: folder.name, depth, parent, pkg })
         if (query || expanded.has(id)) visit(pkg, folder.key, depth + 1)
       }
-      for (const doc of state.documents.filter((d) => d.package === pkg && (d.folderId ?? null) === parent).sort((a, b) => {
-        const aTable = isItemLibraryTableKey(a.key), bTable = isItemLibraryTableKey(b.key)
-        if (aTable !== bTable) return aTable ? -1 : 1
-        return a.name.localeCompare(b.name, 'zh-CN', { numeric: true })
-      })) {
+      for (const doc of docsHere.filter((d) => !isItemLibraryTableKey(d.key))) {
         const entry: FlowEntry = { kind: 'document', key: doc.key }
         if (!query || visible.has(entryId(entry))) result.push({ entry, name: doc.name, depth, parent, pkg })
       }
@@ -561,8 +569,8 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
           : []),
         ...((progress || item) && onViewSource ? [{ label: '查看源码', action: () => onViewSource(entry.key) }] : []),
         { label: '属性…', action: () => onProperties(entry.key) },
-        { label: '重命名', action: () => startEdit('rename', entry) },
-        { label: '移动到…', action: () => startEdit('move', entry) },
+        { label: '重命名', disabled: readOnly, hint: readOnly ? '只读工程不可改名' : '只改文件名；食物/自然 等是视图文件夹，磁盘仍在 src/items/', action: () => startEdit('rename', entry) },
+        { label: '移动到…', disabled: readOnly, hint: readOnly ? '只读工程不可移动' : '改视图归属文件夹，不改磁盘路径', action: () => startEdit('move', entry) },
         ...(script || kit || progress || navigation || item ? [] : [{ label: '导出树图', action: () => onExport(entry.key) }]),
         { label: downloadLabel, action: () => onDownload(entry.key) },
         { label: removeLabel, action: () => onRemove({ documents: [entry.key], folders: [] }) },

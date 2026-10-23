@@ -317,7 +317,7 @@ export function itemLibraryTableDocument() {
   }, false)
 }
 
-/** 把虚拟表视图叠进工作区（不落盘）；固定插在文档列表前部便于资源树置顶。 */
+/** 把虚拟表视图叠进工作区（不落盘）；资源树同级会排在文件夹之前。 */
 export function withItemLibraryTable(state: FlowWorkspaceState): FlowWorkspaceState {
   if (state.documents.some((document) => isItemLibraryTableKey(document.key))) return state
   return { ...state, documents: [itemLibraryTableDocument(), ...state.documents] }

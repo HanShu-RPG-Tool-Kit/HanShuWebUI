@@ -45,6 +45,14 @@ C 侧按上述实现；握手超过约 4s 仍无 `open` 会中止并提示，避
 
 未知 method 返回 `error: "unknown_method"`。
 
+## HTTP：自动发版（publish）
+
+与 Control WebSocket 同门户。剧本工作区菜单 **文件 → 自动发版（auto.pak）** 会编译 combined PAK，再：
+
+`POST /publish?name=auto.pak` · `Content-Type: application/octet-stream` · 头 `X-DevTool-Password` / `X-Pak-Name`
+
+成功体含 `installed` / `kinds` / `publishedOrSkipped`；某 kind `RETAINED` 时 `ok` 仍可能为 true。实现：`src/gameDevServer/publish.ts`。主机/端口/密码与 Control 偏好相同（默认 `127.0.0.1:8765` / `mchhui`）。
+
 ## 出站方法（WebUI → mod）
 
 WebUI 在 Control `phase===open` 时主动发 `{ type: request, id, method, params }`，等待同 `id` 的 `{ type: response }`（出站默认超时约 20s，覆盖单条图标等待约 8s）。

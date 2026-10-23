@@ -198,7 +198,9 @@ xp add @s ${loot(10)} points
 
 ## 12. 脚本接口
 
-礼包内联脚本（Python）由引擎执行。引擎在脚本全局注入只读对象 `kit`：
+礼包内联脚本（Python）由引擎执行。完整注入表、发放顺序与失败语义见 [引擎发放契约](#kit-runtime)。本节只定与表达式相关的 `kit` 数值接口。
+
+引擎在脚本全局**至少**注入只读对象 `kit`、当前领取者 `player`（裸 `ServerPlayer`）、以及本次 `grant` 的 `players` 列表。完整约定见 [引擎发放契约](#kit-runtime)。
 
 | 接口 | 含义 |
 | --- | --- |
@@ -207,12 +209,13 @@ xp add @s ${loot(10)} points
 | `kit.expr(src)` | 求值独立表达式（第 10 节），返回 `float` |
 
 ```python
-bonus = kit.mod("loot", 3)
-if kit.param("hard"):
-    player.give("minecraft:diamond", round(bonus))
+bonus = int(round(kit.mod("loot", 3)))
+if kit.param("difficulty") >= 2:
+    # player 为裸 ServerPlayer；具体 API 随游戏版本
+    player.sendSystemMessage(...)  # 示例，以发放契约为准
 ```
 
-以上接口出错时抛出异常，异常信息应包含第 13 节的错误类别。脚本里的数值逻辑仍应尽量写成修饰器，这样 WebUI 可以预览并检查。
+以上 `kit.*` 接口出错时抛出异常，异常信息应包含第 13 节的错误类别。脚本里的数值逻辑仍应尽量写成修饰器，这样 WebUI 可以预览并检查。
 
 ## 13. 错误分类
 
