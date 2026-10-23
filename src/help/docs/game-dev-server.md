@@ -51,15 +51,15 @@ WebUI 在 Control `phase===open` 时主动发 `{ type: request, id, method, para
 
 ### `items.renderSnapshots`
 
-批量生成展示快照，写入 C 侧 IndexedDB（见 [物品库指南](#item-guide)）。请求/响应 JSON 形状不变；约束与实现以模组侧为准。
+批量生成展示快照，写入 C 侧 IndexedDB（见 [物品库指南](#item-guide)）。当前 WebUI 请求声明 `componentFormat: "tnbt-json-v1"`、`componentMode: "complete"`，组件值使用 [TNBT JSON](#tnbt-json)；响应必须回显相同 componentFormat 和 componentMode，否则不缓存结果，避免把旧协议生成的错误预览当作新快照。Mod 的文件、快照与 IBE 交换层已统一使用这套表示。
 
 | | |
 | --- | --- |
-| **params** | `{ items: [{ key, id, components }], includeIcon?: boolean }`（`includeIcon` 默认 `true`；亦接受扁平一项） |
+| **params** | `{ componentFormat: "tnbt-json-v1", componentMode: "complete", items: [{ key, id, components }], includeIcon?: boolean }`（`includeIcon` 默认 `true`；亦接受扁平一项） |
 | **key** | 与 WebUI 指纹一致：`fnv1a(id+components)`，不含 count |
 | **批量上限** | ≤ **128**；超出 mod 返回 `too_many_items`，WebUI 退避重试（按 24 切批仍可用，吃满吞吐用 128） |
 | **吞吐** | 等 RPC 期间客户端约每帧处理一批（约 128）；图标单条等待约 **8s** |
-| **result** | `{ snapshots: [{ key, ok, error?, display? }] }` |
+| **result** | `{ componentFormat: "tnbt-json-v1", componentMode: "complete", snapshots: [{ key, ok, error?, display? }] }` |
 | **display** | 可无 `icon`；可有 `iconPending: true`（文本先可用，WebUI 会再请求图标） |
 | **iconPending 重试** | 同一指纹最多 **3** 次仍 `iconPending` 则接受纯文本快照并出队（避免 mod 图标永远不就绪时干烧）；强制刷新会重置计数 |
 | **自动刷新** | 默认开；**编辑 → 自动刷新物品快照** 可关。关闭后 UI 不再因 miss/过期自动入队（手动刷新仍可用） |
@@ -96,3 +96,22 @@ ControlHub.INSTANCE.request("items.list", null)
 
 // 出站由 WebUI 发起 items.renderSnapshots；mod 实现 handler 即可
 ```
+
+
+### `items.edit.open` / `items.edit.done` 物品载荷
+
+两条消息独立，沿用既有 uuid/hash 时序；升级的是载荷格式。open 的 params、opened 响应和 done 的 params 均携带 `componentFormat: "tnbt-json-v1"`、`componentMode: "complete"`。缺少/错误标记时 Mod 明确拒绝，不猜测旧 JsonOps patch。
+
+```json
+{
+  "componentFormat": "tnbt-json-v1",
+  "componentMode": "complete",
+  "uuid": "opaque-hint",
+  "hash": "original-version-token",
+  "item": { "id": "minecraft:stick", "components": {} }
+}
+```
+
+open 中 count 忽略，Mod 强制为 1；done 不携带 count，返回全部生效持久化组件。Mod 不计算 hash，uuid/hash 原样回传；C 侧原有接收者应先验证格式与原版本，再走原有草稿/事务路径，不能把 notify 当作工程写权限。关闭 IBE 不发取消消息。
+
+参考 Mod `docs/itemedit.md`。本次协议适配不新增 WebUI IBE 按钮或替换现有回写协调实现。

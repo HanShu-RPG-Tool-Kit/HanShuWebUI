@@ -229,6 +229,8 @@ async function flushBatch(
   request: typeof controlRequest,
 ): Promise<{ okCount: number; iconGaveUp: number }> {
   const params = {
+    componentFormat: 'tnbt-json-v1',
+    componentMode: 'complete',
     items: batch.map((item) => ({
       key: item.fingerprint,
       id: item.id,
@@ -249,7 +251,12 @@ async function flushBatch(
     return { okCount: 0, iconGaveUp: 0 }
   }
 
-  if (!isObject(result) || !Array.isArray(result.snapshots)) {
+  if (
+    !isObject(result)
+    || result.componentFormat !== 'tnbt-json-v1'
+    || result.componentMode !== 'complete'
+    || !Array.isArray(result.snapshots)
+  ) {
     return { okCount: 0, iconGaveUp: 0 }
   }
   const body = result as RenderSnapshotsResult

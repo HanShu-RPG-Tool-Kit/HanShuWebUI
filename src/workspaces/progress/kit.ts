@@ -1,3 +1,4 @@
+import { readComponents, type ItemComponents } from './tnbtJson'
 import { isObject } from './model'
 import { parseJsonValue } from '../../utils/strictJson'
 import type { ItemDocument } from './itemDoc'
@@ -17,7 +18,7 @@ export type KitItem = {
   item?: string
   id: string
   count: number
-  components: Record<string, unknown>
+  components: ItemComponents
   display?: ItemStackDisplay
   mods?: KitMods<'count'>
 }
@@ -560,7 +561,7 @@ function writeItem(item: KitItem): Record<string, unknown> {
   }
   const next: Record<string, unknown> = { id: item.id, count: item.count }
   if (mods) next.mods = mods
-  if (Object.keys(item.components).length > 0) next.components = item.components
+  if (Object.keys(item.components).length > 0) next.components = readComponents(item.components)
   // display 迁出本机缓存，kit 文件不再写入
   return next
 }
@@ -645,10 +646,10 @@ function readItem(value: unknown, path: string): KitItem {
     if (mods) item.mods = mods
     return item
   }
-  let components: Record<string, unknown> = {}
+  let components: ItemComponents = {}
   if (value.components !== undefined) {
     if (!isObject(value.components)) throw new Error(`${path}.components 应为对象`)
-    components = value.components
+    components = readComponents(value.components, `${path}.components`)
   }
   const display = readItemStackDisplay(value.display)
   const item: KitItem = { id: readString(value.id), count, components }
@@ -754,7 +755,7 @@ function readModifier(value: unknown, path: string): KitModifier {
 }
 
 export function parseKit(source: string): KitDocument {
-  const raw = parseJsonValue(source.replace(/^\uFEFF/, ''))
+  const raw = parseJsonValue(source.replace(/^\uFEFF/, ''), 96)
   if (!isObject(raw)) throw new Error('礼包根节点应为 JSON 对象')
   return {
     name: readString(raw.name),

@@ -253,7 +253,6 @@ function App() {
             alt="HanShu"
             draggable={false}
           />
-          <MenuBar ctx={menuCtx} onAction={handleMenuCommand} />
           <div className="workspace-tabs" role="tablist" aria-label="工作区">
             {APP_WORKSPACES.map((ws) => (
               <button
@@ -270,6 +269,7 @@ function App() {
               </button>
             ))}
           </div>
+          <MenuBar ctx={menuCtx} onAction={handleMenuCommand} />
         </div>
         <div className="titlebar-center" data-tauri-drag-region />
         {isDesktopShell && (
