@@ -272,7 +272,6 @@ function App() {
           </div>
         </div>
         <div className="titlebar-center" data-tauri-drag-region />
-        <button type="button" className="project-history-launch" onClick={() => setHistoryOpen(true)}>工程历史</button>
         {isDesktopShell && (
           <div className="titlebar-right">
             <button

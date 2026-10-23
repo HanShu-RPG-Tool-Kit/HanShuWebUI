@@ -37,6 +37,8 @@
 
   --ui-font-size: 15px;
   --ui-titlebar-h: 40px;
+  /* 菜单栏固定宽：按最满的「文件 编辑 选择 查看 转到 帮助」占位，避免切工作区时与页签的分隔线左右跳 */
+  --ui-menubar-w: 18rem;
   --ui-tabbar-h: 44px;
   --ui-row-h: 30px;
   --ui-statusbar-h: 28px;
@@ -112,6 +114,8 @@ html.splash-windowed .app {
   display: flex;
   align-items: stretch;
   height: var(--ui-titlebar-h);
+  width: var(--ui-menubar-w);
+  box-sizing: border-box;
   flex-shrink: 0;
 }
 
