@@ -1,3 +1,4 @@
+import { StatusBarSlots } from '../chrome'
 import { SkinWorkspace } from '../skin/SkinWorkspace.tsx'
 
 export interface McSkinWorkspaceProps {
@@ -6,5 +7,13 @@ export interface McSkinWorkspaceProps {
 }
 
 export function McSkinWorkspace({ active }: McSkinWorkspaceProps) {
-  return <SkinWorkspace active={active} />
+  return (
+    <>
+      <SkinWorkspace active={active} />
+      <StatusBarSlots
+        active={active}
+        left={<span>皮肤管理器</span>}
+      />
+    </>
+  )
 }

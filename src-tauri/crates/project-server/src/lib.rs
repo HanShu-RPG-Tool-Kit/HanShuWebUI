@@ -444,9 +444,14 @@ impl Drop for Service {
 }
 impl Service {
     pub fn local_connection(&self, name:&str)->Result<LocalConnection> {
-        let key=std::fs::read_to_string(self.state.sharing.root().join(".hanshu/service/owner-key"))?;
+        let root = self.state.sharing.root();
+        let key=std::fs::read_to_string(root.join(".hanshu/service/owner-key"))?;
         let (token,_)=self.state.engine.lock().map_err(|_|Error::new("storage","工程状态不可用"))?.login(key.trim(),name,now_ms())?;
-        Ok(LocalConnection{url:format!("http://127.0.0.1:{}",self.address.port()),token})
+        Ok(LocalConnection{
+            url:format!("http://127.0.0.1:{}",self.address.port()),
+            token,
+            path: local_projects::display_path(root),
+        })
     }
     pub fn set_share_web_assets(&self, resolver: WebAssetResolver) {
         self.state.sharing.set_web_assets(resolver);
@@ -599,4 +604,5 @@ async fn start_inner(
 pub struct LocalConnection {
     pub url: String,
     pub token: String,
+    pub path: String,
 }

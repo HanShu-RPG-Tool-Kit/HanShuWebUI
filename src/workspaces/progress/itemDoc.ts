@@ -5,8 +5,8 @@
 
 import { isObject } from './model'
 import { parseJsonValue } from '../../utils/strictJson'
+import { ingestDisplay } from './itemSnapshotCache'
 import {
-  itemFingerprint,
   parseItemStack,
   readItemStackDisplay,
   type ItemStackDisplay,
@@ -104,7 +104,7 @@ export function stringifyItem(doc: ItemDocument): string {
   }
   const tags = unionItemTags(doc.tags)
   if (tags.length > 0) body.tags = tags
-  if (doc.display) body.display = doc.display
+  // display 已迁出到本机快照缓存，工程文件不再写入
   return `${JSON.stringify(body, null, 2)}\n`
 }
 
@@ -125,8 +125,9 @@ export function parseItem(source: string): ItemDocument {
   if (!('item' in raw)) throw new Error('缺少 item')
   const item = readItemData(raw.item, 'item')
   const tags = readItemTags(raw.tags)
-  const display = readItemStackDisplay(raw.display)
-  return { format, schemaVersion, tags, item, display }
+  const legacyDisplay = readItemStackDisplay(raw.display)
+  if (legacyDisplay) ingestDisplay(item, legacyDisplay)
+  return { format, schemaVersion, tags, item }
 }
 
 export function readItemSource(source: string): { doc: ItemDocument; error: string } {
@@ -140,22 +141,19 @@ export function readItemSource(source: string): { doc: ItemDocument; error: stri
   }
 }
 
-/** `.itemstack` → `.item`：去掉 count，改 format / schemaVersion，保留组件与快照 */
+/** `.itemstack` → `.item`：去掉 count；display 只 ingest 进本机缓存，不进文档 */
 export function itemFromItemStack(file: ItemStackFile): ItemDocument {
   const item: ItemData = {
     id: file.item.id.trim(),
     components: { ...file.item.components },
   }
   if (!item.id) throw new Error('item.id 不能为空')
-  const display = file.display
-    ? { ...file.display, snapshotOf: itemFingerprint(item) }
-    : undefined
+  if (file.display) ingestDisplay(item, file.display)
   return {
     format: ITEM_FORMAT,
     schemaVersion: ITEM_SCHEMA_VERSION,
     tags: [],
     item,
-    display,
   }
 }
 
@@ -163,29 +161,21 @@ export function itemFromItemStackSource(source: string): ItemDocument {
   return itemFromItemStack(parseItemStack(source))
 }
 
-/** 编辑后若改了 id/components，快照指纹仍指向旧数据 → 视为过期（保留图标等展示） */
+/** @deprecated display 已出文件；保留空操作以免旧调用方报错 */
 export function withStaleAwareDisplay(doc: ItemDocument): ItemDocument {
-  if (!doc.display) return doc
-  return {
-    ...doc,
-    display: {
-      ...doc.display,
-      snapshotOf: doc.display.snapshotOf ?? itemFingerprint(doc.item),
-    },
-  }
+  if (doc.display) ingestDisplay(doc.item, doc.display)
+  return { format: doc.format, schemaVersion: doc.schemaVersion, tags: doc.tags, item: doc.item }
 }
 
 export function itemPresentable(doc: ItemDocument): {
   id: string
   count: number
   components: Record<string, unknown>
-  display?: ItemStackDisplay
 } {
   return {
     id: doc.item.id,
     count: 1,
     components: doc.item.components,
-    display: doc.display,
   }
 }
 

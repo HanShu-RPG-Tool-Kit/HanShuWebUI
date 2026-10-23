@@ -178,9 +178,19 @@ export function GameDevServerPanel({ onClose }: { onClose: () => void }) {
 
             <div className={`gds-phase phase-${snap.phase}`}>
               <strong>{phaseLabel(snap.phase)}</strong>
+              {snap.health ? (
+                <span>
+                  门户 HTTP 正常
+                  {snap.health.services?.length
+                    ? ` · ${snap.health.services.join(', ')}`
+                    : ''}
+                </span>
+              ) : (
+                <span>门户 HTTP 未通（需客户端已起且密码正确）</span>
+              )}
               {snap.status && (
                 <span>
-                  subscribers={snap.status.subscribers ?? '—'} · pending=
+                  control subscribers={snap.status.subscribers ?? '—'} · pending=
                   {snap.status.pending ?? '—'}
                 </span>
               )}
@@ -195,16 +205,13 @@ export function GameDevServerPanel({ onClose }: { onClose: () => void }) {
             <h3>可用方法</h3>
             <ul className="gds-methods">
               <li>
-                <code>ping</code> — 探活
+                <code>ping</code> — 探活（入站）
               </li>
               <li>
-                <code>items.list</code> — 列出物品库
+                <code>items.list</code> / <code>get</code> / <code>query</code> — 物品库查询（入站）
               </li>
               <li>
-                <code>items.get</code> — <code>ref</code> / <code>id</code>
-              </li>
-              <li>
-                <code>items.query</code> — <code>tag</code> / <code>tags</code> / <code>id</code>
+                <code>items.renderSnapshots</code> — WebUI 出站拉展示快照（≤128）
               </li>
             </ul>
           </section>

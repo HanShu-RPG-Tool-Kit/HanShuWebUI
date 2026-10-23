@@ -15,7 +15,7 @@ type Props = {
 
 /**
  * 语言下拉框。挂在剧本编辑器底部状态栏右侧（`汉书` / `UTF-8` 之后），
- * 因为状态栏在窗口底部，下拉向上弹出（见 App.css 里的 `.statusbar .lang-select`）。
+ * 因为状态栏在窗口底部，下拉向上弹出（见 App.css 里的 `.app-statusbar .lang-select`）。
  * 顺序：「本工程」（仅表里没有的标签）→「常用语言」→ 全部语言（按英文名）。
  */
 export function LocaleSelect({ value, onChange, projectLocales }: Props) {

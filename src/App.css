@@ -7,7 +7,8 @@
   --bg-tab-active: #2a2d33;
   --bg-dropdown: #2f333a;
   --bg-sidebar: #2f333a;
-  --bg-status: #3d6f99;
+  /* 底栏与标题栏同色 */
+  --bg-status: var(--bg-title);
   --border: #1f2227;
   --border-soft: #454a54;
   --text: #d8d4ce;
@@ -2213,6 +2214,7 @@ body.is-resizing .monaco-editor {
 }
 
 .statusbar {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -2222,6 +2224,7 @@ body.is-resizing .monaco-editor {
   color: #f0ebe3;
   font-size: 13px;
   flex-shrink: 0;
+  overflow: visible;
 }
 
 .statusbar-left,
@@ -2240,38 +2243,46 @@ body.is-resizing .monaco-editor {
   background: rgba(255, 255, 255, 0.12);
 }
 
-/* —— 语言选择器挂在底部状态栏时（下拉向上弹，并抵消状态栏对 span 的通用内边距） —— */
+/* —— 语言选择器挂在 IDE 统一状态栏时（下拉向上弹） —— */
+.app-statusbar .lang-select,
 .statusbar .lang-select {
   height: auto;
   margin-right: 0;
 }
 
+.app-statusbar .lang-select .lang-trigger,
 .statusbar .lang-select .lang-trigger {
   height: var(--ui-statusbar-h);
   padding: 0 8px;
   border-radius: 0;
 }
 
+.app-statusbar .lang-select .lang-trigger:hover,
+.app-statusbar .lang-select .lang-trigger.open,
 .statusbar .lang-select .lang-trigger:hover,
 .statusbar .lang-select .lang-trigger.open {
   background: rgba(255, 255, 255, 0.12);
 }
 
+.app-statusbar .lang-select .lang-dropdown,
 .statusbar .lang-select .lang-dropdown {
   top: auto;
   bottom: 100%;
 }
 
+.app-statusbar .lang-select span,
 .statusbar .lang-select span {
   padding: 0;
   line-height: normal;
 }
 
+.app-statusbar .lang-select span:hover,
 .statusbar .lang-select span:hover {
   background: transparent;
 }
 
 /* 语言文本写盘失败的提示（点击可撤掉） */
+.app-statusbar .status-warn,
 .statusbar .status-warn {
   color: #ffb4a2;
   cursor: default;

@@ -189,6 +189,8 @@ cargo run --manifest-path src-tauri/Cargo.toml -p project-server -- --project .h
 
 本机宿主接口独立于工程协议 v11，仅在显式启用时存在：`GET /api/local/bootstrap` 返回宿主令牌与常用位置，`GET /api/local/directories?directoryId=…&filter=…` 浏览目录，`POST /api/local/open {directoryId,clientName}` 打开或复用工程并返回 `{url,token,path}`。后两者使用宿主 Bearer 令牌；子工程 S 不提供这组接口。
 
+「打开工程」对话框会在本机记住最近打开的工程路径（浏览器偏好，不是 S 事实）。再次点击时仍通过目录浏览把路径解析成临时 `directoryId` 再调用 `/api/local/open`，不把绝对路径交给打开接口。路径失效时提示重新浏览选择。
+
 ## 分享当前工程
 
 本机 Admin 使用「文件 → 分享工程…」开启共享并复制工程地址。对方用已有账号登录；链接本身不授予权限，也不会创建新用户。账号和当前工程权限在协作悬浮窗的「用户管理」中设置。

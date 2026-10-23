@@ -1,10 +1,19 @@
-import { useMemo, useState, type CSSProperties } from 'react'
+import { useEffect, useMemo, useState, useSyncExternalStore, type CSSProperties } from 'react'
 import {
-  isSnapshotFresh,
+  itemFingerprint,
   itemStackIconSrc,
   segmentPlainText,
 } from './itemstack'
-import { presentItem, type ItemPresentation } from './itemTooltip'
+import {
+  getCachedDisplaySync,
+  getItemSnapshotRevision,
+  isCachedSnapshotFresh,
+  markSnapshotNeeded,
+  scheduleItemSnapshotRefresh,
+  subscribeItemSnapshots,
+} from './itemSnapshotCache'
+import { peekItemPresentation, snapshotStatusOf } from './itemPresentation'
+import { type ItemPresentation } from './itemTooltip'
 import { ItemHoverTipTarget } from './itemHoverTip'
 import { isItemDocument } from './library'
 import { itemRefFromFileName } from './kit'
@@ -25,18 +34,13 @@ export type ItemLibraryRow = {
   id: string
   tags: string[]
   componentCount: number
-  snapshot: 'none' | 'fresh' | 'stale'
+  snapshot: 'none' | 'fresh' | 'stale' | 'pending' | 'queued'
   displayName: string
   titleName: string
   iconSrc: string
   foil: boolean
   iconStale: boolean
   presentation: ItemPresentation | null
-}
-
-function snapshotOf(doc: ItemDocument | null): ItemLibraryRow['snapshot'] {
-  if (!doc?.display) return 'none'
-  return isSnapshotFresh(doc.item) ? 'fresh' : 'stale'
 }
 
 function buildRows(
@@ -50,8 +54,12 @@ function buildRows(
     const parsed = readItemSource(document.source)
     const doc = parsed.error ? null : parsed.doc
     const presentable = doc ? itemPresentable(doc) : null
-    const presentation = presentable ? presentItem(presentable) : null
-    const icon = doc?.display?.icon
+    // 只读 peek：不在 buildRows 里 markNeeded / bump
+    const presentation = presentable ? peekItemPresentation(presentable) : null
+    const cached = presentable
+      ? getCachedDisplaySync(itemFingerprint(presentable))
+      : undefined
+    const icon = cached?.icon
     const displayName = presentation ? segmentPlainText(presentation.name) : ''
     const titleName = displayName || document.name.replace(/\.item$/i, '') || document.name
     rows.push({
@@ -64,7 +72,7 @@ function buildRows(
       id: doc?.item.id ?? '',
       tags: doc?.tags ?? [],
       componentCount: doc ? Object.keys(doc.item.components).length : 0,
-      snapshot: snapshotOf(doc),
+      snapshot: presentable ? snapshotStatusOf(presentable) : 'none',
       displayName,
       titleName,
       iconSrc: icon ? itemStackIconSrc(icon) : '',
@@ -103,8 +111,17 @@ function TagCell({ tags }: { tags: string[] }) {
 
 function StatusCell({ row }: { row: ItemLibraryRow }) {
   if (row.error) return <span className="item-table-error" title={row.error}>解析失败</span>
-  const snap = row.snapshot === 'fresh' ? '快照' : row.snapshot === 'stale' ? '过期' : '无'
-  const snapClass = row.snapshot === 'fresh' ? 'is-fresh' : row.snapshot === 'stale' ? 'is-stale' : 'is-none'
+  const snap =
+    row.snapshot === 'fresh' ? '快照'
+      : row.snapshot === 'stale' ? '过期'
+        : row.snapshot === 'pending' ? '刷新中'
+          : row.snapshot === 'queued' ? '待同步'
+            : '无'
+  const snapClass =
+    row.snapshot === 'fresh' ? 'is-fresh'
+      : row.snapshot === 'stale' ? 'is-stale'
+        : row.snapshot === 'pending' || row.snapshot === 'queued' ? 'is-pending'
+          : 'is-none'
   return <span className="item-table-status" title={`${row.componentCount} 个组件 · 快照：${snap}`}>
     <span className="item-table-status-count">{row.componentCount}</span>
     <span className="item-table-status-sep" aria-hidden>·</span>
@@ -148,7 +165,7 @@ function IdentityCell({ row }: { row: ItemLibraryRow }) {
     className="item-table-identity item-table-identity-tip"
     id={row.id}
     presentation={row.presentation}
-    locale={row.doc?.display?.locale}
+    locale={row.doc ? getCachedDisplaySync(itemFingerprint(row.doc.item))?.locale : undefined}
   >
     {body}
   </ItemHoverTipTarget>
@@ -160,7 +177,29 @@ export function ItemLibraryTable({ documents, folderLabel, onOpen }: {
   onOpen: (key: string) => void
 }) {
   const [query, setQuery] = useState('')
-  const rows = useMemo(() => buildRows(documents, folderLabel), [documents, folderLabel])
+  const revision = useSyncExternalStore(
+    subscribeItemSnapshots,
+    getItemSnapshotRevision,
+    getItemSnapshotRevision,
+  )
+  const rows = useMemo(
+    () => buildRows(documents, folderLabel),
+    [documents, folderLabel, revision],
+  )
+  // 渲染后再登记 needed，避免订阅 revision 的组件在 render 路径里 bump
+  useEffect(() => {
+    let queued = false
+    for (const row of rows) {
+      if (!row.doc || row.error) continue
+      const item = row.doc.item
+      const cached = getCachedDisplaySync(itemFingerprint(item))
+      if (!isCachedSnapshotFresh(item) || cached?.iconPending) {
+        markSnapshotNeeded(item)
+        queued = true
+      }
+    }
+    if (queued) scheduleItemSnapshotRefresh()
+  }, [rows])
   const filtered = useMemo(() => {
     const q = query.trim().toLocaleLowerCase()
     if (!q) return rows
@@ -180,7 +219,7 @@ export function ItemLibraryTable({ documents, folderLabel, onOpen }: {
     <header className="item-table-head">
       <div>
         <h2>物品库表视图</h2>
-        <p>共 {rows.length} 个物品{query.trim() ? ` · 显示 ${filtered.length}` : ''} · 悬停预览 · 点击打开</p>
+        <p>共 {rows.length} 个物品{query.trim() ? ` · 显示 ${filtered.length}` : ''} · 悬停预览 · 点击打开 · 菜单「编辑 → 刷新全部物品快照」</p>
       </div>
       <input
         className="item-table-search"

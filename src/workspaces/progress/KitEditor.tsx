@@ -36,11 +36,14 @@ import {
   collectItemStackFiles,
   hasItemStackDrag,
   isItemStackFileName,
+  itemFingerprint,
   itemStackIconSrc,
   readItemStackFiles,
 } from './itemstack'
+import { getCachedDisplaySync } from './itemSnapshotCache'
 import { isItemFileName, parseItem } from './itemDoc'
-import { presentItem, type ItemPresentation } from './itemTooltip'
+import { useItemPresentation } from './itemPresentation'
+import { type ItemPresentation } from './itemTooltip'
 import { ItemHoverTipTarget, ItemTipSegments } from './itemHoverTip'
 import './KitEditor.css'
 
@@ -143,7 +146,8 @@ function RemoveButton({ label, disabled, onClick }: { label: string; disabled?: 
 }
 
 function ItemIcon({ item, presentation }: { item: KitItem; presentation: ItemPresentation }) {
-  const icon = item.display?.icon
+  const cached = item.id ? getCachedDisplaySync(itemFingerprint(item)) : undefined
+  const icon = cached?.icon
   const src = icon ? itemStackIconSrc(icon) : ''
   const mask = src ? { WebkitMaskImage: `url("${src}")`, maskImage: `url("${src}")` } : undefined
   return <span className={`kit-item-icon${icon ? '' : ' is-empty'}${presentation.iconStale ? ' is-stale' : ''}`}>
@@ -157,7 +161,8 @@ function ItemIcon({ item, presentation }: { item: KitItem; presentation: ItemPre
 }
 
 function ItemVisual({ item, presentation }: { item: KitItem; presentation: ItemPresentation }) {
-  return <ItemHoverTipTarget id={item.id} presentation={presentation} locale={item.display?.locale}>
+  const locale = item.id ? getCachedDisplaySync(itemFingerprint(item))?.locale : undefined
+  return <ItemHoverTipTarget id={item.id} presentation={presentation} locale={locale}>
     <ItemIcon item={item} presentation={presentation} />
   </ItemHoverTipTarget>
 }
@@ -312,8 +317,9 @@ function ItemRow({ item, index, open, disabled, onToggle, onChange, onRemove, on
   const resolved = useMemo(() => expandKitItem(item, catalog), [item, catalog])
   const missing = linked && !catalog.has(normalizeItemRef(item.item || ''))
   const componentCount = Object.keys(resolved.components).length
-  const presentation = useMemo(() => presentItem(resolved), [resolved])
-  const showName = !!resolved.display || Object.keys(resolved.components).some((key) => /(^|:)(custom_name|item_name)$/.test(key))
+  const presentation = useItemPresentation(resolved)
+  const cached = resolved.id ? getCachedDisplaySync(itemFingerprint(resolved)) : undefined
+  const showName = !!cached?.name?.length || Object.keys(resolved.components).some((key) => /(^|:)(custom_name|item_name)$/.test(key))
   const [over, setOver] = useState(false)
 
   function onDragOver(event: DragEvent) {

@@ -147,6 +147,7 @@ import type {
   ScriptChromeInfo,
   ScriptWorkspaceHandle,
 } from './scriptTypes'
+import { StatusBarSlots } from '../chrome'
 import { LocaleSelect } from '../LocaleSelect'
 import { FilePresenceBar } from '../project/FilePresenceBar'
 import { TextEditBox } from '../TextEditBox'
@@ -2406,54 +2407,47 @@ export const ScriptWorkspace = forwardRef<
   }
 
   const handleMenuAction = (item: string) => {
-    if (item === '打开工程…') {
-      void handleOpenProject()
-      return
-    }
-    if (item === '新建工程…') {
-      void handleCreateProject()
-      return
-    }
-    if (item === '另存为工程…') {
-      void handleExportProjectPack()
-      return
-    }
-    if (item === '保存') {
-      persistNow()
-      return
-    }
-    if (item === '导出PAK') {
-      void handleExportResourcePack()
-      return
-    }
-    if (item === '导出PAK（分平面）') {
-      void handleExportResourcePackPlanes()
-      return
-    }
-    if (item === '导出工程包') {
-      void handleExportProjectPack()
-      return
-    }
-    if (item === '新建包') {
-      window.alert('请使用「新建工程…」创建本地工程文件夹；不再支持仅存在于浏览器缓存的包。')
-      return
-    }
-    if (item === '新建剧本') {
-      /*
-       * 菜单项与资源管理器的 `+剧` 是同一个入口：这里只把"请求"递过去，
-       * 真正打开类型选择器的是资源树 —— 目标包要按"当前活动文件在哪个包"算，
-       * 菜单锚点位置也在那儿。所以不在这里猜 pkgId。
-       */
-      setNewFileMenuRequest((count) => count + 1)
-      return
-    }
-    if (item === 'Agent 窗口') {
-      setAgentOpen((open) => !open)
-      return
-    }
-    if (item === '录音棚') {
-      toggleStudio()
-      return
+    switch (item) {
+      case 'open-project':
+        void handleOpenProject()
+        return
+      case 'new-project':
+        void handleCreateProject()
+        return
+      case 'save-as-project':
+        void handleExportProjectPack()
+        return
+      case 'save':
+        persistNow()
+        return
+      case 'export-pak':
+        void handleExportResourcePack()
+        return
+      case 'export-pak-planes':
+        void handleExportResourcePackPlanes()
+        return
+      case 'export-project-pack':
+        void handleExportProjectPack()
+        return
+      case 'new-package':
+        window.alert('请使用「新建工程…」创建本地工程文件夹；不再支持仅存在于浏览器缓存的包。')
+        return
+      case 'new-script':
+        /*
+         * 菜单项与资源管理器的 `+剧` 是同一个入口：这里只把"请求"递过去，
+         * 真正打开类型选择器的是资源树 —— 目标包要按"当前活动文件在哪个包"算，
+         * 菜单锚点位置也在那儿。所以不在这里猜 pkgId。
+         */
+        setNewFileMenuRequest((count) => count + 1)
+        return
+      case 'agent-panel':
+        setAgentOpen((open) => !open)
+        return
+      case 'voice-studio':
+        toggleStudio()
+        return
+      default:
+        return
     }
   }
 
@@ -3686,129 +3680,131 @@ export const ScriptWorkspace = forwardRef<
         />
       )}
 
-      <footer className="statusbar">
-        <div className="statusbar-left">
-          <span title={project ? project.folderName : '未绑定文件夹工程'}>
-            {project ? `工程 · ${project.folderName}` : '仅浏览器缓存'}
-          </span>
-          <span>{packageName}</span>
-          <span>{charCount} 字符</span>
-          <span>{formatSavedAt(savedAt)}</span>
-          {project && (
-            <span title="最近写入工程文件夹">
-              {diskSavedAt
-                ? `已落盘 ${new Date(diskSavedAt).toLocaleTimeString()}`
-                : '工程未写入'}
+      <StatusBarSlots
+        active={isActive}
+        left={
+          <>
+            <span title={project ? project.folderName : '未绑定文件夹工程'}>
+              {project ? `工程 · ${project.folderName}` : '仅浏览器缓存'}
             </span>
-          )}
-          {agentDiffs.length > 0 && (
+            <span>{packageName}</span>
+            <span>{charCount} 字符</span>
+            <span>行 {lineCount}</span>
+            <span>{formatSavedAt(savedAt)}</span>
+            {project && (
+              <span title="最近写入工程文件夹">
+                {diskSavedAt
+                  ? `已落盘 ${new Date(diskSavedAt).toLocaleTimeString()}`
+                  : '工程未写入'}
+              </span>
+            )}
+            {agentDiffs.length > 0 && (
+              <span
+                className="status-on"
+                onClick={() => setDiffOpen(true)}
+                title="查看 Agent 修改对比"
+                role="button"
+                tabIndex={0}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    setDiffOpen(true)
+                  }
+                }}
+              >
+                Diff×{agentDiffs.length}
+              </span>
+            )}
+          </>
+        }
+        right={
+          <>
             <span
-              className="status-on"
-              onClick={() => setDiffOpen(true)}
-              title="查看 Agent 修改对比"
+              className={agentOpen ? 'status-on' : ''}
+              onClick={() => setAgentOpen((open) => !open)}
+              title="开关 Agent 窗口"
               role="button"
               tabIndex={0}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' || event.key === ' ') {
-                  setDiffOpen(true)
+                  setAgentOpen((open) => !open)
                 }
               }}
             >
-              Diff×{agentDiffs.length}
+              Agent
             </span>
-          )}
-        </div>
-        <div className="statusbar-right">
-          <span
-            className={agentOpen ? 'status-on' : ''}
-            onClick={() => setAgentOpen((open) => !open)}
-            title="开关 Agent 窗口"
-            role="button"
-            tabIndex={0}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' || event.key === ' ') {
-                setAgentOpen((open) => !open)
-              }
-            }}
-          >
-            Agent
-          </span>
-          <span
-            className={studioOpen ? 'status-on' : ''}
-            onClick={toggleStudio}
-            title="开关录音棚（配音工作台）"
-            role="button"
-            tabIndex={0}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter' || event.key === ' ') {
-                toggleStudio()
-              }
-            }}
-          >
-            录音棚
-          </span>
-          <span>行 {lineCount}</span>
-          <span>空格: 2</span>
-          <span>UTF-8</span>
-          <span>汉书</span>
-          {activeTextDiskError && (
             <span
-              className="status-warn"
-              title={`语言草稿镜像失败：${activeTextDiskError}`}
+              className={studioOpen ? 'status-on' : ''}
+              onClick={toggleStudio}
+              title="开关录音棚（配音工作台）"
               role="button"
               tabIndex={0}
-              onClick={() => setLangDiskError(null)}
               onKeyDown={(event) => {
                 if (event.key === 'Enter' || event.key === ' ') {
-                  setLangDiskError(null)
+                  toggleStudio()
                 }
               }}
             >
-              语言草稿镜像失败
+              录音棚
             </span>
-          )}
-          {voiceDiskError && (
-            <span
-              className="status-warn"
-              title={`配音未能写入磁盘：${voiceDiskError.message}`}
-              role="button"
-              tabIndex={0}
-              onClick={() => setVoiceDiskError(null)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' || event.key === ' ') {
-                  setVoiceDiskError(null)
-                }
-              }}
-            >
-              配音未写入磁盘
-            </span>
-          )}
-          {voiceImportMessage && (
-            <span
-              className={voiceImportMessage.ok ? 'status-note' : 'status-warn'}
-              title="音频导入结果（点击清除）"
-              role="button"
-              tabIndex={0}
-              onClick={() => setVoiceImportMessage(null)}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter' || event.key === ' ') {
-                  setVoiceImportMessage(null)
-                }
-              }}
-            >
-              {voiceImportMessage.message}
-              {voiceImportMessage.hint && (
-                <span className="status-hint">（{voiceImportMessage.hint}）</span>
-              )}
-            </span>
-          )}
-          <LocaleSelect
-            value={locale}
-            onChange={handleLocaleChange}
-            projectLocales={listLocalesOf(workspace).map((item) => item.locale)}
-          />
-        </div>
-      </footer>
+            {activeTextDiskError && (
+              <span
+                className="status-warn"
+                title={`语言草稿镜像失败：${activeTextDiskError}`}
+                role="button"
+                tabIndex={0}
+                onClick={() => setLangDiskError(null)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    setLangDiskError(null)
+                  }
+                }}
+              >
+                语言草稿失败
+              </span>
+            )}
+            {voiceDiskError && (
+              <span
+                className="status-warn"
+                title={`配音未能写入磁盘：${voiceDiskError.message}`}
+                role="button"
+                tabIndex={0}
+                onClick={() => setVoiceDiskError(null)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    setVoiceDiskError(null)
+                  }
+                }}
+              >
+                配音未写入
+              </span>
+            )}
+            {voiceImportMessage && (
+              <span
+                className={voiceImportMessage.ok ? 'status-note' : 'status-warn'}
+                title="音频导入结果（点击清除）"
+                role="button"
+                tabIndex={0}
+                onClick={() => setVoiceImportMessage(null)}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    setVoiceImportMessage(null)
+                  }
+                }}
+              >
+                {voiceImportMessage.message}
+                {voiceImportMessage.hint && (
+                  <span className="status-hint">（{voiceImportMessage.hint}）</span>
+                )}
+              </span>
+            )}
+            <LocaleSelect
+              value={locale}
+              onChange={handleLocaleChange}
+              projectLocales={listLocalesOf(workspace).map((item) => item.locale)}
+            />
+          </>
+        }
+      />
       {langEdit && (
         <TextEditBox
           key={langEdit.id}

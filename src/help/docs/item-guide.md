@@ -17,6 +17,8 @@
 
 ## `.item` 文件格式
 
+工程文件**只持久化权威数据**，不再写入 `display`：
+
 ```json
 {
   "format": "rpgtoolkit:item",
@@ -27,12 +29,6 @@
     "components": {
       "minecraft:enchantments": { "levels": { "minecraft:sharpness": 5 } }
     }
-  },
-  "display": {
-    "locale": "zh_cn",
-    "name": [{ "text": "锋利钻石剑", "color": "#55FFFF" }],
-    "icon": { "mime": "image/png", "size": 128, "glint": true, "data": "…" },
-    "snapshotOf": "fnv1a:…"
   }
 }
 ```
@@ -44,9 +40,17 @@
 | `tags` | 可选。游戏标签 string[]；空则不写入。交互与礼包相同（chip、回车/逗号添加）；去重大小写不敏感，保留先出现的写法。建议用稳定标识如 `reward`、`event/summer` |
 | `item.id` | 必填，命名空间物品 ID，新建默认 `minecraft:stick` |
 | `item.components` | 组件对象（可为空 `{}`） |
-| `display` | 可选。仅编辑器展示用的游戏快照（名称、tooltip、图标等），**不是**权威数据 |
 
-`display.snapshotOf` 是生成快照时对 `id + components` 的指纹（不含 count）。编辑改了 id/组件后指纹对不上 → 快照过期：tooltip 改由 WebUI 近似渲染，图标可保留并标过期。
+旧工程若仍带 `display`：解析时 **ingest 进本机缓存**（指纹一致→新鲜；不符→仍保留并标过期，同时排队刷新）。新快照写入缓存时**覆盖**旧条目。工程文件本身不回写 `display`（保存时剥掉）。
+
+## 展示快照（本机缓存）
+
+名称、tooltip、图标等展示数据在 **C 侧 IndexedDB**（`hanshu.itemSnapshots.v1`），不进工程目录、也不经 S。
+
+- **指纹**：`fnv1a(id + components)`（**不含 count**）。缓存键与过期判定均为该指纹；写入时会把 `display.snapshotOf` 规范为请求时的指纹。
+- **刷新**：WebUI 经 Control **出站**调用 mod 的 `items.renderSnapshots`（批量 ≤128，`includeIcon` 默认 true）。`iconPending: true` 时先显示文本快照，条目仍留在 needed 队列稍后重试。
+- **miss / 过期**：编辑器先用 WebUI 近似渲染，并登记 needed；连上游戏开发服务器后自动 drain。
+- **count**：数量变化不改指纹、不触发重新快照（发放数量由礼包等决定）。
 
 ## `.itemstack` 文件格式
 
@@ -59,24 +63,32 @@
     "count": 16,
     "components": {}
   },
-  "display": { "…": "schemaVersion ≥ 2 时可带快照" }
+  "display": { "…": "schemaVersion ≥ 2 时可带快照；可残缺" }
 }
 ```
 
-- `schemaVersion` 1：只有 `item`；2：可带 `display`。
-- 拖入**礼包**物品栏：按内嵌 ItemStack 追加（保留 count / components / display）。
-- 拖入**物品库**：转成 `.item`（去掉 count，改 format，保留组件与快照；`tags` 为空）。
+- 校验 `format` / `schemaVersion` 1..2；`item` 必填；`display` 可选。
+- **导入权威只认 `item`**。`display`（若有）只 ingest 进本机 IDB，**不写入** `.item` / `.kit` 文件。
+- `tooltipRaw` 等解析层忽略字段与现 Web 渲染一致。
+- 拖入**礼包**物品栏：按内嵌 ItemStack 追加（保留 count / components；display 进缓存）。
+- 拖入**物品库**：转成 `.item`（去掉 count，改 format，保留组件；`tags` 为空；display 进缓存）。
+
+桌面拖出的 `.itemstack` 仍可带 `display` 方便交换，但工程持久化路径不依赖它。
 
 ## 编辑器
 
 - 物品库可新建 / 导入 `.item`；也可拖入 `.itemstack` / `.json` 转成 `.item`。
-- 主区：物品 ID、**标签**行、预览（快照优先）、NBT 风格组件树；可「查看源码」。
-- 资源树有只读 **物品库表视图**：汇总文件名、引用名、ID、显示名、标签、组件数、快照状态。
+- 主区：物品 ID、**标签**行、预览（本机快照优先）、NBT 风格组件树；可「查看源码」。
+- 菜单 **编辑 → 刷新物品快照** / **刷新全部物品快照**：强制向客户端重新拉取（旧缓存保留至新快照覆盖；未连接则排队）。结果出现在 [活动列表](#activity-list)（统一状态栏铃铛）。
+- 资源树有只读 **物品库表视图**：汇总文件名、引用名、ID、显示名、标签、组件数、快照状态（新鲜 / 刷新中 / 过期 / 无）。
 - 本地化：`.item` 的标签与指令类字段一样**不进** `lang_*`；玩家可见名称若在组件/快照里，由游戏侧处理。
 
 ## 本机查询（游戏开发服务器）
 
-打开工程后，本机 mod 可通过 [游戏开发服务器](#game-dev-server) Control 方法 `items.list` / `items.get` / `items.query` 读取当前会话中的物品库（C 侧镜像，非绕过工程服务写盘）。
+打开工程后，本机 mod 可通过 [游戏开发服务器](#game-dev-server) Control：
+
+- **入站**：`items.list` / `items.get` / `items.query` 读当前会话物品库（C 侧镜像）。
+- **出站（WebUI→mod）**：`items.renderSnapshots` 批量拉展示快照写入本机缓存。
 
 ## 导出
 
@@ -97,7 +109,7 @@
 
 详见 [礼包：超参数与修饰器](#kit-guide)。礼包条目可以是：
 
-1. **内嵌**：完整 `{ id, count, components, display? }`（或从 `.itemstack` 拖入）；
-2. **链接**：`{ "item": "引用名", "count": n }`——展开时从物品库取 id/components/display，数量仍由礼包字段（可绑定修饰器）决定。
+1. **内嵌**：`{ id, count, components }`（或从 `.itemstack` 拖入；display 只进本机缓存）；
+2. **链接**：`{ "item": "引用名", "count": n }`——展开时从物品库取 id/components，展示名/图标来自本机快照缓存，数量仍由礼包字段（可绑定修饰器）决定。
 
 物品上的 `tags` 与礼包上的 `tags` 彼此独立：物品标签描述物品分类，礼包标签描述发放包分类；链接展开**不会**把物品 tags 并入礼包 tags。

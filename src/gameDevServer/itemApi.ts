@@ -6,6 +6,8 @@
 import { getProjectSession } from '../project/projectSession'
 import { getExtension, sourcePathOf } from '../workspace'
 import { parseItem, type ItemDocument } from '../workspaces/progress/itemDoc'
+import { getCachedDisplaySync } from '../workspaces/progress/itemSnapshotCache'
+import { itemFingerprint, type ItemStackDisplay } from '../workspaces/progress/itemstack'
 import {
   itemRefFromFileName,
   normalizeItemRef,
@@ -28,13 +30,14 @@ export type ItemLibraryEntry = {
 
 export type ItemLibraryItem = ItemLibraryEntry & {
   item: ItemDocument['item']
-  display?: ItemDocument['display']
+  display?: ItemStackDisplay
   format: string
   schemaVersion: number
 }
 
-function displayNameOf(doc: ItemDocument): string | undefined {
-  const parts = doc.display?.name
+function displayNameOf(item: ItemDocument['item']): string | undefined {
+  const cached = getCachedDisplaySync(itemFingerprint(item))
+  const parts = cached?.name
   if (!parts?.length) return undefined
   const texts = parts.map((p) => p.text).filter(Boolean)
   return texts.length ? texts.join('') : undefined
@@ -74,7 +77,7 @@ function toEntry(row: {
   path: string
   doc: ItemDocument
 }): ItemLibraryEntry {
-  const displayName = displayNameOf(row.doc)
+  const displayName = displayNameOf(row.doc.item)
   return {
     ref: row.ref,
     name: row.name,
@@ -92,6 +95,7 @@ function toFull(row: {
   path: string
   doc: ItemDocument
 }): ItemLibraryItem {
+  const display = getCachedDisplaySync(itemFingerprint(row.doc.item))
   return {
     ...toEntry(row),
     format: row.doc.format,
@@ -100,7 +104,7 @@ function toFull(row: {
       id: row.doc.item.id,
       components: { ...row.doc.item.components },
     },
-    ...(row.doc.display ? { display: row.doc.display } : {}),
+    ...(display ? { display } : {}),
   }
 }
 

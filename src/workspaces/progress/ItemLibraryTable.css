@@ -251,6 +251,10 @@
   color: #b7d7b0;
 }
 
+.item-table-snap.is-pending {
+  color: var(--muted, #888);
+}
+
 .item-table-snap.is-stale {
   background: rgba(200, 160, 80, 0.16);
   color: #e0c48a;

@@ -1,6 +1,9 @@
 import collaborationService from './docs/collaboration-service.md?raw'
 import collaborationGuide from './docs/collaboration-guide.md?raw'
 import collaborationProgramming from './docs/collaboration-programming.md?raw'
+import browserCache from './docs/browser-cache.md?raw'
+import activityList from './docs/activity-list.md?raw'
+import ideChrome from './docs/ide-chrome.md?raw'
 import welcome from './docs/welcome.md?raw'
 import docs from './docs/docs.md?raw'
 import hanshuSyntax from './docs/hanshu-syntax.md?raw'
@@ -26,6 +29,9 @@ export type HelpTopicId =
   | 'collaboration-guide'
   | 'collaboration-service'
   | 'collaboration-programming'
+  | 'browser-cache'
+  | 'activity-list'
+  | 'ide-chrome'
   | 'welcome'
   | 'docs'
   | 'hanshu-syntax'
@@ -64,6 +70,9 @@ export const HELP_TOPICS: HelpTopic[] = [
   { id:'collaboration-guide',title:'连接与协作',group:'开始',audience:'user',inDocs:true,body:collaborationGuide },
   { id:'collaboration-service',title:'工程服务与多人协作',group:'开始',audience:'both',inDocs:true,body:collaborationService },
   { id:'collaboration-programming',title:'多人协作编程指南',group:'开始',audience:'dev',inDocs:true,body:collaborationProgramming },
+  { id:'browser-cache',title:'WebUI 浏览器缓存',group:'开始',audience:'both',inDocs:true,body:browserCache },
+  { id:'activity-list',title:'IDE 活动列表',group:'开始',audience:'both',inDocs:true,body:activityList },
+  { id:'ide-chrome',title:'IDE 壳：菜单栏与状态栏',group:'开始',audience:'dev',inDocs:true,body:ideChrome },
   { id: 'welcome', title: '欢迎', group: '开始', audience: 'user', inDocs: false, body: welcome },
   { id: 'docs', title: '文档索引', group: '开始', audience: 'both', inDocs: false, body: docs },
   {

@@ -1,7 +1,8 @@
 import { isObject } from './model'
 import { parseJsonValue } from '../../utils/strictJson'
 import type { ItemDocument } from './itemDoc'
-import { itemFingerprint, readItemStackDisplay, type ItemStackDisplay } from './itemstack'
+import { ingestDisplay } from './itemSnapshotCache'
+import { readItemStackDisplay, type ItemStackDisplay } from './itemstack'
 import { buildKitModifierEnv, interpolateKitText, resolveKitNumber, type KitModifierEnv, type KitNumberRule } from './kitExpr'
 
 /** 数值字段 → 绑定的修饰器 id；最终值 = 字段规则(修饰器(raw)) */
@@ -57,7 +58,6 @@ export function expandKitItem(item: KitItem, catalog?: ItemCatalog): KitItem {
     item: ref,
     id: doc.item.id,
     components: { ...doc.item.components },
-    display: doc.display,
   }
 }
 
@@ -561,7 +561,7 @@ function writeItem(item: KitItem): Record<string, unknown> {
   const next: Record<string, unknown> = { id: item.id, count: item.count }
   if (mods) next.mods = mods
   if (Object.keys(item.components).length > 0) next.components = item.components
-  if (item.display) next.display = item.display
+  // display 迁出本机缓存，kit 文件不再写入
   return next
 }
 
@@ -653,10 +653,7 @@ function readItem(value: unknown, path: string): KitItem {
   const display = readItemStackDisplay(value.display)
   const item: KitItem = { id: readString(value.id), count, components }
   if (mods) item.mods = mods
-  if (display) {
-    // 早期存档没有指纹：视为保存时快照有效
-    item.display = display.snapshotOf ? display : { ...display, snapshotOf: itemFingerprint(item) }
-  }
+  if (display) ingestDisplay(item, display)
   return item
 }
 

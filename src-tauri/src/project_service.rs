@@ -61,29 +61,43 @@ pub async fn project_local_connection(
         .map_err(|e| e.to_string())
 }
 
-/// The trusted native host chooses the directory. C cannot pass a path or obtain a writable handle.
+/// Trusted desktop host: pick a folder, or reopen a path the user previously opened.
+/// Network-facing local APIs still only accept temporary directory IDs.
 #[tauri::command]
 pub async fn project_open_local(
     app: tauri::AppHandle,
     state: tauri::State<'_, ProjectService>,
     name: Option<String>,
+    path: Option<String>,
 ) -> Result<LocalConnection, String> {
-    let chooser = app.clone();
-    let selected = tauri::async_runtime::spawn_blocking(move || {
-        chooser
-            .dialog()
-            .file()
-            .set_title("由本机服务打开工程目录")
-            .blocking_pick_folder()
-    })
-    .await
-    .map_err(|e| e.to_string())?
-    .ok_or("已取消打开工程")?;
-    let parent = selected.into_path().map_err(|e| e.to_string())?;
-    let root = if let Some(name) = name {
-        project_server::create_project_directory(&parent, &name).map_err(|e| e.to_string())?
+    let root = if let Some(path) = path {
+        if name.is_some() {
+            return Err("重新打开最近工程时不能同时创建工程".into());
+        }
+        let root = std::path::PathBuf::from(path);
+        let root = root.canonicalize().map_err(|_| "工程目录已不存在，请重新浏览选择".to_string())?;
+        if !root.is_dir() {
+            return Err("工程目录已不存在，请重新浏览选择".into());
+        }
+        root
     } else {
-        parent
+        let chooser = app.clone();
+        let selected = tauri::async_runtime::spawn_blocking(move || {
+            chooser
+                .dialog()
+                .file()
+                .set_title("由本机服务打开工程目录")
+                .blocking_pick_folder()
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or("已取消打开工程")?;
+        let parent = selected.into_path().map_err(|e| e.to_string())?;
+        if let Some(name) = name {
+            project_server::create_project_directory(&parent, &name).map_err(|e| e.to_string())?
+        } else {
+            parent
+        }
     };
     let mut running = state._service.lock().await;
     let service = running

@@ -35,7 +35,12 @@ export type ItemStackDisplay = {
   foil?: boolean
   tooltipStyle?: string | null
   icon?: ItemStackIcon
-  /** WebUI 扩展：生成快照时 id + components 的指纹，不一致即快照过期 */
+  /**
+   * 模组 `items.renderSnapshots`：图标仍在渲染时为 true，可能尚无 `icon`。
+   * 不参与过期判定；WebUI 可据此保留 needed 队列并重试。
+   */
+  iconPending?: boolean
+  /** WebUI 写入缓存时设为指纹；与当前 id+components 指纹一致即新鲜 */
   snapshotOf?: string
 }
 
@@ -106,6 +111,7 @@ export function readItemStackDisplay(value: unknown): ItemStackDisplay | undefin
   const icon = readIcon(value.icon, 'display.icon')
   if (icon) display.icon = icon
   if (typeof value.snapshotOf === 'string') display.snapshotOf = value.snapshotOf
+  if (value.iconPending === true) display.iconPending = true
   return display
 }
 
@@ -128,6 +134,7 @@ export function itemFingerprint(item: { id: string; components: Record<string, u
   return `fnv1a:${(hash >>> 0).toString(16).padStart(8, '0')}`
 }
 
+/** @deprecated 优先用缓存 `isCachedSnapshotFresh`；若传入 display 则按 fingerprint 比对 */
 export function isSnapshotFresh(item: { id: string; components: Record<string, unknown>; display?: ItemStackDisplay }): boolean {
   return !!item.display && item.display.snapshotOf === itemFingerprint(item)
 }
@@ -162,19 +169,21 @@ export function parseItemStack(source: string): ItemStackFile {
   return { format, schemaVersion, item, display }
 }
 
-/** 导入：只取 item 为权威数据；display 仅附带给 UI */
+/** 导入：只取 item 为权威数据；display 由调用方 ingest 进缓存 */
 export function kitItemFromItemStack(file: ItemStackFile): KitItemFromStack {
-  if (!file.display) return { ...file.item }
-  return { ...file.item, display: { ...file.display, snapshotOf: itemFingerprint(file.item) } }
+  return { ...file.item }
 }
 
 export async function readItemStackFiles(files: Iterable<File>): Promise<{ items: KitItemFromStack[]; errors: string[] }> {
+  const { ingestDisplay } = await import('./itemSnapshotCache')
   const items: KitItemFromStack[] = []
   const errors: string[] = []
   for (const file of files) {
     if (!isItemStackFileName(file.name)) continue
     try {
-      items.push(kitItemFromItemStack(parseItemStack(await file.text())))
+      const parsed = parseItemStack(await file.text())
+      if (parsed.display) ingestDisplay(parsed.item, parsed.display)
+      items.push(kitItemFromItemStack(parsed))
     } catch (cause) {
       errors.push(`${file.name}：${cause instanceof Error ? cause.message : String(cause)}`)
     }

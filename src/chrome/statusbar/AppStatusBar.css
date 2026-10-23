@@ -1,0 +1,107 @@
+/* IDE 唯一状态栏：与标题栏同色（--bg-status → --bg-title） */
+
+.app-statusbar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: var(--ui-statusbar-h);
+  padding: 0 2px 0 8px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-status);
+  color: var(--text);
+  font-size: 12px;
+  flex-shrink: 0;
+  overflow: visible;
+  /* 高于协作浮球（.collab-widget z-index: 900），保证活动面板盖在协作菜单上 */
+  z-index: 950;
+}
+
+.app-statusbar-left,
+.app-statusbar-right {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  min-width: 0;
+  height: 100%;
+}
+
+.app-statusbar-left {
+  flex: 1;
+  overflow: hidden;
+}
+
+.app-statusbar-right {
+  flex: none;
+  margin-left: auto;
+}
+
+.app-statusbar-right-slots {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  min-width: 0;
+  height: 100%;
+}
+
+.app-statusbar-left > span {
+  padding: 0 8px;
+  line-height: var(--ui-statusbar-h);
+  white-space: nowrap;
+}
+
+/* 右侧动作区更紧：少 padding，避免剧本侧挤成一排砖 */
+.app-statusbar-right-slots > span {
+  padding: 0 6px;
+  line-height: var(--ui-statusbar-h);
+  white-space: nowrap;
+}
+
+.app-statusbar-left > span:hover,
+.app-statusbar-right-slots > span:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-bright, #f0ebe3);
+}
+
+.app-statusbar .status-on {
+  background: rgba(74, 108, 247, 0.16);
+  color: #9db4f0;
+}
+
+.app-statusbar .status-warn {
+  color: var(--danger);
+}
+
+.app-statusbar .lang-select {
+  height: 100%;
+  margin-right: 0;
+  color: inherit;
+}
+
+.app-statusbar .lang-select .lang-trigger {
+  height: var(--ui-statusbar-h);
+  padding: 0 6px;
+  font-size: 12px;
+  color: inherit;
+}
+
+.app-statusbar .lang-select .lang-trigger:hover,
+.app-statusbar .lang-select .lang-trigger.open {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-bright, #f0ebe3);
+}
+
+/* 进度工作区迁入的类型标签等 */
+.app-statusbar .flow-statusbar-type {
+  opacity: 0.85;
+}
+
+.app-statusbar .activity-bell {
+  color: inherit;
+}
+
+.app-statusbar .activity-bell:hover,
+.app-statusbar .activity-bell.is-open {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-bright, #f0ebe3);
+}

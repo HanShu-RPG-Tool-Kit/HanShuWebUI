@@ -77,7 +77,7 @@ fn directory_error(error: std::io::Error) -> Error {
         _ => Error::new("storage", "无法读取这个目录，请重新选择"),
     }
 }
-fn display_path(path: &FsPath) -> String {
+pub fn display_path(path: &FsPath) -> String {
     let value = path.to_string_lossy();
     #[cfg(windows)]
     {

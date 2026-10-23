@@ -6,12 +6,32 @@ import './collaboration-widget.css'
 
 type Position = { x: number; y: number }
 const positionKey = 'hanshu.collaborationPosition.v1'
+const ORB = { w: 87, h: 69 }
 const colors = ['#ac9bda', '#7cbba7', '#d7ac79', '#85afd1', '#c990ac']
 function color(id: string) { let value = 0; for (const ch of id) value = (value * 31 + ch.charCodeAt(0)) >>> 0; return colors[value % colors.length] }
 const fileName = (path: string) => path === '.hanshu/skinmanager/library.json' ? '皮肤库' : path.split('/').at(-1) ?? path
 function loadPosition(): Position {
-  try { const value = JSON.parse(localStorage.getItem(positionKey) ?? 'null'); if (Number.isFinite(value?.x) && Number.isFinite(value?.y)) return value } catch { /* Optional preference. */ }
-  return { x: window.innerWidth - 100, y: window.innerHeight - 100 }
+  try { const value = JSON.parse(localStorage.getItem(positionKey) ?? 'null'); if (Number.isFinite(value?.x) && Number.isFinite(value?.y)) return fitOrb(value) } catch { /* Optional preference. */ }
+  return fitOrb({ x: window.innerWidth - ORB.w - 24, y: window.innerHeight - ORB.h - 48 })
+}
+function fitOrb(next: Position): Position {
+  return {
+    x: Math.max(12, Math.min(next.x, window.innerWidth - ORB.w - 12)),
+    y: Math.max(48, Math.min(next.y, window.innerHeight - ORB.h - 40)),
+  }
+}
+function fitPanel(next: Position, width: number, height: number): Position {
+  return {
+    x: Math.max(12, Math.min(next.x, window.innerWidth - width - 12)),
+    y: Math.max(48, Math.min(next.y, window.innerHeight - height - 40)),
+  }
+}
+/** 展开时从浮球右下角向上向左展开；仅改显示坐标，不改写浮球锚点。 */
+function panelFromOrb(orb: Position, width: number, height: number): Position {
+  return fitPanel({ x: orb.x + ORB.w - width, y: orb.y + ORB.h - height }, width, height)
+}
+function orbFromPanel(panel: Position, width: number, height: number): Position {
+  return fitOrb({ x: panel.x + width - ORB.w, y: panel.y + height - ORB.h })
 }
 const subscribeNothing = () => () => undefined
 const emptyState = { pendingPaths: [], queued: 0, preparing: 0, transactions: [], journalError: '' }
@@ -21,43 +41,77 @@ export function CollaborationWidget({ client, snapshot, projectName, open, onOpe
   error: string; management: ReactNode; onProjectAction: (action: 'open' | 'create' | 'share' | 'connect') => void
 }) {
   const state = useSyncExternalStore(client?.transactions.subscribe ?? subscribeNothing, client?.transactions.getSnapshot ?? (() => emptyState))
-  const [position, setPosition] = useState(loadPosition)
+  /** 收起时浮球左上角；展开/收起不改写，避免回位漂移 */
+  const [orbPos, setOrbPos] = useState(loadPosition)
+  const [panelSize, setPanelSize] = useState({ w: 492, h: 420 })
   const [tab, setTab] = useState<'people' | 'changes' | 'manage'>('people')
   const root = useRef<HTMLDivElement>(null)
-  const drag = useRef<{ start: Position; origin: Position; moved: boolean } | null>(null)
+  const drag = useRef<{ start: Position; originOrb: Position; originDisplay: Position; moved: boolean } | null>(null)
   const suppressClick = useRef(false)
-  function fit(next: Position): Position {
-    const width = root.current?.offsetWidth ?? (open ? 328 : 62)
-    const height = root.current?.offsetHeight ?? (open ? 280 : 48)
-    return { x: Math.max(12, Math.min(next.x, window.innerWidth - width - 12)), y: Math.max(48, Math.min(next.y, window.innerHeight - height - 40)) }
-  }
+  const display = open
+    ? panelFromOrb(orbPos, panelSize.w, panelSize.h)
+    : fitOrb(orbPos)
+
   useEffect(() => {
-    const resize = () => setPosition(value => fit(value))
-    resize(); window.addEventListener('resize', resize)
-    const observer = new ResizeObserver(resize)
-    if (root.current) observer.observe(root.current)
-    return () => { window.removeEventListener('resize', resize); observer.disconnect() }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const onResize = () => setOrbPos(value => fitOrb(value))
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [])
+
+  useEffect(() => {
+    if (!open || !root.current) return
+    const observer = new ResizeObserver(() => {
+      const el = root.current
+      if (!el) return
+      const w = el.offsetWidth
+      const h = el.offsetHeight
+      if (w > 0 && h > 0) setPanelSize({ w, h })
+    })
+    observer.observe(root.current)
+    return () => observer.disconnect()
   }, [open])
-  useEffect(() => { try { localStorage.setItem(positionKey, JSON.stringify(position)) } catch { /* Optional preference. */ } }, [position])
+
+  useEffect(() => {
+    try { localStorage.setItem(positionKey, JSON.stringify(orbPos)) } catch { /* Optional preference. */ }
+  }, [orbPos])
+
   function start(event: PointerEvent<HTMLElement>) {
     if (event.button !== 0 || (event.target as HTMLElement).closest('[data-no-drag]')) return
-    drag.current = { start: { x: event.clientX, y: event.clientY }, origin: position, moved: false }
+    drag.current = {
+      start: { x: event.clientX, y: event.clientY },
+      originOrb: orbPos,
+      originDisplay: display,
+      moved: false,
+    }
     event.currentTarget.setPointerCapture(event.pointerId)
   }
   function move(event: PointerEvent<HTMLElement>) {
-    const value = drag.current; if (!value) return
-    const dx = event.clientX - value.start.x, dy = event.clientY - value.start.y
+    const value = drag.current
+    if (!value) return
+    const dx = event.clientX - value.start.x
+    const dy = event.clientY - value.start.y
     if (Math.hypot(dx, dy) > 4) value.moved = true
-    if (value.moved) setPosition(fit({ x: value.origin.x + dx, y: value.origin.y + dy }))
+    if (!value.moved) return
+    if (!open) {
+      setOrbPos(fitOrb({ x: value.originOrb.x + dx, y: value.originOrb.y + dy }))
+      return
+    }
+    const nextPanel = fitPanel(
+      { x: value.originDisplay.x + dx, y: value.originDisplay.y + dy },
+      panelSize.w,
+      panelSize.h,
+    )
+    setOrbPos(orbFromPanel(nextPanel, panelSize.w, panelSize.h))
   }
   function end() { suppressClick.current = drag.current?.moved ?? false; drag.current = null }
+
   const failures = state.transactions.filter(item => ['failed', 'conflict', 'uncertain'].includes(item.phase))
   const attention = !!error || failures.length > 0 || !!state.journalError
   const status = !client ? '未打开工程' : !client.online ? '连接已断开' : attention ? '修改需要处理' : state.queued ? '正在保存…' : state.pendingPaths.length ? `${state.pendingPaths.length} 个文件待保存` : '所有修改已保存'
   const members = snapshot?.members.filter(member => snapshot.sessions.some(session => session.subjectId === member.subject.id)) ?? []
   const currentPath = snapshot?.session.filePresence?.path
-  return <div ref={root} className={`collab-widget${open ? ' is-open' : ''}${attention ? ' needs-attention' : ''}`} data-project-name={projectName} data-online={!!client?.online} style={{ left: position.x, top: position.y }}>
+
+  return <div ref={root} className={`collab-widget${open ? ' is-open' : ''}${attention ? ' needs-attention' : ''}`} data-project-name={projectName} data-online={!!client?.online} style={{ left: display.x, top: display.y }}>
     {!open ? <button className="collab-orb" aria-label="打开协作面板" title={`${status} · 拖动可移动`} onPointerDown={start} onPointerMove={move} onPointerUp={end} onPointerCancel={end} onClick={() => { if (!suppressClick.current) onOpenChange(true); suppressClick.current = false }}>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><circle cx="9" cy="8" r="3" /><path d="M3 20v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6m2 3a5 5 0 0 1 3 4v2" /></svg><i className={!client?.online ? 'is-offline' : attention ? 'is-warning' : ''} /><span>{attention ? '!' : members.length || '＋'}</span>
     </button> : <section className="collab-panel" aria-label="协作面板">

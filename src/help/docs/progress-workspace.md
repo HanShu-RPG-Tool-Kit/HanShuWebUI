@@ -109,5 +109,5 @@ checkpoint 按稳定 ID 平铺保存，只含名称与说明（`FlowText` 无 `k
 方向性备忘，不约束具体交互或实现：
 
 - **回拖**：WebUI → 客户端，物品数据能再回到游戏侧。
-- **同步**：WebUI 改过物品后，可请本机客户端按当前数据重新生成展示快照（可走 [游戏开发服务器](#game-dev-server) Control 通道）。
+- **同步**：展示快照在本机 IndexedDB；改过 id/components 后 WebUI 经 Control 出站 `items.renderSnapshots` 向本机客户端批量拉取（见 [物品库指南](#item-guide)）。
 

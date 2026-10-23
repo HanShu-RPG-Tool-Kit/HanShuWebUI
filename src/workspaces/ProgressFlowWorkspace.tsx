@@ -16,6 +16,7 @@ import { createKit, kitRefFromFileName, readKitSource, stringifyKit, parseKit } 
 import { createProgress, createProgressLocaleSeeds, readProgressSource, stringifyProgress, parseProgress } from './progress/progressDoc'
 import { createNavigationPoint, readNavigationSource, stringifyNavigationPoint, parseNavigationPoint } from './progress/navigationPoint'
 import { createItem, itemFromItemStackSource, parseItem, readItemSource, stringifyItem } from './progress/itemDoc'
+import { forceRequestItemSnapshots, isItemSnapshotRefreshOnline } from './progress/itemSnapshotCache'
 import { isItemStackFileName } from './progress/itemstack'
 import { itemRefFromFileName } from './progress/kit'
 import {
@@ -57,6 +58,8 @@ import { saveProjectToDirectory } from '../project/projectFs'
 import { deleteSourceAssets } from '../agent/agentOps'
 import { randomId } from '../project/crypto'
 import { FilePresenceBar } from '../project/FilePresenceBar'
+import { notify } from '../activity'
+import { StatusBarSlots } from '../chrome'
 import { renameScriptAssets } from '../workspaceMove'
 import { registerAsset, saveWorkspace, sourcePathOf } from '../workspace'
 import { deleteAssetBlob, getAssetBlob, putAssetBlob } from '../assets/idb'
@@ -217,7 +220,11 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
 
   const [storageError, setStorageError] = useState('')
   const failedSaveRef = useRef<{ client: NonNullable<typeof session.binding>['handle']['client']; ids: number[] } | null>(null)
-  const [notice, setNotice] = useState('')
+  /** 短提示走全 IDE 活动列表，不再占编辑区 layout */
+  const setNotice = (message: string) => {
+    if (!message.trim()) return
+    notify(message, { source: 'progress' })
+  }
   const [selection, setSelection] = useState<FlowSelection>({ kind: 'flow' })
   const [editor, setEditor] = useState<{ key: string; flow: ProgressFlow; selection: FlowSelection; origin: HTMLElement | null } | null>(null)
   const [busy, setBusy] = useState(false)
@@ -236,7 +243,6 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
   useEffect(() => {
     failedSaveRef.current = null
     setStorageError(projectBound ? '' : '请先打开工程；所有工作区使用同一工程连接。')
-    if (!projectBound) setNotice('')
   }, [projectBound, session.binding?.handle.client])
 
   useEffect(() => {
@@ -967,9 +973,56 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     }
   }
   useImperativeHandle(workspaceRef, () => ({ handleMenuAction(item) {
-    if (item === '保存') void saveDraft()
-    if (item === '撤销') undo()
-    if (item === '重做') undo(true)
+    if (item === 'save') {
+      void saveDraft()
+      return
+    }
+    if (item === 'undo') {
+      undo()
+      return
+    }
+    if (item === 'redo') {
+      undo(true)
+      return
+    }
+    if (item === 'refresh-item-snapshot') {
+      const focused = state.documents.find((document) => document.key === focusedKey)
+      if (!focused || !isItemDocument(focused)) {
+        setNotice('请先打开一个 .item，再刷新当前物品快照。')
+        return
+      }
+      const parsed = readItemSource(focused.source)
+      if (parsed.error || !parsed.doc.item.id.trim()) {
+        setNotice(parsed.error || '当前物品缺少 id，无法刷新快照。')
+        return
+      }
+      const n = forceRequestItemSnapshots([parsed.doc.item])
+      setNotice(
+        isItemSnapshotRefreshOnline()
+          ? '已请求刷新当前物品快照'
+          : `已排队 ${n} 项 · 待连接游戏开发服务器`,
+      )
+      return
+    }
+    if (item === 'refresh-all-item-snapshots') {
+      const items = []
+      for (const document of state.documents) {
+        if (!isItemDocument(document)) continue
+        const parsed = readItemSource(document.source)
+        if (parsed.error || !parsed.doc.item.id.trim()) continue
+        items.push(parsed.doc.item)
+      }
+      if (items.length === 0) {
+        setNotice('物品库还没有可刷新的 .item。')
+        return
+      }
+      const n = forceRequestItemSnapshots(items)
+      setNotice(
+        isItemSnapshotRefreshOnline()
+          ? `已请求刷新 ${n} 个物品快照`
+          : `已排队 ${n} 项 · 待连接游戏开发服务器`,
+      )
+    }
   } }))
   useEffect(() => {
     if (!active) return
@@ -1258,10 +1311,6 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
 
   return <section className="flow-workspace" aria-label="故事流程工作区">
     <input ref={fileInput} type="file" multiple hidden onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ''; void importFiles(files) }} />
-    {(notice || storageError) && <div className={`flow-notice${storageError ? ' flow-error' : ''}`} role="status">
-      {storageError || notice}
-      {!storageError && <button type="button" aria-label="关闭提示" onClick={() => setNotice('')}>×</button>}
-    </div>}
     <div className="flow-layout">
       <FlowExplorer readOnly={readOnly} state={explorerState} active={active} disabled={locked || busy} onChange={(next) => setState((previous) => normalizeGroups({ ...previous, documents: next.documents, folders: next.folders }))} onSelect={(key) => selectDocument(key)} onNew={newFlow} onImport={requestImport} onImportFiles={(files, folderId, packageId) => { void importFiles(files, { folderId, package: packageId }) }} onExport={exportFlow} onDownload={downloadDraft} onRemove={removeResources} onProperties={setPropertiesKey} onViewSource={viewProgressSource} onNotice={setNotice} />
       <main className="flow-main">
@@ -1280,18 +1329,23 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
         )}
       </main>
     </div>
-    <footer className="flow-statusbar">
-      <span>{storageError ? (projectBound ? '保存异常' : '未打开工程') : projectBound ? (busy ? '正在保存…' : 'Ctrl+S 保存到工程目录') : '需要工程目录'}{locked && projectBound ? ' · 正在编辑' : ''}{splitOn ? ' · 二分编辑' : ''}</span>
-      <span className="flow-statusbar-right">
-        {(progressDoc || flowLocalizable || kitDoc || navigationDoc) && (
-          <LocaleSelect
-            value={locale}
-            onChange={(tag) => { setLocale(tag); saveLocale(tag) }}
-          />
-        )}
-        <span className="flow-statusbar-type">{itemTableDoc ? '物品库 · 表视图' : itemDoc ? '物品 · .item' : navigationDoc ? '导航点 · .nav' : progressDoc ? '进度 · .progress' : kitDoc ? '礼包 · .kit' : scriptDoc ? '脚本 · Python' : '故事流程 · 原型草稿'}</span>
-      </span>
-    </footer>
+    <StatusBarSlots
+      active={active}
+      left={
+        <span>{storageError ? (projectBound ? '保存异常' : '未打开工程') : projectBound ? (busy ? '正在保存…' : 'Ctrl+S 保存到工程目录') : '需要工程目录'}{locked && projectBound ? ' · 正在编辑' : ''}{splitOn ? ' · 二分编辑' : ''}</span>
+      }
+      right={
+        <>
+          {(progressDoc || flowLocalizable || kitDoc || navigationDoc) && (
+            <LocaleSelect
+              value={locale}
+              onChange={(tag) => { setLocale(tag); saveLocale(tag) }}
+            />
+          )}
+          <span className="flow-statusbar-type">{itemTableDoc ? '物品库 · 表视图' : itemDoc ? '物品 · .item' : navigationDoc ? '导航点 · .nav' : progressDoc ? '进度 · .progress' : kitDoc ? '礼包 · .kit' : scriptDoc ? '脚本 · Python' : '故事流程 · 原型草稿'}</span>
+        </>
+      }
+    />
     {editor && active && (
       <FlowEditorDialog
         key={editor.key}

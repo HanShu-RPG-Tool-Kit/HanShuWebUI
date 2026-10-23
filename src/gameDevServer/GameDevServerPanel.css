@@ -5,7 +5,7 @@
   display: grid;
   place-items: center;
   padding: 22px;
-  background: #080b12bc;
+  background: transparent;
 }
 
 .gds-dialog {

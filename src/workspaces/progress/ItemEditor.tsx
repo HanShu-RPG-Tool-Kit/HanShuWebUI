@@ -8,12 +8,18 @@ import {
   type ReactNode,
 } from 'react'
 import {
-  isSnapshotFresh,
+  getCachedDisplaySync,
+} from './itemSnapshotCache'
+import {
   itemFingerprint,
   itemStackIconSrc,
   type ItemTextSegment,
 } from './itemstack'
-import { presentItem, type ItemPresentation } from './itemTooltip'
+import {
+  useItemPresentation,
+  useItemSnapshotStatus,
+} from './itemPresentation'
+import { type ItemPresentation } from './itemTooltip'
 import {
   DEFAULT_ITEM_ID,
   itemPresentable,
@@ -78,11 +84,11 @@ function Segments({ segments, fallback = '#FFFFFF' }: { segments: ItemTextSegmen
   </>
 }
 
-function PreviewIcon({ presentation, display }: {
+function PreviewIcon({ presentation, fingerprint }: {
   presentation: ItemPresentation
-  display: ItemDocument['display']
+  fingerprint: string
 }) {
-  const icon = display?.icon
+  const icon = getCachedDisplaySync(fingerprint)?.icon
   const src = icon ? itemStackIconSrc(icon) : ''
   const mask = src ? { WebkitMaskImage: `url("${src}")`, maskImage: `url("${src}")` } as CSSProperties : undefined
   return <span className={`kit-item-icon item-preview-icon${icon ? '' : ' is-empty'}${presentation.iconStale ? ' is-stale' : ''}`}>
@@ -94,15 +100,18 @@ function PreviewIcon({ presentation, display }: {
   </span>
 }
 
-function SnapshotBadge({ doc }: { doc: ItemDocument }) {
-  const fresh = doc.display ? isSnapshotFresh(doc.item) : false
-  if (!doc.display) return <span className="item-badge is-muted">无快照</span>
-  if (fresh) {
-    return <span className="item-badge is-ok" title={doc.display.locale ? `locale ${doc.display.locale}` : undefined}>
-      游戏快照{doc.display.locale ? ` · ${doc.display.locale}` : ''}
+function SnapshotBadge({ item }: { item: ItemDocument['item'] }) {
+  const status = useItemSnapshotStatus(item)
+  const locale = getCachedDisplaySync(itemFingerprint(item))?.locale
+  if (status === 'none') return <span className="item-badge is-muted">无快照</span>
+  if (status === 'queued') return <span className="item-badge is-muted" title="游戏开发服务器未连接">待同步</span>
+  if (status === 'pending') return <span className="item-badge is-muted">快照刷新中…</span>
+  if (status === 'fresh') {
+    return <span className="item-badge is-ok" title={locale ? `locale ${locale}` : undefined}>
+      游戏快照{locale ? ` · ${locale}` : ''}
     </span>
   }
-  return <span className="item-badge is-warn" title="id / components 已变，快照过期；图标仍可显示">快照过期 · WebUI 渲染</span>
+  return <span className="item-badge is-warn" title="id / components 已变或待向客户端刷新">快照过期 · WebUI 渲染</span>
 }
 
 function ItemTagField({ tags, disabled, onChange }: {
@@ -581,7 +590,7 @@ export function ItemEditor({ doc, error, disabled, selfRef, onChange }: {
   onChange: (source: string) => void
 }) {
   const presentable = useMemo(() => itemPresentable(doc), [doc])
-  const presentation = useMemo(() => presentItem(presentable), [presentable])
+  const presentation = useItemPresentation(presentable)
   const fingerprint = useMemo(() => itemFingerprint(doc.item), [doc.item])
   const linkRef = normalizeItemRef(selfRef || '')
 
@@ -595,7 +604,6 @@ export function ItemEditor({ doc, error, disabled, selfRef, onChange }: {
       schemaVersion: doc.schemaVersion,
       tags: 'tags' in patch ? unionItemTags(patch.tags ?? []) : doc.tags,
       item: nextItem,
-      display: 'display' in patch ? patch.display : doc.display,
     }
     onChange(stringifyItem(next))
   }
@@ -631,7 +639,7 @@ export function ItemEditor({ doc, error, disabled, selfRef, onChange }: {
         <div className="item-header-meta">
           <span className="item-badge is-muted">{doc.format}</span>
           <span className="item-badge is-muted">v{doc.schemaVersion}</span>
-          <SnapshotBadge doc={doc} />
+          <SnapshotBadge item={doc.item} />
           {linkRef && (
             <button
               type="button"
@@ -650,9 +658,9 @@ export function ItemEditor({ doc, error, disabled, selfRef, onChange }: {
       <ItemTagField tags={doc.tags} disabled={disabled} onChange={(tags) => update({ tags })} />
 
       <div className="item-columns">
-        <Section title="预览" hint="快照优先；过期时用 WebUI 近似">
+        <Section title="预览" hint="快照优先；过期时用 WebUI 近似 · 菜单「编辑 → 刷新物品快照」">
           <div className="item-preview">
-            <PreviewIcon presentation={presentation} display={doc.display} />
+            <PreviewIcon presentation={presentation} fingerprint={fingerprint} />
             <div className="item-preview-tip" aria-label="提示框预览">
               {tooltipLines.map((line, lineIndex) => (
                 <div key={lineIndex} className="item-preview-tip-line">

@@ -52,10 +52,6 @@
 .flow-workspace ::-webkit-scrollbar-thumb:hover, .flow-editor-dialog ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, .2); border: 2px solid transparent; background-clip: content-box; }
 .flow-workspace ::-webkit-scrollbar-track, .flow-editor-dialog ::-webkit-scrollbar-track { background: transparent; }
 
-.flow-notice { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 5px 10px 5px 12px; background: var(--fl-head); border-bottom: 1px solid var(--border); border-left: 3px solid var(--accent); line-height: 1.5; font-size: var(--fl-font-sm); flex-shrink: 0; }
-.flow-notice.flow-error { border-left-color: var(--fl-danger); }
-.flow-workspace .flow-notice button { padding: 0 6px; border: 0; background: transparent; color: var(--text-dim); font-size: var(--fl-font); line-height: 1; }
-
 .flow-layout { display: flex; flex: 1; gap: 2px; padding: 2px; min-height: 0; min-width: 0; overflow: auto; background: var(--border); }
 .flow-library { flex: 0 0 280px; width: 280px; display: flex; flex-direction: column; min-height: 0; overflow: hidden; background: var(--fl-panel); }
 .flow-main { flex: 1; display: flex; flex-direction: column; min-width: 260px; min-height: 0; overflow: hidden; background: var(--fl-panel); }

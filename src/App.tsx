@@ -2,6 +2,7 @@ import {
   Fragment,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type Ref,
@@ -26,7 +27,6 @@ import {
   applyUiScale,
   loadUiScale,
   saveUiScale,
-  UI_SCALES,
   type UiScale,
 } from './displayPrefs.ts'
 import {
@@ -48,102 +48,20 @@ import { ProjectHistory } from './project/ProjectHistory'
 import { getProjectClient } from './project/serviceClient'
 import { openProjectUi } from './project/projectUi'
 import { useProjectSession } from './project/projectSession'
+import {
+  AppStatusBar,
+  MenuBar,
+  runAppMenuAction,
+  type MenuCommand,
+  type MenuContext,
+} from './chrome'
 
 const isDesktopShell = isTauriRuntime()
 
-const MENUS = [
-  {
-    label: '文件',
-    items: [
-      '打开工程…',
-      '新建工程…',
-      '分享工程…',
-      '连接其他服务器…',
-      '关闭工程',
-      '—',
-      '新建剧本',
-      '新建包',
-      '保存',
-      '另存为工程…',
-      '历史版本',
-      '—',
-      '导出PAK',
-      '导出PAK（分平面）',
-      '导出工程包',
-      '—',
-      '退出',
-    ],
-  },
-  {
-    label: '编辑',
-    items: [
-      '撤销',
-      '重做',
-      '—',
-      '剪切',
-      '复制',
-      '粘贴',
-      '—',
-      '查找',
-      '替换',
-      '—',
-      '游戏开发服务器',
-    ],
-  },
-  {
-    label: '选择',
-    items: ['全选', '扩展选区', '缩小选区', '—', '向上复制行', '向下复制行'],
-  },
-  {
-    label: '查看',
-    items: [
-      'Agent 窗口',
-      '协作面板',
-      '录音棚',
-      '命令面板...',
-      '外观',
-      '编辑器布局',
-      '—',
-      '界面比例 100%',
-      '界面比例 110%',
-      '界面比例 125%',
-      '界面比例 150%',
-      '恢复推荐大小（125%）',
-      '—',
-      '显示小地图',
-      '自动换行',
-    ],
-  },
-  {
-    label: '转到',
-    items: ['转到文件...', '转到行/列...', '—', '上一个问题', '下一个问题'],
-  },
-  {
-    label: '帮助',
-    items: ['欢迎', '文档', '—', '关于汉书'],
-  },
-] as const
-
 const WORKSPACE_IDS = APP_WORKSPACES.map((w) => w.id)
 
-const HELP_MENU_ITEMS = new Set(['欢迎', '文档', '关于汉书'])
-const HELP_MENU_TOPIC: Record<string, HelpTopicId> = {
-  欢迎: 'welcome',
-  文档: 'docs',
-  关于汉书: 'about',
-}
-
-function isAlwaysEnabledMenuItem(item: string) {
-  return (
-    HELP_MENU_ITEMS.has(item) ||
-    item.startsWith('界面比例 ') ||
-    item === '恢复推荐大小（125%）' ||
-    item === '历史版本' ||
-    item === '游戏开发服务器' ||
-    ['分享工程…', '连接其他服务器…', '关闭工程', '协作面板', '打开工程…', '新建工程…'].includes(item) ||
-    item === '退出'
-  )
-}
+/** 始终交给剧本工作区（即使当前在其它页签） */
+const SCRIPT_ROUTED_MENU_IDS = new Set(['open-project', 'new-project'])
 
 function renderToolWorkspace(
   id: AppWorkspaceId,
@@ -162,7 +80,6 @@ function renderToolWorkspace(
 
 function App() {
   const projectSession = useProjectSession()
-  const [openMenu, setOpenMenu] = useState<string | null>(null)
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<AppWorkspaceId>(
     () => loadActiveWorkspaceId(WORKSPACE_IDS),
   )
@@ -183,11 +100,9 @@ function App() {
   /** Bumps to remount splash when replaying via debug shortcut. */
   const [splashPreviewKey, setSplashPreviewKey] = useState(0)
   const splashPreview = !isDesktopShell
-  const menubarRef = useRef<HTMLElement>(null)
   const scriptRef = useRef<ScriptWorkspaceHandle>(null)
   const progressRef = useRef<ProgressWorkspaceHandle>(null)
 
-  // Apply the persisted UI scale on mount (default 125% on first run).
   useEffect(() => {
     applyUiScale(uiScale)
   }, [uiScale])
@@ -198,8 +113,6 @@ function App() {
     return () => document.documentElement.classList.remove('is-desktop-shell')
   }, [])
 
-  // Web-only: Alt+Shift+S replays the startup splash for design iteration.
-  // (Alt+Space is often stolen by the browser / OS window menu.)
   useEffect(() => {
     if (isDesktopShell) return
     const onKeyDown = (event: KeyboardEvent) => {
@@ -213,7 +126,6 @@ function App() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [])
 
-  // Desktop: splash window first (PS-style), then maximize the main shell.
   useEffect(() => {
     if (!isDesktopShell) return
     let cancelled = false
@@ -223,7 +135,6 @@ function App() {
         else await revealDesktopMainWindow()
       } catch (err) {
         console.error('desktop window bootstrap failed', err)
-        // Last resort: force-show whatever window we have.
         try {
           const { getCurrentWindow } = await import('@tauri-apps/api/window')
           await getCurrentWindow().show()
@@ -238,7 +149,6 @@ function App() {
     return () => {
       cancelled = true
     }
-    // Only on cold mount — showSplash is the initial gate, not a live toggle.
     // eslint-disable-next-line react-hooks/exhaustive-deps -- intentional mount bootstrap
   }, [])
 
@@ -269,7 +179,6 @@ function App() {
     })
   }, [])
 
-  /** Desktop cold splash: hide main chrome until the dialog finishes. */
   const showMainShell = !isDesktopShell || !showSplash
 
   const changeUiScale = useCallback((scale: UiScale) => {
@@ -280,59 +189,49 @@ function App() {
   const selectWorkspace = (id: AppWorkspaceId) => {
     setActiveWorkspaceId(id)
     saveActiveWorkspaceId(id)
-    setOpenMenu(null)
   }
 
-  useEffect(() => {
-    const onPointerDown = (event: PointerEvent) => {
-      if (
-        menubarRef.current &&
-        !menubarRef.current.contains(event.target as Node)
-      ) {
-        setOpenMenu(null)
+  const menuCtx: MenuContext = useMemo(
+    () => ({
+      workspaceId: activeWorkspaceId,
+      projectBound: Boolean(projectSession.binding),
+      role: projectSession.binding?.handle.client.snapshot.role ?? null,
+      uiScale,
+    }),
+    [activeWorkspaceId, projectSession.binding, uiScale],
+  )
+
+  const handleMenuCommand = useCallback(
+    (item: MenuCommand) => {
+      if (item.run === 'app') {
+        runAppMenuAction(item.id, {
+          openProjectUi,
+          openHistory: () => setHistoryOpen(true),
+          openGameDev: () => setGameDevOpen(true),
+          openHelp: (topic) => setHelpTopicId(topic),
+          changeUiScale,
+          quit: () => {
+            void closeDesktopWindow()
+          },
+        })
+        return
       }
-    }
-    document.addEventListener('pointerdown', onPointerDown)
-    return () => document.removeEventListener('pointerdown', onPointerDown)
-  }, [])
 
-  const handleMenuAction = (item: string) => {
-    setOpenMenu(null)
-    if (item === '分享工程…') { openProjectUi('share'); return }
-    if (item === '连接其他服务器…') { openProjectUi('connect'); return }
-    if (item === '关闭工程') { openProjectUi('close'); return }
-    if (item === '协作面板') { openProjectUi('collaboration'); return }
-    if (item === '历史版本') {
-      setHistoryOpen(true)
-      return
-    }
-    if (item === '游戏开发服务器') {
-      setGameDevOpen(true)
-      return
-    }
-    const helpTopic = HELP_MENU_TOPIC[item]
-    if (helpTopic) {
-      setHelpTopicId(helpTopic)
-      return
-    }
-    const scaleMatch = /^界面比例 (\d+)%$/.exec(item)
-    if (scaleMatch) {
-      const scale = Number.parseInt(scaleMatch[1], 10) as UiScale
-      if (UI_SCALES.includes(scale)) changeUiScale(scale)
-      return
-    }
-    if (item === '恢复推荐大小（125%）') {
-      changeUiScale(125)
-      return
-    }
-    if (item === '退出') {
-      void closeDesktopWindow()
-      return
-    }
-    if (item === '打开工程…' || item === '新建工程…') scriptRef.current?.handleMenuAction(item)
-    else if (activeWorkspaceId === 'progress-flow') progressRef.current?.handleMenuAction(item)
-    else if (activeWorkspaceId === 'script') scriptRef.current?.handleMenuAction(item)
-  }
+      if (SCRIPT_ROUTED_MENU_IDS.has(item.id)) {
+        scriptRef.current?.handleMenuAction(item.id)
+        return
+      }
+
+      if (activeWorkspaceId === 'progress-flow') {
+        progressRef.current?.handleMenuAction(item.id)
+        return
+      }
+      if (activeWorkspaceId === 'script') {
+        scriptRef.current?.handleMenuAction(item.id)
+      }
+    },
+    [activeWorkspaceId, changeUiScale],
+  )
 
   return (
     <div className="app">
@@ -354,71 +253,7 @@ function App() {
             alt="HanShu"
             draggable={false}
           />
-          <nav className="menubar" ref={menubarRef} aria-label="主菜单">
-            {MENUS.map((menu) => (
-              <div
-                key={menu.label}
-                className={`menu-item${openMenu === menu.label ? ' open' : ''}`}
-              >
-                <button
-                  type="button"
-                  className="menu-trigger"
-                  onClick={() =>
-                    setOpenMenu((current) =>
-                      current === menu.label ? null : menu.label,
-                    )
-                  }
-                  onMouseEnter={() => {
-                    if (openMenu) setOpenMenu(menu.label)
-                  }}
-                >
-                  {menu.label}
-                </button>
-                {openMenu === menu.label && (
-                  <ul className="menu-dropdown" role="menu">
-                    {menu.items.map((menuItem, index) =>
-                      menuItem === '—' ? (
-                        <li
-                          key={`${menu.label}-sep-${index}`}
-                          className="sep"
-                        />
-                      ) : (
-                        <li key={menuItem} role="none">
-                          <button
-                            type="button"
-                            role="menuitem"
-                            disabled={(menuItem === '分享工程…' && projectSession.binding?.handle.client.snapshot.role !== 'owner') ||
-                              (menuItem === '关闭工程' && !projectSession.binding) || activeWorkspaceId === 'progress-flow' &&
-                              !['保存', '撤销', '重做', '打开工程…', '新建工程…'].includes(menuItem) &&
-                              !isAlwaysEnabledMenuItem(menuItem)}
-                            aria-checked={
-                              menu.label === '查看' &&
-                              UI_SCALES.some(
-                                (s) => `界面比例 ${s}%` === menuItem && s === uiScale,
-                              )
-                                ? true
-                                : undefined
-                            }
-                            className={
-                              menu.label === '查看' &&
-                              UI_SCALES.some(
-                                (s) => `界面比例 ${s}%` === menuItem && s === uiScale,
-                              )
-                                ? 'checked'
-                                : ''
-                            }
-                            onClick={() => handleMenuAction(menuItem)}
-                          >
-                            {menuItem}
-                          </button>
-                        </li>
-                      ),
-                    )}
-                  </ul>
-                )}
-              </div>
-            ))}
-          </nav>
+          <MenuBar ctx={menuCtx} onAction={handleMenuCommand} />
           <div className="workspace-tabs" role="tablist" aria-label="工作区">
             {APP_WORKSPACES.map((ws) => (
               <button
@@ -490,6 +325,7 @@ function App() {
           </div>
         ))}
       </div>
+      <AppStatusBar />
       {helpTopicId && (
         <HelpModal
           topicId={helpTopicId}
