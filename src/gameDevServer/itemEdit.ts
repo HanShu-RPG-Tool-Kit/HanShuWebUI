@@ -8,6 +8,7 @@
 import { randomId } from '../project/crypto'
 import { notify } from '../activity'
 import { itemFingerprint } from '../workspaces/progress/itemstack'
+import { readComponents } from '../workspaces/progress/tnbtJson'
 import type { ItemData } from '../workspaces/progress/itemDoc'
 import {
   controlRequest,
@@ -48,12 +49,11 @@ function readItemData(value: unknown): ItemData | null {
   if (!isObject(value)) return null
   const id = typeof value.id === 'string' ? value.id.trim() : ''
   if (!id) return null
-  let components: Record<string, unknown> = {}
-  if (value.components !== undefined) {
-    if (!isObject(value.components)) return null
-    components = { ...value.components }
+  try {
+    return { id, components: readComponents(value.components) }
+  } catch {
+    return null
   }
-  return { id, components }
 }
 
 function hintUuid(): string {
@@ -65,6 +65,17 @@ function hintUuid(): string {
     /* fall through */
   }
   return randomId()
+}
+
+/** Shared wire payload builder; validates the complete TNBT set before sending. */
+export function itemEditOpenParams(uuid: string, hash: string, item: ItemData) {
+  return {
+    componentFormat: 'tnbt-json-v1',
+    componentMode: 'complete',
+    uuid,
+    hash,
+    item: { id: item.id.trim(), components: readComponents(item.components) },
+  }
 }
 
 export function isItemEditControlOnline(): boolean {
@@ -87,14 +98,10 @@ export async function openItemEditInGame(
 
   const uuid = hintUuid()
   const hash = itemFingerprint(item)
-  const params = {
-    uuid,
-    hash,
-    item: { id, components: item.components },
-  }
+  const params = itemEditOpenParams(uuid, hash, { ...item, id })
 
   const raw = await controlRequest('items.edit.open', params, OPEN_TIMEOUT_MS)
-  if (!isObject(raw) || raw.opened !== true) {
+  if (!isObject(raw) || raw.componentFormat !== 'tnbt-json-v1' || raw.componentMode !== 'complete' || raw.opened !== true) {
     throw new Error('editor_open_failed')
   }
 
@@ -133,6 +140,10 @@ function emitDone(event: ItemEditDoneEvent): void {
 
 function handleEditDoneNotify(params: unknown): void {
   if (!isObject(params)) return
+  if (params.componentFormat !== 'tnbt-json-v1' || params.componentMode !== 'complete') {
+    notify('游戏物品编辑结果的组件格式不受支持', { kind: 'warning', source: 'items' })
+    return
+  }
   const uuid = typeof params.uuid === 'string' ? params.uuid : ''
   const hash = typeof params.hash === 'string' ? params.hash : ''
   const item = readItemData(params.item)

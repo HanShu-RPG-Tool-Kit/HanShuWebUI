@@ -43,3 +43,13 @@ await drainSnapshotQueueForTests(async (method,params)=> {
 assert.equal(getCachedDisplaySync(key)?.name?.[0].text,'TNBT snapshot')
 resetItemSnapshotCacheForTests()
 console.log('通过：生产快照 drain 验证双向格式与完整集合标记，拒绝旧响应并接受新响应')
+
+const {itemEditOpenParams}=await import('../src/gameDevServer/itemEdit')
+const editParams=itemEditOpenParams('edit-test','original-hash',item)
+assert.equal(editParams.componentFormat,'tnbt-json-v1')
+assert.equal(editParams.componentMode,'complete')
+assert.equal(editParams.uuid,'edit-test')
+assert.equal(editParams.hash,'original-hash')
+assert.deepEqual(editParams.item,item)
+assert.throws(()=>itemEditOpenParams('bad','hash',{id:'minecraft:apple',components:{'minecraft:custom_data':{type:'long',value:123} as never}}))
+console.log('通过：游戏内编辑请求携带 TNBT 格式与完整集合标记，拒绝无效组件')
