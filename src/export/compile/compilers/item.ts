@@ -1,5 +1,5 @@
 import { readItemSync, syncRuleErrors } from '../../../workspaces/progress/itemSync'
-import { isItemFileName, parseItem, type ItemDocument } from '../../../workspaces/progress/itemDoc'
+import { isItemFileName, parseItem, unionItemTags, type ItemDocument } from '../../../workspaces/progress/itemDoc'
 import { sourcePathOf } from '../../../workspace'
 import type { FileCompiler } from '../types'
 
@@ -9,6 +9,7 @@ export function itemTemplateArtifact(doc: ItemDocument) {
   return {
     format: 'rpgtoolkit:item-template', schemaVersion: 1,
     componentFormat: 'tnbt-json-v1', componentMode: 'complete',
+    tags: unionItemTags(doc.tags),
     sync, item: doc.item,
   }
 }
@@ -22,7 +23,7 @@ function itemArtifactPath(file: { name: string; srcKind?: string | null }): stri
 
 /**
  * `.item` → `.it`：输出运行时 item、同步规则与协议版本，
- * 不携带作者标签和展示快照。
+ * 保留物品标签，不携带展示快照。
  */
 export const itemCompiler: FileCompiler = {
   id: 'item',
