@@ -1,5 +1,5 @@
 /** Reject duplicate keys instead of silently losing author data through JSON.parse. */
-export function parseJsonValue(text: string): unknown {
+export function parseJsonValue(text: string, maxDepth = 32): unknown {
   if (text.length > 16 * 1024 * 1024) throw new Error('JSON 文本超过 16 MiB。')
   let at = 0
   let values = 0
@@ -20,7 +20,7 @@ export function parseJsonValue(text: string): unknown {
     const char = text[at]
     if (char === '"') return string()
     if (char === '{' || char === '[') {
-      if (depth >= 32) fail('JSON 嵌套超过 32 层。')
+      if (depth >= maxDepth) fail(`JSON 嵌套超过 ${maxDepth} 层。`)
       at++
       const isObject = char === '{'
       const close = isObject ? '}' : ']'

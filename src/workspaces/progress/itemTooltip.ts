@@ -1,3 +1,4 @@
+import { nbtDisplayValue } from './tnbtJson'
 import { isObject } from './model'
 import { isSnapshotFresh, type ItemStackDisplay, type ItemTextSegment } from './itemstack'
 
@@ -55,7 +56,8 @@ const ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X']
 const stripNamespace = (id: string) => id.replace(/^minecraft:/, '')
 
 function component(components: Record<string, unknown>, key: string): unknown {
-  return components[`minecraft:${key}`] ?? components[key]
+  const value=nbtDisplayValue(components[`minecraft:${key}`] ?? components[key])
+  return ['enchantment_glint_override','hide_tooltip','hide_additional_tooltip'].includes(key) && typeof value === 'number' ? value !== 0 : value
 }
 
 function humanize(id: string): string {

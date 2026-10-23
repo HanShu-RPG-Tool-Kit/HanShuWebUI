@@ -85,7 +85,7 @@ async function main() {
   await test('ingest → fresh', async () => {
     resetItemSnapshotCacheForTests()
     useMemoryItemSnapshotStore()
-    const item = { id: 'minecraft:diamond_sword', components: { a: 1 } }
+    const item = { id: 'minecraft:diamond_sword', components: { 'example:a': {type:'int',value:1} } }
     const fp = itemFingerprint(item)
     ingestDisplay(item, sampleDisplay({ snapshotOf: fp }))
     await Promise.resolve()
@@ -97,12 +97,12 @@ async function main() {
   await test('改 components → pending + needed；错误 snapshotOf → stale', async () => {
     resetItemSnapshotCacheForTests()
     useMemoryItemSnapshotStore()
-    const base = { id: 'minecraft:stick', components: { x: 1 } }
+    const base = { id: 'minecraft:stick', components: { 'example:x': {type:'int',value:1} } }
     const fp1 = itemFingerprint(base)
     await putCachedDisplay(fp1, sampleDisplay())
     assert.equal(snapshotStatusOf(base), 'fresh')
 
-    const changed = { id: 'minecraft:stick', components: { x: 2 } }
+    const changed = { id: 'minecraft:stick', components: { 'example:x': {type:'int',value:2} } }
     const fp2 = itemFingerprint(changed)
     assert.notEqual(fp1, fp2)
     markSnapshotNeeded(changed)
@@ -146,7 +146,7 @@ async function main() {
   await test('iconPending: true → 仍在 needed', async () => {
     resetItemSnapshotCacheForTests()
     useMemoryItemSnapshotStore()
-    const item = { id: 'minecraft:book', components: { n: 1 } }
+    const item = { id: 'minecraft:book', components: { 'example:n': {type:'int',value:1} } }
     const fp = itemFingerprint(item)
     markSnapshotNeeded(item)
 
@@ -193,11 +193,11 @@ async function main() {
   await test('count 变化不影响指纹', () => {
     const a = itemFingerprint({
       id: 'minecraft:apple',
-      components: { c: true },
+      components: { 'example:c': {type:'byte',value:1} },
     })
     const b = itemFingerprint({
       id: 'minecraft:apple',
-      components: { c: true },
+      components: { 'example:c': {type:'byte',value:1} },
     })
     assert.equal(a, b)
   })

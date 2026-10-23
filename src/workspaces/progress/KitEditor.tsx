@@ -1,9 +1,8 @@
+import { NbtComponentsEditor } from './NbtComponentsEditor'
 import { createContext, useContext, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import Editor from '@monaco-editor/react'
 import { HANSHU_THEME_ID, registerHanshuLanguage } from '../../monaco/hanshuLanguage'
-import { parseJsonValue } from '../../utils/strictJson'
 import { useEditorFontSize } from './editorFont'
-import { isObject } from './model'
 import type { ItemCatalog, KitCatalog, KitDocument, KitEffect, KitExperience, KitFeedback, KitItem, KitModifier, KitMods, KitParam, KitParamKind, KitPool, KitPoolEntry, KitPoolHit } from './kit'
 import {
   ITEM_LINK_MIME,
@@ -267,40 +266,6 @@ function ItemDropZone({ disabled, hint, className = '', onDropItems, children }:
   </div>
 }
 
-function ComponentsEditor({ value, disabled, onChange }: {
-  value: Record<string, unknown>
-  disabled?: boolean
-  onChange: (value: Record<string, unknown>) => void
-}) {
-  const [draft, setDraft] = useState<string | null>(null)
-  const [error, setError] = useState('')
-
-  function apply(text: string) {
-    setDraft(text)
-    try {
-      const parsed = parseJsonValue(text.trim() || '{}')
-      if (!isObject(parsed)) throw new Error('应为 JSON 对象')
-      onChange(parsed)
-      setError('')
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause))
-    }
-  }
-
-  return <div className="kit-components">
-    <textarea
-      spellCheck={false}
-      disabled={disabled}
-      rows={5}
-      aria-label="物品组件 JSON"
-      placeholder={'{\n  "minecraft:custom_name": "\\"传说之剑\\""\n}'}
-      value={draft ?? (Object.keys(value).length ? JSON.stringify(value, null, 2) : '')}
-      onChange={(event) => apply(event.target.value)}
-      onBlur={() => { if (!error) setDraft(null) }}
-    />
-    {error && <p className="kit-error">{error}</p>}
-  </div>
-}
 
 function ItemRow({ item, index, open, disabled, onToggle, onChange, onRemove, onDropReplace }: {
   item: KitItem
@@ -380,9 +345,9 @@ function ItemRow({ item, index, open, disabled, onToggle, onChange, onRemove, on
       linked
         ? <div className="kit-item-link-components">
           <p className="kit-hint">组件来自物品库链接，只读；改定义请打开对应 `.item`。</p>
-          <ComponentsEditor value={resolved.components} disabled onChange={() => {}} />
+          <NbtComponentsEditor value={resolved.components} disabled onChange={() => {}} />
         </div>
-        : <ComponentsEditor value={item.components} disabled={disabled} onChange={(components) => onChange({ components })} />
+        : <NbtComponentsEditor value={item.components} disabled={disabled} onChange={(components) => onChange({ components })} />
     )}
   </li>
 }

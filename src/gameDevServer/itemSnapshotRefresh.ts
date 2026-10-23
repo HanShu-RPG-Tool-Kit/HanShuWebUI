@@ -116,6 +116,8 @@ async function flushBatch(
   request: typeof controlRequest,
 ): Promise<void> {
   const params = {
+    componentFormat: 'tnbt-json-v1',
+    componentMode: 'complete',
     items: batch.map((item) => ({
       key: item.fingerprint,
       id: item.id,
@@ -134,7 +136,7 @@ async function flushBatch(
     return
   }
 
-  if (!isObject(result) || !Array.isArray(result.snapshots)) return
+  if (!isObject(result) || result.componentFormat !== 'tnbt-json-v1' || result.componentMode !== 'complete' || !Array.isArray(result.snapshots)) return
   const body = result as RenderSnapshotsResult
   let needIconRetry = false
   for (const entry of body.snapshots ?? []) {

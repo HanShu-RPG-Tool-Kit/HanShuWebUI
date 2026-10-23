@@ -10,7 +10,7 @@
 | 权威数据 | `item.id` + `item.components` | 同左，另有 **`item.count`** |
 | 数量 | **不存**（发放数量由礼包等调用方决定） | 有 `count`（拖入礼包时作默认数量） |
 | 标签 | 可选根级 `tags`（与 `.kit` 相同规则） | 无 |
-| 必填 | `format`、`schemaVersion`、`item.id` | `item`；`format` 缺省时按 itemstack 认 |
+| 必填 | `format`、`schemaVersion: 2`、`item.id`、`item.components` | `format`、`schemaVersion: 3`、`item.id`、`item.components` |
 | 用途 | 工程内复用、礼包链接、表视图 | 从游戏/模组导出；导入礼包或转成 `.item` |
 
 引用名：文件 `apple.item` → 礼包链接字段写 `apple`（相对物品库文件名，不含扩展名）。从资源树或物品编辑器拖到礼包物品栏，可创建链接而非内嵌副本。
@@ -22,12 +22,12 @@
 ```json
 {
   "format": "rpgtoolkit:item",
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "tags": ["reward", "event/summer"],
   "item": {
     "id": "minecraft:diamond_sword",
     "components": {
-      "minecraft:enchantments": { "levels": { "minecraft:sharpness": 5 } }
+      "minecraft:enchantments": { "type": "compound", "value": { "minecraft:sharpness": { "type": "int", "value": 5 } } }
     }
   }
 }
@@ -36,38 +36,42 @@
 | 字段 | 说明 |
 | --- | --- |
 | `format` | 固定 `rpgtoolkit:item` |
-| `schemaVersion` | 当前为 `1` |
+| `schemaVersion` | 当前为 `2`；原型阶段拒绝旧格式，不做自动推断转换 |
 | `tags` | 可选。游戏标签 string[]；空则不写入。交互与礼包相同（chip、回车/逗号添加）；去重大小写不敏感，保留先出现的写法。建议用稳定标识如 `reward`、`event/summer` |
 | `item.id` | 必填，命名空间物品 ID，新建默认 `minecraft:stick` |
-| `item.components` | 组件对象（可为空 `{}`） |
+| `item.components` | **完整组件集合**，值为 [TNBT JSON](#tnbt-json)；可为空 `{}`，表示没有持久化组件 |
 
-旧工程若仍带 `display`：解析时 **ingest 进本机缓存**（指纹一致→新鲜；不符→仍保留并标过期，同时排队刷新）。新快照写入缓存时**覆盖**旧条目。工程文件本身不回写 `display`（保存时剥掉）。
+组件集合不继承物品默认值，也不接受 `remove` 或 `!component`。游戏侧适配契约要求导出实际生效的全部持久化组件，加载时内部生成默认组件的移除项。新建 `.item` 的空集合不会自动生成原版默认组件，通常建议从游戏导出作为起点。上面的精简组件示例仅演示语法，不代表合法完整钻石剑配置。
+
+组件具体值是否合法由目标游戏环境（MC 26.1.2、模组、数据包注册表）校验。WebUI 可保存未知组件以保留作者数据，游戏生成物品时必须拒绝未知、暂态或不合法组件，不能静默丢弃。组件内部的嵌套 ItemStack 保持原版 NBT 结构，不递归套用工程包装。
 
 ## 展示快照（本机缓存）
 
 名称、tooltip、图标等展示数据在 **C 侧 IndexedDB**（`hanshu.itemSnapshots.v1`），不进工程目录、也不经 S。
 
-- **指纹**：`fnv1a(id + components)`（**不含 count**）。缓存键与过期判定均为该指纹；写入时会把 `display.snapshotOf` 规范为请求时的指纹。
+- **指纹**：`fnv1a(格式标记 + id + 规范化 components)`（**不含 count**）。缓存键与过期判定均为该指纹；写入时会把 `display.snapshotOf` 规范为请求时的指纹。
 - **刷新**：WebUI 经 Control **出站**调用 mod 的 `items.renderSnapshots`（批量 ≤128，`includeIcon` 默认 true）。`iconPending: true` 时先显示文本快照，条目仍留在 needed 队列稍后重试。
 - **miss / 过期**：编辑器先用 WebUI 近似渲染，并登记 needed；连上游戏开发服务器后自动 drain。
 - **count**：数量变化不改指纹、不触发重新快照（发放数量由礼包等决定）。
+
+Mod 已升级 `.itemstack` v3、快照与 IBE 编辑交换协议；两端需使用同一新版。旧版 Mod 的 v1/v2 文件仍拒绝导入，不自动推断迁移。`.it` 运行时消费者不属于本轮范围。
 
 ## `.itemstack` 文件格式
 
 ```json
 {
   "format": "rpgtoolkit:itemstack",
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "item": {
     "id": "minecraft:apple",
     "count": 16,
     "components": {}
   },
-  "display": { "…": "schemaVersion ≥ 2 时可带快照；可残缺" }
+  "display": { "…": "可选展示快照；可残缺" }
 }
 ```
 
-- 校验 `format` / `schemaVersion` 1..2；`item` 必填；`display` 可选。
+- 严格读取 `.itemstack` v3；旧 v1/v2 拒绝并提示重新从游戏导出；`display` 可选。
 - **导入权威只认 `item`**。`display`（若有）只 ingest 进本机 IDB，**不写入** `.item` / `.kit` 文件。
 - `tooltipRaw` 等解析层忽略字段与现 Web 渲染一致。
 - 拖入**礼包**物品栏：按内嵌 ItemStack 追加（保留 count / components；display 进缓存）。
@@ -78,10 +82,33 @@
 ## 编辑器
 
 - 物品库可新建 / 导入 `.item`；也可拖入 `.itemstack` / `.json` 转成 `.item`。
-- 主区：物品 ID、**标签**行、预览（本机快照优先）、NBT 风格组件树；可「查看源码」。
+- 双栏编辑：左侧为图标、游戏提示文本与简洁快照状态；右侧为物品 ID、标签、常用组件卡片和完整组件树。窄面板自动改成单栏。格式名、版本与指纹不在表单展示，仍可「查看源码」。
+- 常用组件通过标题右侧「＋」下拉菜单添加，内置外观、附魔、存储附魔、属性修改器，以及损耗值、最大耐久、堆叠上限、修复费用。卡片与树编辑同一份 `components`，互相即时反映修改；已有的复杂或不支持的数据格式保留原样，使用树编辑，不自动转换。
+- 卡片使用与进度 goal 一致的彩色标题条。组件树有不可删除的 `components` 根节点，按「值类型、组件 / 键、值」排列。Minecraft 组件名是根下的键（如 `minecraft:damage`）；byte、short、int、long、float、double、string、compound、list 和三种数值数组是 NBT 值类型。没有 Boolean 或 Null；布尔组件通常使用 byte 0/1，具体以游戏 Codec 为准。
+- 右键根或容器条目通过「添加 → string / compound / …」直接插入空白编辑行，填写键和值，回车提交，Esc 取消。未完成的空行不进入文档，重复键会提示。容器值按所选类型建立空 compound、list 或数值数组；数组元素无需键。“添加”为多级菜单：string、compound、list 直接选择，数值与数值数组按组展开。右键还可重命名或删除；根节点不允许删除，不提供类型转换操作。
+- 双击键名或按 F2 重命名，选中行后可按 Shift+F10 打开菜单，左右方向键折叠或展开。只读时允许查看与展开，不允许修改。
+- 拖到礼包使用资源管理器中的物品资源，编辑器内不再提供重复拖拽胶囊。
 - 菜单 **编辑 → 刷新物品快照** / **刷新全部物品快照**：强制向客户端重新拉取（旧缓存保留至新快照覆盖；未连接则排队）。结果出现在 [活动列表](#activity-list)（统一状态栏铃铛）。
 - 资源树有只读 **物品库表视图**：汇总文件名、引用名、ID、显示名、标签、组件数、快照状态（新鲜 / 刷新中 / 过期 / 无）。
 - 本地化：`.item` 的标签与指令类字段一样**不进** `lang_*`；玩家可见名称若在组件/快照里，由游戏侧处理。
+
+## 外观、附魔与属性修改器
+
+- **外观**：集中编辑 `custom_name`、`lore`、`item_model`、`rarity`、`enchantment_glint_override`。模型 ID 回车或离开输入框时提交；名称与说明支持纯字符串，以及包含 `text` 的富文本 compound 的局部修改，颜色、extra 和未知字段保留。翻译、选择器等复杂文本不强行展开成普通文本，继续用组件树编辑。说明最多 256 行。未设置、空字符串和空列表是不同状态，× 表示明确删除；外观编辑区始终显示，卡片标题的 × 清空这组组件并保留编辑区；最后一个字段设为未设置也不会隐藏卡片。
+- **附魔 / 存储附魔**：每条包含附魔 ID 和整数等级 1..255，支持添加、改名与移除。内置原版 ID 建议，但允许模组和数据包 ID；不声称离线验证了注册表存在性或附魔适用物品。目标 MC 26.1.2 的值为 ID → 等级的 compound，没有旧版 levels 包装。
+- **属性修改器**：使用目标版本的 list，每条包含 `type`、`id`、`amount`、`operation` 和可选 `slot`。表单支持多条记录、增删、自定义属性 ID、三种运算和全部目标版本槽位；同一属性内的修饰器 ID 不允许重复。新条目生成未占用的 `hanshu:modifier_N`。修改已知字段保留 `display` 及其他额外字段；不支持的结构、非有限数值留给组件树处理。
+
+这些表单直接更新同一份 TNBT JSON，没有第二份语义数据，也没有绕过现有草稿与协作事务。`.item` 与礼包中的内嵌 ItemStack 使用相同卡片。默认按外观、附魔、属性修改器、其他组件排列，窄面板自动将属性表单改为单栏。
+
+## 扩展常用组件卡片（开发）
+
+在 `src/workspaces/progress/itemComponents/registry.ts` 使用 `registerItemComponentEditor` 注册组件的命名空间 ID、标题、`createValue`、`accepts` 和 React `Editor`，返回函数用于注销；重复 ID 会拒绝。内置注册见同目录 `builtins.tsx`、`complexCards.tsx`；纯结构操作在 `complexModel.ts`。这是代码扩展入口，不是运行时加载外部脚本。
+
+可选 `wide: true` 让复杂卡片占满一行，`order` 控制顺序（默认 100）；可选 `tone` 为 `steel`（默认）、`amber`、`violet` 或 `green`，由宿主统一绘制彩色标题，不在各个编辑器里另做卡片外壳。
+
+`Editor` 接收 TNBT `NbtValue` 类型的 `value`、`disabled` 和 `onChange`，仅提交该组件的新 TNBT 值；添加、移除、卡片外壳及整份文档更新由宿主统一处理。`accepts` 必须拒绝编辑器不能无损处理的数据形状，禁止为套用表单而丢掉未知字段。不要缓存另一份组件副本或直接写文件，继续沿用 `ItemEditor.onChange` 的草稿与工程事务。注册是内存操作，不修改工程文件；只读状态必须传递至每个输入与按钮。
+
+多组件分组使用 `kind: "group"` 的 `ItemComponentGroupEditor`，声明 `componentIds`、`caption`、`createComponents` 和 `Editor`。分组 Editor 接收完整 `ItemComponents`，宿主只应用声明范围内的改动，并保留其他组件。相关组件存在时自动显示分组，替代同 ID 的独立卡片；`alwaysVisible: true` 的表单分组在组件为空时也保持显示；分组之间不允许重复声明组件，注销分组后独立卡片恢复。分组的 UI ID（如 `hanshu:appearance`）不进入物品组件集合。
 
 ## 本机查询（游戏开发服务器）
 

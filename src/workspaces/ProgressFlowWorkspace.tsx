@@ -1159,7 +1159,6 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
           key={paneDoc.key}
           doc={paneItemParsed.doc}
           error={paneItemParsed.error}
-          selfRef={itemRefFromFileName(paneDoc.name)}
           disabled={disabledPane}
           onChange={(source) => { if (!disabledPane) changeSource(source, true, paneDoc.key) }}
         />

@@ -3,6 +3,7 @@
  * format / schemaVersion / item.id 为必填；缺一即非法。
  */
 
+import { readComponents, type ItemComponents } from './tnbtJson'
 import { isObject } from './model'
 import { parseJsonValue } from '../../utils/strictJson'
 import { ingestDisplay } from './itemSnapshotCache'
@@ -14,13 +15,13 @@ import {
 } from './itemstack'
 
 export const ITEM_FORMAT = 'rpgtoolkit:item'
-export const ITEM_SCHEMA_VERSION = 1
-export const ITEM_SCHEMA_MAX = 1
+export const ITEM_SCHEMA_VERSION = 2
+export const ITEM_SCHEMA_MAX = 2
 export const DEFAULT_ITEM_ID = 'minecraft:stick'
 
 export type ItemData = {
   id: string
-  components: Record<string, unknown>
+  components: ItemComponents
 }
 
 export type ItemDocument = {
@@ -74,11 +75,7 @@ function readItemTags(value: unknown): string[] {
 
 function readItemData(value: unknown, path: string): ItemData {
   if (!isObject(value)) throw new Error(`${path} 应为对象`)
-  let components: Record<string, unknown> = {}
-  if (value.components !== undefined) {
-    if (!isObject(value.components)) throw new Error(`${path}.components 应为对象`)
-    components = { ...value.components }
-  }
+  const components = readComponents(value.components, `${path}.components`)
   const id = readString(value.id).trim()
   if (!id) throw new Error(`${path}.id 不能为空`)
   return { id, components }
@@ -99,7 +96,7 @@ export function stringifyItem(doc: ItemDocument): string {
     schemaVersion: ITEM_SCHEMA_VERSION,
     item: {
       id: doc.item.id.trim() || DEFAULT_ITEM_ID,
-      components: doc.item.components,
+      components: readComponents(doc.item.components),
     },
   }
   const tags = unionItemTags(doc.tags)
@@ -109,7 +106,7 @@ export function stringifyItem(doc: ItemDocument): string {
 }
 
 export function parseItem(source: string): ItemDocument {
-  const raw = parseJsonValue(source.replace(/^\uFEFF/, ''))
+  const raw = parseJsonValue(source.replace(/^\uFEFF/, ''), 96)
   if (!isObject(raw)) throw new Error('`.item` 根节点应为 JSON 对象')
   const format = readString(raw.format)
   if (!format) throw new Error('缺少 format')
@@ -117,11 +114,8 @@ export function parseItem(source: string): ItemDocument {
   if (typeof raw.schemaVersion !== 'number' || !Number.isFinite(raw.schemaVersion)) {
     throw new Error('缺少 schemaVersion')
   }
-  const schemaVersion = Math.floor(raw.schemaVersion)
-  if (schemaVersion < 1) throw new Error(`schemaVersion 无效：${schemaVersion}`)
-  if (schemaVersion > ITEM_SCHEMA_MAX) {
-    throw new Error(`schemaVersion ${schemaVersion} 过高（当前支持 1..${ITEM_SCHEMA_MAX}）`)
-  }
+  const schemaVersion = raw.schemaVersion
+  if (schemaVersion !== ITEM_SCHEMA_VERSION) throw new Error(`需要 .item v${ITEM_SCHEMA_VERSION}（TNBT JSON 完整组件集合），不支持版本 ${schemaVersion}`)
   if (!('item' in raw)) throw new Error('缺少 item')
   const item = readItemData(raw.item, 'item')
   const tags = readItemTags(raw.tags)
@@ -145,7 +139,7 @@ export function readItemSource(source: string): { doc: ItemDocument; error: stri
 export function itemFromItemStack(file: ItemStackFile): ItemDocument {
   const item: ItemData = {
     id: file.item.id.trim(),
-    components: { ...file.item.components },
+    components: readComponents(file.item.components),
   }
   if (!item.id) throw new Error('item.id 不能为空')
   if (file.display) ingestDisplay(item, file.display)
@@ -175,7 +169,7 @@ export function itemPresentable(doc: ItemDocument): {
   return {
     id: doc.item.id,
     count: 1,
-    components: doc.item.components,
+    components: readComponents(doc.item.components),
   }
 }
 

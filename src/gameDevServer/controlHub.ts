@@ -77,7 +77,6 @@ let failed = 0
 let logSeq = 0
 let started = false
 let ws: WebSocket | null = null
-let pollTimer: ReturnType<typeof setInterval> | null = null
 let connectGeneration = 0
 let connectTimer: ReturnType<typeof setTimeout> | null = null
 /** 冷却：握手挂起后稍后再试，避免狂打 */
@@ -425,7 +424,7 @@ export function ensureGameDevControlStarted(): void {
   } else {
     setPhase('disabled')
   }
-  pollTimer = setInterval(() => {
+  setInterval(() => {
     void pollTick()
   }, POLL_MS)
   bump()

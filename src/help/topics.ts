@@ -12,6 +12,7 @@ import hscMachine from './docs/hsc-machine.md?raw'
 import hscMachineFramework from './docs/hsc-machine-framework.md?raw'
 import kitGuide from './docs/kit-guide.md?raw'
 import kitExpr from './docs/kit-expr.md?raw'
+import tnbtJson from './docs/tnbt-json.md?raw'
 import itemGuide from './docs/item-guide.md?raw'
 import gameDevServer from './docs/game-dev-server.md?raw'
 import progressWorkspace from './docs/progress-workspace.md?raw'
@@ -41,6 +42,7 @@ export type HelpTopicId =
   | 'kit-guide'
   | 'kit-expr'
   | 'item-guide'
+  | 'tnbt-json'
   | 'game-dev-server'
   | 'progress-workspace'
   | 'progress-flow-model'
@@ -122,6 +124,14 @@ export const HELP_TOPICS: HelpTopic[] = [
     audience: 'dev',
     inDocs: true,
     body: kitExpr,
+  },
+  {
+    id: 'tnbt-json',
+    title: 'TNBT JSON 规范',
+    group: '进度',
+    audience: 'dev',
+    inDocs: true,
+    body: tnbtJson,
   },
   {
     id: 'item-guide',

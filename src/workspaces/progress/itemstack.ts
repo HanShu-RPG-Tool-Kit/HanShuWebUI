@@ -1,8 +1,10 @@
+import { readComponents, type ItemComponents } from './tnbtJson'
 import { isObject } from './model'
 import { parseJsonValue } from '../../utils/strictJson'
 
 export const ITEMSTACK_FORMAT = 'rpgtoolkit:itemstack'
-export const ITEMSTACK_SCHEMA_MAX = 2
+export const ITEMSTACK_SCHEMA_VERSION = 3
+export const ITEMSTACK_SCHEMA_MAX = ITEMSTACK_SCHEMA_VERSION
 
 export type ItemTextSegment = {
   text: string
@@ -47,7 +49,7 @@ export type ItemStackDisplay = {
 export type ItemStackData = {
   id: string
   count: number
-  components: Record<string, unknown>
+  components: ItemComponents
 }
 
 export type ItemStackFile = {
@@ -125,7 +127,7 @@ function stableStringify(value: unknown): string {
 
 /** 数量不影响 tooltip 与图标，不参与指纹 */
 export function itemFingerprint(item: { id: string; components: Record<string, unknown> }): string {
-  const text = stableStringify({ id: item.id, components: item.components })
+  const text = stableStringify({ format: 'tnbt-json-v1:complete', id: item.id, components: readComponents(item.components) })
   let hash = 0x811c9dc5
   for (let i = 0; i < text.length; i++) {
     hash ^= text.charCodeAt(i)
@@ -141,31 +143,23 @@ export function isSnapshotFresh(item: { id: string; components: Record<string, u
 
 function readItem(value: unknown, path: string): ItemStackData {
   if (!isObject(value)) throw new Error(`${path} 应为 ItemStack 对象`)
-  let components: Record<string, unknown> = {}
-  if (value.components !== undefined) {
-    if (!isObject(value.components)) throw new Error(`${path}.components 应为对象`)
-    components = value.components
-  }
-  const count = typeof value.count === 'number' && Number.isFinite(value.count) ? Math.max(0, Math.floor(value.count)) : 1
+  const components = readComponents(value.components, `${path}.components`)
+  const count = value.count === undefined ? 1 : value.count
+  if (typeof count !== 'number' || !Number.isInteger(count) || count < 1 || count > 2147483647) throw new Error(`${path}.count 应为 1..2147483647 的整数`)
   return { id: readString(value.id), count, components }
 }
 
 export function parseItemStack(source: string): ItemStackFile {
-  const raw = parseJsonValue(source.replace(/^\uFEFF/, ''))
+  const raw = parseJsonValue(source.replace(/^\uFEFF/, ''), 96)
   if (!isObject(raw)) throw new Error('`.itemstack` 根节点应为 JSON 对象')
-  const format = readString(raw.format) || ITEMSTACK_FORMAT
+  const format = readString(raw.format)
   if (format !== ITEMSTACK_FORMAT) throw new Error(`未知 format：${format}`)
-  const schemaVersion = typeof raw.schemaVersion === 'number' && Number.isFinite(raw.schemaVersion)
-    ? Math.floor(raw.schemaVersion)
-    : 1
-  if (schemaVersion < 1) throw new Error(`schemaVersion 无效：${schemaVersion}`)
-  if (schemaVersion > ITEMSTACK_SCHEMA_MAX) {
-    throw new Error(`schemaVersion ${schemaVersion} 过高（当前支持 1..${ITEMSTACK_SCHEMA_MAX}）`)
-  }
+  const schemaVersion = raw.schemaVersion
+  if (schemaVersion !== ITEMSTACK_SCHEMA_VERSION) throw new Error(`需要 .itemstack v${ITEMSTACK_SCHEMA_VERSION}（TNBT JSON 完整组件集合），不支持版本 ${schemaVersion}`)
   if (!('item' in raw)) throw new Error('缺少 item')
   const item = readItem(raw.item, 'item')
   if (!item.id) throw new Error('item.id 不能为空')
-  const display = schemaVersion >= 2 ? readItemStackDisplay(raw.display) : undefined
+  const display = readItemStackDisplay(raw.display)
   return { format, schemaVersion, item, display }
 }
 
@@ -214,4 +208,8 @@ export function collectItemStackFiles(dataTransfer: DataTransfer | null): File[]
 
 export function itemHasFoil(display: ItemStackDisplay | undefined): boolean {
   return display?.foil === true
+}
+
+export function stringifyItemStack(file: ItemStackFile): string {
+  return JSON.stringify({format: ITEMSTACK_FORMAT, schemaVersion: ITEMSTACK_SCHEMA_VERSION, item: readItem(file.item, 'item'), ...(file.display ? {display: file.display} : {})}, null, 2) + '\n'
 }

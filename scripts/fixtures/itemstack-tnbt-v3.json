@@ -1,0 +1,93 @@
+{
+  "format": "rpgtoolkit:itemstack",
+  "schemaVersion": 3,
+  "item": {
+    "id": "minecraft:stick",
+    "count": 3,
+    "components": {
+      "minecraft:max_stack_size": {
+        "type": "int",
+        "value": 64
+      },
+      "minecraft:custom_data": {
+        "type": "compound",
+        "value": {
+          "": {
+            "type": "string",
+            "value": "empty key"
+          },
+          "byte": {
+            "type": "byte",
+            "value": -128
+          },
+          "short": {
+            "type": "short",
+            "value": 32767
+          },
+          "int": {
+            "type": "int",
+            "value": 2147483647
+          },
+          "long": {
+            "type": "long",
+            "value": "9223372036854775807"
+          },
+          "float": {
+            "type": "float",
+            "value": "0.5"
+          },
+          "double": {
+            "type": "double",
+            "value": "Infinity"
+          },
+          "negative_zero": {
+            "type": "double",
+            "value": "-0"
+          },
+          "nan": {
+            "type": "float",
+            "value": "NaN"
+          },
+          "list": {
+            "type": "list",
+            "value": [
+              {
+                "type": "int",
+                "value": 1
+              },
+              {
+                "type": "string",
+                "value": "mixed"
+              }
+            ]
+          },
+          "compound": {
+            "type": "compound",
+            "value": {}
+          },
+          "byte_array": {
+            "type": "byte_array",
+            "value": [
+              -128,
+              127
+            ]
+          },
+          "int_array": {
+            "type": "int_array",
+            "value": [
+              -2147483648,
+              2147483647
+            ]
+          },
+          "long_array": {
+            "type": "long_array",
+            "value": [
+              "-9223372036854775808",
+              "9223372036854775807"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

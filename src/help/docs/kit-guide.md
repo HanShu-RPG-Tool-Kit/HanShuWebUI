@@ -130,3 +130,9 @@ give @s minecraft:apple ${round(loot(5))}
 ```
 
 后端引擎应按 [表达式标准 V1](#kit-expr) 第 9 节计算最终值。
+
+## 内嵌物品的组件
+
+内嵌 ItemStack 与物品库共用 [TNBT JSON](#tnbt-json) 完整组件集合；`.itemstack` v3 导入后保留数量与所有带类型的值。物品链接仍只保存引用与数量，不复制组件。编辑界面复用彩色常用组件卡片和 type / key / value 类型树，支持多级右键添加、删除与键名编辑；引用物品的展开组件只读，需回物品库修改。
+
+旧版普通 JSON 组件值不再推断转换。旧 `.itemstack` 需从支持 TNBT JSON v3 的新版 Mod 重新导出。组件集合为空表示没有组件，不会补齐原版默认值。
