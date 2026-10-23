@@ -74,6 +74,12 @@ import {
   getProjectSession,
 } from '../project/projectSession'
 import {
+  flushProjectEditors,
+  registerProjectEditorFlush,
+} from '../project/editorFlush'
+import { exportProjectPack } from '../project/exportActions'
+import { openProjectUi } from '../project/projectUi'
+import {
   createBlankOggBlob,
   isVoiceRefPath,
   listMissingVoiceOggs,
@@ -81,18 +87,7 @@ import {
 } from '../i18n/voiceMap'
 import { createVoiceOps, type VoiceOps } from '../i18n/voiceOps'
 import { voiceRootDir } from '../i18n/localeLayout'
-import {
-  buildResourcePackZip,
-  bundlePacksZip,
-  downloadBlob,
-  exportPaks,
-} from '../export/resourcePack'
-import {
-  AUTO_PUBLISH_PAK_NAME,
-  publishPakBlob,
-  summarizePublishResult,
-} from '../gameDevServer/publish'
-import { pushActivity, updateActivity } from '../activity'
+import { buildResourcePackZip } from '../export/resourcePack'
 import { buildProjectPackZip } from '../export/projectPack'
 import { normalizeAssetPath, normalizeFolderPath } from '../assets/paths'
 import {
@@ -140,13 +135,10 @@ import {
 } from '../AgentDiffModal'
 import {
   type BoundProject,
-  createProjectFromPicker,
-  openProjectFromPicker,
   removeSourceFromDisk,
   renameSourceOnDisk,
   saveProjectToDirectory,
   setBoundProject,
-  supportsDirectoryPicker,
 } from '../project'
 
 import type {
@@ -394,6 +386,19 @@ export const ScriptWorkspace = forwardRef<
     if (!id || !findScript(base, id)) return base
     return updateScriptContent(base, id, valueRef.current)
   }
+
+  // 工程级导出/发版前：把 Monaco 缓冲冲进 projectSession
+  useEffect(() => {
+    return registerProjectEditorFlush(() => {
+      const id = bufferOwnerRef.current
+      if (!id) return
+      const current = findScript(workspaceRef.current, id)
+      if (!current || current.script.content === valueRef.current) return
+      commitWorkspace(
+        updateScriptContent(workspaceRef.current, id, valueRef.current),
+      )
+    })
+  }, [])
 
   const [locale, setLocale] = useState(loadLocale)
   const [langEdit, setLangEdit] = useState<{
@@ -1696,10 +1701,6 @@ export const ScriptWorkspace = forwardRef<
   }, [])
 
 
-  const isProjectCancel = (err: unknown) =>
-    (err instanceof DOMException && err.name === 'AbortError') ||
-    (err instanceof Error && /取消/.test(err.message))
-
   const flushProjectToDisk = async () => {
     const bound = projectRef.current
     if (!bound) return
@@ -1762,50 +1763,6 @@ export const ScriptWorkspace = forwardRef<
     }
   }
 
-  const handleOpenProject = async () => {
-    if (!supportsDirectoryPicker()) {
-      window.alert(
-        '当前浏览器不支持文件夹 API。\n请用 Chrome / Edge 打开本开发页（localhost）。',
-      )
-      return
-    }
-    setProjectBusy(true)
-    try {
-      const result = await openProjectFromPicker()
-      applyLoadedProject(result)
-    } catch (err) {
-      if (!isProjectCancel(err)) {
-        window.alert(
-          `打开工程失败：${err instanceof Error ? err.message : String(err)}`,
-        )
-      }
-    } finally {
-      setProjectBusy(false)
-    }
-  }
-
-  const handleCreateProject = async () => {
-    if (!supportsDirectoryPicker()) {
-      window.alert(
-        '当前浏览器不支持文件夹 API。\n请用 Chrome / Edge 打开本开发页（localhost）。',
-      )
-      return
-    }
-    setProjectBusy(true)
-    try {
-      const result = await createProjectFromPicker()
-      applyLoadedProject(result)
-    } catch (err) {
-      if (!isProjectCancel(err)) {
-        window.alert(
-          `新建工程失败：${err instanceof Error ? err.message : String(err)}`,
-        )
-      }
-    } finally {
-      setProjectBusy(false)
-    }
-  }
-
   const openScript = (scriptId: string) => {
     if (
       scriptId === activeIdRef.current &&
@@ -1837,7 +1794,9 @@ export const ScriptWorkspace = forwardRef<
     })
   }
 
-  const handleNewPackage = () => { void handleOpenProject() }
+  const handleNewPackage = () => {
+    openProjectUi('open')
+  }
 
   /**
    * 新建一个文件。**返回 null 表示建成，返回字符串表示要显示在命名行里的原因。**
@@ -2414,29 +2373,11 @@ export const ScriptWorkspace = forwardRef<
 
   const handleMenuAction = (item: string) => {
     switch (item) {
-      case 'open-project':
-        void handleOpenProject()
-        return
-      case 'new-project':
-        void handleCreateProject()
-        return
       case 'save-as-project':
-        void handleExportProjectPack()
+        void exportProjectPack()
         return
       case 'save':
         persistNow()
-        return
-      case 'export-pak':
-        void handleExportResourcePack()
-        return
-      case 'export-pak-planes':
-        void handleExportResourcePackPlanes()
-        return
-      case 'auto-publish-pak':
-        void handleAutoPublishPak()
-        return
-      case 'export-project-pack':
-        void handleExportProjectPack()
         return
       case 'new-package':
         window.alert('请使用「新建工程…」创建本地工程文件夹；不再支持仅存在于浏览器缓存的包。')
@@ -2457,159 +2398,6 @@ export const ScriptWorkspace = forwardRef<
         return
       default:
         return
-    }
-  }
-
-  /** 导出 PAK：combined（兼容）；走编译图 */
-  const handleExportResourcePack = async () => {
-    persistNow()
-    try {
-      const { blob, fileCount, warnings } = await buildResourcePackZip(
-        workspaceRef.current,
-      )
-      const stamp = new Date()
-        .toISOString()
-        .slice(0, 19)
-        .replace(/[:T]/g, '-')
-      downloadBlob(blob, `hanshu-${stamp}.pak`)
-
-      if (warnings.length > 0) {
-        const shown = warnings.slice(0, 20).join('\n')
-        const more =
-          warnings.length > 20 ? `\n…另有 ${warnings.length - 20} 条` : ''
-        window.alert(
-          `已导出 PAK（${fileCount} 个文件），但有警告：\n\n${shown}${more}`,
-        )
-      }
-    } catch (err) {
-      window.alert(
-        `导出 PAK 失败：${err instanceof Error ? err.message : String(err)}`,
-      )
-    }
-  }
-
-  /** 编译 combined PAK 并 POST /publish 为 auto.pak（本机游戏开发服务器） */
-  const handleAutoPublishPak = async () => {
-    persistNow()
-    const activityId = 'pak.auto-publish'
-    pushActivity({
-      id: activityId,
-      kind: 'progress',
-      title: '自动发版',
-      detail: `编译并上传 ${AUTO_PUBLISH_PAK_NAME}`,
-      source: 'export',
-      progress: 'indeterminate',
-      done: false,
-    })
-    try {
-      const { blob, fileCount, warnings } = await buildResourcePackZip(
-        workspaceRef.current,
-      )
-      updateActivity(activityId, {
-        detail: `上传 ${AUTO_PUBLISH_PAK_NAME}（${fileCount} 个文件）…`,
-      })
-      const result = await publishPakBlob(blob, AUTO_PUBLISH_PAK_NAME)
-      const summary = summarizePublishResult(result)
-      const retained = result.publishedOrSkipped === false
-      updateActivity(activityId, {
-        kind: retained || warnings.length > 0 ? 'warning' : 'success',
-        title: retained ? '自动发版完成（部分保留旧表）' : '自动发版完成',
-        detail: [
-          summary,
-          warnings.length
-            ? `编译警告 ${warnings.length} 条：${warnings.slice(0, 3).join('；')}`
-            : '',
-        ]
-          .filter(Boolean)
-          .join('\n'),
-        progress: undefined,
-        done: true,
-      })
-    } catch (err) {
-      updateActivity(activityId, {
-        kind: 'error',
-        title: '自动发版失败',
-        detail: err instanceof Error ? err.message : String(err),
-        progress: undefined,
-        done: true,
-      })
-    }
-  }
-
-  /** 导出 client / server / shared 三个 pak；可选用口令加密 server */
-  const handleExportResourcePackPlanes = async () => {
-    persistNow()
-    try {
-      const passphrase =
-        window.prompt(
-          '服务端 PAK 加密口令（留空则不加密；口令不会写入工程）',
-          '',
-        ) ?? ''
-      const { packs, warnings } = await exportPaks(workspaceRef.current, {
-        targets: ['client', 'server', 'shared'],
-        encrypt: passphrase
-          ? { targets: ['server'], passphrase }
-          : undefined,
-      })
-      const stamp = new Date()
-        .toISOString()
-        .slice(0, 19)
-        .replace(/[:T]/g, '-')
-      const bundle = await bundlePacksZip(packs)
-      downloadBlob(bundle, `hanshu-paks-${stamp}.zip`)
-
-      const summary = packs
-        .map(
-          (p) =>
-            `${p.target}: ${p.fileCount} 文件${p.encrypted ? '（已加密）' : ''}`,
-        )
-        .join('\n')
-      if (warnings.length > 0) {
-        const shown = warnings.slice(0, 20).join('\n')
-        const more =
-          warnings.length > 20 ? `\n…另有 ${warnings.length - 20} 条` : ''
-        window.alert(
-          `已导出分平面 PAK：\n${summary}\n\n警告：\n${shown}${more}`,
-        )
-      } else {
-        window.alert(`已导出分平面 PAK：\n${summary}`)
-      }
-    } catch (err) {
-      window.alert(
-        `导出分平面 PAK 失败：${
-          err instanceof Error ? err.message : String(err)
-        }`,
-      )
-    }
-  }
-
-  /** 导出工程包：原样完整打包（脚本正文 + assets 二进制） */
-  const handleExportProjectPack = async () => {
-    persistNow()
-    try {
-      const { blob, fileCount, warnings } = await buildProjectPackZip(
-        workspaceRef.current,
-      )
-      const stamp = new Date()
-        .toISOString()
-        .slice(0, 19)
-        .replace(/[:T]/g, '-')
-      downloadBlob(blob, `hanshu-project-${stamp}.zip`)
-
-      if (warnings.length > 0) {
-        const shown = warnings.slice(0, 20).join('\n')
-        const more =
-          warnings.length > 20 ? `\n…另有 ${warnings.length - 20} 条` : ''
-        window.alert(
-          `已导出工程包（${fileCount} 个文件），但有警告：\n\n${shown}${more}`,
-        )
-      } else if (fileCount === 0) {
-        window.alert('工程包为空（没有可导出的文件）')
-      }
-    } catch (err) {
-      window.alert(
-        `导出工程包失败：${err instanceof Error ? err.message : String(err)}`,
-      )
     }
   }
 
@@ -3310,9 +3098,11 @@ export const ScriptWorkspace = forwardRef<
       }
     },
     checkExport: async () => {
+      flushProjectEditors()
+      const workspace = getProjectSession().workspace
       let pak: Awaited<ReturnType<typeof buildResourcePackZip>>
       try {
-        pak = await buildResourcePackZip(workspaceRef.current)
+        pak = await buildResourcePackZip(workspace)
       } catch (error) {
         /*
          * 引用解析不出来会让 PAK 导出**中止**（见 resourcePack）：预演要把这件事
@@ -3324,7 +3114,7 @@ export const ScriptWorkspace = forwardRef<
           error: error instanceof Error ? error.message : String(error),
         }
       }
-      const project = await buildProjectPackZip(workspaceRef.current)
+      const project = await buildProjectPackZip(workspace)
       return {
         ok: true,
         pak: { files: pak.fileCount, warnings: pak.warnings },

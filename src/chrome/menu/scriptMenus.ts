@@ -21,11 +21,6 @@ export const scriptMenuContribution: MenuContribution = {
         cmd('new-package', '新建包'),
         cmd('save', '保存'),
         cmd('save-as-project', '另存为工程…'),
-        { type: 'separator' },
-        cmd('export-pak', '导出PAK'),
-        cmd('export-pak-planes', '导出PAK（分平面）'),
-        cmd('auto-publish-pak', '自动发版（auto.pak）'),
-        cmd('export-project-pack', '导出工程包'),
       ],
     },
     {

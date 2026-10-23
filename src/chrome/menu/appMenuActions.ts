@@ -1,6 +1,8 @@
 import type { HelpTopicId } from '../../help/topics'
 import type { UiScale } from '../../displayPrefs'
 import { UI_SCALES } from '../../displayPrefs'
+import type { ProjectUiAction } from '../../project/projectUi'
+import { runProjectExportAction } from '../../project/exportActions'
 
 const HELP_BY_ID: Record<string, HelpTopicId> = {
   'help-welcome': 'welcome',
@@ -9,7 +11,7 @@ const HELP_BY_ID: Record<string, HelpTopicId> = {
 }
 
 export type AppMenuHandlers = {
-  openProjectUi: (kind: 'share' | 'connect' | 'close' | 'collaboration') => void
+  openProjectUi: (kind: ProjectUiAction) => void
   openHistory: () => void
   openGameDev: () => void
   openHelp: (topic: HelpTopicId) => void
@@ -20,6 +22,12 @@ export type AppMenuHandlers = {
 /** 处理 run:'app' 的菜单项；返回 true 表示已消费 */
 export function runAppMenuAction(id: string, handlers: AppMenuHandlers): boolean {
   switch (id) {
+    case 'open-project':
+      handlers.openProjectUi('open')
+      return true
+    case 'new-project':
+      handlers.openProjectUi('create')
+      return true
     case 'share-project':
       handlers.openProjectUi('share')
       return true
@@ -47,6 +55,8 @@ export function runAppMenuAction(id: string, handlers: AppMenuHandlers): boolean
     default:
       break
   }
+
+  if (runProjectExportAction(id)) return true
 
   const help = HELP_BY_ID[id]
   if (help) {

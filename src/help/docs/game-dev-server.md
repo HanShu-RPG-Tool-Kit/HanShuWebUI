@@ -47,7 +47,7 @@ C 侧按上述实现；握手超过约 4s 仍无 `open` 会中止并提示，避
 
 ## HTTP：自动发版（publish）
 
-与 Control WebSocket 同门户。剧本工作区菜单 **文件 → 自动发版（auto.pak）** 会编译 combined PAK，再：
+与 Control WebSocket 同门户。菜单 **文件 → 自动发版（auto.pak）**（工程级，`project/exportActions`）会编译 combined PAK，再：
 
 `POST /publish?name=auto.pak` · `Content-Type: application/octet-stream` · 头 `X-DevTool-Password` / `X-Pak-Name`
 

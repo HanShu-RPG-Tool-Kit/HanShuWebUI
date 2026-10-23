@@ -60,9 +60,6 @@ const isDesktopShell = isTauriRuntime()
 
 const WORKSPACE_IDS = APP_WORKSPACES.map((w) => w.id)
 
-/** 始终交给剧本工作区（即使当前在其它页签） */
-const SCRIPT_ROUTED_MENU_IDS = new Set(['open-project', 'new-project'])
-
 function renderToolWorkspace(
   id: AppWorkspaceId,
   active: boolean,
@@ -214,11 +211,6 @@ function App() {
             void closeDesktopWindow()
           },
         })
-        return
-      }
-
-      if (SCRIPT_ROUTED_MENU_IDS.has(item.id)) {
-        scriptRef.current?.handleMenuAction(item.id)
         return
       }
 

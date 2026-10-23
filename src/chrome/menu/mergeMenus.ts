@@ -80,6 +80,13 @@ export function mergeMenus(workspaceId: AppWorkspaceId): MenuDef[] {
         { type: 'separator' },
         ...wsItems,
         { type: 'separator' },
+        ...commandsById(globalItems, [
+          'auto-publish-pak',
+          'export-pak',
+          'export-pak-planes',
+          'export-project-pack',
+        ]),
+        { type: 'separator' },
         ...commandsById(globalItems, ['project-history']),
         { type: 'separator' },
         ...commandsById(globalItems, ['quit']),

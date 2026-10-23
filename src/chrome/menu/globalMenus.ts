@@ -19,8 +19,8 @@ export const globalMenuContribution: MenuContribution = {
       id: 'file',
       label: '文件',
       items: [
-        cmd('open-project', '打开工程…', 'workspace'),
-        cmd('new-project', '新建工程…', 'workspace'),
+        cmd('open-project', '打开工程…', 'app'),
+        cmd('new-project', '新建工程…', 'app'),
         cmd('share-project', '分享工程…', 'app', {
           enabled: (ctx) => ctx.role === 'owner',
         }),
@@ -28,6 +28,12 @@ export const globalMenuContribution: MenuContribution = {
         cmd('close-project', '关闭工程', 'app', {
           enabled: (ctx) => ctx.projectBound,
         }),
+        { type: 'separator' },
+        // 工程级导出 / 发版（全工作区；经 projectSession，不经工作区菜单分发）
+        cmd('auto-publish-pak', '自动发版（auto.pak）', 'app'),
+        cmd('export-pak', '导出PAK', 'app'),
+        cmd('export-pak-planes', '导出PAK（分平面）', 'app'),
+        cmd('export-project-pack', '导出工程包', 'app'),
         { type: 'separator' },
         cmd('project-history', '历史版本', 'app'),
         { type: 'separator' },
