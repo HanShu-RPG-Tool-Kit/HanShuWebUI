@@ -88,6 +88,7 @@ type PendingOutbound = {
   reject: (error: Error) => void
   timer: ReturnType<typeof setTimeout>
 }
+const notifyListeners = new Set<(note: ControlNotify) => void>()
 const pendingOutbound = new Map<string, PendingOutbound>()
 
 const listeners = new Set<() => void>()
@@ -126,6 +127,32 @@ function pushLog(
     { id: logSeq, at: Date.now(), kind, summary, detail },
     ...logs,
   ].slice(0, LOG_LIMIT)
+}
+
+/** 导出当前内存日志为文本（新→旧），便于粘贴排查 */
+export function formatControlLogsForClipboard(): string {
+  if (logs.length === 0) return ''
+  const lines: string[] = [
+    `# HanShu Control 日志 ${new Date().toISOString()} · ${logs.length} 条`,
+    '',
+  ]
+  for (const entry of logs) {
+    lines.push(
+      `[${new Date(entry.at).toISOString()}] ${entry.kind} ${entry.summary}`,
+    )
+    if (entry.detail) {
+      lines.push(entry.detail)
+      lines.push('')
+    }
+  }
+  return lines.join('\n')
+}
+
+export async function copyControlLogsToClipboard(): Promise<boolean> {
+  const text = formatControlLogsForClipboard()
+  if (!text) return false
+  await navigator.clipboard.writeText(text)
+  return true
 }
 
 function setPhase(next: ConnPhase) {
@@ -226,7 +253,24 @@ function handleNotify(note: ControlNotify) {
     `↪ notify ${note.method}`,
     JSON.stringify(note),
   )
+  for (const listener of notifyListeners) {
+    try {
+      listener(note)
+    } catch (err) {
+      console.error('control notify listener failed', err)
+    }
+  }
   bump()
+}
+
+/** 订阅 mod → WebUI 的 notify（如 `items.edit.done`） */
+export function subscribeControlNotify(
+  listener: (note: ControlNotify) => void,
+): () => void {
+  notifyListeners.add(listener)
+  return () => {
+    notifyListeners.delete(listener)
+  }
 }
 
 function attachSocket(sock: WebSocket, generation: number) {
@@ -416,6 +460,7 @@ export function ensureGameDevControlStarted(): void {
   started = true
   prefs = loadGameDevServerPrefs()
   void import('./itemSnapshotRefresh').then((m) => m.ensureItemSnapshotRefreshStarted())
+  void import('./itemEdit').then((m) => m.ensureItemEditNotifyStarted())
   if (prefs.autoConnect) {
     setPhase('connecting')
     void refreshPortal().then(() => {

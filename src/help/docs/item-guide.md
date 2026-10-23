@@ -48,8 +48,9 @@
 名称、tooltip、图标等展示数据在 **C 侧 IndexedDB**（`hanshu.itemSnapshots.v1`），不进工程目录、也不经 S。
 
 - **指纹**：`fnv1a(id + components)`（**不含 count**）。缓存键与过期判定均为该指纹；写入时会把 `display.snapshotOf` 规范为请求时的指纹。
-- **刷新**：WebUI 经 Control **出站**调用 mod 的 `items.renderSnapshots`（批量 ≤128，`includeIcon` 默认 true）。`iconPending: true` 时先显示文本快照，条目仍留在 needed 队列稍后重试。
-- **miss / 过期**：编辑器先用 WebUI 近似渲染，并登记 needed；连上游戏开发服务器后自动 drain。
+- **刷新**：WebUI 经 Control **出站**调用 mod 的 `items.renderSnapshots`（批量 ≤128，`includeIcon` 默认 true）。`iconPending: true` 时先显示文本快照并短暂重试；同一指纹约 3 次仍无图标则接受纯文本并停止对该项重试（否则会一直打同一批）。
+- **自动刷新**：默认开启。菜单 **编辑 → 自动刷新物品快照** 可关掉；关掉后 miss/过期不再自动入队（清空当前 needed），仍可用手动「刷新物品快照 / 刷新全部」。偏好记在本机 `localStorage`。
+- **miss / 过期**：自动刷新开启时，编辑器先用 WebUI 近似渲染并登记 needed；连上游戏开发服务器后 drain。
 - **count**：数量变化不改指纹、不触发重新快照（发放数量由礼包等决定）。
 
 ## `.itemstack` 文件格式
@@ -79,7 +80,7 @@
 
 - 物品库可新建 / 导入 `.item`；也可拖入 `.itemstack` / `.json` 转成 `.item`。
 - 主区：物品 ID、**标签**行、预览（本机快照优先）、NBT 风格组件树；可「查看源码」。
-- 菜单 **编辑 → 刷新物品快照** / **刷新全部物品快照**：强制向客户端重新拉取（旧缓存保留至新快照覆盖；未连接则排队）。结果出现在 [活动列表](#activity-list)（统一状态栏铃铛）。
+- 菜单 **编辑 → 自动刷新物品快照**（勾选开关）/ **刷新物品快照** / **刷新全部物品快照**：后两项强制向客户端重新拉取（旧缓存保留至新快照覆盖；未连接则排队）。[活动列表](#activity-list) 会显示带进度条的「刷新物品快照」任务，批次写完后变为「已刷新 N 个」。
 - 资源树有只读 **物品库表视图**：汇总文件名、引用名、ID、显示名、标签、组件数、快照状态（新鲜 / 刷新中 / 过期 / 无）。
 - 本地化：`.item` 的标签与指令类字段一样**不进** `lang_*`；玩家可见名称若在组件/快照里，由游戏侧处理。
 
@@ -87,8 +88,8 @@
 
 打开工程后，本机 mod 可通过 [游戏开发服务器](#game-dev-server) Control：
 
-- **入站**：`items.list` / `items.get` / `items.query` 读当前会话物品库（C 侧镜像）。
-- **出站（WebUI→mod）**：`items.renderSnapshots` 批量拉展示快照写入本机缓存。
+- **入站**：`items.list` / `items.get` / `items.query` 读当前会话物品库（C 侧镜像）；`items.edit.done` 为 IBE 完成通知。
+- **出站（WebUI→mod）**：`items.renderSnapshots` 批量拉展示快照；`items.edit.open` 呼出客户端 IBE（资源树 `.item` 右键「在游戏中编辑…」）。写回只认 `hash` 乐观锁，见 [游戏开发服务器](#game-dev-server)。
 
 ## 导出
 

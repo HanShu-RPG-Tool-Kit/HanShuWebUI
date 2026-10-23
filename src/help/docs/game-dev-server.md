@@ -6,6 +6,7 @@ WebUI **C 侧**连接本机游戏开发门户（`mchhui.rpgtoolkit.devtool.contr
 
 - 菜单：**编辑 → 游戏开发服务器**
 - 打开后可改主机 / 端口 / 门户密码，并查看控制台（request / response / 连接事件）
+- 控制台日志仅本会话内存（约 200 条）；可用「复制到剪贴板」导出全文（含 detail）便于粘贴排查
 - App 启动后 C 侧会**自动轮询**尝试连接（默认同密码 `mchhui`，`127.0.0.1:8765`）；关闭「自动连接」即停止
 
 ## 已验证连法
@@ -59,10 +60,25 @@ WebUI 在 Control `phase===open` 时主动发 `{ type: request, id, method, para
 | **批量上限** | ≤ **128**；超出 mod 返回 `too_many_items`，WebUI 退避重试（按 24 切批仍可用，吃满吞吐用 128） |
 | **吞吐** | 等 RPC 期间客户端约每帧处理一批（约 128）；图标单条等待约 **8s** |
 | **result** | `{ snapshots: [{ key, ok, error?, display? }] }` |
-| **display** | 可无 `icon`；可有 `iconPending: true`（文本先可用，WebUI 仍保留 needed 再请求） |
+| **display** | 可无 `icon`；可有 `iconPending: true`（文本先可用，WebUI 会再请求图标） |
+| **iconPending 重试** | 同一指纹最多 **3** 次仍 `iconPending` 则接受纯文本快照并出队（避免 mod 图标永远不就绪时干烧）；强制刷新会重置计数 |
+| **自动刷新** | 默认开；**编辑 → 自动刷新物品快照** 可关。关闭后 UI 不再因 miss/过期自动入队（手动刷新仍可用） |
 | **其它错误** | 如 `no_level`：整包失败，WebUI 短暂退避 |
 
-模组返回的 `display` 可不带 `snapshotOf`；WebUI **写入缓存时**用请求的 `key` 覆盖/写入 `snapshotOf`。
+模组返回的 `display` 可不带 `snapshotOf`；WebUI **写入缓存时**用请求的 `key` 覆盖/写入 `snapshotOf`。刷新过程用活动列表稳定 id `items.snapshot-refresh` 更新进度条，队列清空后标成功。
+
+### `items.edit.open` / `items.edit.done`
+
+客户端 IBE 物品编辑（包 `mchhui.rpgtoolkit.devtool.itemedit`）。**两条独立消息**，不是「开会话 → 等结果」：
+
+| 方向 | method | 类型 |
+| --- | --- | --- |
+| WebUI → mod | `items.edit.open` | request；成功即完，不 hold |
+| mod → WebUI | `items.edit.done` | notify；用户在 IBE 点完成时另发 |
+
+`params` / `done` 载荷：`{ uuid, hash, item: { id, components } }`（也接受扁平 `id`/`components`）。`uuid` 仅 hint（原样回传，业务可忽略）；`hash` 为 WebUI 版本令牌（当前用 `itemFingerprint`），写回时与本地指纹比对。无 cancel 通知、无写锁。
+
+WebUI 入口：物品库资源树对 `.item` 右键 **在游戏中编辑…**。冲突或找不到文档时丢弃并走 [活动列表](#activity-list)。
 
 ## 边界
 

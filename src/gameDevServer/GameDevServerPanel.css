@@ -215,6 +215,25 @@
   font-weight: 600;
 }
 
+.gds-console-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.gds-console-copy-hint {
+  color: #8fbf9a;
+  font-size: 11px;
+}
+
+.gds-console-hint {
+  margin: 0;
+  padding: 0 12px 8px;
+  color: #8a96a8;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .gds-console-empty {
   margin: 0;
   padding: 24px 16px;

@@ -54,9 +54,9 @@ export function MenuBar({ ctx, onAction }: MenuBarProps) {
                   <li key={entry.id} role="none">
                     <button
                       type="button"
-                      role="menuitem"
+                      role={entry.checked ? 'menuitemcheckbox' : 'menuitem'}
                       disabled={!(entry.enabled?.(ctx) ?? true)}
-                      aria-checked={entry.checked?.(ctx) ? true : undefined}
+                      aria-checked={entry.checked ? entry.checked(ctx) : undefined}
                       className={entry.checked?.(ctx) ? 'checked' : ''}
                       onClick={() => {
                         setOpenMenu(null)

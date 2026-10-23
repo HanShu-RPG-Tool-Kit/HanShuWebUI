@@ -7,6 +7,7 @@ import {
 import {
   getCachedDisplaySync,
   getItemSnapshotRevision,
+  isAutoItemSnapshotRefreshEnabled,
   isCachedSnapshotFresh,
   markSnapshotNeeded,
   scheduleItemSnapshotRefresh,
@@ -182,12 +183,18 @@ export function ItemLibraryTable({ documents, folderLabel, onOpen }: {
     getItemSnapshotRevision,
     getItemSnapshotRevision,
   )
+  const autoRefresh = useSyncExternalStore(
+    subscribeItemSnapshots,
+    isAutoItemSnapshotRefreshEnabled,
+    isAutoItemSnapshotRefreshEnabled,
+  )
   const rows = useMemo(
     () => buildRows(documents, folderLabel),
     [documents, folderLabel, revision],
   )
   // 渲染后再登记 needed，避免订阅 revision 的组件在 render 路径里 bump
   useEffect(() => {
+    if (!autoRefresh) return
     let queued = false
     for (const row of rows) {
       if (!row.doc || row.error) continue
@@ -199,7 +206,7 @@ export function ItemLibraryTable({ documents, folderLabel, onOpen }: {
       }
     }
     if (queued) scheduleItemSnapshotRefresh()
-  }, [rows])
+  }, [rows, autoRefresh])
   const filtered = useMemo(() => {
     const q = query.trim().toLocaleLowerCase()
     if (!q) return rows

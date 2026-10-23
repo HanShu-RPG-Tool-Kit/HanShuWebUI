@@ -6,6 +6,7 @@ import { useSyncExternalStore } from 'react'
 import {
   getCachedDisplaySync,
   getItemSnapshotRevision,
+  isAutoItemSnapshotRefreshEnabled,
   isCachedSnapshotFresh,
   isItemSnapshotRefreshOnline,
   isSnapshotNeeded,
@@ -39,9 +40,13 @@ export function presentItemFromCache(item: ItemLikeForPresentation): ItemPresent
   const fp = itemFingerprint(item)
   const cached = getCachedDisplaySync(fp)
   const presentation = peekItemPresentation(item)
-  if (!isCachedSnapshotFresh(item) || cached?.iconPending) {
+  if (
+    isAutoItemSnapshotRefreshEnabled()
+    && (!isCachedSnapshotFresh(item) || cached?.iconPending)
+  ) {
     // 推迟到渲染外，避免 useSyncExternalStore 订阅方在 render 里被 bump 打成死循环
     queueMicrotask(() => {
+      if (!isAutoItemSnapshotRefreshEnabled()) return
       markSnapshotNeeded(item)
       scheduleItemSnapshotRefresh()
     })

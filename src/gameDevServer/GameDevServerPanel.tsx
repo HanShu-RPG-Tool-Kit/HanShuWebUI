@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import {
   clearControlLogs,
+  copyControlLogsToClipboard,
   disconnectGameDevControl,
   getControlHubSnapshot,
   reconnectGameDevControlNow,
@@ -33,6 +34,49 @@ function formatTime(at: number): string {
     second: '2-digit',
     hour12: false,
   })
+}
+
+function ConsoleSection({ logs }: { logs: ControlLogEntry[] }) {
+  const [copyHint, setCopyHint] = useState<string | null>(null)
+
+  async function onCopy() {
+    try {
+      const ok = await copyControlLogsToClipboard()
+      setCopyHint(ok ? '已复制到剪贴板' : '暂无日志可复制')
+    } catch {
+      setCopyHint('复制失败')
+    }
+    window.setTimeout(() => setCopyHint(null), 2000)
+  }
+
+  return (
+    <section className="gds-console" aria-label="控制台">
+      <div className="gds-console-bar">
+        <h3>控制台</h3>
+        <div className="gds-console-actions">
+          {copyHint && <span className="gds-console-copy-hint" role="status">{copyHint}</span>}
+          <button type="button" disabled={logs.length === 0} onClick={() => void onCopy()}>
+            复制到剪贴板
+          </button>
+          <button type="button" onClick={() => clearControlLogs()}>
+            清空
+          </button>
+        </div>
+      </div>
+      <p className="gds-console-hint">
+        日志仅存于本会话内存（约 200 条）。排查时可「复制到剪贴板」后粘贴给协作者或 Agent。
+      </p>
+      {logs.length === 0 ? (
+        <p className="gds-console-empty">尚无请求。等待 mod 发起 ControlHub.request…</p>
+      ) : (
+        <ul className="gds-log-list">
+          {logs.map((entry) => (
+            <LogRow key={entry.id} entry={entry} />
+          ))}
+        </ul>
+      )}
+    </section>
+  )
 }
 
 function LogRow({ entry }: { entry: ControlLogEntry }) {
@@ -213,26 +257,13 @@ export function GameDevServerPanel({ onClose }: { onClose: () => void }) {
               <li>
                 <code>items.renderSnapshots</code> — WebUI 出站拉展示快照（≤128）
               </li>
+              <li>
+                <code>items.edit.open</code> / <code>items.edit.done</code> — 呼出客户端 IBE；完成另发 notify
+              </li>
             </ul>
           </section>
 
-          <section className="gds-console" aria-label="控制台">
-            <div className="gds-console-bar">
-              <h3>控制台</h3>
-              <button type="button" onClick={() => clearControlLogs()}>
-                清空
-              </button>
-            </div>
-            {snap.logs.length === 0 ? (
-              <p className="gds-console-empty">尚无请求。等待 mod 发起 ControlHub.request…</p>
-            ) : (
-              <ul className="gds-log-list">
-                {snap.logs.map((entry) => (
-                  <LogRow key={entry.id} entry={entry} />
-                ))}
-              </ul>
-            )}
-          </section>
+          <ConsoleSection logs={snap.logs} />
         </div>
       </div>
     </div>

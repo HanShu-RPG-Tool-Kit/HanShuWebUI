@@ -29,6 +29,8 @@ const DB_VERSION = 1
 const NEEDED_LIMIT = 256
 /** 手动「刷新全部」时可排队的上限 */
 const FORCE_NEEDED_LIMIT = 512
+/** 表视图 / 预览 miss 时是否自动入队拉取；手动菜单刷新不受此限 */
+const AUTO_REFRESH_STORAGE_KEY = 'hanshu.items.autoSnapshotRefresh'
 
 const memory = new Map<string, ItemStackDisplay>()
 const neededOrder: string[] = []
@@ -42,10 +44,49 @@ let store: ItemSnapshotStore | null = null
 let idbUnavailable = false
 /** Control 是否已连接；由 itemSnapshotRefresh 同步，供徽章区分「刷新中」与「待连接」 */
 let refreshOnline = false
+let autoRefreshEnabled = loadAutoRefreshPref()
+
+function loadAutoRefreshPref(): boolean {
+  try {
+    const raw = localStorage.getItem(AUTO_REFRESH_STORAGE_KEY)
+    if (raw === null) return true
+    return raw !== '0' && raw !== 'false'
+  } catch {
+    return true
+  }
+}
 
 function bump() {
   revision += 1
   for (const listener of listeners) listener()
+}
+
+/** miss / 过期 / 表视图滚动时是否自动入队；默认开 */
+export function isAutoItemSnapshotRefreshEnabled(): boolean {
+  return autoRefreshEnabled
+}
+
+/**
+ * 开关自动刷新。关闭时清空 needed 队列（已发起的手动刷新批次仍会跑完当前 in-flight）。
+ * 手动「刷新物品快照」不受影响。
+ */
+export function setAutoItemSnapshotRefreshEnabled(enabled: boolean): void {
+  if (autoRefreshEnabled === enabled) return
+  autoRefreshEnabled = enabled
+  try {
+    localStorage.setItem(AUTO_REFRESH_STORAGE_KEY, enabled ? '1' : '0')
+  } catch {
+    /* 隐私模式等 */
+  }
+  if (!enabled) clearAllNeeded()
+  bump()
+}
+
+export function clearAllNeeded(): void {
+  if (neededMeta.size === 0) return
+  neededMeta.clear()
+  neededOrder.length = 0
+  bump()
 }
 
 export function setItemSnapshotRefreshOnline(online: boolean): void {
@@ -106,6 +147,7 @@ export function resetItemSnapshotCacheForTests(): void {
   store = null
   idbUnavailable = false
   refreshOnline = false
+  autoRefreshEnabled = true
   bump()
 }
 
@@ -340,7 +382,7 @@ export function ingestDisplay(
           idbUnavailable = true
         })
     }
-    markSnapshotNeeded(item)
+    if (autoRefreshEnabled) markSnapshotNeeded(item)
     return
   }
   void putCachedDisplay(fp, display)
@@ -409,16 +451,22 @@ export function snapshotsNeededCount(): number {
   return neededMeta.size
 }
 
-let refreshScheduler: ((options?: { force?: boolean }) => void) | null = null
+export type SnapshotRefreshScheduleOptions = {
+  force?: boolean
+  /** 强制入队数量；离线时用于活动列表提示 */
+  queued?: number
+}
+
+let refreshScheduler: ((options?: SnapshotRefreshScheduleOptions) => void) | null = null
 
 /** 由 gameDevServer 注册：队列变化时尝试 items.renderSnapshots */
 export function setItemSnapshotRefreshScheduler(
-  fn: ((options?: { force?: boolean }) => void) | null,
+  fn: ((options?: SnapshotRefreshScheduleOptions) => void) | null,
 ): void {
   refreshScheduler = fn
 }
 
-export function scheduleItemSnapshotRefresh(options?: { force?: boolean }): void {
+export function scheduleItemSnapshotRefresh(options?: SnapshotRefreshScheduleOptions): void {
   refreshScheduler?.(options)
 }
 
@@ -450,7 +498,7 @@ export function forceRequestItemSnapshots(
   }
   if (count > 0) {
     bump()
-    scheduleItemSnapshotRefresh({ force: true })
+    scheduleItemSnapshotRefresh({ force: true, queued: count })
   }
   return count
 }

@@ -258,6 +258,7 @@ html.splash-windowed .app {
 
 .menu-dropdown li button {
   appearance: none;
+  position: relative;
   display: block;
   width: 100%;
   border: none;
@@ -267,6 +268,18 @@ html.splash-windowed .app {
   text-align: left;
   padding: 7px 24px 7px 28px;
   cursor: default;
+}
+
+/* 勾选项（界面比例、自动刷新等）：左侧留白里画 ✓ */
+.menu-dropdown li button.checked::before {
+  content: '✓';
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 12px;
+  line-height: 1;
+  color: inherit;
 }
 
 .menu-dropdown li button:hover {

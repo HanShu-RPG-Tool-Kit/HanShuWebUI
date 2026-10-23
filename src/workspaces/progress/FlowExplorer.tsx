@@ -95,7 +95,7 @@ const parseSelection = (ids: Set<string>) => {
 
 const isPackageId = (value: string): value is FlowPackageId => (FLOW_PACKAGE_ORDER as string[]).includes(value)
 
-export function FlowExplorer({ state, active, disabled, readOnly = false, onChange, onSelect, onNew, onImport, onImportFiles, onExport, onDownload, onRemove, onProperties, onViewSource, onNotice }: {
+export function FlowExplorer({ state, active, disabled, readOnly = false, onChange, onSelect, onNew, onImport, onImportFiles, onExport, onDownload, onRemove, onProperties, onViewSource, onOpenItemInGame, onNotice }: {
   state: FlowWorkspaceState; active: boolean; disabled: boolean; readOnly?: boolean
   onChange: (state: FlowWorkspaceState) => void; onSelect: (key: string) => void
   onNew: (name: string, folder: string | null, pkg: FlowPackageId) => string
@@ -106,6 +106,8 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
   onProperties: (key: string) => void
   /** 查看 .progress / .item 等文档只读源码 */
   onViewSource?: (key: string) => void
+  /** 经 Control 呼出客户端 IBE 编辑当前 .item */
+  onOpenItemInGame?: (key: string) => void
   onNotice: (message: string) => void
 }) {
   const [focus, setFocus] = useState<FlowEntry>(state.activeKey ? { kind: 'document', key: state.activeKey } : defaultFocus)
@@ -549,6 +551,14 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
       const removeLabel = item ? '移除物品…' : kit ? '移除礼包…' : navigation ? '移除导航点…' : progress ? '移除进度…' : script ? '移除脚本…' : '移除流程…'
       return [
         { label: openLabel, action: () => onSelect(entry.key) },
+        ...(item && onOpenItemInGame
+          ? [{
+              label: '在游戏中编辑…',
+              disabled: readOnly,
+              hint: readOnly ? '只读工程不可写回' : '经游戏开发服务器打开客户端 IBE',
+              action: () => onOpenItemInGame(entry.key),
+            }]
+          : []),
         ...((progress || item) && onViewSource ? [{ label: '查看源码', action: () => onViewSource(entry.key) }] : []),
         { label: '属性…', action: () => onProperties(entry.key) },
         { label: '重命名', action: () => startEdit('rename', entry) },

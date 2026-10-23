@@ -16,8 +16,18 @@ import { createKit, kitRefFromFileName, readKitSource, stringifyKit, parseKit } 
 import { createProgress, createProgressLocaleSeeds, readProgressSource, stringifyProgress, parseProgress } from './progress/progressDoc'
 import { createNavigationPoint, readNavigationSource, stringifyNavigationPoint, parseNavigationPoint } from './progress/navigationPoint'
 import { createItem, itemFromItemStackSource, parseItem, readItemSource, stringifyItem } from './progress/itemDoc'
-import { forceRequestItemSnapshots, isItemSnapshotRefreshOnline } from './progress/itemSnapshotCache'
-import { isItemStackFileName } from './progress/itemstack'
+import {
+  forceRequestItemSnapshots,
+  isAutoItemSnapshotRefreshEnabled,
+  isItemSnapshotRefreshOnline,
+  setAutoItemSnapshotRefreshEnabled,
+} from './progress/itemSnapshotCache'
+import { isItemStackFileName, itemFingerprint } from './progress/itemstack'
+import {
+  ensureItemEditNotifyStarted,
+  openItemEditInGame,
+  subscribeItemEditDone,
+} from '../gameDevServer'
 import { itemRefFromFileName } from './progress/kit'
 import {
   buildGoalDefinitionCatalog,
@@ -553,6 +563,65 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
       documents: previous.documents.map((item) => item.key === key ? stampDocument({ ...item, source }) : item),
     }))
   }
+  const changeSourceRef = useRef(changeSource)
+  changeSourceRef.current = changeSource
+  const readOnlyRef = useRef(readOnly)
+  readOnlyRef.current = readOnly
+
+  useEffect(() => {
+    ensureItemEditNotifyStarted()
+    return subscribeItemEditDone((event) => {
+      if (!event.documentKey) {
+        notify('游戏中编辑已完成，但找不到对应的 .item', { kind: 'warning', source: 'items' })
+        return
+      }
+      const document = stateRef.current.documents.find((item) => item.key === event.documentKey)
+      if (!document || !isItemDocument(document)) {
+        notify('游戏中编辑已完成，但对应 .item 已不存在', { kind: 'warning', source: 'items' })
+        return
+      }
+      const parsed = readItemSource(document.source)
+      if (parsed.error) {
+        notify(`无法写回游戏编辑结果：${parsed.error}`, { kind: 'error', source: 'items' })
+        return
+      }
+      if (itemFingerprint(parsed.doc.item) !== event.hash) {
+        notify('本地物品已变更，已丢弃游戏中的编辑结果', { kind: 'warning', source: 'items' })
+        return
+      }
+      if (readOnlyRef.current) {
+        notify('工程只读，无法写回游戏中的编辑', { kind: 'warning', source: 'items' })
+        return
+      }
+      changeSourceRef.current(stringifyItem({ ...parsed.doc, item: event.item }), false, event.documentKey)
+      forceRequestItemSnapshots([event.item])
+      notify('已应用游戏中编辑结果', { kind: 'success', source: 'items' })
+    })
+  }, [])
+
+  async function openItemInGame(key: string) {
+    const document = state.documents.find((item) => item.key === key)
+    if (!document || !isItemDocument(document)) {
+      setNotice('请选择一个 .item。')
+      return
+    }
+    const parsed = readItemSource(document.source)
+    if (parsed.error || !parsed.doc.item.id.trim()) {
+      setNotice(parsed.error || '当前物品缺少 id，无法在游戏中编辑。')
+      return
+    }
+    try {
+      await openItemEditInGame(key, parsed.doc.item)
+      setNotice('已在游戏中打开物品编辑器')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (message === 'control_not_connected') {
+        setNotice('未连接游戏开发服务器，无法打开客户端编辑器')
+        return
+      }
+      setNotice(`打开游戏物品编辑器失败：${message}`)
+    }
+  }
   const changeFlow = (flow: ProgressFlow, key = focusedKey ?? undefined) => changeSource(JSON.stringify(flow, null, 2), false, key)
   function openEditor(nextSelection: FlowSelection) {
     if (!doc || !parsed.flow || locked || busy) return
@@ -985,6 +1054,12 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
       undo(true)
       return
     }
+    if (item === 'toggle-auto-item-snapshot-refresh') {
+      const next = !isAutoItemSnapshotRefreshEnabled()
+      setAutoItemSnapshotRefreshEnabled(next)
+      setNotice(next ? '已开启自动刷新物品快照' : '已关闭自动刷新物品快照（仍可用下方菜单手动刷新）')
+      return
+    }
     if (item === 'refresh-item-snapshot') {
       const focused = state.documents.find((document) => document.key === focusedKey)
       if (!focused || !isItemDocument(focused)) {
@@ -996,12 +1071,11 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
         setNotice(parsed.error || '当前物品缺少 id，无法刷新快照。')
         return
       }
-      const n = forceRequestItemSnapshots([parsed.doc.item])
-      setNotice(
-        isItemSnapshotRefreshOnline()
-          ? '已请求刷新当前物品快照'
-          : `已排队 ${n} 项 · 待连接游戏开发服务器`,
-      )
+      forceRequestItemSnapshots([parsed.doc.item])
+      // 进度与结果由活动列表「刷新物品快照」任务更新；离线排队文案也在那里
+      if (!isItemSnapshotRefreshOnline()) {
+        setNotice('未连接游戏开发服务器，快照已排队')
+      }
       return
     }
     if (item === 'refresh-all-item-snapshots') {
@@ -1016,12 +1090,10 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
         setNotice('物品库还没有可刷新的 .item。')
         return
       }
-      const n = forceRequestItemSnapshots(items)
-      setNotice(
-        isItemSnapshotRefreshOnline()
-          ? `已请求刷新 ${n} 个物品快照`
-          : `已排队 ${n} 项 · 待连接游戏开发服务器`,
-      )
+      forceRequestItemSnapshots(items)
+      if (!isItemSnapshotRefreshOnline()) {
+        setNotice('未连接游戏开发服务器，快照已排队')
+      }
     }
   } }))
   useEffect(() => {
@@ -1312,7 +1384,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
   return <section className="flow-workspace" aria-label="故事流程工作区">
     <input ref={fileInput} type="file" multiple hidden onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ''; void importFiles(files) }} />
     <div className="flow-layout">
-      <FlowExplorer readOnly={readOnly} state={explorerState} active={active} disabled={locked || busy} onChange={(next) => setState((previous) => normalizeGroups({ ...previous, documents: next.documents, folders: next.folders }))} onSelect={(key) => selectDocument(key)} onNew={newFlow} onImport={requestImport} onImportFiles={(files, folderId, packageId) => { void importFiles(files, { folderId, package: packageId }) }} onExport={exportFlow} onDownload={downloadDraft} onRemove={removeResources} onProperties={setPropertiesKey} onViewSource={viewProgressSource} onNotice={setNotice} />
+      <FlowExplorer readOnly={readOnly} state={explorerState} active={active} disabled={locked || busy} onChange={(next) => setState((previous) => normalizeGroups({ ...previous, documents: next.documents, folders: next.folders }))} onSelect={(key) => selectDocument(key)} onNew={newFlow} onImport={requestImport} onImportFiles={(files, folderId, packageId) => { void importFiles(files, { folderId, package: packageId }) }} onExport={exportFlow} onDownload={downloadDraft} onRemove={removeResources} onProperties={setPropertiesKey} onViewSource={viewProgressSource} onOpenItemInGame={(key) => { void openItemInGame(key) }} onNotice={setNotice} />
       <main className="flow-main">
         {active && client && presencePath && <FilePresenceBar key={`${client.snapshot.session.id}:${presencePath}`} client={client} path={presencePath} mode="optimistic" label={doc?.name} />}
         {state.split ? (
