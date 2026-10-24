@@ -1,6 +1,6 @@
 import { readComponents, readNbt, type ItemComponents } from '../tnbtJson'
 import { useRef, useState, useSyncExternalStore } from 'react'
-import { NodeContextMenu } from '../NodeContextMenu'
+import { NodeContextMenu } from '../../../nodeEditor/ContextMenu'
 import { componentEditors, componentKey, isComponentGroup, subscribeComponentEditors, writeComponent, type ItemComponentGroupEditor } from './registry'
 import './builtins'
 import './complexCards'

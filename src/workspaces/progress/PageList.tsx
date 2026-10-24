@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent } from 'react'
 import { Icon } from './FlowExplorer'
 import { isItemDocument, isItemLibraryTableKey, isKitDocument, isNavigationDocument, isProgressDocument, isScriptDocument } from './library'
-import { NodeContextMenu, type NodeMenuItem } from './NodeContextMenu'
+import { NodeContextMenu, type NodeMenuItem } from '../../nodeEditor/ContextMenu'
 import type { FlowDocument } from './storage'
 
 export const PAGE_DRAG_TYPE = 'application/x-hanshu-page'

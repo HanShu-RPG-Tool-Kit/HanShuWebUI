@@ -29,25 +29,6 @@
 .flow-graph-zoom { display: flex; align-items: center; gap: 3px; margin-left: auto; }
 .flow-graph-zoom output { width: 38px; text-align: center; font-variant-numeric: tabular-nums; color: #a8a8a8; }
 .flow-workspace .flow-graph-zoom button { min-width: 24px; }
-.flow-graph-viewport {
-  position: relative; flex: 1; min-height: 150px; overflow: clip; overscroll-behavior: contain;
-  background-color: #222;
-  background-image: radial-gradient(#3c3c3c .65px, transparent .65px);
-  background-size: 20px 20px;
-}
-.flow-graph-size { position: absolute; inset: 0; pointer-events: none; }
-.flow-graph-canvas { position: absolute; top: 0; left: 0; transform-origin: top left; pointer-events: none; }
-.flow-graph-lines { position: absolute; z-index: 1; inset: 0; overflow: visible; pointer-events: none; }
-.flow-graph-link { fill: none; stroke: #a6a6a6; stroke-width: 2.5px; }
-.flow-graph-link.is-kind-goal { stroke: #d0ad72; }
-.flow-graph-link.is-kind-checkpoint { stroke: #7a9aab; }
-.flow-graph-link.is-selected, .flow-graph-link:has(.flow-graph-link-hit:focus-visible) { stroke: #efb26a; }
-.flow-graph-link:has(.flow-graph-link-hit:hover):not(.is-selected) { stroke: #d2d2d2; }
-.flow-graph .flow-graph-link.is-cut-target { stroke: #fa7777; }
-.flow-graph-link .flow-graph-link-shadow { stroke: #1118; stroke-width: 5px; }
-.flow-graph-link .flow-graph-link-hit { stroke: transparent; stroke-width: 18px; pointer-events: stroke; cursor: pointer; }
-.flow-workspace .flow-graph .flow-graph-link-hit:focus-visible { outline: none; }
-.flow-graph-link-hit[aria-disabled='true'] { pointer-events: none; }
 .flow-workspace .flow-graph .flow-graph-node {
   position: absolute; z-index: 2; display: block; padding: 0; text-align: left; pointer-events: auto;
   border: 1px solid #171717; border-radius: 5px; background: #353535;
@@ -92,27 +73,6 @@
 .flow-graph-ports { position: absolute; top: 51px; left: 0; right: 0; height: 16px; display: flex; align-items: center; justify-content: space-between; padding: 0 11px; font-size: 10px; color: #bcbcbc; }
 .flow-graph-node.is-entry .flow-graph-ports { top: 36px; }
 .flow-graph-port-output { margin-left: auto; }
-.flow-workspace .flow-graph .flow-graph-socket { position: absolute; z-index: 2; top: 75px; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%; background: transparent; cursor: crosshair; touch-action: none; }
-.flow-workspace .flow-graph .flow-graph-socket:hover:not(:disabled) { background: transparent; }
-.flow-graph-socket.is-input { left: -11px; }
-.flow-graph-socket.is-output { right: -11px; }
-.flow-graph-socket span { display: block; margin: 4px; width: 12px; height: 12px; border-radius: 50%; background: #7a9aab; border: 2px solid #171717; box-sizing: border-box; }
-.flow-graph-socket.is-kind-goal span { background: #d0ad72; }
-.flow-graph-socket.is-kind-checkpoint span { background: #7a9aab; }
-.flow-graph-socket.is-kind-goal.is-connected span { background: #e8c994; }
-.flow-graph-socket.is-kind-checkpoint.is-connected span { background: #a8c5d4; }
-.flow-graph-socket.is-kind-goal:hover span, .flow-graph-socket.is-kind-goal:focus-visible span { background: #e8c994; box-shadow: 0 0 0 2px #d0ad7280; }
-.flow-graph-socket.is-kind-checkpoint:hover span, .flow-graph-socket.is-kind-checkpoint:focus-visible span { background: #a8c5d4; box-shadow: 0 0 0 2px #7a9aab80; }
-.flow-graph-socket.is-compatible.is-kind-goal span { background: #f2dfb4; box-shadow: 0 0 0 2px #d0ad72aa; }
-.flow-graph-socket.is-compatible.is-kind-checkpoint span { background: #c5dde8; box-shadow: 0 0 0 2px #7a9aabaa; }
-.flow-graph-socket.is-target.is-kind-goal span { background: #f8ebce; box-shadow: 0 0 0 3px #d0ad72cc; }
-.flow-graph-socket.is-target.is-kind-checkpoint span { background: #d8ebf2; box-shadow: 0 0 0 3px #7a9aabcc; }
-.flow-graph.is-connecting .flow-graph-node-body { cursor: default; }
-.flow-graph-wire-preview { z-index: 4; }
-.flow-graph-wire-preview path { fill: none; stroke: #efb26a; stroke-width: 2.5px; stroke-dasharray: 6 4; }
-.flow-graph-wire-preview path.is-kind-goal { stroke: #d0ad72; }
-.flow-graph-wire-preview path.is-kind-checkpoint { stroke: #7a9aab; }
-.flow-graph-wire-preview path.is-snapped { stroke-dasharray: none; filter: brightness(1.15); }
 .flow-graph-node-description { position: absolute; top: 76px; left: 11px; right: 11px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #a8a8a8; font-size: 10px; line-height: 15px; }
 .flow-graph-node.is-goal .flow-graph-node-description { top: 73px; }
 .flow-graph-node-description.is-empty { color: #909090; }
@@ -124,44 +84,7 @@
 .flow-graph-legend i.is-entry { background: #7b956b; }
 .flow-graph-legend i.is-checkpoint { background: #6c8da0; }
 .flow-graph-legend i.is-goal { background: #ba9860; }
-.flow-graph-group { position: absolute; pointer-events: none; border: 1px solid #70707080; border-radius: 7px; background: #ffffff04; }
-.flow-graph-group.is-selected { border-color: #d59d57; background: #efa65308; }
-.flow-graph-group.is-moving { border: 1px solid #efb26a; background: #efa65312; box-shadow: 0 0 0 1px #efb26a55; }
-.flow-workspace .flow-graph .flow-graph-group-heading { position: absolute; z-index: 3; top: 3px; left: 10px; display: flex; align-items: center; gap: 15px; height: 24px; padding: 2px 5px; border: 0; border-radius: 3px; background: transparent; color: #bababa; font-size: 11px; pointer-events: auto; cursor: grab; touch-action: none; }
-.flow-workspace .flow-graph .flow-graph-group-heading:hover { background: #ffffff0a; }
-.flow-graph-group-heading span { font-size: 10px; color: #909090; flex-shrink: 0; }
-.flow-graph-group-heading .flow-graph-group-name-label { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: inherit; }
-.flow-graph-group-name-input { position: absolute; z-index: 3; top: 3px; left: 10px; height: 24px; box-sizing: border-box; padding: 2px 5px; border: 1px solid #efa653; border-radius: 3px; outline: none; background: #272727; color: #e8e8e8; font: inherit; font-size: 11px; pointer-events: auto; user-select: text; }
-.flow-graph-group.is-moving .flow-graph-group-heading { cursor: grabbing; color: #efb26a; }
-.flow-graph-selection-box { position: absolute; z-index: 5; pointer-events: none; border: 1px solid #efa653; background: #efa65320; }
-.flow-graph-knife-preview { position: absolute; z-index: 6; inset: 0; overflow: visible; pointer-events: none; fill: none; stroke: #fa7777; stroke-width: 2px; }
-.flow-graph-knife-preview polyline { stroke-dasharray: 5 3; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
-.flow-graph-knife-preview image { filter: drop-shadow(0 1px 1px #0009); }
-.flow-graph.is-cutting .flow-graph-viewport, .flow-graph.is-cutting .flow-graph-viewport * { cursor: none !important; }
-.flow-graph.is-panning .flow-graph-viewport, .flow-graph.is-panning .flow-graph-viewport * { cursor: grabbing !important; }
-.flow-graph-viewport { touch-action: none; user-select: none; }
 @media (max-width: 1000px) { .flow-graph-count { display: none; } .flow-graph-toolbar { flex-wrap: wrap; } }
-.flow-node-menu {
-  position: fixed;
-  z-index: 1000;
-  min-width: 190px;
-  max-width: calc(100vw - 16px);
-  max-height: calc(100vh - 16px);
-  overflow-y: auto;
-  padding: 4px;
-  border: 1px solid var(--border);
-  border-radius: 0;
-  background: var(--fl-panel-2);
-  color: var(--text);
-  font-family: -apple-system, 'PingFang SC', 'Segoe UI', sans-serif;
-  font-size: var(--fl-font-sm);
-  line-height: 1.5;
-  box-shadow: 0 10px 32px rgba(0, 0, 0, .55);
-}
-.flow-node-menu-title { max-width: 260px; padding: 4px 10px 6px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: var(--fl-font-xs); color: var(--fl-faint); border-bottom: 1px solid var(--border); margin-bottom: 4px; }
-.flow-node-menu button { display: block; width: 100%; padding: 5px 10px; border: 0; border-radius: 0; background: transparent; color: inherit; font: inherit; text-align: left; white-space: nowrap; cursor: pointer; }
-.flow-node-menu button:hover:not(:disabled), .flow-node-menu button:focus-visible { background: var(--fl-hover); color: var(--text-bright); outline: none; }
-.flow-node-menu button:disabled { opacity: .4; cursor: default; }
 
 .flow-graph-node.is-transition .flow-graph-node-header { background: #4e6862; color: #e1ece8; }
 .flow-graph-node.is-transition .flow-graph-ports { position: absolute; inset: 0; height: auto; display: block; padding: 0; }

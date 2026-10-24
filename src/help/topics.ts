@@ -1,3 +1,4 @@
+import nodeEditor from './docs/node-editor.md?raw'
 import collaborationService from './docs/collaboration-service.md?raw'
 import collaborationGuide from './docs/collaboration-guide.md?raw'
 import collaborationProgramming from './docs/collaboration-programming.md?raw'
@@ -30,6 +31,7 @@ import about from './docs/about.md?raw'
 export type HelpTopicId =
   | 'collaboration-guide'
   | 'collaboration-service'
+  | 'node-editor'
   | 'collaboration-programming'
   | 'browser-cache'
   | 'activity-list'
@@ -71,6 +73,7 @@ export type HelpTopic = {
 }
 
 export const HELP_TOPICS: HelpTopic[] = [
+  {id:'node-editor',title:'通用节点编辑器接入规范',group:'开始',audience:'dev',inDocs:true,body:nodeEditor},
   { id:'collaboration-guide',title:'连接与协作',group:'开始',audience:'user',inDocs:true,body:collaborationGuide },
   { id:'collaboration-service',title:'工程服务与多人协作',group:'开始',audience:'both',inDocs:true,body:collaborationService },
   { id:'collaboration-programming',title:'多人协作编程指南',group:'开始',audience:'dev',inDocs:true,body:collaborationProgramming },

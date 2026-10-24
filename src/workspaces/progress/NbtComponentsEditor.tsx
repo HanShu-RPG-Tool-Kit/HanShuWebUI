@@ -1,5 +1,5 @@
 import {useState, useRef, type CSSProperties} from 'react'
-import {NodeContextMenu, type NodeMenuItem} from './NodeContextMenu'
+import {NodeContextMenu, type NodeMenuItem} from '../../nodeEditor/ContextMenu'
 import {NBT_TYPES, defaultNbt, readNbt, readComponents, type NbtValue, type NbtType, type ItemComponents} from './tnbtJson'
 import {ItemComponentCards} from './itemComponents/ItemComponentCards'
 import './ItemEditor.css'

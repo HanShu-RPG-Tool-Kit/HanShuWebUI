@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type MouseEvent } from 'react'
-import { NodeContextMenu, type NodeMenuItem } from './NodeContextMenu'
+import { NodeContextMenu, type NodeMenuItem } from '../../nodeEditor/ContextMenu'
 import { droppedFiles, shouldAcceptDrop } from '../../drag/dragPayload'
 import {
   FLOW_PACKAGE_NAMES,

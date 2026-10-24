@@ -164,3 +164,7 @@ Goal / Predicate 的 `kind`（人工、计数、信号、等待阶段、外部�
 - 信号与模拟：`src/workspaces/progress/signals.ts`
 - 画布创建：`src/workspaces/progress/canvas.ts`
 - 回归：`npm run test:progress`（`scripts/verify-progress-model.ts`）
+
+## 画布实现与扩展
+
+进度画布使用 React Flow 上的 HanShu 通用节点编辑器。`.hflow` 仍是本页定义的文档，适配器位于 `progress/graphAdapter.ts`，节点外观与模拟位于进度模块；框选、连线、小刀、Group、注释及排版共用 `src/nodeEditor/`。新增编辑器遵循[通用节点编辑器接入规范](#node-editor)，不得复制原来的手写画布。

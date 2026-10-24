@@ -1,0 +1,37 @@
+.node-editor { position:relative; flex:1; min-width:0; min-height:150px; overflow:hidden; background:#222; --xy-background-color:#222; --xy-node-background-color:transparent; --xy-node-border:0; --xy-edge-stroke:#a6a6a6; --xy-selection-background-color:#efa65320; --xy-selection-border:1px solid #efa653; }
+.node-editor .react-flow__node-content, .node-editor .react-flow__node-group { padding:0; border:0; border-radius:0; background:transparent; box-shadow:none; }
+.node-editor .react-flow__node-content.selected { box-shadow:none; }
+.node-editor-content { position:relative; width:100%; height:100%; }
+.node-editor .node-editor-port { z-index:4; width:12px; height:12px; min-width:12px; min-height:12px; background:#7a9aab; border:2px solid #171717; border-radius:50%; }
+.node-editor .node-editor-port:hover, .node-editor .node-editor-port.connectingto { filter:brightness(1.4); box-shadow:0 0 0 2px #ffffff40; }
+.node-editor-wire path { fill:none; }
+.node-editor-wire-line { stroke:#a6a6a6; stroke-width:2.5; }
+.node-editor-wire-shadow { stroke:#1118; stroke-width:5; }
+.node-editor-wire-hit { stroke:transparent; stroke-width:18; pointer-events:stroke; cursor:pointer; }
+.node-editor-wire.is-selected .node-editor-wire-line, .node-editor-wire:hover .node-editor-wire-line { stroke:#efb26a; }
+.node-editor-group-frame { width:100%;height:100%;box-sizing:border-box;border:1px solid #70707080;border-radius:7px;background:#ffffff04;pointer-events:none; }
+.node-editor-group-heading { position:absolute;top:3px;left:10px;display:flex;gap:15px;align-items:center;max-width:calc(100% - 20px);height:24px;padding:2px 5px;color:#bababa;font:11px sans-serif;cursor:grab;pointer-events:auto; }
+.node-editor-group-heading span {overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.node-editor-group-heading small { white-space:nowrap;opacity:.65; }
+.node-editor .react-flow__node-group.dragging .node-editor-group-frame { border-color:#efb26a;background:#efa65312; }
+.node-editor-group-name {position:absolute;top:3px;left:10px;max-width:calc(100% - 20px);height:24px;pointer-events:auto;box-sizing:border-box;padding:2px 5px;border:1px solid #efa653;background:#272727;color:#eee;font:11px sans-serif;}
+.node-editor-knife {position:absolute;z-index:20;width:100vw;height:100vh;overflow:visible;pointer-events:none;fill:none;stroke:#fa7777;stroke-width:2;}
+.node-editor-knife polyline {stroke-dasharray:5 3;stroke-linecap:round;stroke-linejoin:round;}
+.node-editor.is-cutting, .node-editor.is-cutting * {cursor:none!important;}
+.node-editor .react-flow__connection-path { stroke:#efb26a;stroke-width:2.5; }
+.node-editor-note { --note-bg:#30383e;--note-line:#59656e;--note-ink:#c4cdd3;position:relative;box-sizing:border-box;height:100%;border:1px solid var(--note-line);border-radius:3px;background:var(--note-bg);color:var(--note-ink);font:12px/1.6 sans-serif; }
+.node-editor-note.is-sand {--note-bg:#3b3830;--note-line:#6e6552;--note-ink:#d4cbbb;}
+.node-editor-note.is-sage {--note-bg:#303b34;--note-line:#536d5d;--note-ink:#bfcec3;}
+.node-editor-note.is-mauve {--note-bg:#3b333e;--note-line:#6c5973;--note-ink:#cfc1d4;}
+.node-editor-note.is-selected {border-color:#efa653;box-shadow:0 0 0 1px #efa653;}
+.node-editor-note header {height:30px;padding:5px 10px;box-sizing:border-box;border-bottom:1px solid var(--note-line);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;}
+.node-editor-note p {margin:0;padding:8px 10px;white-space:pre-wrap;overflow:auto;height:calc(100% - 30px);box-sizing:border-box;}
+.node-editor-note-edit {display:flex;flex-direction:column;height:100%;}
+.node-editor-note-edit input,.node-editor-note-edit textarea {width:100%;min-width:0;box-sizing:border-box;border:0;background:transparent;color:inherit;font:inherit;outline:none;}
+.node-editor-note-edit input {height:30px;padding:5px 10px;border-bottom:1px solid var(--note-line);}
+.node-editor-note-edit textarea {flex:1;resize:none;padding:8px 10px;}
+
+.node-editor-group-frame.is-selected {border-color:#d59d57;background:#efa65308;}
+
+.node-editor-note-resize{position:absolute;right:0;bottom:0;width:19px;height:19px;padding:2px;z-index:4;border:0;background:transparent;color:inherit;cursor:nwse-resize;}
+.node-editor-note-resize svg{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:1;}

@@ -1,3 +1,4 @@
+import './ContextMenu.css'
 import { useEffect, useLayoutEffect, useRef, useState, useId, type KeyboardEvent, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 
@@ -14,12 +15,11 @@ function visibleBounds(boundary?: RefObject<HTMLElement | null>): MenuBounds {
   let element = boundary?.current ?? null
   while (element && element !== document.body) {
     const style = getComputedStyle(element), rect = element.getBoundingClientRect()
-    const editor = element.matches('.item-editor, .flow-group-body')
-    if (editor || /auto|scroll|hidden|clip/.test(style.overflowX)) {
+    if (/auto|scroll|hidden|clip/.test(style.overflowX)) {
       bounds.left = Math.max(bounds.left, rect.left + element.clientLeft)
       bounds.right = Math.min(bounds.right, rect.left + element.clientLeft + element.clientWidth)
     }
-    if (editor || /auto|scroll|hidden|clip/.test(style.overflowY)) {
+    if (/auto|scroll|hidden|clip/.test(style.overflowY)) {
       bounds.top = Math.max(bounds.top, rect.top + element.clientTop)
       bounds.bottom = Math.min(bounds.bottom, rect.top + element.clientTop + element.clientHeight)
     }

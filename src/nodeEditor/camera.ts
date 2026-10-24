@@ -1,4 +1,4 @@
-import type { FlowPosition } from './model'
+import type { Point as FlowPosition } from './types'
 
 export type CanvasCamera = FlowPosition & { zoom: number }
 export const MIN_CANVAS_ZOOM = .2
