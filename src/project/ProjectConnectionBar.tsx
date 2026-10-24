@@ -5,6 +5,7 @@ import { loadServiceProject, refreshServiceProject, refreshProjectManifest } fro
 import { getProjectSession, setProjectSession, useProjectSession } from './projectSession'
 import { setBoundProject } from './bindingBus'
 import { emptyWorkspace } from '../workspace'
+import { defaultHsSeed } from '../hanshu/defaultSeed'
 import './project-connection.css'
 import { rememberProjectDraft, restoreProjectDraft } from './drafts'
 import { CollaborationWidget } from './CollaborationWidget'
@@ -34,7 +35,7 @@ async function openClient(client: ProjectClient, initialName: string) {
     if (!client.writable) throw new Error('服务端工程尚未初始化，请由管理者先打开一次。')
     await client.apply([
       { op: 'write', path: 'project.json', data: JSON.stringify({ version: 1, id: client.snapshot.projectId, name: initialName || '新工程' },null,2) },
-      { op: 'write', path: 'src/hanshu/未命名剧本.hs', data: `标题：${initialName || '新工程'}\n\n第一场\n\n` },
+      { op: 'write', path: 'src/hanshu/未命名剧本.hs', data: defaultHsSeed(initialName || '新工程') },
     ])
     await client.release()
   }

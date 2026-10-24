@@ -346,10 +346,12 @@ assert.equal(wheeling(0, 500, 900, 0), false, 'deltaY = 0：纵向没有穿透�
 // `.hs`：不能有任何语法诊断（缺闭合符 / 说话人换行都算）
 const hsSeed = seedOf('hs')
 assert.deepEqual(analyzeHsDiagnostics(hsSeed), [], '.hs 种子不该有语法诊断')
-assert.ok(hsSeed.startsWith('标题：新剧本\n'), '.hs 种子应以标题行开头')
+assert.ok(hsSeed.startsWith('# 新剧本\n'), '.hs 种子应以注释标题行开头')
 assert.deepEqual(collectSourceKeys(hsSeed, '新剧本.hs'), [], '.hs 种子不该带已成的键')
 // 场景行用带标签注释：#【场景】是文档承认的形态，裸的【场景】不是
 assert.ok(hsSeed.includes('#【场景】'), '.hs 种子的场景行应是带标签注释')
+assert.ok(hsSeed.includes('narrator:'), '.hs 种子应含合法对白 speaker')
+assert.ok(/\n\/\/\n/.test(hsSeed) || hsSeed.includes('//\n'), '.hs 种子对白应正确以 // 收尾')
 
 // `.char`：每个非注释行都是 key:msg//，且解析出恰好一个槽
 const charSeed = seedOf('char', '林砚')

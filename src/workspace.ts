@@ -1,4 +1,5 @@
 import { isTextAssetName } from './i18n/textMap'
+import { defaultHsSeed } from './hanshu/defaultSeed'
 
 const WORKSPACE_KEY = 'hanshu.workspace.v2'
 const LEGACY_DRAFT_KEY = 'hanshu.draft.v1'
@@ -407,14 +408,7 @@ export function loadWorkspace(): Workspace {
     return migrated
   }
 
-  const fresh = defaultWorkspace(
-    `标题：汉书
-
-第一场 · 雨巷
-
-【场景】黄昏，青石巷。雨丝斜斜。
-`,
-  )
+  const fresh = defaultWorkspace(defaultHsSeed('汉书'))
   saveWorkspace(fresh)
   return fresh
 }

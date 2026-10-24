@@ -23,6 +23,7 @@ import {
   type AllowedExtension,
   type PySrcKind,
 } from './workspace'
+import { defaultHsSeed } from './hanshu/defaultSeed'
 import type { ExplorerIconKind } from './explorerIcons'
 import { createFlow } from './workspaces/progress/model'
 import { createFlowDocument } from './workspaces/progress/storage'
@@ -236,11 +237,10 @@ export const NEW_FILE_TYPES: readonly NewFileType[] = [
     group: 'source',
     defaultBase: '新剧本',
     /*
-     * 与 `projectFs.createProjectFromPicker` 的默认剧本同形 —— 新建工程的第一个 `.hs`
-     * 就是这个骨架，两条路不该长得不一样。场景行用**带标签注释** `#【场景】`（文档承认的
-     * 形态，编辑器认得它），比裸文本 `【场景】` 有用。
+     * 与新工程默认 `.hs`、本地空工作区种子同形（`defaultHsSeed`）。
+     * 场景行用带标签注释 `#【场景】`（编辑器认得）；对白 / 选项须符合当前 .hs 语法。
      */
-    seed: (base) => `标题：${base.trim()}\n\n第一场 · \n\n#【场景】\n`,
+    seed: (base) => defaultHsSeed(base),
   },
   {
     id: 'char',
