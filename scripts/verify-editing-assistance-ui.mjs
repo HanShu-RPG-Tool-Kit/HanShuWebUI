@@ -31,7 +31,7 @@ try {
       send(text){const r=JSON.parse(text);window.calls.push(r);let result;
         if(r.method==='commands.complete')result={version:1,items:[{text:'give',start:0,end:r.params.cursor}]};
         else if(r.method==='sounds.preview')result={version:1,previewId:'one'};
-        else if(r.method==='sounds.list'){const all=Array.from({length:36},(_,i)=>({id:i?'minecraft:music.test_'+i:'minecraft:music.menu'}));result={version:1,total:36,items:all.slice(r.params.offset,r.params.offset+32)}}
+        else if(r.method==='sounds.list'){const all=Array.from({length:260},(_,i)=>({id:i?'minecraft:music.test_'+i:'minecraft:music.menu'}));result={version:1,total:260,items:all.slice(r.params.offset,r.params.offset+r.params.limit)}}
         else result={version:1,total:1,items:[{id:'minecraft:speed',name:'速度'}]};
         setTimeout(()=>this.onmessage?.({data:JSON.stringify({type:'response',id:r.id,ok:true,result})}),20)
       }};
@@ -57,7 +57,9 @@ try {
   assert(box.x >= 0 && box.y >= 0 && box.x + box.width <= 700 && box.y + box.height <= 500, JSON.stringify(box))
   const anchor = await page.getByRole('combobox', { name: '音效', exact: true }).boundingBox()
   assert(box.y + box.height <= anchor.y || box.y >= anchor.y + anchor.height, 'picker must not cover its input')
-  assert.equal(await page.locator('.game-assist-play').count(),32)
+  await page.waitForFunction(() => document.querySelectorAll('.game-assist-play').length === 260)
+  assert.equal(await page.getByRole('button', {name:'加载更多',exact:true}).count(),0)
+  assert.equal(await page.getByRole('option', {name:'minecraft:music.test_259',exact:true}).count(),1)
   assert(await page.locator('.game-assist-picker').evaluate(node => node.scrollHeight > node.clientHeight && getComputedStyle(node).scrollbarWidth === 'thin'))
   await page.screenshot({path:'node_modules/.cache/assistance-ui/sound-picker.png'})
   await page.getByRole('button', { name: '试听 minecraft:music.menu', exact: true }).click()

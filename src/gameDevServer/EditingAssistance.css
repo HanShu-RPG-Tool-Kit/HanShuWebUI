@@ -48,8 +48,6 @@
 .game-assist-play svg, .game-assist-check { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .game-assist-check { flex: none; width: 13px; }
 .game-assist-picker footer { display: flex; justify-content: space-between; align-items: center; padding: 5px 8px 2px; margin-top: 3px; border-top: 1px solid var(--border-soft, #ffffff12); color: var(--text-dim, #aaa); font-size: 11px; }
-.game-assist-picker footer button { padding: 3px 6px; border: 0; border-radius: 2px; background: transparent; color: inherit; font: inherit; }
-.game-assist-picker footer button:hover { background: var(--fl-hover, #424242); }
 .game-assist-picker p { font-size: 12px; margin: 10px 8px; color: var(--text-dim, #aaa); }
 .game-assist-picker .game-assist-error { color: #d6a18b; }
 .game-assist-completions code { font-size: 13px; overflow-wrap: anywhere; }

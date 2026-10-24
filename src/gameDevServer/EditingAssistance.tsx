@@ -44,7 +44,6 @@ export function GameResourceInput({ kind, value, disabled, onChange, label }: {
   const connected = useGameConnection()
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState('')
-  const [offset, setOffset] = useState(0)
   const [page, setPage] = useState<Page | null>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
@@ -61,22 +60,33 @@ export function GameResourceInput({ kind, value, disabled, onChange, label }: {
     const current = ++generation.current
     setLoading(true); setError(''); setSelected(-1)
     const timer = setTimeout(() => {
-      void controlRequest(`${kind}.list`, { query, offset, limit: 32 }).then(result => {
-        if (generation.current !== current) return
-        const response = result as Page
-        if (!response || response.version !== 1 || !Array.isArray(response.items)
-          || !Number.isInteger(response.total) || response.total < 0
-          || response.items.some(entry => !entry || typeof entry.id !== 'string'
-            || (entry.name !== undefined && typeof entry.name !== 'string')
-            || (entry.icon !== undefined && (typeof entry.icon !== 'string' || !entry.icon.startsWith('data:image/png;base64,')))))
-          throw new Error('游戏返回了不支持的目录格式')
-        setPage(previous => offset && previous ? { ...response, items: [...previous.items, ...response.items] } : response)
-      }).catch(reason => {
+      void (async () => {
+        const entries: Entry[] = []
+        let total = 0
+        do {
+          const result = await controlRequest(`${kind}.list`, { query, offset: entries.length, limit: 128 })
+          if (generation.current !== current) return
+          const response = result as Page
+          if (!response || response.version !== 1 || !Array.isArray(response.items)
+            || !Number.isInteger(response.total) || response.total < 0
+            || response.items.some(entry => !entry || typeof entry.id !== 'string'
+              || (entry.name !== undefined && typeof entry.name !== 'string')
+              || (entry.icon !== undefined && (typeof entry.icon !== 'string' || !entry.icon.startsWith('data:image/png;base64,')))))
+            throw new Error('游戏返回了不支持的目录格式')
+          total = response.total
+          if (!response.items.length && entries.length < total) throw new Error('游戏目录未完整返回，请重新展开重试')
+          entries.push(...response.items)
+          setPage({ ...response, items: [...entries] })
+          // Keep the first results usable while the remaining transport batches arrive.
+          setLoading(false)
+        } while (entries.length < total && generation.current === current)
+      })().catch(reason => {
         if (generation.current === current) setError(reason instanceof Error ? reason.message : String(reason))
       }).finally(() => { if (generation.current === current) setLoading(false) })
     }, 160)
     return () => { clearTimeout(timer); generation.current++ }
-  }, [open, connected, kind, query, offset])
+  }, [open, connected, kind, query])
+
   useEffect(() => {
     if (!open) return
     const close = (event: Event) => {
@@ -96,7 +106,7 @@ export function GameResourceInput({ kind, value, disabled, onChange, label }: {
   }
   const expand = () => {
     if (!connected || disabled || open) return
-    setQuery(''); setOffset(0); setPage(null); setSelected(-1); setOpen(true)
+    setQuery(''); setPage(null); setSelected(-1); setOpen(true)
   }
   const choose = (entry: Entry) => {
     if (disabled) return
@@ -111,7 +121,7 @@ export function GameResourceInput({ kind, value, disabled, onChange, label }: {
       placeholder={kind === 'effects' ? '搜索效果名称或 ID' : '搜索音效 ID'}
       onFocus={expand} onClick={expand}
       onChange={event => {
-        onChange(event.target.value); setQuery(event.target.value); setOffset(0); setSelected(-1)
+        onChange(event.target.value); setQuery(event.target.value); setSelected(-1)
         if (connected) setOpen(true)
       }}
       onKeyDown={event => {
@@ -146,7 +156,7 @@ export function GameResourceInput({ kind, value, disabled, onChange, label }: {
         {!loading && !error && !entries.length && <p>没有匹配项，可直接填写 ID</p>}
       </div>
       {error && <p className="game-assist-error" role="alert">{error}</p>}
-      {page && <footer><span>{page.total} 项</span>{entries.length < page.total && <button type="button" disabled={loading} onMouseDown={event => event.preventDefault()} onClick={() => setOffset(entries.length)}>加载更多</button>}</footer>}
+      {page && <footer><span>{page.total} 项</span></footer>}
     </Floating>}
   </div>
 }
