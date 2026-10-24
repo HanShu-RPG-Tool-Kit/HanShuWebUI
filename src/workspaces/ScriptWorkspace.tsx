@@ -9,6 +9,7 @@ import {
 } from 'react'
 import Editor, { type OnMount } from '@monaco-editor/react'
 import { Explorer } from '../Explorer'
+import { PanelDock, type DockPanelSpec } from '../ui/PanelDock'
 import {
   findNewFileType,
   newFileName,
@@ -275,12 +276,6 @@ export const ScriptWorkspace = forwardRef<
   const [agentOpen, setAgentOpen] = useState(true)
   const [agentDiffs, setAgentDiffs] = useState<AgentDiffSnapshot[]>([])
   const [diffOpen, setDiffOpen] = useState(false)
-  const [agentPercent, setAgentPercent] = useState(() => {
-    const saved = Number(localStorage.getItem('hanshu.agentPercent'))
-    return Number.isFinite(saved) && saved >= 25 && saved <= 70 ? saved : 45
-  })
-  const splitRef = useRef<HTMLDivElement>(null)
-  const draggingRef = useRef(false)
   /** 正在拖录音棚的右把手（存按下时的横向起点与宽度） */
   const studioDragRef = useRef<{ startX: number; startWidth: number } | null>(
     null,
@@ -2323,28 +2318,14 @@ export const ScriptWorkspace = forwardRef<
         setStudioWidth(next)
         return
       }
-      if (!draggingRef.current || !splitRef.current) return
-      const rect = splitRef.current.getBoundingClientRect()
-      if (rect.width <= 0) return
-      const raw = ((event.clientX - rect.left) / rect.width) * 100
-      const next = Math.min(70, Math.max(25, raw))
-      setAgentPercent(next)
+      return
     }
     const onUp = () => {
-      if (studioDragRef.current) {
-        studioDragRef.current = null
-        document.body.classList.remove('is-resizing')
-        setStudioWidth((current) => {
-          localStorage.setItem('hanshu.studioWidth', String(Math.round(current)))
-          return current
-        })
-        return
-      }
-      if (!draggingRef.current) return
-      draggingRef.current = false
+      if (!studioDragRef.current) return
+      studioDragRef.current = null
       document.body.classList.remove('is-resizing')
-      setAgentPercent((current) => {
-        localStorage.setItem('hanshu.agentPercent', String(Math.round(current)))
+      setStudioWidth((current) => {
+        localStorage.setItem('hanshu.studioWidth', String(Math.round(current)))
         return current
       })
     }
@@ -3136,76 +3117,149 @@ export const ScriptWorkspace = forwardRef<
     })
   }, [titleName, packageName, project?.folderName, projectBusy, onChromeInfo])
 
+  const dockPanels: DockPanelSpec[] = [
+    {
+      id: 'explorer',
+      defaultPlacement: 'left' as const,
+      defaultSize: 280,
+      render: (dock) => (
+          <Explorer
+            workspace={workspace}
+            activeScriptId={workspace.activeScriptId}
+            activeAssetId={workspace.activeAssetId}
+            boundPackageId={project?.manifest.id ?? null}
+            boundFolderName={project?.folderName ?? null}
+            onOpenScript={openScript}
+            onOpenAsset={openAsset}
+            onTogglePackage={handleTogglePackage}
+            onToggleAssets={handleToggleAssets}
+            onNewPackage={handleNewPackage}
+            onNewFile={handleNewFile}
+            newFileMenuRequest={newFileMenuRequest}
+            onRenamePackage={handleRenamePackage}
+            onRenameScript={handleRenameScript}
+            onDeletePackage={handleDeletePackage}
+            onDeleteScript={handleDeleteScript}
+            onDeleteAsset={handleDeleteAsset}
+            onNewAssetFolder={handleNewAssetFolder}
+            onDeleteAssetFolder={handleDeleteAssetFolder}
+            onImportAssets={(packageId, files, targetDir) => {
+              void handleImportAssets(packageId, files, targetDir)
+            }}
+            onGeneratePlaceholderVoice={(scriptId) => {
+              void handleGeneratePlaceholderVoice(scriptId)
+            }}
+            onDropIntoFolder={handleDropIntoFolder}
+            placement={dock.placement}
+            onTitlePointerDown={dock.onTitlePointerDown}
+            onRedock={dock.onRedock}
+          />
+      ),
+    },
+    {
+      id: 'agent',
+      visible: agentOpen,
+      defaultPlacement: 'left' as const,
+      defaultSize: 360,
+      minSize: 220,
+      render: (dock) => (
+        <AgentPanel
+          open={agentOpen}
+          host={agentHost}
+          onClose={() => setAgentOpen(false)}
+          placement={dock.placement}
+          onTitlePointerDown={dock.onTitlePointerDown}
+          onRedock={dock.onRedock}
+          getContext={() => ({
+            packageName,
+            fileName: titleName,
+            content: valueRef.current,
+            selection: getEditorSelection(),
+          })}
+        />
+      ),
+    },
+    {
+      id: 'roles',
+      visible: editingHanshu,
+      defaultPlacement: 'right' as const,
+      defaultSize: 190,
+      minSize: 140,
+      maxSize: 420,
+      render: (dock) => (
+          <aside className="role-panel" aria-label="备选角色栏">
+            <div
+              className="role-panel-header is-draggable"
+              onPointerDown={(event) => {
+                if (
+                  event.target instanceof Element &&
+                  event.target.closest('button, input, label, a, textarea, select')
+                ) {
+                  return
+                }
+                dock.onTitlePointerDown(event)
+              }}
+            >
+              <span
+                className="role-panel-title"
+                title={dock.placement === 'float' ? '拖动标题可停靠到边缘；松手在中间则保持弹层' : '拖动标题可停靠到左、右、上、下，拖到中间变成弹层'}
+              >
+                备选角色
+              </span>
+              {dock.onRedock && (
+                <button
+                  type="button"
+                  className="panel-dock-redock"
+                  title="停靠回上次的边缘"
+                  onClick={dock.onRedock}
+                >
+                  停靠
+                </button>
+              )}
+            </div>
+            <ul className="role-list">
+              {Array.from({ length: SPEAKER_SLOT_COUNT }, (_, index) => (
+                <li key={index} className="role-slot">
+                  <button
+                    type="button"
+                    className="role-index"
+                    title={
+                      roles[index].trim()
+                        ? `${numpadHint(index)} · 插入`
+                        : numpadHint(index)
+                    }
+                    disabled={!roles[index].trim()}
+                    onClick={() => insertRole(index)}
+                  >
+                    {numpadLabel(index)}
+                  </button>
+                  <input
+                    className="role-input"
+                    value={roles[index]}
+                    placeholder="空"
+                    spellCheck={false}
+                    onChange={(event) =>
+                      updateRole(index, event.target.value)
+                    }
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault()
+                        insertRole(index)
+                      }
+                    }}
+                  />
+                </li>
+              ))}
+            </ul>
+          </aside>
+      ),
+    },
+  ]
+
   return (
     <div className="script-workspace">
-      <div className="workspace">
-        <Explorer
-          workspace={workspace}
-          activeScriptId={workspace.activeScriptId}
-          activeAssetId={workspace.activeAssetId}
-          boundPackageId={project?.manifest.id ?? null}
-          boundFolderName={project?.folderName ?? null}
-          onOpenScript={openScript}
-          onOpenAsset={openAsset}
-          onTogglePackage={handleTogglePackage}
-          onToggleAssets={handleToggleAssets}
-          onNewPackage={handleNewPackage}
-          onNewFile={handleNewFile}
-          newFileMenuRequest={newFileMenuRequest}
-          onRenamePackage={handleRenamePackage}
-          onRenameScript={handleRenameScript}
-          onDeletePackage={handleDeletePackage}
-          onDeleteScript={handleDeleteScript}
-          onDeleteAsset={handleDeleteAsset}
-          onNewAssetFolder={handleNewAssetFolder}
-          onDeleteAssetFolder={handleDeleteAssetFolder}
-          onImportAssets={(packageId, files, targetDir) => {
-            void handleImportAssets(packageId, files, targetDir)
-          }}
-          onGeneratePlaceholderVoice={(scriptId) => {
-            void handleGeneratePlaceholderVoice(scriptId)
-          }}
-          onDropIntoFolder={handleDropIntoFolder}
-        />
-
-        <div className="main-split" ref={splitRef}>
-          <AgentPanel
-            open={agentOpen}
-            host={agentHost}
-            style={
-              agentOpen
-                ? { flex: `0 0 ${agentPercent}%`, width: `${agentPercent}%` }
-                : undefined
-            }
-            onClose={() => setAgentOpen(false)}
-            getContext={() => ({
-              packageName,
-              fileName: titleName,
-              content: valueRef.current,
-              selection: getEditorSelection(),
-            })}
-          />
-
-          {agentOpen && (
-            <div
-              className="split-handle"
-              title="拖动调整 Agent / 编辑器 宽度"
-              onPointerDown={(event) => {
-                event.preventDefault()
-                draggingRef.current = true
-                document.body.classList.add('is-resizing')
-              }}
-            />
-          )}
-
-          <div
-            className="editor-column"
-            style={
-              agentOpen
-                ? { flex: `1 1 ${100 - agentPercent}%` }
-                : { flex: '1 1 auto' }
-            }
-          >
+      <PanelDock panels={dockPanels}>
+          <div className="editor-column">
           <div className="tabbar">
             <div className="tab active">
               <span>{titleName}</span>
@@ -3414,49 +3468,7 @@ export const ScriptWorkspace = forwardRef<
             )}
           </main>
           </div>
-        </div>
 
-        {editingHanshu && (
-          <aside className="role-panel" aria-label="备选角色栏">
-            <div className="role-panel-header">
-              <span>备选角色</span>
-            </div>
-            <ul className="role-list">
-              {Array.from({ length: SPEAKER_SLOT_COUNT }, (_, index) => (
-                <li key={index} className="role-slot">
-                  <button
-                    type="button"
-                    className="role-index"
-                    title={
-                      roles[index].trim()
-                        ? `${numpadHint(index)} · 插入`
-                        : numpadHint(index)
-                    }
-                    disabled={!roles[index].trim()}
-                    onClick={() => insertRole(index)}
-                  >
-                    {numpadLabel(index)}
-                  </button>
-                  <input
-                    className="role-input"
-                    value={roles[index]}
-                    placeholder="空"
-                    spellCheck={false}
-                    onChange={(event) =>
-                      updateRole(index, event.target.value)
-                    }
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') {
-                        event.preventDefault()
-                        insertRole(index)
-                      }
-                    }}
-                  />
-                </li>
-              ))}
-            </ul>
-          </aside>
-        )}
 
         {studioOpen && (
           <>
@@ -3501,7 +3513,7 @@ export const ScriptWorkspace = forwardRef<
             />
           </>
         )}
-      </div>
+      </PanelDock>
 
       {/*
         本地缓存（API KEY）**挂在工作区这一层**，不挂在录音棚里。

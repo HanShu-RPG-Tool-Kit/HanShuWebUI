@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import type { AssetFile, ScriptPackage, Workspace } from './workspace'
 import { isVoiceMapFile } from './workspace'
 import { packageLocationLabel, packageLocationTitle } from './project/projectLabel'
@@ -185,6 +185,12 @@ type ExplorerProps = {
     targetDir: string,
     source: DragSource,
   ) => void
+  /** 停靠位置。浮动时标题可以再拖回边缘。 */
+  placement?: 'left' | 'right' | 'top' | 'bottom' | 'float'
+  /** 拖标题栏。按钮和输入框上的按下不会进来。 */
+  onTitlePointerDown?: (event: ReactPointerEvent<HTMLElement>) => void
+  /** 仅浮动时提供，停回上次的边缘。 */
+  onRedock?: () => void
 }
 
 export function Explorer({
@@ -210,6 +216,9 @@ export function Explorer({
   onImportAssets,
   onGeneratePlaceholderVoice,
   onDropIntoFolder,
+  placement = 'left',
+  onTitlePointerDown,
+  onRedock,
 }: ExplorerProps) {
   const [menu, setMenu] = useState<{
     packageId: string
@@ -292,9 +301,36 @@ export function Explorer({
 
   return (
     <aside className="explorer" aria-label="资源管理器">
-      <div className="explorer-header">
-        <span>资源管理器</span>
+      <div
+        className={`explorer-header${onTitlePointerDown ? ' is-draggable' : ''}`}
+        onPointerDown={(event) => {
+          if (
+            event.target instanceof Element &&
+            event.target.closest('button, input, label, a, textarea, select')
+          ) {
+            return
+          }
+          onTitlePointerDown?.(event)
+        }}
+      >
+        <span
+          className="explorer-title"
+          title={
+            onTitlePointerDown
+              ? placement === 'float'
+                ? '拖动标题可停靠到边缘；松手在中间则保持弹层'
+                : '拖动标题可停靠到左、右、上、下，拖到中间变成弹层'
+              : '资源管理器'
+          }
+        >
+          资源管理器
+        </span>
         <div className="explorer-actions">
+          {onRedock && (
+            <button type="button" title="停靠回上次的边缘" onClick={onRedock}>
+              停靠
+            </button>
+          )}
           <button
             ref={headerButtonRef}
             type="button"
@@ -356,7 +392,9 @@ export function Explorer({
           />
         ))}
         {workspace.packages.length === 0 && (
-          <div className="explorer-empty">暂无资源，点击 +包 开始</div>
+          <div className="explorer-empty" title="暂无资源，点击 +包 开始">
+            暂无资源，点击 +包 开始
+          </div>
         )}
       </div>
 
@@ -827,7 +865,9 @@ function PackageNode({
           onClick={() => onOpenScript(script.id)}
           onDoubleClick={() => onRenameScript(script.id)}
           title={
-            isVoiceMapFile(script.name) ? '右键：生成空白 ogg' : '双击重命名'
+            isVoiceMapFile(script.name)
+              ? `${script.name} · 右键：生成空白 ogg`
+              : `${script.name} · 双击重命名`
           }
         >
           <ExplorerIcon kind={sourceIconKind(script)} />
@@ -891,7 +931,9 @@ function PackageNode({
     <li key={`kind-${kind}`} className="explorer-kind">
       <div className="explorer-kind-row">
         <ExplorerIcon kind="group" />
-        <span className="explorer-name">{groupDirPrefix(kind)}</span>
+        <span className="explorer-name" title={groupDirPrefix(kind)}>
+          {groupDirPrefix(kind)}
+        </span>
       </div>
       <ul className="explorer-files nested">
         {items.map(renderScriptRow)}
@@ -940,7 +982,7 @@ function PackageNode({
           className="explorer-label"
           onClick={() => onTogglePackage(pkg.id)}
           onDoubleClick={() => onRenamePackage(pkg.id)}
-          title="双击重命名；可拖入文件到包内 assets/"
+          title={`${pkg.name} · 双击重命名；可拖入文件到包内 assets/`}
         >
           <ExplorerIcon kind="package" />
           <span className="explorer-pkg-name">{pkg.name}</span>
@@ -979,7 +1021,9 @@ function PackageNode({
             })}
             {grouped.root.map(renderScriptRow)}
             {pkg.scripts.length === 0 && !pendingType && (
-              <li className="explorer-empty nested">空包</li>
+              <li className="explorer-empty nested" title="空包">
+                空包
+              </li>
             )}
           </ul>
 
@@ -1189,7 +1233,9 @@ function AssetFolderBlock({
             ),
           )}
           {dir.children.length === 0 && (
-            <li className="explorer-empty nested">空文件夹 · 拖入或 +夹</li>
+            <li className="explorer-empty nested" title="空文件夹 · 拖入或 +夹">
+              空文件夹 · 拖入或 +夹
+            </li>
           )}
         </ul>
       )}
