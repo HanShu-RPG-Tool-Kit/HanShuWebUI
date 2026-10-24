@@ -230,6 +230,13 @@ function respond(id: string, ok: boolean, result?: unknown, error?: string) {
 }
 
 async function handleRequest(req: ControlRequest) {
+  if(req.method==='entities.import'){
+    const handler=await import('./entityWorkbench')
+    // Other subscribed windows must remain silent: this write is addressed to one receiver.
+    if(!handler.acceptsEntityImport(req.params))return
+    try{respond(req.id,true,await handler.importEntityFromGame(req.params))}catch(error){respond(req.id,false,undefined,String(error))}
+    return
+  }
   pushLog(
     'request',
     `→ request #${req.id} ${req.method}`,
@@ -460,6 +467,7 @@ export function ensureGameDevControlStarted(): void {
   prefs = loadGameDevServerPrefs()
   void import('./itemSnapshotRefresh').then((m) => m.ensureItemSnapshotRefreshStarted())
   void import('./itemEdit').then((m) => m.ensureItemEditNotifyStarted())
+  void import('./entityWorkbench').then(m=>m.ensureEntityWorkbenchStarted())
   if (prefs.autoConnect) {
     setPhase('connecting')
     void refreshPortal().then(() => {

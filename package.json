@@ -85,6 +85,7 @@
     "test:editing-assistance:ui": "node scripts/verify-editing-assistance-ui.mjs",
     "test:entity": "node scripts/run-verification.mjs scripts/verify-entity.ts",
     "test:entity:ui": "node scripts/verify-entity-ui.mjs",
+    "test:entity-workbench:ui": "node scripts/verify-entity-workbench-ui.mjs",
     "test:entity-project:ui": "node scripts/verify-entity-project-ui.mjs",
     "test:node-directions": "node scripts/run-verification.mjs scripts/verify-node-directions.ts",
     "test:node-directions:ui": "node scripts/verify-node-directions-ui.mjs",

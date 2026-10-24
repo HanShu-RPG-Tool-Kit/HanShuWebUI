@@ -12,7 +12,7 @@ import { FlowExplorer } from './progress/FlowExplorer'
 import { PageList } from './progress/PageList'
 import { EditorSplit } from './progress/EditorSplit'
 import { closeAllInGroup, closeInGroup, closeOthersInGroup, closeRightInGroup, focusedGroupId, focusGroup, joinGroups, moveTab, normalizeGroups, openAsRightSplit, openInGroup, openOppositeToKey, readGroup, setSplitRatio, splitTab, togglePinInGroup, type GroupId, type SplitZone } from './progress/editorGroups'
-import { ensurePackageSections, folderPath, isBuiltinGoalFolder, isEntityDocument, isItemDocument, isItemLibraryTableKey, ITEM_LIBRARY_TABLE_KEY, isKitDocument, isNavigationDocument, isProgressDocument, isScriptDocument, isSectionFolder, packageAcceptsImportFile, packageAllowsDocuments, packageDocumentExt, requireAvailableName, renameFlowEntry, resourceName, stripItemLibraryTable, uniqueDocumentName, withItemLibraryTable } from './progress/library'
+import { ensurePackageSections, folderPath, isBuiltinGoalFolder, isEntityDocument, isItemDocument, isItemLibraryTableKey, isLibraryTableKey, isEntityLibraryTableKey, ENTITY_LIBRARY_TABLE_KEY, ITEM_LIBRARY_TABLE_KEY, isKitDocument, isNavigationDocument, isProgressDocument, isScriptDocument, isSectionFolder, packageAcceptsImportFile, packageAllowsDocuments, packageDocumentExt, requireAvailableName, renameFlowEntry, resourceName, stripLibraryTables, uniqueDocumentName, withLibraryTables } from './progress/library'
 import { createFlowDocument, downloadFlowFile, importFlowDocument, stampDocument, type FlowDocument, type FlowPackageId, type FlowWorkspaceState } from './progress/storage'
 import { createKit, kitRefFromFileName, readKitSource, stringifyKit, parseKit } from './progress/kit'
 import { createProgress, createProgressLocaleSeeds, readProgressSource, stringifyProgress, parseProgress } from './progress/progressDoc'
@@ -43,6 +43,7 @@ import { ProgressCollaborativeEditor } from './progress/ProgressCollaborativeEdi
 import { progressEditorSession } from './progress/progressEditRegistry'
 import { NavigationEditor } from './progress/NavigationEditor'
 import { ItemEditor } from './progress/ItemEditor'
+import {EntityLibraryTable} from './progress/EntityLibraryTable'
 import { ItemLibraryTable } from './progress/ItemLibraryTable'
 import { useEditorFontSize } from './progress/editorFont'
 import {
@@ -146,7 +147,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
   )
   /** 先叠虚拟内置文档 / 物品库表视图，再清理页条——否则虚拟页会被当成失效键清掉 */
   const state = useMemo(
-    () => normalizeGroups(withItemLibraryTable(withBuiltinGoalDefinitions(baseState))),
+    () => normalizeGroups(withLibraryTables(withBuiltinGoalDefinitions(baseState))),
     [baseState],
   )
   const stateRef = useRef(state)
@@ -156,7 +157,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
   const setState = (change: FlowWorkspaceState | ((previous: FlowWorkspaceState) => FlowWorkspaceState)) => {
     if (structuralPendingRef.current) return
     const previous = stateRef.current
-    const next = stripItemLibraryTable(stripBuiltinGoalDefinitions(typeof change === 'function' ? change(previous) : change))
+    const next = stripLibraryTables(stripBuiltinGoalDefinitions(typeof change === 'function' ? change(previous) : change))
     const live = getProjectSession()
     const binding = live.binding
     const prevScripts = live.workspace.packages[0]?.scripts ?? []
@@ -249,7 +250,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     })().catch(error => {
       if (!acknowledged && getProjectSession().binding?.handle.client === binding.handle.client) {
         setProjectSession({ workspace: revertWorkspace })
-        const revertDocs = stripItemLibraryTable(stripBuiltinGoalDefinitions(previous)).documents
+        const revertDocs = stripLibraryTables(stripBuiltinGoalDefinitions(previous)).documents
         const revertUi = {
           openKeys: previous.openKeys ?? [],
           activeKey: previous.activeKey ?? null,
@@ -344,12 +345,12 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
   const progressDoc = doc ? isProgressDocument(doc) : false
   const progressPath = progressDoc && doc ? sourcePathOf({ name: doc.name }) : null
   const progressEditable = !!progressPath && !!client?.writable
-  const presenceSource = doc && !isBuiltinGoalDocumentKey(doc.key) && !isItemLibraryTableKey(doc.key)
+  const presenceSource = doc && !isBuiltinGoalDocumentKey(doc.key) && !isLibraryTableKey(doc.key)
     ? session.workspace.packages.flatMap(pkg => pkg.scripts).find(script => script.id === doc.key)
     : null
   const presencePath = presenceSource ? sourcePathOf(presenceSource) : null
   const navigationDoc = doc ? isNavigationDocument(doc) : false
-  const itemTableDoc = doc ? isItemLibraryTableKey(doc.key) : false
+  const itemTableDoc = doc ? isLibraryTableKey(doc.key) : false
   const entityDoc = doc ? isEntityDocument(doc) : false
   const itemDoc = doc ? isItemDocument(doc) : false
   const goalCatalog = useMemo(() => buildGoalDefinitionCatalog(state), [state.documents, state.folders])
@@ -775,7 +776,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     updateGroups((previous) => focusGroup(previous, id))
   }
   function selectDocument(key: string, group: GroupId = focusedGroup) {
-    if (isItemLibraryTableKey(key)) {
+    if (isLibraryTableKey(key)) {
       updateGroups((previous) => openAsRightSplit(previous, key))
       setProgressSourceKey(null)
       setNotice('')
@@ -1030,7 +1031,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     setNotice(next.name !== current.name ? '正在保存流程属性…' : '已更新草稿属性。')
   }
   function removeResources({ documents: documentKeys, folders: folderKeys }: { documents: string[]; folders: string[] }) {
-    const docs = documentKeys.filter((key) => !isBuiltinGoalDocumentKey(key) && !isItemLibraryTableKey(key))
+    const docs = documentKeys.filter((key) => !isBuiltinGoalDocumentKey(key) && !isLibraryTableKey(key))
     const foldersToRemove = folderKeys.filter((key) => !isBuiltinGoalFolder(key) && !isSectionFolder(key))
     if (locked || busy || (!docs.length && !foldersToRemove.length)) return
     const parts = [
@@ -1163,6 +1164,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     const paneKit = isKitDocument(paneDoc)
     const paneProgress = isProgressDocument(paneDoc)
     const paneNavigation = isNavigationDocument(paneDoc)
+    const paneEntityTable = isEntityLibraryTableKey(paneDoc.key)
     const paneItemTable = isItemLibraryTableKey(paneDoc.key)
     const paneEntity = isEntityDocument(paneDoc)
     const paneItem = isItemDocument(paneDoc)
@@ -1176,7 +1178,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     if (selfRef) paneCatalog.delete(selfRef)
     let paneFlow: ProgressFlow | null = null
     let paneError = ''
-    if (!paneScript && !paneKit && !paneProgress && !paneNavigation && !paneItem && !paneEntity && !paneItemTable) {
+    if (!paneScript && !paneKit && !paneProgress && !paneNavigation && !paneItem && !paneEntity && !paneItemTable && !paneEntityTable) {
       // 焦点文档复用 memo 过的 parse，避免父级重渲染换掉 flow 引用打断拖拽
       if (paneDoc.key === focusedKey && parsed.flow) paneFlow = parsed.flow
       else {
@@ -1249,7 +1251,8 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
         />
       </div>
     }
-    if(paneEntity)return <div className="flow-kit-pane"><EntityEditor key={`${client?.snapshot.projectId??''}/${paneDoc.key}`} source={paneDoc.source} disabled={disabledPane} active={graphLive&&active} onChange={source=>{if(!disabledPane)changeSource(source,false,paneDoc.key)}}/></div>
+    if(paneEntityTable)return <EntityLibraryTable documents={state.documents} onOpen={key=>updateGroups(previous=>openOppositeToKey(previous,ENTITY_LIBRARY_TABLE_KEY,key,focusedGroup))}/>
+    if(paneEntity)return <div className="flow-kit-pane"><EntityEditor key={`${client?.snapshot.projectId??''}/${paneDoc.key}`} documentKey={paneDoc.key} source={paneDoc.source} disabled={disabledPane} active={graphLive&&active} onChange={source=>{if(!disabledPane)changeSource(source,false,paneDoc.key)}}/></div>
     if (paneItemTable) {
       return <div className="flow-kit-pane">
         <ItemLibraryTable
@@ -1466,7 +1469,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
               onChange={(tag) => { setLocale(tag); saveLocale(tag) }}
             />
           )}
-          <span className="flow-statusbar-type">{itemTableDoc ? '物品库 · 表视图' : entityDoc ? '实体 · .entity' : itemDoc ? '物品 · .item' : navigationDoc ? '导航点 · .nav' : progressDoc ? '进度 · .progress' : kitDoc ? '礼包 · .kit' : scriptDoc ? '脚本 · Python' : '故事流程 · 原型草稿'}</span>
+          <span className="flow-statusbar-type">{itemTableDoc ? (doc&&isEntityLibraryTableKey(doc.key)?'实体库 · 网格表视图':'物品库 · 表视图') : entityDoc ? '实体 · .entity' : itemDoc ? '物品 · .item' : navigationDoc ? '导航点 · .nav' : progressDoc ? '进度 · .progress' : kitDoc ? '礼包 · .kit' : scriptDoc ? '脚本 · Python' : '故事流程 · 原型草稿'}</span>
         </>
       }
     />

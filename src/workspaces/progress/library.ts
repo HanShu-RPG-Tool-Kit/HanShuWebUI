@@ -58,6 +58,9 @@ export const packageDocumentExt = (id: FlowPackageId): PackageDocumentExt | null
 
 /** 「物品库」虚拟表视图（稳定键，不落盘） */
 export const ITEM_LIBRARY_TABLE_KEY = 'builtin:item-library-table'
+export const ENTITY_LIBRARY_TABLE_KEY = 'builtin:entity-library-table'
+export const isEntityLibraryTableKey = (key:string) => key === ENTITY_LIBRARY_TABLE_KEY
+export const isLibraryTableKey = (key:string) => key === ITEM_LIBRARY_TABLE_KEY || isEntityLibraryTableKey(key)
 export const isItemLibraryTableKey = (key: string) => key === ITEM_LIBRARY_TABLE_KEY
 
 export const isScriptDocument = (document: { package: FlowPackageId; name: string }) =>
@@ -68,9 +71,9 @@ export const isProgressDocument = (document: { package: FlowPackageId; name: str
   document.package === 'progress' || document.name.toLowerCase().endsWith('.progress')
 export const isNavigationDocument = (document: { package: FlowPackageId; name: string }) =>
   document.package === 'navigator' || document.name.toLowerCase().endsWith('.nav')
-export const isEntityDocument = (document: {package: FlowPackageId;name:string}) => document.package === 'entities' || document.name.toLowerCase().endsWith('.entity')
+export const isEntityDocument = (document: {key?:string;package: FlowPackageId;name:string}) => !isLibraryTableKey(document.key??'') && (document.package === 'entities' || document.name.toLowerCase().endsWith('.entity'))
 export const isItemDocument = (document: { key?: string; package: FlowPackageId; name: string }) => {
-  if (document.key && isItemLibraryTableKey(document.key)) return false
+  if (document.key && isLibraryTableKey(document.key)) return false
   return document.package === 'items' || document.name.toLowerCase().endsWith('.item')
 }
 export function documentExtOf(document: { package: FlowPackageId; name: string }): PackageDocumentExt {
@@ -93,7 +96,7 @@ export const isBuiltinGoalFolder = (key: string) => key === BUILTIN_GOAL_FOLDER_
 export const isBuiltinGoalDocumentKey = (key: string) => key.startsWith('builtin:goal:')
 /** 资源树只读项：内置二级分类、虚拟内置文件夹与脚本、物品库表视图 */
 export const isReadonlyExplorerKey = (key: string) =>
-  isSectionFolder(key) || isBuiltinGoalFolder(key) || isBuiltinGoalDocumentKey(key) || isItemLibraryTableKey(key)
+  isSectionFolder(key) || isBuiltinGoalFolder(key) || isBuiltinGoalDocumentKey(key) || isLibraryTableKey(key)
 
 export function sectionDefs(pkg: FlowPackageId): FlowSectionDef[] {
   return FLOW_PACKAGE_SECTIONS[pkg] ?? []
@@ -213,7 +216,7 @@ export function renameFlowEntry(state: FlowWorkspaceState, entry: FlowEntry, val
   if (entry.kind === 'folder' && isSectionFolder(entry.key)) throw new Error('内置二级分类不可重命名。')
   if (entry.kind === 'folder' && isBuiltinGoalFolder(entry.key)) throw new Error('内置文件夹不可重命名。')
   if (entry.kind === 'document' && isBuiltinGoalDocumentKey(entry.key)) throw new Error('内置脚本为只读，不可重命名。')
-  if (entry.kind === 'document' && isItemLibraryTableKey(entry.key)) throw new Error('物品库表视图为只读，不可重命名。')
+  if (entry.kind === 'document' && isLibraryTableKey(entry.key)) throw new Error('资源库表视图为只读，不可重命名。')
   const item = entry.kind === 'folder' ? state.folders.find((folder) => folder.key === entry.key) : state.documents.find((document) => document.key === entry.key)
   if (!item) throw new Error('资源不存在。')
   const ext = entry.kind === 'document' ? documentExtOf(item as { package: FlowPackageId; name: string }) : false
@@ -231,7 +234,7 @@ export function canMoveFlowEntry(state: FlowWorkspaceState, entry: FlowEntry, pk
   if (entry.kind === 'folder' && isSectionFolder(entry.key)) return false
   if (entry.kind === 'folder' && isBuiltinGoalFolder(entry.key)) return false
   if (entry.kind === 'document' && isBuiltinGoalDocumentKey(entry.key)) return false
-  if (entry.kind === 'document' && isItemLibraryTableKey(entry.key)) return false
+  if (entry.kind === 'document' && isLibraryTableKey(entry.key)) return false
   if (parent !== null && isBuiltinGoalFolder(parent)) return false
   if (parent !== null) {
     const folder = state.folders.find((item) => item.key === parent)
@@ -325,14 +328,10 @@ export function itemLibraryTableDocument() {
 }
 
 /** 把虚拟表视图叠进工作区（不落盘）；资源树同级会排在文件夹之前。 */
-export function withItemLibraryTable(state: FlowWorkspaceState): FlowWorkspaceState {
-  if (state.documents.some((document) => isItemLibraryTableKey(document.key))) return state
-  return { ...state, documents: [itemLibraryTableDocument(), ...state.documents] }
+export function withLibraryTables(state: FlowWorkspaceState): FlowWorkspaceState {
+  const missing=[itemLibraryTableDocument(),stampDocument({key:ENTITY_LIBRARY_TABLE_KEY,name:'实体库表视图',source:'',package:'entities',folderId:null},false)].filter(d=>!state.documents.some(existing=>existing.key===d.key))
+  return missing.length?{...state,documents:[...missing,...state.documents]}:state
 }
-
-export function stripItemLibraryTable(state: FlowWorkspaceState): FlowWorkspaceState {
-  return {
-    ...state,
-    documents: state.documents.filter((document) => !isItemLibraryTableKey(document.key)),
-  }
+export function stripLibraryTables(state: FlowWorkspaceState): FlowWorkspaceState {
+  return {...state,documents:state.documents.filter(document=>!isLibraryTableKey(document.key))}
 }

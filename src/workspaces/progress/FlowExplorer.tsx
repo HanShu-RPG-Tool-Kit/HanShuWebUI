@@ -13,7 +13,7 @@ import {
   isBuiltinGoalDocumentKey,
   isBuiltinGoalFolder,
   isFolderEmpty,
-  isItemLibraryTableKey,
+  isLibraryTableKey,
   isReadonlyExplorerKey,
   isSectionFolder,
   moveFlowEntry,
@@ -216,12 +216,12 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
       const docsHere = state.documents
         .filter((d) => d.package === pkg && (d.folderId ?? null) === parent)
         .sort((a, b) => {
-          const aTable = isItemLibraryTableKey(a.key), bTable = isItemLibraryTableKey(b.key)
+          const aTable = isLibraryTableKey(a.key), bTable = isLibraryTableKey(b.key)
           if (aTable !== bTable) return aTable ? -1 : 1
           return a.name.localeCompare(b.name, 'zh-CN', { numeric: true })
         })
       // 物品库表视图固定在同级文件夹之前（此前只在文档组内置顶，仍会被文件夹压到后面）
-      for (const doc of docsHere.filter((d) => isItemLibraryTableKey(d.key))) {
+      for (const doc of docsHere.filter((d) => isLibraryTableKey(d.key))) {
         const entry: FlowEntry = { kind: 'document', key: doc.key }
         if (!query || visible.has(entryId(entry))) result.push({ entry, name: doc.name, depth, parent, pkg })
       }
@@ -231,7 +231,7 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
         result.push({ entry, name: folder.name, depth, parent, pkg })
         if (query || expanded.has(id)) visit(pkg, folder.key, depth + 1)
       }
-      for (const doc of docsHere.filter((d) => !isItemLibraryTableKey(d.key))) {
+      for (const doc of docsHere.filter((d) => !isLibraryTableKey(d.key))) {
         const entry: FlowEntry = { kind: 'document', key: doc.key }
         if (!query || visible.has(entryId(entry))) result.push({ entry, name: doc.name, depth, parent, pkg })
       }
@@ -380,9 +380,9 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
       const remainingFolders = state.folders.some((folder) => folder.parentId === key && !folders.includes(folder.key))
       return !remainingDocs && !remainingFolders
     })
-      const removableDocs = documents.filter((key) => !isBuiltinGoalDocumentKey(key) && !isItemLibraryTableKey(key))
+      const removableDocs = documents.filter((key) => !isBuiltinGoalDocumentKey(key) && !isLibraryTableKey(key))
       if (!removableDocs.length && !removableFolders.length) {
-        onNotice(documents.some((key) => isBuiltinGoalDocumentKey(key) || isItemLibraryTableKey(key)) ? '虚拟项为只读，不可删除。' : '请先移走文件夹中的资源，或一并选中其中的流程后再删除。')
+        onNotice(documents.some((key) => isBuiltinGoalDocumentKey(key) || isLibraryTableKey(key)) ? '虚拟项为只读，不可删除。' : '请先移走文件夹中的资源，或一并选中其中的流程后再删除。')
         return
       }
     onRemove({ documents: removableDocs, folders: removableFolders })
@@ -536,7 +536,7 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
         const remainingFolders = state.folders.some((folder) => folder.parentId === key && !selection.folders.includes(folder.key))
         return !remainingDocs && !remainingFolders
       })
-      const removableDocs = selection.documents.filter((key) => !isBuiltinGoalDocumentKey(key) && !isItemLibraryTableKey(key))
+      const removableDocs = selection.documents.filter((key) => !isBuiltinGoalDocumentKey(key) && !isLibraryTableKey(key))
       const canRemove = removableDocs.length > 0 || removableFolders.length > 0
       return [
         { label: `移除所选（${removableDocs.length + removableFolders.length} 项）…`, disabled: !canRemove, hint: canRemove ? '删除选中的流程，以及可安全删除的空文件夹' : '内置项不可删除，或所选文件夹仍有未选中的内容', action: () => onRemove({ documents: removableDocs, folders: removableFolders }) },
@@ -546,7 +546,7 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
     if (entry.kind === 'document') {
       const document = state.documents.find((d) => d.key === entry.key)
       const builtin = isBuiltinGoalDocumentKey(entry.key)
-      const itemTable = isItemLibraryTableKey(entry.key)
+      const itemTable = isLibraryTableKey(entry.key)
       const script = document?.package === 'script'
       const kit = document?.package === 'gift'
       const progress = document?.package === 'progress'
@@ -658,7 +658,7 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
         const kitDoc = !!document && (document.package === 'gift' || row.name.toLowerCase().endsWith('.kit'))
         const progressDoc = !!document && (document.package === 'progress' || row.name.toLowerCase().endsWith('.progress'))
         const navigationDoc = !!document && (document.package === 'navigator' || row.name.toLowerCase().endsWith('.nav'))
-        const itemTableDoc = row.entry.kind === 'document' && isItemLibraryTableKey(row.entry.key)
+        const itemTableDoc = row.entry.kind === 'document' && isLibraryTableKey(row.entry.key)
         const entityDoc = !!document && document.package === 'entities'
         const itemDoc = !!document && !itemTableDoc && (document.package === 'items' || row.name.toLowerCase().endsWith('.item'))
         const iconKind = row.entry.kind === 'package' ? row.entry.package : section ? sectionIconKind(row.entry.key) : itemTableDoc ? 'item-table' : entityDoc ? 'entities' : itemDoc ? 'item' : kitDoc ? 'kit' : navigationDoc ? 'navigator' : progressDoc ? 'progress' : pythonDoc ? 'python' : folder ? 'folder' : 'document'
