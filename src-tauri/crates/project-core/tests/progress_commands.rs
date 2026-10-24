@@ -400,3 +400,126 @@ fn recovery_publishes_selective_undo_only_after_the_durable_commit_decision() {
         }
     }
 }
+
+#[test]
+fn custom_completion_graph_conflict_and_selective_undo() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut engine, sid, _) = setup(dir.path());
+    let graph = json!({"nodes":[{"id":"ref","type":"goal","goalId":"goal-a"},{"id":"output","type":"output"}],"links":[{"id":"wire","from":"ref","to":"output"}]});
+    let added = command(
+        &mut engine,
+        &sid,
+        apply(vec![
+            field("completion", json!("all"), json!("custom")),
+            json!({"target":{"kind":"field","field":"completionGraph"},"expected":{"present":false,"value":null},"value":{"present":true,"value":graph}}),
+        ]),
+    );
+    ok(&added);
+    assert_eq!(read(dir.path(), SOURCE)["completionGraph"], graph);
+    ok(&command(&mut engine, &sid, apply(vec![count(1, 8)])));
+    let undone = command(
+        &mut engine,
+        &sid,
+        json!({"command":"revert","transactionId":added.transaction_id}),
+    );
+    ok(&undone);
+    assert_eq!(read(dir.path(), SOURCE)["completion"], "all");
+    assert!(read(dir.path(), SOURCE).get("completionGraph").is_none());
+    assert_eq!(read(dir.path(), SOURCE)["goals"][0]["config"]["count"], 8);
+    ok(&command(
+        &mut engine,
+        &sid,
+        json!({"command":"revert","transactionId":undone.transaction_id}),
+    ));
+    let mut changed = graph.clone();
+    changed["nodes"][0]["goalId"] = json!("goal-b");
+    ok(&command(
+        &mut engine,
+        &sid,
+        apply(vec![field(
+            "completionGraph",
+            graph.clone(),
+            changed.clone(),
+        )]),
+    ));
+    rejected(
+        &command(
+            &mut engine,
+            &sid,
+            apply(vec![field("completionGraph", graph, changed)]),
+        ),
+        "conflict",
+    );
+}
+
+#[test]
+fn completion_graph_checks_topology_and_rejects_persisted_layout() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut engine, sid, _) = setup(dir.path());
+    let draft = json!({"nodes":[{"id":"output","type":"output"},{"id":"a","type":"logic","op":"not"},{"id":"b","type":"logic","op":"and"},{"id":"g","type":"goal","goalId":"deleted-goal"}],"links":[]});
+    let add = |graph: Value| {
+        apply(vec![
+            field("completion", json!("all"), json!("custom")),
+            json!({"target":{"kind":"field","field":"completionGraph"},"expected":{"present":false,"value":null},"value":{"present":true,"value":graph}}),
+        ])
+    };
+    let mut cycle = draft.clone();
+    cycle["links"] = json!([{"id":"e1","from":"a","to":"b"},{"id":"e2","from":"b","to":"a"}]);
+    rejected(&command(&mut engine, &sid, add(cycle)), "invalid");
+    let mut over = draft.clone();
+    over["links"] = json!([{"id":"e1","from":"b","to":"a"},{"id":"e2","from":"g","to":"a"}]);
+    rejected(&command(&mut engine, &sid, add(over)), "invalid");
+    let mut layout = draft.clone();
+    layout["nodes"][0]["position"] = json!({"x":1,"y":2});
+    rejected(&command(&mut engine, &sid, add(layout)), "invalid");
+    assert_eq!(read(dir.path(), SOURCE)["completion"], "all");
+    ok(&command(&mut engine, &sid, add(draft)));
+}
+
+#[test]
+fn old_progress_receipts_reopen_without_rewriting_or_new_field_requirements() {
+    let dir = tempfile::tempdir().unwrap();
+    let (mut engine, sid, key) = setup(dir.path());
+    let mut old = document();
+    old.as_object_mut()
+        .unwrap()
+        .remove("autoStartWhenAcceptable");
+    fs::write(dir.path().join(SOURCE), serde_json::to_vec(&old).unwrap()).unwrap();
+    let input = apply(vec![count(1, 2)]);
+    let first = command(&mut engine, &sid, input.clone());
+    ok(&first);
+    assert!(!first
+        .progress_result
+        .as_ref()
+        .unwrap()
+        .source
+        .contains("autoStartWhenAcceptable"));
+    let archive = fs::read_dir(dir.path().join(".hanshu/service/file-transactions/archive"))
+        .unwrap()
+        .flat_map(|entry| fs::read_dir(entry.unwrap().path()).unwrap())
+        .map(|entry| entry.unwrap().path())
+        .next()
+        .unwrap();
+    let original_archive = fs::read(&archive).unwrap();
+    let original_source = fs::read(dir.path().join(SOURCE)).unwrap();
+    drop(engine);
+    let mut engine = Engine::open_project(dir.path()).unwrap();
+    let (_, session) = engine.login(&key, "legacy-receipt-reopen", 1000).unwrap();
+    let replay = engine
+        .commit_files(
+            &session.id,
+            &first.transaction_id,
+            vec![change(input)],
+            1000,
+        )
+        .unwrap();
+    assert_eq!(replay, first);
+    assert_eq!(fs::read(archive).unwrap(), original_archive);
+    assert_eq!(fs::read(dir.path().join(SOURCE)).unwrap(), original_source);
+    ok(&command(
+        &mut engine,
+        &session.id,
+        json!({"command":"revert","transactionId":first.transaction_id}),
+    ));
+    assert_eq!(read(dir.path(), SOURCE)["goals"][0]["config"]["count"], 1);
+}

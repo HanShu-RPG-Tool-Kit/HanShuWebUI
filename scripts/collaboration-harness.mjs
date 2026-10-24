@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { rememberTestAccount, testAccount } from './test-accounts.mjs'
 
-export const progress = {format:'hanshu.progress',version:1,id:'progress-test',name:'name',description:'description',authorNotes:'',tags:[],completion:'all',goals:[],visibility:[],acceptance:[],abandonable:true,repeat:{kind:'once',hours:24},rewardKits:[]}
+export const progress = {format:'hanshu.progress',version:1,id:'progress-test',name:'name',description:'description',authorNotes:'',tags:[],completion:'all',goals:[],visibility:[],acceptance:[],abandonable:true,autoStartWhenAcceptable:false,repeat:{kind:'once',hours:24},rewardKits:[]}
 export async function harness(web = false) {
   const options={...(typeof web==='object'?web:{web})}
   if(options.web && options.localProjects===undefined)options.localProjects=true

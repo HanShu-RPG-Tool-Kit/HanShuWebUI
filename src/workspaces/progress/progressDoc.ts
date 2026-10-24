@@ -1,3 +1,4 @@
+import { parseCompletionGraph, completionIssues, type CompletionGraph } from './completionGraph'
 import { randomId } from '../../project/crypto'
 import { isObject } from './model'
 import { parseJsonValue } from '../../utils/strictJson'
@@ -40,7 +41,8 @@ export type ProgressDocument = {
   description: string
   authorNotes: string
   tags: string[]
-  completion: 'all' | 'any'
+  completion: 'all' | 'any' | 'custom'
+  completionGraph?: CompletionGraph
   goals: ProgressGoal[]
   /** Independent conjunctions; each empty list is satisfied. */
   visibility: ProgressConditionRule[]
@@ -131,7 +133,9 @@ export function parseProgress(source: string, _definitions: readonly GoalDefinit
   const visibility = readConditions(raw.visibility, '可见性条件', true)
   const acceptance = readConditions(raw.acceptance, '可承接条件', false)
   const docId = id(raw.id, '进度')
-  check(raw.completion === 'all' || raw.completion === 'any', 'completion 必须是 all 或 any')
+  check(raw.completion === 'all' || raw.completion === 'any' || raw.completion === 'custom', 'completion 必须是 all、any 或 custom')
+  const completionGraph = raw.completionGraph === undefined ? undefined : parseCompletionGraph(raw.completionGraph)
+  check(raw.completion !== 'custom' || completionGraph, '自定义完成需要 completionGraph')
   check(Array.isArray(raw.goals), 'goals 必须是数组')
   const goals = raw.goals.map((item): ProgressGoal => {
       check(isObject(item) && isObject(item.config), '目标或目标参数无效')
@@ -147,14 +151,15 @@ export function parseProgress(source: string, _definitions: readonly GoalDefinit
   const hours = raw.repeat.kind === 'duration' ? raw.repeat.hours : 24
   check(typeof hours === 'number' && Number.isFinite(hours) && hours > 0, '重复间隔必须大于零')
   check(typeof raw.abandonable === 'boolean', 'abandonable 必须是布尔值')
-  check(typeof raw.autoStartWhenAcceptable === 'boolean', 'autoStartWhenAcceptable 必须是布尔值')
+  check(raw.autoStartWhenAcceptable === undefined || typeof raw.autoStartWhenAcceptable === 'boolean', 'autoStartWhenAcceptable 必须是布尔值')
   check(Array.isArray(raw.rewardKits) && raw.rewardKits.every(ref => typeof ref === 'string' && ref.trim()), 'rewardKits 必须是礼包引用数组')
   check(new Set(raw.rewardKits).size === raw.rewardKits.length, '奖励礼包不能重复')
   return {
     format: PROGRESS_FORMAT, version: 1, id: docId, name: str(raw.name, '名称'), description: str(raw.description, '简介'),
     authorNotes: str(raw.authorNotes ?? '', '作者备注'), tags: raw.tags as string[], completion: raw.completion, goals,
+    ...(completionGraph ? { completionGraph } : {}),
     visibility, acceptance,
-    abandonable: raw.abandonable, autoStartWhenAcceptable: raw.autoStartWhenAcceptable,
+    abandonable: raw.abandonable, autoStartWhenAcceptable: raw.autoStartWhenAcceptable ?? false,
     repeat: { kind: raw.repeat.kind as ProgressRepeatKind, hours }, rewardKits: raw.rewardKits as string[],
   }
 }
@@ -185,6 +190,7 @@ export function progressIssues(
   } else if (doc.name !== 'name' && !doc.name.trim()) {
     issues.push('请填写进度名称')
   }
+  if (doc.completion === 'custom' && doc.completionGraph) issues.push(...completionIssues(doc.completionGraph, doc.goals))
   if (!doc.goals.length) issues.push('添加至少一个目标')
   for (const goal of doc.goals) {
       const definition = definitions.find(item => item.kind === goal.kind)

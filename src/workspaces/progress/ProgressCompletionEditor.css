@@ -1,0 +1,14 @@
+.progress-completion-editor{border-top:1px solid #464646;min-width:0;}
+.progress-completion-editor[hidden]{display:none;}
+.completion-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:8px;padding:8px 14px;background:#303030;font-size:12px;}
+.completion-toolbar>span{margin-right:auto;color:#c7c7c7;}
+.progress-completion-editor .completion-toolbar button{padding:3px 9px;border:1px solid #4a4a4a;border-radius:3px;background:#383838;color:#d5d5d5;font-size:12px;}
+.completion-canvas{display:flex;height:420px;min-width:0;}
+.completion-node-fields{padding-top:10px;}
+.progress-completion-editor .completion-node-fields p{margin:4px 12px;color:#aaa;}
+.completion-node-missing{border-color:#c17d62;}
+.completion-footer{display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px;padding:7px 14px;color:#c7af86;background:#2b2b2b;font-size:11px;}
+.completion-footer small{color:#999;}
+.progress-goal-alias{flex:none;padding:2px 7px;border:1px solid #756349;border-radius:3px;background:#574b36;color:#f0d7a8;font:600 12px/1.3 monospace;}
+
+.progress-completion-editor .node-field-control select{padding:3px 5px;font-size:12px;}

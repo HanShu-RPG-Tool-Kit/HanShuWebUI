@@ -39,6 +39,21 @@ try {
   tokens.push(owner.token, a.token, b.token, v.token)
   await seedProgress(h, owner.token)
 
+  const graph = {nodes:[{id:'ref',type:'goal',goalId:'goal-counter'},{id:'output',type:'output'}],links:[{id:'wire',from:'ref',to:'output'}]}
+  const graphAdd = apply([field('completion','all','custom'),effect({kind:'field',field:'completionGraph'},absent(),present(graph))])
+  await send(v.token, graphAdd, 'rejected', 'forbidden')
+  const custom = await send(a.token, graphAdd)
+  assert.deepEqual((await source()).completionGraph, graph)
+  const changedGraph=structuredClone(graph);changedGraph.nodes[0].goalId='deleted-reference'
+  const peerGraph=await send(b.token,apply([field('completionGraph',graph,changedGraph)]))
+  await send(a.token,apply([field('completionGraph',graph,changedGraph)]),'rejected','conflict')
+  await send(b.token,{command:'revert',transactionId:peerGraph.input.transactionId})
+  await send(a.token,{command:'revert',transactionId:custom.input.transactionId})
+  assert.equal((await source()).completion,'all')
+  assert.equal(Object.hasOwn(await source(),'completionGraph'),false)
+  passed('自定义完成图通过 HTTP 落盘，失效引用保留草稿，同图旧值冲突且可撤销首次创建，只读用户不能写入')
+
+
   const [first, second] = await Promise.all([
     send(a.token, apply([config('target', present(10), present(20))])),
     send(b.token, apply([config('bonus', present(3), present(7))])),

@@ -2,7 +2,7 @@
 
 export type ProgressSlot = { present: boolean, value: unknown, };
 
-export type ProgressTarget = { "kind": "field", field: 'name' | 'description' | 'authorNotes' | 'tags' | 'completion' | 'visibility' | 'acceptance' | 'abandonable' | 'autoStartWhenAcceptable' | 'repeat' | 'rewardKits', } | { "kind": "goal-config", goalId: string, goalKind: string, key: string, } | { "kind": "goal-body", goalId: string, } | { "kind": "goal", goalId: string, } | { "kind": "goal-order", } | { "kind": "locale", locale: string, key: string, };
+export type ProgressTarget = { "kind": "field", field: 'name' | 'description' | 'authorNotes' | 'tags' | 'completion' | 'completionGraph' | 'visibility' | 'acceptance' | 'abandonable' | 'autoStartWhenAcceptable' | 'repeat' | 'rewardKits', } | { "kind": "goal-config", goalId: string, goalKind: string, key: string, } | { "kind": "goal-body", goalId: string, } | { "kind": "goal", goalId: string, } | { "kind": "goal-order", } | { "kind": "locale", locale: string, key: string, };
 
 export type ProgressEffect = { target: ProgressTarget, expected: ProgressSlot, value: ProgressSlot, };
 

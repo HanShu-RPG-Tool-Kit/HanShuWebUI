@@ -1,4 +1,6 @@
-import { useEffect, useId, useRef, useState, type DragEvent, type PointerEvent, type ReactNode } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState, type DragEvent, type PointerEvent, type ReactNode } from 'react'
+import { ProgressCompletionEditor } from './ProgressCompletionEditor'
+import { createCompletionGraph, goalAliases } from './completionGraph'
 import {
   createProgressGoal, duplicateProgressGoal, goalConfigSummary,
   goalLabel, moveProgressGoal, progressIssues, PROGRESS_REPEAT_LABELS, stringifyProgress,
@@ -205,6 +207,28 @@ export function ProgressEditor({ doc, goalCatalog, kitOptions = [], disabled, on
   onOpenKit?: (documentKey: string) => void
 }) {
   const definitions = goalCatalog.definitions
+  const [goalView, setGoalView] = useState<'compact' | 'list'>(() => {
+    try { return localStorage.getItem('hanshu.progress.goalView') === 'list' ? 'list' : 'compact' } catch { return 'compact' }
+  })
+  const goalsElement = useRef<HTMLDivElement>(null)
+  const goalIds = doc.goals.map(goal => goal.id).join('|')
+  // Keep the same keyed DOM tree in both views, including uncommitted NumberInput drafts.
+  // One-pixel grid tracks let each card occupy its measured height without equal-height rows.
+  useLayoutEffect(() => {
+    const element = goalsElement.current
+    if (!element || goalView !== 'compact') return
+    let frame = 0
+    const cards = [...element.querySelectorAll<HTMLElement>('.progress-goal, .progress-add-row')]
+    const measure = () => {
+      frame = 0
+      const sizes = cards.map(card => Math.ceil(card.getBoundingClientRect().height) + 12)
+      cards.forEach((card, index) => { const span = `span ${sizes[index]}`; if (card.style.gridRowEnd !== span) card.style.gridRowEnd = span })
+    }
+    const observer = new ResizeObserver(() => { if (!frame) frame = requestAnimationFrame(measure) })
+    cards.forEach(card => observer.observe(card))
+    measure()
+    return () => { observer.disconnect(); cancelAnimationFrame(frame); cards.forEach(card => card.style.removeProperty('grid-row-end')) }
+  }, [goalView, goalIds])
   const [collapsed, setCollapsed] = useState(() => new Set<string>())
   const openGoal = (id: string) => setCollapsed(previous => { const next = new Set(previous); next.delete(id); return next })
   const toggleGoal = (id: string) => setCollapsed(previous => { const next = new Set(previous); if (next.has(id)) next.delete(id); else next.add(id); return next })
@@ -226,6 +250,7 @@ export function ProgressEditor({ doc, goalCatalog, kitOptions = [], disabled, on
   }
   const changeGoal = (goal: ProgressGoal, immediate = true) => update({ goals: doc.goals.map(item => item.id === goal.id ? goal : item) }, immediate)
   const issues = progressIssues(doc, definitions, resolveText ? (key) => resolveText(key) : null)
+  const aliases = goalAliases(doc.goals)
   const count = doc.goals.length
   const pickerGoal = doc.goals.find(goal => goal.id === picker?.goalId)
   const availableKits = kitOptions.filter(item => !doc.rewardKits.includes(item.ref))
@@ -242,14 +267,14 @@ export function ProgressEditor({ doc, goalCatalog, kitOptions = [], disabled, on
     setPicker(null)
   }
   function move(goal: ProgressGoal, index: number) {
-    if (disabled) return
+    if (disabled || goalView !== 'list') return
     onChange(stringifyProgress(moveProgressGoal(doc, goal.id, index)), true)
     setNotice('已调整目标顺序。')
   }
   const cancelDrag = () => { pointerDrag.current = null; setDragging(null); setDropKey(null) }
   const dragProps = (goal: ProgressGoal, index: number) => ({
     onPointerDown: (event: PointerEvent<HTMLSpanElement>) => {
-      if (disabled || event.button !== 0) return
+      if (disabled || goalView !== 'list' || event.button !== 0) return
       event.preventDefault()
       pointerDrag.current = { id: goal.id, startY: event.clientY, active: false, index }
       event.currentTarget.setPointerCapture(event.pointerId)
@@ -364,20 +389,31 @@ export function ProgressEditor({ doc, goalCatalog, kitOptions = [], disabled, on
           <div className="progress-completion-switch" role="group" aria-label="目标完成规则">
             <button type="button" aria-pressed={doc.completion === 'all'} onClick={() => update({ completion: 'all' })}>完成全部</button>
             <button type="button" aria-pressed={doc.completion === 'any'} onClick={() => update({ completion: 'any' })}>完成任一</button>
+            <button type="button" aria-pressed={doc.completion === 'custom'} onClick={() => update({ completion: 'custom', completionGraph: doc.completionGraph ?? createCompletionGraph() })}>自定义完成</button>
           </div>
         </div>
-        <div className="progress-goals">
+        <div className="progress-goal-viewbar">
+          <div className="progress-view-switch" role="group" aria-label="目标视图">
+            {([['compact', '紧凑'], ['list', '列表']] as const).map(([view, label]) => <button key={view} type="button" aria-pressed={goalView === view} onClick={() => {
+              cancelDrag(); setGoalView(view)
+              try { localStorage.setItem('hanshu.progress.goalView', view) } catch { /* View still changes when browser storage is unavailable. */ }
+            }}>{label}</button>)}
+          </div>
+          <small>{goalView === 'compact' ? '自动紧凑排版 · 切到列表可拖拽排序' : '按列表顺序排列 · 拖动手柄排序'}</small>
+        </div>
+        <div ref={goalsElement} className={`progress-goals is-${goalView}`}>
+
             {doc.goals.map((goal, index) => {
               const definition = definitions.find(item => item.kind === goal.kind)
               const fields = definition?.fields ?? []
               const open = !collapsed.has(goal.id)
               return <article key={goal.id} aria-label={`目标 ${goalLabel(goal, definitions)}`} className={`progress-goal${open ? ' is-expanded' : ''}${dragging === goal.id ? ' is-dragging' : ''}${dropKey === index ? ' is-drop' : ''}`}>
                 <div className="progress-goal-row">
-                  <span className="progress-drag" title="上下拖动排序；也可使用右侧菜单" aria-hidden="true" {...dragProps(goal, index)}>⠿</span>
-                  <button type="button" className="progress-goal-open" aria-expanded={open} aria-label={`${open ? '收起' : '展开'}目标 ${goalLabel(goal, definitions)}`} onClick={() => toggleGoal(goal.id)}><span className="progress-chevron" aria-hidden="true">{open ? '▾' : '▸'}</span><strong>{goalLabel(goal, definitions)}</strong><span className="progress-node-kind">GOAL</span></button>
+                  {goalView === 'list' && <span className="progress-drag" title="上下拖动排序；也可使用右侧菜单" aria-hidden="true" {...dragProps(goal, index)}>⠿</span>}
+                  <button type="button" className="progress-goal-open" aria-expanded={open} aria-label={`${open ? '收起' : '展开'}目标 ${goalLabel(goal, definitions)}`} onClick={() => toggleGoal(goal.id)}><span className="progress-goal-alias">{aliases.get(goal.id)}</span><span className="progress-chevron" aria-hidden="true">{open ? '▾' : '▸'}</span><strong>{goalLabel(goal, definitions)}</strong><span className="progress-node-kind">GOAL</span></button>
                   <details className="progress-menu"><summary aria-label={`${goalLabel(goal, definitions)}操作`}>⋯</summary><div>
-                    <button type="button" disabled={index === 0} onClick={() => move(goal, index - 1)}>上移</button>
-                    <button type="button" disabled={index === doc.goals.length - 1} onClick={() => move(goal, index + 2)}>下移</button>
+                    {goalView === 'list' && <><button type="button" disabled={index === 0} onClick={() => move(goal, index - 1)}>上移</button>
+                    <button type="button" disabled={index === doc.goals.length - 1} onClick={() => move(goal, index + 2)}>下移</button></>}
                     <button type="button" onClick={() => { const copy = duplicateProgressGoal(goal); const goals = [...doc.goals]; goals.splice(index + 1, 0, copy); update({ goals }); openGoal(copy.id) }}>复制目标</button>
                     <button type="button" onClick={() => setPicker({ goalId: goal.id })}>更换类型</button>
                     <button type="button" className="progress-danger" onClick={() => { update({ goals: doc.goals.filter(item => item.id !== goal.id) }); setNotice('已删除目标，可用 Ctrl / ⌘ + Z 撤销。') }}>删除目标</button>
@@ -401,6 +437,7 @@ export function ProgressEditor({ doc, goalCatalog, kitOptions = [], disabled, on
               <button type="button" onClick={() => setPicker({})}>＋ 添加目标</button>{doc.goals.length === 0 && <span>先选择一种目标，再填写参数</span>}
             </div>
           </div>
+        {doc.completionGraph && <ProgressCompletionEditor key={doc.id} graph={doc.completionGraph} goals={doc.goals} definitions={definitions} disabled={disabled} active={doc.completion === 'custom'} onChange={completionGraph => update({ completionGraph })} />}
       </section>
 
       {([['visibility', '可见性条件', true], ['acceptance', '可承接条件', false]] as const).map(([field, title, allowRepeat]) => <section key={field} className="progress-card progress-rules" aria-label={title}><header className="progress-card-head"><h2>{title}</h2><span className="progress-card-count">{doc[field].length}</span><small className="progress-card-note">{field === 'acceptance' ? '全部满足（含周期投影）' : '全部满足'}</small></header>
@@ -421,7 +458,7 @@ export function ProgressEditor({ doc, goalCatalog, kitOptions = [], disabled, on
       </section>)}
 
       {(issues.length > 0 || goalCatalog.errors.length > 0) && <section className="progress-card progress-validation"><header className="progress-card-head"><h2>{issues.length + goalCatalog.errors.length} 项待完善</h2></header><ul>{issues.map((issue, index) => <li key={index}>{issue}</li>)}{goalCatalog.errors.map((issue, index) => <li key={`catalog-${index}`}>{issue.sourceName}：{issue.message}</li>)}</ul></section>}
-      <p className="progress-notice" role="status">{notice || '拖动手柄排序，更多操作在行末菜单'}</p>
+      <p className="progress-notice" role="status">{notice || (goalView === 'list' ? '拖动手柄排序，更多操作在行末菜单' : '切换列表视图可调整目标顺序')}</p>
       {picker && <GoalPicker definitions={definitions} current={pickerGoal?.kind} onChoose={choose} onClose={() => setPicker(null)} />}
     </fieldset>
     </div>

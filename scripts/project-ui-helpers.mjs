@@ -18,8 +18,10 @@ export async function loginProject(page,base,key,name,navigate=true) {
     const response=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/local/open'&&r.request().method()==='POST')
     await page.getByRole('button',{name:'打开此文件夹',exact:true}).click();const result=await(await response).json();await waitProject(page,'统一工程验收');return result
   }
-  await projectMenu(page,'连接其他服务器…')
   const form=page.getByRole('form',{name:'连接其他服务器',exact:true})
+  // Refresh restores the connection form automatically; don't click through its backdrop.
+  if(!navigate)await form.waitFor({state:'visible',timeout:2500}).catch(()=>{})
+  if(!await form.isVisible())await projectMenu(page,'连接其他服务器…')
   await form.getByLabel('服务地址',{exact:true}).fill(base);await form.getByLabel('用户名',{exact:true}).fill(account.username);await form.getByLabel('密码',{exact:true}).fill(account.password)
   const response=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/sessions'&&r.request().method()==='POST')
   await form.getByRole('button',{name:'连接并打开工程',exact:true}).click();const result=await(await response).json();await waitProject(page,'统一工程验收');return result

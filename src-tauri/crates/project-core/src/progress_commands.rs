@@ -22,7 +22,7 @@ pub struct ProgressSlot {
 pub enum ProgressTarget {
     Field {
         #[ts(
-            type = "'name' | 'description' | 'authorNotes' | 'tags' | 'completion' | 'visibility' | 'acceptance' | 'abandonable' | 'autoStartWhenAcceptable' | 'repeat' | 'rewardKits'"
+            type = "'name' | 'description' | 'authorNotes' | 'tags' | 'completion' | 'completionGraph' | 'visibility' | 'acceptance' | 'abandonable' | 'autoStartWhenAcceptable' | 'repeat' | 'rewardKits'"
         )]
         field: String,
     },
@@ -132,6 +132,7 @@ fn field_ok(field: &str) -> Result<()> {
                 | "authorNotes"
                 | "tags"
                 | "completion"
+                | "completionGraph"
                 | "visibility"
                 | "acceptance"
                 | "abandonable"
@@ -412,8 +413,16 @@ impl Engine {
         for effect in &effects {
             match &effect.target {
                 ProgressTarget::Field { field } => {
-                    require(effect.value.present, "invalid", "进度文档字段不能删除")?;
-                    next[field] = effect.value.value.clone();
+                    if effect.value.present {
+                        next[field] = effect.value.value.clone();
+                    } else {
+                        require(
+                            field == "completionGraph",
+                            "invalid",
+                            "进度文档字段不能删除",
+                        )?;
+                        next.as_object_mut().unwrap().remove(field);
+                    }
                 }
                 ProgressTarget::GoalConfig { goal_id, key, .. } => {
                     let config = goal_mut(&mut next, goal_id)?["config"]

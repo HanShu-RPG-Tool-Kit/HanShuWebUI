@@ -77,3 +77,7 @@ assert.ok(progressIssues(empty, defs).some(issue => issue.includes('至少一个
 assert.ok(progressIssues(empty, defs, () => '').some(issue => issue.includes('请填写进度名称')), 'empty locale text counts as missing title')
 assert.ok(!progressIssues(empty, defs, (key) => key === 'name' ? '有标题' : '').some(issue => issue.includes('请填写进度名称')))
 console.log('PASS: flat goals, all/any rules, stable sorting, script defaults, immutable copies, parse protection')
+
+const missingAutoStart = JSON.parse(stringifyProgress(empty))
+delete missingAutoStart.autoStartWhenAcceptable
+assert.equal(parseProgress(JSON.stringify(missingAutoStart)).autoStartWhenAcceptable, false, 'missing auto-start is off, not an unreadable document')

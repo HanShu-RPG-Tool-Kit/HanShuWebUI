@@ -168,8 +168,7 @@ impl TransactionRecord {
                 "storage",
                 "持久进度回执无效",
             )?;
-            crate::progress::validate(&result.source)
-                .map_err(|_| Error::new("storage", "持久进度回执内容无效"))?;
+            crate::progress::validate_receipt_snapshot(&result.source, &result.document_id)?;
         }
         Ok(())
     }
