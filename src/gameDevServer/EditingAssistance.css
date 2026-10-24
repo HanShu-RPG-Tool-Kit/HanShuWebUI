@@ -1,0 +1,23 @@
+.game-assist{position:relative;min-width:0;width:100%}
+.game-assist-input{display:flex;gap:6px;align-items:stretch;min-width:0}
+.game-assist-input>input{flex:1;min-width:0;width:0}
+.game-assist-input>button{flex-shrink:0;padding:4px 9px;white-space:nowrap;border:1px solid #ffffff20;border-radius:5px;background:#ffffff08;color:inherit;font:inherit}
+.game-assist-input>button:disabled{opacity:.4}
+.game-assist-picker,.game-assist-completions{position:absolute;top:calc(100% + 4px);left:0;z-index:7000;width:max(100%,280px);max-width:min(480px,80vw);box-sizing:border-box;overflow:auto;border:1px solid #ffffff25;border-radius:8px;padding:8px;background:#292b2e;box-shadow:0 10px 28px #0007;color:#dedede;font:13px/1.4 sans-serif}
+.game-assist-picker>input{width:100%;box-sizing:border-box;margin-bottom:6px}
+.game-assist-entries,.game-assist-completions{max-height:240px;overflow:auto;overscroll-behavior:contain}
+.game-assist-entries>button,.game-assist-completions>button{display:flex;align-items:center;gap:10px;width:100%;padding:7px 9px;border:0;border-radius:4px;background:transparent;color:inherit;text-align:left;font:inherit;min-height:32px}
+.game-assist-entries>button:hover,.game-assist-completions>button:hover,.game-assist-completions>button.selected{background:#79b9e425}
+.game-assist-entries img{width:22px;height:22px;image-rendering:pixelated;object-fit:contain}
+.game-assist-entries strong{display:block;font-size:13px;font-weight:500}
+.game-assist-entries code{display:block;font-size:12px;opacity:.75;overflow-wrap:anywhere}
+.game-assist-picker footer{display:flex;justify-content:space-between;align-items:center;border-top:1px solid #ffffff12;margin-top:6px;padding-top:7px;font-size:12px}
+.game-assist-picker>input{padding:7px 9px;border:1px solid #ffffff20;border-radius:4px;background:#1f2124;color:inherit;font:inherit;outline:none}
+.game-assist-picker>input:focus{border-color:#79b9e470}
+.game-assist-picker footer button{padding:4px 8px;border:1px solid #ffffff18;border-radius:4px;background:#ffffff08;color:inherit;font:inherit}
+.game-assist-picker footer button:disabled{opacity:.35}
+.game-assist-picker p{font-size:12px;margin:10px 4px;color:#aaa}
+.game-assist-error{display:block;color:#e4a28f;margin-top:4px}
+.game-command>input{width:100%;box-sizing:border-box}
+.game-assist-completions code{font-size:13px;overflow-wrap:anywhere}
+.game-assist-completions small{margin-left:auto;opacity:.6}

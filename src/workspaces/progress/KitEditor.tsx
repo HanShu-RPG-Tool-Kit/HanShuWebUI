@@ -2,7 +2,8 @@ import { NbtComponentsEditor } from './NbtComponentsEditor'
 import { createContext, useContext, useEffect, useId, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { ItemComponents } from './tnbtJson'
-import Editor from '@monaco-editor/react'
+import { KitPythonEditor } from '../../monaco/python/KitPythonEditor'
+import { GameCommandInput, GameResourceInput } from '../../gameDevServer/EditingAssistance'
 import { HANSHU_THEME_ID, registerHanshuLanguage } from '../../monaco/hanshuLanguage'
 import { useEditorFontSize } from './editorFont'
 import type { ItemCatalog, KitCatalog, KitDocument, KitEffect, KitExperience, KitFeedback, KitItem, KitModifier, KitMods, KitParam, KitParamKind, KitPool, KitPoolEntry, KitPoolHit } from './kit'
@@ -468,7 +469,7 @@ function EffectRow({ effect, index, disabled, onChange, onRemove }: {
 }) {
   return <li className="kit-row kit-effect">
     <span className="kit-row-index">{index + 1}</span>
-    <input className="kit-mono" value={effect.id} disabled={disabled} placeholder="minecraft:speed" aria-label={`效果 ${index + 1} ID`} onChange={(event) => onChange({ id: event.target.value })} />
+    <GameResourceInput kind="effects" value={effect.id} disabled={disabled} label={`效果 ${index + 1} ID`} onChange={id => onChange({ id })} />
     <span className="kit-numbind">
       <input className="kit-num" type="number" min={1} step={1} value={effect.amplifier + 1} disabled={disabled} aria-label={`效果 ${index + 1} 等级`} onChange={(event) => onChange({ amplifier: Math.max(0, toCount(event.target.value) - 1) })} />
       <ModChip raw={effect.amplifier + 1} mod={effect.mods?.amplifier} rule={KIT_NUMBER_RULES.level} label={`效果 ${index + 1} 等级`} disabled={disabled} onChange={(id) => onChange({ mods: setMod(effect.mods, 'amplifier', id) })} />
@@ -659,7 +660,7 @@ function FeedbackForm({ feedback, disabled, onChange, resolveText, setText }: {
     </div>
     <label className="kit-field">
       <span>音效</span>
-      <input className="kit-mono" value={feedback.sound} disabled={disabled} placeholder="minecraft:entity.player.levelup" onChange={(event) => onChange({ sound: event.target.value })} />
+      <GameResourceInput kind="sounds" value={feedback.sound} disabled={disabled} label="音效" onChange={sound => onChange({ sound })} />
     </label>
   </div>
 }
@@ -1117,7 +1118,7 @@ function KitBody({ kit, disabled, readOnly, editorPath, simulatorPools, afterHea
                 const problems = ui ? interpolateKitText(command, ui.env).errors : []
                 return <li key={index} className={`kit-row kit-command${problems.length ? ' is-error' : ''}`} title={problems.join('\n') || undefined}>
                   <span className="kit-row-index">{index + 1}</span>
-                  <input className="kit-mono" value={command} disabled={locked} placeholder="give @s minecraft:apple ${round(loot(1))}" aria-label={`指令 ${index + 1}`} onChange={(event) => update({ commands: replaceAt(kit.commands, index, event.target.value) })} />
+                  <GameCommandInput value={command} disabled={locked} label={`指令 ${index + 1}`} onChange={value => update({ commands: replaceAt(kit.commands, index, value) })} />
                   <RemoveButton label={`移除指令 ${index + 1}`} disabled={locked} onClick={() => update({ commands: removeAt(kit.commands, index) })} />
                 </li>
               })}
@@ -1133,7 +1134,7 @@ function KitBody({ kit, disabled, readOnly, editorPath, simulatorPools, afterHea
 
         <Panel title="脚本" subtitle={readOnly ? undefined : 'kit.param(id) · kit.mod(id, x) · kit.expr(src)'} className="kit-script" action={<span className="kit-lang">Python</span>}>
           <div className={`kit-script-body${disabled ? ' is-disabled' : ''}`}>
-            <Editor
+            <KitPythonEditor
               height="100%"
               language="python"
               theme={HANSHU_THEME_ID}

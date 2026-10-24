@@ -76,7 +76,9 @@
     "test:presence-protocol": "node scripts/verify-presence-protocol.mjs",
     "test:collaboration:unified": "node scripts/verify-unified-presence.mjs",
     "test:tnbt-json": "node scripts/run-verification.mjs scripts/verify-tnbt-json.ts",
-    "test:item-protocol": "node scripts/run-verification.mjs scripts/verify-item-protocol.ts"
+    "test:item-protocol": "node scripts/run-verification.mjs scripts/verify-item-protocol.ts",
+    "test:python-language": "node scripts/verify-python-language.mjs",
+    "test:editing-assistance:ui": "node scripts/verify-editing-assistance-ui.mjs"
   },
   "dependencies": {
     "@audio/encode-ogg": "^1.3.0",
@@ -86,11 +88,12 @@
     "dompurify": "^3.4.15",
     "jszip": "^3.10.2",
     "marked": "^18.0.14",
+    "monaco-editor": "^0.56.0",
+    "monaco-pyright-lsp": "0.1.7",
     "pako": "^3.0.2",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "skinview3d": "^3.4.2",
-    "monaco-editor": "^0.56.0"
+    "skinview3d": "^3.4.2"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.5",
