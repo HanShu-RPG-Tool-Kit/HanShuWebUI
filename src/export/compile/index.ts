@@ -10,8 +10,9 @@ import type {
   CompileIndex,
 } from './types'
 
-export type { CompileArtifact, CompileDiagnostic, CompileGraph, Plane, SymbolRef } from './types'
-export { registerFileCompiler, registerPackagePass } from './registry'
+export type { CompileArtifact, CompileDiagnostic, CompileGraph, Plane, SymbolRef, LocaleArtifact } from './types'
+export { registerFileCompiler, registerPackagePass, registerLocaleExportRule, listLocaleExportRules } from './registry'
+export type { LocaleExportRule, LocaleAssetExportPolicy, LocaleExportOwner } from './localization'
 export { ensureBuiltinCompilers } from './compilers/registerBuiltin'
 
 function buildIndex(workspace: Workspace, pkg: Project): CompileIndex {

@@ -56,6 +56,46 @@ registerFileCompiler({
 
 包级后处理（依赖其它产物的 `requires`，如按键裁剪 lang）用 `registerPackagePass`。
 
+### 本地化导出规则
+
+路径布局统一使用 `src/i18n/localeLayout.ts`：文本为 `assets/<locale>/lang_<ext>/<文档逻辑路径>.lang`，配音为 `assets/<locale>/voice_<ext>/<文档逻辑路径>/<key>.ogg`；`.ref` 在导出时落地为对等 OGG。
+
+本地化导出策略通过 `registerLocaleExportRule` 注册，与文件编译器、包级 pass 使用同一套注册生命周期。内置规则如下：
+
+| 源类型 | 文本 | 配音 | 平面 |
+| --- | --- | --- | --- |
+| `.hs` | 按本文件编译产物的 `localeKey` 引用裁剪 | 按同一引用集合裁剪 | client |
+| `.char` | 保留本文件整张语言表 | 保留本文件配音 | client |
+| `.kit`、`.progress`、`.hflow`、`.nav` | 保留本文件整张语言表 | 暂未声明 | shared |
+
+注册示例（此处 `.card` 是扩展自己的格式，还需配套文件编译器）：
+
+```ts
+import { registerLocaleExportRule } from '../export/compile'
+
+registerLocaleExportRule({
+  id: 'card',
+  sourceExt: 'card', // 不含点；沿用 lang_card / voice_card 布局
+  text: { plane: 'shared', keys: 'all' },
+  voice: {
+    plane: 'client',
+    keys: 'referenced',
+    references: ({ source }) => JSON.parse(source.content).voiceKeys ?? [],
+  },
+})
+```
+
+- `text`、`voice` 分别配置；未声明的媒体不会导出，并给出诊断。
+- `keys: 'all'` 保留所属文档的整张表或全部配音；`'referenced'` 只保留已使用键。`references` 可由格式自己的解析器提供；省略时读取该源文件编译产物的 `requires: [{ kind: 'localeKey', id: '…' }]`。
+- `keyCase` 默认 `sensitive`；HS hex 键显式使用 `insensitive`。语义键不会擅自转小写。
+- 归属以源文档为单位。文件编译器必须填写 `sourcePath: file.name`；至少有一个运行时产物成功导出后，才会导出该文档的语言与配音。孤立资源、未注册类型均诊断并跳过，不再套用 HS 的默认裁剪规则。
+- 同文档、多语种和文本/配音变体可以共存；不同文档可以各有 `name`。资产通过结构化 `localization` 元数据参与接线，不注册成全局同名符号。编译器声明的 `localeKey` 需求只由同包同文档的文本满足，缺失为 warning，非法跨平面依赖为 error。
+- 同一个 `id` 再次注册会替换规则；不同 id 不能争用同一源后缀。`listLocaleExportRules()` 可查询现行规则。内置初始化保留显式覆盖；清空编译注册表后可重新安装内置规则。
+- 这是开发者的声明式注册接口，不是工程内 JSON 配置或新增配置界面。扩展只需注册自己的规则，无需改语言资产 pass 的类型分支。
+
+回归命令：`node scripts/verify-locale-export-registry.mjs`。测试使用真实 IndexedDB 与 combined/server/client PAK，覆盖内置与自定义类型、覆盖/重置、语种和文档隔离、裁剪、OGG 优先和 `.ref` 落地。
+
+
 内置 **Item**：`.item` → server 平面 `items/….it`，只保留 `{ "item": { id, components } }`（去掉 format / schemaVersion / tags / display）。解析失败记 warning 并跳过该文件。
 
 内置 **ActiveSkins**：把工程皮肤库里已启用的皮肤打进 client 平面：
@@ -69,9 +109,11 @@ registerFileCompiler({
 
 | 平面 | 含义 | 默认后缀（`FILE_PLANE`） |
 | --- | --- | --- |
-| `client` | 仅客户端 | `.hs` / `.char`；lang / voice 产物 |
+| `client` | 仅客户端 | `.hs` / `.char`；本地化产物由注册规则决定 |
 | `server` | 仅服务端 | `.py`（`script/` 与 `goal/`）/ `.progress` / `.item`（编成 `.it`）/ `.kit` |
 | `shared` | 两端都要 | `.hflow` / `.nav`；未列出后缀默认 shared |
+
+语言与配音的平面由注册规则决定，不由 `.lang` / `.ogg` 后缀统一决定。例如礼包语言表随已导出的礼包进入 shared 平面，因此 combined、client 和 server 包均包含译文。
 
 ### 源目录与 PAK 顶层
 

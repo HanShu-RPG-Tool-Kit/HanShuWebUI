@@ -19,6 +19,15 @@ export type CompileDiagnostic = {
   packageName?: string
 }
 
+/** Language/media variants belong to a source document; their keys are not global symbols. */
+export type LocaleArtifact = {
+  sourcePath: string
+  locale: string
+  kind: 'text' | 'voice'
+  keys: string[]
+  keyCase: 'sensitive' | 'insensitive'
+}
+
 export type CompileArtifact = {
   /** pak 内相对路径 */
   path: string
@@ -26,6 +35,7 @@ export type CompileArtifact = {
   plane: Plane
   packageName: string
   sourcePath?: string
+  localization?: LocaleArtifact
   provides?: SymbolRef[]
   requires?: SymbolRef[]
 }
