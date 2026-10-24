@@ -9,20 +9,25 @@ export const TASK_VISIBILITY_STATES = { before_accept: '接取之前', after_acc
 export const DIALOGUE_VISIBILITY_STATES = { before: '之前', after: '之后' } as const
 /** 条件求值器：表达式本身即条件，仅「满足」一态 */
 export const EXPR_VISIBILITY_STATES = { true: '满足' } as const
+/** 本进度重复周期；仅允许写入可见性条件。可承接侧由引擎投影「已满足」，不占条件槽。 */
+export const REPEAT_CYCLE_STATES = { satisfied: '已满足', unsatisfied: '不满足' } as const
 export type ProgressConditionRule =
   | { kind: 'task'; state: keyof typeof TASK_VISIBILITY_STATES; target: string }
   | { kind: 'dialogue'; state: keyof typeof DIALOGUE_VISIBILITY_STATES; target: string }
   | { kind: 'expr'; state: keyof typeof EXPR_VISIBILITY_STATES; target: string }
+  | { kind: 'repeat'; state: keyof typeof REPEAT_CYCLE_STATES; target: '' }
 
 export function conditionStatesFor(kind: ProgressConditionRule['kind']) {
   if (kind === 'task') return TASK_VISIBILITY_STATES
   if (kind === 'dialogue') return DIALOGUE_VISIBILITY_STATES
+  if (kind === 'repeat') return REPEAT_CYCLE_STATES
   return EXPR_VISIBILITY_STATES
 }
 
 export function createConditionRule(kind: ProgressConditionRule['kind']): ProgressConditionRule {
   if (kind === 'task') return { kind: 'task', state: 'succeeded', target: '' }
   if (kind === 'dialogue') return { kind: 'dialogue', state: 'after', target: '' }
+  if (kind === 'repeat') return { kind: 'repeat', state: 'satisfied', target: '' }
   return { kind: 'expr', state: 'true', target: '' }
 }
 export type ProgressRepeatKind = 'once' | 'game_daily' | 'game_weekly' | 'real_daily' | 'real_weekly' | 'real_monthly' | 'duration' | 'manual'
@@ -41,6 +46,8 @@ export type ProgressDocument = {
   visibility: ProgressConditionRule[]
   acceptance: ProgressConditionRule[]
   abandonable: boolean
+  /** When acceptance holds, start without a separate player accept action. Independent of visibility. */
+  autoStartWhenAcceptable: boolean
   repeat: { kind: ProgressRepeatKind; hours: number }
   rewardKits: string[]
 }
@@ -58,7 +65,7 @@ export function createProgress(name = '新建进度', _definitions: readonly Goa
     format: PROGRESS_FORMAT, version: 1, id: uid(),
     name: 'name', description: 'description', authorNotes: '', tags: [],
     completion: 'all', goals: [], visibility: [], acceptance: [],
-    abandonable: true, repeat: { kind: 'once', hours: 24 }, rewardKits: [],
+    abandonable: true, autoStartWhenAcceptable: false, repeat: { kind: 'once', hours: 24 }, rewardKits: [],
   }
 }
 
@@ -98,7 +105,7 @@ export function parseProgress(source: string, _definitions: readonly GoalDefinit
     ids.add(value); return value
   }
   const str = (value: unknown, path: string): string => { check(typeof value === 'string', `${path} 必须是文本`); return value }
-  const readConditions = (values: unknown, label: string): ProgressConditionRule[] => {
+  const readConditions = (values: unknown, label: string, allowRepeat: boolean): ProgressConditionRule[] => {
     check(Array.isArray(values), `${label}必须是条件数组`)
     return values.map((value): ProgressConditionRule => {
     check(isObject(value), `${label}无效`)
@@ -111,12 +118,18 @@ export function parseProgress(source: string, _definitions: readonly GoalDefinit
       check(Object.hasOwn(DIALOGUE_VISIBILITY_STATES, String(value.state)), '对话条件状态无效')
       return { kind: 'dialogue', state: value.state as keyof typeof DIALOGUE_VISIBILITY_STATES, target }
     }
+    if (value.kind === 'repeat') {
+      check(allowRepeat, '可承接条件不能写入重复周期；周期由引擎投影，不占条件槽')
+      check(Object.hasOwn(REPEAT_CYCLE_STATES, String(value.state)), '重复周期条件状态无效')
+      check(target === '', '重复周期条件不需要对象')
+      return { kind: 'repeat', state: value.state as keyof typeof REPEAT_CYCLE_STATES, target: '' }
+    }
     check(value.kind === 'expr' && Object.hasOwn(EXPR_VISIBILITY_STATES, String(value.state)), '求值条件状态无效')
     return { kind: 'expr', state: value.state as keyof typeof EXPR_VISIBILITY_STATES, target }
     })
   }
-  const visibility = readConditions(raw.visibility, '可见性条件')
-  const acceptance = readConditions(raw.acceptance, '可承接条件')
+  const visibility = readConditions(raw.visibility, '可见性条件', true)
+  const acceptance = readConditions(raw.acceptance, '可承接条件', false)
   const docId = id(raw.id, '进度')
   check(raw.completion === 'all' || raw.completion === 'any', 'completion 必须是 all 或 any')
   check(Array.isArray(raw.goals), 'goals 必须是数组')
@@ -134,13 +147,15 @@ export function parseProgress(source: string, _definitions: readonly GoalDefinit
   const hours = raw.repeat.kind === 'duration' ? raw.repeat.hours : 24
   check(typeof hours === 'number' && Number.isFinite(hours) && hours > 0, '重复间隔必须大于零')
   check(typeof raw.abandonable === 'boolean', 'abandonable 必须是布尔值')
+  check(typeof raw.autoStartWhenAcceptable === 'boolean', 'autoStartWhenAcceptable 必须是布尔值')
   check(Array.isArray(raw.rewardKits) && raw.rewardKits.every(ref => typeof ref === 'string' && ref.trim()), 'rewardKits 必须是礼包引用数组')
   check(new Set(raw.rewardKits).size === raw.rewardKits.length, '奖励礼包不能重复')
   return {
     format: PROGRESS_FORMAT, version: 1, id: docId, name: str(raw.name, '名称'), description: str(raw.description, '简介'),
     authorNotes: str(raw.authorNotes ?? '', '作者备注'), tags: raw.tags as string[], completion: raw.completion, goals,
     visibility, acceptance,
-    abandonable: raw.abandonable, repeat: { kind: raw.repeat.kind as ProgressRepeatKind, hours }, rewardKits: raw.rewardKits as string[],
+    abandonable: raw.abandonable, autoStartWhenAcceptable: raw.autoStartWhenAcceptable,
+    repeat: { kind: raw.repeat.kind as ProgressRepeatKind, hours }, rewardKits: raw.rewardKits as string[],
   }
 }
 export function readProgressSource(source: string, definitions: readonly GoalDefinition[] = []): { doc: ProgressDocument | null; error: string } {
@@ -181,7 +196,10 @@ export function progressIssues(
       }
   }
   for (const [label, rules] of [['可见性条件', doc.visibility], ['可承接条件', doc.acceptance]] as const) {
-    rules.forEach((rule, index) => { if (!rule.target.trim()) issues.push(`${label} ${index + 1}：请选择或填写对象`) })
+    rules.forEach((rule, index) => {
+      if (rule.kind === 'repeat') return
+      if (!rule.target.trim()) issues.push(`${label} ${index + 1}：请选择或填写对象`)
+    })
   }
   return issues
 }

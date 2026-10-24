@@ -7,7 +7,7 @@ fn login(e: &mut Engine, root: &Path) -> (String, String) {
     (token, s.id)
 }
 fn progress() -> String {
-    serde_json::json!({"format":"hanshu.progress","version":1,"id":"doc","name":"测试","description":"","authorNotes":"","tags":[],"completion":"all","goals":[],"visibility":[],"acceptance":[],"abandonable":true,"repeat":{"kind":"once"},"rewardKits":[]}).to_string()
+    serde_json::json!({"format":"hanshu.progress","version":1,"id":"doc","name":"测试","description":"","authorNotes":"","tags":[],"completion":"all","goals":[],"visibility":[],"acceptance":[],"abandonable":true,"autoStartWhenAcceptable":false,"repeat":{"kind":"once"},"rewardKits":[]}).to_string()
 }
 
 #[test]

@@ -90,7 +90,7 @@ fn all_file_types_are_server_owned_and_stale_versions_cannot_overwrite() {
         let content = if path == ".hanshu/skinmanager/library.json" {
             r#"{"schemaVersion":5,"revision":1,"folders":[],"entries":[]}"#
         } else if path.ends_with(".progress") {
-            r#"{"format":"hanshu.progress","version":1,"id":"quest","name":"name","description":"description","tags":[],"completion":"all","goals":[],"visibility":[],"acceptance":[],"abandonable":true,"repeat":{"kind":"once"},"rewardKits":[]}"#
+            r#"{"format":"hanshu.progress","version":1,"id":"quest","name":"name","description":"description","tags":[],"completion":"all","goals":[],"visibility":[],"acceptance":[],"abandonable":true,"autoStartWhenAcceptable":false,"repeat":{"kind":"once"},"rewardKits":[]}"#
         } else {
             "original"
         };

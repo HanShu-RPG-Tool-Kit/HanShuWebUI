@@ -10,7 +10,7 @@ const LANG: &str = "assets/zh_cn/lang_progress/quest.lang";
 fn document() -> Value {
     json!({"format":"hanshu.progress","version":1,"id":"document-1","name":"name","description":"description",
         "tags":[],"completion":"all","goals":[{"id":"goal-a","kind":"kill","config":{"count":1,"target":"pig"}},{"id":"goal-b","kind":"collect","config":{}}],
-        "visibility":[],"acceptance":[],"abandonable":true,"repeat":{"kind":"once"},"rewardKits":[],"extension":{"keep":true}})
+        "visibility":[],"acceptance":[],"abandonable":true,"autoStartWhenAcceptable":false,"repeat":{"kind":"once"},"rewardKits":[],"extension":{"keep":true}})
 }
 fn setup(root: &Path) -> (Engine, String, String) {
     fs::create_dir_all(root.join("src/progress")).unwrap();

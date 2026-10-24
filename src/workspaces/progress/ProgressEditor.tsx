@@ -200,7 +200,10 @@ export function ProgressEditor({ doc, goalCatalog, kitOptions = [], disabled, on
         <section className="progress-card" aria-label="周期"><header className="progress-card-head"><h2>周期</h2></header>
           <div className="progress-card-body progress-lifecycle"><label className="progress-field"><span>重复方式</span><select aria-label="重复方式" value={doc.repeat.kind} onChange={event => update({ repeat: { ...doc.repeat, kind: event.target.value as ProgressRepeatKind } })}>{Object.entries(PROGRESS_REPEAT_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
               {doc.repeat.kind === 'duration' && <label className="progress-field"><span>间隔（小时）</span><NumberInput label="重复间隔小时" min={0.01} value={doc.repeat.hours} onChange={hours => { if (hours !== undefined) update({ repeat: { ...doc.repeat, hours } }) }} /></label>}
-              <label className="progress-abandon-switch"><span>可放弃</span><input type="checkbox" role="switch" aria-label="可放弃" checked={doc.abandonable} onChange={event => update({ abandonable: event.target.checked })} /></label>
+              <div className="progress-lifecycle-switches">
+                <label className="progress-abandon-switch"><span>可承接时自动开始</span><input type="checkbox" role="switch" aria-label="可承接时自动开始" checked={doc.autoStartWhenAcceptable} onChange={event => update({ autoStartWhenAcceptable: event.target.checked })} /></label>
+                <label className="progress-abandon-switch"><span>可放弃</span><input type="checkbox" role="switch" aria-label="可放弃" checked={doc.abandonable} onChange={event => update({ abandonable: event.target.checked })} /></label>
+              </div>
           </div>
         </section>
       </div>
@@ -249,15 +252,19 @@ export function ProgressEditor({ doc, goalCatalog, kitOptions = [], disabled, on
           </div>
       </section>
 
-      {([['visibility', '可见性条件'], ['acceptance', '可承接条件']] as const).map(([field, title]) => <section key={field} className="progress-card progress-rules" aria-label={title}><header className="progress-card-head"><h2>{title}</h2><span className="progress-card-count">{doc[field].length}</span><small className="progress-card-note">全部满足</small></header>
+      {([['visibility', '可见性条件', true], ['acceptance', '可承接条件', false]] as const).map(([field, title, allowRepeat]) => <section key={field} className="progress-card progress-rules" aria-label={title}><header className="progress-card-head"><h2>{title}</h2><span className="progress-card-count">{doc[field].length}</span><small className="progress-card-note">{field === 'acceptance' ? '全部满足（含周期投影）' : '全部满足'}</small></header>
         <div className="progress-card-body">
+          {field === 'acceptance' && <div className="progress-visibility-row is-projected" aria-label="重复周期投影"><span className="progress-condition-kind">重复周期</span><span className="progress-condition-state">已满足</span><span className="progress-condition-target">由周期策略投影，不写入条件</span></div>}
           {doc[field].map((rule, index) => <div className="progress-visibility-row" key={index}>
-            <select aria-label={`${title} ${index + 1} 对象类型`} value={rule.kind} onChange={event => update({ [field]: doc[field].map((item, i) => i !== index ? item : createConditionRule(event.target.value as ProgressConditionRule['kind'])) })}><option value="task">任务</option><option value="dialogue">对话</option><option value="expr">求值</option></select>
+            <select aria-label={`${title} ${index + 1} 对象类型`} value={rule.kind} onChange={event => update({ [field]: doc[field].map((item, i) => i !== index ? item : createConditionRule(event.target.value as ProgressConditionRule['kind'])) })}><option value="task">任务</option><option value="dialogue">对话</option><option value="expr">求值</option>{allowRepeat && <option value="repeat">重复周期</option>}</select>
             <select aria-label={`${title} ${index + 1} 状态`} value={rule.state} onChange={event => update({ [field]: doc[field].map((item, i) => i !== index ? item : { ...rule, state: event.target.value } as ProgressConditionRule) })}>{Object.entries(conditionStatesFor(rule.kind)).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
-            <input aria-label={`${title} ${index + 1} 对象`} placeholder={rule.kind === 'task' ? '任务对象' : rule.kind === 'dialogue' ? '对话对象' : '条件表达式'} value={rule.target} onChange={event => update({ [field]: doc[field].map((item, i) => i !== index ? item : { ...rule, target: event.target.value }) }, false)} />
+            {rule.kind === 'repeat'
+              ? <span className="progress-condition-target">本进度周期</span>
+              : <input aria-label={`${title} ${index + 1} 对象`} placeholder={rule.kind === 'task' ? '任务对象' : rule.kind === 'dialogue' ? '对话对象' : '条件表达式'} value={rule.target} onChange={event => update({ [field]: doc[field].map((item, i) => i !== index ? item : { ...rule, target: event.target.value }) }, false)} />}
             <button type="button" className="progress-remove" aria-label={`删除${title} ${index + 1}`} onClick={() => update({ [field]: doc[field].filter((_, i) => i !== index) })}>×</button>
           </div>)}
-          {!doc[field].length && <p className="progress-card-empty">没有条件，直接满足。</p>}
+          {!doc[field].length && field === 'visibility' && <p className="progress-card-empty">没有条件，直接满足。</p>}
+          {!doc[field].length && field === 'acceptance' && <p className="progress-card-empty">除周期投影外没有条件。</p>}
           <button type="button" className="progress-card-add" aria-label={`添加${title}`} onClick={() => update({ [field]: [...doc[field], createConditionRule('task')] })}>＋ 添加条件</button>
         </div>
       </section>)}

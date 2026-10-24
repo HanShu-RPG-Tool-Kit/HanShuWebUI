@@ -22,7 +22,7 @@ pub struct ProgressSlot {
 pub enum ProgressTarget {
     Field {
         #[ts(
-            type = "'name' | 'description' | 'authorNotes' | 'tags' | 'completion' | 'visibility' | 'acceptance' | 'abandonable' | 'repeat' | 'rewardKits'"
+            type = "'name' | 'description' | 'authorNotes' | 'tags' | 'completion' | 'visibility' | 'acceptance' | 'abandonable' | 'autoStartWhenAcceptable' | 'repeat' | 'rewardKits'"
         )]
         field: String,
     },
@@ -135,6 +135,7 @@ fn field_ok(field: &str) -> Result<()> {
                 | "visibility"
                 | "acceptance"
                 | "abandonable"
+                | "autoStartWhenAcceptable"
                 | "repeat"
                 | "rewardKits"
         ),

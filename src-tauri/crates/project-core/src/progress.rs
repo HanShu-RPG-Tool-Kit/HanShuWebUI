@@ -102,7 +102,9 @@ pub fn validate(source: &str) -> Result<()> {
         check(notes.is_string())?;
     }
     check(
-        matches!(v["completion"].as_str(), Some("all" | "any")) && v["abandonable"].is_boolean(),
+        matches!(v["completion"].as_str(), Some("all" | "any"))
+            && v["abandonable"].is_boolean()
+            && v["autoStartWhenAcceptable"].is_boolean(),
     )?;
     for goal in v["goals"].as_array().ok_or_else(invalid)? {
         let id = goal["id"]
@@ -128,6 +130,13 @@ pub fn validate(source: &str) -> Result<()> {
                 ),
                 Some("dialogue") => matches!(rule["state"].as_str(), Some("before" | "after")),
                 Some("expr") => rule["state"].as_str() == Some("true"),
+                // Repeat cycle may only be authored under visibility; acceptance gets it as an
+                // engine projection ("satisfied"), never as a stored condition slot.
+                Some("repeat") => {
+                    k == "visibility"
+                        && matches!(rule["state"].as_str(), Some("satisfied" | "unsatisfied"))
+                        && rule["target"].as_str() == Some("")
+                }
                 _ => false,
             })?;
         }

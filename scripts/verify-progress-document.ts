@@ -38,6 +38,8 @@ doc.visibility = [
   { kind: 'task', state: 'succeeded', target: 'first_task' },
   { kind: 'dialogue', state: 'after', target: 'intro' },
   { kind: 'expr', state: 'true', target: 'level >= 10' },
+  { kind: 'repeat', state: 'satisfied', target: '' },
+  { kind: 'repeat', state: 'unsatisfied', target: '' },
 ]
 doc.acceptance = [{ kind: 'task', state: 'ended', target: 'other_task' }]
 assert.deepEqual(parseProgress(stringifyProgress(doc)).visibility, doc.visibility)
@@ -50,8 +52,12 @@ assert.ok(!('accept' in serialized) && !('visible' in serialized) && !('deliver'
 assert.throws(() => parseProgress(JSON.stringify({ ...serialized, visibility: [{ kind: 'dialogue', state: 'succeeded', target: 'intro' }] })), /对话条件状态无效/)
 assert.throws(() => parseProgress(JSON.stringify({ ...serialized, visibility: [{ kind: 'task', state: 'after', target: 'first_task' }] })), /任务条件状态无效/)
 assert.throws(() => parseProgress(JSON.stringify({ ...serialized, visibility: [{ kind: 'expr', state: 'after', target: 'x' }] })), /求值条件状态无效/)
+assert.throws(() => parseProgress(JSON.stringify({ ...serialized, visibility: [{ kind: 'repeat', state: 'true', target: '' }] })), /重复周期条件状态无效/)
+assert.throws(() => parseProgress(JSON.stringify({ ...serialized, visibility: [{ kind: 'repeat', state: 'satisfied', target: 'self' }] })), /重复周期条件不需要对象/)
+assert.throws(() => parseProgress(JSON.stringify({ ...serialized, acceptance: [{ kind: 'repeat', state: 'satisfied', target: '' }] })), /不能写入重复周期/)
 assert.ok(progressIssues({ ...doc, visibility: [{ kind: 'task', state: 'active', target: '' }] }, defs).some(issue => issue.includes('请选择或填写对象')))
 assert.ok(progressIssues({ ...doc, visibility: [{ kind: 'expr', state: 'true', target: '' }] }, defs).some(issue => issue.includes('请选择或填写对象')))
+assert.ok(!progressIssues({ ...doc, visibility: [{ kind: 'repeat', state: 'unsatisfied', target: '' }], goals: [first] }, defs).some(issue => issue.includes('请选择或填写对象')), 'repeat cycle has no object')
 assert.equal(readProgressSource('{broken').doc, null)
 assert.equal(readProgressSource(JSON.stringify({ ...doc, groups: [] })).doc, null)
 assert.equal(readProgressSource(JSON.stringify({ ...doc, completion: 'atLeast' })).doc, null)
@@ -59,6 +65,10 @@ assert.throws(() => parseProgress(stringifyProgress({ ...doc, goals: [first, fir
 const empty = createProgress('')
 assert.deepEqual(empty.visibility, [])
 assert.deepEqual(empty.acceptance, [])
+assert.equal(empty.autoStartWhenAcceptable, false)
+assert.equal(parseProgress(stringifyProgress(empty)).autoStartWhenAcceptable, false)
+assert.equal(parseProgress(stringifyProgress({ ...empty, autoStartWhenAcceptable: true })).autoStartWhenAcceptable, true)
+assert.throws(() => parseProgress(JSON.stringify({ ...JSON.parse(stringifyProgress(empty)), autoStartWhenAcceptable: 'yes' })), /autoStartWhenAcceptable/)
 assert.ok(!progressIssues({ ...doc, visibility: [], acceptance: [] }, defs).some(issue => issue.includes('条件')), 'empty conditions are satisfied, not incomplete')
 assert.equal(parseProgress(stringifyProgress(empty)).goals.length, 0)
 assert.equal(parseProgress(stringifyProgress(empty)).name, 'name')
