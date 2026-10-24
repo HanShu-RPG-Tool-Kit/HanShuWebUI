@@ -117,6 +117,11 @@ listByTag(tag) → [kitId, …]
 ### 4.5 反馈
 
 - `message` / `title` / `subtitle`：按礼包本地化键解析后发给**当前**玩家（空串跳过）。
+- 本地化值为 **Minecraft 文本组件**：
+  - 普通纯文本（无样式）可直接存字符串；
+  - 带颜色 / 样式时存 JSON 文本组件（支持命名色与 **hex**，如 `"#FFAA00"`；多段用 `extra`）。
+- 引擎须用文本组件反序列化（如 `Component.Serializer.fromJson`），**不要**用 `Component.literal` 包一层——否则颜色不会生效。
+- 分发：`message` → 系统聊天；`title` → `ClientboundSetTitleTextPacket`；`subtitle` → `ClientboundSetSubtitleTextPacket`。
 - `sound`：非空则对该玩家播放；无效 id 记警告。
 
 ## 5. 脚本注入

@@ -47,6 +47,7 @@ import { isItemFileName, parseItem } from './itemDoc'
 import { useItemPresentation } from './itemPresentation'
 import { type ItemPresentation } from './itemTooltip'
 import { ItemHoverTipTarget, ItemTipSegments } from './itemHoverTip'
+import { FeedbackTextEditor } from './FeedbackTextEditor'
 import './KitEditor.css'
 
 const EMPTY_ITEM_CATALOG: ItemCatalog = new Map()
@@ -641,22 +642,26 @@ function FeedbackForm({ feedback, disabled, onChange, resolveText, setText }: {
     }
     onChange({ [field]: value })
   }
-  const field = (key: 'message' | 'title' | 'subtitle', label: string, placeholder: string) => (
-    <label className="kit-field">
-      <span>{label}</span>
-      <input
-        value={readLocalized(key)}
-        disabled={disabled}
-        placeholder={placeholder}
-        onChange={(event) => writeLocalized(key, event.target.value)}
-      />
-    </label>
+  const textField = (
+    key: 'message' | 'title' | 'subtitle',
+    label: string,
+    placeholder: string,
+    tone: 'message' | 'title' | 'subtitle',
+  ) => (
+    <FeedbackTextEditor
+      label={label}
+      value={readLocalized(key)}
+      placeholder={placeholder}
+      disabled={disabled}
+      tone={tone}
+      onChange={(next) => writeLocalized(key, next)}
+    />
   )
   return <div className="kit-form">
-    {field('message', '消息', '你领取了新手礼包')}
+    {textField('message', '消息', '你领取了新手礼包', 'message')}
     <div className="kit-form-pair">
-      {field('title', '标题', '欢迎')}
-      {field('subtitle', '副标题', '祝你旅途愉快')}
+      {textField('title', '标题', '欢迎', 'title')}
+      {textField('subtitle', '副标题', '祝你旅途愉快', 'subtitle')}
     </div>
     <label className="kit-field">
       <span>音效</span>

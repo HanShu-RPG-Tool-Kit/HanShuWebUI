@@ -31,7 +31,14 @@ import {
   sectionFolderKey,
   type FlowEntry,
 } from './library'
-import { encodeItemLinkPayload, ITEM_LINK_MIME, itemRefFromFileName } from './kit'
+import {
+  encodeItemLinkPayload,
+  encodeKitLinkPayload,
+  ITEM_LINK_MIME,
+  KIT_LINK_MIME,
+  itemRefFromFileName,
+  kitRefFromFileName,
+} from './kit'
 import type { FlowPackageId, FlowWorkspaceState } from './storage'
 
 type Row = { entry: FlowEntry; name: string; depth: number; parent: string | null; pkg: FlowPackageId }
@@ -652,11 +659,15 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
             onFocus={(event) => { if (event.target === event.currentTarget) setFocus(row.entry) }} onKeyDown={(event) => keyDown(event, row, index)} onContextMenu={(event) => showMenu(event, row.entry)} draggable={!disabled && !readOnly && !edit && row.entry.kind !== 'package' && !section && !builtinFolder && !builtinDoc && !itemTableDoc && multiCount <= 1}
             onDragStart={(event) => {
               dragging.current = row.entry
-              event.dataTransfer.effectAllowed = itemDoc ? 'copyMove' : 'move'
+              event.dataTransfer.effectAllowed = itemDoc || kitDoc ? 'copyMove' : 'move'
               event.dataTransfer.setData('application/x-hanshu-progress-entry', id)
               if (itemDoc) {
                 const ref = itemRefFromFileName(row.name)
                 if (ref) event.dataTransfer.setData(ITEM_LINK_MIME, encodeItemLinkPayload(ref))
+              }
+              if (kitDoc) {
+                const ref = kitRefFromFileName(row.name)
+                if (ref) event.dataTransfer.setData(KIT_LINK_MIME, encodeKitLinkPayload(ref))
               }
             }}
             onDragEnd={() => { dragging.current = null; setDropTarget(null) }}

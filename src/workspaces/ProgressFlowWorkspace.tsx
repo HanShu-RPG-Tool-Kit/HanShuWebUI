@@ -352,7 +352,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
   const goalCatalog = useMemo(() => buildGoalDefinitionCatalog(state), [state.documents, state.folders])
   const kitCatalog = useMemo(() => {
     const map = new Map<string, ReturnType<typeof readKitSource>['kit']>()
-    const options: { ref: string; label: string }[] = []
+    const options: { ref: string; label: string; key: string }[] = []
     for (const item of state.documents) {
       if (!isKitDocument(item)) continue
       const ref = kitRefFromFileName(item.name)
@@ -362,7 +362,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
       map.set(ref, parsedKit.kit)
       const title = parsedKit.kit.name.trim()
       const showTitle = title && title !== ref && !isProgressLocaleKey(title)
-      options.push({ ref, label: showTitle ? `${ref}（${title}）` : ref })
+      options.push({ ref, label: showTitle ? `${ref}（${title}）` : ref, key: item.key })
     }
     options.sort((a, b) => a.ref.localeCompare(b.ref, 'zh-CN'))
     return { map, options }
@@ -1217,6 +1217,11 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
           goalCatalog={goalCatalog}
           kitOptions={kitCatalog.options}
           disabled={disabledPane}
+          onOpenKit={(key) => {
+            updateGroups((previous) => openOppositeToKey(previous, paneDoc.key, key, focusedGroup))
+            setProgressSourceKey(null)
+            setNotice('')
+          }}
         />}
       </div>
     }

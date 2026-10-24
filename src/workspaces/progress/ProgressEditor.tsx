@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type PointerEvent } from 'react'
+import { useEffect, useId, useRef, useState, type DragEvent, type PointerEvent, type ReactNode } from 'react'
 import {
   createProgressGoal, duplicateProgressGoal, goalConfigSummary,
   goalLabel, moveProgressGoal, progressIssues, PROGRESS_REPEAT_LABELS, stringifyProgress,
@@ -7,9 +7,115 @@ import {
   type ProgressRepeatKind,
 } from './progressDoc'
 import type { GoalConfigField, GoalDefinition, GoalDefinitionCatalog } from './goalDefinitions'
+import {
+  KIT_LINK_MIME,
+  decodeKitLinkPayload,
+  kitRefFromFileName,
+  normalizeKitRef,
+} from './kit'
 import './ProgressEditor.css'
 
-type KitOption = { ref: string; label: string }
+type KitOption = { ref: string; label: string; key?: string }
+
+function isKitFileName(name: string): boolean {
+  return name.toLowerCase().endsWith('.kit')
+}
+
+function hasKitRewardDrag(dataTransfer: DataTransfer | null): boolean {
+  if (!dataTransfer) return false
+  const types = Array.from(dataTransfer.types ?? [])
+  if (types.includes(KIT_LINK_MIME)) return true
+  return Array.from(dataTransfer.files ?? []).some((file) => isKitFileName(file.name))
+}
+
+function collectKitRewardRefs(transfer: DataTransfer): { refs: string[]; errors: string[] } {
+  const refs: string[] = []
+  const errors: string[] = []
+  const mime = transfer.getData(KIT_LINK_MIME)
+  if (mime) {
+    const ref = decodeKitLinkPayload(mime)
+    if (ref) refs.push(ref)
+    else errors.push('礼包链接无效')
+  }
+  for (const file of Array.from(transfer.files ?? [])) {
+    if (!isKitFileName(file.name)) continue
+    const ref = kitRefFromFileName(file.name)
+    if (ref) refs.push(ref)
+    else errors.push(`${file.name}：无效文件名`)
+  }
+  return { refs, errors }
+}
+
+function KitRewardDropZone({
+  disabled,
+  empty,
+  onAdd,
+  children,
+}: {
+  disabled?: boolean
+  empty?: boolean
+  onAdd: (refs: string[]) => { added: number; skipped: number }
+  children: ReactNode
+}) {
+  const [over, setOver] = useState(false)
+  const [notice, setNotice] = useState('')
+
+  function onDragOver(event: DragEvent) {
+    if (disabled || !hasKitRewardDrag(event.dataTransfer)) return
+    event.preventDefault()
+    event.stopPropagation()
+    event.dataTransfer.dropEffect = 'copy'
+    setOver(true)
+  }
+
+  function flash(message: string) {
+    setNotice(message)
+    window.setTimeout(() => setNotice((current) => (current === message ? '' : current)), 3200)
+  }
+
+  return (
+    <div
+      className={`progress-reward-drop${over ? ' is-over' : ''}`}
+      onDragEnter={onDragOver}
+      onDragOver={onDragOver}
+      onDragLeave={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOver(false)
+      }}
+      onDrop={(event) => {
+        setOver(false)
+        if (disabled) return
+        event.preventDefault()
+        event.stopPropagation()
+        if (!hasKitRewardDrag(event.dataTransfer)) return
+        const { refs, errors } = collectKitRewardRefs(event.dataTransfer)
+        if (!refs.length && !errors.length) {
+          flash('请拖入 .kit，或从礼包分类拖入链接')
+          return
+        }
+        const unique = [...new Set(refs.map((ref) => normalizeKitRef(ref)).filter(Boolean))]
+        const { added, skipped } = unique.length ? onAdd(unique) : { added: 0, skipped: 0 }
+        const parts = [
+          added ? `已添加 ${added} 个礼包` : '',
+          skipped ? `${skipped} 个已在列表中` : '',
+          ...errors,
+        ].filter(Boolean)
+        if (parts.length) flash(parts.join('；'))
+      }}
+    >
+      {children}
+      {(over || empty) && (
+        <p className={`progress-reward-drop-hint${over ? ' is-over' : ''}`}>
+          {over ? '松开以添加 .kit' : '可从左侧礼包拖入 .kit，或点下方添加'}
+        </p>
+      )}
+      {notice && (
+        <p className="progress-reward-drop-notice" role="status">
+          {notice}
+        </p>
+      )}
+    </div>
+  )
+}
 
 function NumberInput({ value, onChange, label, integer = false, min, allowUnset = false }: {
   value: number | undefined; onChange: (value: number | undefined) => void; label: string; integer?: boolean; min?: number; allowUnset?: boolean
@@ -86,7 +192,7 @@ function GoalPicker({ definitions, current, onChoose, onClose }: {
   </dialog>
 }
 
-export function ProgressEditor({ doc, goalCatalog, kitOptions = [], disabled, onChange, resolveText, setText, onFlush, onComposition }: {
+export function ProgressEditor({ doc, goalCatalog, kitOptions = [], disabled, onChange, resolveText, setText, onFlush, onComposition, onOpenKit }: {
   doc: ProgressDocument; goalCatalog: GoalDefinitionCatalog; kitOptions?: KitOption[]; disabled?: boolean
   onChange: (source: string, discrete?: boolean) => void
   onFlush?: () => void
@@ -95,6 +201,8 @@ export function ProgressEditor({ doc, goalCatalog, kitOptions = [], disabled, on
   resolveText?: (key: string) => string
   /** 写入当前语言译文（不改文档里的键） */
   setText?: (key: string, value: string) => void
+  /** 打开工程内已找到的奖励礼包文档 */
+  onOpenKit?: (documentKey: string) => void
 }) {
   const definitions = goalCatalog.definitions
   const [collapsed, setCollapsed] = useState(() => new Set<string>())
@@ -192,10 +300,53 @@ export function ProgressEditor({ doc, goalCatalog, kitOptions = [], disabled, on
       <div className="progress-summary-grid">
         <section className="progress-card progress-reward-section" aria-label="完成奖励">
           <header className="progress-card-head"><h2>完成奖励</h2><span className="progress-card-count">{doc.rewardKits.length}</span></header>
-          <div className="progress-card-body">
-            {doc.rewardKits.map(ref => <div className="progress-reward-row" key={ref}><span>{kitOptions.find(item => item.ref === ref)?.label || `${ref}（未找到）`}</span><button type="button" className="progress-remove" aria-label={`移除礼包 ${ref}`} onClick={() => update({ rewardKits: doc.rewardKits.filter(item => item !== ref) })}>×</button></div>)}
-            <select aria-label="添加奖励礼包" value="" disabled={!availableKits.length} onChange={event => { if (event.target.value) update({ rewardKits: [...doc.rewardKits, event.target.value] }) }}><option value="">{availableKits.length ? '＋ 添加礼包' : kitOptions.length ? '所有礼包已添加' : '暂无可用礼包'}</option>{availableKits.map(item => <option key={item.ref} value={item.ref}>{item.label}</option>)}</select>
-          </div>
+          <KitRewardDropZone
+            disabled={disabled}
+            empty={!doc.rewardKits.length}
+            onAdd={(refs) => {
+              const next = [...doc.rewardKits]
+              let added = 0
+              let skipped = 0
+              for (const ref of refs) {
+                if (next.includes(ref)) {
+                  skipped += 1
+                  continue
+                }
+                next.push(ref)
+                added += 1
+              }
+              if (added) update({ rewardKits: next })
+              return { added, skipped }
+            }}
+          >
+            <div className="progress-card-body">
+              {doc.rewardKits.map((ref) => {
+                const option = kitOptions.find((item) => item.ref === ref)
+                return (
+                  <div className="progress-reward-row" key={ref}>
+                    <span>{option?.label || `${ref}（未找到）`}</span>
+                    {option?.key && onOpenKit ? (
+                      <a
+                        className="progress-open"
+                        href="#open-kit"
+                        role="button"
+                        aria-label={`打开礼包 ${ref}`}
+                        title="打开礼包"
+                        onClick={(event) => {
+                          event.preventDefault()
+                          onOpenKit(option.key!)
+                        }}
+                      >
+                        ↗
+                      </a>
+                    ) : null}
+                    <button type="button" className="progress-remove" aria-label={`移除礼包 ${ref}`} onClick={() => update({ rewardKits: doc.rewardKits.filter((item) => item !== ref) })}>×</button>
+                  </div>
+                )
+              })}
+              <select aria-label="添加奖励礼包" value="" disabled={!availableKits.length} onChange={event => { if (event.target.value) update({ rewardKits: [...doc.rewardKits, event.target.value] }) }}><option value="">{availableKits.length ? '＋ 添加礼包' : kitOptions.length ? '所有礼包已添加' : '暂无可用礼包'}</option>{availableKits.map(item => <option key={item.ref} value={item.ref}>{item.label}</option>)}</select>
+            </div>
+          </KitRewardDropZone>
         </section>
         <section className="progress-card" aria-label="周期"><header className="progress-card-head"><h2>周期</h2></header>
           <div className="progress-card-body progress-lifecycle"><label className="progress-field"><span>重复方式</span><select aria-label="重复方式" value={doc.repeat.kind} onChange={event => update({ repeat: { ...doc.repeat, kind: event.target.value as ProgressRepeatKind } })}>{Object.entries(PROGRESS_REPEAT_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>

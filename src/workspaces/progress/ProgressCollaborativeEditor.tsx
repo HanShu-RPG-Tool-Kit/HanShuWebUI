@@ -18,8 +18,9 @@ function fieldName(effect: ProgressEffect) {
 
 type Props = {
   client: ProjectClient; path: string; name: string; source: string; locale: string; goalCatalog: GoalDefinitionCatalog
-  kitOptions: { ref: string; label: string }[]; disabled: boolean
+  kitOptions: { ref: string; label: string; key?: string }[]; disabled: boolean
   initialSeeds?: Record<string, string>; onCreated?: () => void
+  onOpenKit?: (documentKey: string) => void
 }
 export function ProgressCollaborativeEditor(props: Props) {
   const [created, setCreated] = useState(Boolean(props.client.entry(props.path)))
@@ -39,7 +40,7 @@ function ProgressCreateDocument({ client, path, name, source, locale, initialSee
   useEffect(() => { if (client.entry(path)) onCreated?.() }, [client, client.tree.revision, onCreated, path])
   return <div className="progress-autosave-error" role="status">{error || (disabled ? '请使用有编辑权限的连接创建进度。' : '正在创建进度及当前语言…')}{error && <p>原文件和输入已保留，请在保存状态中重试原提交。</p>}</div>
 }
-function ProgressLiveEditor({ client, path, name, source, locale, goalCatalog, kitOptions, disabled }: Props) {
+function ProgressLiveEditor({ client, path, name, source, locale, goalCatalog, kitOptions, disabled, onOpenKit }: Props) {
   const record = getProgressEditor(client, path, name, source, locale)
   const session = record.session
   const state = useSyncExternalStore(session.subscribe, session.getSnapshot)
@@ -78,6 +79,7 @@ function ProgressLiveEditor({ client, path, name, source, locale, goalCatalog, k
       resolveText={key => state.view.languages[locale]?.[key] ?? ''}
       setText={(key, value) => session.editText(locale, key, value)}
       onChange={(source, immediate) => session.editSource(source, immediate)}
-      onFlush={() => session.finishText()} onComposition={active => session.composition(active)} />
+      onFlush={() => session.finishText()} onComposition={active => session.composition(active)}
+      onOpenKit={onOpenKit} />
   </div>
 }

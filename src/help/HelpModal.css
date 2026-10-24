@@ -178,6 +178,8 @@
   min-width: 0;
   overflow: auto;
   scroll-padding-top: 16px;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 .help-md {
@@ -188,6 +190,7 @@
   font-size: calc(14px * var(--help-s));
   line-height: 1.8;
   overflow-wrap: anywhere;
+  cursor: text;
 }
 
 .help-md > :first-child {

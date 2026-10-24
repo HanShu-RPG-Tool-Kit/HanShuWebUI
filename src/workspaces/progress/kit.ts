@@ -27,6 +27,8 @@ export type KitItem = {
 export type ItemCatalog = ReadonlyMap<string, ItemDocument>
 
 export const ITEM_LINK_MIME = 'application/x-hanshu-item-link'
+/** 资源树拖出 `.kit` 链接（进度奖励等落点） */
+export const KIT_LINK_MIME = 'application/x-hanshu-kit-link'
 
 /** `sword.item` / `sword` → `sword` */
 export function normalizeItemRef(value: string): string {
@@ -81,6 +83,24 @@ export function decodeItemLinkPayload(raw: string): string | null {
     }
   } catch { /* 纯文本引用 */ }
   const ref = normalizeItemRef(text)
+  return ref || null
+}
+
+export function encodeKitLinkPayload(ref: string): string {
+  return JSON.stringify({ ref: normalizeKitRef(ref) })
+}
+
+export function decodeKitLinkPayload(raw: string): string | null {
+  const text = raw.trim()
+  if (!text) return null
+  try {
+    const parsed = JSON.parse(text) as unknown
+    if (isObject(parsed) && typeof parsed.ref === 'string') {
+      const ref = normalizeKitRef(parsed.ref)
+      return ref || null
+    }
+  } catch { /* 纯文本引用 */ }
+  const ref = normalizeKitRef(text)
   return ref || null
 }
 
