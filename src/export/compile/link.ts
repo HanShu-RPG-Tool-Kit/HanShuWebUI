@@ -1,3 +1,4 @@
+import { normalizeSourcePath } from '../../i18n/localeLayout'
 import type { CompileArtifact, CompileDiagnostic, Plane, SymbolRef } from './types'
 
 function symKey(ref: SymbolRef): string {
@@ -21,6 +22,22 @@ export function linkArtifacts(artifacts: CompileArtifact[]): CompileDiagnostic[]
     string,
     { plane: Plane; deprecated?: boolean; path: string; packageName: string }
   >()
+
+  const exactLocaleProviders = new Map<string, CompileArtifact[]>()
+  const insensitiveLocaleProviders = new Map<string, CompileArtifact[]>()
+  const localeKey = (packageName: string, sourcePath: string, key: string) =>
+    JSON.stringify([packageName, normalizeSourcePath(sourcePath), key])
+  for (const artifact of artifacts) {
+    const locale = artifact.localization
+    if (locale?.kind !== 'text') continue
+    const index = locale.keyCase === 'insensitive' ? insensitiveLocaleProviders : exactLocaleProviders
+    for (const key of locale.keys) {
+      const id = localeKey(artifact.packageName, locale.sourcePath, locale.keyCase === 'insensitive' ? key.toLowerCase() : key)
+      const providers = index.get(id) ?? []
+      providers.push(artifact)
+      index.set(id, providers)
+    }
+  }
 
   for (const art of artifacts) {
     for (const p of art.provides ?? []) {
@@ -49,6 +66,28 @@ export function linkArtifacts(artifacts: CompileArtifact[]): CompileDiagnostic[]
   for (const art of artifacts) {
     for (const r of art.requires ?? []) {
       const key = symKey(r)
+      if (r.kind === 'localeKey') {
+        // A translation may exist in multiple languages and media. Resolve within
+        // the consumer's source document instead of a global provider namespace.
+        const translations = [
+          ...(exactLocaleProviders.get(localeKey(art.packageName, art.sourcePath ?? '', r.id)) ?? []),
+          ...(insensitiveLocaleProviders.get(localeKey(art.packageName, art.sourcePath ?? '', r.id.toLowerCase())) ?? []),
+        ]
+        if (!translations.length) diagnostics.push({
+          severity: 'warning', code: 'missing_require',
+          message: `${art.path} 所属文档缺少本地化键 ${r.id} 的译文`,
+          sourcePath: art.sourcePath ?? art.path, packageName: art.packageName,
+        })
+        for (const translation of translations) {
+          if ((art.plane === 'server' && translation.plane === 'client') ||
+              (art.plane === 'client' && translation.plane === 'server')) diagnostics.push({
+            severity: 'error', code: 'cross_plane',
+            message: `${art.path}（${art.plane}）所需译文 ${translation.path} 位于 ${translation.plane}，请调整本地化导出规则`,
+            sourcePath: art.sourcePath ?? art.path, packageName: art.packageName,
+          })
+        }
+        continue
+      }
       required.add(key)
       const hit = providers.get(key)
       if (!hit) {
