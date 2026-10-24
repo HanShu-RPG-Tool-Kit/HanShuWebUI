@@ -8,7 +8,9 @@
 .node-header-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0;}
 .node-header-badge{display:flex;align-items:center;margin-left:auto;flex:none;font-size:10px;font-weight:400;}
 .node-port-label{position:absolute;transform:translateY(-50%);max-width:calc(50% - 12px);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;line-height:16px;pointer-events:none;}
-.node-port-label.is-input{left:11px;}.node-port-label.is-output{right:11px;text-align:right;}
+.node-port-label.is-side-left{left:11px;}.node-port-label.is-side-right{right:11px;text-align:right;}
+.node-port-label.is-side-top,.node-port-label.is-side-bottom{transform:translateX(-50%);text-align:center;}
+.node-port-label.is-side-top{top:10px;}.node-port-label.is-side-bottom{bottom:10px;}
 .node-field{display:flex;align-items:center;gap:8px;padding:4px 10px;min-width:0;}
 .node-field-label{flex:0 1 40%;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#bbb;}
 .node-field-control{display:block;flex:1;min-width:0;}

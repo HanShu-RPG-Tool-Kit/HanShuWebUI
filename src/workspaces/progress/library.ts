@@ -7,7 +7,7 @@ export type FlowEntry =
 
 export type FlowSectionDef = { id: string; name: string }
 
-export const FLOW_PACKAGE_ORDER: FlowPackageId[] = ['script', 'progress', 'story', 'actor', 'reputation', 'region', 'navigator', 'shop', 'gift', 'items']
+export const FLOW_PACKAGE_ORDER: FlowPackageId[] = ['script', 'progress', 'story', 'actor', 'reputation', 'region', 'navigator', 'shop', 'gift', 'items', 'entities']
 export const FLOW_PACKAGE_NAMES: Record<FlowPackageId, string> = {
   script: '脚本',
   progress: '进度',
@@ -18,6 +18,7 @@ export const FLOW_PACKAGE_NAMES: Record<FlowPackageId, string> = {
   navigator: '导航器',
   shop: '商店',
   items: '物品库',
+  entities: '实体库',
   gift: '礼包',
 }
 /** 顶层分类下的内置二级分类（稳定键、不可重命名/移动/删除） */
@@ -29,26 +30,29 @@ export const packageAllowsScripts = (id: FlowPackageId) => id === 'script'
 export const packageAllowsKits = (id: FlowPackageId) => id === 'gift'
 export const packageAllowsProgress = (id: FlowPackageId) => id === 'progress'
 export const packageAllowsNavigation = (id: FlowPackageId) => id === 'navigator'
+export const packageAllowsEntities = (id: FlowPackageId) => id === 'entities'
 export const packageAllowsItems = (id: FlowPackageId) => id === 'items'
 export const packageAllowsDocuments = (id: FlowPackageId) =>
-  packageAllowsFlows(id) || packageAllowsScripts(id) || packageAllowsKits(id) || packageAllowsProgress(id) || packageAllowsNavigation(id) || packageAllowsItems(id)
+  packageAllowsFlows(id) || packageAllowsScripts(id) || packageAllowsKits(id) || packageAllowsProgress(id) || packageAllowsNavigation(id) || packageAllowsItems(id) || packageAllowsEntities(id)
 export const packageAcceptsImportFile = (id: FlowPackageId, fileName: string) => {
   const lower = fileName.toLowerCase()
   if (id === 'script') return lower.endsWith('.py')
   if (id === 'gift') return lower.endsWith('.kit')
   if (id === 'progress') return lower.endsWith('.progress')
   if (id === 'navigator') return lower.endsWith('.nav') || lower.endsWith('.json')
+  if (id === 'entities') return lower.endsWith('.entity')
   if (id === 'items') return lower.endsWith('.item') || lower.endsWith('.itemstack') || lower.endsWith('.json')
   if (id === 'story') return lower.endsWith('.hflow') || lower.endsWith('.json')
   return false
 }
-export type PackageDocumentExt = '.hflow' | '.py' | '.kit' | '.progress' | '.nav' | '.item'
+export type PackageDocumentExt = '.hflow' | '.py' | '.kit' | '.progress' | '.nav' | '.item' | '.entity'
 export const packageDocumentExt = (id: FlowPackageId): PackageDocumentExt | null =>
   id === 'story' ? '.hflow'
     : id === 'script' ? '.py'
       : id === 'gift' ? '.kit'
         : id === 'progress' ? '.progress'
           : id === 'navigator' ? '.nav'
+            : id === 'entities' ? '.entity'
             : id === 'items' ? '.item'
               : null
 
@@ -64,13 +68,14 @@ export const isProgressDocument = (document: { package: FlowPackageId; name: str
   document.package === 'progress' || document.name.toLowerCase().endsWith('.progress')
 export const isNavigationDocument = (document: { package: FlowPackageId; name: string }) =>
   document.package === 'navigator' || document.name.toLowerCase().endsWith('.nav')
+export const isEntityDocument = (document: {package: FlowPackageId;name:string}) => document.package === 'entities' || document.name.toLowerCase().endsWith('.entity')
 export const isItemDocument = (document: { key?: string; package: FlowPackageId; name: string }) => {
   if (document.key && isItemLibraryTableKey(document.key)) return false
   return document.package === 'items' || document.name.toLowerCase().endsWith('.item')
 }
 export function documentExtOf(document: { package: FlowPackageId; name: string }): PackageDocumentExt {
   return packageDocumentExt(document.package)
-    ?? (isItemDocument(document) ? '.item'
+    ?? (isEntityDocument(document) ? '.entity' : isItemDocument(document) ? '.item'
       : isNavigationDocument(document) ? '.nav'
         : isProgressDocument(document) ? '.progress'
           : isKitDocument(document) ? '.kit'
@@ -238,6 +243,7 @@ export function canMoveFlowEntry(state: FlowWorkspaceState, entry: FlowEntry, pk
     if (isKitDocument(document)) return packageAllowsKits(pkg)
     if (isProgressDocument(document)) return packageAllowsProgress(pkg)
     if (isNavigationDocument(document)) return packageAllowsNavigation(pkg)
+    if (isEntityDocument(document)) return packageAllowsEntities(pkg)
     if (isItemDocument(document)) return packageAllowsItems(pkg)
     if (isScriptDocument(document)) return packageAllowsScripts(pkg)
     return packageAllowsFlows(pkg)
@@ -273,9 +279,10 @@ export function moveFlowEntry(state: FlowWorkspaceState, entry: FlowEntry, pkg: 
     if (document && isKitDocument(document) && !packageAllowsKits(pkg)) throw new Error('礼包只能放在「礼包」分类中。')
     if (document && isProgressDocument(document) && !packageAllowsProgress(pkg)) throw new Error('进度只能放在「进度」分类中。')
     if (document && isNavigationDocument(document) && !packageAllowsNavigation(pkg)) throw new Error('导航点只能放在「导航器」分类中。')
+    if(document && isEntityDocument(document) && !packageAllowsEntities(pkg)) throw new Error('实体只能放在实体库中。')
     if (document && isItemDocument(document) && !packageAllowsItems(pkg)) throw new Error('物品只能放在「物品库」分类中。')
     if (document && isScriptDocument(document) && !packageAllowsScripts(pkg)) throw new Error('脚本只能放在「脚本」分类中。')
-    if (document && !isKitDocument(document) && !isProgressDocument(document) && !isNavigationDocument(document) && !isItemDocument(document) && !isScriptDocument(document) && !packageAllowsFlows(pkg)) throw new Error('流程只能放在「故事流程」分类中。')
+    if (document && !isKitDocument(document) && !isProgressDocument(document) && !isNavigationDocument(document) && !isItemDocument(document) && !isEntityDocument(document) && !isScriptDocument(document) && !packageAllowsFlows(pkg)) throw new Error('流程只能放在「故事流程」分类中。')
   }
   const name = entry.kind === 'folder' ? state.folders.find((folder) => folder.key === entry.key)!.name : state.documents.find((document) => document.key === entry.key)!.name
   requireAvailableName(state, name, pkg, parent, entry.key, entry.kind === 'folder' ? 'folder' : 'document')

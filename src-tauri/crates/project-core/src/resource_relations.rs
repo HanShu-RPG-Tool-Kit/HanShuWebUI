@@ -51,6 +51,7 @@ fn source_directory(kind: &str) -> Option<&'static str> {
         "nav" => "navigator",
         "kit" => "gift",
         "item" => "items",
+        "entity" => "entities",
         _ => return None,
     })
 }

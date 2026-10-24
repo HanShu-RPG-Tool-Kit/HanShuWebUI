@@ -20,6 +20,7 @@ import {
   packageAllowsDocuments,
   packageAllowsFlows,
   packageAllowsItems,
+  packageAllowsEntities,
   packageAllowsKits,
   packageAllowsNavigation,
   packageAllowsProgress,
@@ -42,9 +43,9 @@ import {
 import type { FlowPackageId, FlowWorkspaceState } from './storage'
 
 type Row = { entry: FlowEntry; name: string; depth: number; parent: string | null; pkg: FlowPackageId }
-type Edit = { mode: 'flow' | 'script' | 'kit' | 'progress' | 'navigation' | 'item' | 'folder' | 'rename' | 'move'; entry: FlowEntry; parent: string | null; pkg: FlowPackageId; value: string; error: string }
+type Edit = { mode: 'flow' | 'script' | 'kit' | 'progress' | 'navigation' | 'entity' | 'item' | 'folder' | 'rename' | 'move'; entry: FlowEntry; parent: string | null; pkg: FlowPackageId; value: string; error: string }
 
-export function Icon({ kind }: { kind: 'folder' | 'document' | 'python' | 'kit' | 'item' | 'item-table' | 'new' | 'import' | 'collapse' | 'script' | 'progress' | 'story' | 'actor' | 'reputation' | 'region' | 'navigator' | 'shop' | 'items' | 'gift' | 'goal-def' }) {
+export function Icon({ kind }: { kind: 'folder' | 'document' | 'python' | 'kit' | 'item' | 'item-table' | 'new' | 'import' | 'collapse' | 'script' | 'progress' | 'story' | 'actor' | 'reputation' | 'region' | 'navigator' | 'shop' | 'entities' | 'items' | 'gift' | 'goal-def' }) {
   const paths: Record<typeof kind, string> = {
     folder: 'M2 5h6l2 2h12v12H2z',
     document: 'M5 2h9l5 5v15H5z M14 2v6h5 M8 12h8 M8 16h8',
@@ -63,6 +64,7 @@ export function Icon({ kind }: { kind: 'folder' | 'document' | 'python' | 'kit' 
     region: 'M12 21s7-5.2 7-11a7 7 0 10-14 0c0 5.8 7 11 7 11z M12 11.5a1.5 1.5 0 100-3 1.5 1.5 0 000 3z',
     navigator: 'M12 21a9 9 0 100-18 9 9 0 000 18z M14.5 9.5l-2 5-5 2 2-5 5-2z',
     shop: 'M3 9l1.5-5h15L21 9 M3 9v11h18V9 M3 9h18 M9 20v-6h6v6',
+    entities: 'M8 3h8v6H8z M5 21v-6a7 7 0 0114 0v6 M8 15v6 M16 15v6',
     items: 'M4 7l8-4 8 4v10l-8 4-8-4z M4 7l8 4 8-4 M12 11v10',
     gift: 'M4 11h16v10H4z M2 7h20v4H2z M12 7v14 M12 7c0-2.5-2-4-4-4S5 5.5 5 7h7 M12 7c0-2.5 2-4 4-4s3 1.5 3 4h-7',
     'goal-def': 'M8 4h11a2 2 0 012 2v14a2 2 0 01-2 2H8a2 2 0 01-2-2V6a2 2 0 012-2z M5 8H3 M5 12H3 M5 16H3 M11 10l2 2 4-4',
@@ -143,10 +145,10 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
   const allowsProgress = packageAllowsProgress(currentPkg)
   const allowsNavigation = packageAllowsNavigation(currentPkg)
   const allowsItems = packageAllowsItems(currentPkg)
-  const allowsDocuments = allowsFlows || allowsScripts || allowsKits || allowsProgress || allowsNavigation || allowsItems
-  const newDocumentMode: 'flow' | 'script' | 'kit' | 'progress' | 'navigation' | 'item' | null = allowsFlows ? 'flow' : allowsScripts ? 'script' : allowsKits ? 'kit' : allowsProgress ? 'progress' : allowsNavigation ? 'navigation' : allowsItems ? 'item' : null
-  const newLabel = allowsItems ? '新建物品' : allowsNavigation ? '新建导航点' : allowsProgress ? '新建进度' : allowsKits ? '新建礼包' : allowsScripts ? '新建脚本' : '新建流程'
-  const importLabel = allowsItems ? '导入物品' : allowsNavigation ? '导入导航点' : allowsProgress ? '导入进度' : allowsKits ? '导入礼包' : allowsScripts ? '导入脚本' : '导入树图'
+  const allowsDocuments = allowsFlows || allowsScripts || allowsKits || allowsProgress || allowsNavigation || allowsItems || packageAllowsEntities(currentPkg)
+  const newDocumentMode: 'flow' | 'script' | 'kit' | 'progress' | 'navigation' | 'entity' | 'item' | null = allowsFlows ? 'flow' : allowsScripts ? 'script' : allowsKits ? 'kit' : allowsProgress ? 'progress' : allowsNavigation ? 'navigation' : packageAllowsEntities(currentPkg) ? 'entity' : allowsItems ? 'item' : null
+  const newLabel = packageAllowsEntities(currentPkg) ? '新建实体' : allowsItems ? '新建物品' : allowsNavigation ? '新建导航点' : allowsProgress ? '新建进度' : allowsKits ? '新建礼包' : allowsScripts ? '新建脚本' : '新建流程'
+  const importLabel = packageAllowsEntities(currentPkg) ? '导入实体' : allowsItems ? '导入物品' : allowsNavigation ? '导入导航点' : allowsProgress ? '导入进度' : allowsKits ? '导入礼包' : allowsScripts ? '导入脚本' : '导入树图'
 
   useEffect(() => {
     // eslint-disable-next-line react/set-state-in-effect
@@ -327,6 +329,7 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
       onNotice('导航点只能建在「导航器」分类中。')
       return
     }
+    if(mode==='entity'&&!packageAllowsEntities(pkg)){onNotice('实体只能建在实体库中。');return}
     if (mode === 'item' && !packageAllowsItems(pkg)) {
       onNotice('物品只能建在「物品库」分类中。')
       return
@@ -337,7 +340,7 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
     selectOnly(entry)
     setEdit({
       mode,
-      entry: mode === 'flow' || mode === 'script' || mode === 'kit' || mode === 'progress' || mode === 'navigation' || mode === 'item' || mode === 'folder' ? containerFor(entry) : entry,
+      entry: mode === 'flow' || mode === 'script' || mode === 'kit' || mode === 'progress' || mode === 'navigation' || mode === 'entity' || mode === 'item' || mode === 'folder' ? containerFor(entry) : entry,
       parent,
       pkg,
       value: mode === 'rename' ? entryName(state, entry)
@@ -346,6 +349,7 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
             : mode === 'kit' ? '新建礼包.kit'
               : mode === 'progress' ? '新建委托.progress'
                 : mode === 'navigation' ? '新建导航点.nav'
+                  : mode === 'entity' ? '新建实体.entity'
                   : mode === 'item' ? '新建物品.item'
                     : '新建流程',
       error: '',
@@ -355,7 +359,7 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
     if (!edit || disabled || readOnly) return
     try {
       let nextEntry = edit.entry
-      if (edit.mode === 'flow' || edit.mode === 'script' || edit.mode === 'kit' || edit.mode === 'progress' || edit.mode === 'navigation' || edit.mode === 'item') { const key = onNew(edit.value, edit.parent, edit.pkg); nextEntry = { kind: 'document', key } }
+      if (edit.mode === 'flow' || edit.mode === 'script' || edit.mode === 'kit' || edit.mode === 'progress' || edit.mode === 'navigation' || edit.mode === 'item' || edit.mode === 'entity') { const key = onNew(edit.value, edit.parent, edit.pkg); nextEntry = { kind: 'document', key } }
       if (edit.mode === 'folder') { const result = addFlowFolder(state, edit.value, edit.pkg, edit.parent); onChange(result.state); nextEntry = { kind: 'folder', key: result.folder.key }; setExpanded((previous) => new Set(previous).add(`folder:${result.folder.key}`)) }
       if (edit.mode === 'rename') onChange(renameFlowEntry(state, edit.entry, edit.value))
       if (edit.mode === 'move') { onChange(moveFlowEntry(state, edit.entry, edit.pkg, edit.parent)); revealEntry(edit.entry) }
@@ -607,6 +611,10 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
       items.unshift({ label: '新建导航点', action: () => startEdit('navigation', entry) })
       items.push({ label: '导入导航点…', action: () => onImport(folder, pkg) })
     }
+    if (packageAllowsEntities(pkg)) {
+      items.unshift({label:'新建实体',action:()=>startEdit('entity',entry)})
+      items.push({label:'导入实体…',action:()=>onImport(folder,pkg)})
+    }
     if (packageAllowsItems(pkg)) {
       items.unshift({ label: '新建物品', action: () => startEdit('item', entry) })
       items.push({ label: '导入物品…', action: () => onImport(folder, pkg) })
@@ -651,8 +659,9 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
         const progressDoc = !!document && (document.package === 'progress' || row.name.toLowerCase().endsWith('.progress'))
         const navigationDoc = !!document && (document.package === 'navigator' || row.name.toLowerCase().endsWith('.nav'))
         const itemTableDoc = row.entry.kind === 'document' && isItemLibraryTableKey(row.entry.key)
+        const entityDoc = !!document && document.package === 'entities'
         const itemDoc = !!document && !itemTableDoc && (document.package === 'items' || row.name.toLowerCase().endsWith('.item'))
-        const iconKind = row.entry.kind === 'package' ? row.entry.package : section ? sectionIconKind(row.entry.key) : itemTableDoc ? 'item-table' : itemDoc ? 'item' : kitDoc ? 'kit' : navigationDoc ? 'navigator' : progressDoc ? 'progress' : pythonDoc ? 'python' : folder ? 'folder' : 'document'
+        const iconKind = row.entry.kind === 'package' ? row.entry.package : section ? sectionIconKind(row.entry.key) : itemTableDoc ? 'item-table' : entityDoc ? 'entities' : itemDoc ? 'item' : kitDoc ? 'kit' : navigationDoc ? 'navigator' : progressDoc ? 'progress' : pythonDoc ? 'python' : folder ? 'folder' : 'document'
         return <div key={id} role="none">
           <div ref={(element) => { if (element) elements.current.set(id, element); else elements.current.delete(id) }} className={`flow-resource-row${isSelected ? ' selected' : ''}${row.entry.kind === 'document' && row.entry.key === state.activeKey ? ' is-open' : ''}${dropTarget === id ? ' drop-target' : ''}${builtinFolder || builtinDoc || itemTableDoc ? ' is-builtin' : ''}`} role="treeitem" aria-level={row.depth + 1} aria-selected={isSelected} aria-expanded={folder ? !!search || expanded.has(id) : undefined} aria-disabled={disabled} tabIndex={isFocused || (!rows.some((r) => entryId(r.entry) === entryId(focus)) && index === 0) ? 0 : -1} style={{ paddingLeft: 6 + row.depth * TREE_INDENT }} title={builtinDoc || builtinFolder || itemTableDoc ? `${row.name}（只读）` : row.name}
             onClick={(event) => clickRow(event, row.entry)}
@@ -676,7 +685,7 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
             <span className="flow-resource-twist" aria-hidden>{folder ? !!search || expanded.has(id) ? '▾' : '▸' : ''}</span><Icon kind={iconKind} />
             {isEditing && edit.mode === 'rename' ? <form className="flow-resource-edit" onSubmit={(event) => { event.preventDefault(); submitEdit() }} onClick={(event) => event.stopPropagation()}><input ref={editInput} aria-label="资源名称" value={edit.value} onChange={(event) => setEdit({ ...edit, value: event.target.value, error: '' })} onKeyDown={(event) => { event.stopPropagation(); if (event.key === 'Escape') cancelEdit() }} /></form> : <span className="flow-resource-name">{row.name}</span>}
           </div>
-          {isEditing && (edit.mode === 'flow' || edit.mode === 'script' || edit.mode === 'kit' || edit.mode === 'progress' || edit.mode === 'navigation' || edit.mode === 'item' || edit.mode === 'folder') && <form className="flow-resource-new" style={{ paddingLeft: 6 + (row.depth + 1) * TREE_INDENT }} onSubmit={(event) => { event.preventDefault(); submitEdit() }}><span className="flow-resource-twist" /><Icon kind={edit.mode === 'folder' ? 'folder' : edit.mode === 'script' ? 'python' : edit.mode === 'kit' ? 'kit' : edit.mode === 'progress' ? 'progress' : edit.mode === 'navigation' ? 'navigator' : edit.mode === 'item' ? 'item' : 'document'} /><input ref={editInput} aria-label={edit.mode === 'folder' ? '新文件夹名称' : edit.mode === 'script' ? '新脚本名称' : edit.mode === 'kit' ? '新礼包名称' : edit.mode === 'progress' ? '新进度名称' : edit.mode === 'navigation' ? '新导航点名称' : edit.mode === 'item' ? '新物品名称' : '新流程名称'} value={edit.value} onChange={(event) => setEdit({ ...edit, value: event.target.value, error: '' })} onKeyDown={(event) => { if (event.key === 'Escape') cancelEdit() }} /></form>}
+          {isEditing && (edit.mode === 'flow' || edit.mode === 'script' || edit.mode === 'kit' || edit.mode === 'progress' || edit.mode === 'navigation' || edit.mode === 'entity' || edit.mode === 'item' || edit.mode === 'folder') && <form className="flow-resource-new" style={{ paddingLeft: 6 + (row.depth + 1) * TREE_INDENT }} onSubmit={(event) => { event.preventDefault(); submitEdit() }}><span className="flow-resource-twist" /><Icon kind={edit.mode === 'folder' ? 'folder' : edit.mode === 'script' ? 'python' : edit.mode === 'kit' ? 'kit' : edit.mode === 'progress' ? 'progress' : edit.mode === 'navigation' ? 'navigator' : edit.mode === 'entity' ? 'entities' : edit.mode === 'item' ? 'item' : 'document'} /><input ref={editInput} aria-label={edit.mode === 'folder' ? '新文件夹名称' : edit.mode === 'script' ? '新脚本名称' : edit.mode === 'kit' ? '新礼包名称' : edit.mode === 'progress' ? '新进度名称' : edit.mode === 'navigation' ? '新导航点名称' : edit.mode === 'entity' ? '新实体名称' : edit.mode === 'item' ? '新物品名称' : '新流程名称'} value={edit.value} onChange={(event) => setEdit({ ...edit, value: event.target.value, error: '' })} onKeyDown={(event) => { if (event.key === 'Escape') cancelEdit() }} /></form>}
         </div>
       })}
       {search && rows.length === FLOW_PACKAGE_ORDER.length && <p className="flow-explorer-empty">没有匹配的资源</p>}

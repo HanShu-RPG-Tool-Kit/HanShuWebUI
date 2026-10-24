@@ -1,7 +1,7 @@
 import { createContext, createElement, forwardRef, useCallback, useContext, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { ReactFlow, ReactFlowProvider, Background, BackgroundVariant, Handle, Position, ConnectionMode, SelectionMode, applyNodeChanges, applyEdgeChanges, useReactFlow, useUpdateNodeInternals, useStoreApi, type Node, type Edge, type NodeProps, type EdgeProps, type Connection, type EdgeChange, type ConnectionLineComponentProps } from '@xyflow/react'
 import type { EditorGroup, EditorNode, EditorSelection, MenuContext, NodeEditorApi, NodeEditorProps, Point } from './types'
-import { normalizeConnection, segmentsCross, wireGeometry } from './geometry'
+import { normalizeConnection, segmentsCross, wireGeometry, portSide, portOffset } from './geometry'
 import { arrangeNodes } from './arrange'
 import { MIN_CANVAS_ZOOM,MAX_CANVAS_ZOOM } from './camera'
 import { NodeContextMenu } from './ContextMenu'
@@ -19,14 +19,14 @@ const GroupContext = createContext<{ rename(id:string,name:string):void; readOnl
 
 function ContentNode({ id, data, selected, dragging }: NodeProps<FlowNode>) {
   const update = useUpdateNodeInternals(),keyboard=useContext(PortContext)
-  const signature = data.view.ports.map(port=>`${port.id}:${port.y}`).join('|')
+  const signature = JSON.stringify([data.view.width,data.view.height,data.view.ports.map(port=>[port.id,port.direction,portSide(port),portOffset(port)])])
   const previousPorts=useRef(signature)
   useEffect(()=>{if(previousPorts.current!==signature){previousPorts.current=signature;update(id)}},[id,signature,update])
   const Component = data.registry[data.view.type]?.component
   return <div className={`node-editor-content ${data.view.className ?? ''}`} data-canvas-node={id}>
     {Component ? createElement(Component,{ node:data.view,selected,dragging:!!dragging,readOnly:data.readOnly }) : <span>未知节点类型：{data.view.type}</span>}
-    {data.view.ports.map(port=><Handle key={port.id} id={port.id} type={port.direction==='output'?'source':'target'} position={port.direction==='output'?Position.Right:Position.Left}
-      style={{top:port.y,background:port.color}} className={`node-editor-port is-kind-${port.kind ?? 'default'}`} data-flow-socket={port.id} data-node-id={id}
+    {data.view.ports.map(port=><Handle key={port.id} id={port.id} type={port.direction==='output'?'source':'target'} position={({left:Position.Left,right:Position.Right,top:Position.Top,bottom:Position.Bottom})[portSide(port)]}
+      style={{...(portSide(port)==='top'||portSide(port)==='bottom'?{left:portOffset(port)}:{top:portOffset(port)}),background:port.color}} className={`node-editor-port is-kind-${port.kind ?? 'default'}`} data-flow-socket={port.id} data-node-id={id}
       aria-label={`${data.view.label}，${port.label}端口`} title={port.label} isConnectable={data.connections} tabIndex={data.readOnly?-1:0} role="button" onKeyDown={event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();if(!data.readOnly)keyboard(id,port.id)}}} />)}
   </div>
 }
@@ -42,18 +42,18 @@ function GroupNode({ data }: NodeProps<FlowNode>) {
     }} /> : <div className="node-editor-group-heading" onDoubleClick={event=>{event.stopPropagation();if(!readOnly){finished.current=false;setName(group.name)}}}><span>{group.name}</span><small>{group.nodes.length} 节点</small></div>}
   </div>
 }
-function Wire({ id,sourceX,sourceY,targetX,targetY,source,target,selected,data }: EdgeProps<FlowEdge>) {
+function Wire({ id,sourceX,sourceY,targetX,targetY,source,target,sourcePosition,targetPosition,selected,data }: EdgeProps<FlowEdge>) {
   const cutting=useContext(CutContext).has(id)
-  const path=wireGeometry({x:sourceX,y:sourceY},{x:targetX,y:targetY},source===target).path
+  const path=wireGeometry({x:sourceX,y:sourceY},{x:targetX,y:targetY},source===target,sourcePosition,targetPosition).path
   return <g className={`node-editor-wire is-kind-${data?.kind ?? 'default'}${selected?' is-selected':''}`}>
     <path d={path} className="node-editor-wire-shadow"/>
     <path d={path} className="node-editor-wire-line" style={{stroke:cutting?'#fa7777':selected?'#efb26a':data?.color}}/>
     <path d={path} className="node-editor-wire-hit react-flow__edge-interaction" data-editor-edge={id}/>
   </g>
 }
-function ConnectionPreview({fromX,fromY,toX,toY,fromHandle}:ConnectionLineComponentProps){
+function ConnectionPreview({fromX,fromY,toX,toY,fromHandle,fromPosition,toPosition}:ConnectionLineComponentProps){
   const from={x:fromX,y:fromY},to={x:toX,y:toY}
-  return <path className="react-flow__connection-path" d={(fromHandle.type==='target'?wireGeometry(to,from):wireGeometry(from,to)).path}/>
+  return <path className="react-flow__connection-path" d={(fromHandle.type==='target'?wireGeometry(to,from,false,toPosition,fromPosition):wireGeometry(from,to,false,fromPosition,toPosition)).path}/>
 }
 const nodeTypes={content:ContentNode,group:GroupNode},edgeTypes={wire:Wire}
 const empty:EditorSelection={nodes:[],edges:[]}

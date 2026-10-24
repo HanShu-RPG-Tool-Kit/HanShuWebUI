@@ -34,6 +34,7 @@ export const PROGRESS_SOURCE_EXTS = new Set([
   '.hflow',
   '.nav',
   '.item',
+  '.entity',
   '.kit',
   '.py',
 ])
@@ -101,6 +102,7 @@ export function packageIdOfExt(ext: string): FlowPackageId | null {
     case '.hflow': return 'story'
     case '.nav': return 'navigator'
     case '.item': return 'items'
+    case '.entity': return 'entities'
     case '.kit': return 'gift'
     case '.py': return 'script'
     default: return null

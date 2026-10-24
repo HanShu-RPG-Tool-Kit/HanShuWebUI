@@ -1,3 +1,4 @@
+import entityGuide from './docs/entity-guide.md?raw'
 import nodeEditor from './docs/node-editor.md?raw'
 import collaborationService from './docs/collaboration-service.md?raw'
 import collaborationGuide from './docs/collaboration-guide.md?raw'
@@ -45,6 +46,7 @@ export type HelpTopicId =
   | 'kit-guide'
   | 'kit-expr'
   | 'kit-runtime'
+  | 'entity-guide'
   | 'item-guide'
   | 'tnbt-json'
   | 'game-dev-server'
@@ -153,6 +155,14 @@ export const HELP_TOPICS: HelpTopic[] = [
     audience: 'both',
     inDocs: true,
     body: itemGuide,
+  },
+  {
+    id: 'entity-guide',
+    title: '实体库：模板与串流预览',
+    group: '进度',
+    audience: 'both',
+    inDocs: true,
+    body: entityGuide,
   },
   {
     id: 'game-dev-server',

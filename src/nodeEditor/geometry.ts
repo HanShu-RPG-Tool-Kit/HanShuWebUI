@@ -1,4 +1,4 @@
-import type { EditorConnection, EditorNode, Point } from './types'
+import type { EditorConnection, EditorNode, Point, Port, PortSide } from './types'
 
 export function normalizeConnection(nodes: EditorNode[], connection: EditorConnection): EditorConnection | null {
   const source = nodes.find(node => node.id === connection.source)?.ports.find(port => port.id === connection.sourcePort)
@@ -9,10 +9,23 @@ export function normalizeConnection(nodes: EditorNode[], connection: EditorConne
   }
 }
 
-export function wireGeometry(from: Point, to: Point, loop = false) {
-  const bend = Math.min(160, Math.abs(to.x - from.x) * .45)
-  const a = loop ? { x: from.x + 95, y: from.y + 140 } : { x: from.x + bend, y: from.y }
-  const b = loop ? { x: to.x - 95, y: to.y + 140 } : { x: to.x - bend, y: to.y }
+export function portSide(port: Pick<Port, 'direction' | 'side'>): PortSide {
+  return port.side ?? (port.direction === 'output' ? 'right' : 'left')
+}
+export function portOffset(port: Pick<Port, 'direction' | 'side' | 'x' | 'y'>): number | '50%' {
+  const side = portSide(port)
+  return (side === 'top' || side === 'bottom' ? port.x : port.y) ?? '50%'
+}
+const normals: Record<PortSide, Point> = { left:{x:-1,y:0}, right:{x:1,y:0}, top:{x:0,y:-1}, bottom:{x:0,y:1} }
+/** Controls leave both sockets along their outward sides, independent of semantic direction. */
+export function wireGeometry(from: Point, to: Point, loop = false, sourceSide: PortSide = 'right', targetSide: PortSide = 'left') {
+  const source = normals[sourceSide], target = normals[targetSide], dx = to.x-from.x, dy = to.y-from.y
+  const projection = Math.max(Math.abs(dx*source.x+dy*source.y),Math.abs(dx*target.x+dy*target.y))
+  const bend = Math.min(160, Math.max(projection*.45, Math.min(24,Math.hypot(dx,dy)*.2)))
+  const lateral = loop ? {x:-source.y*140,y:source.x*140} : {x:0,y:0}
+  const distance = loop ? 95 : bend
+  const a = {x:from.x+source.x*distance+lateral.x,y:from.y+source.y*distance+lateral.y}
+  const b = {x:to.x+target.x*distance+lateral.x,y:to.y+target.y*distance+lateral.y}
   const path = `M ${from.x} ${from.y} C ${a.x} ${a.y}, ${b.x} ${b.y}, ${to.x} ${to.y}`
   return { path, sample: (t: number): Point => {
     const u = 1 - t

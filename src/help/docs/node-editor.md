@@ -18,7 +18,7 @@
 从 `src/nodeEditor/index.ts` 导入 `NodeEditor`、`NoteNode`、`arrangeNodes` 和公共类型。`ContextMenu` 是独立可复用的菜单组件，同时供资源管理器和组件树使用。
 
 - `EditorNode`：`id/type/position/width/height/ports/data/label`；`deletable:false` 用于保护起点等节点，`draggable:false` 禁止移动。
-- `Port`：节点内唯一 `id`、`direction`、相对节点顶部的 `y`、可访问 `label`，以及可选的 `kind/color`。端口规则不从显示名推断。
+- `Port`：节点内唯一 `id`、`direction`、可访问 `label`，以及可选 `side/x/y/kind/color`。`side` 决定显示方位，`direction` 决定输入输出语义，两者独立。左右侧使用节点内的 `y`，上下侧使用 `x`；偏移未提供时居中。旧接入不写 `side` 时，输入默认左侧、输出默认右侧。端口规则不从显示名推断。
 - `EditorEdge`：唯一 `id`、`source/target/sourcePort/targetPort`，可带颜色和可访问名称。
 - `NodeRegistry`：`type → { component }`，组件收到 `NodeViewProps`，包括只读、选中、拖动状态和节点视图。
 - `EditorGroup`：`id/name/nodes`；仅表达编辑归组，不表达执行顺序、运行子流程或权限。
@@ -26,7 +26,7 @@
 
 这里的节点和连线是**视图投影**，不是新的全局存档协议。业务 `data` 可以包含当前模拟状态和回调等临时对象，不能把它原样 JSON 序列化。不得把 React Flow 的 `measured`、内部节点、DOM、Provider、选中状态或临时 Group 节点写入业务文档。
 
-节点尺寸由适配器给出。节点组件应填满自身视图框；表单控件标记 `nodrag`，需要独立滚动/平移的区域标记 `nopan`。不要在节点组件里再实现节点拖动或给世界坐标叠加一次 CSS translate。动态端口增删、端口 y 改变时，公共外壳负责更新 React Flow 的内部测量。
+节点尺寸由适配器给出。节点组件应填满自身视图框；表单控件标记 `nodrag`，需要独立滚动/平移的区域标记 `nopan`。不要在节点组件里再实现节点拖动或给世界坐标叠加一次 CSS translate。动态端口增删、方位、偏移、输入输出方向或节点尺寸改变时，公共外壳负责更新 React Flow 的内部测量。
 
 ## 3. 最小接入
 
@@ -113,7 +113,7 @@ npm run build
 
 - `NodeFrame`：节点边框、背景、选中和拖动外观；支持 `accent` 和普通 div 属性。业务颜色可用 `--node-background`、`--node-foreground` 覆盖。
 - `NodeHeader`：`icon/title/badge/color`，标题自动省略，徽标保持右对齐；默认高度 24px。
-- `PortLabel`：`direction/y/color`；`y` 必须与对应 `Port.y` 一致，文字围绕端口中心垂直对齐，不再另写端口排版坐标。
+- `PortLabel`：`direction/side/x/y/color`，与对应 `Port` 共享方位和偏移。左右标签在节点内靠边垂直居中，上下标签在节点内靠边水平居中；业务节点应为标签预留空间，不要让标题或表单覆盖它。
 - `NodeField`：`label` 与表单控件插槽，自动标记 `nodrag/nopan/nowheel`，业务负责值、校验和只读状态。它不产生保存或撤销记录。
 
 基础组件只定义视觉与排版。节点字段提交的时机、模拟状态、国际化和业务权限仍由使用方负责。避免在通用外壳加入特定游戏或节点类型的判断。
@@ -125,3 +125,25 @@ npm run build
 `test:node-editor:ui` 另外验证两个独立窗格，每个 600 个节点、599 条连线：连续 12 次分组移动各产生一次提交，调用方历史可撤销和重做全部移动，另一窗格数据与视口不受影响；大图只渲染可见节点，定位远处节点后屏幕外节点可重新出现。该历史是测试夹具的调用方历史，不代表已经覆盖工程服务或全部工作区历史路径。
 
 本地无头 Edge 本次加载测得约 0.7 秒，仅是测试环境观测值，不是性能承诺。这些用例属于交互与重复操作回归，不替代小时级耐久测试、内存泄漏分析或真实多人网络验收。
+
+
+## 11. 四向端口与纵向节点图
+
+一个画布可以混用 `left/right/top/bottom` 四种端口方位。左右或上下排版由业务节点位置决定，无须另一套画布组件或修改文档协议。`side` 不决定连接许可：顶部端口可以是输出，底部端口也可以是输入，连接仍只允许语义输出 → 输入，并执行业务 `canConnect`。
+
+上进下出的节点示例：
+
+```ts
+const ports: Port[] = [
+  { id: 'parent', direction: 'input', side: 'top', label: '父节点' },
+  { id: 'children', direction: 'output', side: 'bottom', label: '子节点', x: 108 },
+]
+```
+
+`x/y` 为相对节点左上角的像素坐标，只读取当前方位所在轴；例如 `side:'top', x:0` 位于顶部左端，`x` 缺省则在顶部中央。多个同侧端口使用不同偏移区分。标签接入时传同一个端口的 `direction/side/x/y`，无需自己转换百分比或猜测坐标。
+
+已连接的连线和拖动预览统一按两端实际方位生成曲线，从输入端起拖也会按输出 → 输入归一化。更新端口偏移、方位和节点尺寸会主动刷新锚点测量，既有连线不必删掉重建。曲线只负责朝向与弯曲，不提供自动避障；自环使用按源方位旋转的绕行曲线。
+
+独立示例 `src/nodeEditor/DirectionalExample.tsx` 展示向下、向上、向左、向右的节点位置与端口配置，以及运行中移动端口、交换方位。它不依赖进度模型，不是行为树运行时。行为树接入时仍需业务模型保存孩子的显式执行顺序、校验父子关系并提供树形排列；拖动位置不能隐式改变执行顺序。通用轻度排版不会自动推断这些语义。
+
+验证：`npm run test:node-directions` 检查 16 种方位组合的曲线、默认值与偏移，`npm run test:node-directions:ui` 检查四种布局、反向起拖的预览和实际连接，以及端口移动、换边后的锚点更新。原有画布与大图回归继续使用 `test:node-editor:ui`。

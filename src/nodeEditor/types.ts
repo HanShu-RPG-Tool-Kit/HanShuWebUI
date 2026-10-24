@@ -1,7 +1,9 @@
 import type { ComponentType, MouseEvent, ReactNode } from 'react'
 
 export type Point = { x: number; y: number }
-export type Port = { id: string; direction: 'input' | 'output'; y: number; label: string; kind?: string; color?:string }
+export type PortSide = 'left' | 'right' | 'top' | 'bottom'
+/** Side is visual; input/output remains the semantic connection direction. x/y are node-local pixels. */
+export type Port = { id: string; direction: 'input' | 'output'; side?: PortSide; x?: number; y?: number; label: string; kind?: string; color?:string }
 export type EditorNode = {
   id: string; type: string; position: Point; width: number; height: number; ports: Port[]
   data: unknown; label: string; className?: string; deletable?: boolean; draggable?: boolean

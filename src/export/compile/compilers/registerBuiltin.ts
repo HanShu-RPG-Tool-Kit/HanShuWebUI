@@ -3,6 +3,7 @@ import type { LocaleExportRule } from '../localization'
 import { activeSkinsPass } from './activeSkins'
 import { hanshuCompiler } from './hanshu'
 import { identityCompiler } from './identity'
+import { entityCompiler } from './entity'
 import { itemCompiler } from './item'
 import { localeAssetsPass } from './localeAssets'
 
@@ -19,7 +20,7 @@ const builtinLocaleRules: LocaleExportRule[] = [
 
 /** Idempotent by id; also reinstalls builtins after clearCompileRegistry without replacing overrides. */
 export function ensureBuiltinCompilers(): void {
-  for (const compiler of [hanshuCompiler, itemCompiler, identityCompiler]) {
+  for (const compiler of [hanshuCompiler, itemCompiler, entityCompiler, identityCompiler]) {
     if (!listFileCompilers().some((entry) => entry.id === compiler.id)) registerFileCompiler(compiler)
   }
   for (const pass of [localeAssetsPass, activeSkinsPass]) {

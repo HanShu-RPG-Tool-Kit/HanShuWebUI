@@ -20,8 +20,8 @@ function Scalar({node, disabled, onChange, label = '值'}: {node:NbtValue; disab
     value={current?.raw ?? text} onChange={e=>change(e.target.value)} onBlur={()=>{if(!error)setEdit(null)}} />
 }
 
-function Entry({label,node,depth,root=false,array=false,disabled,onChange,onRename,onDelete}: {
-  label:string;node:NbtValue;depth:number;root?:boolean;array?:boolean;disabled?:boolean;
+function Entry({label,node,depth,root=false,componentKeys=true,array=false,disabled,onChange,onRename,onDelete}: {
+  label:string;node:NbtValue;depth:number;root?:boolean;componentKeys?:boolean;array?:boolean;disabled?:boolean;
   onChange:(node:NbtValue)=>void;onRename?:(name:string)=>string|void;onDelete?:()=>void
 }) {
   const [open,setOpen]=useState(root), [rename,setRename]=useState(false), [key,setKey]=useState(label), [renameError,setRenameError]=useState('')
@@ -60,9 +60,9 @@ function Entry({label,node,depth,root=false,array=false,disabled,onChange,onRena
     {container&&open&&<div role="group" className="item-tree-children">
       {children.map(([name,child])=><Entry key={name} label={name} node={child} depth={depth+1} array={node.type!=='compound'} disabled={disabled}
         onChange={next=>{if(!disabled)replace(name,next)}}
-        onRename={node.type==='compound'?(next=>{if(disabled||next===name)return;if(Object.hasOwn(node.value,next))return '键名重复';try{const value=Object.fromEntries(Object.entries(node.value).map(([k,v])=>[k===name?next:k,v]));if(root)readComponents(value);onChange({...node,value})}catch(error){return (error as Error).message}}):undefined}
+        onRename={node.type==='compound'?(next=>{if(disabled||next===name)return;if(Object.hasOwn(node.value,next))return '键名重复';try{const value=Object.fromEntries(Object.entries(node.value).map(([k,v])=>[k===name?next:k,v]));if(root&&componentKeys)readComponents(value);onChange({...node,value})}catch(error){return (error as Error).message}}):undefined}
         onDelete={()=>{if(disabled)return;if(node.type==='compound'){const value={...node.value};delete value[name];onChange({...node,value})}else onChange({...node,value:(node.value as unknown[]).filter((_,i)=>String(i)!==name)} as NbtValue)}}/>)}
-      {pending&&<Draft type={pending} compound={node.type==='compound'} root={root} existing={children.map(([k])=>k)} disabled={disabled} onCancel={()=>setPending(null)}
+      {pending&&<Draft type={pending} compound={node.type==='compound'} root={root&&componentKeys} existing={children.map(([k])=>k)} disabled={disabled} onCancel={()=>setPending(null)}
         onCommit={(name,child)=>{if(disabled)return;if(node.type==='compound')onChange({...node,value:{...node.value,[name]:child}});else if(node.type==='list')onChange({...node,value:[...node.value,child]});else onChange({...node,value:[...(node.value as (string|number)[]),child.value]} as NbtValue);setPending(null)}}/>}
     </div>}
   </div>
@@ -85,4 +85,9 @@ export function ComponentsTree({value,disabled,onChange}:{value:Record<string,un
 }
 export function NbtComponentsEditor({value,disabled,onChange}:{value:Record<string,unknown>;disabled?:boolean;onChange:(value:ItemComponents)=>void}) {
   return <div className="item-editor item-components-shared"><ItemComponentCards components={value} disabled={disabled} onChange={onChange}/><ComponentsTree value={value} disabled={disabled} onChange={onChange}/></div>
+}
+
+export function NbtTree({value,disabled,onChange}:{value:NbtValue;disabled?:boolean;onChange:(value:NbtValue)=>void}) {
+  const node=readNbt(value)
+  return <div className="item-editor item-components-shared"><div className="item-tree" role="tree" aria-label="实体数据"><div className="item-tree-columns" aria-hidden="true"><span>类型</span><span>键</span><span>值</span></div><Entry label="data" node={node} depth={0} root componentKeys={false} disabled={disabled} onChange={onChange}/></div></div>
 }

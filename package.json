@@ -83,6 +83,11 @@
     "test:item-protocol": "node scripts/run-verification.mjs scripts/verify-item-protocol.ts",
     "test:python-language": "node scripts/verify-python-language.mjs",
     "test:editing-assistance:ui": "node scripts/verify-editing-assistance-ui.mjs",
+    "test:entity": "node scripts/run-verification.mjs scripts/verify-entity.ts",
+    "test:entity:ui": "node scripts/verify-entity-ui.mjs",
+    "test:entity-project:ui": "node scripts/verify-entity-project-ui.mjs",
+    "test:node-directions": "node scripts/run-verification.mjs scripts/verify-node-directions.ts",
+    "test:node-directions:ui": "node scripts/verify-node-directions-ui.mjs",
     "test:node-editor:ui": "node scripts/verify-node-editor-ui.mjs"
   },
   "dependencies": {
