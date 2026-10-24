@@ -36,9 +36,9 @@ C 侧按上述实现；握手超过约 4s 仍无 `open` 会中止并提示，避
 
 礼包编辑器可使用连接的 MC 客户端提供的实时目录，离线时仍可手动输入 ID：
 
-- 药水效果：从游戏选择效果 ID，展示游戏当前语言的名称和资源包图标，支持搜索、分页。
+- 药水效果：点击文本框自动展开目录，直接在该文本框输入名称或 ID 搜索，展示游戏当前语言的名称和资源包图标；上下键选择，Enter 或 Tab 接受，Esc 关闭。
 - 指令：按光标位置使用原版 Brigadier 补全；上下键选择，Tab 或 Enter 接受。只请求建议，不执行指令。含 `${…}` 插值的输入暂不请求原版补全。
-- 音效：搜索客户端实际加载的声音事件，点击「在游戏中播放」试听。游戏聊天提供 `[停止试听]`；新试听替换旧试听，旧消息不能停止新试听。只停止本工具创建的声音实例，不影响其他声音；WebUI 不提供停止入口。
+- 音效：点击文本框搜索客户端实际加载的声音事件，列表每行右侧的播放图标可在游戏中试听（悬浮显示说明）。试听不改变当前值、不关闭列表；点击条目正文才选中。游戏聊天提供 `[停止试听]`；新试听替换旧试听，旧消息不能停止新试听。只停止本工具创建的声音实例，不影响其他声音；WebUI 不提供停止入口。
 - Python：使用浏览器 Worker 内的 Pyright 和 `.pyi` 类型声明。游戏通过 `python.stubs` 提供 Java 公开签名；编辑器不执行脚本来推导类型。语言服务与工程保存分离，补全不会修改工程文件。
 
 这些服务通过现有带密码的 Control 连接访问，不经过共享工程 S 执行游戏代码。断线、游戏版本不同或旧 Mod 未提供方法时，编辑内容保留，在线辅助可能不可用。
@@ -137,14 +137,14 @@ open 中 count 忽略，Mod 强制为 1；done 不携带 count，返回全部生
 
 ## 礼包 Python 语言服务
 
-礼包脚本编辑器使用 `monaco-pyright-lsp@0.1.7` 自带的 Pyright 1.1.386 Worker，提供语法诊断、类型推导、成员补全、悬浮类型和参数提示。Worker 与 typeshed 跟随 C 部署，运行时不请求 CDN、不执行作者脚本；未连接 Minecraft 时仍有 Python 标准库与 `kit` / `player` / `players` / `random()` 的静态上下文。玩家 API 在首次连接后补充。
+礼包脚本编辑器使用 `monaco-pyright-lsp@0.1.7` 自带的 Pyright 1.1.386 Worker，提供语法诊断、类型推导、成员补全、悬浮类型和参数提示。Worker 与 typeshed 跟随 C 部署，运行时不请求 CDN、不执行作者脚本；未连接 Minecraft 时仅保留文本编辑、撤销与普通语法着色，不创建 Python Worker，不提供语言服务诊断、补全、悬浮或参数提示。连接后先准备 `python.stubs` 和玩家类型，再分析脚本，避免用不完整的上下文产生红线。
 
-一个 Worker 管理多个独立文档，最后一个编辑器关闭时清理。`__builtins__.pyi` 注入运行时全局，源文档不插入隐藏代码，保留模块 docstring、`__future__`、诊断行号及编辑范围。`player` 是 `ServerPlayer`，`players` 是该类型的元组，`random()` 返回 `float`；`kit.id` / `tags` 只读，`param()` 因动态参数 ID 返回 `Any`。
+在线时一个 Worker 管理多个独立文档，最后一个编辑器关闭时清理。断线立即终止 Worker、撤销语言服务 Provider、清空所有脚本的 Pyright 诊断，并关闭已有补全窗口；不会修改草稿、光标和撤销历史。重连自动重新创建服务并分析最新草稿。初始化途中断线或关闭编辑器也会清理，旧服务的迟到结果不回填；旧 Mod 缺少 stub 服务时不启动文档分析。`__builtins__.pyi` 注入运行时全局，源文档不插入隐藏代码，保留模块 docstring、`__future__`、诊断行号及编辑范围。`player` 是 `ServerPlayer`，`players` 是该类型的元组，`random()` 返回 `float`；`kit.id` / `tags` 只读，`param()` 因动态参数 ID 返回 `Any`。
 
 连接后的 `python.stubs` 先取 `ServerPlayer`，再取显式 `from net… import Class`、`java.type("全限定类名")` 所需类。返回类型的占位 `.pyi` 保留 Java 类型身份；补全前使用 Pyright 的 type-definition / hover 结果继续请求所需类，更新 Worker 虚拟文件系统并清理导入缓存。因此别名、函数返回值和玩家循环由 Pyright 推导，不是字符串补全表。每次请求最多 24 个类；单次光标请求最多追踪当前行末 16 个标识符、6 轮依赖，特别长的链可拆成局部变量。
 
 存根按游戏进程 `runtimeId` 缓存在编辑会话内；重连时重新核对，游戏重启会清除旧类和缺失类结果。缓存不是工程内容，不进入 PAK 或协作事务。MC 端只执行 `Class.forName(name, false, loader)` 与 public 签名反射，不读取字段值、不初始化类、不调用成员。包含扁平化的公有继承成员、重载、静态成员、构造函数、数组与可表达的泛型；缺失的调试参数名显示 `arg0` 等。继承成员中无法绑定的泛型、Java method type variables、动态对象及无法反射的类型保守降为 `Any`；完整 Java 子类型关系、nullability、GraalPy 的所有隐式转换和任意动态 import 不做完整建模。连接端 classpath 没有的服务端专属模组类型不可获得。分析模块名 `jvm_*` 不会自动写入用户脚本。
 
-验证入口：`npm run test:python-language` 自行启动隔离 Vite 和真实浏览器 Worker，使用桌面原有 CSP。先在相邻 Mod 仓库运行 `gradlew.bat test --tests "mchhui.rpgtoolkit.devtool.python.*"`，会生成 `build/python-stubs-test.json`；Web 验证随后用这些**实际 MC 反射签名 + mock Control 运输**检查玩家链式访问、别名、元组、多文档、诊断和 future import。可用 `PYTHON_STUB_FIXTURE` 指定夹具；没有夹具时明确跳过 MC 集成部分。先 `npm run build` 后测试，还会检查生产 Worker。此验证不等于启动原生 MC 客户端并完成真实 Control 往返。
+验证入口：`npm run test:python-language` 自行启动隔离 Vite 和真实浏览器 Worker，使用桌面原有 CSP。先在相邻 Mod 仓库运行 `gradlew.bat test --tests "mchhui.rpgtoolkit.devtool.python.*"`，会生成 `build/python-stubs-test.json`；Web 验证随后用这些**实际 MC 反射签名 + mock Control 运输**检查玩家链式访问、别名、元组、多文档、诊断和 future import，以及离线不启动、断线清理、最新草稿重连、最后一个编辑器释放和初始化中断线。可用 `PYTHON_STUB_FIXTURE` 指定夹具；没有夹具时明确跳过 MC 集成部分。先 `npm run build` 后测试，还会检查生产 Worker。此验证不等于启动原生 MC 客户端并完成真实 Control 往返。
 
 当前生产 Worker 为独立懒加载资源，约 19.6 MB（gzip 约 4.22 MB，含 typeshed）；本机浏览器验收初始化约 1.8–3.6 秒，实际 MC 签名首次链式补全约 0.84 秒，缓存后约 0.08 秒。耗时随设备与类数量变化。构建保留上游 `eval` 分支警告，但现有语言服务路径在 `script-src 'self'` 下通过验证，没有放宽 CSP。

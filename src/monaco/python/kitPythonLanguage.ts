@@ -3,11 +3,12 @@ import type { CompletionItem, CompletionList, Diagnostic, Hover, Location, Locat
 import { controlRequest, isControlConnected, subscribeControlHub } from '../../gameDevServer/controlHub'
 import { PyrightClient } from './pyrightClient'
 import { JavaStubLoader } from './stubLoader'
-import { importedJavaClasses, type StubResponse } from './stubs'
+import { importedJavaClasses, PLAYER_CLASS, type StubResponse } from './stubs'
 
 type Document = { model: Monaco.editor.ITextModel; uri: string; version: number; timer?: ReturnType<typeof setTimeout>; listener: Monaco.IDisposable; refs: number }
 type MonacoModule = typeof Monaco
-let shared: KitPythonLanguage | undefined
+type SharedService = { service: KitPythonLanguage; users: Set<symbol> }
+let shared: SharedService | undefined
 
 function hoverText(hover: Hover | null): string {
   if (!hover) return ''
@@ -17,22 +18,54 @@ function hoverText(hover: Hover | null): string {
 
 /** One Worker, multiple isolated LSP documents. Dispose registrations with the final editor. */
 export function attachKitPython(monaco: MonacoModule, model: Monaco.editor.ITextModel, reportError: (error: unknown) => void) {
-  shared ??= new KitPythonLanguage(monaco, reportError)
-  const service = shared
-  const detach = service.attach(model)
-  return { dispose() { detach(); if (!service.documents.size) { service.dispose(); if (shared === service) shared = undefined } } }
+  const user = Symbol('kit-python-editor')
+  let current: SharedService | undefined
+  let detach: (() => void) | undefined
+  let disposed = false
+  let failed = false
+  const release = () => {
+    detach?.(); detach = undefined
+    if (!model.isDisposed()) monaco.editor.setModelMarkers(model, 'kit-pyright', [])
+    const previous = current
+    current = undefined
+    if (!previous) return
+    previous.users.delete(user)
+    if (!previous.users.size) {
+      previous.service.dispose()
+      if (shared === previous) shared = undefined
+    }
+  }
+  const syncConnection = () => {
+    if (disposed) return
+    if (!isControlConnected()) { release(); failed = false; return }
+    if (current || failed || model.isDisposed()) return
+    shared ??= { service: new KitPythonLanguage(monaco, reportError), users: new Set() }
+    const next = shared
+    current = next
+    next.users.add(user)
+    void next.service.ready.then(() => {
+      if (disposed || current !== next || !isControlConnected() || model.isDisposed()) return
+      detach = next.service.attach(model)
+    }).catch(() => {
+      if (current !== next) return
+      failed = true
+      release()
+    })
+  }
+  const stopControl = subscribeControlHub(syncConnection)
+  syncConnection()
+  return { dispose() { disposed = true; stopControl(); release() } }
 }
 
 export class KitPythonLanguage {
   readonly client = new PyrightClient()
+  readonly ready: Promise<void>
   readonly documents = new Map<string, Document>()
   readonly stubs = new JavaStubLoader(
     async classes => controlRequest('python.stubs', { classes }) as Promise<StubResponse>,
     files => this.client.writeStubs(files),
   )
   private disposables: Monaco.IDisposable[] = []
-  private stopControl: () => void
-  private connected = false
   private sequence = 0
   private disposed = false
   private warned = false
@@ -45,7 +78,7 @@ export class KitPythonLanguage {
     this.monaco = monaco
     this.reportError = reportError
     this.client.onNotification = (method, params) => {
-      if (method !== 'textDocument/publishDiagnostics') return
+      if (this.disposed || method !== 'textDocument/publishDiagnostics') return
       const diagnostics = params as { uri: string; version?: number; diagnostics: Diagnostic[] }
       const document = [...this.documents.values()].find(doc => doc.uri === diagnostics.uri)
       if (!document || document.model.isDisposed() || (diagnostics.version !== undefined && diagnostics.version !== document.version)) return
@@ -100,14 +133,13 @@ export class KitPythonLanguage {
         } catch (error) { this.warn(error); return null }
       },
     }))
-    const syncConnection = () => {
-      const connected = isControlConnected()
-      if (connected && !this.connected) void this.stubs.reconnect().then(() => Promise.all([...this.documents.values()].map(doc => this.loadImports(doc)))).catch(error => this.warn(error))
-      this.connected = connected
-    }
-    this.stopControl = subscribeControlHub(syncConnection)
-    syncConnection()
-    void this.client.ready.catch(error => this.warn(error))
+    // Do not open documents until actual game stubs are ready: incomplete runtime
+    // context must not produce errors in an otherwise valid author script.
+    this.ready = this.client.ready.then(async () => {
+      await this.stubs.reconnect()
+      if (!this.stubs.classes.has(PLAYER_CLASS)) throw new Error('游戏未提供玩家类型，Python 分析已暂停')
+    })
+    void this.ready.catch(error => this.warn(error))
   }
 
   attach(model: Monaco.editor.ITextModel): () => void {
@@ -116,7 +148,7 @@ export class KitPythonLanguage {
     if (existing) { existing.refs++; return () => this.detach(key) }
     const doc: Document = { model, uri: `file:///typings/kit_${++this.sequence}.py`, version: 1, refs: 1, listener: { dispose() {} } }
     this.documents.set(key, doc)
-    void this.client.ready.then(() => {
+    void this.ready.then(() => {
       if (this.disposed || this.documents.get(key) !== doc) return
       this.client.notify('textDocument/didOpen', { textDocument: { uri: doc.uri, languageId: 'python', version: doc.version, text: model.getValue() } })
       return this.loadImports(doc)
@@ -139,7 +171,7 @@ export class KitPythonLanguage {
   }
 
   private async sync(doc: Document) {
-    await this.client.ready
+    await this.ready
     if (this.disposed || doc.model.isDisposed()) return
     clearTimeout(doc.timer)
     doc.version++
@@ -201,8 +233,14 @@ export class KitPythonLanguage {
   private warn(error: unknown) { if (!this.warned && !this.disposed) { this.warned = true; this.reportError(error) } }
 
   dispose() {
+    if (this.disposed) return
     this.disposed = true
-    this.stopControl()
+    for (const doc of this.documents.values()) {
+      clearTimeout(doc.timer)
+      doc.listener.dispose()
+      if (!doc.model.isDisposed()) this.monaco.editor.setModelMarkers(doc.model, 'kit-pyright', [])
+    }
+    this.documents.clear()
     this.disposables.forEach(disposable => disposable.dispose())
     this.client.dispose()
   }

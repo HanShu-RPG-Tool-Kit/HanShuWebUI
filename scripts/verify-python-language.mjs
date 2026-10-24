@@ -94,7 +94,7 @@ try {
     const integration = await page.evaluate(async fixture => {
       await import('/src/monaco/setup.ts')
       const monaco = await import('/node_modules/monaco-editor/esm/vs/editor/editor.api.js')
-      const { KitPythonLanguage } = await import('/src/monaco/python/kitPythonLanguage.ts')
+      const { KitPythonLanguage, attachKitPython } = await import('/src/monaco/python/kitPythonLanguage.ts')
       const { reconnectGameDevControlNow, disconnectGameDevControl } = await import('/src/gameDevServer/controlHub.ts')
       const calls = [], errors = []
       window.WebSocket = class {
@@ -145,7 +145,42 @@ try {
       while (!monaco.editor.getModelMarkers({ resource: model.uri }).some(marker => marker.message.includes('closed')) && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 50))
       const markers = monaco.editor.getModelMarkers({ resource: model.uri }).map(marker => ({ line: marker.startLineNumber, message: marker.message }))
       detach(); detachOther(); service.dispose(); model.dispose(); other.dispose(); disconnectGameDevControl()
-      return { root, chain, alias, tuple, own, isolated, future, builtins, coldChainMs, warmChainMs, markers, calls, errors }
+      const NativeWorker = window.Worker
+      let created = 0, terminated = 0
+      window.Worker = class extends NativeWorker {
+        constructor(...args) { super(...args); this.tracked = String(args[0]).includes('pyright.worker'); if (this.tracked) created++ }
+        terminate() { if (this.tracked) terminated++; super.terminate() }
+      }
+      const wait = async (predicate, message) => {
+        const deadline = Date.now() + 15000
+        while (!predicate()) { if (Date.now() > deadline) throw new Error(message); await new Promise(resolve => setTimeout(resolve, 25)) }
+      }
+      const a = monaco.editor.createModel('bad = (', 'python', monaco.Uri.parse('file:///lifecycle-a.py'))
+      const b = monaco.editor.createModel('bad = (', 'python', monaco.Uri.parse('file:///lifecycle-b.py'))
+      const aa = attachKitPython(adapter, a, error => errors.push(String(error)))
+      const bb = attachKitPython(adapter, b, error => errors.push(String(error)))
+      if (created !== 0) throw new Error('offline editors created a Python worker')
+      reconnectGameDevControlNow()
+      await wait(() => monaco.editor.getModelMarkers({resource:b.uri}).length > 0, 'connected Python analysis did not start')
+      if (created !== 1) throw new Error('editors did not share a Python worker')
+      disconnectGameDevControl()
+      if (terminated !== 1 || monaco.editor.getModelMarkers({resource:a.uri}).length || monaco.editor.getModelMarkers({resource:b.uri}).length) throw new Error('disconnect did not terminate worker and clear diagnostics')
+      a.setValue('offline_marker = "draft"\noffline_')
+      reconnectGameDevControlNow()
+      await wait(() => monaco.editor.getModelMarkers({resource:b.uri}).length > 0, 'reconnected Python analysis did not restart')
+      const draft = await complete(a.getValue(), a)
+      if (!draft.includes('offline_marker')) throw new Error('reconnect did not analyze the latest offline draft')
+      aa.dispose()
+      if (terminated !== 1) throw new Error('closing one editor stopped another editor')
+      bb.dispose()
+      if (created !== 2 || terminated !== 2) throw new Error('last editor did not release worker')
+      const pending = attachKitPython(adapter, a, error => errors.push(String(error)))
+      disconnectGameDevControl()
+      pending.dispose()
+      if (created !== 3 || terminated !== 3) throw new Error('disconnect during startup leaked a worker')
+      a.dispose(); b.dispose(); window.Worker = NativeWorker
+
+      return { root, chain, alias, tuple, own, isolated, future, builtins, coldChainMs, warmChainMs, markers, calls, errors, created, terminated }
     }, fixture)
     assert(integration.root.includes('getInventory'), 'actual Minecraft player methods')
     assert(integration.chain.includes('getCount'), 'automatic dependency hydration through actual Minecraft signatures')
@@ -156,6 +191,9 @@ try {
     assert(integration.builtins.includes('append'), 'injected builtins preserve list/range and Python inference')
     assert(integration.markers.some(marker => marker.line === 1), 'diagnostics translate hidden prefix back to visible line 1')
     assert.deepEqual(integration.errors, [])
+    assert.equal(integration.created, 3)
+    assert.equal(integration.terminated, 3)
+    console.log('Connection lifecycle passed: no offline worker, shared online worker, immediate diagnostics cleanup, latest-draft reconnect, last-editor and in-flight startup disposal.')
     console.log(`Actual Java reflection fixture + Monaco integration passed: automatic chain/alias/tuple, document isolation, future imports, builtins, diagnostics. RPC batches: ${integration.calls.length}; chain first/warm: ${integration.coldChainMs}/${integration.warmChainMs} ms.`)
   } else console.log(`Actual Java reflection integration skipped: run Mod JavaPythonStubsTest to produce ${fixturePath}.`)
 } finally { await browser.close(); await server?.close() }

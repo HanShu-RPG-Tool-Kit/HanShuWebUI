@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import Editor, { type EditorProps, type OnMount } from '@monaco-editor/react'
 import { notify } from '../../activity/activityStore'
 import { attachKitPython } from './kitPythonLanguage'
+import { isControlConnected, subscribeControlHub } from '../../gameDevServer/controlHub'
 
 /** Drop-in Monaco editor with real Pyright and the runtime's injected kit globals. */
 export function KitPythonEditor({ onMount, ...props }: EditorProps) {
@@ -19,7 +20,13 @@ export function KitPythonEditor({ onMount, ...props }: EditorProps) {
     }
     attach()
     const listener = editor.onDidChangeModel(attach)
-    cleanup.current = () => { listener.dispose(); binding?.dispose() }
+    const stopControl = subscribeControlHub(() => {
+      if (!isControlConnected()) {
+        editor.trigger('kit-python', 'hideSuggestWidget', {})
+        editor.trigger('kit-python', 'closeParameterHints', {})
+      }
+    })
+    cleanup.current = () => { stopControl(); listener.dispose(); binding?.dispose() }
     onMount?.(editor, monaco)
   }
   return <Editor {...props} language="python" onMount={mount} />
