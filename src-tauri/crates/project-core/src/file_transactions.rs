@@ -160,11 +160,15 @@ impl TransactionRecord {
         }
         if let Some(result) = &self.receipt.progress_result {
             path_ok(&result.path).map_err(|_| Error::new("storage", "持久进度回执路径无效"))?;
+            // Receipts archived before progress and story were unified into `src/quest/*.quest`
+            // still name the legacy flat `src/progress/*.progress` documents. They must stay
+            // replayable, because the immutable snapshot, not the current path policy, defines
+            // what the document was.
+            let progress_path = crate::resource_relations::source(&result.path)
+                .is_some_and(|source| source.kind == "quest")
+                || (result.path.starts_with("src/progress/") && result.path.ends_with(".progress"));
             require(
-                crate::resource_relations::source(&result.path)
-                    .is_some_and(|source| source.kind == "quest")
-                    && !result.document_id.is_empty()
-                    && result.effects.len() <= 256,
+                progress_path && !result.document_id.is_empty() && result.effects.len() <= 256,
                 "storage",
                 "持久进度回执无效",
             )?;

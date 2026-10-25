@@ -551,7 +551,7 @@ fn unsaved_owned_resources_have_relations_in_query_and_plan() {
         .plan_file_operations(&sid, &[request(FileOperationKind::Write, path, None)])
         .unwrap();
     assert_eq!(plan.relations, facts.relations);
-    assert_eq!(plan.authorities[0].source_kind.as_deref(), Some("progress"));
+    assert_eq!(plan.authorities[0].source_kind.as_deref(), Some("quest"));
     let voice = engine
         .plan_file_operations(
             &sid,
