@@ -2,13 +2,13 @@ import {randomId} from '../project/crypto'
 import type {EntityDocument} from '../workspaces/progress/entityDoc'
 import type {NbtValue} from '../workspaces/progress/tnbtJson'
 
-export const ENTITY_ATTRIBUTES_PROTOCOL = 'hanshu-entity-attributes-v1'
+export const ENTITY_ATTRIBUTES_PROTOCOL = 'hanshu-entity-attributes-v2'
 export const ENTITY_ATTRIBUTE_OPERATIONS = ['add_value','add_multiplied_base','add_multiplied_total'] as const
 export type EntityAttributeOperation = typeof ENTITY_ATTRIBUTE_OPERATIONS[number]
 export type EntityModifierValue = {amount:number;operation:EntityAttributeOperation}
 export type EntityAttributeModifier = EntityModifierValue & {id:string}
 export type EntityAttributeBinding = {
-  bindingId:string;attributeId:string;base:number|null;modifiers:EntityAttributeModifier[];allowedModifierIds:string[]
+  bindingId:string;attributeId:string;base:number|null;modifiers:EntityAttributeModifier[]
 }
 export type EntityAttributesOpen = {protocol:typeof ENTITY_ATTRIBUTES_PROTOCOL;bindings:EntityAttributeBinding[]}
 export type EntityAttributeDelta =
@@ -63,7 +63,7 @@ function modifierValue(value:unknown):EntityModifierValue{
   if(!ENTITY_ATTRIBUTE_OPERATIONS.includes(value.operation as EntityAttributeOperation))throw Error('属性修饰器运算方式无效')
   return {amount:value.amount,operation:value.operation as EntityAttributeOperation}
 }
-/** Freezes authority before open; the game receives only opaque bindings and explicitly allocated modifier IDs. */
+/** Freezes authority before open; the game receives only attribute bindings; modifier IDs remain author-controlled. */
 export function prepareEntityAttributes(document:EntityDocument,additionalAttributes?:readonly string[]):EntityAttributeSession{
   const original=structuredClone(document),root=original.entity.data.value.attributes
   if(root&&root.type!=='list')return {original,context:{protocol:ENTITY_ATTRIBUTES_PROTOCOL,bindings:[]}}
@@ -75,7 +75,7 @@ export function prepareEntityAttributes(document:EntityDocument,additionalAttrib
     const node=bindingNode(original,attributeId),parsed=node?readEntityAttribute(node):null
     if((counts.get(attributeId)??0)>1||(node&&!parsed))continue
     const modifiers=parsed?.modifiers??[]
-    bindings.push({bindingId:randomId(),attributeId,base:parsed?.base??null,modifiers:structuredClone(modifiers),allowedModifierIds:[...modifiers.map(modifier=>modifier.id),...Array.from({length:64},()=>`hanshu:${randomId()}`)]})
+    bindings.push({bindingId:randomId(),attributeId,base:parsed?.base??null,modifiers:structuredClone(modifiers)})
   }
   return {original,context:{protocol:ENTITY_ATTRIBUTES_PROTOCOL,bindings}}
 }
@@ -91,7 +91,12 @@ export function applyEntityAttributeResult(session:EntityAttributeSession,candid
   assertEntityAttributesUnchanged(session.original,candidate)
   if(!record(result)||result.protocol!==ENTITY_ATTRIBUTES_PROTOCOL||!Array.isArray(result.operations)||Object.keys(result).some(key=>!['protocol','operations'].includes(key)))throw Error('实体属性回包协议无效')
   const deltas=new Map<string,{base?:EntityAttributeDelta;modifiers:EntityAttributeDelta[]}>(),seen=new Set<string>()
+  let projection:unknown[]|undefined
   for(const raw of result.operations){
+    if(record(raw)&&raw.op==='attribute.modifiers.replace'){
+      if(projection||!Array.isArray(raw.rows)||raw.rows.length>4096||Object.keys(raw).some(key=>!['op','rows'].includes(key)))throw Error('修饰器列表操作无效')
+      projection=raw.rows;continue
+    }
     if(!record(raw)||typeof raw.op!=='string'||typeof raw.bindingId!=='string')throw Error('实体属性操作无效')
     const op=raw.op
     const binding=session.context.bindings.find(binding=>binding.bindingId===raw.bindingId)
@@ -108,7 +113,7 @@ export function applyEntityAttributeResult(session:EntityAttributeSession,candid
       else if(binding.base===null)throw Error('未设置的属性基础值不能移除')
       edits.base=raw as EntityAttributeDelta
     }else{
-      if(typeof raw.modifierId!=='string'||!binding.allowedModifierIds.includes(raw.modifierId))throw Error('属性修饰器 ID 未授权')
+      if(typeof raw.modifierId!=='string'||raw.modifierId.length>256||!identifier.test(raw.modifierId))throw Error('属性修饰器 ID 未授权')
       const original=binding.modifiers.find(modifier=>modifier.id===raw.modifierId),expected=original?{amount:original.amount,operation:original.operation}:null
       if(!same(raw.expected,expected))throw Error('属性修饰器原值冲突')
       if(raw.op==='attribute.modifier.set')modifierValue(raw.value)
@@ -117,11 +122,13 @@ export function applyEntityAttributeResult(session:EntityAttributeSession,candid
     }
     deltas.set(binding.bindingId,edits)
   }
-  if(!deltas.size)return candidate
-  const nodes=[...list(candidate)]
+  if(projection&&[...deltas.values()].some(delta=>delta.modifiers.length))throw Error('不能混合列表修改和单条修饰器修改')
+  const working=projection?applyModifierProjection(session,candidate,projection,new Set([...deltas].filter(([,delta])=>delta.base?.op==='attribute.base.set').map(([id])=>id))):candidate
+  if(!deltas.size)return working
+  const nodes=[...list(working)]
   for(const [id,edits] of deltas){
     const binding=session.context.bindings.find(binding=>binding.bindingId===id)!
-    const old=bindingNode(session.original,binding.attributeId),index=old?nodes.findIndex(node=>node.type==='compound'&&node.value.id?.type==='string'&&node.value.id.value===binding.attributeId):-1
+    const old=bindingNode(working,binding.attributeId),index=old?nodes.findIndex(node=>node.type==='compound'&&node.value.id?.type==='string'&&node.value.id.value===binding.attributeId):-1
     if(!old&&edits.base?.op!=='attribute.base.set')throw Error('新增属性需同时设置明确的基础值')
     const node:Extract<NbtValue,{type:'compound'}>=old?.type==='compound'?{...old,value:{...old.value}}:{type:'compound',value:{id:{type:'string',value:binding.attributeId}}}
     if(edits.modifiers.length){
@@ -145,6 +152,48 @@ export function applyEntityAttributeResult(session:EntityAttributeSession,candid
     }
     if(edits.base?.op==='attribute.base.set'&&edits.base.value!==binding.base)node.value.base={type:'double',value:String(edits.base.value)}
     if(index<0)nodes.push(node);else nodes[index]=node
+  }
+  return {...working,entity:{...working.entity,data:{...working.entity.data,value:{...working.entity.data.value,attributes:{type:'list',value:nodes}}}}}
+}
+
+
+type ModifierProjectionRow={bindingId:string;modifierId:string;value:EntityModifierValue;origin?:{bindingId:string;modifierId:string}}
+function applyModifierProjection(session:EntityAttributeSession,candidate:EntityDocument,rawRows:unknown[],newBases:Set<string>):EntityDocument{
+  const destinations=new Set<string>(),origins=new Set<string>(),groups=new Map<string,ModifierProjectionRow[]>()
+  for(const raw of rawRows){
+    if(!record(raw)||Object.keys(raw).some(key=>!['bindingId','modifierId','value','origin'].includes(key))||typeof raw.bindingId!=='string'||typeof raw.modifierId!=='string'||raw.modifierId.length>256||!identifier.test(raw.modifierId))throw Error('修饰器条目无效')
+    const binding=session.context.bindings.find(b=>b.bindingId===raw.bindingId);if(!binding)throw Error('实体属性绑定未授权')
+    const value=modifierValue(raw.value),key=JSON.stringify([raw.bindingId,raw.modifierId])
+    if(destinations.has(key))throw Error('同一属性下修饰器 ID 不能重复');destinations.add(key)
+    let origin:ModifierProjectionRow['origin']
+    if(raw.origin!==undefined){
+      if(!record(raw.origin)||Object.keys(raw.origin).some(key=>!['bindingId','modifierId'].includes(key))||typeof raw.origin.bindingId!=='string'||typeof raw.origin.modifierId!=='string')throw Error('修饰器原始引用无效')
+      const {bindingId:originBindingId,modifierId:originModifierId}=raw.origin
+      const source=session.context.bindings.find(b=>b.bindingId===originBindingId)
+      if(!source?.modifiers.some(m=>m.id===originModifierId))throw Error('修饰器原始引用未授权')
+      const sourceKey=JSON.stringify([raw.origin.bindingId,raw.origin.modifierId]);if(origins.has(sourceKey))throw Error('同一原修饰器不能重复使用');origins.add(sourceKey)
+      origin={bindingId:raw.origin.bindingId,modifierId:raw.origin.modifierId}
+    }
+    const rows=groups.get(binding.bindingId)??[];rows.push({bindingId:binding.bindingId,modifierId:raw.modifierId,value,...(origin?{origin}:{})});if(rows.length>256)throw Error('单属性修饰器过多');groups.set(binding.bindingId,rows)
+  }
+  const nodes=[...list(candidate)]
+  for(const binding of session.context.bindings){
+    const rows=groups.get(binding.bindingId)??[],before=binding.modifiers.map(m=>({bindingId:binding.bindingId,modifierId:m.id,value:{amount:m.amount,operation:m.operation},origin:{bindingId:binding.bindingId,modifierId:m.id}}))
+    if(same(rows,before))continue
+    const at=nodes.findIndex(node=>node.type==='compound'&&node.value.id?.type==='string'&&node.value.id.value===binding.attributeId)
+    if(at<0&&!rows.length)continue
+    if(at<0&&!newBases.has(binding.bindingId))throw Error('新增属性需同时设置明确的基础值')
+    const old=at<0?undefined:nodes[at]
+    const values=rows.map(row=>{
+      const sourceBinding=row.origin?session.context.bindings.find(b=>b.bindingId===row.origin!.bindingId):undefined
+      const source=sourceBinding?bindingNode(session.original,sourceBinding.attributeId):undefined
+      const sourceMods=source?.type==='compound'&&source.value.modifiers?.type==='list'?source.value.modifiers.value:[]
+      const original=sourceMods.find(m=>m.type==='compound'&&m.value.id?.type==='string'&&m.value.id.value===row.origin?.modifierId)
+      const fields=original?.type==='compound'?original.value:{}
+      return {type:'compound' as const,value:{...fields,id:{type:'string' as const,value:row.modifierId},...(entityAttributeNumber(fields.amount)!==row.value.amount?{amount:{type:'double' as const,value:String(row.value.amount)}}:{}),...(fields.operation?.value!==row.value.operation?{operation:{type:'string' as const,value:row.value.operation}}:{})}}
+    })
+    const node:NbtValue={type:'compound',value:{...(old?.type==='compound'?old.value:{id:{type:'string',value:binding.attributeId}}),modifiers:{type:'list',value:values}}}
+    if(at<0)nodes.push(node);else nodes[at]=node
   }
   return {...candidate,entity:{...candidate.entity,data:{...candidate.entity.data,value:{...candidate.entity.data.value,attributes:{type:'list',value:nodes}}}}}
 }

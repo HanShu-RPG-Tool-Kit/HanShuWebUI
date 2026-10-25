@@ -12,11 +12,10 @@ doc.entity.data.value.attributes={type:'list',value:[original,attribute('minecra
 doc.entity.data.value.Attributes={type:'compound',value:{legacy:string('do not rewrite')}}
 const session=prepareEntityAttributes(doc),health=session.context.bindings.find(b=>b.attributeId==='minecraft:max_health')!,movement=session.context.bindings.find(b=>b.attributeId==='minecraft:movement_speed')!
 assert(!session.context.bindings.some(b=>b.attributeId==='minecraft:attack_damage'))
-assert.equal(health.allowedModifierIds.length,65);assert(health.allowedModifierIds.includes('test:buff'));assert.equal(movement.base,null)
 const run=(ops:unknown[],candidate=doc)=>applyEntityAttributeResult(session,candidate,{protocol:ENTITY_ATTRIBUTES_PROTOCOL,operations:ops})
 const base={op:'attribute.base.set',bindingId:health.bindingId,expected:20,value:40}
 const change={op:'attribute.modifier.set',bindingId:health.bindingId,modifierId:'test:buff',expected:{amount:2,operation:'add_value'},value:{amount:3.5,operation:'add_multiplied_base'}}
-const added={op:'attribute.modifier.set',bindingId:health.bindingId,modifierId:health.allowedModifierIds[1],expected:null,value:{amount:1,operation:'add_value'}}
+const added={op:'attribute.modifier.set',bindingId:health.bindingId,modifierId:'test:new',expected:null,value:{amount:1,operation:'add_value'}}
 const result=run([base,change,added]),nodes=result.entity.data.value.attributes
 assert.equal(nodes.type,'list');if(nodes.type!=='list')throw Error('list expected')
 const edited=nodes.value[0] as Extract<NbtValue,{type:'compound'}>
@@ -32,7 +31,7 @@ assert.deepEqual(parseEntity(stringifyEntity(result)),result)
 assert.throws(()=>run([{...base,bindingId:'unbound'}]),/未授权/)
 assert.throws(()=>run([{...base,expected:19}]),/原值冲突/)
 assert.throws(()=>run([{...change,expected:{amount:1,operation:'add_value'}}]),/原值冲突/)
-assert.throws(()=>run([{...added,modifierId:'test:unbound'}]),/未授权/)
+assert.throws(()=>run([{...added,modifierId:'invalid id'}]),/修饰器/)
 assert.throws(()=>run([{...base,path:'attributes.0.base'}]),/未授权字段/)
 assert.throws(()=>run([{...base,op:'attribute.replace'}]),/未知/)
 assert.throws(()=>run([base,base]),/重复/)
@@ -45,7 +44,7 @@ const legacy=structuredClone(doc);delete legacy.entity.data.value.Attributes;ass
 const reordered=structuredClone(doc);if(reordered.entity.data.value.attributes.type==='list'){const node=reordered.entity.data.value.attributes.value[0];if(node.type==='compound')node.value=Object.fromEntries(Object.entries(node.value).reverse())}assertEntityAttributesUnchanged(doc,reordered)
 assert.throws(()=>run([{op:'attribute.base.remove',bindingId:health.bindingId,expected:20}]),/清空修饰器/)
 assert.throws(()=>run([{op:'attribute.modifier.remove',bindingId:health.bindingId,modifierId:'test:buff',expected:{amount:2,operation:'add_value'}},{op:'attribute.base.remove',bindingId:health.bindingId,expected:20}]),/未知属性字段/)
-const newModifier={op:'attribute.modifier.set',bindingId:movement.bindingId,modifierId:movement.allowedModifierIds[0],expected:null,value:{amount:0.5,operation:'add_multiplied_total'}}
+const newModifier={op:'attribute.modifier.set',bindingId:movement.bindingId,modifierId:'test:movement',expected:null,value:{amount:0.5,operation:'add_multiplied_total'}}
 assert.throws(()=>run([newModifier]),/同时设置/)
 const created=run([{op:'attribute.base.set',bindingId:movement.bindingId,expected:null,value:0.3},newModifier])
 const createdList=created.entity.data.value.attributes as Extract<NbtValue,{type:'list'}>
@@ -56,6 +55,21 @@ const simpleSession=prepareEntityAttributes(simple),binding=simpleSession.contex
 const removeOps:EntityAttributeDelta[]=[{op:'attribute.base.remove',bindingId:binding.bindingId,expected:20},{op:'attribute.modifier.remove',bindingId:binding.bindingId,modifierId:'test:buff',expected:{amount:2,operation:'add_value'}}]
 const removed=applyEntityAttributeResult(simpleSession,simple,{protocol:ENTITY_ATTRIBUTES_PROTOCOL,operations:removeOps})
 assert.deepEqual(removed.entity.data.value.attributes,{type:'list',value:[]})
+const movedRow={bindingId:movement.bindingId,modifierId:'test:renamed',value:{amount:2,operation:'add_value'},origin:{bindingId:health.bindingId,modifierId:'test:buff'}}
+const projection={op:'attribute.modifiers.replace',rows:[movedRow]}
+const moved=run([projection,{op:'attribute.base.set',bindingId:movement.bindingId,expected:null,value:0.3}])
+const movedNodes=(moved.entity.data.value.attributes as Extract<NbtValue,{type:'list'}>).value
+const destination=movedNodes.at(-1) as Extract<NbtValue,{type:'compound'}>
+const movedModifier=(destination.value.modifiers as Extract<NbtValue,{type:'list'}>).value[0] as Extract<NbtValue,{type:'compound'}>
+assert.deepEqual(movedModifier.value.custom,{type:'long',value:'9223372036854775807'})
+assert.deepEqual(movedModifier.value.amount,{type:'int',value:2})
+assert.equal(movedModifier.value.id.value,'test:renamed')
+assert.deepEqual(movedNodes.slice(1,4),(doc.entity.data.value.attributes as Extract<NbtValue,{type:'list'}>).value.slice(1))
+assert.throws(()=>run([projection]),/同时设置/)
+assert.throws(()=>run([{...projection,rows:[movedRow,movedRow]}]),/重复/)
+assert.throws(()=>run([{...projection,rows:[{...movedRow,origin:{bindingId:health.bindingId,modifierId:'test:forged'}}]}]),/未授权/)
+assert.throws(()=>run([{...projection,rows:[movedRow,{...movedRow,modifierId:'test:other'}]}]),/重复使用/)
+assert(!await supportsEntityAttributes(async()=>({protocols:['hanshu-entity-attributes-v1']})))
 // Later mutation of the caller's draft cannot revise open's expected values.
 ;(doc.entity.data.value.attributes as Extract<NbtValue,{type:'list'}>).value[0]=attribute('minecraft:max_health',99)
 assert.equal(session.context.bindings.find(b=>b.attributeId==='minecraft:max_health')!.base,20)

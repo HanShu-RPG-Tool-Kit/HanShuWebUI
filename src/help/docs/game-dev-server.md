@@ -149,24 +149,23 @@ WebUI 保留 open 时的源正文、源版本、所有授权语言正文和版�
 
 ### 实体属性增量协议
 
-`localization.capabilities.protocols` 可另行包含 `hanshu-entity-attributes-v1`，独立于显示文本能力。支持时 `entities.edit.open` 携带可选 `attributes`：
+`localization.capabilities.protocols` 可另行包含 `hanshu-entity-attributes-v2`，独立于显示文本能力。支持时 `entities.edit.open` 携带可选 `attributes`：
 
 ```json
 {
-  "protocol": "hanshu-entity-attributes-v1",
+  "protocol": "hanshu-entity-attributes-v2",
   "bindings": [{
     "bindingId": "opaque",
     "attributeId": "minecraft:max_health",
     "base": 20,
-    "modifiers": [{"id":"example:bonus","amount":2,"operation":"add_value"}],
-    "allowedModifierIds": ["example:bonus", "hanshu:allocated-id"]
+    "modifiers": [{"id":"example:bonus","amount":2,"operation":"add_value"}]
   }]
 }
 ```
 
-`bindingId` 绑定 open 时的属性记录；`base: null` 表示尚无该属性记录。现有修饰器和每条绑定八个预分配的新 ID 构成 `allowedModifierIds`。只有已下发绑定和 ID 可以出现在增量里；属性 ID、修饰器 ID 和工程路径不从回包推导。未知记录、重复 ID、非有限数值和旧格式 `Attributes` 不授予编辑权。
+`bindingId` 绑定 open 时的属性记录；`base: null` 表示尚无该属性记录。属性授权范围在 open 时固定，修饰器 ID 可直接编辑，须为有效资源标识符且在同一属性内唯一；不再预分配 ID。工程路径不从回包推导。未知记录、重复 ID、非有限数值和旧格式 `Attributes` 不授予编辑权。
 
-done 的 `attributes` 为 `{protocol: "hanshu-entity-attributes-v1", operations: [...]}`，操作形式：
+done 的 `attributes` 为 `{protocol: "hanshu-entity-attributes-v2", operations: [...]}`，操作形式：
 
 | op | 比较原值 | 新值 |
 | --- | --- | --- |
@@ -192,3 +191,5 @@ done 的 `attributes` 为 `{protocol: "hanshu-entity-attributes-v1", operations:
 验证入口：`npm run test:python-language` 自行启动隔离 Vite 和真实浏览器 Worker，使用桌面原有 CSP。先在相邻 Mod 仓库运行 `gradlew.bat test --tests "mchhui.rpgtoolkit.devtool.python.*"`，会生成 `build/python-stubs-test.json`；Web 验证随后用这些**实际 MC 反射签名 + mock Control 运输**检查玩家链式访问、别名、元组、多文档、诊断和 future import，以及离线不启动、断线清理、最新草稿重连、最后一个编辑器释放和初始化中断线。可用 `PYTHON_STUB_FIXTURE` 指定夹具；没有夹具时明确跳过 MC 集成部分。先 `npm run build` 后测试，还会检查生产 Worker。此验证不等于启动原生 MC 客户端并完成真实 Control 往返。
 
 当前生产 Worker 为独立懒加载资源，约 19.6 MB（gzip 约 4.22 MB，含 typeshed）；本机浏览器验收初始化约 1.8–3.6 秒，实际 MC 签名首次链式补全约 0.84 秒，缓存后约 0.08 秒。耗时随设备与类数量变化。构建保留上游 `eval` 分支警告，但现有语言服务路径在 `script-src 'self'` 下通过验证，没有放宽 CSP。
+
+修饰器统一列表使用 `attribute.modifiers.replace` 操作，`rows` 每项包含目标 `bindingId`、`modifierId`、`value:{amount,operation}`，已有条目另携带 `origin:{bindingId,modifierId}`。origin 必须来自 open 快照且不可重复，用于跨属性移动或重命名时保留未知 NBT 字段；新条目省略 origin。该操作不得与单修饰器 set/remove 混用。新增属性须在同批操作显式设置基础值。
