@@ -1,25 +1,11 @@
 import { isObject } from './model'
-import {
-  isScriptDocument,
-  parseSectionFolderKey,
-  sectionFolderKey,
-  ensurePackageSections,
-  BUILTIN_GOAL_FOLDER_KEY,
-  builtinGoalDocumentKey,
-  isBuiltinGoalDocumentKey,
-  isBuiltinGoalFolder,
-} from './library'
-import { stampDocument, type FlowDocument, type FlowFolder, type FlowWorkspaceState } from './storage'
-import { BUILTIN_GOAL_DEFINITION_SCRIPTS } from './builtinGoals'
-
-export {
-  BUILTIN_GOAL_FOLDER_KEY,
-  builtinGoalDocumentKey,
-  isBuiltinGoalDocumentKey,
-  isBuiltinGoalFolder,
-} from './library'
-
-export { BUILTIN_GOAL_DEFINITION_SCRIPTS } from './builtinGoals'
+import {isScriptDocument,scriptTypeInFolder,isBuiltinScriptDocumentKey} from './library'
+import {type FlowDocument,type FlowWorkspaceState} from './storage'
+import {BUILTIN_SCRIPTS} from '../../scriptResources'
+import {withBuiltinScripts} from './scriptResources'
+export {isBuiltinScriptDocumentKey,isBuiltinScriptFolder} from './library'
+export {withBuiltinScripts,stripBuiltinScripts} from './scriptResources'
+export const BUILTIN_GOAL_DEFINITION_SCRIPTS=BUILTIN_SCRIPTS.filter(s=>s.type==='goal')
 
 export type GoalConfigFieldType = 'string' | 'int' | 'float' | 'bool'
 export type GoalConfigValue = string | number | boolean
@@ -150,65 +136,15 @@ export function defaultConfigFromFields(fields: GoalConfigField[]): Record<strin
 /** 文档是否落在「脚本 / 目标定义」及其子文件夹下。 */
 export function isGoalDefinitionDocument(state: FlowWorkspaceState, document: FlowDocument): boolean {
   if (document.package !== 'script' || !isScriptDocument(document)) return false
-  let current = document.folderId ?? null
-  while (current) {
-    if (parseSectionFolderKey(current)?.sectionId === 'goal-def') return true
-    current = state.folders.find((folder) => folder.key === current)?.parentId ?? null
-  }
-  return false
-}
-
-/** 「目标定义 / 内置」虚拟文件夹（稳定键，不进 UI 持久化）。 */
-export function builtinGoalDefinitionFolder(): FlowFolder {
-  return {
-    key: BUILTIN_GOAL_FOLDER_KEY,
-    name: '内置',
-    parentId: sectionFolderKey('script', 'goal-def'),
-    package: 'script',
-  }
-}
-
-export function builtinGoalDefinitionDocuments(): FlowDocument[] {
-  return BUILTIN_GOAL_DEFINITION_SCRIPTS.map((item) => stampDocument({
-    key: builtinGoalDocumentKey(item.name),
-    name: item.name,
-    source: item.source,
-    package: 'script',
-    folderId: BUILTIN_GOAL_FOLDER_KEY,
-  }))
-}
-
-/** 把虚拟内置文件夹与脚本叠进工作区视图（不落盘）。 */
-export function withBuiltinGoalDefinitions(state: FlowWorkspaceState): FlowWorkspaceState {
-  const next = ensurePackageSections(state)
-  const folder = builtinGoalDefinitionFolder()
-  const builtins = builtinGoalDefinitionDocuments()
-  const folders = next.folders.some((item) => item.key === folder.key)
-    ? next.folders
-    : [...next.folders, folder]
-  const existing = new Set(next.documents.map((document) => document.key))
-  const documents = [
-    ...next.documents,
-    ...builtins.filter((document) => !existing.has(document.key)),
-  ]
-  return { ...next, folders, documents }
-}
-
-/** 去掉虚拟内置项，避免写入工程 / UI 状态。 */
-export function stripBuiltinGoalDefinitions(state: FlowWorkspaceState): FlowWorkspaceState {
-  return {
-    ...state,
-    documents: state.documents.filter((document) => !isBuiltinGoalDocumentKey(document.key)),
-    folders: state.folders.filter((folder) => !isBuiltinGoalFolder(folder.key)),
-  }
+  return scriptTypeInFolder(state,document.folderId??null)==='goal'
 }
 
 /**
  * 目标定义管理器：扫描「目标定义」下的 .py（含虚拟内置），解析为 kind 目录。
- * 先收内置，再收工程脚本 —— 同 kind 时工程侧覆盖内置。
+ * 先按类型和文件名应用工程整文件覆盖，再解析有效脚本；不同文件的类型 ID 冲突单独报告。
  */
 export function buildGoalDefinitionCatalog(state: FlowWorkspaceState): GoalDefinitionCatalog {
-  const view = withBuiltinGoalDefinitions(state)
+  const view = withBuiltinScripts(state)
   const definitions: GoalDefinition[] = []
   const errors: GoalDefinitionCatalog['errors'] = []
   const byKind = new Map<string, GoalDefinition>()
@@ -224,11 +160,11 @@ export function buildGoalDefinitionCatalog(state: FlowWorkspaceState): GoalDefin
         return
       }
       for (const def of parsed) {
-        if (byKind.has(def.kind) && !isBuiltinGoalDocumentKey(document.key)) {
+        if (byKind.has(def.kind) && !isBuiltinScriptDocumentKey(document.key)) {
           errors.push({
             sourceKey: document.key,
             sourceName: document.name,
-            message: `goal kind「${def.kind}」重复，已用较后的定义覆盖`,
+            message: `goal 类型「${def.kind}」在不同有效脚本中重复，请修改定义 ID`,
           })
         }
         byKind.set(def.kind, def)
@@ -242,14 +178,14 @@ export function buildGoalDefinitionCatalog(state: FlowWorkspaceState): GoalDefin
     }
   }
 
-  // 内置先入；工程脚本后入以覆盖同 kind
+  // 有效内置先入；工程定义后入，重复 ID 会保留诊断。
   for (const document of view.documents) {
-    if (!isBuiltinGoalDocumentKey(document.key)) continue
+    if (!isBuiltinScriptDocumentKey(document.key)) continue
     if (!isGoalDefinitionDocument(view, document)) continue
     ingest(document)
   }
   for (const document of view.documents) {
-    if (isBuiltinGoalDocumentKey(document.key)) continue
+    if (isBuiltinScriptDocumentKey(document.key)) continue
     if (!isGoalDefinitionDocument(view, document)) continue
     ingest(document)
   }

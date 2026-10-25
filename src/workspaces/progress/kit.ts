@@ -172,8 +172,8 @@ export type KitDocument = {
   commands: string[]
   experience: KitExperience
   feedback: KitFeedback
-  /** 内联脚本原文，不是外调路径 */
-  script: string
+  /** New resources use a typed reference. Strings retain legacy source only for explicit extraction. */
+  script: string | {ref:string} | {ref:string}[]
 }
 
 /** 礼包参数类型（声明时指定，默认值必须可按此解释） */
@@ -408,7 +408,7 @@ export function createKit(_name = '新礼包'): KitDocument {
     commands: [],
     experience: { kind: 'points', amount: 0 },
     feedback: emptyFeedback(),
-    script: '',
+    script: [],
   }
 }
 
@@ -456,7 +456,7 @@ export function overlayKitLayer(base: KitDocument, overlay: KitDocument): KitDoc
     commands: overlay.commands.length > 0 ? overlay.commands : base.commands,
     experience: overlay.experience.amount > 0 ? overlay.experience : base.experience,
     feedback: feedbackSet(overlay.feedback) ? { ...overlay.feedback } : { ...base.feedback },
-    script: overlay.script || base.script,
+    script: hasKitScript(overlay.script) ? overlay.script : base.script,
   }
 }
 
@@ -632,6 +632,23 @@ export function stringifyKit(kit: KitDocument): string {
   return `${JSON.stringify(out, null, 2)}\n`
 }
 
+export function kitScriptRefs(value:KitDocument['script']):string[]{return typeof value==='string'?[]:(Array.isArray(value)?value:[value]).map(s=>s.ref).filter(Boolean)}
+export function hasKitScript(value:KitDocument['script']):boolean{return typeof value==='string'?!!value.trim():kitScriptRefs(value).length>0}
+export function kitScriptRef(value:KitDocument['script']):string{return kitScriptRefs(value)[0]??''}
+function readKitScript(raw:unknown):KitDocument['script']{
+ if(raw==null)return []
+ if(typeof raw==='string')return raw
+ const values=Array.isArray(raw)?raw:[raw]
+ const refs=values.map(value=>{
+  if(!isObject(value)||typeof value.ref!=='string')throw Error('script 应为脚本引用数组 [{ref:名称}]')
+  const ref=value.ref.trim()
+  if(ref==='.'||ref==='..'||/[\\/:*?"<>|\x00-\x1f]/.test(ref))throw Error('礼包脚本引用应为扁平文件名')
+  return ref
+ }).filter(Boolean)
+ if(new Set(refs).size!==refs.length)throw Error('礼包脚本不能重复绑定')
+ return refs.map(ref=>({ref}))
+}
+
 const readInt = (value: unknown, fallback: number, min = 0) =>
   typeof value === 'number' && Number.isFinite(value) ? Math.max(min, Math.floor(value)) : fallback
 
@@ -802,7 +819,7 @@ export function parseKit(source: string): KitDocument {
     }),
     experience: readExperience(raw.experience),
     feedback: readFeedback(raw.feedback),
-    script: readString(raw.script),
+    script: readKitScript(raw.script),
   }
 }
 

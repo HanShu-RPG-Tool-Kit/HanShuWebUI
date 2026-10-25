@@ -2,9 +2,9 @@ import assert from 'node:assert/strict'
 import {
   BUILTIN_GOAL_DEFINITION_SCRIPTS,
   buildGoalDefinitionCatalog,
-  isBuiltinGoalDocumentKey,
+  isBuiltinScriptDocumentKey,
   parseGoalDefinitionsFromSource,
-  withBuiltinGoalDefinitions,
+  withBuiltinScripts,
 } from '../src/workspaces/progress/goalDefinitions.ts'
 import { ensurePackageSections, sectionFolderKey } from '../src/workspaces/progress/library.ts'
 
@@ -52,10 +52,10 @@ test('empty workspace still exposes virtual builtin goal definitions', () => {
     'core:region_enter',
     'core:region_present',
   ])
-  assert.ok(catalog.definitions.every((item) => item.sourceKey && isBuiltinGoalDocumentKey(item.sourceKey)))
-  const view = withBuiltinGoalDefinitions(state)
+  assert.ok(catalog.definitions.every((item) => item.sourceKey && isBuiltinScriptDocumentKey(item.sourceKey)))
+  const view = withBuiltinScripts(state)
   assert.equal(view.folders.some((folder) => folder.name === '内置'), true)
-  assert.equal(view.documents.filter((doc) => isBuiltinGoalDocumentKey(doc.key)).length, 8)
+  assert.equal(view.documents.filter((doc) => isBuiltinScriptDocumentKey(doc.key)).length, 8)
   assert.equal(state.documents.length, 0, 'builtins must not mutate the base state')
 })
 

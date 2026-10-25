@@ -1,3 +1,4 @@
+import {SCRIPT_TEMPLATES} from '../../scriptResources'
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type MouseEvent } from 'react'
 import { NodeContextMenu, type NodeMenuItem } from '../../nodeEditor/ContextMenu'
 import { droppedFiles, shouldAcceptDrop } from '../../drag/dragPayload'
@@ -10,8 +11,8 @@ import {
   entryId,
   entryPackage,
   folderPath,
-  isBuiltinGoalDocumentKey,
-  isBuiltinGoalFolder,
+  isBuiltinScriptDocumentKey,
+  isBuiltinScriptFolder,
   isFolderEmpty,
   isLibraryTableKey,
   isReadonlyExplorerKey,
@@ -30,6 +31,8 @@ import {
   renameFlowEntry,
   sectionDefs,
   sectionFolderKey,
+  scriptTypeInFolder,
+  uniqueDocumentName,
   type FlowEntry,
 } from './library'
 import {
@@ -43,10 +46,11 @@ import {
 import type { FlowPackageId, FlowWorkspaceState } from './storage'
 
 type Row = { entry: FlowEntry; name: string; depth: number; parent: string | null; pkg: FlowPackageId }
-type Edit = { mode: 'flow' | 'script' | 'kit' | 'progress' | 'navigation' | 'entity' | 'item' | 'folder' | 'rename' | 'move'; entry: FlowEntry; parent: string | null; pkg: FlowPackageId; value: string; error: string }
+type Edit = { mode: 'flow' | 'script' | 'kit' | 'progress' | 'navigation' | 'entity' | 'item' | 'folder' | 'rename' | 'move'; entry: FlowEntry; parent: string | null; pkg: FlowPackageId; value: string; error: string; templateName?:string }
 
-export function Icon({ kind }: { kind: 'folder' | 'document' | 'python' | 'kit' | 'item' | 'item-table' | 'new' | 'import' | 'collapse' | 'script' | 'progress' | 'story' | 'actor' | 'reputation' | 'region' | 'navigator' | 'shop' | 'entities' | 'items' | 'gift' | 'goal-def' }) {
+export function Icon({ kind }: { kind: 'folder' | 'document' | 'python' | 'kit' | 'item' | 'item-table' | 'new' | 'import' | 'collapse' | 'script' | 'progress' | 'story' | 'actor' | 'reputation' | 'region' | 'navigator' | 'shop' | 'entities' | 'items' | 'gift' | 'goal-def' | 'enchantment' }) {
   const paths: Record<typeof kind, string> = {
+    enchantment: 'M12 2l2.5 7.5L22 12l-7.5 2.5L12 22l-2.5-7.5L2 12l7.5-2.5z M19 2v4 M17 4h4',
     folder: 'M2 5h6l2 2h12v12H2z',
     document: 'M5 2h9l5 5v15H5z M14 2v6h5 M8 12h8 M8 16h8',
     python: 'M5 2h9l5 5v15H5z M14 2v6h5 M9 13c0 1.1.9 2 2 2h1 M14 13v2a2 2 0 01-2 2 M9 11v-1a2 2 0 012-2h1 M14 11c0-1.1-.9-2-2-2',
@@ -74,9 +78,9 @@ export function Icon({ kind }: { kind: 'folder' | 'document' | 'python' | 'kit' 
 
 const TREE_INDENT = 10
 const defaultFocus = packageEntry('story')
-const sectionIconKind = (key: string): 'folder' | 'goal-def' => {
+const sectionIconKind = (key: string): Parameters<typeof Icon>[0]['kind'] => {
   const parsed = parseSectionFolderKey(key)
-  return parsed?.sectionId === 'goal-def' ? 'goal-def' : 'folder'
+  return ({common:'script','goal-def':'goal-def',kit:'kit',item:'item',entity:'entities',enchantment:'enchantment',player:'actor'} as const)[parsed?.sectionId as 'common'] ?? 'folder'
 }
 const allSectionEntryIds = () => FLOW_PACKAGE_ORDER.flatMap((pkg) => sectionDefs(pkg).map((section) => `folder:${sectionFolderKey(pkg, section.id)}`))
 const compareFolders = (pkg: FlowPackageId, a: { key: string; name: string }, b: { key: string; name: string }) => {
@@ -104,10 +108,10 @@ const parseSelection = (ids: Set<string>) => {
 
 const isPackageId = (value: string): value is FlowPackageId => (FLOW_PACKAGE_ORDER as string[]).includes(value)
 
-export function FlowExplorer({ state, active, disabled, readOnly = false, onChange, onSelect, onNew, onImport, onImportFiles, onExport, onDownload, onRemove, onProperties, onViewSource, onOpenItemInGame, onOpenEntityInGame, onNotice }: {
+export function FlowExplorer({ state, active, disabled, readOnly = false, onChange, onSelect, onNew, onImport, onImportFiles, onExport, onDownload, onRemove, onProperties, onViewSource, onOpenItemInGame, onOpenEntityInGame, onOverrideBuiltinScript, onNotice }: {
   state: FlowWorkspaceState; active: boolean; disabled: boolean; readOnly?: boolean
   onChange: (state: FlowWorkspaceState) => void; onSelect: (key: string) => void
-  onNew: (name: string, folder: string | null, pkg: FlowPackageId) => string
+  onNew: (name: string, folder: string | null, pkg: FlowPackageId, templateName?:string) => string
   onImport: (folder: string | null, pkg: FlowPackageId) => void
   onImportFiles: (files: File[], folder: string | null, pkg: FlowPackageId) => void
   onExport: (key: string) => void; onDownload: (key: string) => void
@@ -118,6 +122,7 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
   /** 经 Control 呼出客户端 IBE 编辑当前 .item */
   onOpenItemInGame?: (key: string) => void
   onOpenEntityInGame?: (key: string) => void
+  onOverrideBuiltinScript?: (key:string)=>void
   onNotice: (message: string) => void
 }) {
   const [focus, setFocus] = useState<FlowEntry>(state.activeKey ? { kind: 'document', key: state.activeKey } : defaultFocus)
@@ -134,7 +139,7 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
   const currentPkg = entryPackage(state, focus)
   const rawFolder = entryFolder(state, focus)
   /** 内置只读夹不可作为创建/导入落点，回落到「目标定义」 */
-  const currentFolder = rawFolder && isBuiltinGoalFolder(rawFolder)
+  const currentFolder = rawFolder && isBuiltinScriptFolder(rawFolder)
     ? sectionFolderKey('script', 'goal-def')
     : rawFolder
   const focusReadonly = (focus.kind === 'folder' || focus.kind === 'document') && isReadonlyExplorerKey(focus.key)
@@ -346,7 +351,7 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
       pkg,
       value: mode === 'rename' ? entryName(state, entry)
         : mode === 'folder' ? '新建文件夹'
-          : mode === 'script' ? '新建脚本.py'
+          : mode === 'script' ? uniqueDocumentName(state,'新建脚本.py',pkg,parent)
             : mode === 'kit' ? '新建礼包.kit'
               : mode === 'progress' ? '新建委托.progress'
                 : mode === 'navigation' ? '新建导航点.nav'
@@ -360,7 +365,7 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
     if (!edit || disabled || readOnly) return
     try {
       let nextEntry = edit.entry
-      if (edit.mode === 'flow' || edit.mode === 'script' || edit.mode === 'kit' || edit.mode === 'progress' || edit.mode === 'navigation' || edit.mode === 'item' || edit.mode === 'entity') { const key = onNew(edit.value, edit.parent, edit.pkg); nextEntry = { kind: 'document', key } }
+      if (edit.mode === 'flow' || edit.mode === 'script' || edit.mode === 'kit' || edit.mode === 'progress' || edit.mode === 'navigation' || edit.mode === 'item' || edit.mode === 'entity') { const key = onNew(edit.value, edit.parent, edit.pkg, edit.templateName); nextEntry = { kind: 'document', key } }
       if (edit.mode === 'folder') { const result = addFlowFolder(state, edit.value, edit.pkg, edit.parent); onChange(result.state); nextEntry = { kind: 'folder', key: result.folder.key }; setExpanded((previous) => new Set(previous).add(`folder:${result.folder.key}`)) }
       if (edit.mode === 'rename') onChange(renameFlowEntry(state, edit.entry, edit.value))
       if (edit.mode === 'move') { onChange(moveFlowEntry(state, edit.entry, edit.pkg, edit.parent)); revealEntry(edit.entry) }
@@ -371,19 +376,19 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
     if (disabled || edit) return
     const { documents, folders } = parseSelection(selectedIds)
     if (!documents.length && !folders.length) return
-    if (!documents.length && folders.length > 0 && folders.every((key) => isSectionFolder(key) || isBuiltinGoalFolder(key))) {
+    if (!documents.length && folders.length > 0 && folders.every((key) => isSectionFolder(key) || isBuiltinScriptFolder(key))) {
       onNotice('内置分类与内置文件夹不可删除。')
       return
     }
     const removableFolders = folders.filter((key) => {
-      if (isSectionFolder(key) || isBuiltinGoalFolder(key)) return false
+      if (isSectionFolder(key) || isBuiltinScriptFolder(key)) return false
       const remainingDocs = state.documents.some((document) => document.folderId === key && !documents.includes(document.key))
       const remainingFolders = state.folders.some((folder) => folder.parentId === key && !folders.includes(folder.key))
       return !remainingDocs && !remainingFolders
     })
-      const removableDocs = documents.filter((key) => !isBuiltinGoalDocumentKey(key) && !isLibraryTableKey(key))
+      const removableDocs = documents.filter((key) => !isBuiltinScriptDocumentKey(key) && !isLibraryTableKey(key))
       if (!removableDocs.length && !removableFolders.length) {
-        onNotice(documents.some((key) => isBuiltinGoalDocumentKey(key) || isLibraryTableKey(key)) ? '虚拟项为只读，不可删除。' : '请先移走文件夹中的资源，或一并选中其中的流程后再删除。')
+        onNotice(documents.some((key) => isBuiltinScriptDocumentKey(key) || isLibraryTableKey(key)) ? '虚拟项为只读，不可删除。' : '请先移走文件夹中的资源，或一并选中其中的流程后再删除。')
         return
       }
     onRemove({ documents: removableDocs, folders: removableFolders })
@@ -416,7 +421,7 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
   }
   function canImportInto(entry: FlowEntry, pkg: FlowPackageId) {
     const target = importDropTarget(entry, pkg)
-    if (target.parent && isBuiltinGoalFolder(target.parent)) return false
+    if (target.parent && isBuiltinScriptFolder(target.parent)) return false
     return packageAllowsDocuments(target.pkg)
   }
   function importExternalFiles(files: File[], entry: FlowEntry, pkg: FlowPackageId) {
@@ -532,12 +537,12 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
   const menuItems: NodeMenuItem[] = menu ? (() => {
     if (menu.multi) {
       const removableFolders = selection.folders.filter((key) => {
-        if (isSectionFolder(key) || isBuiltinGoalFolder(key)) return false
+        if (isSectionFolder(key) || isBuiltinScriptFolder(key)) return false
         const remainingDocs = state.documents.some((document) => document.folderId === key && !selection.documents.includes(document.key))
         const remainingFolders = state.folders.some((folder) => folder.parentId === key && !selection.folders.includes(folder.key))
         return !remainingDocs && !remainingFolders
       })
-      const removableDocs = selection.documents.filter((key) => !isBuiltinGoalDocumentKey(key) && !isLibraryTableKey(key))
+      const removableDocs = selection.documents.filter((key) => !isBuiltinScriptDocumentKey(key) && !isLibraryTableKey(key))
       const canRemove = removableDocs.length > 0 || removableFolders.length > 0
       return [
         { label: `移除所选（${removableDocs.length + removableFolders.length} 项）…`, disabled: !canRemove, hint: canRemove ? '删除选中的流程，以及可安全删除的空文件夹' : '内置项不可删除，或所选文件夹仍有未选中的内容', action: () => onRemove({ documents: removableDocs, folders: removableFolders }) },
@@ -546,7 +551,7 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
     const entry = menu.entry, pkg = entryPackage(state, entry), folder = entryFolder(state, entry)
     if (entry.kind === 'document') {
       const document = state.documents.find((d) => d.key === entry.key)
-      const builtin = isBuiltinGoalDocumentKey(entry.key)
+      const builtin = isBuiltinScriptDocumentKey(entry.key)
       const itemTable = isLibraryTableKey(entry.key)
       const script = document?.package === 'script'
       const kit = document?.package === 'gift'
@@ -565,6 +570,7 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
       if (builtin) {
         return [
           { label: openLabel, action: () => onSelect(entry.key) },
+          ...(onOverrideBuiltinScript?[{label:'在工程中覆盖',disabled:readOnly,action:()=>onOverrideBuiltinScript(entry.key)}]:[]),
           { label: downloadLabel, action: () => onDownload(entry.key) },
           { label: '只读内置脚本', disabled: true, hint: '不可重命名、移动或删除', action: () => {} },
         ]
@@ -589,7 +595,7 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
         { label: removeLabel, action: () => onRemove({ documents: [entry.key], folders: [] }) },
       ]
     }
-    if (entry.kind === 'folder' && isBuiltinGoalFolder(entry.key)) {
+    if (entry.kind === 'folder' && isBuiltinScriptFolder(entry.key)) {
       return [{ label: '只读内置文件夹', disabled: true, hint: '内置目标定义脚本，不可改动', action: () => {} }]
     }
     const items: NodeMenuItem[] = [{ label: '新建文件夹', action: () => startEdit('folder', entry) }]
@@ -644,7 +650,7 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
     <div className="flow-explorer-heading"><strong>资源管理器</strong><div className="flow-explorer-actions">
       <button type="button" title={newLabel} aria-label={newLabel} disabled={disabled || readOnly || !!edit || !allowsDocuments || !newDocumentMode || focusReadonly} onClick={() => newDocumentMode && startEdit(newDocumentMode)}><Icon kind="new" /></button>
       <button type="button" title="新建文件夹" aria-label="新建文件夹" disabled={disabled || readOnly || !!edit || focusReadonly} onClick={() => startEdit('folder')}><Icon kind="folder" /></button>
-      <button type="button" title={importLabel} aria-label={importLabel} disabled={disabled || readOnly || !!edit || !allowsDocuments || (rawFolder != null && isBuiltinGoalFolder(rawFolder))} onClick={() => onImport(currentFolder, currentPkg)}><Icon kind="import" /></button>
+      <button type="button" title={importLabel} aria-label={importLabel} disabled={disabled || readOnly || !!edit || !allowsDocuments || (rawFolder != null && isBuiltinScriptFolder(rawFolder))} onClick={() => onImport(currentFolder, currentPkg)}><Icon kind="import" /></button>
       <button type="button" title="折叠文件夹" aria-label="折叠文件夹" disabled={!!edit} onClick={() => { setExpanded(new Set([...FLOW_PACKAGE_ORDER.map((pkg) => entryId(packageEntry(pkg))), ...allSectionEntryIds()])); selectOnly(defaultFocus); setSearch('') }}><Icon kind="collapse" /></button>
     </div></div>
     <input className="flow-search" placeholder="筛选资源…" aria-label="筛选资源" value={search} disabled={!!edit} onChange={(event) => setSearch(event.target.value)} />
@@ -652,8 +658,8 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
       {rows.map((row, index) => {
         const id = entryId(row.entry), folder = row.entry.kind !== 'document', isSelected = selectedIds.has(id), isFocused = id === entryId(focus), isEditing = edit && entryId(edit.entry) === id
         const section = row.entry.kind === 'folder' && isSectionFolder(row.entry.key)
-        const builtinFolder = row.entry.kind === 'folder' && isBuiltinGoalFolder(row.entry.key)
-        const builtinDoc = row.entry.kind === 'document' && isBuiltinGoalDocumentKey(row.entry.key)
+        const builtinFolder = row.entry.kind === 'folder' && isBuiltinScriptFolder(row.entry.key)
+        const builtinDoc = row.entry.kind === 'document' && isBuiltinScriptDocumentKey(row.entry.key)
         const docKey = row.entry.kind === 'document' ? row.entry.key : undefined
         const document = docKey ? state.documents.find((d) => d.key === docKey) : undefined
         const pythonDoc = !!document && (document.package === 'script' || row.name.toLowerCase().endsWith('.py'))
@@ -694,10 +700,11 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
       {!search && !hasAnyResource && !edit && <p className="flow-explorer-empty">在「故事流程」下新建或拖入 .hflow；「脚本」下新建或拖入 .py；「进度」下新建或拖入 .progress；「导航器」下新建或拖入 .nav；「物品库」下新建 .item 或拖入 .item / .itemstack；「礼包」下新建或拖入 .kit；其他分类可先建文件夹占位。</p>}
     </div>
     {edit && <div className="flow-explorer-edit-panel" onKeyDown={(event) => { if (event.key === 'Escape') cancelEdit() }}>
+      {edit.mode==='script'&&<label>脚本模板<select aria-label="脚本模板" value={edit.templateName??'default.py'} onChange={e=>setEdit({...edit,templateName:e.target.value})}>{SCRIPT_TEMPLATES.filter(t=>t.type===scriptTypeInFolder(state,edit.parent)).map(t=><option key={t.name} value={t.name}>{t.name.replace(/\.py$/i,'')}</option>)}</select></label>}
       {edit.mode === 'move' ? <><label>移动到<select aria-label="目标文件夹" value={moveSelectValue} onChange={(event) => {
-        const [pkg, parent] = event.target.value.split(':') as [FlowPackageId, string]
-        if (!isPackageId(pkg)) return
-        setEdit({ ...edit, pkg, parent: parent || null, error: '' })
+        const option=moveOptions.find(option=>option.key===event.target.value)
+        if(!option)return
+        setEdit({...edit,pkg:option.pkg,parent:option.parent,error:''})
       }}>{moveOptions.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}</select></label></> : <p>Enter 确认 · Esc 取消</p>}
       {edit.error && <p className="flow-error" role="alert">{edit.error}</p>}
       <div><button type="button" onClick={submitEdit}>确认</button><button type="button" onClick={cancelEdit}>取消</button></div>

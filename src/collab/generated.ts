@@ -127,7 +127,7 @@ export type PlannedFileOperation = { op: FileOperationKind, path: string, destin
 
 export type ResourceRelationKind = "ownership" | "reference";
 
-export type ResourceRelationRole = "language" | "voice" | "rewardKit";
+export type ResourceRelationRole = "language" | "voice" | "rewardKit" | "kitScript";
 
 export type ResourceRelation = { kind: ResourceRelationKind, role: ResourceRelationRole, from: string, to: string, };
 

@@ -1,17 +1,20 @@
-import { BASE_STUBS, PLAYER_CLASS, buildJavaFiles, type JavaStub, type StubResponse } from './stubs'
+import { BASE_STUBS, buildJavaFiles, type JavaStub, type StubResponse } from './stubs'
 
 export class JavaStubLoader {
   readonly classes = new Map<string, JavaStub>()
   readonly byUri = new Map<string, string>()
   private missing = new Set<string>()
   private runtimeId = ''
-  private files: Record<string, string> = { ...BASE_STUBS }
+  private files: Record<string, string>
+  private base:Record<string,string>
+  private requiredClasses:string[]
   private queue: Promise<unknown> = Promise.resolve()
 
   private fetchStubs: (classes: string[]) => Promise<StubResponse>
   private writeFiles: (files: Record<string, string | null>) => Promise<void>
 
-  constructor(fetchStubs: (classes: string[]) => Promise<StubResponse>, writeFiles: (files: Record<string, string | null>) => Promise<void>) {
+  constructor(fetchStubs: (classes: string[]) => Promise<StubResponse>, writeFiles: (files: Record<string, string | null>) => Promise<void>, base:Record<string,string>=BASE_STUBS, requiredClasses:string[]=[]) {
+    this.base=base;this.requiredClasses=requiredClasses;this.files={...base}
     this.fetchStubs = fetchStubs
     this.writeFiles = writeFiles
   }
@@ -26,7 +29,7 @@ export class JavaStubLoader {
         this.runtimeId = response.runtimeId
         await this.publish()
       }
-      await this.load([PLAYER_CLASS])
+      await this.load(this.requiredClasses)
     })
   }
 
@@ -62,7 +65,7 @@ export class JavaStubLoader {
   }
 
   private async publish() {
-    const next = buildJavaFiles(this.classes.values())
+    const next = buildJavaFiles(this.classes.values(),this.base)
     const changed: Record<string, string | null> = {}
     for (const [path, source] of Object.entries(next.files)) if (source !== this.files[path]) changed[path] = source
     for (const path of Object.keys(this.files)) if (!(path in next.files)) changed[path] = null

@@ -1,3 +1,4 @@
+import {scriptType,type ScriptType} from './scriptResources/types'
 import { isTextAssetName } from './i18n/textMap'
 import { defaultHsSeed } from './hanshu/defaultSeed'
 
@@ -38,8 +39,8 @@ export type AllowedExtension = (typeof ALLOWED_EXTENSIONS)[number]
 export const FILE_DIRS: Record<string, string> = {
   '.hs': 'src/hanshu',
   '.char': 'src/character',
-  /** 普通脚本；目标定义见 `src/goal/`（由 SourceFile.srcKind 分流） */
-  '.py': 'src/script',
+  /** 脚本统一使用 src/script/<类型>/（由 SourceFile.srcKind 分流） */
+  '.py': 'src/script/common',
   '.progress': 'src/progress',
   '.hflow': 'src/story',
   '.nav': 'src/navigator',
@@ -56,7 +57,6 @@ export const SOURCE_KIND_ORDER = [
   'hanshu',
   'character',
   'script',
-  'goal',
   'progress',
   'story',
   'navigator',
@@ -94,8 +94,8 @@ export const SCRIPT_WORKSPACE_GROUP_ORDER = ['hanshu', 'character', 'script', 'm
 /** 工作区分组顺序：全部源类型 + 创作资料 `meta` */
 export const WORKSPACE_GROUP_ORDER = [...SOURCE_KIND_ORDER, 'meta'] as const
 
-/** `.py` 的 srcKind：普通脚本 vs 目标定义（PAK / 工程目录均为顶层 folder） */
-export type PySrcKind = 'script' | 'goal'
+/** `.py` 的 srcKind 为五种明确的脚本类型 */
+export type PySrcKind = ScriptType
 
 /** 文件的目标目录（相对包根）；未归类返回 null（留在包根） */
 export function fileDir(name: string): string | null {
@@ -108,28 +108,27 @@ export function isMetaFile(name: string): boolean {
   return dir === 'meta' || (dir?.startsWith('meta/') ?? false)
 }
 
-/** 从磁盘相对路径还原 srcKind（兼容旧 `src/scripts/`） */
+/** 从规范工程路径读取资源类型 */
 export function srcKindFromDiskPath(relativePath: string): string | undefined {
   const norm = relativePath.trim().replace(/\\/g, '/')
   const match = /^src\/([^/]+)\//i.exec(norm)
   if (!match) return undefined
   const kind = match[1]!.toLowerCase()
-  if (kind === 'scripts' || kind === 'script') return 'script'
-  if (kind === 'goal') return 'goal'
+  if(kind==='script')return scriptType(norm.split('/')[2])
   return kind
 }
 
 /**
  * 文件在工程结构里的相对路径。
- * `.py` 按 `srcKind`：`goal` → `src/goal/`，否则 → `src/script/`（含旧数据未标注时）。
+ * `.py` 按 srcKind 保存到 src/script/<类型>/。
  */
 export function sourceRelativePath(
   name: string,
   srcKind?: string | null,
 ): string {
   if (getExtension(name) === '.py') {
-    const kind: PySrcKind = srcKind === 'goal' ? 'goal' : 'script'
-    return `src/${kind}/${name}`
+    const kind=scriptType(srcKind)
+    return `src/script/${kind}/${name}`
   }
   const dir = fileDir(name)
   return dir ? `${dir}/${name}` : name
@@ -143,14 +142,14 @@ export function sourcePathOf(file: {
   return sourceRelativePath(file.name, file.srcKind)
 }
 
-/** 工作区分组键：`hanshu` / `character` / `script` / `goal` / `meta`；留在包根为 `root` */
+/** 工作区分组键：`hanshu` / `character` / `script` / `meta`；留在包根为 `root` */
 export function sourceKindOf(
   name: string,
-  srcKind?: string | null,
+  _srcKind?: string | null,
 ): string {
   if (isMetaFile(name)) return 'meta'
   if (getExtension(name) === '.py') {
-    return srcKind === 'goal' ? 'goal' : 'script'
+    return 'script'
   }
   const dir = fileDir(name)
   return dir ? dir.slice('src/'.length) : 'root'
@@ -205,8 +204,7 @@ export type SourceFile = {
   content: string
   updatedAt: number
   /**
-   * 覆盖默认 `src/<kind>/`（目前用于 `.py`：`script` | `goal`）。
-   * 目标定义不进 `script/`，单独落在 `goal/`（工程与 PAK 一致）。
+   * `.py` 的脚本类型；对应 src/script/<类型>/ 与 PAK script/<类型>/。
    */
   srcKind?: string
 }

@@ -2,10 +2,8 @@ import { NbtComponentsEditor } from './NbtComponentsEditor'
 import { createContext, useContext, useEffect, useId, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { ItemComponents } from './tnbtJson'
-import { KitPythonEditor } from '../../monaco/python/KitPythonEditor'
+import {KitScriptField,type KitScriptOptions} from './KitScriptField'
 import { GameCommandInput, GameResourceInput } from '../../gameDevServer/EditingAssistance'
-import { HANSHU_THEME_ID, registerHanshuLanguage } from '../../monaco/hanshuLanguage'
-import { useEditorFontSize } from './editorFont'
 import type { ItemCatalog, KitCatalog, KitDocument, KitEffect, KitExperience, KitFeedback, KitItem, KitModifier, KitMods, KitParam, KitParamKind, KitPool, KitPoolEntry, KitPoolHit } from './kit'
 import {
   ITEM_LINK_MIME,
@@ -1050,18 +1048,19 @@ function ModifierPanel({ modifiers, env, disabled, onChange }: {
 }
 
 /** 礼包表单主体：可编辑表单与只读编译结果共用同一套布局 */
-function KitBody({ kit, disabled, readOnly, editorPath, simulatorPools, afterHeader, update, resolveText, setText }: {
+function KitBody({ kit, disabled, readOnly, scriptOptions, onOpenScript, onCreateScript, simulatorPools, afterHeader, update, resolveText, setText }: {
   kit: KitDocument
   disabled?: boolean
   readOnly?: boolean
-  editorPath: string
+  scriptOptions?:KitScriptOptions
+  onOpenScript?:(key:string)=>void
+  onCreateScript?:(source?:string)=>void
   simulatorPools: KitPool[]
   afterHeader?: ReactNode
   update: (patch: Partial<KitDocument>) => void
   resolveText?: (key: string) => string
   setText?: (key: string, value: string) => void
 }) {
-  const fontSize = useEditorFontSize()
   const ui = useContext(KitExprContext)
   const locked = disabled || readOnly
   const add = (label: string, onClick: () => void) => readOnly ? undefined : <AddButton label={label} disabled={disabled} onClick={onClick} />
@@ -1137,32 +1136,8 @@ function KitBody({ kit, disabled, readOnly, editorPath, simulatorPools, afterHea
           <FeedbackForm feedback={kit.feedback} disabled={locked} resolveText={resolveText} setText={setText} onChange={(patch) => update({ feedback: { ...kit.feedback, ...patch } })} />
         </Panel>
 
-        <Panel title="脚本" subtitle={readOnly ? undefined : 'kit.param(id) · kit.mod(id, x) · kit.expr(src)'} className="kit-script" action={<span className="kit-lang">Python</span>}>
-          <div className={`kit-script-body${disabled ? ' is-disabled' : ''}`}>
-            <KitPythonEditor
-              height="100%"
-              language="python"
-              theme={HANSHU_THEME_ID}
-              value={kit.script}
-              path={editorPath}
-              beforeMount={registerHanshuLanguage}
-              onChange={(value) => { if (!locked) update({ script: value ?? '' }) }}
-              options={{
-                fontSize,
-                mouseWheelZoom: true,
-                minimap: { enabled: false },
-                wordWrap: 'on',
-                automaticLayout: true,
-                scrollBeyondLastLine: false,
-                lineNumbersMinChars: 3,
-                renderLineHighlight: 'line',
-                overviewRulerLanes: 0,
-                padding: { top: 10, bottom: 10 },
-                readOnly: locked,
-                domReadOnly: readOnly,
-              }}
-            />
-          </div>
+        <Panel title="礼包脚本" subtitle={readOnly ? undefined : '选择发放时执行的脚本'} className="kit-script" action={<span className="kit-lang">Python</span>}>
+          <KitScriptField value={kit.script} options={scriptOptions} disabled={locked} onChange={script=>update({script})} onOpen={onOpenScript} onCreate={onCreateScript}/>
         </Panel>
       </div>
     </div>
@@ -1172,11 +1147,13 @@ function KitBody({ kit, disabled, readOnly, editorPath, simulatorPools, afterHea
 const NOOP = () => {}
 const EMPTY_CATALOG: KitCatalog = new Map()
 
-export function KitEditor({ kit, error, disabled, editorPath, selfRef = 'kit', catalog = EMPTY_CATALOG, catalogOptions = [], itemCatalog = EMPTY_ITEM_CATALOG, onChange, resolveText, setText }: {
+export function KitEditor({ kit, error, disabled, scriptOptions, onOpenScript, onCreateScript, selfRef = 'kit', catalog = EMPTY_CATALOG, catalogOptions = [], itemCatalog = EMPTY_ITEM_CATALOG, onChange, resolveText, setText }: {
   kit: KitDocument
   error?: string
   disabled?: boolean
-  editorPath?: string
+  scriptOptions?: KitScriptOptions
+  onOpenScript?:(key:string)=>void
+  onCreateScript?:(source?:string)=>void
   /** 当前资源引用名（文件名去 .kit） */
   selfRef?: string
   catalog?: KitCatalog
@@ -1210,7 +1187,6 @@ export function KitEditor({ kit, error, disabled, editorPath, selfRef = 'kit', c
     ...env.errors.map((message) => ({ path: '声明', level: 'error' as const, message })),
     ...compiled.issues,
   ]
-  const scriptPath = editorPath ?? 'progress-kit-script://kit.py'
   const setPreviewValue = (id: string, value: unknown) => setPreview((previous) => {
     const next = { ...previous }
     if (value === undefined || (typeof value === 'number' && !Number.isFinite(value))) delete next[id]
@@ -1227,7 +1203,7 @@ export function KitEditor({ kit, error, disabled, editorPath, selfRef = 'kit', c
           <KitBody
             kit={kit}
             disabled={disabled}
-            editorPath={scriptPath}
+            scriptOptions={scriptOptions} onOpenScript={onOpenScript} onCreateScript={onCreateScript}
             simulatorPools={localPools}
             afterHeader={<CompositionBar kit={kit} selfRef={selfRef} options={catalogOptions} disabled={disabled} onChange={(patch) => update(patch)} />}
             update={update}
@@ -1278,7 +1254,7 @@ export function KitEditor({ kit, error, disabled, editorPath, selfRef = 'kit', c
           )}
           <div className="kit-compiled" aria-label="编译结果（只读）">
             <KitExprContext.Provider value={appliedUi}>
-              <KitBody kit={compiled} readOnly editorPath={`${scriptPath}.compiled`} simulatorPools={compiled.pools} update={NOOP} resolveText={resolveText} />
+              <KitBody kit={compiled} readOnly scriptOptions={scriptOptions} simulatorPools={compiled.pools} update={NOOP} resolveText={resolveText} />
             </KitExprContext.Provider>
             <Panel title="超参数" subtitle="预览值可在此直接调整" count={activeKitParams(compiled.params).length}>
               <ParamPanel params={compiled.params} preview={preview} disabled onChange={NOOP} onPreview={setPreviewValue} />

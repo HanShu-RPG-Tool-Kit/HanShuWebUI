@@ -99,7 +99,7 @@ try {
 
   const [ca, cb] = await Promise.all([
     commit(a.token, [{ path: 'meta/docs/author-a.md', content: '作者 A 独立文件' }]),
-    commit(b.token, [{ path: 'src/script/author-b.py', content: 'print("author B")\n' }]),
+    commit(b.token, [{ path: 'src/script/common/author-b.py', content: 'print("author B")\n' }]),
   ])
   const concurrent = (await list()).entries.filter(value => [ca.request.transactionId, cb.request.transactionId].includes(value.transactionId))
   assert.equal(concurrent.length, 2)

@@ -21,7 +21,7 @@ try {
     const { PyrightClient } = await import('/src/monaco/python/pyrightClient.ts')
     const { buildJavaFiles, javaModule } = await import('/src/monaco/python/stubs.ts')
     const started = performance.now()
-    const client = new PyrightClient()
+    const {pythonProfile}=await import('/src/monaco/python/profiles.ts');const client = new PyrightClient(undefined,pythonProfile('kit').files)
     await client.ready
     const initMs = Math.round(performance.now() - started)
     const uri = 'file:///test.py'
@@ -42,13 +42,13 @@ try {
     const stubs = [
       { name: player, module: javaModule(player), symbol: 'ServerPlayer', dependencies: [inventory], source: `import ${javaModule(inventory)} as i\nclass ServerPlayer:\n    def getInventory(self) -> i.Inventory: ...\n    def getScore(self) -> int: ...\n` },
     ]
-    await client.writeStubs(buildJavaFiles(stubs).files)
+    await client.writeStubs(buildJavaFiles(stubs,pythonProfile('kit').files).files)
     const playerCompletion = await complete('player.')
     const before = await complete('bag = player.getInventory()\nbag.')
     const definition = await client.request('textDocument/typeDefinition', { textDocument: { uri }, position: { line: 1, character: 1 } })
     stubs.push({ name: inventory, module: javaModule(inventory), symbol: 'Inventory', dependencies: [item], source: `import ${javaModule(item)} as s\nclass Inventory:\n    def getItem(self, slot: int) -> s.ItemStack: ...\n    def getContainerSize(self) -> int: ...\n` })
     stubs.push({ name: item, module: javaModule(item), symbol: 'ItemStack', dependencies: [], source: 'class ItemStack:\n    def getCount(self) -> int: ...\n    def isEmpty(self) -> bool: ...\n' })
-    await client.writeStubs(buildJavaFiles(stubs).files)
+    await client.writeStubs(buildJavaFiles(stubs,pythonProfile('kit').files).files)
     const after = await complete('bag = player.getInventory()\nbag.')
     const chain = await complete('player.getInventory().getItem(0).')
     const tuple = await complete('for person in players:\n    person.')
@@ -69,6 +69,18 @@ try {
   assert(result.javaImport.includes('getCount'), 'GraalPy package imports')
   assert(result.javaType.includes('getCount'), 'java.type literal overloads')
   console.log(`Python Worker verification passed (${result.initMs} ms cold initialize): builtins, kit, random, Java imports, dynamic stubs, inferred receivers, chained return types, players tuple, java.type.`)
+  const profiles=await page.evaluate(async()=>{
+    const {PyrightClient}=await import('/src/monaco/python/pyrightClient.ts'),{pythonProfile}=await import('/src/monaco/python/profiles.ts')
+    const common=new PyrightClient(undefined,pythonProfile('common').files),goal=new PyrightClient(undefined,pythonProfile('goal').files)
+    async function complete(client,uri,text){await client.ready;client.notify('textDocument/didOpen',{textDocument:{uri,languageId:'python',version:1,text}});const lines=text.split('\n');const result=await client.request('textDocument/completion',{textDocument:{uri},position:{line:lines.length-1,character:lines.at(-1).length}});return (Array.isArray(result)?result:result?.items??[]).map(i=>i.label)}
+    const plain=await complete(common,'file:///typings/plain.py','ki')
+    const goals=await complete(goal,'file:///typings/goal.py','subscr')
+    await common.writeStubs({'project/common/helper.py':'def answer() -> int:\n    return 42\n'})
+    const imported=await complete(common,'file:///typings/imports.py','from common.helper import answer\nanswer().')
+    common.dispose();goal.dispose();return {plain,goals,imported}
+  })
+  assert(!profiles.plain.includes('kit'),'common profile must not inherit kit globals');assert(profiles.goals.includes('subscribe'),'goal SDK decorators');assert(profiles.imported.includes('bit_length'),'project Python sources participate in real import inference')
+  console.log('Python profiles passed: common/goal/kit isolation and virtual project library imports.')
   const productionWorker = (await readdir('dist/assets').catch(() => [])).find(name => name.startsWith('pyright.worker-') && name.endsWith('.js'))
   if (productionWorker) {
     await page.route('**/assets/*.js', async route => {
@@ -77,7 +89,7 @@ try {
     })
     const production = await page.evaluate(async name => {
       const { PyrightClient } = await import('/src/monaco/python/pyrightClient.ts')
-      const client = new PyrightClient(new Worker(`/assets/${name}`))
+      const client = new PyrightClient(new Worker(`/assets/${name}`),(await import('/src/monaco/python/profiles.ts')).pythonProfile('kit').files)
       const start = performance.now()
       await client.ready
       const initMs = Math.round(performance.now() - start)
@@ -91,10 +103,12 @@ try {
     console.log(`Production Worker passed under desktop CSP (${production.initMs} ms initialize).`)
   }
   if (fixture) {
+    await page.goto(`${base}/python-language-check`)
+    await page.route('http://127.0.0.1:8765/**',route=>route.fulfill({contentType:'application/json',headers:{'Access-Control-Allow-Origin':'*'},body:'{"ok":true,"subscribers":1}'}))
     const integration = await page.evaluate(async fixture => {
       await import('/src/monaco/setup.ts')
       const monaco = await import('/node_modules/monaco-editor/esm/vs/editor/editor.api.js')
-      const { KitPythonLanguage, attachKitPython } = await import('/src/monaco/python/kitPythonLanguage.ts')
+      const { PythonLanguage, attachPython } = await import('/src/monaco/python/pythonLanguage.ts')
       const { reconnectGameDevControlNow, disconnectGameDevControl } = await import('/src/gameDevServer/controlHub.ts')
       const calls = [], errors = []
       window.WebSocket = class {
@@ -115,7 +129,7 @@ try {
       await new Promise(resolve => setTimeout(resolve, 20))
       let completionProvider
       const adapter = { ...monaco, languages: { ...monaco.languages, registerCompletionItemProvider: (language, provider) => { completionProvider = provider; return monaco.languages.registerCompletionItemProvider(language, provider) } } }
-      const service = new KitPythonLanguage(adapter, error => errors.push(String(error)))
+      const service = new PythonLanguage(adapter, error => errors.push(String(error)),'kit')
       const model = monaco.editor.createModel('', 'python', monaco.Uri.parse('file:///real-kit.py'))
       const other = monaco.editor.createModel('other_only = "text"', 'python', monaco.Uri.parse('file:///other-kit.py'))
       const detach = service.attach(model), detachOther = service.attach(other)
@@ -157,8 +171,8 @@ try {
       }
       const a = monaco.editor.createModel('bad = (', 'python', monaco.Uri.parse('file:///lifecycle-a.py'))
       const b = monaco.editor.createModel('bad = (', 'python', monaco.Uri.parse('file:///lifecycle-b.py'))
-      const aa = attachKitPython(adapter, a, error => errors.push(String(error)))
-      const bb = attachKitPython(adapter, b, error => errors.push(String(error)))
+      const aa = attachPython(adapter, a, error => errors.push(String(error)),'kit')
+      const bb = attachPython(adapter, b, error => errors.push(String(error)),'kit')
       if (created !== 0) throw new Error('offline editors created a Python worker')
       reconnectGameDevControlNow()
       await wait(() => monaco.editor.getModelMarkers({resource:b.uri}).length > 0, 'connected Python analysis did not start')
@@ -174,7 +188,7 @@ try {
       if (terminated !== 1) throw new Error('closing one editor stopped another editor')
       bb.dispose()
       if (created !== 2 || terminated !== 2) throw new Error('last editor did not release worker')
-      const pending = attachKitPython(adapter, a, error => errors.push(String(error)))
+      const pending = attachPython(adapter, a, error => errors.push(String(error)),'kit')
       disconnectGameDevControl()
       pending.dispose()
       if (created !== 3 || terminated !== 3) throw new Error('disconnect during startup leaked a worker')
@@ -182,6 +196,7 @@ try {
 
       return { root, chain, alias, tuple, own, isolated, future, builtins, coldChainMs, warmChainMs, markers, calls, errors, created, terminated }
     }, fixture)
+    if(!integration.chain.includes('getCount'))console.log(JSON.stringify({root:integration.root.slice(0,8),chain:integration.chain.slice(0,12),errors:integration.errors,calls:integration.calls},null,2))
     assert(integration.root.includes('getInventory'), 'actual Minecraft player methods')
     assert(integration.chain.includes('getCount'), 'automatic dependency hydration through actual Minecraft signatures')
     assert(integration.alias.includes('getCount'), 'aliases retain inferred Minecraft types')

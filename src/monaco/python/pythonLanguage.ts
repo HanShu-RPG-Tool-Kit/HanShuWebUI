@@ -1,14 +1,18 @@
+import {pythonProfile} from './profiles'
+import {getProjectSession,subscribeProjectSession} from '../../project/projectSession'
+import {effectiveBuiltinScripts,scriptType,type ScriptType} from '../../scriptResources'
 import type * as Monaco from 'monaco-editor'
 import type { CompletionItem, CompletionList, Diagnostic, Hover, Location, LocationLink, Range, SignatureHelp, TextEdit } from 'vscode-languageserver'
 import { controlRequest, isControlConnected, subscribeControlHub } from '../../gameDevServer/controlHub'
 import { PyrightClient } from './pyrightClient'
 import { JavaStubLoader } from './stubLoader'
-import { importedJavaClasses, PLAYER_CLASS, type StubResponse } from './stubs'
+import { importedJavaClasses, type StubResponse } from './stubs'
 
 type Document = { model: Monaco.editor.ITextModel; uri: string; version: number; timer?: ReturnType<typeof setTimeout>; listener: Monaco.IDisposable; refs: number }
 type MonacoModule = typeof Monaco
-type SharedService = { service: KitPythonLanguage; users: Set<symbol> }
-let shared: SharedService | undefined
+type SharedService = { service: PythonLanguage; users: Set<symbol> }
+const services=new Map<string,SharedService>()
+const projectKeys=new WeakMap<object,number>();let projectSequence=0
 
 function hoverText(hover: Hover | null): string {
   if (!hover) return ''
@@ -17,30 +21,33 @@ function hoverText(hover: Hover | null): string {
 }
 
 /** One Worker, multiple isolated LSP documents. Dispose registrations with the final editor. */
-export function attachKitPython(monaco: MonacoModule, model: Monaco.editor.ITextModel, reportError: (error: unknown) => void) {
-  const user = Symbol('kit-python-editor')
+export function attachPython(monaco: MonacoModule, model: Monaco.editor.ITextModel, reportError: (error: unknown) => void, type:ScriptType='common') {
+  const project=getProjectSession().binding?.handle.client
+  if(project&&!projectKeys.has(project))projectKeys.set(project,++projectSequence)
+  const key=`${project?projectKeys.get(project):'unbound'}:${type}`
+  const user = Symbol('python-editor')
   let current: SharedService | undefined
   let detach: (() => void) | undefined
   let disposed = false
   let failed = false
   const release = () => {
     detach?.(); detach = undefined
-    if (!model.isDisposed()) monaco.editor.setModelMarkers(model, 'kit-pyright', [])
+    if (!model.isDisposed()) monaco.editor.setModelMarkers(model, 'hanshu-pyright', [])
     const previous = current
     current = undefined
     if (!previous) return
     previous.users.delete(user)
     if (!previous.users.size) {
       previous.service.dispose()
-      if (shared === previous) shared = undefined
+      if (services.get(key)===previous)services.delete(key)
     }
   }
   const syncConnection = () => {
     if (disposed) return
-    if (!isControlConnected()) { release(); failed = false; return }
+    if (!isControlConnected()||getProjectSession().binding?.handle.client!==project) { release(); failed = false; return }
     if (current || failed || model.isDisposed()) return
-    shared ??= { service: new KitPythonLanguage(monaco, reportError), users: new Set() }
-    const next = shared
+    let next=services.get(key)
+    if(!next){next={service:new PythonLanguage(monaco,reportError,type),users:new Set()};services.set(key,next)}
     current = next
     next.users.add(user)
     void next.service.ready.then(() => {
@@ -53,18 +60,18 @@ export function attachKitPython(monaco: MonacoModule, model: Monaco.editor.IText
     })
   }
   const stopControl = subscribeControlHub(syncConnection)
+  const stopProject=subscribeProjectSession(syncConnection)
   syncConnection()
-  return { dispose() { disposed = true; stopControl(); release() } }
+  return { dispose() { disposed = true; stopControl();stopProject(); release() } }
 }
 
-export class KitPythonLanguage {
-  readonly client = new PyrightClient()
+export class PythonLanguage {
+  readonly client:PyrightClient
+  readonly stubs:JavaStubLoader
+  private scriptType:ScriptType
+  private projectFiles:Record<string,string>={}
   readonly ready: Promise<void>
   readonly documents = new Map<string, Document>()
-  readonly stubs = new JavaStubLoader(
-    async classes => controlRequest('python.stubs', { classes }) as Promise<StubResponse>,
-    files => this.client.writeStubs(files),
-  )
   private disposables: Monaco.IDisposable[] = []
   private sequence = 0
   private disposed = false
@@ -74,7 +81,28 @@ export class KitPythonLanguage {
   private monaco: MonacoModule
   private reportError: (error: unknown) => void
 
-  constructor(monaco: MonacoModule, reportError: (error: unknown) => void) {
+  constructor(monaco: MonacoModule, reportError: (error: unknown) => void, type:ScriptType='common') {
+    this.scriptType=type
+    const profile=pythonProfile(type)
+    this.client=new PyrightClient(undefined,profile.files)
+    this.stubs=new JavaStubLoader(async classes=>controlRequest('python.stubs',{classes}) as Promise<StubResponse>,files=>this.client.writeStubs(files),profile.files,profile.requiredClasses)
+    const project=getProjectSession().binding?.handle.client
+    const syncProject=async()=>{
+      if(this.disposed||getProjectSession().binding?.handle.client!==project)return
+      const scripts=getProjectSession().workspace.packages.flatMap(p=>p.scripts).filter(s=>s.name.toLowerCase().endsWith('.py'))
+      const files:Record<string,string>={}
+      for(const s of effectiveBuiltinScripts(scripts))files[`project/${s.type}/${s.name}`]=s.source
+      for(const s of scripts)files[`project/${scriptType(s.srcKind)}/${s.name}`]=s.content
+      const changes:Record<string,string|null>={}
+      for(const [path,source] of Object.entries(files))if(this.projectFiles[path]!==source)changes[path]=source
+      for(const path of Object.keys(this.projectFiles))if(!(path in files))changes[path]=null
+      this.projectFiles=files
+      await this.client.writeStubs(changes)
+    }
+    let projectTimer:ReturnType<typeof setTimeout>|undefined
+    const unsubscribe=subscribeProjectSession(()=>{clearTimeout(projectTimer);projectTimer=setTimeout(()=>void syncProject().catch(e=>this.warn(e)),300)})
+    this.disposables.push({dispose:()=>{unsubscribe();clearTimeout(projectTimer)}})
+
     this.monaco = monaco
     this.reportError = reportError
     this.client.onNotification = (method, params) => {
@@ -82,7 +110,7 @@ export class KitPythonLanguage {
       const diagnostics = params as { uri: string; version?: number; diagnostics: Diagnostic[] }
       const document = [...this.documents.values()].find(doc => doc.uri === diagnostics.uri)
       if (!document || document.model.isDisposed() || (diagnostics.version !== undefined && diagnostics.version !== document.version)) return
-      monaco.editor.setModelMarkers(document.model, 'kit-pyright', diagnostics.diagnostics.map(diag => ({
+      monaco.editor.setModelMarkers(document.model, 'hanshu-pyright', diagnostics.diagnostics.map(diag => ({
         ...this.range(diag.range), message: diag.message, source: 'Pyright',
         severity: diag.severity === 1 ? monaco.MarkerSeverity.Error : diag.severity === 2 ? monaco.MarkerSeverity.Warning : monaco.MarkerSeverity.Info,
       })))
@@ -97,7 +125,7 @@ export class KitPythonLanguage {
           if (token.isCancellationRequested) return { suggestions: [] }
           const result = await this.client.request<CompletionList | CompletionItem[] | null>('textDocument/completion', this.at(doc, position))
           const items = Array.isArray(result) ? result : result?.items ?? []
-          return { incomplete: !Array.isArray(result) && !!result?.isIncomplete, suggestions: items.filter(item => !/^(?:jvm_|__kit_context|__builtins__)/.test(item.label)).map(item => this.completion(item, model, position)) }
+          return { incomplete: !Array.isArray(result) && !!result?.isIncomplete, suggestions: items.filter(item => !/^(?:jvm_|__kit_context|__goal_context|__builtins__)/.test(item.label)).map(item => this.completion(item, model, position)) }
         } catch (error) { this.warn(error); return { suggestions: [] } }
       },
       resolveCompletionItem: async item => {
@@ -137,16 +165,22 @@ export class KitPythonLanguage {
     // context must not produce errors in an otherwise valid author script.
     this.ready = this.client.ready.then(async () => {
       await this.stubs.reconnect()
-      if (!this.stubs.classes.has(PLAYER_CLASS)) throw new Error('游戏未提供玩家类型，Python 分析已暂停')
+      if(profile.requiredClasses.some(name=>!this.stubs.classes.has(name)))throw new Error('游戏未提供脚本必需的类型，Python 分析已暂停')
+      await syncProject()
     })
     void this.ready.catch(error => this.warn(error))
+  }
+
+  private documentUri(model:Monaco.editor.ITextModel){
+    const source=getProjectSession().workspace.packages.flatMap(p=>p.scripts).find(s=>decodeURIComponent(model.uri.toString()).includes('/'+s.id+'/'))
+    return `file:///typings/project/${this.scriptType}/__open_${++this.sequence}_${source?encodeURIComponent(source.name):'scratch.py'}`
   }
 
   attach(model: Monaco.editor.ITextModel): () => void {
     const key = model.uri.toString()
     const existing = this.documents.get(key)
     if (existing) { existing.refs++; return () => this.detach(key) }
-    const doc: Document = { model, uri: `file:///typings/kit_${++this.sequence}.py`, version: 1, refs: 1, listener: { dispose() {} } }
+    const doc: Document = { model, uri: this.documentUri(model), version: 1, refs: 1, listener: { dispose() {} } }
     this.documents.set(key, doc)
     void this.ready.then(() => {
       if (this.disposed || this.documents.get(key) !== doc) return
@@ -167,7 +201,7 @@ export class KitPythonLanguage {
     doc.listener.dispose()
     this.documents.delete(key)
     this.client.notify('textDocument/didClose', { textDocument: { uri: doc.uri } })
-    if (!doc.model.isDisposed()) this.monaco.editor.setModelMarkers(doc.model, 'kit-pyright', [])
+    if (!doc.model.isDisposed()) this.monaco.editor.setModelMarkers(doc.model, 'hanshu-pyright', [])
   }
 
   private async sync(doc: Document) {
@@ -238,7 +272,7 @@ export class KitPythonLanguage {
     for (const doc of this.documents.values()) {
       clearTimeout(doc.timer)
       doc.listener.dispose()
-      if (!doc.model.isDisposed()) this.monaco.editor.setModelMarkers(doc.model, 'kit-pyright', [])
+      if (!doc.model.isDisposed()) this.monaco.editor.setModelMarkers(doc.model, 'hanshu-pyright', [])
     }
     this.documents.clear()
     this.disposables.forEach(disposable => disposable.dispose())

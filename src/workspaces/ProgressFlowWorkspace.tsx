@@ -1,3 +1,6 @@
+import {PythonEditor} from '../monaco/python/PythonEditor'
+import {scriptType,scriptSection,scriptTemplate} from '../scriptResources'
+import {scriptTypeInFolder,sectionFolderKey} from './progress/library'
 import {openEntityEditInGame} from '../gameDevServer/entityWorkbench'
 import {EntityEditor} from './progress/EntityEditor'
 import {createEntity,parseEntity,stringifyEntity} from './progress/entityDoc'
@@ -13,7 +16,7 @@ import { FlowExplorer } from './progress/FlowExplorer'
 import { PageList } from './progress/PageList'
 import { EditorSplit } from './progress/EditorSplit'
 import { closeAllInGroup, closeInGroup, closeOthersInGroup, closeRightInGroup, focusedGroupId, focusGroup, joinGroups, moveTab, normalizeGroups, openAsRightSplit, openInGroup, openOppositeToKey, readGroup, setSplitRatio, splitTab, togglePinInGroup, type GroupId, type SplitZone } from './progress/editorGroups'
-import { ensurePackageSections, folderPath, isBuiltinGoalFolder, isEntityDocument, isItemDocument, isItemLibraryTableKey, isLibraryTableKey, isEntityLibraryTableKey, ENTITY_LIBRARY_TABLE_KEY, ITEM_LIBRARY_TABLE_KEY, isKitDocument, isNavigationDocument, isProgressDocument, isScriptDocument, isSectionFolder, packageAcceptsImportFile, packageAllowsDocuments, packageDocumentExt, requireAvailableName, renameFlowEntry, resourceName, stripLibraryTables, uniqueDocumentName, withLibraryTables } from './progress/library'
+import { ensurePackageSections, folderPath, isBuiltinScriptFolder, isEntityDocument, isItemDocument, isItemLibraryTableKey, isLibraryTableKey, isEntityLibraryTableKey, ENTITY_LIBRARY_TABLE_KEY, ITEM_LIBRARY_TABLE_KEY, isKitDocument, isNavigationDocument, isProgressDocument, isScriptDocument, isSectionFolder, packageAcceptsImportFile, packageAllowsDocuments, packageDocumentExt, renameFlowEntry, stripLibraryTables, uniqueDocumentName, withLibraryTables } from './progress/library'
 import { createFlowDocument, downloadFlowFile, importFlowDocument, stampDocument, type FlowDocument, type FlowPackageId, type FlowWorkspaceState } from './progress/storage'
 import { createKit, kitRefFromFileName, readKitSource, stringifyKit, parseKit } from './progress/kit'
 import { createProgress, createProgressLocaleSeeds, readProgressSource, stringifyProgress, parseProgress } from './progress/progressDoc'
@@ -34,10 +37,9 @@ import {
 import { itemRefFromFileName } from './progress/kit'
 import {
   buildGoalDefinitionCatalog,
-  isBuiltinGoalDocumentKey,
-  isGoalDefinitionDocument,
-  stripBuiltinGoalDefinitions,
-  withBuiltinGoalDefinitions,
+  isBuiltinScriptDocumentKey,
+  stripBuiltinScripts,
+  withBuiltinScripts,
 } from './progress/goalDefinitions'
 import { KitEditor } from './progress/KitEditor'
 import { ProgressCollaborativeEditor } from './progress/ProgressCollaborativeEditor'
@@ -126,11 +128,8 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
       let folderId = doc.folderId && (folderKeys.has(doc.folderId) || isSectionFolder(doc.folderId)) ? doc.folderId : null
       const source = session.workspace.packages[0]?.scripts.find(source => source.id === doc.key)
       if (doc.name.toLowerCase().endsWith('.py')) {
-        const inGoalFolder = isGoalDefinitionDocument({ documents: [], folders, activeKey: null }, { ...doc, folderId })
-        // Resource kind comes from S. A missing/stale UI folder must never turn
-        // merely opening a page into a move between src/goal and src/script.
-        if (source?.srcKind === 'goal' && !inGoalFolder) folderId = 'section:script:goal-def'
-        else if (source?.srcKind !== 'goal' && inGoalFolder) folderId = null
+        const type=scriptType(source?.srcKind)
+        if(scriptTypeInFolder({folders},folderId)!==type||folderId===null)folderId=sectionFolderKey('script',scriptSection(type))
       }
       return folderId === (doc.folderId ?? null) ? doc : { ...doc, folderId }
     })
@@ -148,7 +147,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
   )
   /** 先叠虚拟内置文档 / 物品库表视图，再清理页条——否则虚拟页会被当成失效键清掉 */
   const state = useMemo(
-    () => normalizeGroups(withLibraryTables(withBuiltinGoalDefinitions(baseState))),
+    () => normalizeGroups(withLibraryTables(withBuiltinScripts(baseState))),
     [baseState],
   )
   const stateRef = useRef(state)
@@ -158,7 +157,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
   const setState = (change: FlowWorkspaceState | ((previous: FlowWorkspaceState) => FlowWorkspaceState)) => {
     if (structuralPendingRef.current) return
     const previous = stateRef.current
-    const next = stripLibraryTables(stripBuiltinGoalDefinitions(typeof change === 'function' ? change(previous) : change))
+    const next = stripLibraryTables(stripBuiltinScripts(typeof change === 'function' ? change(previous) : change))
     const live = getProjectSession()
     const binding = live.binding
     const prevScripts = live.workspace.packages[0]?.scripts ?? []
@@ -166,9 +165,9 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
       const old = prevScripts.find(script => script.id === doc.key)
       if (!old) return []
       const srcKind = doc.name.toLowerCase().endsWith('.py')
-        ? isGoalDefinitionDocument(next, doc) ? 'goal' : 'script'
+        ? scriptTypeInFolder(next,doc.folderId??null)
         : old.srcKind
-      return old.name !== doc.name || (old.srcKind ?? 'script') !== (srcKind ?? 'script')
+      return old.name !== doc.name || scriptType(old.srcKind) !== scriptType(srcKind)
         ? [{ old, doc, srcKind }] : []
     })
     const removed = prevScripts.filter(script => isProgressSourceName(script.name) && !next.documents.some(doc => doc.key === script.id))
@@ -251,7 +250,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     })().catch(error => {
       if (!acknowledged && getProjectSession().binding?.handle.client === binding.handle.client) {
         setProjectSession({ workspace: revertWorkspace })
-        const revertDocs = stripLibraryTables(stripBuiltinGoalDefinitions(previous)).documents
+        const revertDocs = stripLibraryTables(stripBuiltinScripts(previous)).documents
         const revertUi = {
           openKeys: previous.openKeys ?? [],
           activeKey: previous.activeKey ?? null,
@@ -346,7 +345,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
   const progressDoc = doc ? isProgressDocument(doc) : false
   const progressPath = progressDoc && doc ? sourcePathOf({ name: doc.name }) : null
   const progressEditable = !!progressPath && !!client?.writable
-  const presenceSource = doc && !isBuiltinGoalDocumentKey(doc.key) && !isLibraryTableKey(doc.key)
+  const presenceSource = doc && !isBuiltinScriptDocumentKey(doc.key) && !isLibraryTableKey(doc.key)
     ? session.workspace.packages.flatMap(pkg => pkg.scripts).find(script => script.id === doc.key)
     : null
   const presencePath = presenceSource ? sourcePathOf(presenceSource) : null
@@ -591,7 +590,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
   }, [storageError, projectBound])
 
   function changeSource(source: string, group = false, key = doc?.key) {
-    if (!key || isBuiltinGoalDocumentKey(key) || isItemLibraryTableKey(key)) return
+    if (!key || isBuiltinScriptDocumentKey(key) || isItemLibraryTableKey(key)) return
     const current = state.documents.find((item) => item.key === key)
     if (!current || source === current.source || readOnly) return
     const previous = history.get(key)
@@ -810,18 +809,17 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     else if (drag.group !== group) updateGroups((previous) => moveTab(previous, drag.group, group, drag.key, beforeKey))
     else if (beforeKey !== drag.key) updateGroups((previous) => moveTab(previous, group, group, drag.key, beforeKey))
   }
-  function newFlow(value = '新建流程', folderId: string | null = null, packageId: FlowPackageId = 'story') {
+  function newFlow(value = '新建流程', folderId: string | null = null, packageId: FlowPackageId = 'story', templateName='default.py', sourceOverride?:string) {
     if (locked || busy) throw new Error('请先完成当前修改。')
     const ext = packageDocumentExt(packageId)
     if (!ext) throw new Error('此分类不支持文件。')
-    const name = resourceName(value, ext)
-    requireAvailableName(state, name, packageId, folderId, undefined, 'document')
+    const name = uniqueDocumentName(state,value,packageId,folderId)
     const title = name.slice(0, -ext.length)
     const next = ext === '.py'
       ? stampDocument({
         key: randomId(),
         name,
-        source: '# 目标定义脚本\n\n',
+        source: sourceOverride??scriptTemplate(scriptTypeInFolder(state,folderId),templateName,title),
         package: packageId,
         folderId,
       })
@@ -1037,8 +1035,8 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     setNotice(next.name !== current.name ? '正在保存流程属性…' : '已更新草稿属性。')
   }
   function removeResources({ documents: documentKeys, folders: folderKeys }: { documents: string[]; folders: string[] }) {
-    const docs = documentKeys.filter((key) => !isBuiltinGoalDocumentKey(key) && !isLibraryTableKey(key))
-    const foldersToRemove = folderKeys.filter((key) => !isBuiltinGoalFolder(key) && !isSectionFolder(key))
+    const docs = documentKeys.filter((key) => !isBuiltinScriptDocumentKey(key) && !isLibraryTableKey(key))
+    const foldersToRemove = folderKeys.filter((key) => !isBuiltinScriptFolder(key) && !isSectionFolder(key))
     if (locked || busy || (!docs.length && !foldersToRemove.length)) return
     const parts = [
       docs.length ? `${docs.length} 个流程` : '',
@@ -1050,7 +1048,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     setState((previous) => {
       const documents = previous.documents.filter((item) => !documentSet.has(item.key))
       const folders = previous.folders.filter((folder) => {
-        if (folder.key.startsWith('section:') || isBuiltinGoalFolder(folder.key)) return true
+        if (folder.key.startsWith('section:') || isBuiltinScriptFolder(folder.key)) return true
         if (!folderSet.has(folder.key)) return true
         const hasDoc = documents.some((item) => item.folderId === folder.key)
         const hasChild = previous.folders.some((child) => child.parentId === folder.key && !folderSet.has(child.key))
@@ -1304,8 +1302,18 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
         <KitEditor
           key={paneDoc.key}
           kit={paneKitParsed.kit}
+          scriptOptions={state.documents.filter(d=>d.package==='script'&&scriptTypeInFolder(state,d.folderId??null)==='kit').map(d=>({ref:d.name.replace(/\.py$/i,''),label:d.name,key:d.key}))}
+          onOpenScript={key=>selectDocument(key)}
+          onCreateScript={source=>{
+            setState(previous=>{
+              const folderId=sectionFolderKey('script',scriptSection('kit'))
+              const name=uniqueDocumentName(previous,`${paneDoc.name.replace(/\.kit$/i,'')}-发放脚本.py`,'script',folderId)
+              const created=stampDocument({key:randomId(),name,source:source??scriptTemplate('kit','default.py',name.replace(/\.py$/i,'')),package:'script',folderId})
+              const documents=previous.documents.map(d=>d.key===paneDoc.key?{...d,source:stringifyKit({...paneKitParsed.kit,script:[...(Array.isArray(paneKitParsed.kit.script)?paneKitParsed.kit.script:typeof paneKitParsed.kit.script==='string'?[]:paneKitParsed.kit.script.ref?[paneKitParsed.kit.script]:[]),{ref:name.replace(/\.py$/i,'')}]})}:d)
+              return openInGroup({...previous,documents:[...documents,created]},group,created.key)
+            })
+          }}
           error={paneKitParsed.error}
-          editorPath={`progress-kit-script://g${group}/${paneDoc.key}.py`}
           selfRef={selfRef}
           catalog={paneCatalog}
           catalogOptions={paneCatalogOptions}
@@ -1318,11 +1326,12 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
       </div>
     }
     if (paneScript) {
-      const builtinScript = isBuiltinGoalDocumentKey(paneDoc.key)
+      const builtinScript = isBuiltinScriptDocumentKey(paneDoc.key)
       return <div className="flow-source-pane flow-script-pane">
-        {builtinScript && <p className="flow-banner is-info" role="status">内置目标定义（只读）</p>}
+        {builtinScript && <p className="flow-banner is-info" role="status">内置脚本（只读）</p>}
         <div className="flow-script-editor">
-          <Editor
+          <PythonEditor
+            scriptType={scriptTypeInFolder(state,paneDoc.folderId??null)}
             height="100%"
             language="python"
             theme={HANSHU_THEME_ID}
@@ -1446,7 +1455,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
   return <section className="flow-workspace" aria-label="故事流程工作区">
     <input ref={fileInput} type="file" multiple hidden onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ''; void importFiles(files) }} />
     <div className="flow-layout">
-      <FlowExplorer readOnly={readOnly} state={explorerState} active={active} disabled={locked || busy} onChange={(next) => setState((previous) => normalizeGroups({ ...previous, documents: next.documents, folders: next.folders }))} onSelect={(key) => selectDocument(key)} onNew={newFlow} onImport={requestImport} onImportFiles={(files, folderId, packageId) => { void importFiles(files, { folderId, package: packageId }) }} onExport={exportFlow} onDownload={downloadDraft} onRemove={removeResources} onProperties={setPropertiesKey} onViewSource={viewProgressSource} onOpenEntityInGame={key=>{void openEntityInGame(key)}} onOpenItemInGame={(key) => { void openItemInGame(key) }} onNotice={setNotice} />
+      <FlowExplorer onOverrideBuiltinScript={key=>{const d=state.documents.find(d=>d.key===key);if(!d)return;const type=scriptTypeInFolder(state,d.folderId??null);newFlow(d.name,sectionFolderKey('script',scriptSection(type)),'script','default.py',d.source)}} readOnly={readOnly} state={explorerState} active={active} disabled={locked || busy} onChange={(next) => setState((previous) => normalizeGroups({ ...previous, documents: next.documents, folders: next.folders }))} onSelect={(key) => selectDocument(key)} onNew={newFlow} onImport={requestImport} onImportFiles={(files, folderId, packageId) => { void importFiles(files, { folderId, package: packageId }) }} onExport={exportFlow} onDownload={downloadDraft} onRemove={removeResources} onProperties={setPropertiesKey} onViewSource={viewProgressSource} onOpenEntityInGame={key=>{void openEntityInGame(key)}} onOpenItemInGame={(key) => { void openItemInGame(key) }} onNotice={setNotice} />
       <main className="flow-main">
         {active && client && presencePath && <FilePresenceBar key={`${client.snapshot.session.id}:${presencePath}`} client={client} path={presencePath} mode="optimistic" label={doc?.name} />}
         {state.split ? (

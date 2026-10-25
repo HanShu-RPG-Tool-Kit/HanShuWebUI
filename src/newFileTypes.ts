@@ -1,3 +1,5 @@
+import {createEntity,stringifyEntity} from './workspaces/progress/entityDoc'
+import {scriptTemplate,SCRIPT_TYPE_NAMES,SCRIPT_TYPES} from './scriptResources'
 /**
  * 「资源管理器里能新建什么」的**唯一真相**。
  *
@@ -54,6 +56,12 @@ export type NewFileTypeId =
   | 'char'
   | 'py'
   | 'py-goal'
+  | 'py-kit'
+  | 'py-item'
+  | 'py-entity'
+  | 'py-enchantment'
+  | 'py-player'
+  | 'entity'
   | 'progress'
   | 'hflow'
   | 'nav'
@@ -97,7 +105,7 @@ export type NewFileType = {
   group: NewFileGroupId
   /** 预填的基名（不含后缀） */
   defaultBase: string
-  /** `.py` 的目标目录分流（`src/script` vs `src/goal`）；其余类型留空 */
+  /** `.py` 的脚本类型，对应 src/script/<类型>/；其余类型留空 */
   srcKind?: PySrcKind
   /**
    * **这个类型额外**的基名规则。
@@ -217,16 +225,7 @@ function serviceIdError(base: string): string | null {
     : '服务 id 会拼进凭据引用（app:<id>），只能用字母、数字、. - _'
 }
 
-/** `.py` 目标定义 / 普通脚本共用的注释骨架 —— 两者的正文都是"等作者写"的注释 */
-const pySkeleton = (title: string, lines: string[]): string =>
-  [`# ${title}`, ...lines].join('\n') + '\n'
-
-/**
- * 按菜单顺序排列的全部可新建类型。
- *
- * `.py` 两条：普通脚本（`src/script`）与目标定义（`src/goal`，`srcKind: 'goal'`）——
- * 它们在磁盘上是两个目录，图标也必须分开，否则用户在树里认不出哪个是进度要用的。
- */
+/** New Python files always use the same bundled templates as the progress explorer. */
 export const NEW_FILE_TYPES: readonly NewFileType[] = [
   {
     id: 'hs',
@@ -259,42 +258,13 @@ export const NEW_FILE_TYPES: readonly NewFileType[] = [
       return `# 角色卡：${name}（角色 id 就是文件名，正文里不要再写名字字段）\nname:${name}//\n`
     },
   },
-  {
-    id: 'py',
-    ext: '.py',
-    label: 'Python 脚本',
-    hint: '服务端逻辑（src/script），导出时进 server 平面',
-    icon: 'python',
-    group: 'source',
-    defaultBase: '新脚本',
-    seed: (base) =>
-      pySkeleton(base.trim(), [
-        '# 普通脚本，放在 src/script/；与目标定义（src/goal/）是两个目录。',
-      ]),
-  },
-  {
-    id: 'py-goal',
-    ext: '.py',
-    label: '目标定义',
-    hint: '进度里能选的目标类型（src/goal）；用 @goal 声明',
-    icon: 'goal',
-    group: 'source',
-    defaultBase: '新目标',
-    srcKind: 'goal',
-    /*
-     * 正文只有注释，和进度工作区的新建一致：真正的 `@goal` 得由作者写 ——
-     * 替他猜一个 kind 会与内置目标撞名。
-     *
-     * **别在注释里写出 `@goal("…")` 的字面形态**：目标定义目录是拿正则扫全文的
-     * （`parseGoalDefinitionsFromSource` 不看注释），一句示例注释会凭空多出一个目标类型，
-     * 而且它指向的还是这份空文件。这也是这里只写 `@goal` 三个字、不带括号的原因。
-     */
-    seed: (base) =>
-      pySkeleton(base.trim(), [
-        '# 在这里声明 @goal 与 @config（写法见帮助「进度：任务与委托」）。',
-        '# 声明之前，这份文件不会出现在进度的目标类型里。',
-      ]),
-  },
+  ...SCRIPT_TYPES.map(type=>({
+    id:(type==='common'?'py':`py-${type}`) as NewFileTypeId,ext:'.py' as const,label:SCRIPT_TYPE_NAMES[type],
+    hint:`src/script/${type} · 服务端脚本`,icon:(type==='goal'?'goal':type==='common'?'python':`script-${type}`) as ExplorerIconKind,
+    group:'source' as const,defaultBase:type==='goal'?'新目标':'新脚本',srcKind:type,
+    seed:(base:string)=>scriptTemplate(type,'default.py',base.trim()),
+  })),
+  {id:'entity',ext:'.entity',label:'实体模板',hint:'实体库模板',icon:'entity',group:'progress',defaultBase:'新实体',seed:()=>stringifyEntity(createEntity())},
   {
     id: 'progress',
     ext: '.progress',

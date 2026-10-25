@@ -1,3 +1,5 @@
+import {PythonEditor} from '../monaco/python/PythonEditor'
+import {scriptType} from '../scriptResources/types'
 import {
   forwardRef,
   useCallback,
@@ -318,6 +320,7 @@ export const ScriptWorkspace = forwardRef<
   const packageName = viewingAsset
     ? activeAssetHit!.pkg.name
     : (active?.pkg.name ?? '汉书')
+  const SourceEditor=editorLanguageForFile(titleName)==='python'?PythonEditor:Editor
   const editingMarkdown = !viewingAsset && isMarkdownFile(titleName)
   const editingHanshu = !viewingAsset && isHanshuFile(titleName)
   const editingChar = !viewingAsset && isCharFile(titleName)
@@ -1832,7 +1835,7 @@ export const ScriptWorkspace = forwardRef<
       return `文件名无效。新建允许的后缀：${MANUAL_FILE_EXTENSIONS_LABEL}`
     }
     // 重名只看**目标包**：不同包是两份独立工程，同名文件本来就允许
-    if (pkg.scripts.some((item) => item.name.toLowerCase() === normalized.toLowerCase())) {
+    if (pkg.scripts.some((item) => sourcePathOf(item).toLowerCase() === sourcePathOf({name:normalized,srcKind:type.srcKind}).toLowerCase())) {
       return `「${normalized}」已经存在`
     }
 
@@ -3297,7 +3300,9 @@ export const ScriptWorkspace = forwardRef<
                   </div>
                 )}
                 <div className="editor-pane">
-                  <Editor
+                  <SourceEditor
+                    scriptType={scriptType(active?.script.srcKind)}
+                    path={editorLanguageForFile(titleName)==='python'?`python-source://${presenceClient?.snapshot.projectId??'unbound'}/${active?.script.id??'scratch'}/${titleName}`:undefined}
                     key={`${presenceClient?.snapshot.projectId ?? 'unbound'}:${presenceClient?.discardVersions.get(presencePath ?? '') ?? 0}:${active?.script.id ?? 'empty'}:${titleName}`}
                     height="100%"
                     language={editorLanguageForFile(titleName)}

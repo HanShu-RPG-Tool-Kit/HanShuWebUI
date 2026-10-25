@@ -1,3 +1,4 @@
+import {SCRIPT_TYPES,SCRIPT_TYPE_NAMES,scriptSection,scriptTypeFromSection,type ScriptType} from '../../scriptResources/types'
 import { randomId } from '../../project/crypto'
 import { stampDocument, type FlowFolder, type FlowPackageId, type FlowWorkspaceState } from './storage'
 
@@ -23,7 +24,7 @@ export const FLOW_PACKAGE_NAMES: Record<FlowPackageId, string> = {
 }
 /** 顶层分类下的内置二级分类（稳定键、不可重命名/移动/删除） */
 export const FLOW_PACKAGE_SECTIONS: Partial<Record<FlowPackageId, FlowSectionDef[]>> = {
-  script: [{ id: 'goal-def', name: '目标定义' }],
+  script: SCRIPT_TYPES.map(type=>({id:scriptSection(type),name:SCRIPT_TYPE_NAMES[type]})),
 }
 export const packageAllowsFlows = (id: FlowPackageId) => id === 'story'
 export const packageAllowsScripts = (id: FlowPackageId) => id === 'script'
@@ -89,14 +90,19 @@ export const packageEntry = (id: FlowPackageId): FlowEntry => ({ kind: 'package'
 export const sectionFolderKey = (pkg: FlowPackageId, sectionId: string) => `section:${pkg}:${sectionId}`
 export const isSectionFolder = (key: string) => key.startsWith('section:')
 
-/** 「目标定义 / 内置」虚拟文件夹（稳定键，不落盘） */
-export const BUILTIN_GOAL_FOLDER_KEY = 'builtin:folder:script:goal-def'
-export const builtinGoalDocumentKey = (name: string) => `builtin:goal:${name}`
-export const isBuiltinGoalFolder = (key: string) => key === BUILTIN_GOAL_FOLDER_KEY
-export const isBuiltinGoalDocumentKey = (key: string) => key.startsWith('builtin:goal:')
+/** Virtual builtins are grouped by the same script type as project files. */
+export const builtinScriptFolderKey=(type:ScriptType)=>`builtin:folder:script:${type}`
+export const builtinScriptDocumentKey=(type:ScriptType,name:string)=>`builtin:script:${type}:${name}`
+export const isBuiltinScriptDocumentKey=(key:string)=>key.startsWith('builtin:script:')
+export const isBuiltinScriptFolder=(key:string)=>key.startsWith('builtin:folder:script:')
+export function scriptTypeInFolder(state:Pick<FlowWorkspaceState,'folders'>,parent:string|null):ScriptType{
+ const visited=new Set<string>()
+ while(parent&&!visited.has(parent)){visited.add(parent);const section=parseSectionFolderKey(parent);if(section?.package==='script')return scriptTypeFromSection(section.sectionId);parent=state.folders.find(f=>f.key===parent)?.parentId??null}
+ return 'common'
+}
 /** 资源树只读项：内置二级分类、虚拟内置文件夹与脚本、物品库表视图 */
 export const isReadonlyExplorerKey = (key: string) =>
-  isSectionFolder(key) || isBuiltinGoalFolder(key) || isBuiltinGoalDocumentKey(key) || isLibraryTableKey(key)
+  isSectionFolder(key) || isBuiltinScriptFolder(key) || isBuiltinScriptDocumentKey(key) || isLibraryTableKey(key)
 
 export function sectionDefs(pkg: FlowPackageId): FlowSectionDef[] {
   return FLOW_PACKAGE_SECTIONS[pkg] ?? []
@@ -163,7 +169,7 @@ export function resourceName(value: string, documentExt: boolean | PackageDocume
 
 function requireFolder(state: FlowWorkspaceState, parent: string | null) {
   if (parent !== null && !state.folders.some((folder) => folder.key === parent)) throw new Error('目标文件夹不存在。')
-  if (parent !== null && isBuiltinGoalFolder(parent)) throw new Error('内置文件夹为只读，不能在此创建或移入资源。')
+  if (parent !== null && isBuiltinScriptFolder(parent)) throw new Error('内置文件夹为只读，不能在此创建或移入资源。')
 }
 
 /** 文件夹：同级唯一；文档：同一分类内全局唯一（与所在文件夹无关，便于磁盘/lang 扁平映射）。 */
@@ -187,7 +193,7 @@ export function requireAvailableName(
     }
     return
   }
-  if (state.documents.some((document) => document.key !== except && document.package === pkg && same(document.name))) {
+  if (state.documents.some((document) => document.key !== except && document.package === pkg && !isBuiltinScriptDocumentKey(document.key) && (pkg!=='script'||scriptTypeInFolder(state,document.folderId??null)===scriptTypeInFolder(state,parent)) && same(document.name))) {
     throw new Error('此分类中已有同名文件。')
   }
 }
@@ -214,8 +220,8 @@ export function addFlowFolder(state: FlowWorkspaceState, value: string, pkg: Flo
 export function renameFlowEntry(state: FlowWorkspaceState, entry: FlowEntry, value: string): FlowWorkspaceState {
   if (entry.kind === 'package') return state
   if (entry.kind === 'folder' && isSectionFolder(entry.key)) throw new Error('内置二级分类不可重命名。')
-  if (entry.kind === 'folder' && isBuiltinGoalFolder(entry.key)) throw new Error('内置文件夹不可重命名。')
-  if (entry.kind === 'document' && isBuiltinGoalDocumentKey(entry.key)) throw new Error('内置脚本为只读，不可重命名。')
+  if (entry.kind === 'folder' && isBuiltinScriptFolder(entry.key)) throw new Error('内置文件夹不可重命名。')
+  if (entry.kind === 'document' && isBuiltinScriptDocumentKey(entry.key)) throw new Error('内置脚本为只读，不可重命名。')
   if (entry.kind === 'document' && isLibraryTableKey(entry.key)) throw new Error('资源库表视图为只读，不可重命名。')
   const item = entry.kind === 'folder' ? state.folders.find((folder) => folder.key === entry.key) : state.documents.find((document) => document.key === entry.key)
   if (!item) throw new Error('资源不存在。')
@@ -232,10 +238,10 @@ export function renameFlowEntry(state: FlowWorkspaceState, entry: FlowEntry, val
 export function canMoveFlowEntry(state: FlowWorkspaceState, entry: FlowEntry, pkg: FlowPackageId, parent: string | null) {
   if (entry.kind === 'package') return false
   if (entry.kind === 'folder' && isSectionFolder(entry.key)) return false
-  if (entry.kind === 'folder' && isBuiltinGoalFolder(entry.key)) return false
-  if (entry.kind === 'document' && isBuiltinGoalDocumentKey(entry.key)) return false
+  if (entry.kind === 'folder' && isBuiltinScriptFolder(entry.key)) return false
+  if (entry.kind === 'document' && isBuiltinScriptDocumentKey(entry.key)) return false
   if (entry.kind === 'document' && isLibraryTableKey(entry.key)) return false
-  if (parent !== null && isBuiltinGoalFolder(parent)) return false
+  if (parent !== null && isBuiltinScriptFolder(parent)) return false
   if (parent !== null) {
     const folder = state.folders.find((item) => item.key === parent)
     if (!folder || folder.package !== pkg) return false

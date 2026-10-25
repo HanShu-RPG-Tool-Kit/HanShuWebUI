@@ -1,3 +1,4 @@
+import {effectiveBuiltinScripts} from '../../scriptResources'
 import type { Project, Workspace } from '../../workspace'
 import { ensureBuiltinCompilers } from './compilers/registerBuiltin'
 import { hasLinkErrors, linkArtifacts } from './link'
@@ -44,7 +45,9 @@ export async function buildCompileGraph(
     })
   }
 
-  for (const pkg of workspace.packages) {
+  const builtin=effectiveBuiltinScripts(workspace.packages.flatMap(p=>p.scripts))
+  for (const [packageIndex,project] of workspace.packages.entries()) {
+    const pkg={...project,scripts:[...(packageIndex===0?builtin:[]).map(s=>({id:`builtin:${s.type}:${s.name}`,name:s.name,content:s.source,srcKind:s.type,updatedAt:0})),...project.scripts]}
     const index = buildIndex(workspace, pkg)
     const ctx: CompileContext = {
       index,

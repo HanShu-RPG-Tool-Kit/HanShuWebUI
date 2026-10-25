@@ -110,7 +110,7 @@ registerLocaleExportRule({
 | 平面 | 含义 | 默认后缀（`FILE_PLANE`） |
 | --- | --- | --- |
 | `client` | 仅客户端 | `.hs` / `.char`；本地化产物由注册规则决定 |
-| `server` | 仅服务端 | `.py`（`script/` 与 `goal/`）/ `.progress` / `.item`（编成 `.it`）/ `.kit` |
+| `server` | 仅服务端 | `.py`（`script/<类型>/`）/ `.progress` / `.item`（编成 `.it`）/ `.kit` |
 | `shared` | 两端都要 | `.hflow` / `.nav`；未列出后缀默认 shared |
 
 语言与配音的平面由注册规则决定，不由 `.lang` / `.ogg` 后缀统一决定。例如礼包语言表随已导出的礼包进入 shared 平面，因此 combined、client 和 server 包均包含译文。
@@ -121,11 +121,10 @@ registerLocaleExportRule({
 
 | kind | 内容 |
 | --- | --- |
-| `script` | 普通脚本 `.py`（进度「脚本」分类根下） |
-| `goal` | 目标定义 `.py`（「目标定义」二级分类；**不在** `script/` 下） |
+| `script/<类型>` | `common` / `goal` / `kit` / `item` / `entity` / `enchantment` / `player` 脚本；内置脚本先入，工程同类型同名文件覆盖 |
 | `hanshu` / `character` / `progress` / `story` / `navigator` / `gift` / `items` | 其它源类型 |
 
-旧工程若仍有 `src/scripts/`，加载时按 `script` 认领，保存后迁到 `src/script/`。
+脚本资源、内置覆盖与新建模板的完整约定见[脚本资源](#script-resources)。
 
 导出目标：
 

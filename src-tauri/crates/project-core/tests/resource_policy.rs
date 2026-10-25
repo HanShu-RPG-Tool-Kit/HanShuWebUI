@@ -733,3 +733,34 @@ fn uppercase_source_extensions_keep_schema_and_actual_source_authority() {
     );
     assert!(!dir.path().join("src/progress/Invalid.PROGRESS").exists());
 }
+
+#[test]
+fn kit_script_reference_does_not_grant_lease_or_cascade_deletion() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, sid) = setup(
+        dir.path(),
+        &[
+            ("src/gift/a.kit", r#"{"script":[{"ref":"reward.py"},{"ref":"second"}]}"#),
+            ("src/script/kit/reward.py.py", "pass"),
+        ],
+    );
+    let facts = engine.resource_relations(&sid, "src/gift/a.kit").unwrap();
+    assert!(facts.relations.iter().any(
+        |r| r.role == ResourceRelationRole::KitScript && r.to == "src/script/kit/reward.py.py"
+    ));
+    assert!(facts.relations.iter().any(|r| r.role == ResourceRelationRole::KitScript && r.to == "src/script/kit/second.py"));
+    let plan = engine
+        .plan_file_operations(
+            &sid,
+            &[request(FileOperationKind::Remove, "src/gift/a.kit", None)],
+        )
+        .unwrap();
+    assert!(plan
+        .operations
+        .iter()
+        .all(|op| op.path != "src/script/kit/reward.py.py"));
+    assert!(plan
+        .lease_paths
+        .iter()
+        .all(|path| path != "src/script/kit/reward.py.py"));
+}

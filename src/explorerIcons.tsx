@@ -30,6 +30,11 @@ export const EXPLORER_ICON_KINDS = [
   'character',
   'python',
   'goal',
+  'script-kit',
+  'script-item',
+  'script-entity',
+  'script-enchantment',
+  'script-player',
   'markdown',
   'lang',
   'voice',
@@ -39,6 +44,7 @@ export const EXPLORER_ICON_KINDS = [
   'hflow',
   'nav',
   'item',
+  'entity',
   'kit',
   'image',
   'audio',
@@ -68,6 +74,12 @@ const PATHS: Record<ExplorerIconKind, string> = {
   hflow: 'M4 3h6v5H4z M14 16h6v5h-6z M7 8v6h10v2',
   nav: 'M12 21a9 9 0 100-18 9 9 0 000 18z M14.5 9.5l-2 5-5 2 2-5 5-2z',
   // 与 `kit`（礼物盒）刻意分开：物品是"一块宝石"，盒子留给礼包
+  'script-kit':'M4 3h12v9H4z M8 6l-2 2 2 2 M12 6l2 2-2 2 M13 16h9v6h-9z M12 13h11v3H12z M17.5 13v9',
+  'script-item':'M4 3h12v9H4z M8 6l-2 2 2 2 M12 6l2 2-2 2 M17 13l5 3v5l-5 3-5-3v-5z M12 16l5 3 5-3',
+  'script-enchantment':'M4 3h12v9H4z M8 6l-2 2 2 2 M12 6l2 2-2 2 M18 12l2 4 4 2-4 2-2 4-2-4-4-2 4-2z',
+  'script-player':'M4 3h12v9H4z M8 6l-2 2 2 2 M12 6l2 2-2 2 M18 17a3 3 0 100-6 3 3 0 000 6z M12 23a6 6 0 0112 0',
+  'script-entity':'M4 3h12v9H4z M8 6l-2 2 2 2 M12 6l2 2-2 2 M15 13h6v5h-6z M13 18h10v5H13z',
+  entity:'M8 4h8v8H8z M6 12h12v9H6z M10 8h.01 M14 8h.01',
   item: 'M6 3h12l4 6-10 12L2 9z M2 9h20',
   kit: 'M4 11h16v10H4z M2 7h20v4H2z M12 7v14 M12 7c0-2.5-2-4-4-4S5 5.5 5 7h7 M12 7c0-2.5 2-4 4-4s3 1.5 3 4h-7',
   image: 'M3 4h18v16H3z M3 16l5-5 4 4 3-3 6 6 M15.5 9.5a1.5 1.5 0 100-3 1.5 1.5 0 000 3z',
@@ -116,7 +128,7 @@ export function fileIconKind(name: string): ExplorerIconKind {
 /**
  * 源文件（`SourceFile`）的图标。
  *
- * 后缀不够用：**`.py` 的目标定义与普通脚本在磁盘上是两个目录**（`src/goal` / `src/script`），
+ * 后缀不够用：**`.py` 的目标定义与普通脚本在磁盘上是两个目录**（`src/script/goal` / `src/script`），
  * 只有 `srcKind` 分得开。光看后缀的话，进度要用的目标定义与普通脚本会画成同一个图标，
  * 而这正是新建菜单要用户分清的那一对。
  */
@@ -124,6 +136,8 @@ export function sourceIconKind(file: {
   name: string
   srcKind?: string | null
 }): ExplorerIconKind {
+  if(getExtension(file.name)==='.py'&&['kit','item','entity','enchantment','player'].includes(file.srcKind??''))return `script-${file.srcKind}` as ExplorerIconKind
+  if(getExtension(file.name)==='.entity')return 'entity'
   if (getExtension(file.name) === '.py' && file.srcKind === 'goal') return 'goal'
   return fileIconKind(file.name)
 }

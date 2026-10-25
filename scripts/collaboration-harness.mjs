@@ -16,7 +16,7 @@ export async function harness(web = false) {
     'project.json':JSON.stringify({version:1,id:'shared-test-project',name:'统一工程验收'}),
     'src/hanshu/story.hs':'标题：协作测试\n\n第一场\n\n',
     'src/progress/example.progress':JSON.stringify(progress),
-    'src/script/example.py':'print("server-owned file")\n',
+    'src/script/common/example.py':'print("server-owned file")\n',
     'meta/docs/notes.md':'# 工程笔记\n',
     'assets/zh_cn/lang_progress/example.lang':JSON.stringify({name:'共同进度',description:'由同一工程服务管理'}),
     '.hanshu/skinmanager/library.json':JSON.stringify({schemaVersion:5,revision:1,folders:[],entries:[]}),

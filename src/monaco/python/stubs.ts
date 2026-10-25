@@ -28,13 +28,7 @@ def random() -> float: ...
 `
 
 // Only the documented injection is available offline. No invented Minecraft API.
-export const BASE_STUBS: Record<string, string> = {
-  // Pyright's supported project __builtins__ override supplies injected names without
-  // prepending source, preserving future imports, docstrings, ranges and diagnostics.
-  '__builtins__.pyi': 'from builtins import *\nfrom __kit_context import kit as kit, player as player, players as players, random as random\n',
-  '__kit_context.pyi': KIT_CONTEXT,
-  [`${javaModule(PLAYER_CLASS)}.pyi`]: 'class ServerPlayer: ...\n',
-}
+export const BASE_STUBS:Record<string,string>={'__builtins__.pyi':'from builtins import *\n'}
 
 /** Discover explicit Java imports; all semantic inference remains in Pyright. */
 export function importedJavaClasses(source: string): string[] {
@@ -45,13 +39,13 @@ export function importedJavaClasses(source: string): string[] {
       if (/^[A-Za-z_$][\w$]*$/.test(symbol)) names.add(`${match[1]}.${symbol}`)
     }
   }
-  for (const match of source.matchAll(/\bjava\.type\(\s*['"]([\w.$]+)['"]\s*\)/g)) names.add(match[1])
+  for (const match of source.matchAll(/\b(?:java\.type|java_type)\(\s*['"]([\w.$]+)['"]\s*\)/g)) names.add(match[1])
   return [...names]
 }
 
 /** Flat per-class modules avoid cyclic imports. Package exports support GraalPy imports. */
-export function buildJavaFiles(stubs: Iterable<JavaStub>): { files: Record<string, string>; byUri: Map<string, string> } {
-  const files: Record<string, string> = { ...BASE_STUBS }
+export function buildJavaFiles(stubs: Iterable<JavaStub>, base:Record<string,string> = BASE_STUBS): { files: Record<string, string>; byUri: Map<string, string> } {
+  const files: Record<string, string> = { ...base }
   const byUri = new Map<string, string>()
   const classes = [...stubs]
   const known = new Set(classes.map(stub => stub.name))

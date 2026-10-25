@@ -7,7 +7,7 @@ import {
 } from '../../../workspace'
 import type { FileCompiler } from '../types'
 
-/** 未由专用编译器接手的 `src/` 源文件：原样写入对应 kind 目录（`.py` → script/ 或 goal/） */
+/** 未由专用编译器接手的 `src/` 源文件：原样写入对应 kind 目录（`.py` → script/<类型>/） */
 export const identityCompiler: FileCompiler = {
   id: 'identity',
   match(file) {

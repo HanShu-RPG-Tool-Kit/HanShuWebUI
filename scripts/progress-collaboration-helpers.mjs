@@ -30,7 +30,7 @@ export async function seedProgress(h, token) {
   try {
     const receipt = await h.commit(token, [
       { path: progressPath, content: JSON.stringify(fixtureProgress()) },
-      { path: 'src/goal/acceptance_counter.py', content: goalDefinition },
+      { path: 'src/script/goal/acceptance_counter.py', content: goalDefinition },
     ])
     assert.equal(receipt.status, 'committed')
   } finally { await h.release(token) }

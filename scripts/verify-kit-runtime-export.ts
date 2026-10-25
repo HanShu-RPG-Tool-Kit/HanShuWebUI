@@ -1,3 +1,4 @@
+import {join,dirname} from 'node:path'
 import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
 import { createKit, createKitItem, createKitItemLink, stringifyKit, parseKit, resolveKit } from '../src/workspaces/progress/kit'
@@ -11,7 +12,18 @@ kit.effects = [{id:'minecraft:speed',amplifier:0,duration:0,particles:false}]
 kit.experience = {kind:'points',amount:7}
 kit.commands = ['tag @s add kit_command_ran']
 kit.feedback = {message:'feedback.message',title:'',subtitle:'',sound:''}
-kit.script = `import math
+kit.script = [{ref:'web-reward'}]
+const script = `from common.helper import marker
+assert marker() == "library-ok"
+from common import helper
+helper.calls = 10
+from mchhui.rpgtoolkit.feature.kit import Kits
+from java.util import Map
+nested = Kits.forServer(player.level().getServer()).grant(player, 'inner', Map.of())
+assert str(nested.status()) == 'SUCCESS'
+from common import helper as restored
+assert restored is helper and restored.calls == 10
+import math
 from net.minecraft.network.chat import Component
 assert 'seen' not in globals()
 seen = True
@@ -34,5 +46,6 @@ const resolved=resolveKit(roundtrip,{distributionCount:3,distributionId:0})
 assert.equal(resolved.items[0].count,4)
 // Serialization preserves authored values; runtime must distribute 10 as 4/3/3.
 assert.equal(JSON.parse(source).items[0].count,10)
-if(process.env.KIT_RUNTIME_EXPORT_PATH)await writeFile(process.env.KIT_RUNTIME_EXPORT_PATH,source)
+assert.deepEqual(roundtrip.script,[{ref:'web-reward'}])
+if(process.env.KIT_RUNTIME_EXPORT_PATH){await writeFile(process.env.KIT_RUNTIME_EXPORT_PATH,source);await writeFile(join(dirname(process.env.KIT_RUNTIME_EXPORT_PATH),'web-reward.py'),script)}
 console.log('通过：kit 运行时夹具使用 WebUI 实际序列化器生成，保留模板链接、修饰器和完整奖励类型')

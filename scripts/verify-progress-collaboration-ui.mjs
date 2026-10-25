@@ -56,8 +56,8 @@ try {
   assert.equal(await active(a).getByRole('button', { name: '开始编辑', exact: true }).count(), 0)
   assert.equal(proxy.observed.length, 0, 'Merely opening a progress form issued a project mutation')
   const initialFiles = (await h.files(ownerToken)).entries
-  assert.ok(initialFiles.some(file => file.path === 'src/goal/acceptance_counter.py'))
-  assert.ok(!initialFiles.some(file => file.path === 'src/script/acceptance_counter.py'), 'Opening a page silently moved its goal definition to an ordinary script folder')
+  assert.ok(initialFiles.some(file => file.path === 'src/script/goal/acceptance_counter.py'))
+  assert.ok(!initialFiles.some(file => file.path === 'src/script/common/acceptance_counter.py'), 'Opening a page silently moved its goal definition to an ordinary script folder')
   await noLeases()
   await title(a).fill('无需保存按钮的进度标题')
   await until(async () => (await language()).name === '无需保存按钮的进度标题', 'Idle title input did not autosubmit')

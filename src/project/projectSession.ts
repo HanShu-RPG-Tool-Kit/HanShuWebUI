@@ -1,3 +1,4 @@
+import {scriptType,scriptSection} from '../scriptResources/types'
 /**
  * 跨工作区共享的「当前工程」会话：剧本与进度读写同一 Workspace / 绑定目录。
  * Virtual Cache 不再作为正式编辑态；未绑定工程时 binding 为 null、packages 为空。
@@ -14,7 +15,7 @@ import {
 import { getExtension } from '../workspace'
 import { sourcePathOf } from '../workspace'
 import { assetCacheEpoch } from '../assets/idb'
-import { isGoalDefinitionDocument } from '../workspaces/progress/goalDefinitions'
+import {scriptTypeInFolder} from '../workspaces/progress/library'
 import { sectionFolderKey } from '../workspaces/progress/library'
 import type {
   FlowDocument,
@@ -121,7 +122,6 @@ export function sourcesToProgressDocuments(
   documentFolders?: ProgressDocumentFolders,
 ): FlowDocument[] {
   const docs: FlowDocument[] = []
-  const goalSection = sectionFolderKey('script', 'goal-def')
   for (const source of sources) {
     const pkg = packageIdOfExt(getExtension(source.name))
     if (!pkg) continue
@@ -129,8 +129,8 @@ export function sourcesToProgressDocuments(
     const folderId =
       typeof fromUi === 'string' && fromUi
         ? fromUi
-        : source.srcKind === 'goal'
-          ? goalSection
+        : getExtension(source.name)==='.py'
+          ? sectionFolderKey('script',scriptSection(scriptType(source.srcKind)))
           : null
     docs.push(stampDocument({
       key: source.id,
@@ -163,13 +163,7 @@ export function applyProgressDocumentsToWorkspace(
   const nextSources: SourceFile[] = [
     ...kept,
     ...documents.map((doc) => {
-      const srcKind =
-        getExtension(doc.name) === '.py' &&
-        isGoalDefinitionDocument(folderState, doc)
-          ? 'goal'
-          : getExtension(doc.name) === '.py'
-            ? 'script'
-            : undefined
+      const srcKind=getExtension(doc.name)==='.py'?scriptTypeInFolder(folderState,doc.folderId??null):undefined
       return {
         id: doc.key,
         name: doc.name,

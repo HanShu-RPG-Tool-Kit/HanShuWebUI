@@ -1,3 +1,4 @@
+import {kitCompiler} from './kitScripts'
 import { listFileCompilers, listPackagePasses, listLocaleExportRules, registerFileCompiler, registerPackagePass, registerLocaleExportRule } from '../registry'
 import type { LocaleExportRule } from '../localization'
 import { activeSkinsPass } from './activeSkins'
@@ -20,7 +21,7 @@ const builtinLocaleRules: LocaleExportRule[] = [
 
 /** Idempotent by id; also reinstalls builtins after clearCompileRegistry without replacing overrides. */
 export function ensureBuiltinCompilers(): void {
-  for (const compiler of [hanshuCompiler, itemCompiler, entityCompiler, identityCompiler]) {
+  for (const compiler of [hanshuCompiler, itemCompiler, entityCompiler, kitCompiler, identityCompiler]) {
     if (!listFileCompilers().some((entry) => entry.id === compiler.id)) registerFileCompiler(compiler)
   }
   for (const pass of [localeAssetsPass, activeSkinsPass]) {

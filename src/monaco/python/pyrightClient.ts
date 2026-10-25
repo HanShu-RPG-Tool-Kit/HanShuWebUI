@@ -1,5 +1,5 @@
 import PyrightWorker from './pyright.worker?worker'
-import { BASE_STUBS } from './stubs'
+import {pythonProfile} from './profiles'
 
 type Pending = { resolve(value: unknown): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }
 type Message = { id?: number; method?: string; params?: unknown; result?: unknown; error?: { message: string }; type?: string }
@@ -15,7 +15,7 @@ export class PyrightClient {
   readonly ready: Promise<void>
   onNotification?: (method: string, params: unknown) => void
 
-  constructor(worker: Worker = new PyrightWorker()) {
+  constructor(worker: Worker = new PyrightWorker(), baseStubs:Record<string,string> = pythonProfile('common').files) {
     this.worker = worker
     this.ready = new Promise<void>((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('Python 语言服务启动超时')), 30_000)
@@ -24,7 +24,7 @@ export class PyrightClient {
       this.worker.onmessage = (event: MessageEvent<Message>) => {
         const message = event.data
         if (message.type === 'serverLoaded') {
-          this.worker.postMessage({ type: 'initServer', userFiles: BASE_STUBS })
+          this.worker.postMessage({ type: 'initServer', userFiles: baseStubs })
         } else if (message.type === 'serverInitialized') {
           void this.initialize().then(() => { clearTimeout(timeout); resolve() }, (error) => { clearTimeout(timeout); reject(error) })
         } else if (message.type === 'hanshu/stubsDone' || (message.id !== undefined && !message.method)) {
@@ -36,7 +36,7 @@ export class PyrightClient {
           else pending.resolve(message.result)
         } else if (message.method && message.id !== undefined) {
           const params = message.params as { items?: { section?: string }[] }
-          const analysis = { typeCheckingMode: 'basic', diagnosticMode: 'openFilesOnly', autoSearchPaths: false, stubPath: '/typings', extraPaths: ['/typings'], useLibraryCodeForTypes: false }
+          const analysis = { typeCheckingMode: 'basic', diagnosticMode: 'openFilesOnly', autoSearchPaths: false, stubPath: '/typings', extraPaths: ['/typings','/typings/project'], useLibraryCodeForTypes: false }
           const result = message.method === 'workspace/configuration' ? params.items?.map(item => item.section === 'python' ? { analysis } : item.section === 'python.analysis' ? analysis : {}) ?? [] : null
           this.worker.postMessage({ jsonrpc: '2.0', id: message.id, result })
         } else if (message.method) this.onNotification?.(message.method, message.params)
@@ -55,7 +55,7 @@ export class PyrightClient {
     })
     this.notify('initialized', {})
     this.notify('workspace/didChangeConfiguration', { settings: { python: { analysis: {
-      stubPath: '/typings', extraPaths: ['/typings'], typeCheckingMode: 'basic', diagnosticMode: 'openFilesOnly', autoImportCompletions: false,
+      stubPath: '/typings', extraPaths: ['/typings','/typings/project'], typeCheckingMode: 'basic', diagnosticMode: 'openFilesOnly', autoImportCompletions: false,
       // Java modules exist in GraalPy, not as Python source files in this virtual FS.
       diagnosticSeverityOverrides: { reportMissingModuleSource: 'none' },
     } } } })

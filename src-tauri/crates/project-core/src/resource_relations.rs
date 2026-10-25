@@ -17,6 +17,7 @@ pub enum ResourceRelationRole {
     Language,
     Voice,
     RewardKit,
+    KitScript,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, TS)]
@@ -134,6 +135,41 @@ pub(crate) fn resolve(tree: &Tree) -> Vec<ResourceRelation> {
                 });
             }
         }
+        if source(path).is_some_and(|s| s.kind == "kit") {
+            if let Some(document) = bytes
+                .as_ref()
+                .and_then(|b| serde_json::from_slice::<serde_json::Value>(b).ok())
+            {
+                let script = document.get("script");
+                let entries: Vec<_> = match script {
+                    Some(serde_json::Value::Array(values)) => values.iter().collect(),
+                    Some(value) => vec![value],
+                    None => vec![],
+                };
+                for entry in entries {
+                    let Some(reference) = entry.get("ref").and_then(serde_json::Value::as_str) else {
+                        continue;
+                    };
+                    let id = reference.trim();
+                    let target = format!("src/script/kit/{id}.py");
+                    if !id.is_empty()
+                        && id != "."
+                        && id != ".."
+                        && !id
+                            .chars()
+                            .any(|c| matches!(c, '/' | '\\' | ':') || c.is_control())
+                        && path_ok(&target).is_ok()
+                    {
+                        relations.insert(ResourceRelation {
+                            kind: ResourceRelationKind::Reference,
+                            role: ResourceRelationRole::KitScript,
+                            from: path.clone(),
+                            to: target,
+                        });
+                    }
+                }
+            }
+        }
         if source(path).is_some_and(|s| s.kind == "progress") {
             let Some(document) = bytes
                 .as_ref()
@@ -189,6 +225,6 @@ pub(crate) fn relocated_owned(relation: &ResourceRelation, next_source: &Source)
             "assets/{locale}/voice_{}/{}",
             next_source.kind, next_source.stem
         ),
-        ResourceRelationRole::RewardKit => return None,
+        ResourceRelationRole::RewardKit | ResourceRelationRole::KitScript => return None,
     })
 }

@@ -93,8 +93,8 @@ for (const ext of MANUAL_FILE_EXTENSIONS) {
   )
 }
 // `.py` 恰恰两条：普通脚本与目标定义（磁盘上是两个目录）
-assert.equal(NEW_FILE_TYPES.filter((item) => item.ext === '.py').length, 2)
-assert.equal(type('py').srcKind, undefined, '普通脚本不该带 srcKind')
+assert.equal(NEW_FILE_TYPES.filter((item) => item.ext === '.py').length, 7)
+assert.equal(type('py').srcKind, 'common', '通用脚本使用 common 类型')
 assert.equal(type('py-goal').srcKind, 'goal')
 assert.notEqual(type('py').icon, type('py-goal').icon, '两种 .py 的图标必须能区分')
 
@@ -170,12 +170,12 @@ assert.deepEqual(
     'hanshu',
     'character',
     'script',
-    'goal',
     'progress',
     'story',
     'navigator',
     'gift',
     'items',
+    'entities',
     'meta',
   ],
   'WORKSPACE_GROUP_ORDER 必须覆盖全部源类型 + meta（资源树按它建桶）',
