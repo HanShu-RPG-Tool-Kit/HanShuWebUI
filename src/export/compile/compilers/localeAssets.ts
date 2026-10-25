@@ -114,8 +114,9 @@ export const localeAssetsPass: PackagePass = {
           if (keep(key, asset)) selected[key] = table[key]!
         }
         const keys = Object.keys(selected)
+        const runtimeTable = asset.policy.transformText?.(selected, asset.owner) ?? selected
         if (keys.length) out.push({
-          path: asset.path, bytes: `${JSON.stringify(selected, null, 2)}\n`, plane: asset.policy.plane,
+          path: asset.path, bytes: `${JSON.stringify(runtimeTable, null, 2)}\n`, plane: asset.policy.plane,
           packageName: pkg.name, sourcePath: entry.path, localization: localization(asset, keys),
         })
       } else {

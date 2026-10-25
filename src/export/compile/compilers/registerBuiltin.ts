@@ -7,6 +7,11 @@ import { identityCompiler } from './identity'
 import { entityCompiler } from './entity'
 import { itemCompiler } from './item'
 import { localeAssetsPass } from './localeAssets'
+import { displayTextReferences, displayTextRuntimeTranslations, type DisplayTextKind } from '../../../workspaces/progress/displayTextLocale'
+import { parseItem } from '../../../workspaces/progress/itemDoc'
+import { parseEntity } from '../../../workspaces/progress/entityDoc'
+
+const displayBindings = (kind: DisplayTextKind, content: string) => displayTextReferences(kind, kind === 'item' ? parseItem(content) : parseEntity(content))
 
 const builtinLocaleRules: LocaleExportRule[] = [
   { id: 'hs', sourceExt: 'hs',
@@ -16,6 +21,14 @@ const builtinLocaleRules: LocaleExportRule[] = [
   { id: 'char', sourceExt: 'char', text: { plane: 'client', keys: 'all' }, voice: { plane: 'client', keys: 'all' } },
   ...['kit', 'progress', 'hflow', 'nav'].map((sourceExt): LocaleExportRule => ({
     id: sourceExt, sourceExt, text: { plane: 'shared', keys: 'all' },
+  })),
+  ...(['item', 'entity'] as const).map((kind): LocaleExportRule => ({
+    id: kind, sourceExt: kind,
+    text: {
+      plane: 'shared', keys: 'referenced',
+      references: owner => displayBindings(kind, owner.source.content).map(binding => binding.semanticKey),
+      transformText: (table, owner) => displayTextRuntimeTranslations(displayBindings(kind, owner.source.content), table),
+    },
   })),
 ]
 

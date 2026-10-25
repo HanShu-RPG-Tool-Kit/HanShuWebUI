@@ -101,6 +101,17 @@ Mod 已升级 `.itemstack` v3、快照与 IBE 编辑交换协议；两端需使�
 
 这些表单直接更新同一份 TNBT JSON，没有第二份语义数据，也没有绕过现有草稿与协作事务。`.item` 与礼包中的内嵌 ItemStack 使用相同卡片。默认按外观、附魔、属性修改器、其他组件排列，窄面板自动将属性表单改为单栏。
 
+## 显示文本本地化
+
+现有固定文本保持原样。选择「工程本地化」时才生成 `translate` 引用，并将当前文本作为当前语言的种子。工程语言资产位于 `assets/<locale>/lang_item/<逻辑名>.lang`，键为 `display.item_name`、`display.custom_name` 或 `display.lore.<稳定 ID>`。切换语言只切换译文，不重写 Component。
+
+运行时键形如 `hanshu.item.<不透明标识>.display.custom_name`，由 WebUI 生成并显示为只读。标识保存在 `translate` 本身，不增加 `.item` 元数据或改变 schema。每行本地化 lore 的 ID 随该行一起移动；插入、删除和排序不会把后续行的译文绑定到另一行。普通 Minecraft 翻译键不会因没有工程语言文件而被转换。
+
+语言值可以是普通字符串或富文本 Component JSON 字符串。源文件改名、移动和删除由工程服务联动各语言文件，历史恢复沿用同一资源归属。源路径变化不改变不透明运行时键。
+
+导出 PAK 会将仍被 Component 引用的语义键编成全局运行时键，写入 `assets/<locale>/lang_item/<逻辑名>.lang`，语言产物属于 shared 平面。未引用的译文和没有已导出源文档的语言文件会被裁剪。未提供任何语言译文的引用会产生编译警告。
+
+
 ## 扩展常用组件卡片（开发）
 
 在 `src/workspaces/progress/itemComponents/registry.ts` 使用 `registerItemComponentEditor` 注册组件的命名空间 ID、标题、`createValue`、`accepts` 和 React `Editor`，返回函数用于注销；重复 ID 会拒绝。内置注册见同目录 `builtins.tsx`、`complexCards.tsx`；纯结构操作在 `complexModel.ts`。这是代码扩展入口，不是运行时加载外部脚本。

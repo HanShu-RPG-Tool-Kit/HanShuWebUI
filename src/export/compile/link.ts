@@ -134,6 +134,8 @@ export function linkArtifacts(artifacts: CompileArtifact[]): CompileDiagnostic[]
     if (required.has(key)) continue
     // localeKey 由裁剪逻辑按需提供，未引用是预期（死资源 warning 已在 locale pass 处理）
     if (key.startsWith('localeKey:')) continue
+    // Runtime display keys are consumed by Minecraft Components, not script symbols.
+    if (key.startsWith('displayTextKey:')) continue
     // hsInject 可为引擎入口，不必被 `:>>` 引用
     if (key.startsWith('hsInject:')) continue
     // 启用皮肤由引擎按路径 / skins.json 消费，无需脚本 require
