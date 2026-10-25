@@ -79,7 +79,6 @@ const PATHS: Record<ExplorerIconKind, string> = {
   'script-enchantment':'M4 3h12v9H4z M8 6l-2 2 2 2 M12 6l2 2-2 2 M18 12l2 4 4 2-4 2-2 4-2-4-4-2 4-2z',
   'script-player':'M4 3h12v9H4z M8 6l-2 2 2 2 M12 6l2 2-2 2 M18 17a3 3 0 100-6 3 3 0 000 6z M12 23a6 6 0 0112 0',
   'script-entity':'M4 3h12v9H4z M8 6l-2 2 2 2 M12 6l2 2-2 2 M15 13h6v5h-6z M13 18h10v5H13z',
-  entity:'M8 4h8v8H8z M6 12h12v9H6z M10 8h.01 M14 8h.01',
   item: 'M6 3h12l4 6-10 12L2 9z M2 9h20',
   entity: 'M8 3h8v6H8z M5 21v-6a7 7 0 0114 0v6 M8 15v6 M16 15v6',
   kit: 'M4 11h16v10H4z M2 7h20v4H2z M12 7v14 M12 7c0-2.5-2-4-4-4S5 5.5 5 7h7 M12 7c0-2.5 2-4 4-4s3 1.5 3 4h-7',

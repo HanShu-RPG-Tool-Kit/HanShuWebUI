@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { chromium } from 'playwright'
 import { createServer as createHttpServer, request as httpRequest } from 'node:http'
 import { randomUUID } from 'node:crypto'
 import { createServer } from 'vite'
@@ -56,7 +56,7 @@ async function seed(h, token) {
   await h.commit(token, edits)
   await h.release(token)
 }
-let service, other, proxy, vite
+let service, other, proxy, vite, browser
 let evidence
 try {
   const reservation = createHttpServer()
@@ -115,23 +115,21 @@ try {
   })
   await vite.listen()
   const url = `http://127.0.0.1:${vite.httpServer.address().port}/display-localization-integration`
-  const browserScript = `const task=await useOrCreateTaskSpace('Hanshu 本地化事务集成验收');\nawait openOrReuseTab(${JSON.stringify(url + '?actor=peer')},{wait:true,timeout:30});\nfor(const tab of await listTabs())if(tab.url.includes('/display-localization-integration')&&tab.url!==${JSON.stringify(url + '?actor=peer')})await closeTab(tab.targetId);\ncliLog(await js('(async()=>{const deadline=Date.now()+8000;while(!window.integrationPeerReady){if(Date.now()>deadline)throw Error("Peer initialization timed out");await new Promise(r=>setTimeout(r,50))}return "Peer initialized"})()'));\nawait openOrReuseTab(${JSON.stringify(url)},{wait:true,timeout:30});\ncliLog('Real two-window integration dispatched');`
-  const browser = spawn(process.env.EGO_BROWSER_BIN ?? '/Users/muzermat/.local/bin/ego-browser', ['nodejs'], { stdio: ['pipe', 'pipe', 'pipe'] })
-  browser.stdin.end(browserScript)
-  browser.stdout.on('data', data => process.stdout.write(data))
-  browser.stderr.on('data', data => process.stderr.write(data))
-  const exit = await new Promise((resolve, reject) => { browser.once('error', reject); browser.once('exit', resolve) })
-  assert.equal(exit, 0, 'Ego Lite integration browser failed')
+  // Share one browser context so the two independent pages can use BroadcastChannel.
+  browser = await chromium.launch({headless:true,...(process.platform==='win32'?{channel:'msedge'}:{})})
+  const context = await browser.newContext()
+  const peerPage = await context.newPage()
+  await peerPage.goto(url + '?actor=peer')
+  await peerPage.waitForFunction(()=>window.integrationPeerReady,{},{timeout:15000})
+  const page = await context.newPage()
+  await page.goto(url)
   const deadline = Date.now() + 120000
   while (!evidence && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 100))
   assert.ok(evidence?.ok, JSON.stringify(evidence ?? { error: 'Browser returned no evidence' }, null, 2))
   for (const check of evidence.checks) console.log(`通过：${check}`)
   console.log(`通过：真实双窗口/双会话工程服务本地化集成，共 ${evidence.checks.length} 项。`)
-  // Cleanup is a separate final browser invocation, after the preceding result proved completion.
-  const cleanup = spawn(process.env.EGO_BROWSER_BIN ?? '/Users/muzermat/.local/bin/ego-browser', ['nodejs'], { stdio: ['pipe', 'inherit', 'inherit'] })
-  cleanup.stdin.end("cliLog(await completeTaskSpace('Hanshu 本地化事务集成验收',{keep:false}));")
-  await new Promise((resolve, reject) => { cleanup.once('error', reject); cleanup.once('exit', resolve) })
 } finally {
+  await browser?.close()
   await vite?.close()
   await proxy?.close()
   await service?.stop()

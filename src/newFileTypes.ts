@@ -1,4 +1,3 @@
-import {createEntity,stringifyEntity} from './workspaces/progress/entityDoc'
 import {scriptTemplate,SCRIPT_TYPE_NAMES,SCRIPT_TYPES} from './scriptResources'
 /**
  * 「资源管理器里能新建什么」的**唯一真相**。
@@ -266,7 +265,6 @@ export const NEW_FILE_TYPES: readonly NewFileType[] = [
     group:'source' as const,defaultBase:type==='goal'?'新目标':'新脚本',srcKind:type,
     seed:(base:string)=>scriptTemplate(type,'default.py',base.trim()),
   })),
-  {id:'entity',ext:'.entity',label:'实体模板',hint:'实体库模板',icon:'entity',group:'progress',defaultBase:'新实体',seed:()=>stringifyEntity(createEntity())},
   {
     id: 'progress',
     ext: '.progress',

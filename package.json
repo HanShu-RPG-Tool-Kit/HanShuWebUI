@@ -98,7 +98,7 @@
     "test:display-text-locale": "node scripts/run-verification.mjs scripts/verify-display-text-locale.ts",
     "test:display-appearance": "node scripts/run-verification.mjs scripts/verify-display-appearance.ts",
     "test:display-localization:integration": "node scripts/verify-display-localization-integration.mjs",
-    "test:entity-attributes": "tsx scripts/verify-entity-attributes.ts"
+    "test:entity-attributes": "node scripts/run-verification.mjs scripts/verify-entity-attributes.ts"
   },
   "dependencies": {
     "@audio/encode-ogg": "^1.3.0",
