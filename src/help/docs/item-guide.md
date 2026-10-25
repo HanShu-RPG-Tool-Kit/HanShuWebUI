@@ -116,7 +116,7 @@ Mod 已升级 `.itemstack` v3、快照与 IBE 编辑交换协议；两端需使�
 打开工程后，本机 mod 可通过 [游戏开发服务器](#game-dev-server) Control：
 
 - **入站**：`items.list` / `items.get` / `items.query` 读当前会话物品库（C 侧镜像）；`items.edit.done` 为 IBE 完成通知。
-- **出站（WebUI→mod）**：`items.renderSnapshots` 批量拉展示快照；`items.edit.open` 呼出客户端 IBE（资源树 `.item` 右键「在游戏中编辑…」）。写回只认 `hash` 乐观锁，见 [游戏开发服务器](#game-dev-server)。
+- **出站（WebUI→mod）**：`items.renderSnapshots` 批量拉展示快照；`items.edit.open` 呼出客户端 IBE（资源树 `.item` 右键或编辑器预览下方「发送到游戏内编辑」）。写回只认 `hash` 乐观锁，见 [游戏开发服务器](#game-dev-server)。
 
 ## 模板同步与导出
 

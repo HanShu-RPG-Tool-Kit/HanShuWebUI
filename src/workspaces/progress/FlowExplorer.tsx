@@ -104,7 +104,7 @@ const parseSelection = (ids: Set<string>) => {
 
 const isPackageId = (value: string): value is FlowPackageId => (FLOW_PACKAGE_ORDER as string[]).includes(value)
 
-export function FlowExplorer({ state, active, disabled, readOnly = false, onChange, onSelect, onNew, onImport, onImportFiles, onExport, onDownload, onRemove, onProperties, onViewSource, onOpenItemInGame, onNotice }: {
+export function FlowExplorer({ state, active, disabled, readOnly = false, onChange, onSelect, onNew, onImport, onImportFiles, onExport, onDownload, onRemove, onProperties, onViewSource, onOpenItemInGame, onOpenEntityInGame, onNotice }: {
   state: FlowWorkspaceState; active: boolean; disabled: boolean; readOnly?: boolean
   onChange: (state: FlowWorkspaceState) => void; onSelect: (key: string) => void
   onNew: (name: string, folder: string | null, pkg: FlowPackageId) => string
@@ -117,6 +117,7 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
   onViewSource?: (key: string) => void
   /** 经 Control 呼出客户端 IBE 编辑当前 .item */
   onOpenItemInGame?: (key: string) => void
+  onOpenEntityInGame?: (key: string) => void
   onNotice: (message: string) => void
 }) {
   const [focus, setFocus] = useState<FlowEntry>(state.activeKey ? { kind: 'document', key: state.activeKey } : defaultFocus)
@@ -552,8 +553,9 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
       const progress = document?.package === 'progress'
       const navigation = document?.package === 'navigator'
       const item = document?.package === 'items' && !itemTable
-      const openLabel = itemTable ? '打开表视图' : item ? '打开物品' : kit ? '打开礼包' : navigation ? '打开导航点' : progress ? '打开进度' : script ? '打开脚本' : '打开流程'
-      const downloadLabel = item ? '下载物品' : kit ? '下载礼包' : navigation ? '下载导航点' : progress ? '下载进度' : script ? '下载脚本' : '下载草稿'
+      const entity = document?.package === 'entities' && !itemTable
+      const openLabel = itemTable ? '打开表视图' : entity ? '打开实体' : item ? '打开物品' : kit ? '打开礼包' : navigation ? '打开导航点' : progress ? '打开进度' : script ? '打开脚本' : '打开流程'
+      const downloadLabel = entity ? '下载实体' : item ? '下载物品' : kit ? '下载礼包' : navigation ? '下载导航点' : progress ? '下载进度' : script ? '下载脚本' : '下载草稿'
       if (itemTable) {
         return [
           { label: openLabel, action: () => onSelect(entry.key) },
@@ -567,22 +569,22 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
           { label: '只读内置脚本', disabled: true, hint: '不可重命名、移动或删除', action: () => {} },
         ]
       }
-      const removeLabel = item ? '移除物品…' : kit ? '移除礼包…' : navigation ? '移除导航点…' : progress ? '移除进度…' : script ? '移除脚本…' : '移除流程…'
+      const removeLabel = entity ? '移除实体…' : item ? '移除物品…' : kit ? '移除礼包…' : navigation ? '移除导航点…' : progress ? '移除进度…' : script ? '移除脚本…' : '移除流程…'
       return [
         { label: openLabel, action: () => onSelect(entry.key) },
-        ...(item && onOpenItemInGame
+        ...((item && onOpenItemInGame || entity && onOpenEntityInGame)
           ? [{
-              label: '在游戏中编辑…',
+              label: '发送到游戏内编辑',
               disabled: readOnly,
               hint: readOnly ? '只读工程不可写回' : '经游戏开发服务器打开客户端 IBE',
-              action: () => onOpenItemInGame(entry.key),
+              action: () => entity ? onOpenEntityInGame?.(entry.key) : onOpenItemInGame?.(entry.key),
             }]
           : []),
         ...((progress || item) && onViewSource ? [{ label: '查看源码', action: () => onViewSource(entry.key) }] : []),
         { label: '属性…', action: () => onProperties(entry.key) },
         { label: '重命名', disabled: readOnly, hint: readOnly ? '只读工程不可改名' : '只改文件名；食物/自然 等是视图文件夹，磁盘仍在 src/items/', action: () => startEdit('rename', entry) },
         { label: '移动到…', disabled: readOnly, hint: readOnly ? '只读工程不可移动' : '改视图归属文件夹，不改磁盘路径', action: () => startEdit('move', entry) },
-        ...(script || kit || progress || navigation || item ? [] : [{ label: '导出树图', action: () => onExport(entry.key) }]),
+        ...(script || kit || progress || navigation || item || entity ? [] : [{ label: '导出树图', action: () => onExport(entry.key) }]),
         { label: downloadLabel, action: () => onDownload(entry.key) },
         { label: removeLabel, action: () => onRemove({ documents: [entry.key], folders: [] }) },
       ]

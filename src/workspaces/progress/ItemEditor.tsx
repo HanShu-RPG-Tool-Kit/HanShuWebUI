@@ -1,6 +1,8 @@
+import {getControlHubSnapshot,subscribeControlHub} from '../../gameDevServer'
 import { ItemSyncEditor } from './ItemSyncEditor'
 import {
   useMemo,
+  useSyncExternalStore,
   useRef,
   useState,
   type CSSProperties,
@@ -161,12 +163,14 @@ function Section({ title, hint, action, children }: {
   </section>
 }
 
-export function ItemEditor({ doc, error, disabled, onChange }: {
+export function ItemEditor({ doc, error, disabled, onChange, onEditInGame }: {
   doc: ItemDocument
   error?: string
   disabled?: boolean
   onChange: (source: string) => void
+  onEditInGame?: () => void
 }) {
+  const online=useSyncExternalStore(subscribeControlHub,getControlHubSnapshot).phase==='open'
   const presentable = useMemo(() => itemPresentable(doc), [doc])
   const presentation = useItemPresentation(presentable)
   const fingerprint = useMemo(() => itemFingerprint(doc.item), [doc.item])
@@ -207,6 +211,7 @@ export function ItemEditor({ doc, error, disabled, onChange }: {
               </div>
             ))}
           </div>
+          <button className="item-edit-in-game" type="button" disabled={disabled||!online||!onEditInGame} title={online?'在游戏中打开 IBE':'请先连接游戏开发服务器'} onClick={onEditInGame}>发送到游戏内编辑</button>
         </aside>
         <div className="item-authoring">
           <Section title="物品定义">

@@ -670,3 +670,5 @@
 .item-sync-expand-hint .when-open { display:none; }
 .item-sync-branch[open] > summary > .item-sync-row > .item-sync-expand-hint .when-open { display:inline; }
 .item-sync-branch[open] > summary > .item-sync-row > .item-sync-expand-hint .when-closed { display:none; }
+
+.item-edit-in-game{width:100%;margin-top:14px;min-height:32px;border:1px solid var(--border,#454545);border-radius:5px;background:var(--panel,#303030);color:inherit;cursor:pointer}.item-edit-in-game:disabled{opacity:.45;cursor:default}

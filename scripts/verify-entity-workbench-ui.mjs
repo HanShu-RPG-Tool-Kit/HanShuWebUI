@@ -16,6 +16,7 @@ try{
   const r=JSON.parse(String(text));if(r.type==='response'){counts.set(r.id,(counts.get(r.id)??0)+1);waits.get(r.id)?.(r);waits.delete(r.id);return}calls.push(r)
   let result={version:1};if(r.method==='entities.receiver.bind'){receiver=r.params.receiver;result.active=true}
   if(r.method==='entities.list')result.items=[{id:'minecraft:pig',name:'猪'},{id:'minecraft:zombie',name:'僵尸'}]
+  if(r.method==='items.edit.open')result={componentFormat:'tnbt-json-v1',componentMode:'complete',opened:true}
   if(r.method==='entities.edit.open'){edit=r.params;result={version:1,opened:true,editId:r.params.editId}}
   ws.send(JSON.stringify({type:'response',id:r.id,ok:true,result}))
  })})
@@ -29,7 +30,7 @@ try{
  page.once('dialog',d=>void d.accept());incoming=capture('卫兵',template(20));assert.equal((await incoming.result).ok,true);assert.equal((await read()).entity.data.value.Health.value,'20')
  // Retransmission of the same request never opens a second dialog or submits twice.
  let extraDialog=false;const onDialog=d=>{extraDialog=true;void d.dismiss()};page.on('dialog',onDialog);socket.send(JSON.stringify(incoming.request));await page.waitForTimeout(150);assert.equal(extraDialog,false);assert.equal(counts.get(incoming.id),2);page.off('dialog',onDialog)
- const pane=page.locator('.app-workspace-pane.active');await pane.getByLabel('筛选资源',{exact:true}).fill('卫兵.entity');await pane.locator('[role=treeitem][title="卫兵.entity"]').click();await pane.getByRole('button',{name:'发送到游戏内编辑',exact:true}).click()
+ const pane=page.locator('.app-workspace-pane.active');await pane.getByLabel('筛选资源',{exact:true}).fill('卫兵.entity');await pane.locator('[role=treeitem][title="卫兵.entity"]').click();await pane.locator('[role=treeitem][title="卫兵.entity"]').click({button:'right'});await page.getByRole('menuitem',{name:'发送到游戏内编辑',exact:true}).click()
  for(let i=0;i<100&&!edit;i++)await page.waitForTimeout(30);assert(edit)
  socket.send(JSON.stringify({type:'notify',method:'entities.edit.done',params:{version:1,editId:edit.editId,hash:edit.hash,receiver:edit.receiver,template:template(90,'IBE守卫')}}))
  await page.waitForFunction(()=>Array.from(document.querySelectorAll('input')).some(i=>i.getAttribute('aria-label')==='实体名称'&&i.value==='IBE守卫'))
@@ -51,6 +52,9 @@ try{
  await other.routeWebSocket('ws://127.0.0.1:8765/**',ws=>{otherSocket=ws;ws.onMessage(text=>{const r=JSON.parse(String(text));if(r.type==='response'){otherResponses++;return}if(r.method==='entities.receiver.bind')otherReceiver=r.params.receiver;ws.send(JSON.stringify({type:'response',id:r.id,ok:true,result:{version:1,active:true}}))})})
  await loginProject(other,h.base,account.credential,'other entity window');for(let i=0;i<100&&!otherReceiver;i++)await other.waitForTimeout(30);assert(otherReceiver&&otherReceiver!==receiver)
  incoming=capture('多人定向',template(25));otherSocket.send(JSON.stringify(incoming.request));assert.equal((await incoming.result).ok,true);await page.waitForTimeout(150);assert.equal(otherResponses,0);assert.equal(otherDialogs,0);assert.equal(counts.get(incoming.id),1);await other.close()
+ // The item preview action uses the same game editor route as its explorer menu.
+ await h.commit(owner.token,[{path:'src/items/预览物品.item',content:JSON.stringify({format:'rpgtoolkit:item',schemaVersion:2,tags:[],item:{id:'minecraft:stick',components:{}}})}]);await h.release(owner.token)
+ await pane.getByLabel('筛选资源',{exact:true}).fill('预览物品.item');await pane.locator('[role=treeitem][title="预览物品.item"]').click();const itemAction=pane.locator('.item-overview').getByRole('button',{name:'发送到游戏内编辑',exact:true});await itemAction.click();for(let i=0;i<100&&!calls.some(c=>c.method==='items.edit.open');i++)await page.waitForTimeout(30);assert(calls.some(c=>c.method==='items.edit.open'&&c.params.item.id==='minecraft:stick'))
  assert.deepEqual(errors,[])
  console.log('PASS entity workbench against real S: import, duplicate confirmation/cancel, replay, IBE draft roundtrip/conflict preservation and CAS after confirmation')
 }finally{await browser?.close();await h.stop()}

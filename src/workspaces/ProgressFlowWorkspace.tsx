@@ -1,3 +1,4 @@
+import {openEntityEditInGame} from '../gameDevServer/entityWorkbench'
 import {EntityEditor} from './progress/EntityEditor'
 import {createEntity,parseEntity,stringifyEntity} from './progress/entityDoc'
 import { useEffect, useImperativeHandle, useMemo, useRef, useState, type DragEvent, type Ref } from 'react'
@@ -639,6 +640,11 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
     })
   }, [])
 
+  async function openEntityInGame(key:string){
+    const document=state.documents.find(d=>d.key===key)
+    if(!document||!isEntityDocument(document))return
+    try{await openEntityEditInGame(key,parseEntity(document.source));setNotice('已在游戏中打开实体编辑器')}catch(error){setNotice(`打开游戏实体编辑器失败：${error instanceof Error?error.message:String(error)}`)}
+  }
   async function openItemInGame(key: string) {
     const document = state.documents.find((item) => item.key === key)
     if (!document || !isItemDocument(document)) {
@@ -1251,8 +1257,8 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
         />
       </div>
     }
-    if(paneEntityTable)return <EntityLibraryTable documents={state.documents} onOpen={key=>updateGroups(previous=>openOppositeToKey(previous,ENTITY_LIBRARY_TABLE_KEY,key,focusedGroup))}/>
-    if(paneEntity)return <div className="flow-kit-pane"><EntityEditor key={`${client?.snapshot.projectId??''}/${paneDoc.key}`} documentKey={paneDoc.key} source={paneDoc.source} disabled={disabledPane} active={graphLive&&active} onChange={source=>{if(!disabledPane)changeSource(source,false,paneDoc.key)}}/></div>
+    if(paneEntityTable)return <EntityLibraryTable active={active} documents={state.documents} onOpen={key=>updateGroups(previous=>openOppositeToKey(previous,ENTITY_LIBRARY_TABLE_KEY,key,focusedGroup))}/>
+    if(paneEntity)return <div className="flow-kit-pane"><EntityEditor key={`${client?.snapshot.projectId??''}/${paneDoc.key}`} documentKey={paneDoc.key} source={paneDoc.source} disabled={disabledPane} active={active} onChange={source=>{if(!disabledPane)changeSource(source,false,paneDoc.key)}}/></div>
     if (paneItemTable) {
       return <div className="flow-kit-pane">
         <ItemLibraryTable
@@ -1286,6 +1292,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
         <ItemEditor
           key={paneDoc.key}
           doc={paneItemParsed.doc}
+          onEditInGame={()=>{void openItemInGame(paneDoc.key)}}
           error={paneItemParsed.error}
           disabled={disabledPane}
           onChange={(source) => { if (!disabledPane) changeSource(source, true, paneDoc.key) }}
@@ -1439,7 +1446,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
   return <section className="flow-workspace" aria-label="故事流程工作区">
     <input ref={fileInput} type="file" multiple hidden onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ''; void importFiles(files) }} />
     <div className="flow-layout">
-      <FlowExplorer readOnly={readOnly} state={explorerState} active={active} disabled={locked || busy} onChange={(next) => setState((previous) => normalizeGroups({ ...previous, documents: next.documents, folders: next.folders }))} onSelect={(key) => selectDocument(key)} onNew={newFlow} onImport={requestImport} onImportFiles={(files, folderId, packageId) => { void importFiles(files, { folderId, package: packageId }) }} onExport={exportFlow} onDownload={downloadDraft} onRemove={removeResources} onProperties={setPropertiesKey} onViewSource={viewProgressSource} onOpenItemInGame={(key) => { void openItemInGame(key) }} onNotice={setNotice} />
+      <FlowExplorer readOnly={readOnly} state={explorerState} active={active} disabled={locked || busy} onChange={(next) => setState((previous) => normalizeGroups({ ...previous, documents: next.documents, folders: next.folders }))} onSelect={(key) => selectDocument(key)} onNew={newFlow} onImport={requestImport} onImportFiles={(files, folderId, packageId) => { void importFiles(files, { folderId, package: packageId }) }} onExport={exportFlow} onDownload={downloadDraft} onRemove={removeResources} onProperties={setPropertiesKey} onViewSource={viewProgressSource} onOpenEntityInGame={key=>{void openEntityInGame(key)}} onOpenItemInGame={(key) => { void openItemInGame(key) }} onNotice={setNotice} />
       <main className="flow-main">
         {active && client && presencePath && <FilePresenceBar key={`${client.snapshot.session.id}:${presencePath}`} client={client} path={presencePath} mode="optimistic" label={doc?.name} />}
         {state.split ? (

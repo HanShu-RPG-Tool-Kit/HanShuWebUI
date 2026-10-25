@@ -97,7 +97,7 @@ WebUI 在 Control `phase===open` 时主动发 `{ type: request, id, method, para
 
 `params` / `done` 载荷：`{ uuid, hash, item: { id, components } }`（也接受扁平 `id`/`components`）。`uuid` 仅 hint（原样回传，业务可忽略）；`hash` 为 WebUI 版本令牌（当前用 `itemFingerprint`），写回时与本地指纹比对。无 cancel 通知、无写锁。
 
-WebUI 入口：物品库资源树对 `.item` 右键 **在游戏中编辑…**。冲突或找不到文档时丢弃并走 [活动列表](#activity-list)。
+WebUI 入口：物品库资源树对 `.item` 右键 **发送到游戏内编辑**，或点击物品编辑器预览下方的同名按钮。冲突或找不到文档时丢弃并走 [活动列表](#activity-list)。
 
 ## 边界
 
