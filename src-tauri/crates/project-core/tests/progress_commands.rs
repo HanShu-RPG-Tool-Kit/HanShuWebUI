@@ -69,7 +69,7 @@ fn ok(receipt: &FileTransactionReceipt) {
         FileTransactionStatus::Committed,
         "{receipt:?}"
     );
-    assert!(receipt.quest_result.is_some());
+    assert!(receipt.progress_result.is_some());
 }
 fn rejected(receipt: &FileTransactionReceipt, code: &str) {
     assert_eq!(
@@ -78,7 +78,7 @@ fn rejected(receipt: &FileTransactionReceipt, code: &str) {
         "{receipt:?}"
     );
     assert_eq!(receipt.error.as_ref().unwrap().code, code, "{receipt:?}");
-    assert!(receipt.quest_result.is_none());
+    assert!(receipt.progress_result.is_none());
 }
 fn read(root: &Path, path: &str) -> Value {
     serde_json::from_slice(&fs::read(root.join(path)).unwrap()).unwrap()
@@ -147,12 +147,12 @@ fn source_and_locale_commit_atomically_and_noop_does_not_create_history() {
         .unwrap();
     let saved = command(&mut engine, &sid, edits);
     ok(&saved);
-    assert_eq!(saved.quest_result.as_ref().unwrap().languages.len(), 1);
+    assert_eq!(saved.progress_result.as_ref().unwrap().languages.len(), 1);
     assert_eq!(read(dir.path(), LANG)["description"], "untouched");
     let head = engine.history_stats(&sid).unwrap().head;
     let noop = command(&mut engine, &sid, apply(vec![count(2, 2)]));
     ok(&noop);
-    assert!(noop.quest_result.unwrap().effects.is_empty());
+    assert!(noop.progress_result.unwrap().effects.is_empty());
     assert_eq!(engine.history_stats(&sid).unwrap().head, head);
 }
 
@@ -489,7 +489,7 @@ fn old_progress_receipts_reopen_without_rewriting_or_new_field_requirements() {
     let first = command(&mut engine, &sid, input.clone());
     ok(&first);
     assert!(!first
-        .quest_result
+        .progress_result
         .as_ref()
         .unwrap()
         .source

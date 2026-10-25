@@ -393,6 +393,7 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
   }
   function startEdit(mode: Edit['mode'], entry = focus) {
     if (disabled || readOnly) return
+    if(entry.kind==='document'&&state.documents.find(doc=>doc.key===entry.key)?.detached&&['rename','move'].includes(mode)){onNotice('资源已从工程移除，请导出保留的草稿后另存。');return}
     const pkg = entryPackage(state, entry)
     if ((mode === 'flow' || mode === 'progress') && !packageAllowsQuest(pkg)) {
       onNotice('任务只能建在「任务」分类中。')

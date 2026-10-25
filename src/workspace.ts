@@ -159,6 +159,8 @@ export function isManualFileName(name: string): boolean {
 
 /** 工程内源文件（剧本 / 进度 / 礼包等） */
 export type SourceFile = {
+  /** A remote deletion detached this unsaved draft; ordinary Save must never recreate it. */
+  detached?: boolean
   id: string
   name: string
   content: string

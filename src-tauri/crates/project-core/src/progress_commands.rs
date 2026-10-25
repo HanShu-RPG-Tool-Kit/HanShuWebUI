@@ -295,9 +295,9 @@ impl Engine {
         path_ok(&input.path)?;
         require(
             crate::resource_relations::source(&input.path)
-                .is_some_and(|source| source.kind == "progress"),
+                .is_some_and(|source| source.kind == "quest"),
             "invalid",
-            "进度操作只能作用于进度源文件",
+            "进度操作只能作用于任务源文件",
         )?;
         let bytes = STANDARD
             .decode(

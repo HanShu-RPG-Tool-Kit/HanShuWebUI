@@ -1,3 +1,4 @@
+import {ServiceError} from '../collab/protocol'
 import {EXPLORER_ORGANIZATION_PATH,documentPlacements,emptyOrganization,organizationFromDocuments,serializeOrganization} from '../project/explorerOrganization'
 import {PythonEditor} from '../monaco/python/PythonEditor'
 import {scriptType,scriptSection,scriptTemplate} from '../scriptResources'
@@ -161,8 +162,8 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
     const binding = live.binding
     const prevScripts = live.workspace.packages[0]?.scripts ?? []
     const previousOrganization = live.workspace.packages[0]?.explorer ?? emptyOrganization()
-    const nextOrganization = organizationFromDocuments(next.documents, next.folders ?? [], {
-      organization: previousOrganization, sourcePaths: prevScripts.map(sourcePathOf),
+    const nextOrganization = organizationFromDocuments(next.documents.filter(doc=>!doc.detached), next.folders ?? [], {
+      organization: previousOrganization, sourcePaths: prevScripts.filter(source=>!source.detached).map(sourcePathOf),
     })
     const metadataChanged = serializeOrganization(nextOrganization) !== serializeOrganization(previousOrganization)
     const organization = metadataChanged ? nextOrganization : previousOrganization
@@ -189,7 +190,8 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
       const currentOrganization=workspace.packages[0]?.explorer??emptyOrganization()
       const appliedOrganization=structuralPendingRef.current&&serializeOrganization(currentOrganization)!==serializeOrganization(organization)?currentOrganization:organization
       const projected = next.documents.flatMap(doc => {
-        if (!structuralPendingRef.current || structuralIds.has(doc.key)) return [doc]
+        if (!structuralPendingRef.current) return [doc]
+        if(structuralIds.has(doc.key)){const current=currentSources.find(source=>source.id===doc.key);return [{...doc,source:current?.content??doc.source}]}
         const current = currentSources.find(source => source.id === doc.key)
         return current ? [{ ...doc, source: current.content, updatedAt: new Date(current.updatedAt).toISOString() }] : []
       })
@@ -214,7 +216,7 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
     // 尚未写入 S 的草稿不能 move（会报「移动目标无效」）；只改本机名，等下次保存落新路径
     const onServer = (file: { name: string; srcKind?: string | null }) => {
       const path = sourcePathOf(file)
-      return Boolean(binding.handle.client.entry(path) || binding.handle.client.baseline.has(path))
+      return Boolean(binding.handle.client.entry(path))
     }
     const serverRenames = renames.filter(({ old }) => onServer(old))
     const serverRemoves = removed.filter((old) => onServer(old))
@@ -264,7 +266,7 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
       }
       setNotice('工程结构已保存。')
     })().catch(error => {
-      if (!acknowledged && getProjectSession().binding?.handle.client === binding.handle.client) {
+      if (!acknowledged && !(error instanceof ServiceError&&error.code==='commit_uncertain') && getProjectSession().binding?.handle.client === binding.handle.client) {
         // Folder-only rollback must not discard text edited or refreshed while waiting.
         const current=getProjectSession().workspace
         setProjectSession({ workspace: renames.length||removed.length?revertWorkspace:{...current,packages:current.packages.map((pkg,index)=>index===0?{...pkg,explorer:revertWorkspace.packages[0]?.explorer}:pkg)} })
@@ -277,7 +279,7 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
         setUi(revertUi)
         saveProgressUiState(revertUi)
       }
-      setNotice(`${acknowledged ? '服务器已保存，本地视图更新失败，请重新打开工程' : '操作未提交，原文件和草稿已保留'}：${String(error)}`)
+      setNotice(`${acknowledged ? '服务器已保存，本地视图更新失败，请查询原提交恢复' : error instanceof ServiceError&&error.code==='commit_uncertain'?'操作结果待确认，资源编辑已暂停，请查询原提交':'操作未提交，原文件和草稿已保留'}：${String(error)}`)
     })
       .finally(() => { structuralPendingRef.current = false; setBusy(false) })
   }
@@ -364,7 +366,7 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
   const presenceSource = doc && !isBuiltinScriptDocumentKey(doc.key) && !isLibraryTableKey(doc.key)
     ? session.workspace.packages.flatMap(pkg => pkg.scripts).find(script => script.id === doc.key)
     : null
-  const presencePath = presenceSource ? sourcePathOf(presenceSource) : null
+  const presencePath = presenceSource&&!presenceSource.detached ? sourcePathOf(presenceSource) : null
   const navigationDoc = doc ? isNavigationDocument(doc) : false
   const itemTableDoc = doc ? isLibraryTableKey(doc.key) : false
   const entityDoc = doc ? isEntityDocument(doc) : false
@@ -1195,7 +1197,7 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
     const paneCycle = paneIssues.find((issue) => issue.path === 'graph' && issue.message.includes('环'))
     // 同一文档可同时开在两组，画布交互只交给焦点组
     const graphLive = group === focusedGroup
-    const disabledPane = locked || busy || readOnly || (paneProgress && !graphLive)
+    const disabledPane = Boolean(paneDoc.detached) || locked || busy || readOnly || (paneProgress && !graphLive)
 
     if (paneProgress && paneProgressParsed) {
       if (!paneProgressParsed.doc) return <ProgressSourceRepair key={paneDoc.key} source={paneDoc.source} error={paneProgressParsed.error} disabled={disabledPane}
@@ -1223,6 +1225,7 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
         {client && <ProgressCollaborativeEditor
           key={paneDoc.key}
           client={client}
+          detached={paneDoc.detached}
           path={sourcePathOf({ name: paneDoc.name })}
           name={paneDoc.name}
           source={paneDoc.source}
@@ -1425,6 +1428,7 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
         onJoin={() => updateGroups(joinGroups)}
       />
       <div className="flow-group-body">
+        {paneDoc?.detached&&<div role="status">资源已从工程移除，草稿仅保留在本机；普通保存不会重新创建它。<button type="button" onClick={()=>downloadFlowFile(`${paneDoc.name}.draft`,paneDoc.source)}>导出保留的草稿</button></div>}
         {renderDocumentPane(paneDoc, id)}
         {pageDrag && !locked && !busy && (
           <div

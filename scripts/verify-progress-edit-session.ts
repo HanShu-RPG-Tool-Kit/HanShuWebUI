@@ -195,4 +195,17 @@ await test('批量同步只丢冲突字段，保留并提交其他字段', async
   assert.equal(parseProgress(f.state.source).completion,'any')
   assert.equal(f.session.getSnapshot().dirty,false)
 })
+await test('结构操作先完成待提交输入，暂停新输入，迁移后清理旧路径撤销记录',async()=>{
+ const f=fixture();await f.session.initialize();f.session.editText('zh_cn','name','改名前输入')
+ await f.session.prepareLocationChange();assert.equal(f.state.languages.zh_cn.name,'改名前输入')
+ f.session.editText('zh_cn','name','暂停期间输入');assert.equal(f.session.getSnapshot().view.languages.zh_cn.name,'改名前输入')
+ await f.session.relocate();assert.equal(f.session.getSnapshot().location,'ready');assert.equal(f.session.getSnapshot().canUndo,false)
+ f.session.editText('zh_cn','name','新位置输入');await f.session.flush();assert.equal(f.state.languages.zh_cn.name,'新位置输入')
+})
+await test('远端删除停止定时与全局同步，但保留尚未提交的文本恢复记录',async()=>{
+ const f=fixture();await f.session.initialize();f.session.editText('zh_cn','name','保留草稿');f.session.markMissing()
+ await new Promise(resolve=>setTimeout(resolve,550));await f.session.flush();await f.session.synchronize()
+ assert.equal(f.sent.length,0);assert.equal(f.session.getSnapshot().location,'missing');assert.equal(f.session.getSnapshot().dirty,true)
+ assert.equal(f.session.getSnapshot().view.languages.zh_cn.name,'保留草稿');assert(f.saved?.pending.length)
+})
 console.log(`进度编辑会话 ${passed} 组通过。`)

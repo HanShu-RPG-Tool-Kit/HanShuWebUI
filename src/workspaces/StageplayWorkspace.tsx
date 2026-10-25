@@ -312,7 +312,7 @@ export const StageplayWorkspace = forwardRef<
   const charCount = value.length
   const viewingAsset = Boolean(activeAssetHit)
   const presenceClient = serviceSession.binding?.handle.client
-  const presencePath = activeAssetHit?.asset.path ?? (active ? sourcePathOf(active.script) : null)
+  const presencePath = activeAssetHit?.asset.path ?? (active&&!active.script.detached ? sourcePathOf(active.script) : null)
   // The editor buffer precedes its debounced workspace mirror by 400 ms.
   const presenceDirty = !viewingAsset && !!active && bufferOwnerRef.current === active.script.id && value !== active.script.content
   const titleName = viewingAsset
@@ -1935,6 +1935,7 @@ export const StageplayWorkspace = forwardRef<
   ): Promise<{ ok: true; moves: number } | { ok: false; error: string }> => {
     const hit = findScript(workspaceRef.current, scriptId)
     if (!hit) return { ok: false, error: '文件不存在' }
+    if(hit.script.detached)return {ok:false,error:'资源已从工程移除，请导出草稿后另存为新资源'}
     if (newName === hit.script.name) return { ok: true, moves: 0 }
     if (projectBusy) return { ok: false, error: '工程操作进行中，请稍候' }
     const oldName = hit.script.name
@@ -2066,7 +2067,7 @@ export const StageplayWorkspace = forwardRef<
     const bound = projectRef.current
     setProjectBusy(true)
     try {
-      if (bound) await removeSourceFromDisk(bound.handle, sourceName, hit.script.srcKind)
+      if (bound&&!hit.script.detached) await removeSourceFromDisk(bound.handle, sourceName, hit.script.srcKind)
     } catch (error) {
       setProjectBusy(false)
       window.alert(`删除未提交，原文件与草稿已保留：${error instanceof Error ? error.message : String(error)}`)
@@ -3246,6 +3247,7 @@ export const StageplayWorkspace = forwardRef<
             dirty={presenceDirty}
             label={titleName}
           />}
+          {active?.script.detached&&<p role="status">此资源已从工程移除，当前内容保留为本机草稿；普通保存不会重新创建它。可复制或导出内容后另存。</p>}
           <main
             className={`editor-shell${
               editingMarkdown && mdPreviewOn ? ' split-md' : ''

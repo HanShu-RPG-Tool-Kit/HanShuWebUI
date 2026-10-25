@@ -162,7 +162,7 @@ impl TransactionRecord {
             path_ok(&result.path).map_err(|_| Error::new("storage", "持久进度回执路径无效"))?;
             require(
                 crate::resource_relations::source(&result.path)
-                    .is_some_and(|source| source.kind == "progress")
+                    .is_some_and(|source| source.kind == "quest")
                     && !result.document_id.is_empty()
                     && result.effects.len() <= 256,
                 "storage",

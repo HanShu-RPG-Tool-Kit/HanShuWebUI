@@ -80,7 +80,7 @@ export function setProjectSession(next: Partial<Session>) {
   const client = session.binding?.handle.client
   if (client) {
     client.transactions.setDirtyPaths(session.workspace.packages.flatMap(p => [
-      ...p.scripts.filter(s => s.content !== client.texts.get(sourcePathOf(s))).map(sourcePathOf),
+      ...p.scripts.filter(s => !s.detached && s.content !== client.texts.get(sourcePathOf(s))).map(sourcePathOf),
       ...p.assets.filter(a => client.assetEpochs.get(a.path) !== assetCacheEpoch(p.id, a.path)).map(a => a.path),
       ...(p.name !== session.binding?.manifest.name ? ['project.json'] : []),
       ...(p.explorer&&serializeOrganization(p.explorer)!==serializeOrganization(parseOrganization(client.texts.get(EXPLORER_ORGANIZATION_PATH)??null))?[EXPLORER_ORGANIZATION_PATH]:[]),
@@ -122,7 +122,7 @@ export function sourcesToProgressDocuments(
           ? sectionFolderKey('script',scriptSection(scriptType(source.srcKind)))
           : null
     docs.push(stampDocument({
-      key: source.id,
+      key: source.id, detached:source.detached,
       name: source.name,
       source: source.content,
       package: pkg,
@@ -154,7 +154,7 @@ export function applyProgressDocumentsToWorkspace(
     ...documents.map((doc) => {
       const srcKind=getExtension(doc.name)==='.py'?scriptTypeInFolder(folderState,doc.folderId??null):undefined
       return {
-        id: doc.key,
+        id: doc.key, detached:doc.detached,
         name: doc.name,
         content: doc.source,
         updatedAt: doc.updatedAt ? Date.parse(doc.updatedAt) || Date.now() : Date.now(),

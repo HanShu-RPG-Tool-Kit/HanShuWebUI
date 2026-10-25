@@ -7,6 +7,7 @@ import { parseJsonValue } from '../../utils/strictJson'
 export const FLOW_STORAGE_KEY = 'hanshu.progressWorkspace.v1'
 export type FlowPackageId = import('../../resourceTypes').GameplayCategoryId
 export type FlowDocument = {
+  detached?: boolean
   key: string
   name: string
   source: string

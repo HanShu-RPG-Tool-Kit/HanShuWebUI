@@ -1,3 +1,4 @@
+import {ResourceLifecycle} from './resourceLifecycle'
 import {EXPLORER_ORGANIZATION_PATH,parseOrganization,serializeOrganization,relocateOrganization} from './explorerOrganization'
 import { request, ServiceError, type Connection, type Lease, type Snapshot } from '../collab/protocol'
 import type { FileChange, FileEditAuthority, FileOperationRequest, FileTransactionReceipt, ProjectFile, ProjectFileTree, ResourceOperationPlan, ResourceRelations, HistoryRestorePlan, ProgressCommand, ProgressCommandResult } from '../collab/generated'
@@ -58,6 +59,7 @@ export class ProjectClient {
   private libraryResults = new Map<string, Record<string, unknown>>()
   private importResults = new Map<string, unknown>()
   private progressResults = new Map<string, ProgressAcknowledgement>()
+  readonly resourceLifecycle=new ResourceLifecycle()
   private progressEditors = new Map<string, Set<() => Promise<void>>>()
   skinLibraryResult(command: string) { return this.libraryResults.get(command) }
   skinImportResult(entryId: string): unknown { return this.importResults.get(entryId) }
@@ -106,6 +108,7 @@ export class ProjectClient {
     this.serverClock = snapshot.serverTime ?? Date.now(); this.serverClockAt = performance.now()
     this.editing = new FileEditing(this)
     this.transactions = new EditTransactions(edits => this.capture(edits), (edits, attempt) => this.perform(edits, attempt))
+    this.transactions.subscribe(()=>this.resourceLifecycle.settle(this.transactions.getSnapshot().transactions))
     this.transactions.onSettled = replayed => {
       // TextMap reads staged text first. Notify editors only after the exact
       // acknowledged stage has been cleared, or they reload the old draft.
@@ -439,7 +442,7 @@ export class ProjectClient {
       const l = this.leases.get(edit.path)
       if (l) { await request(this.connection, '/api/files/leases', 'DELETE', { path: edit.path, leaseId: l.id }).catch(() => undefined); this.leases.delete(edit.path) }
     }
-    try { await this.onCommitted?.(edits, attempt.replayed) }
+    try { await this.resourceLifecycle.committed(edits); await this.onCommitted?.(edits, attempt.replayed) }
     catch { throw new ServiceError('commit_uncertain', '服务已保存，本地视图更新未完成；请重试以恢复本地视图') }
   }
   async releaseLeases(leases: Lease[], strict = false): Promise<void> {
@@ -463,6 +466,15 @@ export class ProjectClient {
     return this.sourceCommands([{path, destination, content}])
   }
   async sourceCommands(commands: Array<{path: string; destination: string | null; content?: string}>, extraEdits:FileEdit[]=[]): Promise<void> {
+    const originalContents=new Map(commands.map(command=>[command.path,this.texts.get(command.path)]))
+    const transition=await this.resourceLifecycle.prepare(commands)
+    let submitted=false
+    try {
+    commands=commands.map(command=>{
+      const prepared=transition.contents.find(item=>item.path===command.path)
+      if(prepared&&typeof prepared.content==='string'&&command.content!==undefined&&command.content!==originalContents.get(command.path)&&command.content!==prepared.content)throw new Error('源文件还有未保存的文本草稿，请先保存，再改名或移动')
+      return prepared&&typeof prepared.content==='string'&&command.destination?{...command,content:prepared.content}:command
+    })
     // Preserve shared virtual placement for callers outside the gameplay explorer too.
     if(!extraEdits.some(edit=>edit.path===EXPLORER_ORGANIZATION_PATH)){
       const raw=this.texts.get(EXPLORER_ORGANIZATION_PATH)
@@ -510,7 +522,17 @@ export class ProjectClient {
       }
     }
     edits.push(...frozenExtras)
-    if (edits.length) await this.apply(edits, '修改源文件及关联资源')
+    if (edits.length) {
+      const completion=this.apply(edits, '修改源文件及关联资源')
+      const record=this.transactions.getSnapshot().transactions.at(-1)!
+      transition.submitted(record.id);submitted=true
+      await completion
+    }else transition.cancel()
+    }catch(error){
+      if(!submitted)transition.cancel()
+      // Known rejections resume through settle(); uncertain requests stay paused.
+      throw error
+    }
   }
   /** Structural edits must not strand an unsaved owned-resource draft at its old path.
    * This is a UI precondition, not authority; S still derives the actual move plan.

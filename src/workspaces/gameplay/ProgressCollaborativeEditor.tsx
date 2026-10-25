@@ -4,7 +4,7 @@ import { textAssetPath } from '../../i18n/localeLayout'
 import { parseProgress } from './progressDoc'
 import type { GoalDefinitionCatalog } from './goalDefinitions'
 import { ProgressEditor } from './ProgressEditor'
-import { getProgressEditor } from './progressEditRegistry'
+import { getProgressEditor,progressEditorSession } from './progressEditRegistry'
 import { downloadFlowFile } from './storage'
 import { progressSlot, type ProgressEffect } from './progressOperations'
 import './ProgressEditor.css'
@@ -17,14 +17,14 @@ function fieldName(effect: ProgressEffect) {
 }
 
 type Props = {
-  client: ProjectClient; path: string; name: string; source: string; locale: string; goalCatalog: GoalDefinitionCatalog
+  detached?:boolean; client: ProjectClient; path: string; name: string; source: string; locale: string; goalCatalog: GoalDefinitionCatalog
   kitOptions: { ref: string; label: string; key?: string }[]; disabled: boolean
   initialSeeds?: Record<string, string>; onCreated?: () => void
   onOpenKit?: (documentKey: string) => void
 }
 export function ProgressCollaborativeEditor(props: Props) {
   const [created, setCreated] = useState(Boolean(props.client.entry(props.path)))
-  if (!created && !props.client.entry(props.path)) return <ProgressCreateDocument {...props} onCreated={() => { props.onCreated?.(); setCreated(true) }} />
+  if (!created && !props.client.entry(props.path) && !props.detached && !progressEditorSession(props.client,props.path)) return <ProgressCreateDocument {...props} onCreated={() => { props.onCreated?.(); setCreated(true) }} />
   return <ProgressLiveEditor {...props} />
 }
 function ProgressCreateDocument({ client, path, name, source, locale, initialSeeds, onCreated, disabled }: Props) {
@@ -60,10 +60,10 @@ function ProgressLiveEditor({ client, path, name, source, locale, goalCatalog, k
   try { doc = parseProgress(state.view.source) } catch (error) { return <p role="alert">{String(error)}</p> }
   return <div className="progress-collaborative-editor">
     <div className="progress-autosave-bar" aria-label="进度自动保存">
-      <span role="status">{!state.ready ? '正在读取进度…' : state.resolving ? '正在处理冲突…' : state.saving ? '正在保存…' : state.error ? '自动保存已暂停 · 草稿保留' : state.dirty ? '等待保存…' : '修改已保存'}</span>
+      <span role="status">{state.location==='changing'?'正在更新资源位置…':state.location==='missing'?'资源已移除 · 草稿保留':!state.ready ? '正在读取进度…' : state.resolving ? '正在处理冲突…' : state.saving ? '正在保存…' : state.error ? '自动保存已暂停 · 草稿保留' : state.dirty ? '等待保存…' : '修改已保存'}</span>
       <button type="button" title="包含当前源文件、语言文本、原始前提与未完成提交" onClick={() => downloadFlowFile(`${name}.draft.json`, JSON.stringify({ ...session.backup(), projectId: client.snapshot.projectId, path }, null, 2) + '\n')}>导出草稿</button>
-      <button type="button" disabled={disabled || !state.ready || state.replaced || state.resolving || state.saving || !!state.active || !state.canUndo} onClick={() => void run(() => session.undo())}>撤销</button>
-      <button type="button" disabled={disabled || !state.ready || state.replaced || state.resolving || state.saving || !!state.active || !state.canRedo} onClick={() => void run(() => session.undo(true))}>重做</button>
+      <button type="button" disabled={disabled || state.location!=='ready' || !state.ready || state.replaced || state.resolving || state.saving || !!state.active || !state.canUndo} onClick={() => void run(() => session.undo())}>撤销</button>
+      <button type="button" disabled={disabled || state.location!=='ready' || !state.ready || state.replaced || state.resolving || state.saving || !!state.active || !state.canRedo} onClick={() => void run(() => session.undo(true))}>重做</button>
     </div>
     {(state.error || error) && <div className="progress-autosave-error" role="alert">
       <p>{error || state.error}</p>
@@ -75,7 +75,7 @@ function ProgressLiveEditor({ client, path, name, source, locale, goalCatalog, k
       </>}
       {!state.ready && <button type="button" onClick={() => void run(() => session.initialize())}>重新加载进度</button>}
     </div>}
-    <ProgressEditor doc={doc} goalCatalog={goalCatalog} kitOptions={kitOptions} disabled={disabled || !state.ready || state.replaced || state.resolving}
+    <ProgressEditor doc={doc} goalCatalog={goalCatalog} kitOptions={kitOptions} disabled={disabled || state.location!=='ready' || !state.ready || state.replaced || state.resolving}
       locale={locale}
       resolveText={key => state.view.languages[locale]?.[key] ?? ''}
       setText={(key, value) => session.editText(locale, key, value)}

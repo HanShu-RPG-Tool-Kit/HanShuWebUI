@@ -295,7 +295,7 @@ export async function refreshServiceProject(binding: BoundProject, current: Work
     assertCanonicalSourcePath(entry.path)
     const index = scripts.findIndex(s => sourcePathOf(s) === entry.path)
     const local = scripts[index]
-    if (local && client.texts.get(entry.path) !== local.content) continue
+    if (local && (local.detached||client.texts.get(entry.path) !== local.content)) continue
     if (local && client.baseline.get(entry.path) === entry.version) continue
     const content = await (await client.read(entry.path, false, entry.version)).text()
     if (content === null) continue
@@ -303,9 +303,14 @@ export async function refreshServiceProject(binding: BoundProject, current: Work
     if (index >= 0) scripts[index] = source; else scripts.push(source)
     staged.push({path:entry.path,content,version:entry.version})
   }
-  const kept = scripts.filter(s => {
+  const semanticDrafts=new Set(client.transactions.editorDirtyPaths())
+  client.resourceLifecycle.observe(new Set(remote.map(entry=>entry.path)))
+  const kept = scripts.map(source=>{
+    const path=sourcePathOf(source)
+    return !remote.some(entry=>entry.path===path)&&client.baseline.has(path)&&(source.content!==client.texts.get(path)||semanticDrafts.has(path))?{...source,detached:true}:source
+  }).filter(s => {
     const path = sourcePathOf(s)
-    return remote.some(e => e.path === path) || !client.baseline.has(path) || client.texts.get(path) !== s.content
+    return s.detached || remote.some(e => e.path === path) || !client.baseline.has(path) || client.texts.get(path) !== s.content
   })
   let assets = [...pkg.assets]
   let assetChanges = 0
@@ -375,6 +380,10 @@ export async function refreshServiceProject(binding: BoundProject, current: Work
     client.texts.set(stage.path,stage.content); client.baseline.set(stage.path,stage.version);client.originals.set(stage.path,{version:stage.version,data:stage.content})
   }
   for(const before of pkg.scripts)if(!kept.some(s=>s.id===before.id) && merged.find(s=>s.id===before.id)?.content===before.content){client.baseline.delete(sourcePathOf(before));client.texts.delete(sourcePathOf(before))}
+  for(const draft of kept.filter(source=>source.detached)){
+    const index=merged.findIndex(source=>source.id===draft.id)
+    if(index>=0)merged[index]={...merged[index],detached:true}
+  }
   const result = merged.filter(s => kept.some(k => k.id === s.id) || !pkg.scripts.some(p => p.id === s.id && p.content === s.content))
   if (staged.length || assetChanges || result.length !== pkg.scripts.length) client.remoteEpoch++
   const packages = latest.packages.map(p => p.id === pkg.id ? { ...p, explorer:mergedExplorer, scripts: result, assets: latestPkg.assets === pkg.assets ? assets : latestPkg.assets } : p)
@@ -415,6 +424,7 @@ export async function collectProjectChanges(binding: BoundProject, current: Work
     }
     if (pkg.name !== binding.manifest.name) edits.push({ op: 'write', path: PROJECT_FILE, data: serializeManifest({ ...binding.manifest, name: pkg.name }) })
     for (const source of pkg.scripts) {
+      if(source.detached)continue
       const path = sourcePathOf(source)
       if (client.texts.get(path) !== source.content) edits.push({ op: 'write', path, data: source.content })
     }

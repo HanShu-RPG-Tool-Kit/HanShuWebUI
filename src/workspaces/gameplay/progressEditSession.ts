@@ -19,6 +19,7 @@ export type ProgressEditState = {
   canUndo: boolean; canRedo: boolean; conflicts: ProgressEffect[]
   replaced: boolean
   resolving: boolean
+  location: 'ready'|'changing'|'missing'
 }
 
 /** One document's local intent queue. Server acknowledgements are the only undo records. */
@@ -39,6 +40,7 @@ export class ProgressEditSession {
   private documentId: string
   private replaced = false
   private resolving = false
+  private location:'ready'|'changing'|'missing'='ready'
   private listeners = new Set<() => void>()
   private snapshot: ProgressEditState
   private readonly adapter: ProgressSessionAdapter
@@ -67,7 +69,7 @@ export class ProgressEditSession {
     return { view, server: this.base, ready: this.ready, dirty: !!(this.pending.length || this.active), saving: this.saving, error: this.error, active: this.active,
       canUndo: !!(this.pending.length || this.undoStack.length), canRedo: !!this.redoStack.length && !this.pending.length,
       replaced: this.replaced,
-      resolving: this.resolving,
+      resolving: this.resolving, location:this.location,
       conflicts: coalesceProgressEffects(effects).filter(effect => !sameProgressValue(progressSlot(this.base, effect.target), effect.expected)) }
   }
   private changed() {
@@ -86,6 +88,7 @@ export class ProgressEditSession {
     else if (this.pending.length) this.schedule()
   }
   async refresh() {
+    if(this.location==='missing')return
     const ticket = ++this.refreshing
     const latest = await this.adapter.read()
     if (ticket !== this.refreshing || latest.revision < this.base.revision) return
@@ -105,7 +108,7 @@ export class ProgressEditSession {
     this.edit([{ target, expected: progressSlot(this.snapshot.view, target), value: { present: true, value } }], immediate)
   }
   private edit(effects: ProgressEffect[], immediate: boolean) {
-    if (this.resolving) return
+    if (this.resolving||this.location!=='ready') return
     this.pending = coalesceProgressEffects([...this.pending, ...effects])
     this.changed()
     if (immediate) void this.flush().catch(() => undefined)
@@ -113,7 +116,7 @@ export class ProgressEditSession {
   }
   private schedule() {
     if (this.timer) clearTimeout(this.timer)
-    if (this.composing) return
+    if (this.composing||this.location!=='ready') return
     this.timer = setTimeout(() => { this.timer = null; void this.flush().catch(() => undefined) }, 500)
   }
   pauseText() { if (this.timer) clearTimeout(this.timer); this.timer = null }
@@ -121,6 +124,7 @@ export class ProgressEditSession {
   finishText() { if (this.pending.length) void this.flush().catch(() => undefined) }
   async flush(): Promise<void> {
     this.pauseText()
+    if(this.location==='missing')return
     if (this.replaced) throw new Error(this.error || '进度身份已变化，原草稿已保留')
     if (this.composing) return
     if (this.current) { await this.current; return this.flush() }
@@ -159,7 +163,7 @@ export class ProgressEditSession {
   }
   /** A recovered outbox retry settles the same session even after the first Promise rejected. */
   async reconcile() {
-    if (!this.active || this.current || this.recovering || this.resolving) return
+    if (this.location!=='ready'||!this.active || this.current || this.recovering || this.resolving) return
     this.recovering = true
     try {
       const record = this.adapter.record(this.active.id)
@@ -182,6 +186,28 @@ export class ProgressEditSession {
     } catch (error) { this.error = String(error); this.changed() }
     finally { this.recovering = false }
   }
+  async prepareLocationChange():Promise<string> {
+    if(this.location!=='ready')throw new Error('资源结构操作尚未完成')
+    this.location='changing';this.pauseText();this.changed()
+    try {await this.flush();await this.refresh();return this.snapshot.server.source}
+    catch(error){this.cancelLocationChange();throw error}
+  }
+  cancelLocationChange(){
+    if(this.location!=='changing')return
+    this.location='ready';this.changed();if(this.pending.length)this.schedule()
+  }
+  async relocate(){
+    this.pauseText();++this.refreshing
+    this.location='ready';this.ready=false
+    // Archived undo receipts refer to the previous source path.
+    this.undoStack=[];this.redoStack=[];this.error='';this.changed()
+    await this.initialize()
+  }
+  markMissing(){
+    this.location='missing';this.pauseText();++this.refreshing
+    this.error='资源已被移除或移动，自动保存已停止。未完成修改已保留，可导出草稿。'
+    this.changed()
+  }
   async undo(redo = false) {
     if (this.resolving) return
     if (!redo && this.pending.length && !this.active) { this.pauseText(); this.pending = []; this.error = ''; this.changed(); return }
@@ -197,6 +223,7 @@ export class ProgressEditSession {
   }
   /** Explicit bulk policy: drop only incompatible fields, submit the rest with their original expectations. */
   async synchronize() {
+    if(this.location!=='ready')return
     this.pauseText()
     if (!this.snapshot.dirty) { try{await this.refresh()}catch(error){if(this.replaced)await this.openReplacement();else throw error}return }
     if (this.current) await this.current.catch(() => undefined)

@@ -13,7 +13,7 @@ export function rememberProjectDraft(workspace: Workspace): void {
   const drafts: Draft[]=[]
   for (const p of workspace.packages) for(const source of p.scripts) {
     const path=sourcePathOf(source)
-    if(source.content!==client.texts.get(path)) drafts.push({source,version:client.baseline.get(path)??null,original:client.texts.get(path)??null})
+    if(source.detached||source.content!==client.texts.get(path)) drafts.push({source,version:client.baseline.get(path)??null,original:client.texts.get(path)??null})
   }
   const recovery: Recovery = { sources: drafts, staged: client.transactions.stagedWrites().filter(e => typeof e.data === 'string').map(e=>({...e,baseData:typeof e.baseData === 'string'?e.baseData:undefined})) }
   try { sessionStorage.setItem(key(client),JSON.stringify(recovery)) } catch { /* Existing visible editor remains the primary draft; save/download before closing. */ }
