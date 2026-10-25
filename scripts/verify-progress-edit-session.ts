@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
-import { ProgressEditSession, type ProgressSessionAdapter, type ProgressSessionRecovery } from '../src/workspaces/progress/progressEditSession'
-import { applyProgressEffects, coalesceProgressEffects, progressDocumentEffects, progressSlot, sameProgressValue, type ProgressAcknowledgement, type ProgressCommand, type ProgressEffect } from '../src/workspaces/progress/progressOperations'
-import { createProgress, parseProgress, stringifyProgress } from '../src/workspaces/progress/progressDoc'
+import { ProgressEditSession, type ProgressSessionAdapter, type ProgressSessionRecovery } from '../src/workspaces/quest/progressEditSession'
+import { applyProgressEffects, coalesceProgressEffects, progressDocumentEffects, progressSlot, sameProgressValue, type ProgressAcknowledgement, type ProgressCommand, type ProgressEffect } from '../src/workspaces/quest/progressOperations'
+import { createProgress, parseProgress, stringifyProgress } from '../src/workspaces/quest/progressDoc'
 
 const document = () => ({ ...createProgress(), id: 'document-a', goals: [{ id: 'goal-a', kind: 'counter', config: { target: 1, bonus: 3 } }] })
 const wait = (ms = 0) => new Promise(resolve => setTimeout(resolve, ms))
@@ -26,7 +26,7 @@ function fixture(recovery?: ProgressSessionRecovery) {
         const effects = command.command === 'apply' ? command.changes : acks.get(command.transactionId)!.result.effects.map(effect => ({ target: effect.target, expected: effect.value, value: effect.expected }))
         for (const effect of effects) if (!sameProgressValue(progressSlot(state, effect.target), effect.expected)) throw new Error('conflict')
         state = { ...applyProgressEffects(state, effects), revision: state.revision + 1 }
-        const ack = { transactionId: requestId, result: { path: 'src/progress/a.progress', documentId: 'document-a', source: state.source, effects, languages: [] } }
+        const ack = { transactionId: requestId, result: { path: 'src/quest/a.quest', documentId: 'document-a', source: state.source, effects, languages: [] } }
         acks.set(requestId, ack); records.set(id, { requestId, phase: 'saved', message: '' }); return ack
       })().catch(error => { records.set(id, { requestId, phase: 'conflict', message: String(error) }); throw error })
       return { id, requestId, completion }

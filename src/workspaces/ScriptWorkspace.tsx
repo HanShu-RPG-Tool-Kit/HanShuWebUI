@@ -18,7 +18,7 @@ import {
   type NewFileSeedContext,
   type NewFileTypeId,
 } from '../newFileTypes'
-import { parseGoalDefinitionsFromSource } from '../workspaces/progress/goalDefinitions'
+import { parseGoalDefinitionsFromSource } from '../workspaces/quest/goalDefinitions'
 import {
   CHAR_THEME_ID,
   registerCharLanguage,
@@ -1807,7 +1807,7 @@ export const ScriptWorkspace = forwardRef<
    * 取代了旧的 `handleNewScript`：那时候用户在 `window.prompt` 里连后缀一起手打，
    * 提示语还得把 `MANUAL_FILE_EXTENSIONS_LABEL` 抄一遍。现在类型来自
    * `newFileTypes` 注册表（后缀由类型决定，用户只给基名），初始正文也由注册表按类型播种 ——
-   * 空正文对 `.progress` / `.kit` / `.hflow` 就是一份打开即报错的坏文档。
+   * 空正文对 `.quest` / `.kit` 就是一份打开即报错的坏文档。
    *
    * 错误**返回**而不是 `window.alert`：调用方（资源树）把它画在输入框下面，
    * 用户刚敲的名字还在，改一下就能重试。

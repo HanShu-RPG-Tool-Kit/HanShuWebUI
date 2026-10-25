@@ -11,7 +11,7 @@ const output=resolve('../output/account-collaboration');await mkdir(output,{recu
 let browser
 const active=p=>p.locator('.app-workspace-pane.active')
 const disk=async path=>readFile(join(h.root,path),'utf8')
-async function openProgress(p){await closeCollaboration(p);await p.getByRole('tab',{name:'进度流程',exact:true}).click();await active(p).getByLabel('筛选资源',{exact:true}).fill('example.progress');await active(p).locator('[role=treeitem][title="example.progress"]').click();await until(()=>active(p).getByLabel('进度标题',{exact:true}).isEnabled(),'Progress not ready')}
+async function openProgress(p){await closeCollaboration(p);await p.getByRole('tab',{name:'进度流程',exact:true}).click();await active(p).getByLabel('筛选资源',{exact:true}).fill('example.quest');await active(p).locator('[role=treeitem][title="example.quest"]').click();await until(()=>active(p).getByLabel('进度标题',{exact:true}).isEnabled(),'Progress not ready')}
 async function sync(p){await collaboration(p,'修改');await p.getByRole('button',{name:'放弃冲突修改并同步修改',exact:true}).click();await p.getByRole('dialog',{name:'正在同步修改',exact:true}).waitFor({state:'hidden'});assert.equal(await p.getByRole('alert').filter({hasText:'仍有'}).count(),0)}
 try {
   const admin=await h.api('','/api/local-session','POST',{credential:h.credential,clientName:'验收准备'})
@@ -51,10 +51,10 @@ try {
   const title=active(a).getByLabel('进度标题',{exact:true}),description=active(a).getByLabel('进度描述',{exact:true})
   await title.dispatchEvent('compositionstart',{data:''});await title.fill('A 冲突标题');await description.fill('A 可以提交的描述')
   await active(b).getByLabel('进度标题',{exact:true}).fill('B 的服务器标题');await active(b).getByLabel('进度标题',{exact:true}).press('Tab')
-  await until(async()=>JSON.parse(await disk('assets/zh_cn/lang_progress/example.lang')).name==='B 的服务器标题','Peer title did not save')
+  await until(async()=>JSON.parse(await disk('assets/zh_cn/lang_quest/example.lang')).name==='B 的服务器标题','Peer title did not save')
   await title.dispatchEvent('compositionend',{data:'A 冲突标题'})
   await a.locator('.collab-attention-label').waitFor();await sync(a)
-  const language=JSON.parse(await disk('assets/zh_cn/lang_progress/example.lang'))
+  const language=JSON.parse(await disk('assets/zh_cn/lang_quest/example.lang'))
   assert.equal(language.name,'B 的服务器标题');assert.equal(language.description,'A 可以提交的描述')
   assert.equal(await title.inputValue(),'B 的服务器标题');assert.equal(await description.inputValue(),'A 可以提交的描述')
   console.log('通过：同一进度内放弃冲突标题，保留并提交不冲突的描述，不整份覆盖语言文件')

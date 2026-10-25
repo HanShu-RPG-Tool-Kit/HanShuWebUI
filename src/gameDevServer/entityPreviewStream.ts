@@ -1,7 +1,7 @@
 import {controlRequest,getControlHubSnapshot,subscribeControlHub} from './controlHub'
 import {controlWsUrl} from './protocol'
-import type {EntityDocument} from '../workspaces/progress/entityDoc'
-import {entityFingerprint,readEntityStreamFrame,saveEntitySnapshot} from '../workspaces/progress/entitySnapshot'
+import type {EntityDocument} from '../workspaces/quest/entityDoc'
+import {entityFingerprint,readEntityStreamFrame,saveEntitySnapshot} from '../workspaces/quest/entitySnapshot'
 export type PreviewAnimation='idle'|'walk'|'run'|'attack'|'spin'
 export type PreviewSpec={id:string;template:EntityDocument;width:number;height:number;animation:PreviewAnimation}
 export type PreviewStatus={online:boolean;running:boolean;error:string}

@@ -63,8 +63,8 @@ try {
   const title = active(a).getByLabel('进度标题', { exact: true })
   await until(() => title.isEnabled(), 'Local progress form not ready')
   await title.fill('在本机目录中自动保存'); await title.press('Tab')
-  await until(async () => (await value('assets/zh_cn/lang_progress/example.lang')).name === '在本机目录中自动保存', 'Progress did not save to selected local directory')
-  assert.equal(JSON.parse(await readFile(join(h.root, 'assets/zh_cn/lang_progress/example.lang'), 'utf8')).name, '共同进度')
+  await until(async () => (await value('assets/zh_cn/lang_quest/example.lang')).name === '在本机目录中自动保存', 'Progress did not save to selected local directory')
+  assert.equal(JSON.parse(await readFile(join(h.root, 'assets/zh_cn/lang_quest/example.lang'), 'utf8')).name, '共同进度')
   passed('无需填写地址或凭证即可打开已有工程，进度操作通过S落盘到所选目录')
 
   await open(b, '工程甲', true)
@@ -77,7 +77,7 @@ try {
   await until(() => active(b).getByLabel('进度标题', { exact: true }).isEnabled(), 'Switching one window stopped peer project service')
   await active(b).getByLabel('进度标题', { exact: true }).fill('另一窗口继续编辑工程甲')
   await active(b).getByLabel('进度标题', { exact: true }).press('Tab')
-  await until(async () => (await value('assets/zh_cn/lang_progress/example.lang')).name === '另一窗口继续编辑工程甲', 'Peer lost write access after another client switched')
+  await until(async () => (await value('assets/zh_cn/lang_quest/example.lang')).name === '另一窗口继续编辑工程甲', 'Peer lost write access after another client switched')
   passed('空目录初始化为新工程，同一目录复用S，切换不影响原工程协作者')
 
   await open(a, '工程甲')
@@ -103,7 +103,7 @@ try {
   await form(a).getByRole('alert').filter({ hasText: '请等待当前保存结束' }).waitFor()
   assert.equal(opened.length, beforeSwitch)
   releaseRoute()
-  await until(async () => (await value('assets/zh_cn/lang_progress/example.lang')).name === '在途操作完成后再切换', 'Queued local edit was lost during attempted switch')
+  await until(async () => (await value('assets/zh_cn/lang_quest/example.lang')).name === '在途操作完成后再切换', 'Queued local edit was lost during attempted switch')
   await a.unroute('**/api/files/commit')
   await picker(a).getByRole('button', { name: '返回', exact: true }).click()
   await form(a).getByRole('button', { name: '取消', exact: true }).click()

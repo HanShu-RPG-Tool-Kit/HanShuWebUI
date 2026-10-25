@@ -5,7 +5,7 @@
 | 标识 | `hanshu.kit.expr` |
 | 版本 | **1**（正式） |
 | 适用 | 礼包（`.kit`）修饰器、指令插值、脚本接口 |
-| 参考实现 | WebUI `src/workspaces/progress/kitExpr.ts` |
+| 参考实现 | WebUI `src/workspaces/quest/kitExpr.ts` |
 
 本标准规定礼包修饰器所用的数值表达式语言：语法、求值语义、内置函数，以及修饰器绑定到条目字段后的取值规则。WebUI 与后端引擎**必须**按本标准得到一致结果。
 

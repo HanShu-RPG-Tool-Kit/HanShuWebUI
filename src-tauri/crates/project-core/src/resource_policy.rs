@@ -305,8 +305,8 @@ fn plan_inner(
                     )?;
                 }
                 require(
-                    !target.to_ascii_lowercase().ends_with(".progress")
-                        || path.to_ascii_lowercase().ends_with(".progress"),
+                    !target.to_ascii_lowercase().ends_with(".quest")
+                        || path.to_ascii_lowercase().ends_with(".quest"),
                     "invalid",
                     "不能通过改名把普通文件转换为进度文档",
                 )?;

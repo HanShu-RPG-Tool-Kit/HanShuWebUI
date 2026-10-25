@@ -17,8 +17,8 @@ const output=resolve('../output/collaboration-presence')
 const results=[],pages=[],errors=[],commits=[]
 let browser,setupToken='',sharedBase=''
 const heartbeat=setInterval(()=>{if(setupToken)void h.api(setupToken,'/api/heartbeat','POST',{resourceId:null,fileLeases:[]}).catch(()=>undefined)},8000)
-const source='src/progress/example.progress',secondSource='src/progress/second.progress'
-const language='assets/zh_cn/lang_progress/example.lang'
+const source='src/quest/example.quest',secondSource='src/quest/second.quest'
+const language='assets/zh_cn/lang_quest/example.lang'
 const sleep=ms=>new Promise(r=>setTimeout(r,ms))
 async function until(fn,label,timeout=20000){const deadline=Date.now()+timeout;while(!await fn()){assert.ok(Date.now()<deadline,label);await sleep(100)}}
 function passed(name){results.push({name,status:'passed'});console.log(`通过：${name}`)}
@@ -28,7 +28,7 @@ async function login(page,key,name){
   const {token}=await loginProject(page,testAccount(key).local?h.base:sharedBase,key,name)
   return {token,id:(await h.api(token,'/api/project')).session.id}
 }
-async function openProgress(page,name='example.progress'){
+async function openProgress(page,name='example.quest'){
   await page.getByRole('tab',{name:'进度流程',exact:true}).click()
   await page.getByLabel('筛选资源',{exact:true}).fill(name)
   await page.locator(`[role=treeitem][title="${name}"]`).click()
@@ -46,7 +46,7 @@ async function save(page,name){await title(page).fill(name);await until(async()=
 try{
   await mkdir(output,{recursive:true})
   await writeFile(join(h.root,secondSource),JSON.stringify({...progress,id:'second-progress'}))
-  await writeFile(join(h.root,'assets/zh_cn/lang_progress/second.lang'),JSON.stringify({name:'第二个进度',description:'用于切换编辑会话'}))
+  await writeFile(join(h.root,'assets/zh_cn/lang_quest/second.lang'),JSON.stringify({name:'第二个进度',description:'用于切换编辑会话'}))
   const setup=await h.login(h.credential,'验收 API')
   setupToken=setup.token
   sharedBase=(await h.api(setupToken,'/api/share/enable','POST')).urls[0]
@@ -100,10 +100,10 @@ try{
 
   // An unrelated operation's lease must survive view and workspace navigation.
   const unrelated=(await h.api(sa.token,'/api/files/leases','POST',{paths:['meta/docs/notes.md']}))[0]
-  await openProgress(a,'second.progress');await presence(sa,secondSource,'viewing')
+  await openProgress(a,'second.quest');await presence(sa,secondSource,'viewing')
   assert.ok(await title(a).isEnabled())
   assert.ok((await state()).leases.some(l=>l.id===unrelated.id))
-  assert.ok(!(await state()).leases.some(l=>l.resourceId.endsWith('.progress')))
+  assert.ok(!(await state()).leases.some(l=>l.resourceId.endsWith('.quest')))
   await a.getByRole('tab',{name:'剧本',exact:true}).click();await presence(sa,'src/hanshu/story.hs','viewing')
   assert.ok((await state()).leases.some(l=>l.id===unrelated.id),'Workspace switch released an unrelated lease')
   await openProgress(a);await presence(sa,source,'viewing')

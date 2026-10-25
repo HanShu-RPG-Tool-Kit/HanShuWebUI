@@ -4,7 +4,7 @@ import { harness } from './collaboration-harness.mjs'
 // Real HTTP integration for informational focus vs permission and lease authority.
 const h = await harness()
 const skin = '.hanshu/skinmanager/library.json'
-const source = 'src/progress/example.progress'
+const source = 'src/quest/example.quest'
 const script = 'src/hanshu/story.hs'
 let count = 0
 const passed = name => { count++; console.log(`通过：${name}`) }

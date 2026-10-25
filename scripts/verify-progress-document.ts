@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
-import { createProgress, createProgressGoal, duplicateProgressGoal, moveProgressGoal, parseProgress, progressIssues, readProgressSource, stringifyProgress } from '../src/workspaces/progress/progressDoc.ts'
-import { parseGoalDefinitionsFromSource } from '../src/workspaces/progress/goalDefinitions.ts'
+import { createProgress, createProgressGoal, duplicateProgressGoal, moveProgressGoal, parseProgress, progressIssues, readProgressSource, stringifyProgress } from '../src/workspaces/quest/progressDoc.ts'
+import { parseGoalDefinitionsFromSource } from '../src/workspaces/quest/goalDefinitions.ts'
 const defs = parseGoalDefinitionsFromSource(`@goal("sample:counter")
 @config(field("target", "int", required=True, default=10))
 class CounterGoal(BaseGoalPy):

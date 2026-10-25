@@ -5,13 +5,13 @@
 
 import { getProjectSession } from '../project/projectSession'
 import { getExtension, sourcePathOf } from '../workspace'
-import { parseItem, type ItemDocument } from '../workspaces/progress/itemDoc'
-import { getCachedDisplaySync } from '../workspaces/progress/itemSnapshotCache'
-import { itemFingerprint, type ItemStackDisplay } from '../workspaces/progress/itemstack'
+import { parseItem, type ItemDocument } from '../workspaces/quest/itemDoc'
+import { getCachedDisplaySync } from '../workspaces/quest/itemSnapshotCache'
+import { itemFingerprint, type ItemStackDisplay } from '../workspaces/quest/itemstack'
 import {
   itemRefFromFileName,
   normalizeItemRef,
-} from '../workspaces/progress/kit'
+} from '../workspaces/quest/kit'
 
 export type ItemLibraryEntry = {
   /** 物品库引用名（文件名无 .item） */

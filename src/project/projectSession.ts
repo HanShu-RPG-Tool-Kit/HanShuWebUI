@@ -15,15 +15,15 @@ import {
 import { getExtension } from '../workspace'
 import { sourcePathOf } from '../workspace'
 import { assetCacheEpoch } from '../assets/idb'
-import {scriptTypeInFolder} from '../workspaces/progress/library'
-import { sectionFolderKey } from '../workspaces/progress/library'
+import {scriptTypeInFolder} from '../workspaces/quest/library'
+import { sectionFolderKey } from '../workspaces/quest/library'
 import type {
   FlowDocument,
   FlowFolder,
   FlowPackageId,
   FlowWorkspaceState,
-} from '../workspaces/progress/storage'
-import { stampDocument } from '../workspaces/progress/storage'
+} from '../workspaces/quest/storage'
+import { stampDocument } from '../workspaces/quest/storage'
 
 export const PROGRESS_UI_STORAGE_KEY = 'hanshu.progressUi.v1'
 /** 旧整库草稿；迁入工程后删除 */
@@ -31,8 +31,7 @@ export const LEGACY_PROGRESS_WORKSPACE_KEY = 'hanshu.progressWorkspace.v1'
 
 /** 进度工作区认领的源文件后缀（含目标定义用的 .py） */
 export const PROGRESS_SOURCE_EXTS = new Set([
-  '.progress',
-  '.hflow',
+  '.quest',
   '.nav',
   '.item',
   '.entity',
@@ -99,8 +98,8 @@ export function useProjectSession(): Session {
 
 export function packageIdOfExt(ext: string): FlowPackageId | null {
   switch (ext.toLowerCase()) {
-    case '.progress': return 'progress'
-    case '.hflow': return 'story'
+    case '.quest':
+      return 'quest'
     case '.nav': return 'navigator'
     case '.item': return 'items'
     case '.entity': return 'entities'

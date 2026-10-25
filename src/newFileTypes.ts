@@ -13,7 +13,7 @@ import {scriptTemplate,SCRIPT_TYPE_NAMES,SCRIPT_TYPES} from './scriptResources'
  *    手工建一个只会变成孤儿，所以它们**不在**这张表里。这条一致性由
  *    `scripts/verify-new-file-types.ts` 断言，别靠人眼。
  * 2. **`seed` 必须能被各自的解析器吃回去**。`createScript(name, '')` 那种空壳对
- *    `.progress` / `.kit` / `.hflow` 就是一份坏文档（打开即报错），所以一律复用既有构造函数播种。
+ *    `.quest` / `.kit` 就是一份坏文档（打开即报错），所以一律复用既有构造函数播种。
  * 3. **注册表不认识工作区**。语言表、服务定义、供应商预设、目标定义都由调用方经
  *    `NewFileSeedContext` 现取现给 —— 让一张纯数据表去拉这些，等于把「新建文件」
  *    和配音 / 进度两个工作区焊在一起，测试也就再跑不起来了。
@@ -26,17 +26,17 @@ import {
 } from './workspace'
 import { defaultHsSeed } from './hanshu/defaultSeed'
 import type { ExplorerIconKind } from './explorerIcons'
-import { createFlow } from './workspaces/progress/model'
-import { createFlowDocument } from './workspaces/progress/storage'
-import { createKit, stringifyKit } from './workspaces/progress/kit'
+import { createFlow } from './workspaces/quest/model'
+import { createFlowDocument } from './workspaces/quest/storage'
+import { createKit, stringifyKit } from './workspaces/quest/kit'
 import {
   createNavigationPoint,
   stringifyNavigationPoint,
-} from './workspaces/progress/navigationPoint'
-import { createProgress, stringifyProgress } from './workspaces/progress/progressDoc'
-import { createItem, stringifyItem } from './workspaces/progress/itemDoc'
-import { createEntity, stringifyEntity } from './workspaces/progress/entityDoc'
-import type { GoalDefinition } from './workspaces/progress/goalDefinitions'
+} from './workspaces/quest/navigationPoint'
+import { createProgress, stringifyProgress } from './workspaces/quest/progressDoc'
+import { createItem, stringifyItem } from './workspaces/quest/itemDoc'
+import { createEntity, stringifyEntity } from './workspaces/quest/entityDoc'
+import type { GoalDefinition } from './workspaces/quest/goalDefinitions'
 import { blankServiceDefinition, stringifyServiceDefinition } from './tts/service'
 import { stringifyVoicePlan, type VoicePlan } from './tts/plan'
 import type { ProviderPreset } from './tts/providers'
@@ -46,7 +46,7 @@ export type NewFileGroupId = 'source' | 'progress' | 'meta'
 
 export const NEW_FILE_GROUPS: readonly { id: NewFileGroupId; label: string }[] = [
   { id: 'source', label: '源文件' },
-  { id: 'progress', label: '进度与流程' },
+  { id: 'progress', label: '任务' },
   { id: 'meta', label: '创作资料' },
 ]
 
@@ -267,38 +267,38 @@ export const NEW_FILE_TYPES: readonly NewFileType[] = [
   })),
   {
     id: 'progress',
-    ext: '.progress',
-    label: '进度 / 委托',
-    hint: '目标、可见性与奖励（src/progress）；表单编辑',
+    ext: '.quest',
+    label: '单进度任务',
+    hint: '目标、可见性与奖励（src/quest）；表单编辑',
     icon: 'progress',
     group: 'progress',
-    defaultBase: '新进度',
+    defaultBase: '新单进度任务',
     /*
-     * `createProgress` 忽略标题（文档里的 `name` 是**语义键**，译文在 lang_progress），
-     * 所以文件名不会进正文 —— 名称由用户在进度工作区填，`progressIssues` 会提示"请填写进度名称"。
+     * `createProgress` 忽略标题（文档里的 `name` 是**语义键**，译文在 lang_quest），
+     * 所以文件名不会进正文 —— 名称由用户在任务工作区填，`progressIssues` 会提示"请填写进度名称"。
      * 这是有意的：新建时猜一个显示名，只会让译文表里多一条没人认领的条目。
      */
     seed: (base, ctx) => stringifyProgress(createProgress(base.trim(), ctx.goalDefinitions)),
   },
   {
     id: 'hflow',
-    ext: '.hflow',
-    label: '故事流程',
-    hint: '树图节点与连线的草稿（src/story）',
+    ext: '.quest',
+    label: '多进度任务',
+    hint: '树图节点与连线的草稿（src/quest）',
     icon: 'hflow',
     group: 'progress',
-    defaultBase: '新流程',
+    defaultBase: '新多进度任务',
     /*
      * 只取 `createFlowDocument(...).source`（= flow 的 JSON）：文件名由用户在资源树里定，
-     * 而 `createFlowDocument` 会按 flow 标题另拼一个 `.hflow` 名，与这里的选择无关。
+     * 而 `createFlowDocument` 会按 flow 标题另拼一个 `.quest` 名，与这里的选择无关。
      *
      * `base` 传进 `createFlow` 的标题位是**眼下用不上**的（`_title` 收了不用：标题是语义键，
-     * 译文在 lang_flow）。与进度工作区的 `newFlow` 同一写法 —— 它也是把标题传进同一个位置。
+     * 译文在 lang_quest）。与任务工作区的 `newFlow` 同一写法 —— 它也是把标题传进同一个位置。
      *
-     * `package: 'story'` 是分类的合理默认：剧本工作区没有"分类"这个概念，树图分类归进度
+     * `package: 'quest'` 是分类的合理默认：剧本工作区没有"分类"这个概念，任务归任务
      * 工作区；`folderId` 留空即落在该分类根（`sourcesToProgressDocuments` 同样这么认）。
      */
-    seed: (base) => createFlowDocument(createFlow(undefined, base.trim()), 'story').source,
+    seed: (base) => createFlowDocument(createFlow(undefined, base.trim()), 'quest').source,
   },
   {
     id: 'nav',

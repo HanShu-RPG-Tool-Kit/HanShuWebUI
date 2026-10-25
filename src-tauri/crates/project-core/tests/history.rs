@@ -322,21 +322,21 @@ fn corrupt_content_and_oversized_compressed_payloads_fail_closed() {
 fn source_history_includes_owned_languages_before_and_after_rename_but_not_reward_references() {
     let dir = tempfile::tempdir().unwrap();
     for (path, content) in [
-        ("src/progress/a.progress", r#"{"rewardKits":["shared"]}"#),
+        ("src/quest/a.quest", r#"{"rewardKits":["shared"]}"#),
         ("src/gift/shared.kit", "{}"),
-        ("assets/zh_cn/lang_progress/a.lang", "title=A"),
+        ("assets/zh_cn/lang_quest/a.lang", "title=A"),
     ] {
         let path = dir.path().join(path);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, content).unwrap();
     }
     let (mut e, sid, _) = open(dir.path(), 1000);
-    e.acquire_files(&sid, &["src/progress/a.progress".into()], false, 1000)
+    e.acquire_files(&sid, &["src/quest/a.quest".into()], false, 1000)
         .unwrap();
     let language = change(
         &mut e,
         &sid,
-        "assets/zh_cn/lang_progress/a.lang",
+        "assets/zh_cn/lang_quest/a.lang",
         b"title=B",
         1000,
     );
@@ -360,7 +360,7 @@ fn source_history_includes_owned_languages_before_and_after_rename_but_not_rewar
         FileTransactionStatus::Committed
     );
     let page = e
-        .history_list(&sid, None, 20, Some("src/progress/a.progress"))
+        .history_list(&sid, None, 20, Some("src/quest/a.quest"))
         .unwrap();
     assert!(page
         .entries
@@ -375,8 +375,8 @@ fn source_history_includes_owned_languages_before_and_after_rename_but_not_rewar
             &sid,
             &[FileOperationRequest {
                 op: FileOperationKind::Move,
-                path: "src/progress/a.progress".into(),
-                destination: Some("src/progress/b.progress".into()),
+                path: "src/quest/a.quest".into(),
+                destination: Some("src/quest/b.quest".into()),
             }],
         )
         .unwrap();
@@ -408,11 +408,11 @@ fn source_history_includes_owned_languages_before_and_after_rename_but_not_rewar
         FileTransactionStatus::Committed
     );
     let first = e
-        .history_list(&sid, None, 1, Some("src/progress/b.progress"))
+        .history_list(&sid, None, 1, Some("src/quest/b.quest"))
         .unwrap();
     assert_eq!(first.entries[0].transaction_id.as_deref(), Some("rename"));
     let older = e
-        .history_list(&sid, first.next_before, 20, Some("src/progress/b.progress"))
+        .history_list(&sid, first.next_before, 20, Some("src/quest/b.quest"))
         .unwrap();
     assert!(older
         .entries
@@ -423,11 +423,11 @@ fn source_history_includes_owned_languages_before_and_after_rename_but_not_rewar
         .iter()
         .any(|entry| entry.transaction_id.as_deref() == Some("referenced-kit")));
     let scoped = e
-        .history_tree_scoped(&sid, 2, Some("src/progress/b.progress"))
+        .history_tree_scoped(&sid, 2, Some("src/quest/b.quest"))
         .unwrap();
     assert_eq!(
         scoped.scope_path.as_deref(),
-        Some("src/progress/a.progress")
+        Some("src/quest/a.quest")
     );
     assert_eq!(
         scoped
@@ -436,25 +436,25 @@ fn source_history_includes_owned_languages_before_and_after_rename_but_not_rewar
             .map(|entry| entry.path.as_str())
             .collect::<Vec<_>>(),
         [
-            "assets/zh_cn/lang_progress/a.lang",
-            "src/progress/a.progress"
+            "assets/zh_cn/lang_quest/a.lang",
+            "src/quest/a.quest"
         ]
     );
     let language = e
-        .history_tree_scoped(&sid, 2, Some("assets/zh_cn/lang_progress/b.lang"))
+        .history_tree_scoped(&sid, 2, Some("assets/zh_cn/lang_quest/b.lang"))
         .unwrap();
     assert_eq!(
         language.scope_path.as_deref(),
-        Some("assets/zh_cn/lang_progress/a.lang")
+        Some("assets/zh_cn/lang_quest/a.lang")
     );
     assert_eq!(language.entries.len(), 1);
     let current = e
-        .history_tree_scoped(&sid, 4, Some("src/progress/b.progress"))
+        .history_tree_scoped(&sid, 4, Some("src/quest/b.quest"))
         .unwrap();
     assert!(current
         .entries
         .iter()
-        .any(|entry| entry.path == "src/progress/b.progress"));
+        .any(|entry| entry.path == "src/quest/b.quest"));
     assert!(current
         .entries
         .iter()

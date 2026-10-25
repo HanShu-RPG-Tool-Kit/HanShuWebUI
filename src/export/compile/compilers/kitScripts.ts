@@ -1,5 +1,5 @@
 import type {FileCompiler} from '../types'
-import {parseKit,hasKitScript,kitScriptRefs} from '../../../workspaces/progress/kit'
+import {parseKit,hasKitScript,kitScriptRefs} from '../../../workspaces/quest/kit'
 export const kitCompiler:FileCompiler={
  id:'kit',match:file=>file.name.toLowerCase().endsWith('.kit'),
  async compile(file,ctx){

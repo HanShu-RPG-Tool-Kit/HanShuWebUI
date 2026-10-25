@@ -196,7 +196,7 @@ export const HELP_TOPICS: HelpTopic[] = [
   },
   {
     id: 'progress-document',
-    title: '.progress 文档与表单',
+    title: '任务文档与表单',
     group: '进度',
     audience: 'both',
     inDocs: true,

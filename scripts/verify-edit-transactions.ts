@@ -48,11 +48,11 @@ await test('等待异步语言镜像，源文件与语言仅发送一次批量�
 await test('语言初始化尚未产出草稿时保存也等待，种子与异步镜像随源文件一次提交', async () => {
   const { tx, sent } = fixture()
   const initialize = deferred(); const mirror = deferred(); let mirrored = false
-  const preparing = tx.prepareDraft('assets/zh_cn/lang_hflow/new.lang', async () => {
+  const preparing = tx.prepareDraft('assets/zh_cn/lang_quest/new.lang', async () => {
     await initialize.promise
-    void tx.stageWrite(write('assets/zh_cn/lang_hflow/new.lang', '{"name":"新流程"}'), async () => { await mirror.promise; mirrored = true })
+    void tx.stageWrite(write('assets/zh_cn/lang_quest/new.lang', '{"name":"新流程"}'), async () => { await mirror.promise; mirrored = true })
   })
-  const saving = tx.submit('新建流程', () => [write('src/story/new.hflow', 'flow')], true)
+  const saving = tx.submit('新建流程', () => [write('src/quest/new.quest', 'flow')], true)
   await Promise.resolve(); await Promise.resolve()
   assert.equal(sent.length, 0)
   initialize.resolve(); await preparing
@@ -60,21 +60,21 @@ await test('语言初始化尚未产出草稿时保存也等待，种子与异�
   mirror.resolve(); await saving
   assert.equal(mirrored, true)
   assert.equal(sent.length, 1)
-  assert.deepEqual(sent[0].map(edit => edit.path), ['src/story/new.hflow', 'assets/zh_cn/lang_hflow/new.lang'])
+  assert.deepEqual(sent[0].map(edit => edit.path), ['src/quest/new.quest', 'assets/zh_cn/lang_quest/new.lang'])
   assert.equal(tx.stagedWrites().length, 0)
 })
 await test('语言初始化失败阻止源文件先落盘，重试初始化成功后再整批提交', async () => {
   const { tx, sent } = fixture(); let attempts = 0
-  await assert.rejects(tx.prepareDraft('assets/zh_cn/lang_hflow/new.lang', async () => {
+  await assert.rejects(tx.prepareDraft('assets/zh_cn/lang_quest/new.lang', async () => {
     if (++attempts === 1) throw new Error('initial language read failed')
-    void tx.stageWrite(write('assets/zh_cn/lang_hflow/new.lang', '{"name":"初始化后标题"}'))
+    void tx.stageWrite(write('assets/zh_cn/lang_quest/new.lang', '{"name":"初始化后标题"}'))
   }), /initial language read failed/)
-  await assert.rejects(tx.submit('新建流程', () => [write('src/story/new.hflow', 'flow')], true), /准备草稿失败/)
+  await assert.rejects(tx.submit('新建流程', () => [write('src/quest/new.quest', 'flow')], true), /准备草稿失败/)
   assert.equal(sent.length, 0)
   await tx.retry(tx.getSnapshot().transactions[0].id)
   assert.equal(attempts, 2)
   assert.equal(sent.length, 1)
-  assert.deepEqual(sent[0].map(edit => edit.path), ['src/story/new.hflow', 'assets/zh_cn/lang_hflow/new.lang'])
+  assert.deepEqual(sent[0].map(edit => edit.path), ['src/quest/new.quest', 'assets/zh_cn/lang_quest/new.lang'])
 })
 await test('准备资源失败阻止整批提交，重试重新准备后再提交', async () => {
   const { tx, sent } = fixture(); let attempts = 0
@@ -709,20 +709,20 @@ await test('历史恢复成功后本地刷新失败，确认回执只重建视�
 
 await test('语义编辑器脏状态独立于工程快照，不能被远端刷新清除', async () => {
   const { tx } = fixture()
-  tx.setEditorDirty('progress:a', ['src/progress/a.progress', 'assets/en/lang_progress/a.lang'])
+  tx.setEditorDirty('progress:a', ['src/quest/a.quest', 'assets/en/lang_quest/a.lang'])
   tx.setDirtyPaths(['src/a.hs']); tx.setDirtyPaths([])
-  assert.equal(tx.hasDraft('src/progress/a.progress'), true)
+  assert.equal(tx.hasDraft('src/quest/a.quest'), true)
   assert.equal(tx.getSnapshot().pendingPaths.length, 2)
   assert.deepEqual(tx.stagedWrites(), [])
-  tx.setEditorDirty('progress:b', ['src/progress/a.progress'])
+  tx.setEditorDirty('progress:b', ['src/quest/a.quest'])
   tx.setEditorDirty('progress:a', [])
-  assert.equal(tx.hasDraft('src/progress/a.progress'), true)
+  assert.equal(tx.hasDraft('src/quest/a.quest'), true)
   tx.setEditorDirty('progress:b', [])
   assert.deepEqual(tx.getSnapshot().pendingPaths, [])
 })
 
 const progressCommand = { command: 'apply' as const, documentId: 'doc-a', changes: [{ target: { kind: 'field' as const, field: 'abandonable' as const }, expected: { present: true, value: false }, value: { present: true, value: true } }] }
-const progressPath = 'src/progress/a.progress'
+const progressPath = 'src/quest/a.quest'
 const progressReceipt = (id: string): FileTransactionReceipt => ({ ...committed(id), progressResult: { path: progressPath, documentId: 'doc-a', effects: progressCommand.changes, source: '{"id":"doc-a","abandonable":true}', languages: [] } })
 
 await test('进度按操作提交绕过C租约和整文件基线，保留服务精确效果', async () => wireTest(async mock => {
@@ -776,7 +776,7 @@ await test('编辑器恢复原请求不立即发包，持久保存同ID并阻止
   assert.equal(stored.length, 1); assert.equal(stored[0].requestId, 'original-progress-id')
   assert.equal(mock.calls.length, 0)
   assert.equal(await mock.client.recoverProgress(progressPath, command, 'original-progress-id', 'duplicate'), id)
-  await assert.rejects(mock.client.apply([write('assets/en/lang_progress/a.lang', 'unsafe')]), /未处理的提交/)
+  await assert.rejects(mock.client.apply([write('assets/en/lang_quest/a.lang', 'unsafe')]), /未处理的提交/)
   await assert.rejects(mock.client.transactions.forget(id), /不能移除/)
   await assert.rejects(mock.client.transactions.confirm(id), /暂无进度回执/)
   assert.equal(mock.calls.filter(call => call.path === '/api/files/commit').length, 0)

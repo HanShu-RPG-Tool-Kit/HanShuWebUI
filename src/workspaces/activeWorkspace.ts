@@ -8,7 +8,9 @@ export function loadActiveWorkspaceId(
 ): AppWorkspaceId {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw && validIds.includes(raw)) return raw
+    // 旧工作区 id progress-flow → quest
+    const id = raw === 'progress-flow' ? 'quest' : raw
+    if (id && validIds.includes(id)) return id
   } catch {
     // ignore
   }

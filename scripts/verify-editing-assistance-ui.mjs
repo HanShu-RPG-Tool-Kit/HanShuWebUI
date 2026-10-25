@@ -21,7 +21,7 @@ try {
     <div id="root" class="flow-kit-pane" style="width:340px;height:auto;position:absolute;bottom:20px;right:20px;overflow:hidden;padding:16px;gap:12px;border:1px solid #484848"></div>
     <script type="module">
     import React from '${react}';import DOM from '${dom}';
-    import '/src/index.css';import '/src/App.css';import '/src/workspaces/ProgressFlowWorkspace.css';import '/src/workspaces/progress/KitEditor.css';
+    import '/src/index.css';import '/src/App.css';import '/src/workspaces/QuestWorkspace.css';import '/src/workspaces/quest/KitEditor.css';
     import {GameResourceInput,GameCommandInput} from '/src/gameDevServer/EditingAssistance.tsx';
     import {reconnectGameDevControlNow,disconnectGameDevControl} from '/src/gameDevServer/controlHub.ts';window.disconnectGame=disconnectGameDevControl;
     window.calls=[];

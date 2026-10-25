@@ -47,8 +47,7 @@ fn source_directory(kind: &str) -> Option<&'static str> {
     Some(match kind {
         "hs" => "hanshu",
         "char" => "character",
-        "progress" => "progress",
-        "hflow" => "story",
+        "quest" => "quest",
         "nav" => "navigator",
         "kit" => "gift",
         "item" => "items",
@@ -170,13 +169,17 @@ pub(crate) fn resolve(tree: &Tree) -> Vec<ResourceRelation> {
                 }
             }
         }
-        if source(path).is_some_and(|s| s.kind == "progress") {
+        if source(path).is_some_and(|s| s.kind == "quest") {
             let Some(document) = bytes
                 .as_ref()
                 .and_then(|b| serde_json::from_slice::<serde_json::Value>(b).ok())
             else {
                 continue;
             };
+            // 多进度树图无顶层 rewardKits；单进度（含编译前 .quest）才解析礼包引用
+            if document.get("format").and_then(|v| v.as_str()) == Some("hanshu.progress-tree") {
+                continue;
+            }
             let Some(kits) = document
                 .get("rewardKits")
                 .and_then(serde_json::Value::as_array)

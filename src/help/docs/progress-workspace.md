@@ -1,12 +1,12 @@
-# 进度流程原型
+# 任务工作区
 
-“进度流程”是 HanShu 的内容设计工作区，工作区 ID 为 `progress-flow`。当前阶段先确定作者如何组织阶段、分支和条件，执行规则由后续引擎设计。
+任务（quest）是 HanShu 的内容设计工作区，工作区 ID 仍为 `progress-flow`。顶层资源分类为**任务**；其下「单进度 / 多进度」是按 JSON `format` 划分的**虚拟视图**（非磁盘分区）。执行规则由后续引擎设计。
 
-**流程模型与信号语义、表达能力分析**见 [进度流程模型](#progress-flow-model)。
+**流程模型与信号语义**见 [进度流程模型](#progress-flow-model)；单进度表单见 [任务文档](#progress-document)。
 
 ## 原型草稿
 
-当前内部草稿暂用 `format: "hanshu.progress-tree"`、`version: 1` 和 `.hflow` 后缀，以 JSON 保存和恢复编辑内容。这些是原型实现细节，不是冻结的文件协议或引擎数据格式；现阶段不做版本迁移、兼容层或专用 Git 合并机制。模型不包含游戏资源 ID 规则、注册表、数据包路径或 Mod 字段。
+新建一律 **`.quest`**。多进度草稿：`format: "hanshu.progress-tree"`、`version: 1`；单进度表单：`format: "hanshu.progress"`。这些是原型实现细节；现阶段不做专用 Git 合并。模型不含游戏资源 ID / 数据包路径。
 
 ```json
 {
@@ -41,22 +41,22 @@ checkpoint 按稳定 ID 平铺保存，只含名称与说明（`FlowText` 无 `k
 
 ## 工程服务
 
-进度与剧本使用同一个全局工程连接，文件读写统一经过 S；不再另开一份「共享进度」工程。源文件与语言/配音资源共用写权，保存只提交变更。详见[工程服务与多人协作](#collaboration-service)。
+任务与剧本共用同一全局工程连接，文件读写统一经过 S。源文件与语言/配音资源共用写权，保存只提交变更。详见[工程服务与多人协作](#collaboration-service)。
 
 ## 编辑与保存
 
-- 左侧资源管理器按十个顶层分类组织资源：**脚本**、**进度**、**故事流程**、**演员**、**声誉**、**区域**、**导航器**、**商店**、**礼包**、**物品库**（各分类下可有文件夹）。「脚本」下内置二级分类 **目标定义**（稳定、不可重命名/移动/删除，其下仍可建普通文件夹），其内另有虚拟只读文件夹 **内置**（含 `core:dialogue_choice` / `core:manual` / `core:counter` 等只读样例脚本，不落盘；进度收集目标定义时始终计入，工程脚本同 kind 可覆盖）。并可新建 / 导入 **`.py`** 脚本（主区用 Python 编辑器打开）。「进度」可新建 / 导入 **`.progress`**（委托表单：目标种类来自目标定义脚本）。「导航器」可新建 / 导入 **`.nav`**（导航点 JSON：`position` 固定坐标或 `entity` 绑定实体；对齐引擎 NavigationPoint，不含 datapack 路径 / 资源 id）。「物品库」可新建 / 导入 **`.item`**（详见 [物品库：.item 与 .itemstack](#item-guide)：`format: rpgtoolkit:item`、必填 `item.id` + `components`，**不存 count**；可选根级 `tags` 与礼包相同；可带 `display` 快照；主区为标签 + 预览 + 组件树；资源树有只读表视图）。也可拖入 **`.itemstack`** 转成 `.item`（去掉 count）。「礼包」可新建 / 导入 **`.kit`**（JSON：名称；可选 `extends` 单父继承、`includes` 组合；可选 `tags` 游戏标签 string[]——类似 MC Tag 的成员声明，引擎可查询，**继承与父并集去重、组合不并入宿主**，空则不写入；可选 `params` 超参数 / `modifiers` 修饰器，详见应用内帮助与 `hanshu.kit.expr` V1；物品 ItemStack `{id,count,components,display?}`——`display` 仅编辑器展示快照，附 `snapshotOf` 指纹（id + components 的 FNV-1a，不含 count），与当前数据不一致即视为过期：tooltip 改由 WebUI 近似渲染（名称/稀有度/附魔/描述/无法破坏，未识别组件只计数），图标保留但加角标；可从桌面拖入模组导出的 **`.itemstack`** 文件追加/替换物品；随机池 `pools[{rolls, entries[{weight, items}]}]`、药水效果 `effects[{id, amplifier, duration(秒,0=无限), particles}]`、指令、经验 `{kind: levels|points, amount}`、领取反馈 `feedback{message,title,subtitle,sound}`、内联脚本；可选块为空时不写入文件；居中双栏表单）。`.hflow` 树图流程仅能在「故事流程」中新建与导入；其余分类暂只支持文件夹占位，供后续扩展。
+- 左侧资源管理器顶层分类：**脚本**、**任务**、**演员**、**声誉**、**区域**、**导航器**、**商店**、**礼包**、**物品库**、**实体库**（各分类下可有文件夹）。「任务」下有两个**虚拟视图**——**单进度任务**（`hanshu.progress` 表单）与**多进度任务**（`hanshu.progress-tree` 树图）；二者不是真实分区文件夹，磁盘一律 `src/quest/*.quest`。「脚本」下内置二级分类 **目标定义**（稳定、不可重命名/移动/删除），其内另有虚拟只读 **内置**（样例目标脚本不落盘；工程同 kind 可覆盖）。可新建 / 导入 **`.py`**。「任务」新建 **`.quest`**（菜单区分单/多进度作者态）；可导入 `.quest` / `.json`。「导航器」→ **`.nav`**。「物品库」→ **`.item`**（详见 [物品库](#item-guide)）；可拖入 **`.itemstack`** 转成 `.item`。「礼包」→ **`.kit`**（继承/组合、tags、ItemStack 快照、`params`/`modifiers` 等，见礼包帮助）。其余分类暂只支持文件夹占位。
 
-  **工程目录**：进度与剧本共用同一工程包根。打开/新建工程后，进度文档落在 `src/progress/`、`src/story/`、`src/navigator/`、`src/items/`、`src/gift/`、`src/script/<类型>/`（common / goal / kit / item / entity / enchantment / player）。内置脚本来自 `src/scriptResources/builtin/<类型>/*.py`，新建模板来自 `src/scriptResources/templates/<类型>/*.py`；前者虚拟只读展示并参与 PAK 导出，工程同类型同名脚本整份覆盖内置，后者只负责生成新文件。详见[脚本资源](#script-resources)。编辑会即时写入共享工程会话；在进度区「保存」/Ctrl+S 即可整包落盘，无需回到剧本区。未打开工程时进度区只读提示。旧的整库 `hanshu.progressWorkspace.v1` 会在打开工程时迁入源文件后删除；页条等 UI 状态改存 `hanshu.progressUi.v1`。旧草稿未带分类字段时加载为「故事流程」。资源名称与文档标题、稳定 ID 分开维护。
+  **工程目录**：与剧本同一包根。任务落在 `src/quest/`；另有 `src/navigator/`、`src/items/`、`src/entities/`、`src/gift/`、`src/script/<类型>/`。内置脚本与模板见[脚本资源](#script-resources)。编辑写入共享工程会话；任务区「保存」/Ctrl+S 整包落盘。未打开工程时只读。旧整库 `hanshu.progressWorkspace.v1` 打开工程时迁入后删除；UI 状态存 `hanshu.progressUi.v1`。旧草稿里 `package: progress|story` 读入为 `quest`。
 
-  **本地化**：`.progress` / `.hflow` / `.nav` / `.kit` 的玩家可见文案与 `.hs` 同布局——源文件存语义键，译文在 `assets/<locale>/lang_progress|lang_hflow|lang_nav|lang_kit/….lang`。键为文档内相对路径（如 `name`、`description`、`entry.title`、`label`、`feedback.message`），不含文件名；改文件名时搬迁对等 `.lang`。底部语言切换与剧本共用 `hanshu.locale`。作者备注、画布注释、礼包音效 id / 标签 / 指令、以及 `.item` 的标签不进本地化。打开旧明文稿时自动收成语义键并把原文灌入当前语言。
+  **本地化**：`.quest` / `.nav` / `.kit` 与 `.hs` 同布局——源存语义键，译文在 `assets/<locale>/lang_<后缀>/….lang`（任务为 **`lang_quest`**）。键为文档内相对路径（如 `name`、`entry.title`），不含文件名；改名时搬迁对等 `.lang`。语言切换与剧本共用 `hanshu.locale`。作者备注、画布注释、礼包音效 id / 标签 / 指令、`.item` 标签不进本地化。
 - 主区按 VS Code 方式划分**编辑组**，每组有自己的**文档页条**（流程 / 脚本 / 礼包共用）：打开即加入、可拖拽排序；右键可固定、关闭、关闭其他页、关闭右侧页、关闭所有页；固定页跳过关闭，须先取消固定；中键关闭未固定页。
   - 最多两组。未拆分时，把页拖到编辑区左 / 右 / 上 / 下边缘即移过去并拆分（组里只剩这一页时改为复制）；右键「向右拆分 / 向下拆分」则复制一份到新组。
   - 已拆分时，页可在两组页条间拖动，或拖到另一组的内容区；右键另有「移到另一侧」「合并拆分」。某组关空即自动收起拆分。
   - 资源管理器打开的文档进入焦点组；同一文档可同时开在两组，画布交互只在焦点组生效。分割线 1px，可拖动，双击恢复对半。
   - 主组状态在根上（`openKeys` / `activeKey` / `pinnedKeys`），第二组与方向、比例、焦点存于 `split`；旧草稿的 `splitKey` 读取时自动迁移。
 - 右键资源可打开属性、重命名、移动、导出校验通过的树图、下载原始草稿或移除；支持拖动文件和文件夹到目录，禁止移入自身或子目录。文件夹是资源树的**视图归属**（存于 `hanshu.progressUi.v1` 的 `folders` / `documentFolders`），磁盘与 `lang_*` 仍按文件名扁平（例如树里 `食物/自然/minecraft_apple.item` 落盘为 `src/items/minecraft_apple.item`）；**重命名只改文件名**，换文件夹用「移动到」。已在工程中的文件经 `sourceCommand` 向 S 提交 `move`／删除；尚未保存的草稿只改本机名，避免对不存在的源路径 `move`。**同一分类内文件名全局唯一**（跨文件夹也不许重名），文件夹名仅同级唯一。文件夹仅在清空后删除。
-- 可从系统资源管理器拖入或多个文件粘贴到分类/文件夹（含「目标定义」）：脚本接受 `.py`，物品库接受 `.item` / `.itemstack` / `.json`，礼包接受 `.kit`，故事流程接受 `.hflow` / `.json`；不匹配扩展名的文件会跳过并提示。
+- 可从系统资源管理器拖入或多个文件粘贴到分类/文件夹（含「目标定义」）：脚本接受 `.py`，任务接受 `.quest` / `.json`，物品库接受 `.item` / `.itemstack` / `.json`，礼包接受 `.kit`；不匹配扩展名的文件会跳过并提示。
 - 资源树支持 Ctrl/Command 追加多选、Shift 范围多选、Ctrl+A 全选；Delete / Backspace 或右键「移除所选」批量删除流程与空文件夹。方向键、Enter 打开、F2 重命名、Shift+F10 菜单；新建和重命名在树内输入，Enter 确认、Esc 取消。
 - 画布单击选择；双击阶段或开始节点打开表单弹窗，也支持 Enter / F2。图名称 / 说明经开始节点编辑；文档 ID 与文件名在资源管理器「属性」中修改。
 - 弹窗先显示名称、说明等基本内容，动作、奖励与结构设置按需展开。“完成”一次提交、一次撤销；取消、关闭或 Esc 放弃本次编辑。弹窗使用模态对话框，背景不可操作。
@@ -80,7 +80,7 @@ checkpoint 按稳定 ID 平铺保存，只含名称与说明（`FlowText` 无 `k
 - 每份文档有会话内撤销/重做，通过主菜单或画布中的 Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y 操作；源码连续输入合并为一次编辑。资源目录操作独立于文档历史。
 - 条件参数、动作和奖励 JSON，以及节点/分支 ID 修改需要先应用或放弃，再完成弹窗。Ctrl+Enter / Ctrl+S 可完成编辑；尚未提交的修改会在离开页面时提示。
 - 本机草稿库使用 `hanshu.progressWorkspace.v1`，原始未完成源码也会保存。读取失败时阻止自动覆盖。
-- 导入 `.hflow` / 原生 JSON 文档；导出通过结构校验的树图，或下载未经校验的原始草稿。
+- 导入 `.quest` / 原生 JSON；导出通过结构校验的树图，或下载未经校验的原始草稿。
 
 校验覆盖必需的独立起点、画布 ID 唯一性、草稿容器、坐标、入口与条件引用、条件声明及资源引用形状。未连接的 checkpoint、共享目标和环不作为草稿错误。尚未定义任务提取、运行时失效条件、分支竞态、提交事务和复杂等待依赖；编辑器不声称能模拟执行。
 

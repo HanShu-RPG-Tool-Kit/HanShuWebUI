@@ -17,10 +17,15 @@ try {
   const {exportPaks}=await import('/src/export/pack/exportPaks.ts')
   const {putAssetBlob}=await import('/src/assets/idb.ts')
   const {createProject}=await import('/src/workspace.ts')
+  const {createProgress,stringifyProgress}=await import('/src/workspaces/quest/progressDoc.ts')
+  const {createFlow}=await import('/src/workspaces/quest/model.ts')
+  const {stringifyNavigationPoint,createNavigationPoint}=await import('/src/workspaces/quest/navigationPoint.ts')
   const check=(condition,message)=>{if(!condition)throw new Error(message)}
   registry.clearCompileRegistry();api.ensureBuiltinCompilers()
-  check(registry.listFileCompilers().length===3,'clear/reinstall builtin compilers')
-  check(api.listLocaleExportRules().length===6,'builtin locale rules missing')
+  // hanshu / item / entity / kit / quest / identity
+  check(registry.listFileCompilers().length===6,'clear/reinstall builtin compilers')
+  // hs, char, kit, quest, progress, hflow, nav, item, entity
+  check(api.listLocaleExportRules().length===9,'builtin locale rules missing')
   let rejected=false
   try{api.registerLocaleExportRule({id:'ambiguous',sourceExt:'hs',text:{plane:'client',keys:'all'}})}catch{rejected=true}
   check(rejected,'ambiguous extension registration accepted')
@@ -29,10 +34,15 @@ try {
    voice:{plane:'client',keys:'all'},
   })
   api.registerFileCompiler({id:'widget',match:file=>file.name.endsWith('.widget'),async compile(file,ctx){return [{path:`widgets/${file.name}`,bytes:file.content,plane:'server',sourcePath:file.name,packageName:ctx.index.package.name,requires:JSON.parse(file.content).keys.map(id=>({kind:'localeKey',id}))}]}})
+  const simpleQuest=stringifyProgress(createProgress('任务'))
+  const multiQuest=JSON.stringify(createFlow(undefined,'流程'))
   const pkg=createProject('locale-registry')
   for(const [name,content] of Object.entries({
    'a.hs':'narrator:7f3a91c2//','nested/b.hs':'narrator:7f3a91c2//',
-   'hero.char':'name:12345678','quest.progress':'{}','story.hflow':'{}','point.nav':'{}',
+   'hero.char':'name:12345678',
+   'task.quest':simpleQuest,
+   'tree.quest':multiQuest,
+   'point.nav':stringifyNavigationPoint(createNavigationPoint('导航')),
    'panel.widget':JSON.stringify({keys:['title']}),
   }))pkg.scripts.push({id:name,name,content,updatedAt:0})
   async function asset(path,content,refTarget){const blob=new Blob([typeof content==='string'?content:JSON.stringify(content)]);pkg.assets.push({id:path,path,size:blob.size,mime:'application/octet-stream',updatedAt:0,...(refTarget?{refTarget}:{})});await putAssetBlob(pkg.id,path,blob)}
@@ -45,15 +55,15 @@ try {
   await asset('assets/zh_cn/voice_hs/a/7f3a91c2.ref','missing','assets/missing.ogg')
   await asset('assets/zh_cn/voice_hs/a/deadbeef.ogg','unused-voice')
   await asset('assets/zh_cn/lang_char/hero.lang',{'12345678':'角色名'})
-  await asset('assets/zh_cn/lang_progress/quest.lang',{name:'任务',description:'说明'})
-  await asset('assets/zh_cn/lang_hflow/story.lang',{'entry.title':'流程'})
+  await asset('assets/zh_cn/lang_quest/task.lang',{name:'任务',description:'说明'})
+  await asset('assets/zh_cn/lang_quest/tree.lang',{'entry.title':'树图'})
   await asset('assets/zh_cn/lang_nav/point.lang',{label:'导航'})
   await asset('assets/zh_cn/lang_widget/panel.lang',{title:'Panel',unused:'裁剪'})
   await asset('assets/zh_cn/voice_widget/panel/intro.ref','assets/raw/b.ogg','assets/raw/b.ogg')
   await asset('assets/zh_cn/lang_widget/orphan.lang',{title:'孤立'})
   await asset('assets/zh_cn/lang_unknown/unregistered.lang',{name:'未知规则'})
   const output=await exportPaks({packages:[pkg],activeScriptId:null,activeAssetId:null},{targets:['combined','server','client']})
-  check(!output.diagnostics.some(d=>d.severity==='error'),'duplicate locale keys/languages/media failed linking')
+  check(!output.diagnostics.some(d=>d.severity==='error'),`export errors: ${output.diagnostics.filter(d=>d.severity==='error').map(d=>d.message).join('; ')}`)
   check(output.warnings.some(s=>s.includes('未注册本地化导出规则')),'unknown rule warning missing')
   // A missing translation cannot be satisfied by another source's same key.
   const graph=await api.buildCompileGraph({packages:[{...pkg,assets:pkg.assets.filter(a=>!a.path.includes('lang_hs/a.lang'))}],activeScriptId:null,activeAssetId:null})
@@ -73,7 +83,7 @@ try {
  })
  for(const pack of result){
   const zip=await JSZip.loadAsync(Uint8Array.from(pack.bytes))
-  for(const path of ['assets/zh_cn/lang_progress/quest.lang','assets/zh_cn/lang_hflow/story.lang','assets/zh_cn/lang_nav/point.lang'])assert.ok(zip.file(path),`${pack.target}: ${path}`)
+  for(const path of ['assets/zh_cn/lang_quest/task.lang','assets/zh_cn/lang_quest/tree.lang','assets/zh_cn/lang_nav/point.lang'])assert.ok(zip.file(path),`${pack.target}: ${path}`)
   assert.equal(Boolean(zip.file('assets/zh_cn/lang_widget/panel.lang')),pack.target!=='client')
   assert.equal(Boolean(zip.file('assets/zh_cn/voice_widget/panel/intro.ogg')),pack.target!=='server')
   assert.equal(zip.file('assets/zh_cn/lang_widget/orphan.lang'),null)

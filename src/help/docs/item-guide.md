@@ -113,7 +113,7 @@ Mod 已升级 `.itemstack` v3、快照与 IBE 编辑交换协议；两端需使�
 
 ## 扩展常用组件卡片（开发）
 
-在 `src/workspaces/progress/itemComponents/registry.ts` 使用 `registerItemComponentEditor` 注册组件的命名空间 ID、标题、`createValue`、`accepts` 和 React `Editor`，返回函数用于注销；重复 ID 会拒绝。内置注册见同目录 `builtins.tsx`、`complexCards.tsx`；纯结构操作在 `complexModel.ts`。这是代码扩展入口，不是运行时加载外部脚本。
+在 `src/workspaces/quest/itemComponents/registry.ts` 使用 `registerItemComponentEditor` 注册组件的命名空间 ID、标题、`createValue`、`accepts` 和 React `Editor`，返回函数用于注销；重复 ID 会拒绝。内置注册见同目录 `builtins.tsx`、`complexCards.tsx`；纯结构操作在 `complexModel.ts`。这是代码扩展入口，不是运行时加载外部脚本。
 
 可选 `wide: true` 让复杂卡片占满一行，`order` 控制顺序（默认 100）；可选 `tone` 为 `steel`（默认）、`amber`、`violet` 或 `green`，由宿主统一绘制彩色标题，不在各个编辑器里另做卡片外壳。
 

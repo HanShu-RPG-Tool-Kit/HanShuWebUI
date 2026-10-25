@@ -3,13 +3,12 @@ import { getExtension } from './workspace'
 /**
  * 资源树图标：一个 kind = 一条 SVG path。
  *
- * 新增文件类型时**必须**给它一个专属 kind（见 `newFileTypes.ts`）：树里 `.progress` 与
- * `.kit` 都退化成通用文件图标时，一眼看不出哪个是进度、哪个是礼包，右键点错了才发现。
+ * 新增文件类型时**必须**给它一个专属 kind（见 `newFileTypes.ts`）：树里 `.quest` 与
+ * `.kit` 都退化成通用文件图标时，一眼看不出哪个是任务、哪个是礼包，右键点错了才发现。
  *
- * 形状与进度工作区（`workspaces/progress/FlowExplorer.tsx` 的 `Icon`）**同源**：
- * 同一个文件类型在两个资源树里长得一样，用户不必学两套。唯一例外是 `hflow` ——
- * 那边的 `story` 与这里的 `hanshu` 都是"摊开的书"，而新建菜单会把两种类型并排显示，
- * 所以 `.hflow` 换成流程图（两个节点 + 连线）。
+ * 形状与任务工作区（`workspaces/quest/FlowExplorer.tsx` 的 `Icon`）**同源**：
+ * 同一个文件类型在两个资源树里长得一样，用户不必学两套。新建菜单里单/多进度
+ * 都是 `.quest`，用 `progress` / `hflow` 图标区分作者态；资源树按后缀只认 `quest`。
  */
 
 /**
@@ -41,6 +40,7 @@ export const EXPLORER_ICON_KINDS = [
   'tts',
   'ttsservice',
   'progress',
+  'quest',
   'hflow',
   'nav',
   'item',
@@ -70,7 +70,9 @@ const PATHS: Record<ExplorerIconKind, string> = {
   // 与 `.tts`（喇叭）刻意分开：服务定义是"一家供应商的配置"，齿轮一眼可辨
   ttsservice: 'M12 15a3 3 0 100-6 3 3 0 000 6z M19.4 15a1.7 1.7 0 00.3 1.8l.1.1a2 2 0 11-2.8 2.8l-.1-.1a1.7 1.7 0 00-1.8-.3 1.7 1.7 0 00-1 1.5V21a2 2 0 11-4 0v-.1a1.7 1.7 0 00-1.1-1.5 1.7 1.7 0 00-1.8.3l-.1.1a2 2 0 11-2.8-2.8l.1-.1a1.7 1.7 0 00.3-1.8 1.7 1.7 0 00-1.5-1H3a2 2 0 110-4h.1a1.7 1.7 0 001.5-1.1 1.7 1.7 0 00-.3-1.8l-.1-.1a2 2 0 112.8-2.8l.1.1a1.7 1.7 0 001.8.3H9a1.7 1.7 0 001-1.5V3a2 2 0 114 0v.1a1.7 1.7 0 001 1.5 1.7 1.7 0 001.8-.3l.1-.1a2 2 0 112.8 2.8l-.1.1a1.7 1.7 0 00-.3 1.8V9a1.7 1.7 0 001.5 1H21a2 2 0 110 4h-.1a1.7 1.7 0 00-1.5 1z',
   progress: 'M5 21V4 M5 4h10l-2 3 2 3H5',
-  // 与 `hanshu`（摊开的书）区分：两个节点 + 连线 = 树图
+  // 任务通用（.quest）：摊开的书；单/多进度作者态在进度工作区按正文区分图标
+  quest: 'M4 5h7a3 3 0 013 3v12a3 3 0 00-3-3H4z M20 5h-7a3 3 0 00-3 3v12a3 3 0 013-3h7z',
+  // 与 `hanshu` / `quest`（摊开的书）区分：两个节点 + 连线 = 多进度树图（新建菜单）
   hflow: 'M4 3h6v5H4z M14 16h6v5h-6z M7 8v6h10v2',
   nav: 'M12 21a9 9 0 100-18 9 9 0 000 18z M14.5 9.5l-2 5-5 2 2-5 5-2z',
   // 与 `kit`（礼物盒）刻意分开：物品是"一块宝石"，盒子留给礼包
@@ -91,8 +93,8 @@ const PATHS: Record<ExplorerIconKind, string> = {
 /**
  * 后缀 → kind。
  *
- * **`.progress` / `.hflow` / `.nav` / `.kit` 曾经不在这张表里**，于是资源树把它们都画成
- * 通用文件图标 —— 补上之后，同一个包里的进度、流程、导航点、礼包才一眼分得开。
+ * **`.quest` / `.nav` / `.kit` 等曾经不在这张表里**，于是资源树把它们都画成
+ * 通用文件图标 —— 补上之后，同一个包里的任务、导航点、礼包才一眼分得开。
  */
 const BY_EXT: Record<string, ExplorerIconKind> = {
   '.hs': 'hanshu',
@@ -103,8 +105,7 @@ const BY_EXT: Record<string, ExplorerIconKind> = {
   '.voice': 'voice',
   '.tts': 'tts',
   '.ttsservice': 'ttsservice',
-  '.progress': 'progress',
-  '.hflow': 'hflow',
+  '.quest': 'quest',
   '.nav': 'nav',
   '.item': 'item',
   '.entity': 'entity',

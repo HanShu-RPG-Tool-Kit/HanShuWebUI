@@ -69,7 +69,7 @@ try {
   const firstLang = JSON.stringify({ name: '历史进度标题', description: '正文和语言同事务' })
   const progressOne = JSON.stringify({ ...progress, tags: ['历史第一版'] })
   const moreResources = [
-    { path: 'src/story/history.hflow', content: JSON.stringify({ format: 'hanshu.progress-tree', version: 1, id: 'history-flow', entry: { id: 'entry', target: null }, nodes: {}, layout: { positions: {} } }) },
+    { path: 'src/quest/history.quest', content: JSON.stringify({ format: 'hanshu.progress-tree', version: 1, id: 'history-flow', entry: { id: 'entry', target: null }, nodes: {}, layout: { positions: {} } }) },
     { path: 'src/items/history.item', content: JSON.stringify({ id: 'history-item' }) },
     { path: 'src/gift/history.kit', content: JSON.stringify({ id: 'history-kit' }) },
     { path: 'assets/history/preview.png', content: Buffer.from('89504e470d0a1a0a', 'hex') },

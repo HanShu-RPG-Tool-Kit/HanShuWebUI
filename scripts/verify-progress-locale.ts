@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
-import { createFlow, displayText, parseFlow } from '../src/workspaces/progress/model.ts'
-import { createCheckpoint } from '../src/workspaces/progress/canvas.ts'
+import { createFlow, displayText, parseFlow } from '../src/workspaces/quest/model.ts'
+import { createCheckpoint } from '../src/workspaces/quest/canvas.ts'
 import {
   defaultFlowLocaleSeeds,
   defaultKitLocaleSeeds,
@@ -14,15 +14,15 @@ import {
   KIT_FEEDBACK_TITLE_KEY,
   KIT_NAME_KEY,
   NAV_LABEL_KEY,
-} from '../src/workspaces/progress/progressLocale.ts'
-import { createProgress, createProgressLocaleSeeds, stringifyProgress } from '../src/workspaces/progress/progressDoc.ts'
-import { createKit, stringifyKit } from '../src/workspaces/progress/kit.ts'
-import { createNavigationPoint, stringifyNavigationPoint } from '../src/workspaces/progress/navigationPoint.ts'
+} from '../src/workspaces/quest/progressLocale.ts'
+import { createProgress, createProgressLocaleSeeds, stringifyProgress } from '../src/workspaces/quest/progressDoc.ts'
+import { createKit, stringifyKit } from '../src/workspaces/quest/kit.ts'
+import { createNavigationPoint, stringifyNavigationPoint } from '../src/workspaces/quest/navigationPoint.ts'
 import { normalizeTextMapKey, TextMap, type TextSink } from '../src/i18n/textMap.ts'
 import { textAssetPath } from '../src/i18n/localeLayout.ts'
 
-assert.equal(textAssetPath('zh_cn', 'quest_a.progress'), 'assets/zh_cn/lang_progress/quest_a.lang')
-assert.equal(textAssetPath('zh_cn', 'story/main.hflow'), 'assets/zh_cn/lang_hflow/story/main.lang')
+assert.equal(textAssetPath('zh_cn', 'quest_a.quest'), 'assets/zh_cn/lang_quest/quest_a.lang')
+assert.equal(textAssetPath('zh_cn', 'src/quest/main.quest'), 'assets/zh_cn/lang_quest/main.lang')
 assert.equal(textAssetPath('zh_cn', 'tower.nav'), 'assets/zh_cn/lang_nav/tower.lang')
 assert.equal(textAssetPath('zh_cn', 'starter.kit'), 'assets/zh_cn/lang_kit/starter.lang')
 assert.equal(normalizeTextMapKey('entry.title', 'literal'), 'entry.title')
@@ -104,4 +104,4 @@ assert.equal(migratedKit.seeds[KIT_FEEDBACK_TITLE_KEY], '欢迎')
 assert.equal(JSON.parse(stringifyKit(migratedKit.kit)).feedback.title, KIT_FEEDBACK_TITLE_KEY)
 assert.equal(JSON.parse(stringifyKit(migratedKit.kit)).feedback.sound, 'minecraft:entity.player.levelup')
 
-console.log('PASS: progress locale semantic keys, TextMap literal, layout paths')
+console.log('PASS: quest/progress locale semantic keys, TextMap literal, layout paths')

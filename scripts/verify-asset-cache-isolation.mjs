@@ -21,7 +21,7 @@ try {
   const put = (page, pkg, path, body) => page.evaluate(async ({ pkg, path, body }) => window.cache.putAssetBlob(pkg, path, new Blob([body])), { pkg, path, body })
   const read = (page, pkg, path) => page.evaluate(async ({ pkg, path }) => (await window.cache.getAssetBlob(pkg, path))?.text() ?? null, { pkg, path })
   await Promise.all([load(a), load(b)])
-  const lang = 'assets/zh_cn/lang_progress/example.lang'
+  const lang = 'assets/zh_cn/lang_quest/example.lang'
   const audio = 'assets/zh_cn/voice_hs/story/line.ogg'
   await put(a, 'shared-project', lang, 'A unsaved translation')
   assert.equal(await read(b, 'shared-project', lang), null)

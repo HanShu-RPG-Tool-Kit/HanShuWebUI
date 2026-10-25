@@ -8,8 +8,8 @@ import {
   parseFeedbackText,
   replaceFeedbackPlainText,
   stringifyFeedbackText,
-} from '../src/workspaces/progress/feedbackText'
-import { textComponentSegments, itemNameBaseStyle } from '../src/workspaces/progress/itemTooltip'
+} from '../src/workspaces/quest/feedbackText'
+import { textComponentSegments, itemNameBaseStyle } from '../src/workspaces/quest/itemTooltip'
 
 function roundTrip(raw: string) {
   return stringifyFeedbackText(parseFeedbackText(raw))

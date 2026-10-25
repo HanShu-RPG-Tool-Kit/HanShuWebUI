@@ -82,7 +82,7 @@ async function until(fn,label,timeout=20000){const deadline=Date.now()+timeout;w
 async function browserLogin(page,key,name,navigate=true){
   return loginProject(page,base,key,name,navigate)
 }
-async function openProgress(page,name='example.progress'){ await closeCollaboration(page);
+async function openProgress(page,name='example.quest'){ await closeCollaboration(page);
   await page.getByRole('tab',{name:'进度流程',exact:true}).click()
   await page.getByLabel('筛选资源',{exact:true}).fill(name)
   await page.locator(`[role=treeitem][title="${name}"]`).click()
@@ -208,7 +208,7 @@ try{
   await until(async()=>await pageB.getByLabel('进度标题',{exact:true}).inputValue()==='LAN 回复丢失后的标题','Peer failed to synchronize committed unknown outcome')
   // A newer operation must survive confirming an older receipt after reload.
   await pageB.getByRole('button',{name:'完成任一',exact:true}).click()
-  await until(async()=>JSON.parse(await readFile(join(h.root,'src/progress/example.progress'),'utf8')).completion==='any','Peer could not continue during unknown outcome')
+  await until(async()=>JSON.parse(await readFile(join(h.root,'src/quest/example.quest'),'utf8')).completion==='any','Peer could not continue during unknown outcome')
   await settled(pageB)
   await pageA.reload();await browserLogin(pageA,author.credential,'LAN A restored outbox',false);await openProgress(pageA)
   await (await submission(pageA)).getByText('结果待确认',{exact:true}).waitFor()
@@ -216,37 +216,37 @@ try{
   await settled(pageA)
   assert.equal(observed.filter(r=>r.transactionId===uncertainRequest.transactionId).length,1,'Confirmed transaction was sent again')
   await until(async()=>await pageA.getByRole('button',{name:'完成任一',exact:true}).getAttribute('aria-pressed')==='true','Historical receipt overwrote newer peer state')
-  assert.equal(JSON.parse(await readFile(join(h.root,'src/progress/example.progress'),'utf8')).completion,'any')
+  assert.equal(JSON.parse(await readFile(join(h.root,'src/quest/example.quest'),'utf8')).completion,'any')
   delayMs=0
-  assert.ok(!(await api(owner.token,'/api/project')).leases.some(l=>l.resourceId.endsWith('.progress')))
+  assert.ok(!(await api(owner.token,'/api/project')).leases.some(l=>l.resourceId.endsWith('.quest')))
   passed('普通 LAN HTTP 自动提交丢失成功回复后刷新恢复 outbox，按原事务确认且不重复写入，并保留他端之后的修改')
   // Exercise UUID generation and SHA-256 from an insecure LAN origin, including
   // newly-created source documents and a real binary skin resource.
   await pageA.getByLabel('筛选资源',{exact:true}).fill('')
-  for(const item of [{category:'进度',command:'新建进度',input:'新进度名称',name:'lan-created',path:'src/progress/lan-created.progress'},{category:'故事流程',command:'新建流程',input:'新流程名称',name:'lan-flow',path:'src/story/lan-flow.hflow'}]){
+  for(const item of [{category:'进度',command:'新建进度',input:'新进度名称',name:'lan-created',path:'src/quest/lan-created.quest'},{category:'故事流程',command:'新建流程',input:'新流程名称',name:'lan-flow',path:'src/quest/lan-flow.quest'}]){
     await pageA.locator(`[role=treeitem][title="${item.category}"]`).click({button:'right'})
     await pageA.getByRole('menuitem',{name:item.command,exact:true}).click()
     await pageA.getByLabel(item.input,{exact:true}).fill(item.name)
     await pageA.getByLabel(item.input,{exact:true}).press('Enter')
-    if(item.path.endsWith('.progress'))await beginEditing(pageA)
+    if(item.command==='新建进度'||item.command==='新建单进度任务')await beginEditing(pageA)
     await pageA.keyboard.press('Control+s')
     await until(async()=>(await api(a.token,'/api/files')).entries.some(e=>e.path===item.path),`LAN creation failed: ${item.path}`)
     await until(async()=>await (await submission(pageA)).getByRole('status').innerText()==='修改已保存',`Client did not finish acknowledging creation: ${item.path}`)
   }
   acceptRemoval=true;dropCommitResponse=true
   const beforeRemove=observed.length
-  await pageA.locator('[role=treeitem][title="lan-flow.hflow"]').click({button:'right'})
+  await pageA.locator('[role=treeitem][title="lan-flow.quest"]').click({button:'right'})
   await pageA.getByRole('menuitem',{name:'移除流程…',exact:true}).click()
   await (await submission(pageA)).getByText('结果待确认',{exact:true}).waitFor()
   acceptRemoval=false
   const removeRequest=observed[beforeRemove]
-  assert.ok(removeRequest.changes.some(c=>c.op==='remove'&&c.path==='src/story/lan-flow.hflow'))
+  assert.ok(removeRequest.changes.some(c=>c.op==='remove'&&c.path==='src/quest/lan-flow.quest'))
   await pageA.reload();await browserLogin(pageA,author.credential,'LAN A restored removal',false)
   await (await submission(pageA)).getByText('结果待确认',{exact:true}).waitFor()
   await (await submission(pageA)).getByRole('button',{name:'查询提交结果',exact:true}).click()
   await until(async()=>await (await submission(pageA)).getByRole('status').innerText()==='修改已保存','Restored deletion was not confirmed')
   assert.equal(observed.filter(r=>r.transactionId===removeRequest.transactionId).length,1)
-  assert.ok(!(await api(a.token,'/api/files')).entries.some(e=>e.path==='src/story/lan-flow.hflow'))
+  assert.ok(!(await api(a.token,'/api/files')).entries.some(e=>e.path==='src/quest/lan-flow.quest'))
   passed('删除回复丢失后刷新页面，从持久 outbox 确认同一事务，未重复执行删除')
   await pageA.getByRole('tab',{name:'皮肤管理器',exact:true}).click()
   await pageA.getByText('皮肤库为空。右键空白处可新建文件夹或导入皮肤。',{exact:true}).click({button:'right'})
@@ -266,16 +266,16 @@ try{
 
   // Unlike isolated contexts above, these pages deliberately share localStorage
   // and IndexedDB. Draft bytes and journal ownership must still be per tab.
-  const sharedSource='src/progress/shared-tabs.progress',sharedLang='assets/zh_cn/lang_progress/shared-tabs.lang'
-  const sharedDoc=JSON.parse(await readFile(join(h.root,'src/progress/example.progress'),'utf8'));sharedDoc.completion='all';sharedDoc.id='same-context-tabs'
+  const sharedSource='src/quest/shared-tabs.quest',sharedLang='assets/zh_cn/lang_quest/shared-tabs.lang'
+  const sharedDoc=JSON.parse(await readFile(join(h.root,'src/quest/example.quest'),'utf8'));sharedDoc.completion='all';sharedDoc.id='same-context-tabs'
   const sharedSeed=await prepare(owner.token,[{path:sharedSource,content:JSON.stringify(sharedDoc)},{path:sharedLang,content:JSON.stringify({name:'共享浏览器里的服务器标题',description:''})}])
   assert.equal((await submit(owner.token,sharedSeed)).status,'committed');await h.release(owner.token)
   const sharedContext=await browser.newContext({viewport:{width:1500,height:1050}});browserContexts++
   const tabA=await sharedContext.newPage(),tabB=await sharedContext.newPage()
   for(const page of [tabA,tabB]){pages.push(page);page.on('pageerror',e=>pageErrors.push(e.message));page.on('dialog',d=>d.dismiss())}
-  await browserLogin(tabA,author.credential,'same-context tab A');await openProgress(tabA,'shared-tabs.progress')
+  await browserLogin(tabA,author.credential,'same-context tab A');await openProgress(tabA,'shared-tabs.quest')
   await until(async()=>await tabA.getByLabel('进度标题',{exact:true}).inputValue()==='共享浏览器里的服务器标题','Shared-context initial title missing')
-  await browserLogin(tabB,author.credential,'same-context tab B');await openProgress(tabB,'shared-tabs.progress')
+  await browserLogin(tabB,author.credential,'same-context tab B');await openProgress(tabB,'shared-tabs.quest')
   await beginEditing(tabA);await beginEditing(tabB)
   await tabA.getByLabel('进度标题',{exact:true}).dispatchEvent('compositionstart',{data:''})
   await tabA.getByLabel('进度标题',{exact:true}).fill('只有 A 尚在输入的标题')

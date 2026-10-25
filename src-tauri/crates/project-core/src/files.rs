@@ -466,11 +466,15 @@ impl ProjectFiles {
                         .decode(c.content.as_deref().unwrap_or(""))
                         .map_err(|_| Error::new("invalid", "文件编码无效"))?;
                     require(bytes.len() <= MAX_FILE, "invalid", "文件超过 32 MiB")?;
-                    if c.path.to_ascii_lowercase().ends_with(".progress") {
-                        super::progress::validate(
-                            std::str::from_utf8(&bytes)
-                                .map_err(|_| Error::new("invalid", "进度须为 UTF-8"))?,
-                        )?;
+                    if c.path.to_ascii_lowercase().ends_with(".quest") {
+                        let text = std::str::from_utf8(&bytes)
+                            .map_err(|_| Error::new("invalid", "任务须为 UTF-8"))?;
+                        // 仅校验单进度 format；多进度树图另有前端校验
+                        if text.contains("\"hanshu.progress\"")
+                            && !text.contains("\"hanshu.progress-tree\"")
+                        {
+                            super::progress::validate(text)?;
+                        }
                     }
                     if c.path == "project.json" {
                         let v: serde_json::Value = serde_json::from_slice(&bytes)

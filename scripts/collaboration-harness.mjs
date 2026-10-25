@@ -15,10 +15,10 @@ export async function harness(web = false) {
   const fixtures={
     'project.json':JSON.stringify({version:1,id:'shared-test-project',name:'统一工程验收'}),
     'src/hanshu/story.hs':'标题：协作测试\n\n第一场\n\n',
-    'src/progress/example.progress':JSON.stringify(progress),
+    'src/quest/example.quest':JSON.stringify(progress),
     'src/script/common/example.py':'print("server-owned file")\n',
     'meta/docs/notes.md':'# 工程笔记\n',
-    'assets/zh_cn/lang_progress/example.lang':JSON.stringify({name:'共同进度',description:'由同一工程服务管理'}),
+    'assets/zh_cn/lang_quest/example.lang':JSON.stringify({name:'共同进度',description:'由同一工程服务管理'}),
     '.hanshu/skinmanager/library.json':JSON.stringify({schemaVersion:5,revision:1,folders:[],entries:[]}),
   }
   for(const [path,content]of Object.entries(fixtures)){await mkdir(join(root,path,'..'),{recursive:true});await writeFile(join(root,path),content)}

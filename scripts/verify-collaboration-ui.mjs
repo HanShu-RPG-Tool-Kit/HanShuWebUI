@@ -17,7 +17,7 @@ const passed=name=>{results.push({name,status:'passed'});console.log(`通过：$
 async function login(page,key,name){
   return loginProject(page,h.base,key,name)
 }
-async function progress(page){await page.getByRole('tab',{name:'进度流程',exact:true}).click();await page.getByRole('textbox',{name:'筛选资源',exact:true}).fill('example.progress');await page.locator('[role=treeitem][title="example.progress"]').click();await title(page).waitFor()}
+async function progress(page){await page.getByRole('tab',{name:'进度流程',exact:true}).click();await page.getByRole('textbox',{name:'筛选资源',exact:true}).fill('example.quest');await page.locator('[role=treeitem][title="example.quest"]').click();await title(page).waitFor()}
 try{
   await mkdir(output,{recursive:true})
   const owner=await h.login(h.credential,'setup');ownerToken=owner.token
@@ -36,13 +36,13 @@ try{
   assert.equal(await active(a).getByRole('button',{name:'开始编辑',exact:true}).count(),0)
   const semantic=[];a.on('request',request=>{if(new URL(request.url()).pathname==='/api/files/commit')semantic.push(request.postDataJSON())})
   await title(a).fill('从 A 自动保存的共同标题')
-  await until(async()=>JSON.parse(await readFile(join(h.root,'assets/zh_cn/lang_progress/example.lang'),'utf8')).name==='从 A 自动保存的共同标题','Locale did not autosubmit')
+  await until(async()=>JSON.parse(await readFile(join(h.root,'assets/zh_cn/lang_quest/example.lang'),'utf8')).name==='从 A 自动保存的共同标题','Locale did not autosubmit')
   await until(async()=>await title(b).inputValue()==='从 A 自动保存的共同标题','B did not receive title')
   await active(a).getByRole('button',{name:'完成任一',exact:true}).click()
   await until(async()=>await active(b).getByRole('button',{name:'完成任一',exact:true}).getAttribute('aria-pressed')==='true','B did not receive progress operation')
   assert.ok(semantic.length>0&&semantic.every(batch=>batch.changes.length===1&&batch.changes[0].op==='progress-command'))
   await active(b).getByRole('button',{name:'完成全部',exact:true}).click()
-  await until(async()=>JSON.parse(await readFile(join(h.root,'src/progress/example.progress'),'utf8')).completion==='all','B could not edit without handoff')
+  await until(async()=>JSON.parse(await readFile(join(h.root,'src/quest/example.quest'),'utf8')).completion==='all','B could not edit without handoff')
   assert.equal((await h.api(ownerToken,'/api/project')).leases.length,0)
   passed('三客户端共享进度：写者直接操作并自动同步、读者只读、语义提交不保留文件写权')
 

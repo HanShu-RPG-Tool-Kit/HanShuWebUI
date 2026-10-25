@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict'
-import { addNode, canConnectNodes, clone, connectEntry, connectNodes, createFlow, disconnectLink, findCanvasCycle, getCanvasNote, hasContentNode, inputPorts, linkSourcePort, makeNode, outgoingCount, outputPorts, parseFlow, portKind, removeNode, renameNode, swapInPort, swapOutPort, text, validateFlow, type ProgressFlow } from '../src/workspaces/progress/model.ts'
-import { FLOW_STORAGE_KEY, createFlowDocument, importFlowDocument, loadFlowWorkspace, saveFlowWorkspace } from '../src/workspaces/progress/storage.ts'
-import { addFlowFolder, moveFlowEntry, renameFlowEntry, uniqueDocumentName } from '../src/workspaces/progress/library.ts'
-import { addNextCheckpoint, createCanvasNote, removeCanvasItems, updateCanvasNote, removeCanvasNote, groupCanvasNodes, moveCanvasNodes, nodeMetrics, createCheckpoint, createEndNode, createGoalNode, createPredicateNode, createTransitionNode, createConditionalNode, createDiffNode, createMergeNode, createSwapNode, layoutCanvas, moveCheckpoint, socketOffset, withCanvasPositions } from '../src/workspaces/progress/canvas.ts'
-import { smartArrangeCanvas } from '../src/workspaces/progress/arrange.ts'
+import { addNode, canConnectNodes, clone, connectEntry, connectNodes, createFlow, disconnectLink, findCanvasCycle, getCanvasNote, hasContentNode, inputPorts, linkSourcePort, makeNode, outgoingCount, outputPorts, parseFlow, portKind, removeNode, renameNode, swapInPort, swapOutPort, text, validateFlow, type ProgressFlow } from '../src/workspaces/quest/model.ts'
+import { FLOW_STORAGE_KEY, createFlowDocument, importFlowDocument, loadFlowWorkspace, saveFlowWorkspace } from '../src/workspaces/quest/storage.ts'
+import { addFlowFolder, moveFlowEntry, renameFlowEntry, uniqueDocumentName } from '../src/workspaces/quest/library.ts'
+import { addNextCheckpoint, createCanvasNote, removeCanvasItems, updateCanvasNote, removeCanvasNote, groupCanvasNodes, moveCanvasNodes, nodeMetrics, createCheckpoint, createEndNode, createGoalNode, createPredicateNode, createTransitionNode, createConditionalNode, createDiffNode, createMergeNode, createSwapNode, layoutCanvas, moveCheckpoint, socketOffset, withCanvasPositions } from '../src/workspaces/quest/canvas.ts'
+import { smartArrangeCanvas } from '../src/workspaces/quest/arrange.ts'
 import { MAX_CANVAS_ZOOM, MIN_CANVAS_ZOOM, worldPoint, zoomCamera } from '../src/nodeEditor/camera.ts'
-import { CKPT_STATES, GOAL_STATES, PREDICATE_STATES, ckptState, createSimState, fireCkptTransition, fireGoalComplete, fireGoalNo, fireGoalYes, firePredicateComplete, fireStart, goalState, mergeSim, outgoingSignalTargets, predicateState, propagateSignals, resetSimState, syncSimState } from '../src/workspaces/progress/signals.ts'
-import { createKit, createKitItem, flattenKit, mergeKitLayer, parseKit, stringifyKit } from '../src/workspaces/progress/kit.ts'
+import { CKPT_STATES, GOAL_STATES, PREDICATE_STATES, ckptState, createSimState, fireCkptTransition, fireGoalComplete, fireGoalNo, fireGoalYes, firePredicateComplete, fireStart, goalState, mergeSim, outgoingSignalTargets, predicateState, propagateSignals, resetSimState, syncSimState } from '../src/workspaces/quest/signals.ts'
+import { createKit, createKitItem, flattenKit, mergeKitLayer, parseKit, stringifyKit } from '../src/workspaces/quest/kit.ts'
 
 let passed = 0
 const pending: Promise<void>[] = []
@@ -341,36 +341,38 @@ test('Corrupt storage is reported without modifying the stored bytes', () => {
   assert.equal(store.get(FLOW_STORAGE_KEY), '{bad}')
 })
 test('Native import preserves authored text and accepts UTF-8 BOM', () => {
-  const flow = fixture(), doc = importFlowDocument('故事.hflow', '\uFEFF' + JSON.stringify(flow))
-  assert.equal(doc.name, '故事.hflow')
+  const flow = fixture(), doc = importFlowDocument('故事.json', '\uFEFF' + JSON.stringify(flow))
+  // 导入名归一为 .quest；正文不变
+  assert.equal(doc.name, '故事.quest')
+  assert.equal(doc.package, 'quest')
   assert.deepEqual(parseFlow(doc.source), flow)
 })
 test('Nested resource folders persist without changing flow content or active identity', () => {
   const doc = createFlowDocument(fixture()), empty = { documents: [doc], folders: [], activeKey: doc.key }
-  const chapter = addFlowFolder(empty, '第一章', 'story', null), story = addFlowFolder(chapter.state, '支线', 'story', chapter.folder.key)
+  const chapter = addFlowFolder(empty, '第一章', 'quest', null), story = addFlowFolder(chapter.state, '支线', 'quest', chapter.folder.key)
   const entry = { kind: 'document' as const, key: doc.key }
-  const moved = moveFlowEntry(story.state, entry, 'story', story.folder.key), renamed = renameFlowEntry(moved, entry, '驿站')
-  assert.equal(doc.package, 'story')
+  const moved = moveFlowEntry(story.state, entry, 'quest', story.folder.key), renamed = renameFlowEntry(moved, entry, '驿站')
+  assert.equal(doc.package, 'quest')
   assert.equal(empty.documents[0].folderId, undefined)
   assert.equal(renamed.documents[0].source, doc.source)
-  assert.equal(renamed.documents[0].name, '驿站.hflow')
+  assert.equal(renamed.documents[0].name, '驿站.quest')
   assert.equal(renamed.activeKey, doc.key)
   saveFlowWorkspace(renamed)
   const reloaded = loadFlowWorkspace().state
   assert.deepEqual(reloaded.documents, renamed.documents)
   assert.deepEqual(reloaded.folders.filter((folder) => !folder.key.startsWith('section:')), renamed.folders)
   assert.equal(reloaded.activeKey, renamed.activeKey)
-  assert.throws(() => moveFlowEntry(renamed, { kind: 'folder', key: chapter.folder.key }, 'story', story.folder.key), /子文件夹/)
-  assert.equal(moveFlowEntry(renamed, entry, 'story', null).documents[0].folderId, null)
+  assert.throws(() => moveFlowEntry(renamed, { kind: 'folder', key: chapter.folder.key }, 'quest', story.folder.key), /子文件夹/)
+  assert.equal(moveFlowEntry(renamed, entry, 'quest', null).documents[0].folderId, null)
 })
 test('Resource name collisions are rejected and repeated imports receive distinct names', () => {
-  const doc = { ...createFlowDocument(), name: '故事.hflow' }, state = { documents: [doc], folders: [], activeKey: doc.key }
+  const doc = { ...createFlowDocument(), name: '故事.quest' }, state = { documents: [doc], folders: [], activeKey: doc.key }
   // 文件夹只与同级文件夹比名；文档在分类内全局唯一（跨文件夹也不许重名）
-  const folder = addFlowFolder(state, '章节', 'story', null)
-  assert.throws(() => addFlowFolder(folder.state, '章节', 'story', null), /同名/)
+  const folder = addFlowFolder(state, '章节', 'quest', null)
+  assert.throws(() => addFlowFolder(folder.state, '章节', 'quest', null), /同名/)
   assert.throws(() => renameFlowEntry(state, { kind: 'document', key: doc.key }, '../故事'), /有效名称/)
-  assert.equal(uniqueDocumentName(state, '故事.hflow', 'story', null), '故事 (2).hflow')
-  assert.equal(uniqueDocumentName(folder.state, '故事.hflow', 'story', folder.folder.key), '故事 (2).hflow')
+  assert.equal(uniqueDocumentName(state, '故事.quest', 'quest', null), '故事 (2).quest')
+  assert.equal(uniqueDocumentName(folder.state, '故事.quest', 'quest', folder.folder.key), '故事 (2).quest')
 })
 test('Broken folder references and cycles cannot silently hide saved documents', () => {
   const doc = { ...createFlowDocument(), folderId: 'missing' }
@@ -1162,8 +1164,8 @@ test('Kit stringify/parse keeps extends and includes', () => {
 })
 
 test('Kit item can link to .item library by filename stem', async () => {
-  const { createKitItemLink, expandKitItem, isKitItemLink, normalizeItemRef, resolveKit } = await import('../src/workspaces/progress/kit.ts')
-  const { createItem } = await import('../src/workspaces/progress/itemDoc.ts')
+  const { createKitItemLink, expandKitItem, isKitItemLink, normalizeItemRef, resolveKit } = await import('../src/workspaces/quest/kit.ts')
+  const { createItem } = await import('../src/workspaces/quest/itemDoc.ts')
   const linked = createKitItemLink('diamond_spear.item', 3)
   assert.equal(linked.item, 'diamond_spear')
   assert.ok(isKitItemLink(linked))

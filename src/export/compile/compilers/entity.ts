@@ -1,7 +1,7 @@
-import {parseEntity,stringifyEntity} from '../../../workspaces/progress/entityDoc'
+import {parseEntity,stringifyEntity} from '../../../workspaces/quest/entityDoc'
 import {sourcePathOf} from '../../../workspace'
 import type {FileCompiler} from '../types'
-import {displayTextReferences} from '../../../workspaces/progress/displayTextLocale'
+import {displayTextReferences} from '../../../workspaces/quest/displayTextLocale'
 export const entityCompiler:FileCompiler={id:'entity',match:file=>file.name.toLowerCase().endsWith('.entity'),async compile(file,ctx){try{
  const doc=parseEntity(file.content),path=sourcePathOf(file).replace(/^src\//,'')
  if(!/^entities\/[^/\\:]+\.entity$/i.test(path))throw Error('实体模板需要扁平文件名')

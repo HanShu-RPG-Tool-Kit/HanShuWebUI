@@ -15,8 +15,7 @@ export const ALLOWED_EXTENSIONS = [
   '.voice',
   '.tts',
   '.ttsservice',
-  '.progress',
-  '.hflow',
+  '.quest',
   '.nav',
   '.item',
   '.entity',
@@ -41,8 +40,7 @@ export const FILE_DIRS: Record<string, string> = {
   '.char': 'src/character',
   /** 脚本统一使用 src/script/<类型>/（由 SourceFile.srcKind 分流） */
   '.py': 'src/script/common',
-  '.progress': 'src/progress',
-  '.hflow': 'src/story',
+  '.quest': 'src/quest',
   '.nav': 'src/navigator',
   '.item': 'src/items',
   '.entity': 'src/entities',
@@ -57,8 +55,7 @@ export const SOURCE_KIND_ORDER = [
   'hanshu',
   'character',
   'script',
-  'progress',
-  'story',
+  'quest',
   'navigator',
   'gift',
   'items',
@@ -75,8 +72,8 @@ export const FILE_PLANE: Record<string, FilePlane> = {
   '.hs': 'client',
   '.char': 'client',
   '.py': 'server',
-  '.progress': 'server',
-  '.hflow': 'shared',
+  /** 导出前单进度会编译为多进度；PAK 平面跟引擎通用形态走 shared */
+  '.quest': 'shared',
   '.nav': 'shared',
   '.item': 'server',
   '.entity': 'server',
@@ -286,7 +283,7 @@ export function editorLanguageForFile(name: string): string {
   if (ext === '.py') return 'python'
   if (
     ext === '.lang' || ext === '.voice' || ext === '.tts' || ext === '.ttsservice'
-    || ext === '.progress' || ext === '.hflow' || ext === '.nav' || ext === '.item' || ext === '.entity' || ext === '.kit'
+    || ext === '.quest' || ext === '.nav' || ext === '.item' || ext === '.entity' || ext === '.kit'
   ) {
     return 'json'
   }

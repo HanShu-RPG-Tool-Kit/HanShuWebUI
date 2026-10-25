@@ -14,8 +14,8 @@ import { harness } from './collaboration-harness.mjs'
 // This is a single-host test, not an assertion of two-physical-device acceptance.
 const output = resolve('../output/unified-presence')
 const indexPath = '.hanshu/skinmanager/library.json'
-const scriptPath = 'src/hanshu/story.hs', flowPath = 'src/story/presence.hflow'
-const progressPath = 'src/progress/example.progress'
+const scriptPath = 'src/hanshu/story.hs', flowPath = 'src/quest/presence.quest'
+const progressPath = 'src/quest/example.quest'
 const results = [], observed = [], pages = [], pageErrors = [], sockets = new Set()
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 let upstream, browser, dropNextPatch = false, dropNextCommand = null, ownerToken = ''
@@ -158,7 +158,7 @@ try {
   await until(async () => (await state()).leases.every(lease => lease.sessionId !== sa.id), 'Short save lease was not released')
   passed('剧本本地输入显示编辑中和未保存，不持有长期写权；提交成功同步内容并清除草稿状态')
 
-  await Promise.all([openProgressFile(a, 'presence.hflow'), openProgressFile(b, 'presence.hflow')])
+  await Promise.all([openProgressFile(a, 'presence.quest'), openProgressFile(b, 'presence.quest')])
   await presence(sa, flowPath, 'viewing'); await presence(sb, flowPath, 'viewing'); await visibleWindow(a, '审阅窗口'); await assertFree(a)
   const startNode = active(a).getByRole('button', { name: '开始节点（信号源），不可删除；Ctrl+点击发出 S(未激活 → 已激活)', exact: true })
   const rect = await startNode.boundingBox(); assert.ok(rect)
@@ -170,7 +170,7 @@ try {
   await saved(a); await presence(sa, flowPath, 'viewing')
   passed('流程节点移动采用相同的编辑意图、未保存和已保存状态，仍由保存时短租约保护')
 
-  await Promise.all([openProgressFile(a, 'example.progress'), openProgressFile(b, 'example.progress'), openProgressFile(v, 'example.progress')])
+  await Promise.all([openProgressFile(a, 'example.quest'), openProgressFile(b, 'example.quest'), openProgressFile(v, 'example.quest')])
   await presence(sa, progressPath, 'viewing'); await until(()=>title(a).isEnabled(),'Progress writer not ready'); assert.ok(await title(v).isDisabled())
   await assertFree(a); await assertFree(b); await noLease(sa)
   // Hold the command before S sees it so the meaningful editing interval is
@@ -188,7 +188,7 @@ try {
   await until(() => Boolean(resumeProgress), 'Progress did not start its automatic command')
   await noLease(sa); assert.ok(await title(b).isEnabled()); assert.ok(await title(v).isDisabled())
   resumeProgress()
-  await until(async () => JSON.parse(await readFile(join(h.root, 'assets/zh_cn/lang_progress/example.lang'), 'utf8')).name === '进度自动提交的在线状态', 'Progress title did not autosubmit')
+  await until(async () => JSON.parse(await readFile(join(h.root, 'assets/zh_cn/lang_quest/example.lang'), 'utf8')).name === '进度自动提交的在线状态', 'Progress title did not autosubmit')
   await saved(a); await presence(sa, progressPath, 'viewing'); await noLease(sa)
   await a.unroute('**/api/files/commit')
   passed('进度自动提交期间显示编辑中，两个写者都可输入；确认后返回查看状态且无长期写权')
@@ -269,7 +269,7 @@ try {
 
   await a.getByRole('tab', { name: '剧本', exact: true }).click(); await presence(sa, scriptPath, 'viewing')
   await visibleWindow(b, '窗口 A')
-  await openProgressFile(a, 'presence.hflow'); await presence(sa, flowPath, 'viewing')
+  await openProgressFile(a, 'presence.quest'); await presence(sa, flowPath, 'viewing')
   await (await editSkinName(b, '另一窗口更新的皮肤 B')).press('Enter'); await saved(b)
   await sleep(1200); await presence(sa, flowPath, 'viewing')
   await openSkin(a, '另一窗口更新的皮肤 B'); await presence(sa, indexPath, 'viewing', 'presence-skin-b'); await capsule(b, '窗口 A', '查看中')

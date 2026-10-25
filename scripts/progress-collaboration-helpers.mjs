@@ -6,8 +6,8 @@ import { join } from 'node:path'
 import { progress } from './collaboration-harness.mjs'
 import { projectMenu, waitProject ,loginProject} from './project-ui-helpers.mjs'
 
-export const progressPath = 'src/progress/example.progress'
-export const languagePath = 'assets/zh_cn/lang_progress/example.lang'
+export const progressPath = 'src/quest/example.quest'
+export const languagePath = 'assets/zh_cn/lang_quest/example.lang'
 export const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 export async function until(check, label, timeout = 20000) {
   const deadline = Date.now() + timeout
@@ -107,7 +107,7 @@ export async function login(page, base, credential, name, navigate = true) {
 }
 export async function openProgress(page) {
   await page.getByRole('tab', { name: '进度流程', exact: true }).click()
-  await active(page).getByLabel('筛选资源', { exact: true }).fill('example.progress')
-  await active(page).locator('[role=treeitem][title="example.progress"]').click()
+  await active(page).getByLabel('筛选资源', { exact: true }).fill('example.quest')
+  await active(page).locator('[role=treeitem][title="example.quest"]').click()
   await active(page).getByLabel('进度标题', { exact: true }).waitFor()
 }

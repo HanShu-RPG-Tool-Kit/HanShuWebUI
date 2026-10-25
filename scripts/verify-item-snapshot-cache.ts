@@ -7,7 +7,7 @@ import {
   createItem,
   parseItem,
   stringifyItem,
-} from '../src/workspaces/progress/itemDoc.ts'
+} from '../src/workspaces/quest/itemDoc.ts'
 import {
   forceRequestItemSnapshots,
   getCachedDisplaySync,
@@ -20,13 +20,13 @@ import {
   setItemSnapshotRefreshOnline,
   snapshotsNeededCount,
   useMemoryItemSnapshotStore,
-} from '../src/workspaces/progress/itemSnapshotCache.ts'
-import { snapshotStatusOf } from '../src/workspaces/progress/itemPresentation.ts'
+} from '../src/workspaces/quest/itemSnapshotCache.ts'
+import { snapshotStatusOf } from '../src/workspaces/quest/itemPresentation.ts'
 import {
   itemFingerprint,
   readItemStackDisplay,
   type ItemStackDisplay,
-} from '../src/workspaces/progress/itemstack.ts'
+} from '../src/workspaces/quest/itemstack.ts'
 
 const RENDER_SNAPSHOTS_BATCH = 128
 

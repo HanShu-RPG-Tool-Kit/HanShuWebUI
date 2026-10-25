@@ -187,15 +187,15 @@ fn relations_are_facts_and_reference_targets_are_never_leased_or_cascaded() {
         dir.path(),
         &[
             (
-                "src/progress/a.progress",
+                "src/quest/a.quest",
                 r#"{"rewardKits":["shared","missing.kit"]}"#,
             ),
             ("src/gift/shared.kit", "shared"),
-            ("assets/zh_cn/lang_progress/a.lang", "title=A"),
+            ("assets/zh_cn/lang_quest/a.lang", "title=A"),
         ],
     );
     let facts = engine
-        .resource_relations(&sid, "src/progress/a.progress")
+        .resource_relations(&sid, "src/quest/a.quest")
         .unwrap();
     assert_eq!(facts.relations.len(), 3);
     assert!(facts
@@ -205,7 +205,7 @@ fn relations_are_facts_and_reference_targets_are_never_leased_or_cascaded() {
             && relation.to == "src/gift/missing.kit"));
     for operation in [FileOperationKind::Write, FileOperationKind::Remove] {
         let plan = engine
-            .plan_file_operations(&sid, &[request(operation, "src/progress/a.progress", None)])
+            .plan_file_operations(&sid, &[request(operation, "src/quest/a.quest", None)])
             .unwrap();
         assert!(plan
             .lease_paths
@@ -220,7 +220,7 @@ fn relations_are_facts_and_reference_targets_are_never_leased_or_cascaded() {
         .resource_relations(&sid, "src/gift/shared.kit")
         .unwrap();
     assert_eq!(incoming.relations.len(), 1);
-    assert_eq!(incoming.relations[0].from, "src/progress/a.progress");
+    assert_eq!(incoming.relations[0].from, "src/quest/a.quest");
 }
 
 #[test]
@@ -471,7 +471,7 @@ fn read_only_queries_are_available_to_viewers_and_malformed_unrelated_sources_do
     let (mut engine, sid) = setup(
         dir.path(),
         &[
-            ("src/progress/broken.progress", "not json"),
+            ("src/quest/broken.quest", "not json"),
             ("src/hanshu/a.hs", "A"),
         ],
     );
@@ -486,7 +486,7 @@ fn read_only_queries_are_available_to_viewers_and_malformed_unrelated_sources_do
         )
         .unwrap();
     assert!(engine
-        .resource_relations(&viewer.id, "src/progress/broken.progress")
+        .resource_relations(&viewer.id, "src/quest/broken.quest")
         .unwrap()
         .relations
         .is_empty());
@@ -516,7 +516,7 @@ fn invalid_paths_type_changing_moves_and_conflicting_requests_fail_without_side_
             &[request(
                 FileOperationKind::Move,
                 "src/hanshu/a.hs",
-                Some("src/progress/a.progress")
+                Some("src/quest/a.quest")
             )]
         )
         .is_err());
@@ -543,10 +543,10 @@ fn invalid_paths_type_changing_moves_and_conflicting_requests_fail_without_side_
 fn unsaved_owned_resources_have_relations_in_query_and_plan() {
     let dir = tempfile::tempdir().unwrap();
     let (engine, sid) = setup(dir.path(), &[]);
-    let path = "assets/zh_cn/lang_progress/new.lang";
+    let path = "assets/zh_cn/lang_quest/new.lang";
     let facts = engine.resource_relations(&sid, path).unwrap();
     assert_eq!(facts.relations.len(), 1);
-    assert_eq!(facts.relations[0].from, "src/progress/new.progress");
+    assert_eq!(facts.relations[0].from, "src/quest/new.quest");
     let plan = engine
         .plan_file_operations(&sid, &[request(FileOperationKind::Write, path, None)])
         .unwrap();
@@ -557,7 +557,7 @@ fn unsaved_owned_resources_have_relations_in_query_and_plan() {
             &sid,
             &[request(
                 FileOperationKind::Mkdir,
-                "assets/zh_cn/voice_progress/new",
+                "assets/zh_cn/voice_quest/new",
                 None,
             )],
         )
@@ -565,8 +565,8 @@ fn unsaved_owned_resources_have_relations_in_query_and_plan() {
     assert!(voice
         .relations
         .iter()
-        .any(|relation| relation.from == "src/progress/new.progress"
-            && relation.to == "assets/zh_cn/voice_progress/new"));
+        .any(|relation| relation.from == "src/quest/new.quest"
+            && relation.to == "assets/zh_cn/voice_quest/new"));
 }
 
 #[test]
@@ -637,24 +637,24 @@ fn arbitrary_files_cannot_enter_typed_sources_through_move_or_directory_move() {
         dir.path(),
         &[
             ("meta/docs/malformed.txt", "not progress JSON"),
-            ("meta/imports/injected.progress", "not progress JSON"),
+            ("meta/imports/injected.quest", "not progress JSON"),
         ],
     );
     for operation in [
         request(
             FileOperationKind::Move,
             "meta/docs/malformed.txt",
-            Some("src/progress/injected.progress"),
+            Some("src/quest/injected.quest"),
         ),
         request(
             FileOperationKind::Move,
             "meta/docs/malformed.txt",
-            Some("meta/docs/injected.progress"),
+            Some("meta/docs/injected.quest"),
         ),
         request(
             FileOperationKind::Move,
             "meta/imports",
-            Some("src/progress"),
+            Some("src/quest"),
         ),
     ] {
         assert_eq!(
@@ -667,7 +667,7 @@ fn arbitrary_files_cannot_enter_typed_sources_through_move_or_directory_move() {
     }
     let paths = vec![
         "meta/docs/malformed.txt".into(),
-        "src/progress/injected.progress".into(),
+        "src/quest/injected.quest".into(),
     ];
     let leases = engine.acquire_files(&sid, &paths, false, 1001).unwrap();
     let version = engine
@@ -697,7 +697,7 @@ fn arbitrary_files_cannot_enter_typed_sources_through_move_or_directory_move() {
         "invalid"
     );
     assert!(dir.path().join("meta/docs/malformed.txt").exists());
-    assert!(!dir.path().join("src/progress/injected.progress").exists());
+    assert!(!dir.path().join("src/quest/injected.quest").exists());
 }
 
 #[test]
@@ -820,7 +820,7 @@ fn uppercase_source_extensions_keep_schema_and_actual_source_authority() {
             &[request(
                 FileOperationKind::Move,
                 "meta/raw.txt",
-                Some("src/progress/Injected.PROGRESS")
+                Some("src/quest/Injected.QUEST")
             )]
         )
         .is_err());
@@ -829,18 +829,20 @@ fn uppercase_source_extensions_keep_schema_and_actual_source_authority() {
             &sid,
             &[request(
                 FileOperationKind::Write,
-                "src/progress/Invalid.PROGRESS",
+                "src/quest/Invalid.QUEST",
                 None,
             )],
         )
         .unwrap();
-    assert_eq!(plan.authorities[0].source_kind.as_deref(), Some("progress"));
-    let submitted = changes(&mut engine, &sid, &plan);
+    assert_eq!(plan.authorities[0].source_kind.as_deref(), Some("quest"));
+    let mut submitted = changes(&mut engine, &sid, &plan);
+    // 带单进度 format 的残缺 JSON 须在提交时被校验拒绝
+    submitted[0].content = Some(STANDARD.encode(r#"{"format":"hanshu.progress","version":1}"#));
     assert_eq!(
         commit(&mut engine, &sid, submitted).error.unwrap().code,
         "invalid"
     );
-    assert!(!dir.path().join("src/progress/Invalid.PROGRESS").exists());
+    assert!(!dir.path().join("src/quest/Invalid.QUEST").exists());
 }
 
 #[test]

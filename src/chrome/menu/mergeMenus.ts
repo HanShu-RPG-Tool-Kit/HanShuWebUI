@@ -1,6 +1,6 @@
 import type { AppWorkspaceId } from '../../workspaces/types'
 import { globalMenuContribution } from './globalMenus'
-import { progressMenuContribution } from './progressMenus'
+import { questMenuContribution } from './questMenus'
 import { scriptMenuContribution } from './scriptMenus'
 import type { MenuCommand, MenuContribution, MenuDef, MenuEntry } from './types'
 
@@ -8,7 +8,7 @@ const MENU_ORDER = ['file', 'edit', 'select', 'view', 'go', 'help'] as const
 
 const WORKSPACE_CONTRIBUTIONS: Partial<Record<AppWorkspaceId, MenuContribution>> = {
   script: scriptMenuContribution,
-  'progress-flow': progressMenuContribution,
+  'quest': questMenuContribution,
 }
 
 function itemsOf(contribution: MenuContribution, menuId: string): MenuEntry[] {

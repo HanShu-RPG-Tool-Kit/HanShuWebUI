@@ -20,7 +20,7 @@
 ## 菜单栏
 
 - **全局贡献**（`src/chrome/menu/globalMenus.ts`）：打开/新建/分享/连接/关闭工程、导出 PAK / 工程包 / 自动发版、历史、界面比例、帮助、退出、游戏开发服务器、协作面板等。
-- **工作区贡献**：剧本 `scriptMenus.ts`、进度 `progressMenus.ts`；按当前工作区与全局合并（`mergeMenus`）。
+- **工作区贡献**：剧本 `scriptMenus.ts`、进度 `questMenus.ts`；按当前工作区与全局合并（`mergeMenus`）。
 - 每项有稳定 **`id`**（分发与启用规则）和显示用 **`label`**。
 - `run: 'app'` 由 `runAppMenuAction` 处理（工程会话经 `openProjectUi`，导出/发版经 `project/exportActions`）；`run: 'workspace'` 交给当前工作区 `handleMenuAction(id)`。
 - 导出前用 `flushProjectEditors` 冲各工作区编辑缓冲进 `projectSession`；工作区通过 `registerProjectEditorFlush` 登记。

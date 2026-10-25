@@ -1,7 +1,7 @@
 import {join,dirname} from 'node:path'
 import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
-import { createKit, createKitItem, createKitItemLink, stringifyKit, parseKit, resolveKit } from '../src/workspaces/progress/kit'
+import { createKit, createKitItem, createKitItemLink, stringifyKit, parseKit, resolveKit } from '../src/workspaces/quest/kit'
 
 const kit = createKit()
 kit.tags = ['Test', 'test', '礼包']

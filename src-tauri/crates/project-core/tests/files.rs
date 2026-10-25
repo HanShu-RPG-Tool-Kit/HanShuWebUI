@@ -75,8 +75,8 @@ fn all_file_types_are_server_owned_and_stale_versions_cannot_overwrite() {
         "src/character/npc.char",
         "src/script/action.py",
         "src/goal/goal.py",
-        "src/progress/quest.progress",
-        "src/story/tree.hflow",
+        "src/quest/quest.quest",
+        "src/quest/tree.quest",
         "src/navigator/point.nav",
         "src/items/apple.item",
         "src/gift/reward.kit",
@@ -89,7 +89,7 @@ fn all_file_types_are_server_owned_and_stale_versions_cannot_overwrite() {
     ] {
         let content = if path == ".hanshu/skinmanager/library.json" {
             r#"{"schemaVersion":5,"revision":1,"folders":[],"entries":[]}"#
-        } else if path.ends_with(".progress") {
+        } else if path.ends_with(".quest") {
             r#"{"format":"hanshu.progress","version":1,"id":"quest","name":"name","description":"description","tags":[],"completion":"all","goals":[],"visibility":[],"acceptance":[],"abandonable":true,"autoStartWhenAcceptable":false,"repeat":{"kind":"once"},"rewardKits":[]}"#
         } else {
             "original"
@@ -265,7 +265,7 @@ fn localizations_and_voice_share_the_source_write_authority() {
     let (_, b) = e.login(&key, "B", 1000).unwrap();
     e.acquire_files(
         &a.id,
-        &["src/progress/example.progress".into()],
+        &["src/quest/example.quest".into()],
         false,
         1000,
     )
@@ -277,7 +277,7 @@ fn localizations_and_voice_share_the_source_write_authority() {
                 &b.id,
                 &[FileOperationRequest {
                     op: FileOperationKind::Write,
-                    path: "assets/zh_cn/lang_progress/example.lang".into(),
+                    path: "assets/zh_cn/lang_quest/example.lang".into(),
                     destination: None
                 }]
             )
@@ -297,7 +297,7 @@ fn localizations_and_voice_share_the_source_write_authority() {
                 &b.id,
                 &[FileOperationRequest {
                     op: FileOperationKind::Write,
-                    path: "assets/zh_cn/voice_progress/example/line.ogg".into(),
+                    path: "assets/zh_cn/voice_quest/example/line.ogg".into(),
                     destination: None
                 }]
             )
@@ -311,7 +311,7 @@ fn localizations_and_voice_share_the_source_write_authority() {
         "locked"
     );
     assert!(e
-        .acquire_files(&b.id, &["src/progress/other.progress".into()], false, 1000)
+        .acquire_files(&b.id, &["src/quest/other.quest".into()], false, 1000)
         .is_ok());
 }
 #[test]

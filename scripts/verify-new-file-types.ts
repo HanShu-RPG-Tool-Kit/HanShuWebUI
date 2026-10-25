@@ -6,7 +6,7 @@
  * 1. 注册表的 `ext` 集合与 `workspace.MANUAL_FILE_EXTENSIONS` **完全一致**。
  *    两边一漂移，就会出现"菜单里没有、后缀却合法"（或反过来：菜单里能点、落盘被拒）——
  *    点一下才发现，而且只在某个后缀上。
- * 2. **每条 `seed` 都能被各自的解析器吃回去**。空壳对 `.progress` / `.kit` / `.hflow`
+ * 2. **每条 `seed` 都能被各自的解析器吃回去**。空壳对 `.quest` / `.kit`
  *    就是一份打开即报错的坏文档，而"新建 → 打开"这条路上没人会去读解析器源码。
  * 3. 每个 `icon` 都真实存在于 `explorerIcons` 的图标表。写错一个 kind 只是"没图标"，
  *    没人会逐个点开 11 个类型看一遍。
@@ -40,12 +40,12 @@ import { analyzeHsDiagnostics } from '../src/monaco/hsDiagnostics.ts'
 import { analyzeCharDiagnostics } from '../src/monaco/charDiagnostics.ts'
 import { parseCharTextSpans } from '../src/monaco/charTextSpans.ts'
 import { collectSourceKeys } from '../src/hanshu/sourceKeys.ts'
-import { parseProgress, stringifyProgress } from '../src/workspaces/progress/progressDoc.ts'
-import { parseItem, stringifyItem } from '../src/workspaces/progress/itemDoc.ts'
-import { parseEntity, stringifyEntity } from '../src/workspaces/progress/entityDoc.ts'
-import { parseKit } from '../src/workspaces/progress/kit.ts'
-import { parseNavigationPoint, validateNavigationPoint } from '../src/workspaces/progress/navigationPoint.ts'
-import { parseFlow } from '../src/workspaces/progress/model.ts'
+import { parseProgress, stringifyProgress } from '../src/workspaces/quest/progressDoc.ts'
+import { parseItem, stringifyItem } from '../src/workspaces/quest/itemDoc.ts'
+import { parseEntity, stringifyEntity } from '../src/workspaces/quest/entityDoc.ts'
+import { parseKit } from '../src/workspaces/quest/kit.ts'
+import { parseNavigationPoint, validateNavigationPoint } from '../src/workspaces/quest/navigationPoint.ts'
+import { parseFlow } from '../src/workspaces/quest/model.ts'
 import { readVoicePlan } from '../src/tts/plan.ts'
 import { readServiceDefinition, resolveService } from '../src/tts/service.ts'
 import { AUTH_SHAPES, PROTOCOLS } from '../src/tts/spec.ts'
@@ -125,18 +125,19 @@ for (const item of NEW_FILE_TYPES) {
   )
 }
 // 资源树是靠 sourceIconKind(file) 选图标的：注册表里每种类型的图标必须与它一致，
-// 否则"菜单里认得出、树里认不出"（`.progress` 等曾经就退化成通用文件图标；
-// 而 `.py` 的目标定义光看后缀根本分不开，得靠 srcKind）
+// 否则"菜单里认得出、树里认不出"（`.quest` 等曾经就退化成通用文件图标；
+// 而 `.py` 的目标定义光看后缀根本分不开，得靠 srcKind）。
+// 例外：单/多进度都是 `.quest`，菜单用 progress/hflow 区分作者态，树里统一 quest。
 for (const item of NEW_FILE_TYPES) {
   const name = newFileName(item, item.defaultBase)
+  const expected = item.ext === '.quest' ? 'quest' : item.icon
   assert.equal(
     sourceIconKind({ name, srcKind: item.srcKind }),
-    item.icon,
-    `${name} 在资源树里的图标与注册表的 ${item.icon} 不一致`,
+    expected,
+    `${name} 在资源树里的图标与期望的 ${expected} 不一致`,
   )
 }
-assert.equal(fileIconKind('a.progress'), 'progress')
-assert.equal(fileIconKind('a.hflow'), 'hflow')
+assert.equal(fileIconKind('a.quest'), 'quest')
 assert.equal(fileIconKind('a.nav'), 'nav')
 assert.equal(fileIconKind('a.kit'), 'kit')
 assert.equal(fileIconKind('a.entity'), 'entity')
@@ -144,6 +145,9 @@ assert.equal(fileIconKind('a.ttsservice'), 'ttsservice')
 assert.equal(fileIconKind('a.tts'), 'tts')
 assert.notEqual(fileIconKind('a.tts'), fileIconKind('a.ttsservice'), '方案与服务定义必须是两个图标')
 assert.notEqual(sourceIconKind({ name: 'a.py' }), sourceIconKind({ name: 'a.py', srcKind: 'goal' }))
+assert.equal(type('progress').ext, '.quest')
+assert.equal(type('hflow').ext, '.quest')
+assert.notEqual(type('progress').icon, type('hflow').icon, '单/多进度在新建菜单里必须能区分')
 
 // ===== 2b. 注册表建得出来的文件，资源树必须渲染得出来 =====
 
@@ -173,8 +177,7 @@ assert.deepEqual(
     'hanshu',
     'character',
     'script',
-    'progress',
-    'story',
+    'quest',
     'navigator',
     'gift',
     'items',
@@ -381,11 +384,12 @@ for (const id of ['py', 'py-goal']) {
   )
 }
 
-// `.progress`：往返一致（种子就是 `stringifyProgress(createProgress(…))`）
+// 单进度 `.quest`：往返一致（种子就是 `stringifyProgress(createProgress(…))`）
 const progressSeed = seedOf('progress')
 const progressDoc = parseProgress(progressSeed)
-assert.equal(progressSeed, stringifyProgress(progressDoc), '.progress 种子应能原样往返')
-assert.deepEqual(progressDoc.goals, [], '新建进度不带目标，由用户在进度工作区加')
+assert.equal(progressSeed, stringifyProgress(progressDoc), '单进度 .quest 种子应能原样往返')
+assert.deepEqual(progressDoc.goals, [], '新建单进度任务不带目标，由用户在任务工作区加')
+assert.equal(newFileName(type('progress'), '示例'), '示例.quest')
 
 // `.kit`
 const kitSeed = seedOf('kit')
@@ -410,11 +414,12 @@ assert.equal(sourcePathOf({ name: newFileName(type('entity'), '新实体') }), '
 const navPoint = parseNavigationPoint(seedOf('nav'))
 assert.deepEqual(validateNavigationPoint(navPoint), [], '.nav 种子应是一份合法导航点')
 
-// `.hflow`：树图文档
+// 多进度 `.quest`：树图文档
 const flowSeed = seedOf('hflow', '序章流程')
 const flow = parseFlow(flowSeed)
 assert.equal(flow.format, 'hanshu.progress-tree')
 assert.equal(flow.entry.title.text, 'entry.title', '标题是语义键，种子不该写死展示名')
+assert.equal(newFileName(type('hflow'), '示例'), '示例.quest')
 
 // `.ttsservice`：必须**通过结构校验**（否则它连方案的服务下拉都进不去）
 const serviceSeed = seedOf('ttsservice')

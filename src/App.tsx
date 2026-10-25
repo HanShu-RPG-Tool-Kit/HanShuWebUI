@@ -13,7 +13,7 @@ import {
 } from './workspaces/activeWorkspace.ts'
 import { APP_WORKSPACES } from './workspaces/registry.ts'
 import { McSkinWorkspace } from './workspaces/McSkinWorkspace.tsx'
-import { ProgressFlowWorkspace, type ProgressWorkspaceHandle } from './workspaces/ProgressFlowWorkspace.tsx'
+import { QuestWorkspace, type ProgressWorkspaceHandle } from './workspaces/QuestWorkspace.tsx'
 import { ScriptWorkspace } from './workspaces/ScriptWorkspace.tsx'
 import {
   ensureGameDevControlStarted,
@@ -66,8 +66,8 @@ function renderToolWorkspace(
   progressRef: Ref<ProgressWorkspaceHandle>,
 ) {
   switch (id) {
-    case 'progress-flow':
-      return <ProgressFlowWorkspace active={active} workspaceRef={progressRef} />
+    case 'quest':
+      return <QuestWorkspace active={active} workspaceRef={progressRef} />
     case 'mc-skin':
       return <McSkinWorkspace active={active} />
     default:
@@ -214,7 +214,7 @@ function App() {
         return
       }
 
-      if (activeWorkspaceId === 'progress-flow') {
+      if (activeWorkspaceId === 'quest') {
         progressRef.current?.handleMenuAction(item.id)
         return
       }

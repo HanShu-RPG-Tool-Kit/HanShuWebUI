@@ -51,7 +51,7 @@ const registry: NodeRegistry = {
 />
 ```
 
-`editDraft` 是示意名称，接入时使用当前编辑会话的真实草稿入口。完整独立示例见 `nodeEditor/Example.tsx`：不导入进度模块，可以独立创建节点、连线、分组和注释。进度适配器参考 `workspaces/progress/graphAdapter.ts`。
+`editDraft` 是示意名称，接入时使用当前编辑会话的真实草稿入口。完整独立示例见 `nodeEditor/Example.tsx`：不导入进度模块，可以独立创建节点、连线、分组和注释。进度适配器参考 `workspaces/quest/graphAdapter.ts`。
 
 `documentId` 是画布实例身份；切换文档会重建独立的 React Flow Provider，旧拖动、连线、小刀、菜单和视口状态不跨文档续接。同一文档可同时在多个窗格打开，每个组件实例有独立视口和选择状态。
 
@@ -93,7 +93,7 @@ Group 成员继续保存绝对世界坐标，不把它们迁成 React Flow `pare
 
 外部文档刷新后适配器重新投影；不要用当前 React Flow 内部数据反向覆盖整份业务文档。已有业务修改应继续保留读取版本，遵守当前文件/字段的冲突策略。
 
-进度流程保留 `.hflow` 格式、原有节点身份、动态交换槽、端口校验和信号模拟。React Flow 的临时分组节点不会进入 `layout.positions`。进度与通用层的选择/连线 ID 由适配器映射，逻辑连线 ID 使用独立视图前缀，避免与起点连接冲突。
+多进度任务保留 `.quest`（`hanshu.progress-tree`）、原有节点身份、动态交换槽、端口校验和信号模拟。React Flow 的临时分组节点不会进入 `layout.positions`。进度与通用层的选择/连线 ID 由适配器映射，逻辑连线 ID 使用独立视图前缀，避免与起点连接冲突。
 
 ## 8. 验证入口
 

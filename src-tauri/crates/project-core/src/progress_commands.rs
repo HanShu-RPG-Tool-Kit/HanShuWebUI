@@ -170,9 +170,9 @@ fn language_path(source: &str, locale: &str) -> Result<String> {
         "语言名称无效",
     )?;
     let source = crate::resource_relations::source(source)
-        .filter(|source| source.kind == "progress")
-        .ok_or_else(|| Error::new("invalid", "进度操作只能作用于进度源文件"))?;
-    let path = format!("assets/{locale}/lang_progress/{}.lang", source.stem);
+        .filter(|source| source.kind == "quest")
+        .ok_or_else(|| Error::new("invalid", "进度操作只能作用于任务源文件"))?;
+    let path = format!("assets/{locale}/lang_quest/{}.lang", source.stem);
     path_ok(&path)?;
     Ok(path)
 }

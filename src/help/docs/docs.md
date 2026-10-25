@@ -37,17 +37,17 @@
 | [表达式标准 V1](#kit-expr) | 规范 | `hanshu.kit.expr`；引擎实现以此为准 |
 | [引擎发放契约](#kit-runtime) | 规范 · 开发 | `grant`、注入表、流水线、失败语义；实装 Mod 以此为准 |
 
-## 进度
+## 任务 / 进度
 
 | 文档 | 受众 | 内容 |
 | --- | --- | --- |
-| [进度工作区](#progress-workspace) | 用户 · 开发 | 资源树、工程目录、编辑与保存 |
+| [任务工作区](#progress-workspace) | 用户 · 开发 | 资源树（任务包）、`src/quest`、虚拟单/多进度视图 |
 | [实体库：模板与串流预览](#entity-guide) | 用户 · 开发 | 实体模板、捕获、在线取景、快照与生成 |
 | [物品库：.item 与 .itemstack](#item-guide) | 用户 · 开发 | 物品定义、快照导入、标签、礼包链接 |
 | [游戏开发服务器](#game-dev-server) | 开发 | 本机 Control 连接、物品库查询 API、控制台 |
-| [进度流程模型](#progress-flow-model) | 开发 | 画布模型、信号运行时、校验 |
-| [.progress 文档与表单](#progress-document) | 用户 · 开发 | 委托文档字段与表单交互 |
-| [进度：任务与委托](#progress-design) | 草案 | 接取条件、目标组、冷却（尚未全部实现） |
+| [多进度任务模型](#progress-flow-model) | 开发 | `.quest` 树图、信号运行时、校验 |
+| [任务文档（单进度）](#progress-document) | 用户 · 开发 | `.quest` / `hanshu.progress` 表单字段与交互 |
+| [进度：任务与委托](#progress-design) | 草案 | 进度⊂任务；接取条件、目标组、冷却 |
 
 ## 配音
 

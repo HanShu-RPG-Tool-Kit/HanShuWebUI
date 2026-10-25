@@ -73,7 +73,7 @@ pub(crate) fn parse_unique(bytes: &[u8]) -> Result<Value> {
         .map_err(|_| Error::new("invalid", "JSON 无效或包含重复字段"))
 }
 
-/// Mirrors the current .progress structural contract. Unresolved references are valid drafts.
+/// Mirrors the current simple-quest (`hanshu.progress`) structural contract. Unresolved references are valid drafts.
 pub fn validate(source: &str) -> Result<()> {
     let invalid = || Error::new("invalid", "进度文档结构无效，服务器未保存");
     if source.len() > 1024 * 1024 {

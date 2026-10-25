@@ -5,8 +5,8 @@ import { connect } from 'node:net'
 import { deflateSync } from 'node:zlib'
 
 export const skinIndexPath = '.hanshu/skinmanager/library.json'
-export const progressPath = 'src/progress/example.progress'
-export const progressLangPath = 'assets/zh_cn/lang_progress/example.lang'
+export const progressPath = 'src/quest/example.quest'
+export const progressLangPath = 'assets/zh_cn/lang_quest/example.lang'
 export const scriptPath = 'src/hanshu/story.hs'
 export const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 

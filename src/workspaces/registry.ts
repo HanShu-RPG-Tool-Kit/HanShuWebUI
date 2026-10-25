@@ -8,6 +8,6 @@ export type AppWorkspaceMeta = {
 /** 应用级工作区列表（「剧本」由 App 单独挂载以保留 ref / 状态） */
 export const APP_WORKSPACES: readonly AppWorkspaceMeta[] = [
   { id: 'script', label: '剧本' },
-  { id: 'progress-flow', label: '进度流程' },
+  { id: 'quest', label: '任务' },
   { id: 'mc-skin', label: '皮肤管理器' },
 ] as const

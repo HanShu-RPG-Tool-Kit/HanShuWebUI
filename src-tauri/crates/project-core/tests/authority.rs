@@ -32,7 +32,7 @@ fn identity_is_not_a_connection_and_leases_are_session_scoped() {
         .create_resource(
             &a.id,
             None,
-            "one.progress".into(),
+            "one.quest".into(),
             ResourceKind::Progress,
             Some(progress()),
         )
@@ -75,7 +75,7 @@ fn viewers_and_revoked_subjects_cannot_bypass_authority() {
         .create_resource(
             &owner,
             None,
-            "one.progress".into(),
+            "one.quest".into(),
             ResourceKind::Progress,
             Some(progress()),
         )
@@ -116,7 +116,7 @@ fn lease_expiry_takeover_versions_and_restart_fence_old_writes() {
         .create_resource(
             &owner,
             None,
-            "one.progress".into(),
+            "one.quest".into(),
             ResourceKind::Progress,
             Some(progress()),
         )
@@ -169,7 +169,7 @@ fn malformed_writes_and_invalid_directory_changes_preserve_state() {
         .create_resource(
             &owner,
             Some(folder.id.clone()),
-            "one.progress".into(),
+            "one.quest".into(),
             ResourceKind::Progress,
             Some(progress()),
         )
@@ -212,7 +212,7 @@ fn failed_disk_replacement_never_publishes_candidate_state() {
         .create_resource(
             &owner,
             None,
-            "one.progress".into(),
+            "one.quest".into(),
             ResourceKind::Progress,
             Some(progress()),
         )
@@ -245,7 +245,7 @@ fn duplicate_document_and_nested_config_keys_are_rejected() {
         .create_resource(
             &owner,
             None,
-            "duplicate.progress".into(),
+            "duplicate.quest".into(),
             ResourceKind::Progress,
             Some(duplicate)
         )
@@ -258,7 +258,7 @@ fn duplicate_document_and_nested_config_keys_are_rejected() {
         .create_resource(
             &owner,
             None,
-            "nested.progress".into(),
+            "nested.quest".into(),
             ResourceKind::Progress,
             Some(duplicate)
         )
@@ -278,7 +278,7 @@ fn expression_conditions_match_the_progress_editor_contract() {
     e.create_resource(
         &owner,
         None,
-        "expr.progress".into(),
+        "expr.quest".into(),
         ResourceKind::Progress,
         Some(doc.to_string()),
     )
@@ -288,7 +288,7 @@ fn expression_conditions_match_the_progress_editor_contract() {
         .create_resource(
             &owner,
             None,
-            "invalid.progress".into(),
+            "invalid.quest".into(),
             ResourceKind::Progress,
             Some(doc.to_string())
         )

@@ -1,8 +1,8 @@
-import { readItemSync, syncRuleErrors } from '../../../workspaces/progress/itemSync'
-import { isItemFileName, parseItem, unionItemTags, type ItemDocument } from '../../../workspaces/progress/itemDoc'
+import { readItemSync, syncRuleErrors } from '../../../workspaces/quest/itemSync'
+import { isItemFileName, parseItem, unionItemTags, type ItemDocument } from '../../../workspaces/quest/itemDoc'
 import { sourcePathOf } from '../../../workspace'
 import type { FileCompiler } from '../types'
-import { displayTextReferences } from '../../../workspaces/progress/displayTextLocale'
+import { displayTextReferences } from '../../../workspaces/quest/displayTextLocale'
 
 export function itemTemplateArtifact(doc: ItemDocument) {
   const sync=readItemSync(doc.sync), errors=syncRuleErrors(sync,doc.item.components)

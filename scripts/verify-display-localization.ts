@@ -4,9 +4,9 @@ import {
   assertDisplaySessionUnchanged, commitLocalizedResult, preserveReadOnlyDisplayText, legacyLocalizedResultEdits, supportsDisplayLocalization, loadDisplayLocaleTables, prepareDisplayLocalization,
   type LocalizationSession,
 } from '../src/gameDevServer/displayLocalization'
-import {createItem, stringifyItem} from '../src/workspaces/progress/itemDoc'
-import {createEntity} from '../src/workspaces/progress/entityDoc'
-import {displayTextRuntimeKey, replaceDisplayText, getDisplayText} from '../src/workspaces/progress/displayTextLocale'
+import {createItem, stringifyItem} from '../src/workspaces/quest/itemDoc'
+import {createEntity} from '../src/workspaces/quest/entityDoc'
+import {displayTextRuntimeKey, replaceDisplayText, getDisplayText} from '../src/workspaces/quest/displayTextLocale'
 import {ProjectClient, type FileEdit} from '../src/project/serviceClient'
 import {getProjectSession,setProjectSession} from '../src/project/projectSession'
 import {createProject, type Workspace} from '../src/workspace'

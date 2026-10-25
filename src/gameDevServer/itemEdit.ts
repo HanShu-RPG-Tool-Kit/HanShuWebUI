@@ -7,9 +7,9 @@
 
 import { randomId } from '../project/crypto'
 import { notify } from '../activity'
-import { itemFingerprint } from '../workspaces/progress/itemstack'
-import { readComponents } from '../workspaces/progress/tnbtJson'
-import { parseItem, stringifyItem, type ItemData } from '../workspaces/progress/itemDoc'
+import { itemFingerprint } from '../workspaces/quest/itemstack'
+import { readComponents } from '../workspaces/quest/tnbtJson'
+import { parseItem, stringifyItem, type ItemData } from '../workspaces/quest/itemDoc'
 import { prepareDisplayLocalization, supportsDisplayLocalization, commitLocalizedResult, localizedResultEdits, legacyLocalizedResultEdits, preserveReadOnlyDisplayText, type LocalizationSession } from './displayLocalization'
 import {
   controlRequest,

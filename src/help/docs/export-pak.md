@@ -1,6 +1,6 @@
 # 导出 PAK
 
-> 状态：**已落地骨架**（编译注册表、分平面、整包加密）。域编译器（kit / nav / hflow 等）可继续往注册表挂。
+> 状态：**已落地骨架**（编译注册表、分平面、整包加密）。域编译器（kit / nav / quest 等）可继续往注册表挂。
 
 PAK 是给引擎用的运行时包。流水线：**编译图 → 接线校验 → 按平面分包 → 可选加密**。
 
@@ -18,7 +18,7 @@ PAK 是给引擎用的运行时包。流水线：**编译图 → 接线校验 �
 | 路径 | 职责 |
 | --- | --- |
 | `src/export/compile/` | 类型、注册表、接线、`buildCompileGraph` |
-| `src/export/compile/compilers/` | 内置 Hanshu / Item / Identity / LocaleAssets / ActiveSkins |
+| `src/export/compile/compilers/` | 内置 Hanshu / Item / Entity / Kit / Quest / Identity / LocaleAssets / ActiveSkins |
 | `src/export/pack/exportPaks.ts` | 总入口 `exportPaks` |
 | `src/export/pack/planes.ts` | 平面过滤 |
 | `src/export/pack/encrypt.ts` | AES-256-GCM 整包加密 |
@@ -66,7 +66,7 @@ registerFileCompiler({
 | --- | --- | --- | --- |
 | `.hs` | 按本文件编译产物的 `localeKey` 引用裁剪 | 按同一引用集合裁剪 | client |
 | `.char` | 保留本文件整张语言表 | 保留本文件配音 | client |
-| `.kit`、`.progress`、`.hflow`、`.nav` | 保留本文件整张语言表 | 暂未声明 | shared |
+| `.kit`、`.quest`、`.nav` | 保留本文件整张语言表 | 暂未声明 | shared |
 
 注册示例（此处 `.card` 是扩展自己的格式，还需配套文件编译器）：
 
@@ -110,10 +110,12 @@ registerLocaleExportRule({
 | 平面 | 含义 | 默认后缀（`FILE_PLANE`） |
 | --- | --- | --- |
 | `client` | 仅客户端 | `.hs` / `.char`；本地化产物由注册规则决定 |
-| `server` | 仅服务端 | `.py`（`script/<类型>/`）/ `.progress` / `.item`（编成 `.it`）/ `.kit` |
-| `shared` | 两端都要 | `.hflow` / `.nav`；未列出后缀默认 shared |
+| `server` | 仅服务端 | `.py`（`script/<类型>/`）/ `.item`（编成 `.it`）/ `.kit` |
+| `shared` | 两端都要 | **`.quest`** / `.nav`；未列出后缀默认 shared |
 
-语言与配音的平面由注册规则决定，不由 `.lang` / `.ogg` 后缀统一决定。例如礼包语言表随已导出的礼包进入 shared 平面，因此 combined、client 和 server 包均包含译文。
+语言与配音的平面由注册规则决定，不由 `.lang` / `.ogg` 后缀统一决定。例如礼包 / 任务语言表随已导出源进入 shared，combined、client、server 均含译文。
+
+**任务编译（`questCompiler`）**：`.quest` 进包路径为 `quest/<名>.quest`，平面 **shared**。单进度（`hanshu.progress`）编译为多进度外壳（`hanshu.progress-tree`），完整表单暂放入 `extensions.hanshuSimpleQuest`；已是树图的原样进包。验证：`npm run test:quest-compile`。
 
 ### 源目录与 PAK 顶层
 
@@ -122,7 +124,7 @@ registerLocaleExportRule({
 | kind | 内容 |
 | --- | --- |
 | `script/<类型>` | `common` / `goal` / `kit` / `item` / `entity` / `enchantment` / `player` 脚本；内置脚本先入，工程同类型同名文件覆盖 |
-| `hanshu` / `character` / `progress` / `story` / `navigator` / `gift` / `items` | 其它源类型 |
+| `hanshu` / `character` / `quest` / `navigator` / `gift` / `items` / `entities` | 其它源类型（旧工程 `progress` / `story` 目录仍可读） |
 
 脚本资源、内置覆盖与新建模板的完整约定见[脚本资源](#script-resources)。
 

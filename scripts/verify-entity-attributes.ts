@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import {ENTITY_ATTRIBUTES_PROTOCOL,prepareEntityAttributes,applyEntityAttributeResult,assertEntityAttributesUnchanged,supportsEntityAttributes,type EntityAttributeDelta} from '../src/gameDevServer/entityAttributes'
-import {createEntity,parseEntity,stringifyEntity} from '../src/workspaces/progress/entityDoc'
-import type {NbtValue} from '../src/workspaces/progress/tnbtJson'
+import {createEntity,parseEntity,stringifyEntity} from '../src/workspaces/quest/entityDoc'
+import type {NbtValue} from '../src/workspaces/quest/tnbtJson'
 const string=(value:string):NbtValue=>({type:'string',value})
 const modifier=(id:string,amount=2):NbtValue=>({type:'compound',value:{id:string(id),amount:{type:'int',value:amount},operation:string('add_value'),custom:{type:'long',value:'9223372036854775807'}}})
 const attribute=(id:string,base=20,modifiers:NbtValue[]=[]):NbtValue=>({type:'compound',value:{id:string(id),base:{type:'double',value:String(base)},modifiers:{type:'list',value:modifiers}}})

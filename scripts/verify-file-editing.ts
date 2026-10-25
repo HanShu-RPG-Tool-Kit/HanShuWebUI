@@ -5,11 +5,11 @@ import type { FileChange, FileTransactionReceipt, ProjectFileTree, ResourceOpera
 import { resourcePlanFixture } from './resource-plan-fixture'
 import { saveProjectToDirectory } from '../src/project/projectFs'
 
-const SOURCE = 'src/progress/chapter/arrival.progress'
-const LANGUAGE = 'assets/zh_cn/lang_progress/chapter/arrival.lang'
-const VOICE = 'assets/zh_cn/voice_progress/chapter/arrival/hello.ogg'
+const SOURCE = 'src/quest/chapter/arrival.quest'
+const LANGUAGE = 'assets/zh_cn/lang_quest/chapter/arrival.lang'
+const VOICE = 'assets/zh_cn/voice_quest/chapter/arrival/hello.ogg'
 const OTHER = 'src/hanshu/other.hs'
-const NEXT = 'src/progress/chapter/next.progress'
+const NEXT = 'src/quest/chapter/next.quest'
 const SESSION = 'window-a'
 const wallClock = Date.now.bind(Date)
 

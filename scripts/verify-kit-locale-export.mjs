@@ -16,7 +16,7 @@ try {
   const {putAssetBlob}=await import('/src/assets/idb.ts')
   const {exportPaks}=await import('/src/export/pack/exportPaks.ts')
   const {createProject}=await import('/src/workspace.ts')
-  const {createKit,stringifyKit}=await import('/src/workspaces/progress/kit.ts')
+  const {createKit,stringifyKit}=await import('/src/workspaces/quest/kit.ts')
   const pkg=createProject('kit-locale-regression')
   for(const id of ['starter','other']){
    const kit=createKit();kit.feedback.message='feedback.message'

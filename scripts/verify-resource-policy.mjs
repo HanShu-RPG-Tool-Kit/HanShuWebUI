@@ -5,8 +5,8 @@ import { randomUUID } from 'node:crypto'
 import { harness, progress } from './collaboration-harness.mjs'
 
 const h = await harness()
-const source = 'src/progress/example.progress'
-const language = 'assets/zh_cn/lang_progress/example.lang'
+const source = 'src/quest/example.quest'
+const language = 'assets/zh_cn/lang_quest/example.lang'
 const results = []
 const passed = name => { results.push(name); console.log(`通过：${name}`) }
 const plan = (token, operations, status = 200) => h.api(token, '/api/files/plan', 'POST', { operations }, status)
@@ -38,7 +38,7 @@ try {
   const editor = await h.login(editorSubject.credential, '独立编辑')
   await h.api('', '/api/files/plan', 'POST', { operations: [{ op: 'remove', path: source }] }, 401)
   await relations('', source, 401)
-  await h.api(owner.token, '/api/files/source-plan?path=src/progress/example.progress', 'GET', undefined, 404)
+  await h.api(owner.token, '/api/files/source-plan?path=src/quest/example.quest', 'GET', undefined, 404)
 
   const beforeTree = await h.files(owner.token)
   const beforeState = await h.api(owner.token, '/api/project')
@@ -71,16 +71,16 @@ try {
   await h.release(editor.token)
   passed('租约机制只处理路径；修改策略单独要求源文件写权且提交端重验')
 
-  const ownedVoice = 'assets/en_us/voice_progress/example/line.ogg'
+  const ownedVoice = 'assets/en_us/voice_quest/example/line.ogg'
   const sharedKit = 'src/gift/shared-reward.kit'
   await fixture(ownedVoice, 'voice-content')
   await fixture(sharedKit, '{"reward":"shared"}')
   await fixture(source, JSON.stringify({ ...progress, rewardKits: ['shared-reward'] }))
   const allRelations = await relations(owner.token, source)
   assert.ok(allRelations.relations.some(item => item.kind === 'reference' && item.role === 'rewardKit' && item.to === sharedKit))
-  const movePlan = await plan(owner.token, [{ op: 'move', path: source, destination: 'src/progress/renamed.progress' }])
-  assert.ok(movePlan.operations.some(item => item.path === language && item.destination === 'assets/zh_cn/lang_progress/renamed.lang'))
-  assert.ok(movePlan.operations.some(item => item.path === 'assets/en_us/voice_progress/example' && item.destination === 'assets/en_us/voice_progress/renamed'))
+  const movePlan = await plan(owner.token, [{ op: 'move', path: source, destination: 'src/quest/renamed.quest' }])
+  assert.ok(movePlan.operations.some(item => item.path === language && item.destination === 'assets/zh_cn/lang_quest/renamed.lang'))
+  assert.ok(movePlan.operations.some(item => item.path === 'assets/en_us/voice_quest/example' && item.destination === 'assets/en_us/voice_quest/renamed'))
   assert.ok(movePlan.operations.every(item => item.originPath === source))
   assert.ok(!movePlan.operations.some(item => item.path === sharedKit))
   assert.ok(!movePlan.leasePaths.includes(sharedKit))
@@ -95,7 +95,7 @@ try {
   await h.release(owner.token)
 
   const stalePlan = await plan(owner.token, [{ op: 'remove', path: source }])
-  const newLanguage = 'assets/fr_fr/lang_progress/example.lang'
+  const newLanguage = 'assets/fr_fr/lang_quest/example.lang'
   await h.commit(editor.token, [{ path: newLanguage, content: '{"name":"新增法文"}' }])
   await h.release(editor.token)
   const staleBatch = await preparedPlan(owner.token, stalePlan)

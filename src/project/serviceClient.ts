@@ -177,10 +177,10 @@ export class ProjectClient {
     normalizeProjectPath(path)
     // C's conservative recovery scope only. S independently derives the exact
     // resources from the command and its archived receipt.
-    const stem = path.replace(/^src\/progress\//, '').replace(/\.progress$/, '')
+    const stem = path.replace(/^src\/quest\//, '').replace(/\.quest$/i, '')
     const languages = command.command === 'apply'
-      ? command.changes.flatMap(effect => effect.target.kind === 'locale' ? [`assets/${effect.target.locale}/lang_progress/${stem}.lang`] : [])
-      : this.tree.entries.filter(entry => entry.path.startsWith('assets/') && entry.path.endsWith(`/lang_progress/${stem}.lang`)).map(entry => entry.path)
+      ? command.changes.flatMap(effect => effect.target.kind === 'locale' ? [`assets/${effect.target.locale}/lang_quest/${stem}.lang`] : [])
+      : this.tree.entries.filter(entry => entry.path.startsWith('assets/') && entry.path.endsWith(`/lang_quest/${stem}.lang`)).map(entry => entry.path)
     return { op: 'progress-command', path, data: JSON.stringify(command), version: null, affectedPaths: [...new Set([path, ...languages])] }
   }
   async submitProgress(path: string, command: ProgressCommand, label: string): Promise<ProgressAcknowledgement> {

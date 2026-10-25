@@ -45,8 +45,8 @@ async function selectVersion(page, sequence) {
 async function historyRefresh(page) { await dialog(page).getByRole('button', { name: '刷新工程历史', exact: true }).click() }
 async function openProgress(page) {
   await page.getByRole('tab', { name: '进度流程', exact: true }).click()
-  await active(page).getByLabel('筛选资源', { exact: true }).fill('example.progress')
-  await active(page).locator('[role=treeitem][title="example.progress"]').click()
+  await active(page).getByLabel('筛选资源', { exact: true }).fill('example.quest')
+  await active(page).locator('[role=treeitem][title="example.quest"]').click()
   await active(page).getByLabel('进度标题', { exact: true }).waitFor()
 }
 async function editorText(page) { return (await active(page).locator('.monaco-editor .view-lines').allTextContents()).join('\n').replace(/\u00a0/g, ' ') }

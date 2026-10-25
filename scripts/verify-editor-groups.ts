@@ -9,13 +9,13 @@ import {
   readGroup,
   splitTab,
   togglePinInGroup,
-} from '../src/workspaces/progress/editorGroups.ts'
-import type { FlowDocument, FlowWorkspaceState } from '../src/workspaces/progress/storage.ts'
+} from '../src/workspaces/quest/editorGroups.ts'
+import type { FlowDocument, FlowWorkspaceState } from '../src/workspaces/quest/storage.ts'
 
 let passed = 0
 function test(name: string, check: () => void) { check(); passed++; console.log(`[OK] ${name}`) }
 
-const doc = (key: string) => ({ key, name: `${key}.hflow`, source: '{}', package: 'story', folderId: null }) as unknown as FlowDocument
+const doc = (key: string) => ({ key, name: `${key}.quest`, source: '{}', package: 'story', folderId: null }) as unknown as FlowDocument
 function workspace(open: string[], active = open.at(-1) ?? null): FlowWorkspaceState {
   return { documents: ['a', 'b', 'c', 'd'].map(doc), folders: [], activeKey: active, openKeys: open, pinnedKeys: [], split: null }
 }

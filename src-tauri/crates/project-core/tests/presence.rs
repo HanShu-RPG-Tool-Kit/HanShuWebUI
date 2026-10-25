@@ -1,12 +1,12 @@
 use project_core::*;
 use std::{fs, path::Path};
 
-const SOURCE: &str = "src/progress/chapter/arrival.progress";
-const LANG: &str = "assets/zh_cn/lang_progress/chapter/arrival.lang";
+const SOURCE: &str = "src/quest/chapter/arrival.quest";
+const LANG: &str = "assets/zh_cn/lang_quest/chapter/arrival.lang";
 
 fn setup(root: &Path) -> (Engine, String, String) {
-    fs::create_dir_all(root.join("src/progress/chapter")).unwrap();
-    fs::create_dir_all(root.join("assets/zh_cn/lang_progress/chapter")).unwrap();
+    fs::create_dir_all(root.join("src/quest/chapter")).unwrap();
+    fs::create_dir_all(root.join("assets/zh_cn/lang_quest/chapter")).unwrap();
     fs::write(root.join(SOURCE), "{}").unwrap();
     fs::write(root.join(LANG), "title=arrival").unwrap();
     let mut engine = Engine::open_project(root).unwrap();
@@ -64,7 +64,7 @@ fn unsaved_public_files_are_allowed_but_directories_and_private_paths_are_not() 
     engine
         .set_file_presence(
             &owner,
-            Some("src/progress/new.progress".into()),
+            Some("src/quest/new.quest".into()),
             None,
             FileActivity::Viewing,
             1001,
@@ -72,9 +72,9 @@ fn unsaved_public_files_are_allowed_but_directories_and_private_paths_are_not() 
         .unwrap();
     assert_eq!(presence(&engine, &owner).activity, FileActivity::Viewing);
     for (path, code) in [
-        ("src/progress", "invalid"),
+        ("src/quest", "invalid"),
         (".hanshu/service/owner-key", "forbidden"),
-        (".hanshu/service/new.progress", "forbidden"),
+        (".hanshu/service/new.quest", "forbidden"),
         ("src/../../secrets", "invalid"),
         ("C:/windows/file", "invalid"),
     ] {
@@ -87,7 +87,7 @@ fn unsaved_public_files_are_allowed_but_directories_and_private_paths_are_not() 
         );
     }
     // Failed presence requests must not clear the previous valid focus.
-    assert_eq!(presence(&engine, &owner).path, "src/progress/new.progress");
+    assert_eq!(presence(&engine, &owner).path, "src/quest/new.quest");
 }
 
 #[test]
@@ -338,7 +338,7 @@ fn free_editor_intent_is_independent_of_temporary_leases_and_survives_heartbeat(
     let (_, second) = engine.login(&key, "another window", 1001).unwrap();
     for path in [
         "src/hanshu/story.hs",
-        "src/story/flow.hflow",
+        "src/quest/flow.quest",
         ".hanshu/skinmanager/library.json",
     ] {
         engine

@@ -1,12 +1,12 @@
-# 进度流程模型说明
+# 多进度任务（树图）模型
 
-本文描述 HanShu 进度流程工作区**当前**的画布模型与信号运行时（以 `src/workspaces/progress/model.ts`、`signals.ts` 为准）。集线器 / 网关 / 合取·析取节点 / checkpoint 树时代字段已移除。画布操作用法见 [进度工作区](#progress-workspace)。
+本文描述任务工作区中**多进度**作者态的画布模型与信号运行时（`src/workspaces/quest/model.ts`、`signals.ts`）。文件为 **`.quest`**（`format: "hanshu.progress-tree"`）。单进度表单见 [任务文档](#progress-document)。画布操作用法见 [任务工作区](#progress-workspace)。
 
 ## 1. 模型定位
 
 | 层 | 职责 |
 |----|------|
-| **作者图** | 节点 + 类型化端口连线；文档 `hanshu.progress-tree` v1 |
+| **作者图** | 节点 + 类型化端口连线；文档 `hanshu.progress-tree` v1（`.quest`） |
 | **运行时** | 信号沿导线传播；checkpoint / Goal / Predicate 的状态机 |
 | **校验** | 端口基数、引用完整性；画布连线成环仅 **warning** |
 
@@ -160,11 +160,11 @@ Goal / Predicate 的 `kind`（人工、计数、信号、等待阶段、外部�
 
 ## 7. 相关代码
 
-- 结构与连线：`src/workspaces/progress/model.ts`
-- 信号与模拟：`src/workspaces/progress/signals.ts`
-- 画布创建：`src/workspaces/progress/canvas.ts`
+- 结构与连线：`src/workspaces/quest/model.ts`
+- 信号与模拟：`src/workspaces/quest/signals.ts`
+- 画布创建：`src/workspaces/quest/canvas.ts`
 - 回归：`npm run test:progress`（`scripts/verify-progress-model.ts`）
 
 ## 画布实现与扩展
 
-进度画布使用 React Flow 上的 HanShu 通用节点编辑器。`.hflow` 仍是本页定义的文档，适配器位于 `progress/graphAdapter.ts`，节点外观与模拟位于进度模块；框选、连线、小刀、Group、注释及排版共用 `src/nodeEditor/`。新增编辑器遵循[通用节点编辑器接入规范](#node-editor)，不得复制原来的手写画布。
+多进度画布使用 React Flow 上的 HanShu 通用节点编辑器。文档形态见本页；适配器位于 `progress/graphAdapter.ts`，节点外观与模拟位于进度模块；框选、连线、小刀、Group、注释及排版共用 `src/nodeEditor/`。新增编辑器遵循[通用节点编辑器接入规范](#node-editor)，不得复制原来的手写画布。

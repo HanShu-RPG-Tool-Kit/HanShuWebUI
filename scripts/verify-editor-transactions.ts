@@ -304,8 +304,8 @@ await test('重载已读到较新服务器正文时，旧回执不能把它误�
 })
 
 await test('S计划的进度与语言改名使用C冻结版本，引用礼包不进入修改批次', async () => {
-  const source = 'src/progress/arrival.progress'; const destination = 'src/progress/renamed.progress'
-  const language = 'assets/zh_cn/lang_progress/arrival.lang'; const nextLanguage = 'assets/zh_cn/lang_progress/renamed.lang'
+  const source = 'src/quest/arrival.quest'; const destination = 'src/quest/renamed.quest'
+  const language = 'assets/zh_cn/lang_quest/arrival.lang'; const nextLanguage = 'assets/zh_cn/lang_quest/renamed.lang'
   const kit = 'src/gift/shared.kit'
   const client = new ProjectClient({ url: 'http://plan.test', token: '' }, { role: 'editor', projectId: 'test', session: { subjectId: 'subject' } } as never)
   client.baseline.set(source, 'source-read-v1'); client.baseline.set(language, 'lang-read-v1')

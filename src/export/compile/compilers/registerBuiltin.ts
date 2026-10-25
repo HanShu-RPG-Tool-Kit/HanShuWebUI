@@ -7,9 +7,10 @@ import { identityCompiler } from './identity'
 import { entityCompiler } from './entity'
 import { itemCompiler } from './item'
 import { localeAssetsPass } from './localeAssets'
-import { displayTextReferences, displayTextRuntimeTranslations, type DisplayTextKind } from '../../../workspaces/progress/displayTextLocale'
-import { parseItem } from '../../../workspaces/progress/itemDoc'
-import { parseEntity } from '../../../workspaces/progress/entityDoc'
+import { questCompiler } from './quest'
+import { displayTextReferences, displayTextRuntimeTranslations, type DisplayTextKind } from '../../../workspaces/quest/displayTextLocale'
+import { parseItem } from '../../../workspaces/quest/itemDoc'
+import { parseEntity } from '../../../workspaces/quest/entityDoc'
 
 const displayBindings = (kind: DisplayTextKind, content: string) => displayTextReferences(kind, kind === 'item' ? parseItem(content) : parseEntity(content))
 
@@ -19,7 +20,7 @@ const builtinLocaleRules: LocaleExportRule[] = [
     voice: { plane: 'client', keys: 'referenced', keyCase: 'insensitive' },
   },
   { id: 'char', sourceExt: 'char', text: { plane: 'client', keys: 'all' }, voice: { plane: 'client', keys: 'all' } },
-  ...['kit', 'progress', 'hflow', 'nav'].map((sourceExt): LocaleExportRule => ({
+  ...['kit', 'quest', 'nav'].map((sourceExt): LocaleExportRule => ({
     id: sourceExt, sourceExt, text: { plane: 'shared', keys: 'all' },
   })),
   ...(['item', 'entity'] as const).map((kind): LocaleExportRule => ({
@@ -34,7 +35,7 @@ const builtinLocaleRules: LocaleExportRule[] = [
 
 /** Idempotent by id; also reinstalls builtins after clearCompileRegistry without replacing overrides. */
 export function ensureBuiltinCompilers(): void {
-  for (const compiler of [hanshuCompiler, itemCompiler, entityCompiler, kitCompiler, identityCompiler]) {
+  for (const compiler of [hanshuCompiler, itemCompiler, entityCompiler, kitCompiler, questCompiler, identityCompiler]) {
     if (!listFileCompilers().some((entry) => entry.id === compiler.id)) registerFileCompiler(compiler)
   }
   for (const pass of [localeAssetsPass, activeSkinsPass]) {

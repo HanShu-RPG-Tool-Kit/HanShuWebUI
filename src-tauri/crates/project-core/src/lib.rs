@@ -493,11 +493,16 @@ impl Engine {
         self.location(&parent, &name, None)?;
         if kind == ResourceKind::Progress {
             require(
-                name.ends_with(".progress"),
+                name.ends_with(".quest"),
                 "invalid",
-                "进度文件须使用 .progress 后缀",
+                "任务文件须使用 .quest 后缀",
             )?;
-            progress::validate(content.as_deref().unwrap_or(""))?;
+            if let Some(text) = content.as_deref() {
+                if text.contains("\"hanshu.progress\"") && !text.contains("\"hanshu.progress-tree\"")
+                {
+                    progress::validate(text)?;
+                }
+            }
         } else if kind == ResourceKind::GoalDefinition {
             require(
                 name.ends_with(".py") && content.as_ref().is_some_and(|s| s.len() <= 1024 * 1024),
@@ -616,7 +621,7 @@ impl Engine {
             self.require_lease(sid, id, lease.unwrap_or(""), now)?;
             require(
                 name.ends_with(if r.kind == ResourceKind::Progress {
-                    ".progress"
+                    ".quest"
                 } else {
                     ".py"
                 }),
