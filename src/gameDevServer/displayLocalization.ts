@@ -88,7 +88,7 @@ export async function prepareDisplayLocalization(documentKey: string, kind: Disp
   })
   const readOnlyFields = displayTextFields(kind, document).filter(field => {
     const component = getDisplayText(kind, document, field)
-    return component !== undefined && !decodeTextComponent(component).editable
+    return component !== undefined && (!decodeTextComponent(component).editable || field.startsWith('item.lore.') && !!document.displayTextEditor?.[field]?.reference && !bindings.some(binding=>binding.field===field))
   })
   const freezeLore = readOnlyFields.some(field => field.startsWith('item.lore.') && !bindings.some(binding => binding.field === field))
   return { client, documentKey, sourcePath, source: source.content, sourceVersion, kind, tables,
@@ -100,7 +100,7 @@ export function preserveReadOnlyDisplayText<T extends DisplayTextDocument>(sessi
   const original = JSON.parse(session.source) as DisplayTextDocument
   const fields = session.localization.readOnlyFields ?? displayTextFields(session.kind, original).filter(field => {
     const component = getDisplayText(session.kind, original, field)
-    return component !== undefined && !decodeTextComponent(component).editable
+    return component !== undefined && (!decodeTextComponent(component).editable || field.startsWith('item.lore.') && !!original.displayTextEditor?.[field]?.reference && !session.localization.bindings.some(binding=>binding.field===field))
   })
   if (!fields.length) return candidate
   const result = structuredClone(candidate)

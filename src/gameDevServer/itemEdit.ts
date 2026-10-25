@@ -1,3 +1,4 @@
+import {prepareTextEditing,applyTextEditing,supportsTextEditing,type TextSession} from './displayTextEditing'
 /**
  * 物品编辑（IBE）：`items.edit.open` / `items.edit.done`
  *
@@ -36,7 +37,7 @@ export type ItemEditDoneEvent = {
   conflict: boolean
 }
 
-type Pending = ItemEditPending & { session: LocalizationSession; version: number; receiving?: boolean }
+type Pending = ItemEditPending & { session: LocalizationSession; version: number; text?:TextSession; receiving?: boolean }
 
 const pendingByUuid = new Map<string, Pending>()
 const doneListeners = new Set<(event: ItemEditDoneEvent) => void>()
@@ -100,15 +101,17 @@ export async function openItemEditInGame(
   const hash = itemFingerprint(item)
   const source = await prepareDisplayLocalization(documentKey, 'item', {format:'rpgtoolkit:item',schemaVersion:2,tags:[],item})
   if (itemFingerprint(parseItem(source.source).item) !== hash) throw Error('物品草稿已改变，请重试')
-  const capable = await supportsDisplayLocalization(controlRequest)
-  const version = capable ? 2 : 1
-  if (!capable && source.localization.readOnlyFields?.length) notify('游戏端 IBE 版本不支持工程本地化编辑；绑定与高级文本只读，相关修改不会保存', {kind:'warning',source:'items'})
-  const params = {...itemEditOpenParams(uuid, hash, { ...item, id }), ...(capable ? {version:2,editId:uuid,receiver:uuid,localization:source.localization} : {})}
+  const textCapable=await supportsTextEditing(controlRequest)
+  const text=textCapable?prepareTextEditing(source,parseItem(source.source)):undefined
+  const capable = !textCapable&&await supportsDisplayLocalization(controlRequest)
+  const version = capable||text ? 2 : 1
+  if (!capable && !text && source.localization.readOnlyFields?.length) notify('游戏端 IBE 版本不支持工程本地化编辑；绑定与高级文本只读，相关修改不会保存', {kind:'warning',source:'items'})
+  const params = {...itemEditOpenParams(uuid, hash, { ...item, id }), ...(text?{version:2,editId:uuid,receiver:uuid,displayText:text.open}:capable ? {version:2,editId:uuid,receiver:uuid,localization:source.localization} : {})}
   if (pendingByUuid.size >= 64) throw Error('待接收的游戏编辑过多')
-  pendingByUuid.set(uuid,{documentKey,hash,uuid,openedAt:Date.now(),session:source,version})
+  pendingByUuid.set(uuid,{documentKey,hash,uuid,openedAt:Date.now(),session:source,version,text})
   let raw: unknown
   try { raw = await controlRequest('items.edit.open', params, OPEN_TIMEOUT_MS) } catch(error) {pendingByUuid.delete(uuid);throw error}
-  if (!isObject(raw) || raw.componentFormat !== 'tnbt-json-v1' || raw.componentMode !== 'complete' || raw.opened !== true || (capable && (raw.version !== 2 || raw.editId !== uuid))) {
+  if (!isObject(raw) || raw.componentFormat !== 'tnbt-json-v1' || raw.componentMode !== 'complete' || raw.opened !== true || ((capable||text) && (raw.version !== 2 || raw.editId !== uuid))) {
     pendingByUuid.delete(uuid)
     throw new Error('editor_open_failed')
   }
@@ -161,9 +164,10 @@ async function handleEditDoneNotify(params: unknown): Promise<void> {
   try {
     const old = parseItem(pending.session.source)
     const incoming = parseItem(stringifyItem({...old,item}))
-    const candidate = pending.version === 2 ? incoming : preserveReadOnlyDisplayText(pending.session,incoming,true)
-    const edits = pending.version === 2 ? localizedResultEdits(pending.session,candidate,params.localization) : legacyLocalizedResultEdits(pending.session,candidate)
-    const preserved = preserveReadOnlyDisplayText(pending.session,candidate,pending.version !== 2)
+    const textResult=pending.text?applyTextEditing(pending.session,pending.text,incoming,params.displayText):undefined
+    const candidate = textResult?textResult.document as import('../workspaces/quest/itemDoc').ItemDocument:pending.version === 2 ? incoming : preserveReadOnlyDisplayText(pending.session,incoming,true)
+    const edits = textResult?textResult.edits:pending.version === 2 ? localizedResultEdits(pending.session,candidate,params.localization) : legacyLocalizedResultEdits(pending.session,candidate)
+    const preserved = textResult?candidate:preserveReadOnlyDisplayText(pending.session,candidate,pending.version !== 2)
     await commitLocalizedResult(pending.session,stringifyItem(preserved),edits)
     emitDone({uuid,hash,item:preserved.item,documentKey:pending.documentKey,conflict:false})
     notify('已保存游戏中的物品与本地化编辑', {kind:'success',source:'items'})

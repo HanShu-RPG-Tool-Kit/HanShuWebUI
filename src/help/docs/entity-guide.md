@@ -12,7 +12,7 @@ WebUI 不主动捕获游戏目标。请在游戏中使用复制魔杖右键实�
 
 ## 名称语言资产
 
-实体名称的语义键为 `display.custom_name`，译文属于 `assets/<locale>/lang_entity/<模板名>.lang`。固定文本通过明确操作才会转换为 `translate`；运行时键形如 `hanshu.entity.<不透明标识>.display.custom_name`，不随文件改名改变。普通 Minecraft 翻译键和高级结构保留原样。
+实体名称的语义键为 `display.custom_name`，译文属于 `assets/<locale>/lang_entity/<模板名>.lang`。固定文本在工程中首次编辑时自动转换为 `translate`，输入内容存入右下角统一语言选择器指定的语言资产；运行时键形如 `hanshu.entity.<不透明标识>.display.custom_name`，不随文件改名改变。普通 Minecraft 翻译键和高级结构保留原样。
 
 源文档与多语言值通过同一工程事务保存；源文件改名、删除和历史恢复沿用工程服务的归属关系。导出时只保留名称仍引用的译文，将语义键转换为全局运行时键；`lang_entity` 语言产物位于 shared 平面，实体模板位于 server 平面。
 
@@ -74,3 +74,7 @@ registerEntityFieldEditor({
 
 
 IBE 实体编辑支持 NoAI、PersistenceRequired、装备及实体属性，字段按目标实体能力提供。装备可进入完整物品编辑器；属性修饰器使用动态条目，模板往返继续以授权增量提交。游戏在线时，WebUI 会查询目标支持的属性（含模组属性）生成授权，避免只给三个预设属性。
+
+实体名称与物品名称共用「本地化」复选框和右下角语言选择器。取消后编辑固定富文本；重新勾选恢复原绑定及译文，固定文本也会保留供下次切换。`.entity` 可选 `displayTextEditor` 对象中的 `entity.custom_name` 保存 `localized`、原 `reference` 和上次 `literal`。这些仅为 WebUI 编辑信息，预览、发送游戏内编辑及导出 PAK 时剔除；从游戏返回时保留原工程编辑信息。语言文件不会因切换模式被删除。
+
+支持 `ibe-display-text-v1` 的 IBE 在「名称与说明」中提供语言选择及本地化复选框；固定文本、译文和绑定恢复信息一起回传，由 WebUI 与源文档合批保存。WebUI 实体表单不再重复显示名称预览，富文本输入本身即显示样式。

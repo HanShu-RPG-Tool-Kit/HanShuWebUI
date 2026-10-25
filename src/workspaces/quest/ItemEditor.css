@@ -674,3 +674,18 @@
 .item-edit-in-game{width:100%;margin-top:14px;min-height:32px;border:1px solid var(--border,#454545);border-radius:5px;background:var(--panel,#303030);color:inherit;cursor:pointer}.item-edit-in-game:disabled{opacity:.45;cursor:default}
 
 .item-appearance-text,.item-lore-rich-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:start;min-width:0}.item-lore-rich-row{padding:10px 0;border-top:1px solid var(--border-soft,#444)}.item-lore-actions{display:flex;gap:4px;padding-top:6px}.item-lore-actions button{padding:3px 7px;border:1px solid var(--border-soft,#555);border-radius:3px;background:var(--item-field,#292929);color:inherit}.item-effective-name{margin:0;padding:8px 10px;background:var(--item-field,#252525);border-radius:4px;overflow-wrap:anywhere}.item-effective-name small{display:block;font-size:11px;color:var(--text-dim,#aaa);margin-top:4px}.item-tooltip-toggle{display:flex;align-items:center;justify-content:space-between;gap:10px}.item-tooltip-toggle input{width:18px;height:18px;accent-color:var(--accent)}.item-tooltip-hidden{display:flex;flex-direction:column;gap:6px}
+
+.item-lore-list { display:flex;flex-direction:column;gap:6px;min-width:0; }
+.item-lore-rich-row { grid-template-columns:22px minmax(0,1fr) auto;padding:10px 8px;border:1px solid var(--border-soft);border-radius:5px;background:var(--item-field); }
+.item-lore-rich-row.is-dragging { opacity:.45; }
+.item-lore-drag { padding:4px 0;background:transparent;border:0;color:var(--text-dim);cursor:grab;font-size:20px;line-height:24px; }
+.item-lore-drag:active { cursor:grabbing; }
+.item-lore-rich-row .item-lore-actions { opacity:.35;transition:opacity .12s; }
+.item-lore-rich-row:hover .item-lore-actions,.item-lore-rich-row:focus-within .item-lore-actions { opacity:1; }
+
+.item-name-columns { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px; }
+.item-name-columns .item-appearance-text { gap:4px; }
+.item-name-columns .localized-text-field { min-width:0; }
+.item-lore-rich-row { padding:6px;gap:6px; }
+.item-lore-rich-row .item-lore-drag { border:0;background:transparent;min-height:0;height:26px;width:20px;padding:0; }
+@container (max-width: 700px) { .item-name-columns { grid-template-columns:1fr; } }

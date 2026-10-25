@@ -17,7 +17,7 @@ import { PageList } from './quest/PageList'
 import { EditorSplit } from './quest/EditorSplit'
 import { closeAllInGroup, closeInGroup, closeOthersInGroup, closeRightInGroup, focusedGroupId, focusGroup, joinGroups, moveTab, normalizeGroups, openAsRightSplit, openInGroup, openOppositeToKey, readGroup, setSplitRatio, splitTab, togglePinInGroup, type GroupId, type SplitZone } from './quest/editorGroups'
 import { ensurePackageSections, folderPath, isBuiltinScriptFolder, isEntityDocument, isItemDocument, isItemLibraryTableKey, isLibraryTableKey, isEntityLibraryTableKey, ENTITY_LIBRARY_TABLE_KEY, ITEM_LIBRARY_TABLE_KEY, isKitDocument, isMultiQuestDocument, isNavigationDocument, isQuestDocument, isScriptDocument, isSectionFolder, isSimpleQuestDocument, packageAcceptsImportFile, packageAllowsDocuments, packageDocumentExt, renameFlowEntry, stripLibraryTables, uniqueDocumentName, withLibraryTables } from './quest/library'
-import { normalizeQuestFileName, questAuthorKindFromSource, QUEST_EXT } from './quest/questKind'
+import { normalizeQuestFileName, questAuthorKindFromSource } from './quest/questKind'
 import { createFlowDocument, downloadFlowFile, importFlowDocument, stampDocument, type FlowDocument, type FlowPackageId, type FlowWorkspaceState } from './quest/storage'
 import { createKit, kitRefFromFileName, readKitSource, stringifyKit, parseKit } from './quest/kit'
 import { createProgress, createProgressLocaleSeeds, readProgressSource, stringifyProgress, parseProgress } from './quest/progressDoc'
@@ -1462,7 +1462,7 @@ export function QuestWorkspace({ active, workspaceRef }: { active: boolean; work
       }
       right={
         <>
-          {(progressDoc || flowLocalizable || kitDoc || navigationDoc) && (
+          {(progressDoc || flowLocalizable || kitDoc || navigationDoc || itemDoc || entityDoc) && (
             <LocaleSelect
               value={locale}
               onChange={(tag) => { setLocale(tag); saveLocale(tag) }}

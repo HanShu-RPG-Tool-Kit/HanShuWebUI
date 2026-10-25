@@ -1,6 +1,7 @@
+import {reorderDisplayTextEditor,inferDisplayTextOrder} from '../src/workspaces/quest/displayTextEditor'
 import assert from 'node:assert/strict'
-import { createItem, stringifyItem } from '../src/workspaces/quest/itemDoc'
-import { createEntity, stringifyEntity } from '../src/workspaces/quest/entityDoc'
+import { createItem, stringifyItem, parseItem } from '../src/workspaces/quest/itemDoc'
+import { createEntity, stringifyEntity, parseEntity, runtimeEntity } from '../src/workspaces/quest/entityDoc'
 import { displayTextBindings, displayTextReferences, displayTextRuntimeKey, displayTextSemanticKey, displayTextRuntimeTranslations, getDisplayText, replaceDisplayText } from '../src/workspaces/quest/displayTextLocale'
 import { writeDisplayText } from '../src/workspaces/quest/displayTextNbt'
 import { textAssetPath } from '../src/i18n/localeLayout'
@@ -59,3 +60,22 @@ for (const [kind, name, content, compiler, key] of [
   assert.deepEqual(rule.text?.transformText?.({ 'display.custom_name': '名称', unused: '裁剪' }, owner), { [key]: '名称' })
 }
 console.log('通过：物品/实体稳定引用、lore 重排、TNBT 往返、语言归属路径与语义键编译。')
+
+const editing={...item,displayTextEditor:{'item.custom_name':{localized:false,reference:{translate:nameKey},literal:{text:'fixed'}},'item.lore.0':{localized:false,reference:{translate:first},literal:'row one'}}}
+assert.deepEqual(parseItem(stringifyItem(editing)).displayTextEditor,editing.displayTextEditor)
+assert.deepEqual(reorderDisplayTextEditor(editing.displayTextEditor,[1,0])?.['item.lore.1'],editing.displayTextEditor['item.lore.0'])
+assert.equal(reorderDisplayTextEditor(editing.displayTextEditor,[])?.['item.lore.0'],undefined)
+assert.deepEqual(inferDisplayTextOrder(['same','same','other'],['other','same','same']),[2,1,0])
+assert.deepEqual(inferDisplayTextOrder(['a','b'],['b','b']),[0,1])
+const entityEditing={...entity,displayTextEditor:{'entity.custom_name':{localized:false,reference:{translate:entityKey},literal:'fixed entity'}}}
+assert.deepEqual(parseEntity(stringifyEntity(entityEditing)),entityEditing)
+assert.equal(runtimeEntity(entityEditing).displayTextEditor,undefined)
+const compiled=await entityCompiler.compile({name:'test.entity',content:stringifyEntity(entityEditing),id:'test',language:'entity'} as never,context)
+assert(!String(compiled[0].bytes).includes('displayTextEditor'))
+assert.throws(()=>parseEntity(JSON.stringify({...entity,displayTextEditor:{'entity.custom_name':{localized:false,reference:{translate:'invalid'}}}})))
+console.log('PASS display text modes: persisted backups, duplicate-row reorder, removal, entity runtime/export isolation and malformed state rejection')
+
+const fixedEntity=replaceDisplayText('entity',entityEditing,'entity.custom_name',{text:'fixed'})
+assert.equal(displayTextReferences('entity',fixedEntity).length,0,'dormant references must not be exported')
+const fixedCompiled=await entityCompiler.compile({name:'fixed.entity',content:stringifyEntity(fixedEntity),id:'fixed',language:'entity'} as never,context)
+assert(!String(fixedCompiled[0].bytes).includes(entityKey));assert(!String(fixedCompiled[0].bytes).includes('displayTextEditor'))

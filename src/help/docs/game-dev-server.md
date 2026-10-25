@@ -193,3 +193,11 @@ done 的 `attributes` 为 `{protocol: "hanshu-entity-attributes-v2", operations:
 当前生产 Worker 为独立懒加载资源，约 19.6 MB（gzip 约 4.22 MB，含 typeshed）；本机浏览器验收初始化约 1.8–3.6 秒，实际 MC 签名首次链式补全约 0.84 秒，缓存后约 0.08 秒。耗时随设备与类数量变化。构建保留上游 `eval` 分支警告，但现有语言服务路径在 `script-src 'self'` 下通过验证，没有放宽 CSP。
 
 修饰器统一列表使用 `attribute.modifiers.replace` 操作，`rows` 每项包含目标 `bindingId`、`modifierId`、`value:{amount,operation}`，已有条目另携带 `origin:{bindingId,modifierId}`。origin 必须来自 open 快照且不可重复，用于跨属性移动或重命名时保留未知 NBT 字段；新条目省略 origin。该操作不得与单修饰器 set/remove 混用。新增属性须在同批操作显式设置基础值。
+
+### IBE 文本会话（`ibe-display-text-v1`）
+
+能力协商优先选择该协议。`items.edit.open`、`entities.edit.open` 使用 version 2，在 `displayText` 中发送 `protocol`、`activeLocale`、`availableLocales` 和有序 `rows`；不同时发送旧 `localization`。每行包含 `rowId`、`field`、`present`、`localized`、`literal`、`translations`，外加 open 专属 `source/reference/readOnly`。无工程路径和文件写入凭据。旧版继续使用原本地化协议；含停用本地化备份的 lore 会冻结结构，避免按行号错配。
+
+Done 的 `displayText` 为 `{protocol,rows}`，不带 `source/reference/readOnly`。原行的 `rowId/field` 不可变，位置可变；移除行代表删除，名称行身份须保留，通过 `present:false` 表示未设置。新 lore 行为 `new:<唯一标识>`、`field:item.lore`，复制可带 `copyOf` 指向 open 中的原 lore 身份，由 WebUI 分配独立本地化绑定。新身份、重复身份、来源和语言均经校验；固定文本与译文分别保存，模式切换不隐式覆盖另一份内容。
+
+客户端按身份恢复源行、顺序与编辑信息，不按文字相等或数组索引匹配。原始 NBT 文本不能绕过表单；其他组件／实体字段仍走既有编辑流程。结果最终与全部已读取语言版本合并成一个 S 事务，冲突时整批保留待处理。`rowId/copyOf` 只在本次会话生效，不导出到 Minecraft。

@@ -1,3 +1,4 @@
+import {prepareTextEditing,applyTextEditing,rowValue,DISPLAY_TEXT_PROTOCOL} from '../src/gameDevServer/displayTextEditing'
 import { ProjectClient, setProjectClient } from '../src/project/serviceClient'
 import { loadServiceProject } from '../src/project/projectFs'
 import { getProjectSession, setProjectSession } from '../src/project/projectSession'
@@ -57,7 +58,7 @@ async function prepare(kind: DisplayTextKind, name: string) {
   const session = await prepareDisplayLocalization(source.id, kind, document)
   const candidate = { ...document, tags: ['game-result'] }
   const sourceResult = kind === 'item' ? stringifyItem(candidate as ReturnType<typeof parseItem>) : stringifyEntity(candidate as ReturnType<typeof parseEntity>)
-  const operations = ['zh_cn', 'en_us'].map(locale => ({
+  const operations = (session.localization.bindings.length?['zh_cn', 'en_us']:[]).map(locale => ({
     op: 'translation.set', bindingId: session.localization.bindings[0].bindingId,
     locale, expected: session.localization.bindings[0].translations[locale], value: locale === 'zh_cn' ? '游戏修改名称' : 'Edited in game',
   }))
@@ -156,6 +157,31 @@ if (actor === 'peer') {
         equal(after[languagePath(kind, 'locale-conflict', 'zh_cn')], before[languagePath(kind, 'locale-conflict', 'zh_cn')], 'Rejected locale transaction partly wrote Chinese')
         equal(after[enPath], concurrent, 'Concurrent English was overwritten')
         frozenTransaction(client, frozen.session, 'conflict')
+      })
+    }
+    for(const kind of ['item','entity'] as const){
+      await test(`${kind}: 有身份文本会话的模式与双语修改合批保存，重开恢复`,async()=>{
+        const frozen=await prepare(kind,'text-session'),text=prepareTextEditing(frozen.session,frozen.candidate),rows=text.open.rows.map(rowValue)
+        const name=rows.find(r=>r.field.endsWith('custom_name'))!;name.localized=false;name.literal={text:'Fixed in game',color:'red'};name.translations.en_us='Retained English'
+        const applied=applyTextEditing(frozen.session,text,frozen.candidate,{protocol:DISPLAY_TEXT_PROTOCOL,rows})
+        await commitLocalizedResult(frozen.session,kind==='item'?stringifyItem(applied.document as ReturnType<typeof parseItem>):stringifyEntity(applied.document as ReturnType<typeof parseEntity>),applied.edits)
+        const after=await readBatch(client,kind,'text-session'),stored=JSON.parse(after[sourcePath(kind,'text-session')]!)
+        equal(stored.displayTextEditor[`${kind}.custom_name`].localized,false,'Mode was not stored')
+        equal(JSON.parse(after[languagePath(kind,'text-session','en_us')]!)['display.custom_name'],'Retained English','Stored English was lost')
+        const reopened=await prepare(kind,'text-session'),again=prepareTextEditing(reopened.session,reopened.candidate),restore=again.open.rows.map(rowValue)
+        restore.find(r=>r.field.endsWith('custom_name'))!.localized=true
+        const restored=applyTextEditing(reopened.session,again,reopened.candidate,{protocol:DISPLAY_TEXT_PROTOCOL,rows:restore})
+        await commitLocalizedResult(reopened.session,kind==='item'?stringifyItem(restored.document as ReturnType<typeof parseItem>):stringifyEntity(restored.document as ReturnType<typeof parseEntity>),restored.edits)
+        const final=await readBatch(client,kind,'text-session');assert(final[sourcePath(kind,'text-session')]!.includes('hanshu.'),'Original binding did not recover')
+        equal(JSON.parse(final[languagePath(kind,'text-session','en_us')]!)['display.custom_name'],'Retained English','Restore overwrote translations')
+      })
+      await test(`${kind}: 新文本会话保留未编辑语言的 CAS，冲突时整批不写入`,async()=>{
+        const frozen=await prepare(kind,'text-conflict'),text=prepareTextEditing(frozen.session,frozen.candidate),rows=text.open.rows.map(rowValue)
+        rows.find(r=>r.field.endsWith('custom_name'))!.translations.zh_cn='New text'
+        const applied=applyTextEditing(frozen.session,text,frozen.candidate,{protocol:DISPLAY_TEXT_PROTOCOL,rows}),before=await readBatch(client,kind,'text-conflict')
+        await rpc('write',languagePath(kind,'text-conflict','en_us'),JSON.stringify({'display.custom_name':'Other author'}))
+        await rejects(()=>commitLocalizedResult(frozen.session,kind==='item'?stringifyItem(applied.document as ReturnType<typeof parseItem>):stringifyEntity(applied.document as ReturnType<typeof parseEntity>),applied.edits),/版本|改变|冲突|一致|conflict/i,'Stale new text session accepted')
+        const after=await readBatch(client,kind,'text-conflict');equal(after[sourcePath(kind,'text-conflict')],before[sourcePath(kind,'text-conflict')],'Conflict partly changed source');equal(after[languagePath(kind,'text-conflict','zh_cn')],before[languagePath(kind,'text-conflict','zh_cn')],'Conflict partly changed translation')
       })
     }
     await test('丢失真实成功回执后，IndexedDB 恢复冻结请求并按原编号查询，不重复写入', async () => {

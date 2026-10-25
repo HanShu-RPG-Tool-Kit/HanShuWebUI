@@ -1,3 +1,4 @@
+import {readDisplayTextEditor,type DisplayTextEditor} from './displayTextEditor'
 import { readItemSync, TEMPLATE_COMPONENT, type ItemSync } from './itemSync'
 /**
  * `.item` 物品库文档：与 `.itemstack` 同源，但不存 count。
@@ -26,6 +27,7 @@ export type ItemData = {
 }
 
 export type ItemDocument = {
+  displayTextEditor?: DisplayTextEditor
   format: string
   schemaVersion: number
   /** 游戏标签：引擎可按标签查询；空则不写入文件 */
@@ -98,6 +100,7 @@ export function stringifyItem(doc: ItemDocument): string {
     format: ITEM_FORMAT,
     schemaVersion: ITEM_SCHEMA_VERSION,
     sync: readItemSync(doc.sync),
+    ...(doc.displayTextEditor?{displayTextEditor:readDisplayTextEditor(doc.displayTextEditor)}:{}),
     item: {
       id: doc.item.id.trim() || DEFAULT_ITEM_ID,
       components: readComponents(doc.item.components),
@@ -125,7 +128,7 @@ export function parseItem(source: string): ItemDocument {
   const tags = readItemTags(raw.tags)
   const legacyDisplay = readItemStackDisplay(raw.display)
   if (legacyDisplay) ingestDisplay(item, legacyDisplay)
-  return { format, schemaVersion, tags, item, sync: readItemSync(raw.sync) }
+  return { format, schemaVersion, tags, item, sync: readItemSync(raw.sync), ...('displayTextEditor' in raw?{displayTextEditor:readDisplayTextEditor(raw.displayTextEditor)}:{}) }
 }
 
 export function readItemSource(source: string): { doc: ItemDocument; error: string } {

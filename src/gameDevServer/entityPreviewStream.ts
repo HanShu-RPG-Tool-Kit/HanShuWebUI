@@ -1,6 +1,6 @@
 import {controlRequest,getControlHubSnapshot,subscribeControlHub} from './controlHub'
 import {controlWsUrl} from './protocol'
-import type {EntityDocument} from '../workspaces/quest/entityDoc'
+import {runtimeEntity,type EntityDocument} from '../workspaces/quest/entityDoc'
 import {entityFingerprint,readEntityStreamFrame,saveEntitySnapshot} from '../workspaces/quest/entitySnapshot'
 export type PreviewAnimation='idle'|'walk'|'run'|'attack'|'spin'
 export type PreviewSpec={id:string;template:EntityDocument;width:number;height:number;animation:PreviewAnimation}
@@ -15,7 +15,7 @@ const visible=()=>typeof document==='undefined'||document.visibilityState!=='hid
 function notify(error=''){for(const view of views.values())view.status({online:online(),running:!!session&&session.plan.tiles.some(t=>t.id===view.spec.id),error})}
 function schedule(delay=100){if(timer)clearTimeout(timer);timer=setTimeout(()=>{timer=null;void reconcile()},delay)}
 function signature(){return JSON.stringify([...views.values()].map(v=>({...v.spec,template:v.fingerprint})))}
-function specs(){return [...views.values()].map(v=>v.spec)}
+function specs(){return [...views.values()].map(v=>({...v.spec,template:runtimeEntity(v.spec.template)}))}
 function readPlan(raw:unknown):Plan{
  const p=raw as Plan;if(p?.version!==1||!Number.isInteger(p.width)||!Number.isInteger(p.height)||p.width<1||p.height<1||p.width>2048||p.height>2048||!Number.isInteger(p.minFrameId)||!Array.isArray(p.tiles)||p.tiles.length<1||p.tiles.length>64)throw Error('实体预览布局无效')
  const ids=new Set<string>();for(const t of p.tiles){if(typeof t.id!=='string'||ids.has(t.id)||![t.x,t.y,t.width,t.height].every(Number.isInteger)||t.x<0||t.y<0||t.width<1||t.height<1||t.x+t.width>p.width||t.y+t.height>p.height)throw Error('实体预览区域无效');ids.add(t.id)}return p

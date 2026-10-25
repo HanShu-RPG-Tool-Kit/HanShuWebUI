@@ -40,7 +40,7 @@ async function transportProxy(upstream) {
 }
 
 const types = ['item', 'entity']
-const cases = ['happy', 'source-conflict', 'locale-conflict', 'unknown', 'viewer', 'offline', 'switch', 'revoke']
+const cases = ['happy', 'source-conflict', 'locale-conflict', 'unknown', 'viewer', 'offline', 'switch', 'revoke', 'text-session', 'text-conflict']
 const string = value => ({ type: 'string', value })
 function fixture(kind, name) {
   const component = { type: 'compound', value: { translate: string(`hanshu.${kind}.${name}.display.custom_name`), color: string('gold'), italic: { type: 'byte', value: 0 } } }

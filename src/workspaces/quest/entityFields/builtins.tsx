@@ -1,9 +1,8 @@
 import {NbtTree,NbtComponentsEditor} from '../NbtComponentsEditor'
 import type {NbtValue} from '../tnbtJson'
 import type {EntityFieldEditorProps} from './registry'
-import {textComponentSegments} from '../itemTooltip'
 import {LocalizedTextField} from '../../../textComponent/LocalizedTextField'
-import {readDisplayText,writeDisplayText,localizedDisplayText} from '../displayTextNbt'
+import {readDisplayText,writeDisplayText} from '../displayTextNbt'
 import {EntityAttributeFields} from './EntityAttributes'
 function editing({data,onChange}:EntityFieldEditorProps){
  const fields=data
@@ -15,10 +14,9 @@ function editing({data,onChange}:EntityFieldEditorProps){
 }
 export function AppearanceFields(props:EntityFieldEditorProps){
  const {disabled,getTextLocalization}=props,{fields,put}=editing(props),component=readDisplayText(fields.CustomName)
- const localization=getTextLocalization?.('entity.custom_name',component),preview=textComponentSegments(localizedDisplayText(component,localization),{},false)
+ const localization=getTextLocalization?.('entity.custom_name',component)
  return <div className="entity-fields">
   <div className="entity-name-field"><LocalizedTextField label="实体名称（CustomName）" value={component} disabled={disabled} localization={localization} onChange={value=>put('CustomName',writeDisplayText(value,fields.CustomName))}/>{fields.CustomName&&<button type="button" disabled={disabled} onClick={()=>put('CustomName',undefined)}>移除名称</button>}</div>
-  {fields.CustomName&&<p className="entity-name-preview" aria-label="实体名称预览">名称预览：{preview.map((segment,index)=><span key={index} style={{color:segment.color,fontWeight:segment.bold?700:undefined,fontStyle:segment.italic?'italic':undefined,textDecoration:[segment.underlined&&'underline',segment.strikethrough&&'line-through'].filter(Boolean).join(' ')||undefined}}>{segment.text}</span>)}</p>}
   {([['CustomNameVisible','名称常显'],['Invulnerable','无敌'],['Silent','静音'],['NoGravity','无重力'],['Glowing','发光'],['NoAI','禁用原版 AI'],['PersistenceRequired','不会自然消失']] as const).map(([key,label])=>!fields[key]||fields[key].type==='byte'?<label className="entity-bool" key={key}>{label}<input type="checkbox" role="switch" aria-label={label} disabled={disabled} checked={fields[key]?.type==='byte'&&fields[key].value!==0} onChange={e=>put(key,{type:'byte',value:e.target.checked?1:0})}/></label>:<p className="entity-capability-note" key={key}>{label}：高级格式，请在完整数据树中编辑。</p>)}
   {([['Health','生命值','float',0,1000000],['Fire','燃烧时间（游戏刻）','short',-32768,32767]] as const).map(([key,label,type,min,max])=>!fields[key]||['byte','short','int','long','float','double'].includes(fields[key].type)?<label key={key}>{label}<input type="number" title={key==='Health'?'生命值须大于 0 且不超过 1000000':undefined} step={type==='float'?'any':'1'} min={min} max={max} aria-label={label} disabled={disabled} placeholder="未设置" key={String(fields[key]?.value??'')} defaultValue={String(fields[key]?.value??'')} onBlur={e=>{const raw=e.target.value,n=Number(raw);if(!raw){put(key,undefined);return}if(!Number.isFinite(n)||n<min||(key==='Health'&&n<=0)||(max!==undefined&&n>max)||(type==='short'&&!Number.isInteger(n)))return;put(key,type==='float'?{type,value:String(n)}:{type,value:n})}}/></label>:<p className="entity-capability-note" key={key}>{label}：高级格式，请在完整数据树中编辑。</p>)}
  </div>

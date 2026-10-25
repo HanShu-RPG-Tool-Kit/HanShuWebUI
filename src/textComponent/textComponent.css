@@ -184,3 +184,11 @@
 .localized-text-field small { color:var(--text-dim,#aaa);overflow-wrap:anywhere; }
 .localized-text-field > button { align-self:flex-start; }
 .localized-text-field pre,.kit-feedback-field pre { margin:0;max-height:160px;overflow:auto;font:12px/1.4 monospace; }
+
+.localized-text-field { position:relative;gap:4px; }
+.localized-text-field > .localized-text-mode { display:flex;flex-direction:row;align-items:center;gap:4px;position:absolute;right:0;top:0;font-size:11px;line-height:16px;color:var(--text-dim); }
+.localized-text-mode input { width:12px;height:12px;margin:0;accent-color:var(--accent); }
+.localized-text-field .kit-feedback-field > span { padding-right:64px; }
+
+.localized-text-field > label.localized-text-mode { z-index:2;line-height:16px;min-height:0;padding:0;margin:0; }
+.localized-text-field > label.localized-text-mode > input[type=checkbox] { box-sizing:border-box;flex:none;width:12px;height:12px;min-width:12px;min-height:12px;max-width:12px;padding:0;margin:0; }

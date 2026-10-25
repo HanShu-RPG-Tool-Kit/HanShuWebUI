@@ -1,3 +1,4 @@
+import {reorderDisplayTextEditor,inferDisplayTextOrder} from './displayTextEditor'
 import {getControlHubSnapshot,subscribeControlHub} from '../../gameDevServer'
 import { ItemSyncEditor } from './ItemSyncEditor'
 import {
@@ -198,7 +199,10 @@ export function ItemEditor({ doc, error, disabled, onChange, onEditInGame, getTe
     const nextItem = 'item' in patch && patch.item
       ? { ...doc.item, ...patch.item }
       : doc.item
+    const beforeLore=doc.item.components['minecraft:lore'],afterLore=nextItem.components['minecraft:lore']
+    const editor='displayTextEditor' in patch?patch.displayTextEditor:nextItem.components!==doc.item.components?reorderDisplayTextEditor(doc.displayTextEditor,inferDisplayTextOrder(beforeLore?.type==='list'?beforeLore.value:[],afterLore?.type==='list'?afterLore.value:[])):doc.displayTextEditor
     const next: ItemDocument = {
+      displayTextEditor: editor,
       format: doc.format,
       schemaVersion: doc.schemaVersion,
       tags: 'tags' in patch ? unionItemTags(patch.tags ?? []) : doc.tags,
@@ -242,7 +246,7 @@ export function ItemEditor({ doc, error, disabled, onChange, onEditInGame, getTe
             <ItemTagField tags={doc.tags} disabled={disabled} onChange={(tags) => update({ tags })} />
           </Section>
           <ItemComponentCards components={doc.item.components} disabled={disabled} getTextLocalization={getTextLocalization}
-              onChange={(components) => update({ item: { components } })} />
+              onChange={(components,order) => update({ item: { ...doc.item, components }, ...(order?{displayTextEditor:reorderDisplayTextEditor(doc.displayTextEditor,order)}:{}) })} />
           <ItemSyncEditor components={doc.item.components} value={doc.sync} disabled={disabled} onChange={(sync) => update({ sync })} />
           <Section title="组件树" hint="右键管理 · 双击键名重命名"
             action={<span className="item-count">{Object.keys(doc.item.components).length}</span>}>

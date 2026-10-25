@@ -32,7 +32,7 @@ export type ItemComponentGroupEditor = {
   order?: number
   componentIds: readonly string[]
   createComponents: () => ItemComponents
-  Editor: ComponentType<{components: ItemComponents; disabled: boolean; getTextLocalization?: GetTextLocalization; onChange: (components: ItemComponents) => void}>
+  Editor: ComponentType<{components: ItemComponents; disabled: boolean; getTextLocalization?: GetTextLocalization; onChange: (components: ItemComponents, loreOrder?:readonly number[]) => void}>
 }
 export type ItemComponentCard = ItemComponentEditor | ItemComponentGroupEditor
 export const isComponentGroup = (editor: ItemComponentCard): editor is ItemComponentGroupEditor => 'kind' in editor && editor.kind === 'group'

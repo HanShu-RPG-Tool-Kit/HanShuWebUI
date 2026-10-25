@@ -10,7 +10,7 @@ export function ItemComponentCards({ components, disabled = false, onChange, get
   components: Record<string, unknown>
   disabled?: boolean
   getTextLocalization?: GetTextLocalization
-  onChange: (components: ItemComponents) => void
+  onChange: (components: ItemComponents, loreOrder?:readonly number[]) => void
 }) {
   const editors = useSyncExternalStore(subscribeComponentEditors, componentEditors)
   const [menu, setMenu] = useState<{x: number; y: number} | null>(null)
@@ -21,11 +21,11 @@ export function ItemComponentCards({ components, disabled = false, onChange, get
   const active = visible.filter(editor => isComponentGroup(editor)
     ? editor.alwaysVisible || editor.componentIds.some(id => Object.hasOwn(values, id)) : Object.hasOwn(values, editor.id))
   const available = visible.filter(editor => !active.includes(editor))
-  function updateGroup(editor: ItemComponentGroupEditor, next: ItemComponents) {
+  function updateGroup(editor: ItemComponentGroupEditor, next: ItemComponents, loreOrder?:readonly number[]) {
     if(disabled)return
     const merged={...values}
     for(const id of editor.componentIds) { if(Object.hasOwn(next,id))merged[id]=next[id];else delete merged[id] }
-    onChange(readComponents(merged))
+    onChange(readComponents(merged),loreOrder)
   }
   return <section className="item-section item-common-section">
     <header className="item-section-head"><h3>常用组件</h3>
@@ -39,7 +39,7 @@ export function ItemComponentCards({ components, disabled = false, onChange, get
         return <article className={`item-component-card is-wide is-${editor.tone ?? 'steel'}`} key={editor.id} aria-label={editor.title}>
           <header><div className="item-component-caption"><h4>{editor.title}</h4>{editor.caption&&<code>{editor.caption}</code>}</div>
             <button type="button" className="item-tree-action" aria-label={`${editor.alwaysVisible ? '清空' : '移除'}${editor.title}`} title={`${editor.alwaysVisible ? '清空已设置的组件，保留编辑区' : '删除此分组的组件'}`} disabled={disabled} onClick={()=>{if(disabled)return;const next={...values};for(const id of editor.componentIds)delete next[id];onChange(next)}}>×</button></header>
-          <Editor components={values} disabled={disabled} getTextLocalization={getTextLocalization} onChange={next=>updateGroup(editor,next)}/>
+          <Editor components={values} disabled={disabled} getTextLocalization={getTextLocalization} onChange={(next,order)=>updateGroup(editor,next,order)}/>
         </article>
       }
 
