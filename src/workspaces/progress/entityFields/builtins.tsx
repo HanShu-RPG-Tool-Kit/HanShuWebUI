@@ -4,17 +4,14 @@ import type {EntityFieldEditorProps} from './registry'
 import {textComponentSegments} from '../itemTooltip'
 import {LocalizedTextField} from '../../../textComponent/LocalizedTextField'
 import {readDisplayText,writeDisplayText,localizedDisplayText} from '../displayTextNbt'
+import {EntityAttributeFields} from './EntityAttributes'
 function editing({data,onChange}:EntityFieldEditorProps){
  const fields=data
  const put=(key:string,value:NbtValue|undefined)=>{const next={...fields};if(value===undefined)delete next[key];else Object.defineProperty(next,key,{value,enumerable:true,writable:true,configurable:true});onChange(next)}
- const attributes=fields.attributes?.type==='list'?fields.attributes.value:[]
- const attr=(id:string)=>attributes.find(value=>value.type==='compound'&&value.value.id?.type==='string'&&value.value.id.value===id)
- const attrBase=(id:string)=>{const value=attr(id);return value?.type==='compound'&&value.value.base?String(value.value.base.value):''}
- const patchAttribute=(id:string,raw:string)=>{const n=Number(raw);if(raw&&!Number.isFinite(n)){return}const old=attr(id);const remaining=attributes.filter(value=>value!==old);if(raw){const value=old?.type==='compound'?old.value:{};remaining.push({type:'compound',value:{...value,id:{type:'string',value:id},base:{type:'double',value:String(n)}}})}put('attributes',{type:'list',value:remaining})}
  const equipment=fields.equipment?.type==='compound'?fields.equipment.value:{}
  const equip=(slot:string,value:NbtValue|undefined)=>{const next={...equipment};if(value)next[slot]=value;else delete next[slot];put('equipment',{type:'compound',value:next})}
 
- return {fields,put,attrBase,patchAttribute,equipment,equip}
+ return {fields,put,equipment,equip}
 }
 export function AppearanceFields(props:EntityFieldEditorProps){
  const {disabled,getTextLocalization}=props,{fields,put}=editing(props),component=readDisplayText(fields.CustomName)
@@ -26,7 +23,7 @@ export function AppearanceFields(props:EntityFieldEditorProps){
   {([['Health','生命值','float',0,1000000],['Fire','燃烧时间（游戏刻）','short',-32768,32767]] as const).map(([key,label,type,min,max])=>!fields[key]||['byte','short','int','long','float','double'].includes(fields[key].type)?<label key={key}>{label}<input type="number" title={key==='Health'?'生命值须大于 0 且不超过 1000000':undefined} step={type==='float'?'any':'1'} min={min} max={max} aria-label={label} disabled={disabled} placeholder="未设置" key={String(fields[key]?.value??'')} defaultValue={String(fields[key]?.value??'')} onBlur={e=>{const raw=e.target.value,n=Number(raw);if(!raw){put(key,undefined);return}if(!Number.isFinite(n)||n<min||(key==='Health'&&n<=0)||(max!==undefined&&n>max)||(type==='short'&&!Number.isInteger(n)))return;put(key,type==='float'?{type,value:String(n)}:{type,value:n})}}/></label>:<p className="entity-capability-note" key={key}>{label}：高级格式，请在完整数据树中编辑。</p>)}
  </div>
 }
-export function AttributeFields(props:EntityFieldEditorProps){const {disabled}=props;const {attrBase,patchAttribute}=editing(props);return <><p className="entity-capability-note">仅 WebUI 模板编辑。</p><div className="entity-fields">{[['minecraft:max_health','最大生命'],['minecraft:attack_damage','基础攻击力'],['minecraft:movement_speed','移动速度']].map(([id,label])=><label key={id}>{label}<input aria-label={label} type="number" step="any" key={attrBase(id)} defaultValue={attrBase(id)} disabled={disabled} placeholder="沿用实体默认值" onBlur={e=>{if(e.target.value!==attrBase(id))patchAttribute(id,e.target.value)}}/></label>)}</div></>}
+export function AttributeFields(props:EntityFieldEditorProps){return <EntityAttributeFields {...props}/>}
 export function EquipmentFields(props:EntityFieldEditorProps){const {disabled}=props;const {equipment,equip}=editing(props);return <><div className="entity-equipment"><select aria-label="添加装备槽位" value="" disabled={disabled} onChange={e=>{if(e.target.value)equip(e.target.value,{type:'compound',value:{id:{type:'string',value:'minecraft:stone'},count:{type:'int',value:1}}})}}><option value="">＋ 添加装备</option>{[['mainhand','主手'],['offhand','副手'],['head','头部'],['chest','胸部'],['legs','腿部'],['feet','脚部'],['body','身体'],['saddle','鞍']].filter(([slot])=>!Object.hasOwn(equipment,slot)).map(([slot,label])=><option key={slot} value={slot}>{label}</option>)}</select>
    {Object.entries(equipment).map(([slot,value])=><div className="entity-equipment-slot" key={slot}><header><strong>{slot}</strong><button type="button" aria-label={`移除装备 ${slot}`} disabled={disabled} onClick={()=>equip(slot,undefined)}>×</button></header>{value.type==='compound'?<><label>物品 ID<input aria-label={`${slot} 物品 ID`} disabled={disabled} value={value.value.id?.type==='string'?value.value.id.value:''} onChange={e=>equip(slot,{...value,value:{...value.value,id:{type:'string',value:e.target.value}}})}/></label><label>数量<input type="number" min={1} step={1} aria-label={`${slot} 数量`} disabled={disabled} defaultValue={String(value.value.count?.value??1)} onBlur={e=>{const n=Number(e.target.value);if(!Number.isInteger(n)||n<1){return}equip(slot,{...value,value:{...value.value,count:{type:'int',value:n}}})}}/></label><NbtComponentsEditor value={value.value.components?.type==='compound'?value.value.components.value:{}} disabled={disabled} onChange={components=>equip(slot,{...value,value:{...value.value,components:{type:'compound',value:components}}})}/></>:<NbtTree value={value} disabled={disabled} onChange={next=>equip(slot,next)}/>}</div>)}
    </div></>}

@@ -147,6 +147,38 @@ WebUI 保留 open 时的源正文、源版本、所有授权语言正文和版�
 
 旧端不支持该能力时，WebUI 提示本地化不可编辑，仍允许编辑其他字段；回写时要求原本地化 Component 原样保留。旧端若转换绑定或高级文本，WebUI 恢复 open 时冻结的原始 TNBT，再提交其他字段；包含绑定的 Lore 列表整体只读，不接受旧端重排或删除。新版 open 还携带只读字段列表 `readOnlyFields`；没有稳定绑定身份的高级 Lore 使用 `freezeLore` 禁止结构操作。游戏端规范化未知字段也不会改写这些源文本。普通游戏内 IBE 会话没有工程本地化分类。
 
+### 实体属性增量协议
+
+`localization.capabilities.protocols` 可另行包含 `hanshu-entity-attributes-v1`，独立于显示文本能力。支持时 `entities.edit.open` 携带可选 `attributes`：
+
+```json
+{
+  "protocol": "hanshu-entity-attributes-v1",
+  "bindings": [{
+    "bindingId": "opaque",
+    "attributeId": "minecraft:max_health",
+    "base": 20,
+    "modifiers": [{"id":"example:bonus","amount":2,"operation":"add_value"}],
+    "allowedModifierIds": ["example:bonus", "hanshu:allocated-id"]
+  }]
+}
+```
+
+`bindingId` 绑定 open 时的属性记录；`base: null` 表示尚无该属性记录。现有修饰器和每条绑定八个预分配的新 ID 构成 `allowedModifierIds`。只有已下发绑定和 ID 可以出现在增量里；属性 ID、修饰器 ID 和工程路径不从回包推导。未知记录、重复 ID、非有限数值和旧格式 `Attributes` 不授予编辑权。
+
+done 的 `attributes` 为 `{protocol: "hanshu-entity-attributes-v1", operations: [...]}`，操作形式：
+
+| op | 比较原值 | 新值 |
+| --- | --- | --- |
+| `attribute.base.set` | `expected: number \| null` | `value: number` |
+| `attribute.base.remove` | `expected: number` | 无；仅允许清空修饰器且无未知属性字段的记录 |
+| `attribute.modifier.set` | `expected: {amount, operation} \| null` | `value: {amount, operation}` |
+| `attribute.modifier.remove` | `expected: {amount, operation}` | 无 |
+
+每项携带 `bindingId`，修饰器项另带 `modifierId`。运算方式为 `add_value`、`add_multiplied_base`、`add_multiplied_total`；变更数值必须有限且绝对值不超过 `1e12`，游戏端还按原版属性注册表验证基础值范围。所有 expected 都比较 open 的冻结原值，同一字段不得重复提交。一个批次可先移除修饰器再移除基础值；已有未知属性字段会阻止基础值移除。向尚未设置的属性添加修饰器时，必须在同批次设置基础值。
+
+完整候选模板的原生 `attributes` 和旧版 `Attributes` 必须与 open 一致，键的排序不影响比较。WebUI 验证全部增量后只修改授权字段，保留未知字段及无关记录；源与本次语言文件仍通过同一次工程事务提交。未协商到能力时，不发送属性编辑上下文，并拒绝旧端对完整属性数据的任何覆盖。
+
 ## 礼包 Python 语言服务
 
 礼包脚本编辑器使用 `monaco-pyright-lsp@0.1.7` 自带的 Pyright 1.1.386 Worker，提供语法诊断、类型推导、成员补全、悬浮类型和参数提示。Worker 与 typeshed 跟随 C 部署，运行时不请求 CDN、不执行作者脚本；未连接 Minecraft 时仅保留文本编辑、撤销与普通语法着色，不创建 Python Worker，不提供语言服务诊断、补全、悬浮或参数提示。连接后先准备 `python.stubs` 和玩家类型，再分析脚本，避免用不完整的上下文产生红线。

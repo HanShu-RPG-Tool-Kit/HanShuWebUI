@@ -1,5 +1,6 @@
 import {notify} from '../activity'
 import {prepareDisplayLocalization,supportsDisplayLocalization,localizedResultEdits,legacyLocalizedResultEdits,commitLocalizedResult,preserveReadOnlyDisplayText,type LocalizationSession} from './displayLocalization'
+import {prepareEntityAttributes,supportsEntityAttributes,applyEntityAttributeResult,assertEntityAttributesUnchanged,type EntityAttributeSession} from './entityAttributes'
 import {randomId} from '../project/crypto'
 import {getProjectSession,setProjectSession,subscribeProjectSession} from '../project/projectSession'
 import type {ProjectClient} from '../project/serviceClient'
@@ -10,7 +11,7 @@ import {controlRequest,getControlHubSnapshot,subscribeControlHub,subscribeContro
 
 let receiver:{token:string;client:ProjectClient}|null=null
 let started=false
-const pending=new Map<string,{client:ProjectClient;documentKey:string;hash:string;receiver:string;session:LocalizationSession;version:number;localized:boolean;receiving?:boolean}>()
+const pending=new Map<string,{client:ProjectClient;documentKey:string;hash:string;receiver:string;session:LocalizationSession;version:number;localized:boolean;attributes?:EntityAttributeSession;receiving?:boolean}>()
 const imports=new Map<string,{promise:Promise<unknown>;settled:boolean}>()
 function object(value:unknown):Record<string,unknown>{if(!value||typeof value!=='object'||Array.isArray(value))throw Error('实体消息无效');return value as Record<string,unknown>}
 function currentClient(){return getProjectSession().binding?.handle.client??null}
@@ -61,11 +62,13 @@ export async function openEntityEditInGame(documentKey:string,template:EntityDoc
  if(pending.size>=64)throw Error('待接收的游戏编辑过多，请先完成已有编辑')
  const localizationSession=await prepareDisplayLocalization(documentKey,'entity',template)
  if(entityFingerprint(parseEntity(localizationSession.source))!==entityFingerprint(template))throw Error('实体草稿已改变，请重试')
- const capable=await supportsDisplayLocalization(controlRequest),version=capable?2:1
+ const [capable,attributeCapable]=await Promise.all([supportsDisplayLocalization(controlRequest),supportsEntityAttributes(controlRequest)]),version=capable||attributeCapable?2:1
+ const attributes=attributeCapable?prepareEntityAttributes(template):undefined
+ if(!attributeCapable)notify('游戏端 IBE 不支持实体属性事务；属性保持只读',{kind:'warning',source:'entities'})
  if(!capable&&localizationSession.localization.readOnlyFields?.length)notify('游戏端 IBE 不支持工程本地化编辑；绑定与高级文本只读，相关修改不会保存',{kind:'warning',source:'entities'})
  const editId=randomId(),hash=entityFingerprint(template)
- pending.set(editId,{client:r.client,documentKey,hash,receiver:r.token,session:localizationSession,version,localized:capable})
- try{const result=object(await controlRequest('entities.edit.open',{version,editId,hash,receiver:r.token,template,...(capable?{localization:localizationSession.localization}:{})}));if(result.version!==version||result.opened!==true||result.editId!==editId)throw Error('无法打开 IBE 实体编辑器')}
+ pending.set(editId,{client:r.client,documentKey,hash,receiver:r.token,session:localizationSession,version,localized:capable,attributes})
+ try{const result=object(await controlRequest('entities.edit.open',{version,editId,hash,receiver:r.token,template,...(capable?{localization:localizationSession.localization}:{}),...(attributes?{attributes:attributes.context}:{})}));if(result.version!==version||result.opened!==true||result.editId!==editId)throw Error('无法打开 IBE 实体编辑器')}
  catch(error){pending.delete(editId);throw error}
 }
 export async function receiveEntityEditDone(params:unknown){
@@ -76,6 +79,8 @@ export async function receiveEntityEditDone(params:unknown){
   editId=p.editId as string;entry.receiving=true
   const original=parseEntity(entry.session.source),candidate=parseEntity(JSON.stringify(p.template))
   let result={...candidate,tags:original.tags}
+  if(entry.attributes)result=applyEntityAttributeResult(entry.attributes,result,p.attributes)
+  else assertEntityAttributesUnchanged(original,result)
   if(!entry.localized)result=preserveReadOnlyDisplayText(entry.session,result,true)
   const edits=entry.localized?localizedResultEdits(entry.session,result,p.localization):legacyLocalizedResultEdits(entry.session,result)
   result=preserveReadOnlyDisplayText(entry.session,result,!entry.localized)
