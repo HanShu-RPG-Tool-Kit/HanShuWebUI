@@ -21,6 +21,7 @@ import {
 } from './gameDevServer'
 import type { ScriptWorkspaceHandle } from './workspaces/scriptTypes.ts'
 import { HelpModal } from './help/HelpModal.tsx'
+import { DialogHost } from './ui/dialogs'
 import type { HelpTopicId } from './help/topics.ts'
 import type { AppWorkspaceId } from './workspaces/types.ts'
 import {
@@ -326,6 +327,7 @@ function App() {
       )}
       </Fragment>
       )}
+      <DialogHost />
     </div>
   )
 }

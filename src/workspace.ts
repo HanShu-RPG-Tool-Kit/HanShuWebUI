@@ -376,7 +376,7 @@ export function loadWorkspace(): Workspace {
     const raw = localStorage.getItem(WORKSPACE_KEY)
     if (raw) {
       const data = JSON.parse(raw) as Workspace
-      if (Array.isArray(data.packages) && data.packages.length > 0) {
+      if (Array.isArray(data.packages)) {
         return {
           packages: data.packages.map((pkg) => ({
             ...pkg,
@@ -392,7 +392,9 @@ export function loadWorkspace(): Workspace {
               ? (pkg as ScriptPackage).assetFolders
               : [],
           })),
-          activeScriptId: data.activeScriptId ?? data.packages[0]?.scripts[0]?.id ?? null,
+          activeScriptId: data.packages.some((pkg) => pkg.scripts?.some((script) => script.id === data.activeScriptId))
+            ? data.activeScriptId ?? null
+            : data.packages[0]?.scripts[0]?.id ?? null,
           activeAssetId: (data as Workspace).activeAssetId ?? null,
         }
       }

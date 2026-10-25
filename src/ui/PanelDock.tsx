@@ -1,4 +1,5 @@
 import {
+  useEffect,
   useLayoutEffect,
   useRef,
   useState,
@@ -9,27 +10,38 @@ import {
   DOCK_DEFAULT_H,
   DOCK_DEFAULT_W,
   DOCK_EDGES,
+  DOCK_TAB_H,
   DOCK_MAX_H,
   DOCK_MAX_W,
   DOCK_MIN_H,
   DOCK_MIN_W,
   DOCK_SASH,
+  activateTab,
   applyStick,
+  stickGroup,
+  bandId,
   copyLayout,
   defaultRecord,
   detach,
+  floatGroupFor,
+  liftColumn,
   dockToEdge,
   findCell,
   hitDock,
   isVertical,
   layoutFrame,
   layoutFromSaved,
+  orderTab,
+  tabInsertIndex,
   limitsFor,
   mergeSpecs,
+  removePanel,
   resetCellWeights,
   resizeLane,
   setCellPixels,
   sizeForDock,
+  syncFloatGroup,
+  tabsOf,
   type DockEdge,
   type DockHit,
   type DockLayout,
@@ -55,6 +67,7 @@ export type DockPanelSpec = {
   minSize?: number
   maxSize?: number
   defaultFloat?: FloatRect
+  title?: string
   render: (api: PanelDockHandle) => ReactNode
 }
 
@@ -70,6 +83,16 @@ type TitleSession = {
   offsetY: number
   moved: boolean
   announced: boolean
+  reordered: boolean
+  detached: boolean
+  activateOnClick?: boolean
+  lift?: FloatRect
+  tabOrder?: string[]
+  tabRects?: { id: string; left: number; width: number }[]
+  tabOffset?: number
+  tabWidth?: number
+  tabHomeIndex?: number
+  tabTargetIndex?: number
 }
 
 type SashSession = {
@@ -102,8 +125,31 @@ type ResizeSession = {
 type Session = TitleSession | SashSession | ResizeSession
 
 const STORAGE_KEY = "hanshu.panelDock"
+export const PANEL_DOCK_RESET_EVENT = "hanshu:panel-dock-reset"
+const LEGACY_EXPLORER_KEYS = [
+  "hanshu.explorerDock",
+  "hanshu.explorerLastEdge",
+  "hanshu.explorerWidth",
+  "hanshu.explorerHeight",
+  "hanshu.explorerFloat",
+]
+
+/** Clear the saved dock and ask the mounted PanelDock to rebuild its default edges. */
+export function resetPanelDock(storageKey = STORAGE_KEY) {
+  try {
+    localStorage.removeItem(storageKey)
+    if (storageKey === STORAGE_KEY) {
+      for (const key of LEGACY_EXPLORER_KEYS) localStorage.removeItem(key)
+    }
+  } catch {
+    /* private mode keeps the in-memory reset */
+  }
+  window.dispatchEvent(new CustomEvent(PANEL_DOCK_RESET_EVENT, { detail: { storageKey } }))
+}
 const MIN_FLOAT_W = 220
 const MIN_FLOAT_H = 160
+const FLOAT_W = 500
+const FLOAT_H = 300
 const LIFT_OFFSET_X = 28
 const LIFT_OFFSET_Y = 14
 const SASH_X = "拖拽调整宽度，双击恢复默认"
@@ -150,7 +196,7 @@ function readLegacyLayout(specs: readonly DockPanelSpec[]): DockLayout {
   const lastEdge = readEnum("hanshu.explorerLastEdge", DOCK_EDGES, dock === "float" ? "left" : dock)
   const width = readNumber("hanshu.explorerWidth", DOCK_MIN_W, DOCK_MAX_W, DOCK_DEFAULT_W)
   const height = readNumber("hanshu.explorerHeight", DOCK_MIN_H, DOCK_MAX_H, DOCK_DEFAULT_H)
-  const layout: DockLayout = { version: 2, agentSized: false, lanes: { left: [], right: [], top: [], bottom: [] }, panels: {} }
+  const layout: DockLayout = { version: 3, agentSized: false, lanes: { left: [], right: [], top: [], bottom: [] }, panels: {}, floatGroups: [] }
   for (const spec of specs) layout.panels[spec.id] = defaultRecord(spec)
   const explorer = layout.panels.explorer
   if (explorer) {
@@ -160,7 +206,7 @@ function readLegacyLayout(specs: readonly DockPanelSpec[]): DockLayout {
     explorer.floatRect = readLegacyFloat()
     if (dock !== "float") dockToEdge(layout, "explorer", dock, explorer.size, "outer")
   }
-  for (const id of ["agent", "roles"] as const) {
+  for (const id of ["agent", "roles", "studio"] as const) {
     const panel = layout.panels[id]
     if (panel && panel.placement !== "float") dockToEdge(layout, id, panel.placement, panel.size, "inner")
   }
@@ -220,10 +266,10 @@ function setRect(el: HTMLElement, rect: DockRect) {
 function clampFloat(rect: DOMRect, box: FloatRect): FloatRect {
   const w = Math.min(Math.max(MIN_FLOAT_W, box.w), Math.max(MIN_FLOAT_W, rect.width - 16))
   const h = Math.min(Math.max(MIN_FLOAT_H, box.h), Math.max(MIN_FLOAT_H, rect.height - 16))
-  const maxX = Math.max(0, rect.width - 48)
-  const maxY = Math.max(0, rect.height - 28)
+  const maxX = Math.max(0, rect.width - w)
+  const maxY = Math.max(0, rect.height - h)
   return {
-    x: Math.min(maxX, Math.max(-w + 48, box.x)),
+    x: Math.min(maxX, Math.max(0, box.x)),
     y: Math.min(maxY, Math.max(0, box.y)),
     w,
     h,
@@ -234,11 +280,64 @@ function isInteractive(target: EventTarget | null) {
   return target instanceof Element && Boolean(target.closest("button, input, label, a, textarea, select"))
 }
 
-function opposite(edge: DockEdge): DockEdge {
-  if (edge === "left") return "right"
-  if (edge === "right") return "left"
-  if (edge === "top") return "bottom"
-  return "top"
+function tabBarFor(root: HTMLElement, panelId: string) {
+  return [...root.querySelectorAll<HTMLElement>("[data-dock-tabs]")].find((bar) =>
+    [...bar.querySelectorAll<HTMLElement>("[role=tab]")].some((tab) => tab.dataset.panelId === panelId),
+  )
+}
+
+function pointerOnTabStrip(bar: HTMLElement, x: number, y: number) {
+  const rect = bar.getBoundingClientRect()
+  return x >= rect.left - 4 && x <= rect.right + 4 && y >= rect.top - 4 && y <= rect.bottom + 4
+}
+
+function clearTabDrag(root: ParentNode | null | undefined) {
+  root?.querySelectorAll<HTMLElement>("[data-dock-tabs]").forEach((bar) => {
+    bar.classList.remove("is-reordering")
+    bar.querySelectorAll<HTMLElement>("[role=tab]").forEach((tab) => {
+      tab.style.order = ""
+      tab.style.transform = ""
+      tab.style.zIndex = ""
+      tab.classList.remove("is-dragging")
+    })
+  })
+}
+
+function paintTabDrag(bar: HTMLElement, session: TitleSession, clientX: number, clientY: number) {
+  const rects = session.tabRects
+  if (!rects || rects.length < 2) return
+  const home = session.tabHomeIndex ?? 0
+  const insertAt = tabInsertIndex(rects, session.panelId, clientX, session.tabTargetIndex ?? home)
+  session.tabTargetIndex = insertAt
+  session.reordered = insertAt !== home
+  const others = [...rects].filter((tab) => tab.id !== session.panelId).sort((a, b) => a.left - b.left)
+  const order = others.map((tab) => tab.id)
+  order.splice(Math.max(0, Math.min(insertAt, order.length)), 0, session.panelId)
+  const slots = [...rects].sort((a, b) => a.left - b.left).map((tab) => tab.left)
+  bar.classList.add("is-reordering")
+  for (const tab of bar.querySelectorAll<HTMLElement>("[role=tab]")) {
+    const id = tab.dataset.panelId ?? ""
+    const item = rects.find((rect) => rect.id === id)
+    if (!item) continue
+    const grabbed = id === session.panelId
+    const slot = slots[order.indexOf(id)] ?? item.left
+    const dx = grabbed ? clientX - session.startX : slot - item.left
+    const dy = grabbed ? Math.max(-8, Math.min(12, clientY - session.startY)) : 0
+    tab.style.order = ""
+    tab.style.transform = dx || dy ? `translate(${Math.round(dx)}px, ${Math.round(dy)}px)` : ""
+    tab.style.zIndex = grabbed ? "4" : ""
+    tab.classList.toggle("is-dragging", grabbed)
+  }
+}
+
+function tabPlaceAt(root: HTMLElement, x: number, targetId: string): "before" | "after" | "end" {
+  const bar = tabBarFor(root, targetId)
+  const tab = bar
+    ? [...bar.querySelectorAll<HTMLElement>("[role=tab]")].find((item) => item.dataset.panelId === targetId)
+    : undefined
+  if (!tab) return "end"
+  const rect = tab.getBoundingClientRect()
+  return x < rect.left + rect.width / 2 ? "before" : "after"
 }
 
 export function PanelDock({
@@ -260,6 +359,7 @@ export function PanelDock({
   const zoneRef = useRef<HTMLDivElement>(null)
   const bandRefs = useRef(new Map<string, HTMLDivElement>())
   const sessionRef = useRef<Session | null>(null)
+  const layoutRenderFrameRef = useRef<number | null>(null)
   const listenersRef = useRef<{
     move: (event: PointerEvent) => void
     up: (event: Event) => void
@@ -268,11 +368,33 @@ export function PanelDock({
   visibleRef.current = new Set(panels.filter((panel) => panel.visible !== false).map((panel) => panel.id))
 
   const publish = (next: DockLayout) => {
+    if (layoutRenderFrameRef.current !== null) {
+      window.cancelAnimationFrame(layoutRenderFrameRef.current)
+      layoutRenderFrameRef.current = null
+    }
     const stored = copyLayout(next)
     layoutRef.current = stored
     setLayout(stored)
     writeLayout(storageKey, stored)
   }
+
+  const scheduleLayoutRender = () => {
+    if (layoutRenderFrameRef.current !== null) return
+    layoutRenderFrameRef.current = window.requestAnimationFrame(() => {
+      layoutRenderFrameRef.current = null
+      setLayout(copyLayout(layoutRef.current))
+    })
+  }
+
+  useEffect(() => {
+    const onReset = (event: Event) => {
+      const key = (event as CustomEvent<{ storageKey?: string }>).detail?.storageKey
+      if (key && key !== storageKey) return
+      publish(readLayout(storageKey, specsRef.current))
+    }
+    window.addEventListener(PANEL_DOCK_RESET_EVENT, onReset)
+    return () => window.removeEventListener(PANEL_DOCK_RESET_EVENT, onReset)
+  }, [storageKey])
 
   const specOf = (id: string) => specsRef.current.find((spec) => spec.id === id)
 
@@ -293,7 +415,7 @@ export function PanelDock({
     const visible = visibleRef.current
     const agentLane = current.lanes[loc.edge][loc.laneIndex]
     const others = [...current.lanes.left, ...current.lanes.right].filter(
-      (lane) => lane !== agentLane && lane.cells.some((cell) => visible.has(cell.id)),
+      (lane) => lane !== agentLane && lane.cells.some((cell) => tabsOf(cell).some((id) => visible.has(id))),
     )
     const used = others.reduce((sum, lane) => sum + lane.size, 0) + DOCK_SASH * (others.length + 1)
     const room = rect.width - used
@@ -305,7 +427,7 @@ export function PanelDock({
 
   const hideZones = () => {
     zonesRef.current?.classList.remove("is-open")
-    zoneRef.current?.classList.remove("is-hot")
+    zoneRef.current?.classList.remove("is-hot", "is-line", "is-tabs")
   }
 
   const showHit = (hit: DockHit) => {
@@ -316,8 +438,10 @@ export function PanelDock({
       return
     }
     zones.classList.add("is-open")
+    zones.style.zIndex = "1000"
     zone.classList.add("is-hot")
-    zone.classList.toggle("is-line", hit.line)
+    zone.classList.toggle("is-tabs", hit.kind === "tabs")
+    zone.classList.toggle("is-line", hit.kind !== "tabs" && hit.line)
     setRect(zone, hit.preview)
   }
 
@@ -339,7 +463,16 @@ export function PanelDock({
       if (!shown) continue
       band.classList.toggle("is-float", panel.placement === "float")
       if (panel.placement === "float") {
-        setRect(band, panel.floatRect)
+        const group = floatGroupFor(layoutRef.current, spec.id)
+        const members = (group?.tabs ?? [spec.id]).filter((id) => visibleRef.current.has(id))
+        const shown = members.includes(group?.active ?? "") ? group?.active : members[0]
+        if (shown !== spec.id) {
+          band.style.display = "none"
+          continue
+        }
+        const tabH = members.length > 1 ? DOCK_TAB_H : 0
+        const box = panel.floatRect
+        setRect(band, { x: box.x, y: box.y + tabH, w: box.w, h: Math.max(0, box.h - tabH) })
         band.style.zIndex = String(40 + panel.z)
         continue
       }
@@ -351,6 +484,32 @@ export function PanelDock({
       setRect(band, box)
       band.style.zIndex = "1"
     }
+    root.querySelectorAll<HTMLElement>("[data-dock-tabs]").forEach((el) => {
+      const key = el.dataset.dockTabs ?? ""
+      const bar = frame.tabBars.find((item) => item.key === key)
+      if (bar) {
+        el.style.display = ""
+        el.style.zIndex = "5"
+        setRect(el, bar.rect)
+        return
+      }
+      const group = (layoutRef.current.floatGroups ?? []).find((item) => {
+        const tabs = item.tabs.filter((id) => visibleRef.current.has(id)).sort().join(",")
+        return key === `float-tabs:${tabs}`
+      })
+      const activeId = group
+        ? group.tabs.find((id) => visibleRef.current.has(id) && id === group.active) ??
+          group.tabs.find((id) => visibleRef.current.has(id))
+        : undefined
+      const host = activeId ? layoutRef.current.panels[activeId] : undefined
+      if (!host || host.placement !== "float") {
+        el.style.display = "none"
+        return
+      }
+      el.style.display = ""
+      el.style.zIndex = String(41 + host.z)
+      setRect(el, { x: host.floatRect.x, y: host.floatRect.y, w: host.floatRect.w, h: DOCK_TAB_H })
+    })
     root.querySelectorAll<HTMLElement>("[data-dock-sash]").forEach((el) => {
       const key = el.dataset.dockSash ?? ""
       const sash = frame.sashes.find((item) => item.key === key)
@@ -366,7 +525,12 @@ export function PanelDock({
   }
 
   const endSession = () => {
+    if (layoutRenderFrameRef.current !== null) {
+      window.cancelAnimationFrame(layoutRenderFrameRef.current)
+      layoutRenderFrameRef.current = null
+    }
     const listeners = listenersRef.current
+    clearTabDrag(rootRef.current)
     if (listeners) {
       window.removeEventListener("pointermove", listeners.move, true)
       window.removeEventListener("pointerup", listeners.up, true)
@@ -380,26 +544,66 @@ export function PanelDock({
     document.body.style.cursor = ""
   }
 
+  const columnRect = (panelId: string): FloatRect | null => {
+    const root = rootRef.current?.getBoundingClientRect()
+    const layout = layoutRef.current
+    const panel = layout.panels[panelId]
+    if (!root || !panel) return null
+    const loc = findCell(layout, panelId)
+    if (loc) {
+      const frame = layoutFrame(layout, root, visibleRef.current)
+      const cell = layout.lanes[loc.edge][loc.laneIndex].cells[loc.cellIndex]
+      const host = bandId(cell, visibleRef.current)
+      const box = host ? frame.slots[host] : undefined
+      if (box && box.w > 8 && box.h > 8) return { x: box.x, y: box.y, w: box.w, h: box.h }
+    }
+    const group = floatGroupFor(layout, panelId)
+    const hostId =
+      group?.tabs.find((id) => id === group.active && layout.panels[id]?.placement === "float") ??
+      (panel.placement === "float" ? panelId : "")
+    if (hostId) {
+      const band = bandRefs.current.get(hostId)?.getBoundingClientRect()
+      const tabCount = (group?.tabs ?? [hostId]).filter((id) => visibleRef.current.has(id)).length
+      const tabH = tabCount > 1 ? DOCK_TAB_H : 0
+      if (band && band.width > 8 && band.height > 8) {
+        return {
+          x: band.left - root.left,
+          y: band.top - root.top - tabH,
+          w: band.width,
+          h: band.height + tabH,
+        }
+      }
+      const host = layout.panels[hostId]
+      if (host) return { ...host.floatRect }
+    }
+    const band = bandRefs.current.get(panelId)?.getBoundingClientRect()
+    if (band && band.width > 8 && band.height > 8) {
+      return { x: band.left - root.left, y: band.top - root.top, w: band.width, h: band.height }
+    }
+    return null
+  }
+
   const placeFloat = (panelId: string, clientX: number, clientY: number, offsetX: number, offsetY: number) => {
     const rect = rootRef.current?.getBoundingClientRect()
     const panel = layoutRef.current.panels[panelId]
     if (!rect || !panel) return
-    const bandBox = bandRefs.current.get(panelId)?.getBoundingClientRect()
+    const lift = sessionRef.current?.kind === "title" ? sessionRef.current.lift : undefined
     const w =
-      panel.placement === "float"
-        ? panel.floatRect.w
-        : Math.min(560, Math.max(MIN_FLOAT_W, bandBox?.width ?? panel.size))
+      lift?.w ??
+      (panel.placement === "float" ? panel.floatRect.w : Math.min(FLOAT_W, Math.max(MIN_FLOAT_W, rect.width - 16)))
     const h =
-      panel.placement === "float"
-        ? panel.floatRect.h
-        : Math.min(640, Math.max(MIN_FLOAT_H, Math.min(bandBox?.height ?? 420, 560)))
+      lift?.h ??
+      (panel.placement === "float" ? panel.floatRect.h : Math.min(FLOAT_H, Math.max(MIN_FLOAT_H, rect.height - 16)))
     panel.floatRect = clampFloat(rect, {
       x: clientX - rect.left - offsetX,
       y: clientY - rect.top - offsetY,
       w,
       h,
     })
-    if (panel.placement !== "float") detach(layoutRef.current, panelId)
+    const dragGroup = sessionRef.current?.kind === "title" && !sessionRef.current.activateOnClick
+    if (dragGroup) liftColumn(layoutRef.current, panelId)
+    else if (panel.placement !== "float") detach(layoutRef.current, panelId)
+    else if (floatGroupFor(layoutRef.current, panelId)) removePanel(layoutRef.current, panelId)
   }
 
   const hitAt = (clientX: number, clientY: number, panelId?: string) => {
@@ -409,14 +613,45 @@ export function PanelDock({
     const floats: Record<string, DockRect> = {}
     const mover = panelId ? layoutRef.current.panels[panelId] : undefined
     if (panelId) {
+      const group =
+        sessionRef.current?.kind === "title" && !sessionRef.current.activateOnClick
+          ? floatGroupFor(layoutRef.current, panelId)
+          : null
       for (const [id, panel] of Object.entries(layoutRef.current.panels)) {
         if (id === panelId || panel.placement !== "float" || !visibleRef.current.has(id)) continue
+        if (group?.tabs.includes(id)) continue
         floats[id] = panel.floatRect
       }
     }
-    return hitDock(rect, { x: clientX - rect.left, y: clientY - rect.top }, frame.bands, {
+    let moverRect = mover?.placement === "float" ? { ...mover.floatRect } : undefined
+    if (panelId && rootRef.current) {
+      const band = bandRefs.current.get(panelId)?.getBoundingClientRect()
+      if (band && band.width > 8 && band.height > 8) {
+        let top = band.top
+        let bottom = band.bottom
+        let left = band.left
+        let right = band.right
+        const bar = tabBarFor(rootRef.current, panelId)
+        if (bar && bar.style.display !== "none") {
+          const tabBox = bar.getBoundingClientRect()
+          if (tabBox.width > 8 && tabBox.height > 2) {
+            top = Math.min(top, tabBox.top)
+            bottom = Math.max(bottom, tabBox.bottom)
+            left = Math.min(left, tabBox.left)
+            right = Math.max(right, tabBox.right)
+          }
+        }
+        moverRect = {
+          x: left - rect.left,
+          y: top - rect.top,
+          w: right - left,
+          h: bottom - top,
+        }
+      }
+    }
+    return hitDock(rect, { x: clientX - rect.left, y: clientY - rect.top }, frame.slots, {
       ignoreId: panelId,
-      mover: mover?.placement === "float" ? mover.floatRect : undefined,
+      mover: moverRect,
       floats,
     })
   }
@@ -431,25 +666,67 @@ export function PanelDock({
       const rect = root?.getBoundingClientRect()
       if (!root || !rect) return
       if (active.kind === "title") {
-        if (!active.moved) {
-          if (Math.hypot(event.clientX - active.startX, event.clientY - active.startY) < 4) return
-          active.moved = true
-          document.body.classList.add("is-panel-dragging")
-          const panel = layoutRef.current.panels[active.panelId]
-          if (panel && panel.placement !== "float") {
-            active.offsetX = LIFT_OFFSET_X
-            active.offsetY = LIFT_OFFSET_Y
-          }
-        }
         active.clientX = event.clientX
         active.clientY = event.clientY
+        const dx = event.clientX - active.startX
+        const dy = event.clientY - active.startY
+        const travel = Math.hypot(dx, dy)
+        if (active.activateOnClick && !active.detached) {
+          const bar = tabBarFor(root, active.panelId)
+          const reorder =
+            Boolean(
+              bar &&
+                active.tabRects &&
+                pointerOnTabStrip(bar, event.clientX, event.clientY) &&
+                Math.abs(dx) >= 3 &&
+                Math.abs(dx) > Math.abs(dy) * 1.25,
+            )
+          if (reorder && bar) {
+            paintTabDrag(bar, active, event.clientX, event.clientY)
+            hideZones()
+            return
+          }
+          if (travel < 8) return
+          clearTabDrag(root)
+          active.reordered = false
+        } else if (!active.moved && travel < 8) {
+          return
+        }
+        if (!active.moved) {
+          active.moved = true
+          active.detached = true
+          document.body.classList.add("is-panel-dragging")
+          const origin = columnRect(active.panelId)
+          const panel = layoutRef.current.panels[active.panelId]
+          if (origin && panel) {
+            const docked = panel.placement !== "float"
+            const w = docked ? Math.min(FLOAT_W, Math.max(MIN_FLOAT_W, rect.width - 16)) : origin.w
+            const h = docked ? Math.min(FLOAT_H, Math.max(MIN_FLOAT_H, rect.height - 16)) : origin.h
+            let offsetX = event.clientX - rect.left - origin.x
+            let offsetY = event.clientY - rect.top - origin.y
+            if (docked) {
+              offsetX = Math.min(Math.max(16, offsetX), Math.max(16, w - 24))
+              offsetY = Math.min(Math.max(8, offsetY), 28)
+            }
+            const box = {
+              x: event.clientX - rect.left - offsetX,
+              y: event.clientY - rect.top - offsetY,
+              w,
+              h,
+            }
+            active.lift = box
+            active.offsetX = offsetX
+            active.offsetY = offsetY
+            panel.floatRect = { ...box }
+          }
+        }
         const wasFloat = layoutRef.current.panels[active.panelId]?.placement === "float"
         placeFloat(active.panelId, event.clientX, event.clientY, active.offsetX, active.offsetY)
         const hit = hitAt(event.clientX, event.clientY, active.panelId)
         showHit(hit)
         if (!wasFloat && !active.announced) {
           active.announced = true
-          setLayout(copyLayout(layoutRef.current))
+          scheduleLayoutRender()
         }
         return
       }
@@ -506,24 +783,44 @@ export function PanelDock({
         h = MIN_FLOAT_H
       }
       panel.floatRect = clampFloat(rect, { x, y, w, h })
+      syncFloatGroup(layoutRef.current, active.panelId)
       applyGeometry()
     }
     const up = (event: Event) => {
       const active = sessionRef.current
       if (!active) return
       if (event instanceof PointerEvent && event.pointerId !== active.pointerId) return
-      if (active.kind === "title" && !active.moved) {
+      if (active.kind === "title" && !active.detached) {
+        const activate = active.activateOnClick
+        const panelId = active.panelId
+        if (activate) {
+          if (active.reordered && active.tabTargetIndex !== undefined) {
+            orderTab(layoutRef.current, panelId, active.tabTargetIndex)
+          }
+          activateTab(layoutRef.current, panelId)
+        }
+        const next = copyLayout(layoutRef.current)
         endSession()
+        if (activate) publish(next)
         return
       }
       if (active.kind === "title" && active.moved && event instanceof PointerEvent) {
+        const root = rootRef.current
         const panel = layoutRef.current.panels[active.panelId]
-        const hit = hitAt(event.clientX, event.clientY, active.panelId)
+        const rawHit = hitAt(event.clientX, event.clientY, active.panelId)
+        const hit =
+          rawHit.kind === "tabs" && root
+            ? {
+                ...rawHit,
+                place: tabPlaceAt(root, event.clientX, rawHit.panelId),
+              }
+            : rawHit
         if (panel) {
-          const edge = hit.kind === "window" ? hit.edge : hit.kind === "panel" ? layoutRef.current.panels[hit.panelId]?.lastEdge ?? panel.lastEdge : panel.lastEdge
-          const dockEdge = hit.kind === "panel" ? layoutRef.current.panels[hit.panelId]?.placement : edge
+          const targetId = hit.kind === "panel" || hit.kind === "tabs" ? hit.panelId : ""
+          const dockEdge = targetId ? layoutRef.current.panels[targetId]?.placement : hit.kind === "window" ? hit.edge : panel.lastEdge
           const sizeEdge = dockEdge && dockEdge !== "float" ? dockEdge : panel.lastEdge
-          applyStick(layoutRef.current, active.panelId, hit, sizeForDock(panel, sizeEdge, specOf(active.panelId)))
+          const stick = active.activateOnClick ? applyStick : stickGroup
+          stick(layoutRef.current, active.panelId, hit, sizeForDock(panel, sizeEdge, specOf(active.panelId)))
         }
       }
       const next = copyLayout(layoutRef.current)
@@ -599,8 +896,11 @@ export function PanelDock({
     const maxZ = Math.max(1, ...Object.values(layoutRef.current.panels).map((item) => item.z))
     panel.z = maxZ + 1
     const rect = rootRef.current?.getBoundingClientRect()
-    const offsetX = rect ? event.clientX - rect.left - panel.floatRect.x : LIFT_OFFSET_X
-    const offsetY = rect ? event.clientY - rect.top - panel.floatRect.y : LIFT_OFFSET_Y
+    const origin = columnRect(panelId)
+    if (origin) panel.floatRect = { ...origin }
+    if (panel.placement === "float") syncFloatGroup(layoutRef.current, panelId)
+    const offsetX = origin && rect ? event.clientX - rect.left - origin.x : LIFT_OFFSET_X
+    const offsetY = origin && rect ? event.clientY - rect.top - origin.y : LIFT_OFFSET_Y
     startSession({
       kind: "title",
       panelId,
@@ -613,6 +913,55 @@ export function PanelDock({
       offsetY,
       moved: false,
       announced: false,
+      reordered: false,
+      detached: false,
+      lift: origin ?? undefined,
+    })
+  }
+
+  const onTabPointerDown = (panelId: string) => (event: ReactPointerEvent<HTMLElement>) => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    event.currentTarget.setPointerCapture?.(event.pointerId)
+    const panel = layoutRef.current.panels[panelId]
+    if (!panel) return
+    const maxZ = Math.max(1, ...Object.values(layoutRef.current.panels).map((item) => item.z))
+    panel.z = maxZ + 1
+    const bar = tabBarFor(rootRef.current!, panelId)
+    const tabElements = bar ? [...bar.querySelectorAll<HTMLElement>("[role=tab]")] : []
+    const tabOrder = tabElements.map((tab) => tab.dataset.panelId ?? "").filter(Boolean)
+    const tabRect = event.currentTarget.getBoundingClientRect()
+    const tabRects = tabElements.flatMap((tab) => {
+      const id = tab.dataset.panelId ?? ""
+      const rect = tab.getBoundingClientRect()
+      return id && rect.width > 0 ? [{ id, left: rect.left, width: rect.width }] : []
+    })
+    const rect = rootRef.current?.getBoundingClientRect()
+    const origin = columnRect(panelId)
+    if (origin) panel.floatRect = { ...origin }
+    startSession({
+      kind: "title",
+      panelId,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      clientX: event.clientX,
+      clientY: event.clientY,
+      offsetX: origin && rect ? event.clientX - rect.left - origin.x : LIFT_OFFSET_X,
+      offsetY: origin && rect ? event.clientY - rect.top - origin.y : LIFT_OFFSET_Y,
+      moved: false,
+      announced: false,
+      reordered: false,
+      detached: false,
+      activateOnClick: true,
+      lift: origin ?? undefined,
+      tabOrder,
+      tabRects,
+      tabOffset: event.clientX - tabRect.left,
+      tabWidth: tabRect.width,
+      tabHomeIndex: Math.max(0, [...tabRects].sort((a, b) => a.left - b.left).findIndex((tab) => tab.id === panelId)),
+      tabTargetIndex: Math.max(0, [...tabRects].sort((a, b) => a.left - b.left).findIndex((tab) => tab.id === panelId)),
     })
   }
 
@@ -622,18 +971,18 @@ export function PanelDock({
     const lane = layoutRef.current.lanes[sash.edge][sash.laneIndex]
     const rect = rootRef.current?.getBoundingClientRect()
     const frame = rect ? layoutFrame(layoutRef.current, rect, visibleRef.current) : null
-    const shown = lane?.cells.filter((cell) => visibleRef.current.has(cell.id)) ?? []
+    const shown = lane?.cells.filter((cell) => tabsOf(cell).some((id) => visibleRef.current.has(id))) ?? []
     const first = shown[0]
-    const band = first ? frame?.bands[first.id] : undefined
+    const band = first ? frame?.bands[bandId(first, visibleRef.current) ?? ""] : undefined
     let startA = 0
     let startB = 0
     let startCross = rect ? (isVertical(sash.edge) ? frame?.main.w ?? rect.width : rect.height) : 0
     if (sash.cellIndex != null && lane) {
       const a = lane.cells[sash.cellIndex]
-      const bIndex = lane.cells.findIndex((cell, index) => index > sash.cellIndex! && visibleRef.current.has(cell.id))
+      const bIndex = lane.cells.findIndex((cell, index) => index > sash.cellIndex! && tabsOf(cell).some((id) => visibleRef.current.has(id)))
       const b = lane.cells[bIndex]
-      const aBox = a ? frame?.bands[a.id] : undefined
-      const bBox = b ? frame?.bands[b.id] : undefined
+      const aBox = a ? frame?.bands[bandId(a, visibleRef.current) ?? ""] : undefined
+      const bBox = b ? frame?.bands[bandId(b, visibleRef.current) ?? ""] : undefined
       const verticalCells = sash.edge === "left" || sash.edge === "right"
       startA = verticalCells ? aBox?.h ?? 0 : aBox?.w ?? 0
       startB = verticalCells ? bBox?.h ?? 0 : bBox?.w ?? 0
@@ -709,6 +1058,25 @@ export function PanelDock({
     publish(next)
   }
 
+  const labelOf = (id: string) => specOf(id)?.title || id
+  const tabStrips = [
+    ...DOCK_EDGES.flatMap((edge) =>
+      layout.lanes[edge].flatMap((lane, laneIndex) =>
+        lane.cells.flatMap((cell, cellIndex) => {
+          const tabs = tabsOf(cell).filter((id) => visibleRef.current.has(id))
+          if (tabs.length < 2) return []
+          const active = tabs.includes(cell.id) ? cell.id : tabs[0]
+          return [{ key: `tabs:${edge}:${laneIndex}:${cellIndex}`, tabs: tabs.map((id) => ({ id, active: id === active })) }]
+        }),
+      ),
+    ),
+    ...(layout.floatGroups ?? []).flatMap((group) => {
+      const tabs = group.tabs.filter((id) => visibleRef.current.has(id))
+      if (tabs.length < 2) return []
+      const active = tabs.includes(group.active) ? group.active : tabs[0]
+      return [{ key: `float-tabs:${[...tabs].sort().join(",")}`, tabs: tabs.map((id) => ({ id, active: id === active })) }]
+    }),
+  ]
   const sashItems = layoutFrame(layout, { width: 1200, height: 800 }, visibleRef.current).sashes
   const handlesFor = (panelId: string) =>
     (
@@ -758,6 +1126,34 @@ export function PanelDock({
       <div ref={mainRef} className="panel-dock-main">
         {children}
       </div>
+      {tabStrips.map((strip) => (
+        <div
+          key={strip.key}
+          data-dock-tabs={strip.key}
+          className="panel-dock-tabs"
+          onPointerDown={(event) => {
+            if (event.button !== 0 || isInteractive(event.target)) return
+            if (event.target instanceof Element && event.target.closest("[role=tab]")) return
+            const activeId = strip.tabs.find((tab) => tab.active)?.id
+            if (activeId) onTitlePointerDown(activeId)(event)
+          }}
+        >
+          {strip.tabs.map((tab) => (
+            <div
+              key={tab.id}
+              role="tab"
+              aria-selected={tab.active}
+              data-panel-id={tab.id}
+              className={`panel-dock-tab${tab.active ? " is-active" : ""}`}
+              title={labelOf(tab.id)}
+              onPointerDown={onTabPointerDown(tab.id)}
+            >
+              <span>{labelOf(tab.id)}</span>
+            </div>
+          ))}
+          <div className="panel-dock-tab-gap" />
+        </div>
+      ))}
       {sashItems.map((sash) => (
         <div
           key={sash.key}

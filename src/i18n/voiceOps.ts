@@ -45,6 +45,10 @@ export type VoiceOpsHost = {
   refresh(): void
   /** 一条轻提示（录音棚与资源管理器共用那条） */
   notify(message: string, ok: boolean): void
+  /** 二次确认。取消返回 false，不抛错。界面轮子由宿主注入，领域层不依赖 React。 */
+  confirm(message: string): Promise<boolean>
+  /** 需要停下来看的说明。 */
+  alert(message: string): Promise<void>
 }
 
 export type VoiceOps = {
@@ -101,7 +105,7 @@ export function createVoiceOps(host: VoiceOpsHost): VoiceOps {
       ? pkg.assets.find((item) => item.path.toLowerCase() === target.toLowerCase())
       : null
     if (!asset || !isAudioAsset(asset.path, asset.mime)) {
-      window.alert(
+      void host.alert(
         `引用的目标必须是本包内的音频资产。\n当前：${targetPath}\n` +
           '（跨包引用、指向文本或图片都不行）',
       )
@@ -176,6 +180,7 @@ export function createVoiceOps(host: VoiceOpsHost): VoiceOps {
    * 说明可能有其它脚本的键也在用它，得说清楚影响面。
    */
   const confirmAndDeleteVoice = (key: string): void => {
+    void (async () => {
     const library = host.library()
     if (!library) return
     const status = library.statusOf(key)
@@ -197,44 +202,47 @@ export function createVoiceOps(host: VoiceOpsHost): VoiceOps {
               status.audioPath ? `：${status.audioPath}` : ''
             }）`
           : ''
-      if (!window.confirm(`删除${what}「${path}」？${extra}`)) return
+      if (!(await host.confirm(`删除${what}「${path}」？${extra}`))) return
     } else if (
-      !window.confirm(
+      !(await host.confirm(
         `该配音来自其它目录：${path}\n删除会影响所有引用它的键，确定删除？`,
-      )
+      ))
     ) {
       return
     }
 
-    void deleteVoice(key).catch(error => host.notify(`配音未删除：${String(error)}`, false))
+    await deleteVoice(key).catch(error => host.notify(`配音未删除：${String(error)}`, false))
+    })()
   }
 
   /** 录音棚：清除选中键名的配音（一次确认，逐个删） */
   const deleteVoices = (keys: string[]): void => {
+    void (async () => {
     const library = host.library()
     if (!library || keys.length === 0) return
     const withVoice = keys.filter((key) => library.statusOf(key).path != null)
     if (withVoice.length === 0) {
-      window.alert('选中的键都没有配音文件，没什么可清除的')
+      await host.alert('选中的键都没有配音文件，没什么可清除的')
       return
     }
     const refCount = withVoice.filter(
       (key) => library.statusOf(key).source === 'ref',
     ).length
     if (
-      !window.confirm(
+      !(await host.confirm(
         `清除 ${withVoice.length} 个键的配音？\n（对等文件会从应用内资源与工程文件夹一起删掉）` +
           (refCount > 0
             ? `\n（其中 ${refCount} 个是引用：只解除引用，被引用的音频不动）`
             : ''),
-      )
+      ))
     ) {
       return
     }
     const pkg = host.activePackage()
     if (!pkg) return
     const paths = withVoice.map(key => library.statusOf(key).path).filter((path): path is string => !!path)
-    void removeAssetEverywhere(pkg.id, paths).catch(error => host.notify(`配音未删除：${String(error)}`, false))
+    await removeAssetEverywhere(pkg.id, paths).catch(error => host.notify(`配音未删除：${String(error)}`, false))
+    })()
   }
 
   return {

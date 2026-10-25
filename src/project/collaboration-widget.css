@@ -4,6 +4,34 @@
   color: var(--text);
   font-size: 20px;
   user-select: none;
+  transform: translateX(0);
+  transition: left 180ms ease, top 180ms ease, transform 180ms ease;
+}
+
+.collab-widget.is-dragging {
+  transition: none;
+}
+
+.collab-widget.is-docked.is-docked-left {
+  transform: translateX(calc(-100% + 22px));
+}
+
+.collab-widget.is-docked.is-docked-right {
+  transform: translateX(calc(100% - 22px));
+}
+
+.collab-widget.is-docked.is-docked-left .collab-orb {
+  border-top-left-radius: 4px;
+  border-bottom-left-radius: 4px;
+}
+
+.collab-widget.is-docked.is-docked-right .collab-orb {
+  border-top-right-radius: 4px;
+  border-bottom-right-radius: 4px;
+}
+
+.collab-widget.is-docked .collab-attention-label {
+  opacity: 0;
 }
 
 /* 与剧本 / 进度工作区同一套细滚动条 */

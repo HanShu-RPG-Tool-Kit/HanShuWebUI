@@ -1,3 +1,4 @@
+import { scriptViewFlags } from '../../workspaces/scriptView'
 import type { MenuContribution, MenuCommand } from './types'
 
 const always = () => true
@@ -5,9 +6,9 @@ const always = () => true
 function cmd(
   id: string,
   label: string,
-  extra?: Pick<MenuCommand, 'enabled'>,
+  extra?: Pick<MenuCommand, 'enabled' | 'checked'>,
 ): MenuCommand {
-  return { id, label, run: 'workspace', enabled: extra?.enabled ?? always }
+  return { id, label, run: 'workspace', enabled: extra?.enabled ?? always, checked: extra?.checked }
 }
 
 /** 剧本工作区菜单贡献 */
@@ -54,14 +55,16 @@ export const scriptMenuContribution: MenuContribution = {
       id: 'view',
       label: '查看',
       items: [
-        cmd('agent-panel', 'Agent 窗口'),
-        cmd('voice-studio', '录音棚'),
+        cmd('explorer-panel', '资源管理器', { checked: () => scriptViewFlags.get().explorer }),
+        cmd('agent-panel', 'Agent 窗口', { checked: () => scriptViewFlags.get().agent }),
+        cmd('roles-panel', '备选角色', { checked: () => scriptViewFlags.get().roles }),
+        cmd('voice-studio', '录音棚', { checked: () => scriptViewFlags.get().studio }),
         cmd('command-palette', '命令面板...'),
         cmd('appearance', '外观'),
         cmd('editor-layout', '编辑器布局'),
         { type: 'separator' },
-        cmd('show-minimap', '显示小地图'),
-        cmd('word-wrap', '自动换行'),
+        cmd('show-minimap', '显示小地图', { checked: () => scriptViewFlags.get().minimap }),
+        cmd('word-wrap', '自动换行', { checked: () => scriptViewFlags.get().wordWrap }),
       ],
     },
     {

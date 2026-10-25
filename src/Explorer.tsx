@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import type { AssetFile, ScriptPackage, Workspace } from './workspace'
 import { isVoiceMapFile } from './workspace'
 import { packageLocationLabel, packageLocationTitle } from './project/projectLabel'
@@ -248,8 +249,8 @@ export function Explorer({
   }
 
   /**
-   * 打开类型选择器。菜单是 `fixed` 的，所以这里要先把触发按钮的位置算成视口坐标 ——
-   * 挂在树里当普通子节点会被资源树的滚动容器裁掉。
+   * 打开类型选择器。坐标用视口坐标：菜单会挂到 `document.body`，盖过相邻栏目。
+   * 挂在资源管理器里会被栏目的 `overflow` 裁掉，即使写了 `position: fixed`。
    */
   const openMenu = (packageId: string, anchor: HTMLElement | null) => {
     const rect = anchor?.getBoundingClientRect()
@@ -556,7 +557,7 @@ function NewFileTypeMenu({
     }
   }, [onClose])
 
-  return (
+  const menu = (
     <ul
       ref={ref}
       className="explorer-newfile-menu"
@@ -599,6 +600,7 @@ function NewFileTypeMenu({
       ))}
     </ul>
   )
+  return createPortal(menu, document.body)
 }
 
 /**
@@ -1027,29 +1029,31 @@ function PackageNode({
             )}
           </ul>
 
-          {ctxMenu && (
-            <ul
-              className="explorer-context-menu"
-              style={{ left: ctxMenu.x, top: ctxMenu.y }}
-              role="menu"
-              onClick={(e) => e.stopPropagation()}
-              onContextMenu={(e) => e.preventDefault()}
-            >
-              <li>
-                <button
-                  type="button"
-                  role="menuitem"
-                  onClick={() => {
-                    const id = ctxMenu.scriptId
-                    setCtxMenu(null)
-                    onGeneratePlaceholderVoice(id)
-                  }}
-                >
-                  生成空白 ogg
-                </button>
-              </li>
-            </ul>
-          )}
+          {ctxMenu &&
+            createPortal(
+              <ul
+                className="explorer-context-menu"
+                style={{ left: ctxMenu.x, top: ctxMenu.y }}
+                role="menu"
+                onClick={(e) => e.stopPropagation()}
+                onContextMenu={(e) => e.preventDefault()}
+              >
+                <li>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={() => {
+                      const id = ctxMenu.scriptId
+                      setCtxMenu(null)
+                      onGeneratePlaceholderVoice(id)
+                    }}
+                  >
+                    生成空白 ogg
+                  </button>
+                </li>
+              </ul>,
+              document.body,
+            )}
 
           <AssetFolderBlock
             pkgId={pkg.id}
