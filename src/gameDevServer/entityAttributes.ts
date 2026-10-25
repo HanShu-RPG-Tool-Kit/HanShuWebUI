@@ -64,18 +64,18 @@ function modifierValue(value:unknown):EntityModifierValue{
   return {amount:value.amount,operation:value.operation as EntityAttributeOperation}
 }
 /** Freezes authority before open; the game receives only opaque bindings and explicitly allocated modifier IDs. */
-export function prepareEntityAttributes(document:EntityDocument):EntityAttributeSession{
+export function prepareEntityAttributes(document:EntityDocument,additionalAttributes?:readonly string[]):EntityAttributeSession{
   const original=structuredClone(document),root=original.entity.data.value.attributes
   if(root&&root.type!=='list')return {original,context:{protocol:ENTITY_ATTRIBUTES_PROTOCOL,bindings:[]}}
   const nodes=list(original),counts=new Map<string,number>()
   for(const node of nodes)if(node.type==='compound'&&node.value.id?.type==='string')counts.set(node.value.id.value,(counts.get(node.value.id.value)??0)+1)
-  const ids=new Set<string>([...COMMON_ENTITY_ATTRIBUTES.map(a=>a.id),...nodes.flatMap(node=>{const parsed=readEntityAttribute(node);return parsed?[parsed.id]:[]})])
+  const ids=new Set<string>([...(additionalAttributes??COMMON_ENTITY_ATTRIBUTES.map(a=>a.id)).filter(id=>identifier.test(id)),...nodes.flatMap(node=>{const parsed=readEntityAttribute(node);return parsed?[parsed.id]:[]})])
   const bindings:EntityAttributeBinding[]=[]
   for(const attributeId of ids){
     const node=bindingNode(original,attributeId),parsed=node?readEntityAttribute(node):null
     if((counts.get(attributeId)??0)>1||(node&&!parsed))continue
     const modifiers=parsed?.modifiers??[]
-    bindings.push({bindingId:randomId(),attributeId,base:parsed?.base??null,modifiers:structuredClone(modifiers),allowedModifierIds:[...modifiers.map(modifier=>modifier.id),...Array.from({length:8},()=>`hanshu:${randomId()}`)]})
+    bindings.push({bindingId:randomId(),attributeId,base:parsed?.base??null,modifiers:structuredClone(modifiers),allowedModifierIds:[...modifiers.map(modifier=>modifier.id),...Array.from({length:64},()=>`hanshu:${randomId()}`)]})
   }
   return {original,context:{protocol:ENTITY_ATTRIBUTES_PROTOCOL,bindings}}
 }

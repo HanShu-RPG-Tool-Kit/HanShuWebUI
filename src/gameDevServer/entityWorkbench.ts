@@ -63,7 +63,11 @@ export async function openEntityEditInGame(documentKey:string,template:EntityDoc
  const localizationSession=await prepareDisplayLocalization(documentKey,'entity',template)
  if(entityFingerprint(parseEntity(localizationSession.source))!==entityFingerprint(template))throw Error('实体草稿已改变，请重试')
  const [capable,attributeCapable]=await Promise.all([supportsDisplayLocalization(controlRequest),supportsEntityAttributes(controlRequest)]),version=capable||attributeCapable?2:1
- const attributes=attributeCapable?prepareEntityAttributes(template):undefined
+ let attributeIds:string[]|undefined
+ if(attributeCapable){
+  try{const catalog=object(await controlRequest('entities.attributes.list',{template}));if(catalog.version===1&&Array.isArray(catalog.items))attributeIds=catalog.items.flatMap(row=>{const item=object(row);return typeof item.id==='string'?[item.id]:[]})}catch{/* Older games retain their explicit common/existing field authorization. */}
+ }
+ const attributes=attributeCapable?prepareEntityAttributes(template,attributeIds):undefined
  if(!attributeCapable)notify('游戏端 IBE 不支持实体属性事务；属性保持只读',{kind:'warning',source:'entities'})
  if(!capable&&localizationSession.localization.readOnlyFields?.length)notify('游戏端 IBE 不支持工程本地化编辑；绑定与高级文本只读，相关修改不会保存',{kind:'warning',source:'entities'})
  const editId=randomId(),hash=entityFingerprint(template)

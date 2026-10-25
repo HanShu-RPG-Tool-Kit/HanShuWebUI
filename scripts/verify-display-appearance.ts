@@ -20,7 +20,7 @@ assert.equal(readDisplayText(jsonLiteral),jsonLiteral.value)
 assert.equal(writeDisplayText(readDisplayText(jsonLiteral),jsonLiteral),jsonLiteral)
 assert.equal(renderItemTooltip({id:'minecraft:stick',components:{'minecraft:custom_name':jsonLiteral}}).name[0].text,jsonLiteral.value)
 
-const adapter:TextLocalizationAdapter={activeLocale:'zh_cn',availableLocales:['zh_cn','en_us'],runtimeKey:'hanshu.demo.display.custom_name',semanticKey:'display.custom_name',translations:{zh_cn:'{"text":"本地名称","bold":true}'},onLocaleChange:()=>{},onTranslationChange:()=>{}}
+const adapter:TextLocalizationAdapter={bound:true,activeLocale:'zh_cn',availableLocales:['zh_cn','en_us'],runtimeKey:'hanshu.demo.display.custom_name',semanticKey:'display.custom_name',translations:{zh_cn:'{"text":"本地名称","bold":true}'},onLocaleChange:()=>{},onTranslationChange:()=>{}}
 const original={translate:adapter.runtimeKey,color:'gold',italic:false,extra:[{text:' 后缀'}]}
 const projected=localizedDisplayText(original,adapter)
 assert.equal(original.translate,adapter.runtimeKey)

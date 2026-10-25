@@ -97,6 +97,7 @@
     "test:display-localization": "node scripts/run-verification.mjs scripts/verify-display-localization.ts",
     "test:display-text-locale": "node scripts/run-verification.mjs scripts/verify-display-text-locale.ts",
     "test:display-appearance": "node scripts/run-verification.mjs scripts/verify-display-appearance.ts",
+    "test:localized-appearance:ui": "node scripts/verify-localized-appearance-ui.mjs",
     "test:display-localization:integration": "node scripts/verify-display-localization-integration.mjs",
     "test:entity-attributes": "node scripts/run-verification.mjs scripts/verify-entity-attributes.ts"
   },

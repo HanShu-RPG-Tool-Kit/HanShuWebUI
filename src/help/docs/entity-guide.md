@@ -71,3 +71,6 @@ registerEntityFieldEditor({
 ## 开发验证
 
 `test:entity-attributes`：属性授权、基础值与修饰器原值比较、未知字段保留、增删、重复 ID、旧版降级及整段覆盖拒绝；`test:entity`：模型、目录、导出平面、帧校验与注册卡片字段保护；`test:entity:ui`：模拟 MC 传输下的 RPSF 绘制、输入、自动开启／更新／回收、快照、只读、动态扩展卡片、网格分页和分栏共享串流；`test:entity-project:ui`：真实工程服务中的新建、保存、重开和权限。`test:entity-workbench:ui` 使用模拟 MC 传输和真实 S，验证复制、覆盖确认／取消、重复请求、IBE 草稿回传、冲突和多窗口定向接收。Mod 提供实体生成及魔杖注册 GameTest 和取景数学 JUnit。浏览器模拟帧与服务端 GameTest 不代表原生 MC 图形客户端渲染已经验收。
+
+
+IBE 实体编辑支持 NoAI、PersistenceRequired、装备及实体属性，字段按目标实体能力提供。装备可进入完整物品编辑器；属性修饰器使用动态条目，模板往返继续以授权增量提交。游戏在线时，WebUI 会查询目标支持的属性（含模组属性）生成授权，避免只给三个预设属性。

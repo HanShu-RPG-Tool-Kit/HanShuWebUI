@@ -12,7 +12,7 @@ doc.entity.data.value.attributes={type:'list',value:[original,attribute('minecra
 doc.entity.data.value.Attributes={type:'compound',value:{legacy:string('do not rewrite')}}
 const session=prepareEntityAttributes(doc),health=session.context.bindings.find(b=>b.attributeId==='minecraft:max_health')!,movement=session.context.bindings.find(b=>b.attributeId==='minecraft:movement_speed')!
 assert(!session.context.bindings.some(b=>b.attributeId==='minecraft:attack_damage'))
-assert.equal(health.allowedModifierIds.length,9);assert(health.allowedModifierIds.includes('test:buff'));assert.equal(movement.base,null)
+assert.equal(health.allowedModifierIds.length,65);assert(health.allowedModifierIds.includes('test:buff'));assert.equal(movement.base,null)
 const run=(ops:unknown[],candidate=doc)=>applyEntityAttributeResult(session,candidate,{protocol:ENTITY_ATTRIBUTES_PROTOCOL,operations:ops})
 const base={op:'attribute.base.set',bindingId:health.bindingId,expected:20,value:40}
 const change={op:'attribute.modifier.set',bindingId:health.bindingId,modifierId:'test:buff',expected:{amount:2,operation:'add_value'},value:{amount:3.5,operation:'add_multiplied_base'}}
@@ -70,3 +70,5 @@ assert(await supportsEntityAttributes(async()=>({protocols:[ENTITY_ATTRIBUTES_PR
 assert(!await supportsEntityAttributes(async()=>({protocols:['hanshu-localization-v1']})))
 assert(!await supportsEntityAttributes(async()=>{throw Error('old peer')}))
 console.log('PASS entity attributes: granular CAS, explicit authority, native/legacy replacement rejection, unknown metadata preservation, add/remove, immutable baseline, duplicate IDs and capability fallback')
+
+assert(prepareEntityAttributes(createEntity(),["minecraft:armor"]).context.bindings.some(b=>b.attributeId==="minecraft:armor"))

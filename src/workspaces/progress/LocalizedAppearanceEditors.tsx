@@ -13,22 +13,25 @@ type LocaleProps = { name: string; locale: string; onLocaleChange: (locale: stri
 function useDisplayLocalization(kind: DisplayTextKind, document: DisplayTextDocument | null, { name, locale, onLocaleChange }: LocaleProps): GetTextLocalization {
   const session = useProjectSession(), client = session.binding?.handle.client
   const [tables, setTables] = useState<Map<string, LocaleTable>>(new Map())
+  const [failure,setFailure] = useState<{client:typeof client;name:string;locales:string;error:string}|null>(null)
+  const [retry,setRetry] = useState(0)
   const loaded = useRef<{ client: typeof client; name: string; locales: string } | null>(null)
   const locales = client ? projectDisplayLocales(client, locale) : [locale]
   const localeList = locales.join(',')
   useEffect(() => {
     let cancelled = false
     loaded.current = null
+    setFailure(null)
     if (!client) return
     void loadDisplayLocaleTables(client, name, localeList.split(',')).then(next => {
       if (cancelled) return
       loaded.current = { client, name, locales: localeList }
       setTables(next)
-    }).catch(error => { if (!cancelled) notify(`译文读取失败：${String(error)}`, { kind: 'error', source: 'localization' }) })
+    }).catch(error => { if (!cancelled) {setFailure({client,name,locales:localeList,error:String(error)});notify(`译文读取失败：${String(error)}`, { kind: 'error', source: 'localization' })} })
     return () => { cancelled = true }
-  }, [client, name, localeList, client?.remoteEpoch])
+  }, [client, name, localeList, client?.remoteEpoch,retry])
   function write(semanticKey: string, targetLocale: string, value: string | undefined) {
-    if (!client?.writable || loaded.current?.client !== client || loaded.current.name !== name) throw Error('译文尚未加载或工程只读')
+    if (!client?.writable || loaded.current?.client !== client || loaded.current.name !== name || loaded.current.locales !== localeList) throw Error('译文尚未加载或工程只读')
     const table = tables.get(targetLocale)
     if (!table) throw Error('当前语言不可编辑')
     const next = stageDisplayTranslation(client, table, semanticKey, value)
@@ -36,11 +39,14 @@ function useDisplayLocalization(kind: DisplayTextKind, document: DisplayTextDocu
   }
   return (field, component) => {
     const runtimeKey = component && typeof component === 'object' && !Array.isArray(component) && 'translate' in component && typeof component.translate === 'string' ? component.translate : ''
-    const semanticKey = displayTextSemanticKey(runtimeKey, kind) ?? (field.startsWith('item.lore.') ? `display.lore.${randomId()}` : `display.${field.split('.').at(-1)}`)
+    const projectKey = displayTextSemanticKey(runtimeKey, kind)
+    const semanticKey = projectKey ?? (field.startsWith('item.lore.') ? `display.lore.${randomId()}` : `display.${field.split('.').at(-1)}`)
     const ready = !!client?.writable && loaded.current?.client === client && loaded.current.name === name && loaded.current.locales === localeList
     const currentTables = loaded.current?.client === client && loaded.current?.name === name && loaded.current?.locales === localeList ? tables : new Map<string, LocaleTable>()
+    const error=failure?.client===client&&failure?.name===name&&failure?.locales===localeList?failure.error:undefined
     return {
-      activeLocale: locale, availableLocales: locales, semanticKey, runtimeKey, loading: !loaded.current || currentTables !== tables,
+      bound:projectKey!==null, error, onRetry:()=>setRetry(value=>value+1),
+      activeLocale: locale, availableLocales: locales, semanticKey, runtimeKey:projectKey?runtimeKey:'', loading: !!client && !error && (!loaded.current || currentTables !== tables),
       translations: Object.fromEntries([...currentTables].flatMap(([locale, table]) => Object.hasOwn(table.values, semanticKey) ? [[locale, table.values[semanticKey]]] : [])),
       onLocaleChange,
       onTranslationChange: (locale, value) => { try { write(semanticKey, locale, value) } catch (error) { notify(String(error), { kind: 'error', source: 'localization' }) } },
