@@ -14,6 +14,8 @@ try{
  window.React=React;reconnectGameDevControlNow();function App(){const [source,S]=React.useState(stringifyEntity(createEntity())),[active,A]=React.useState(true),[disabled,D]=React.useState(false);window.doc=parseEntity(source);window.hide=()=>A(false);window.show=()=>A(true);window.setSource=S;window.freeze=()=>D(true);return React.createElement(EntityEditor,{source,active,disabled,onChange:S})}DOM.createRoot(document.getElementById('root')).render(React.createElement(App));
  </script>`}))
  await page.goto(base+'/__entity');await page.getByLabel('预览动画').waitFor();await page.waitForFunction(()=>window.calls.some(c=>c.method==='entities.list'))
+ await page.getByLabel('实体类型',{exact:true}).fill('minecraft:ender_dragon')
+ assert.equal(await page.evaluate(()=>window.doc.entity.id),'minecraft:ender_dragon')
  await page.getByLabel('实体名称',{exact:true}).fill('守卫')
  await page.getByRole('switch',{name:'无敌',exact:true}).check()
  await page.getByLabel('最大生命',{exact:true}).fill('50');await page.getByLabel('最大生命',{exact:true}).press('Tab')

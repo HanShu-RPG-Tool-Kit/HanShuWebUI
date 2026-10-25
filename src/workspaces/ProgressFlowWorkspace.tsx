@@ -1059,6 +1059,10 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
   }
   async function saveDraft() {
     if (locked || busy) return
+    // 先让当前输入失焦，把 defaultValue/草稿类字段刷进文档，再落盘（否则 Ctrl+S 会存旧值）。
+    const focused = document.activeElement
+    if (focused instanceof HTMLElement && focused.closest('.flow-workspace')) focused.blur()
+    await new Promise<void>((resolve) => queueMicrotask(() => queueMicrotask(resolve)))
     const live = getProjectSession()
     if (!live.binding) {
       setNotice('请先打开工程；进度文件会写入工程目录。')
