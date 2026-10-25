@@ -72,6 +72,115 @@ fn commit(
 }
 
 #[test]
+fn display_text_languages_follow_item_and_entity_source_transactions() {
+    for (kind, directory) in [("item", "items"), ("entity", "entities")] {
+        let dir = tempfile::tempdir().unwrap();
+        let source = format!("src/{directory}/a.{kind}");
+        let destination = format!("src/{directory}/renamed.{kind}");
+        let zh = format!("assets/zh_cn/lang_{kind}/a.lang");
+        let en = format!("assets/en_us/lang_{kind}/a.lang");
+        let next_zh = format!("assets/zh_cn/lang_{kind}/renamed.lang");
+        let next_en = format!("assets/en_us/lang_{kind}/renamed.lang");
+        let (mut engine, sid) = setup(
+            dir.path(),
+            &[
+                (&source, "source"),
+                (&zh, r#"{"display.custom_name":"名称"}"#),
+                (&en, r#"{"display.custom_name":"Name"}"#),
+            ],
+        );
+        let authority = engine
+            .plan_file_operations(&sid, &[request(FileOperationKind::Write, &zh, None)])
+            .unwrap();
+        assert!(authority.lease_paths.contains(&source));
+        let plan = engine
+            .plan_file_operations(
+                &sid,
+                &[request(
+                    FileOperationKind::Move,
+                    &source,
+                    Some(&destination),
+                )],
+            )
+            .unwrap();
+        assert_eq!(plan.operations.len(), 3);
+        assert!(plan
+            .operations
+            .iter()
+            .any(|op| op.path == zh && op.destination.as_deref() == Some(next_zh.as_str())));
+        assert!(plan
+            .operations
+            .iter()
+            .any(|op| op.path == en && op.destination.as_deref() == Some(next_en.as_str())));
+        let edits = changes(&mut engine, &sid, &plan);
+        assert!(commit(&mut engine, &sid, edits).error.is_none());
+        assert!(!dir.path().join(&zh).exists());
+        assert!(dir.path().join(&next_zh).exists());
+        assert!(dir.path().join(&next_en).exists());
+        let historical = engine
+            .history_tree_scoped(&sid, 1, Some(&destination))
+            .unwrap();
+        assert!(historical.entries.iter().any(|entry| entry.path == source));
+        assert!(historical.entries.iter().any(|entry| entry.path == zh));
+        assert!(historical.entries.iter().any(|entry| entry.path == en));
+        let plan = engine
+            .plan_file_operations(
+                &sid,
+                &[request(FileOperationKind::Remove, &destination, None)],
+            )
+            .unwrap();
+        assert_eq!(plan.operations.len(), 3);
+        let edits = changes(&mut engine, &sid, &plan);
+        assert!(commit(&mut engine, &sid, edits).error.is_none());
+        assert!(!dir.path().join(&destination).exists());
+        assert!(!dir.path().join(&next_zh).exists());
+        assert!(!dir.path().join(&next_en).exists());
+    }
+}
+
+#[test]
+fn stale_display_translation_rejects_source_and_all_language_writes() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = "src/items/a.item";
+    let zh = "assets/zh_cn/lang_item/a.lang";
+    let en = "assets/en_us/lang_item/a.lang";
+    let (mut engine, sid) = setup(
+        dir.path(),
+        &[
+            (source, "original source"),
+            (zh, "original zh"),
+            (en, "original en"),
+        ],
+    );
+    let plan = engine
+        .plan_file_operations(
+            &sid,
+            &[
+                request(FileOperationKind::Write, source, None),
+                request(FileOperationKind::Write, zh, None),
+                request(FileOperationKind::Write, en, None),
+            ],
+        )
+        .unwrap();
+    let edits = changes(&mut engine, &sid, &plan);
+    fs::write(dir.path().join(en), "concurrent en").unwrap();
+    let receipt = commit(&mut engine, &sid, edits);
+    assert_eq!(receipt.error.unwrap().code, "conflict");
+    assert_eq!(
+        fs::read_to_string(dir.path().join(source)).unwrap(),
+        "original source"
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join(zh)).unwrap(),
+        "original zh"
+    );
+    assert_eq!(
+        fs::read_to_string(dir.path().join(en)).unwrap(),
+        "concurrent en"
+    );
+}
+
+#[test]
 fn relations_are_facts_and_reference_targets_are_never_leased_or_cascaded() {
     let dir = tempfile::tempdir().unwrap();
     let (engine, sid) = setup(

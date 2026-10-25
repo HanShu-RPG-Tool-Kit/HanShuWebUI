@@ -2,6 +2,7 @@ import { readItemSync, syncRuleErrors } from '../../../workspaces/progress/itemS
 import { isItemFileName, parseItem, unionItemTags, type ItemDocument } from '../../../workspaces/progress/itemDoc'
 import { sourcePathOf } from '../../../workspace'
 import type { FileCompiler } from '../types'
+import { displayTextReferences } from '../../../workspaces/progress/displayTextLocale'
 
 export function itemTemplateArtifact(doc: ItemDocument) {
   const sync=readItemSync(doc.sync), errors=syncRuleErrors(sync,doc.item.components)
@@ -56,6 +57,8 @@ export const itemCompiler: FileCompiler = {
         plane: 'server',
         packageName: ctx.index.package.name,
         sourcePath: file.name,
+        requires: displayTextReferences('item', doc).map(binding => ({ kind: 'localeKey', id: binding.semanticKey })),
+        provides: [...new Set(displayTextReferences('item', doc).map(binding => binding.runtimeKey))].map(id => ({ kind: 'displayTextKey', id })),
       },
     ]
   },

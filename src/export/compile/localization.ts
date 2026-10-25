@@ -14,6 +14,8 @@ export type LocaleAssetExportPolicy = Readonly<{
   keys: 'all' | 'referenced'
   /** Defaults to localeKey requirements on the owner's compiled artifacts. */
   references?: (owner: LocaleExportOwner) => Iterable<string>
+  /** Runtime table representation; ownership/linking still use authored semantic keys. */
+  transformText?: (table: Record<string, string>, owner: LocaleExportOwner) => Record<string, string>
   /** HS hex keys are insensitive; semantic keys default to exact spelling. */
   keyCase?: 'sensitive' | 'insensitive'
 }>
