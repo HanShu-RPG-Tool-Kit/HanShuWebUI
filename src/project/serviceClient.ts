@@ -1,3 +1,4 @@
+import {EXPLORER_ORGANIZATION_PATH,parseOrganization,serializeOrganization,relocateOrganization} from './explorerOrganization'
 import { request, ServiceError, type Connection, type Lease, type Snapshot } from '../collab/protocol'
 import type { FileChange, FileEditAuthority, FileOperationRequest, FileTransactionReceipt, ProjectFile, ProjectFileTree, ResourceOperationPlan, ResourceRelations, HistoryRestorePlan, ProgressCommand, ProgressCommandResult } from '../collab/generated'
 import { EditTransactions, type SendAttempt } from './editTransactions'
@@ -461,7 +462,21 @@ export class ProjectClient {
   async sourceCommand(path: string, destination: string | null, content?: string): Promise<void> {
     return this.sourceCommands([{path, destination, content}])
   }
-  async sourceCommands(commands: Array<{path: string; destination: string | null; content?: string}>): Promise<void> {
+  async sourceCommands(commands: Array<{path: string; destination: string | null; content?: string}>, extraEdits:FileEdit[]=[]): Promise<void> {
+    // Preserve shared virtual placement for callers outside the gameplay explorer too.
+    if(!extraEdits.some(edit=>edit.path===EXPLORER_ORGANIZATION_PATH)){
+      const raw=this.texts.get(EXPLORER_ORGANIZATION_PATH)
+      if(raw){const before=parseOrganization(raw),after=relocateOrganization(before,commands)
+        if(serializeOrganization(before)!==serializeOrganization(after))extraEdits=[...extraEdits,{op:'write',path:EXPLORER_ORGANIZATION_PATH,data:serializeOrganization(after)}]
+      }
+    }
+    // Recovery must keep a source command and its placement update together.
+    // This C-only scope lets synchronization discard the whole operation when
+    // metadata is stale; S still derives the actual source/owned-resource plan.
+    const sourcePaths=commands.flatMap(command=>command.destination?[command.path,command.destination]:[command.path])
+    const frozenExtras=this.captureEdits(extraEdits.map(edit=>edit.path===EXPLORER_ORGANIZATION_PATH&&sourcePaths.length
+      ?{...edit,affectedPaths:[...new Set([...(edit.affectedPaths??[]),...sourcePaths])]}
+      :edit))
     const versions = new Map(this.baseline)
     const originals = new Map(this.originals)
     // Freeze C's projection before fetching any plan: editing can continue while
@@ -489,6 +504,12 @@ export class ProjectClient {
     for (const {destination, content, localContents, localEpochs} of captured) {
       if (destination && content !== undefined) edits.push({op:'write',path:destination,data:content,version:versions.get(destination) ?? null,baseData:originals.get(destination)?.data,localContents,localEpochs})
     }
+    for(const edit of frozenExtras){
+      if(edit.path===EXPLORER_ORGANIZATION_PATH&&(this.baseline.get(edit.path)??null)!==(edit.version??null)){
+        throw new ServiceError('conflict','资源组织已变化，请刷新后重试；原请求未提交')
+      }
+    }
+    edits.push(...frozenExtras)
     if (edits.length) await this.apply(edits, '修改源文件及关联资源')
   }
   /** Structural edits must not strand an unsaved owned-resource draft at its old path.

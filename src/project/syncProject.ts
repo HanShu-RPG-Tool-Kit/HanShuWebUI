@@ -7,6 +7,7 @@ import { collectProjectChanges, refreshServiceProject, refreshProjectManifest } 
 import { getProjectSession, setProjectSession } from './projectSession'
 import { setBoundProject } from './bindingBus'
 import { rememberProjectDraft } from './drafts'
+import { EXPLORER_ORGANIZATION_PATH, parseOrganization } from './explorerOrganization'
 
 import { partitionSyncEdits } from './syncPolicy'
 const touches = (edit: FileEdit) => [edit.path, ...(edit.destination ? [edit.destination] : []), ...(edit.affectedPaths ?? [])]
@@ -52,7 +53,12 @@ export async function synchronizeProject(client: ProjectClient): Promise<string>
   const collected=(await collectProjectChanges(binding,live.workspace)).filter(e=>!client.syncParticipants.has(`progress:${e.path}`));current()
   const staged=client.transactions.stagedWrites()
   const latest=new Map<string,FileEdit>()
-  for(const edit of [...ordinary,...collected,...staged]) latest.set(`${edit.op}:${edit.path}:${edit.destination??''}`,edit)
+  for(const edit of [...ordinary,...collected,...staged]) {
+    const key=`${edit.op}:${edit.path}:${edit.destination??''}`
+    // Newer draft contents cannot erase a failed operation's atomic recovery scope.
+    const affectedPaths=[...new Set([...(latest.get(key)?.affectedPaths??[]),...(edit.affectedPaths??[])])]
+    latest.set(key,affectedPaths.length?{...edit,affectedPaths}:edit)
+  }
   const edits=client.captureEdits([...latest.values()])
   const draftRevision=client.transactions.getRevision()
   if(edits.length)await client.planOperations(edits.map(e=>({op:e.op as 'write'|'move'|'mkdir'|'remove',path:e.path,destination:e.destination??null})))
@@ -73,6 +79,10 @@ export async function synchronizeProject(client: ProjectClient): Promise<string>
   const manifestBlob=remote.get('project.json')?.blob
   const manifestName=manifestBlob?JSON.parse(await manifestBlob.text()).name:undefined
   if(manifestBlob&&typeof manifestName!=='string')throw new Error('服务器工程清单无效，原修改保留')
+  // Validate shared metadata before removing recovery requests. A missing file
+  // adopts the empty organization, including when the local tree is still dirty.
+  const organization=remote.get(EXPLORER_ORGANIZATION_PATH)
+  const adoptedOrganization=organization?parseOrganization(organization.blob?await organization.blob.text():null):undefined
   const priorAssets=new Map<string,Blob|null>()
   const installedAssets=new Map<string,number>()
   try {
@@ -108,7 +118,9 @@ export async function synchronizeProject(client: ProjectClient): Promise<string>
     const path=sourcePathOf(source),adopted=remote.get(path)
     if(!adopted)return[source]
     return adopted.blob?[{...source,content:client.texts.get(path)??source.content}]:[]
-  }),name:manifestName??pkg.name}))}
+  }),name:manifestName??pkg.name,
+    ...(adoptedOrganization&&pkg.id===binding.manifest.id?{explorer:adoptedOrganization}:{}),
+  }))}
   client.transactions.discardDraftPaths(paths)
   if(paths.length){client.discardEpoch++;for(const path of paths)client.discardVersions.set(path,client.discardEpoch)}
   client.remoteEpoch++

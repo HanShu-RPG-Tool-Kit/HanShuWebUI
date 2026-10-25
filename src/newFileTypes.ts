@@ -1,3 +1,5 @@
+import {resourceBaseError} from './resourceNames'
+export {MAX_BASE_LENGTH} from './resourceNames'
 import {scriptTemplate,SCRIPT_TYPE_NAMES,SCRIPT_TYPES} from './scriptResources'
 /**
  * 「资源管理器里能新建什么」的**唯一真相**。
@@ -42,11 +44,11 @@ import { stringifyVoicePlan, type VoicePlan } from './tts/plan'
 import type { ProviderPreset } from './tts/providers'
 
 /** 下拉菜单里的分组。顺序即显示顺序（先"写剧本要用的"，再"要另开工作区编的"，最后"资料"） */
-export type NewFileGroupId = 'source' | 'progress' | 'meta'
+export type NewFileGroupId = 'source' | 'gameplay' | 'meta'
 
 export const NEW_FILE_GROUPS: readonly { id: NewFileGroupId; label: string }[] = [
   { id: 'source', label: '源文件' },
-  { id: 'progress', label: '任务' },
+  { id: 'gameplay', label: '游戏性' },
   { id: 'meta', label: '创作资料' },
 ]
 
@@ -61,7 +63,6 @@ export type NewFileTypeId =
   | 'py-entity'
   | 'py-enchantment'
   | 'py-player'
-  | 'entity'
   | 'progress'
   | 'hflow'
   | 'nav'
@@ -119,77 +120,6 @@ export type NewFileType = {
 }
 
 /**
- * Windows 保留设备名（判据大小写不敏感）。
- *
- * 为什么注册表要管这个：目标外壳是 Windows 桌面（Tauri + 真实文件系统）。
- * 建出 `CON.hs` / `NUL.hs` **不会当场报错** —— 它会在落盘那一步炸，
- * 而那时用户已经以为文件建好了，错误信息离"名字"还很远。
- *
- * 判据按 Windows 的实际规则：只看**第一个点之前**那一段（`NUL.txt` 与 `NUL` 等价，
- * 所以 `CON.hs` 与 `CON.x.hs` 都要拦）。MS 文档列的是 `COM1`–`COM9` / `LPT1`–`LPT9`；
- * 这里连 `COM0` / `LPT0` 一起拦（内核的 DOS 设备名判定也认它们），
- * 多拦一个的代价只是让用户换个名字，漏一个的代价是文件根本写不下去。
- */
-const WINDOWS_RESERVED_NAMES = new Set([
-  'CON',
-  'PRN',
-  'AUX',
-  'NUL',
-  'CONIN$',
-  'CONOUT$',
-  ...Array.from({ length: 10 }, (_, index) => `COM${index}`),
-  ...Array.from({ length: 10 }, (_, index) => `LPT${index}`),
-])
-
-/**
- * 基名长度上限。理由见 `baseShapeError` 里那一段（整条路径的 MAX_PATH 260，
- * 而包根由用户选、可以很深）。导出来是为了让测试断言边界时不必抄一遍数字。
- */
-export const MAX_BASE_LENGTH = 120
-
-/**
- * 基名的通用规则。
- *
- * 判据与 `workspace.normalizeResourceName` 对齐 —— 这里先拦一道只是为了**把话说在输入框那一行**，
- * 真正落地的判据仍在创建管线里：资源树拿到的是"用户敲到一半"的文本，不能当成可信输入。
- */
-function baseShapeError(base: string): string | null {
-  const value = base.trim()
-  if (!value) return '名字不能为空'
-  if (/[\\/:*?"<>|]/.test(value)) return '不能含 \\ / : * ? " < > |'
-  // eslint 不管，但控制字符（粘贴带进来的）会让文件名在磁盘上出现怪东西
-  if ([...value].some((ch) => ch.charCodeAt(0) < 32)) return '不能含控制字符'
-  if (value === '.' || value === '..') return '这个名字不能用'
-  /*
-   * 结尾的**点**必须拦：Windows 会静默丢掉结尾的点，`序章.` 落盘后变成 `序章`，
-   * 于是资源树里的名字与磁盘上的名字对不上（改名 / 重名判断全跟着错）。
-   *
-   * 结尾的**空格**不在这里拦 —— 上面 `trim()` 已经去掉了，`newFileName` 也 trim，
-   * 所以 `序章 ` 建出来就是 `序章.hs`，那正是用户想要的。
-   * （早先这条判据写作 `/[. ]$/` 并宣称覆盖两种情形，其实空格那一半**永远不可达**：
-   * trim 之后末尾不可能还有空格。判据与文案不一致比少一条规则更坏 —— 看代码的人会以为
-   * 空格被拦住了，实际没有。所以现在只留点号这一半，空格交给 trim。）
-   */
-  if (value.endsWith('.')) return '结尾不能是点'
-  // 保留设备名按第一个点之前那一段判（见 WINDOWS_RESERVED_NAMES）
-  const device = value.split('.')[0]
-  if (WINDOWS_RESERVED_NAMES.has(device.toUpperCase())) {
-    return `「${device}」是 Windows 保留设备名，换一个`
-  }
-  /*
-   * 长度上限。为什么不卡在 Windows 的单段上限 255：真正的约束是**整条路径**的
-   * MAX_PATH 260（Tauri 走的是普通 Win32 文件 API，长路径支持要用户与清单都开）。
-   * 包根由用户选、可以很深，再加上 `meta/voice/service/` 这类目录与后缀，
-   * 留给基名的余量得保守。120 是"远超正常文件名、又给路径留足余量"的一档；
-   * 用 `.length`（UTF-16 码元）而不是码点数，因为 Windows 的 255 就是按码元算的。
-   */
-  if (value.length > MAX_BASE_LENGTH) {
-    return `名字太长（最多 ${MAX_BASE_LENGTH} 个字符，当前 ${value.length}）`
-  }
-  return null
-}
-
-/**
  * 用户把后缀也敲进来时（`序章.hs`）当场说清楚。
  *
  * 不这么判就会造出 `序章.hs.hs` —— 合法、能建、图标还对，但没人想要。
@@ -205,7 +135,7 @@ function typedExtensionError(base: string): string | null {
 
 /** 菜单 / 创建管线共用的校验：静态规则。重名要目标包的文件名表，只能由创建管线判 */
 export function validateNewFileBase(type: NewFileType, base: string): string | null {
-  return baseShapeError(base) ?? typedExtensionError(base) ?? type.validateBase?.(base) ?? null
+  return resourceBaseError(base) ?? typedExtensionError(base) ?? type.validateBase?.(base) ?? null
 }
 
 /** 基名 + 该类型的后缀。后缀**只**从这里来，界面上没有让用户改它的地方 */
@@ -271,7 +201,7 @@ export const NEW_FILE_TYPES: readonly NewFileType[] = [
     label: '单进度任务',
     hint: '目标、可见性与奖励（src/quest）；表单编辑',
     icon: 'progress',
-    group: 'progress',
+    group: 'gameplay',
     defaultBase: '新单进度任务',
     /*
      * `createProgress` 忽略标题（文档里的 `name` 是**语义键**，译文在 lang_quest），
@@ -286,7 +216,7 @@ export const NEW_FILE_TYPES: readonly NewFileType[] = [
     label: '多进度任务',
     hint: '树图节点与连线的草稿（src/quest）',
     icon: 'hflow',
-    group: 'progress',
+    group: 'gameplay',
     defaultBase: '新多进度任务',
     /*
      * 只取 `createFlowDocument(...).source`（= flow 的 JSON）：文件名由用户在资源树里定，
@@ -306,7 +236,7 @@ export const NEW_FILE_TYPES: readonly NewFileType[] = [
     label: '导航点',
     hint: '固定坐标或绑定实体（src/navigator）',
     icon: 'nav',
-    group: 'progress',
+    group: 'gameplay',
     defaultBase: '新导航点',
     // `createNavigationPoint` 同样忽略展示名：`label` 是语义键，译文在 lang_nav
     seed: (base) => stringifyNavigationPoint(createNavigationPoint(base.trim())),
@@ -317,7 +247,7 @@ export const NEW_FILE_TYPES: readonly NewFileType[] = [
     label: '物品',
     hint: '物品 id、组件与标签（src/items）',
     icon: 'item',
-    group: 'progress',
+    group: 'gameplay',
     defaultBase: '新物品',
     /*
      * 与进度工作区的新建文档同式：`stringifyItem(createItem())`。
@@ -334,7 +264,7 @@ export const NEW_FILE_TYPES: readonly NewFileType[] = [
     label: '实体',
     hint: '名称、属性与装备',
     icon: 'entity',
-    group: 'progress',
+    group: 'gameplay',
     defaultBase: '新实体',
     seed: () => stringifyEntity(createEntity()),
   },
@@ -344,7 +274,7 @@ export const NEW_FILE_TYPES: readonly NewFileType[] = [
     label: '礼包',
     hint: '超参数、修饰器与内容卡（src/gift）',
     icon: 'kit',
-    group: 'progress',
+    group: 'gameplay',
     defaultBase: '新礼包',
     seed: (base) => stringifyKit(createKit(base.trim())),
   },

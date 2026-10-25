@@ -1,3 +1,5 @@
+import {SCRIPT_TYPE_NAMES,scriptType} from './scriptResources/types'
+import {sourcePathOf,sourceRelativePath} from './workspace'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import type { AssetFile, ScriptPackage, Workspace } from './workspace'
 import { isVoiceMapFile } from './workspace'
@@ -827,7 +829,7 @@ function PackageNode({
           onClick={() => onOpenScript(script.id)}
           onDoubleClick={() => onRenameScript(script.id)}
           title={
-            isVoiceMapFile(script.name) ? '右键：生成空白 ogg' : '双击重命名'
+            `${sourcePathOf(script)}\n${isVoiceMapFile(script.name) ? '右键：生成空白 ogg' : '双击重命名'}`
           }
         >
           <ExplorerIcon kind={sourceIconKind(script)} />
@@ -894,8 +896,21 @@ function PackageNode({
         <span className="explorer-name">{groupDirPrefix(kind)}</span>
       </div>
       <ul className="explorer-files nested">
-        {items.map(renderScriptRow)}
-        {pendingRow}
+        {(() => {
+          const prefix=groupDirPrefix(kind)
+          const pendingDirectory=pendingType?sourceRelativePath(newFileName(pendingType,'pending'),pendingType.srcKind).split('/').slice(0,-1).join('/'):null
+          const directories=[...new Set([...items.map(file=>sourcePathOf(file).split('/').slice(0,-1).join('/')), ...(pendingRow&&pendingDirectory?[pendingDirectory]:[])])]
+          return directories.map(directory=>{
+            const children=items.filter(file=>sourcePathOf(file).startsWith(`${directory}/`)&&sourcePathOf(file).split('/').slice(0,-1).join('/')===directory)
+            const pending=directory===pendingDirectory?pendingRow:null
+            if(directory===prefix)return <li key={directory}><ul className="explorer-files">{children.map(renderScriptRow)}{pending}</ul></li>
+            const label=kind==='script'?SCRIPT_TYPE_NAMES[scriptType(directory.split('/').at(-1))]:directory.slice(prefix.length+1)
+            return <li key={directory} className="explorer-kind">
+              <div className="explorer-kind-row" title={directory}><ExplorerIcon kind="group"/><span className="explorer-name">{label}</span></div>
+              <ul className="explorer-files nested">{children.map(renderScriptRow)}{pending}</ul>
+            </li>
+          })
+        })()}
       </ul>
     </li>
   )

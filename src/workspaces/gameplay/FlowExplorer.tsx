@@ -267,7 +267,7 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
           if (`${folderPath(state, pkg, d.folderId ?? null)} / ${d.name}`.toLocaleLowerCase().includes(query)) {
             visible.add(`document:${d.key}`)
             includeParents(pkg, d.folderId ?? null)
-            if (pkg === 'quest' && isQuestDocument(d)) visible.add(`folder:${questViewKey(questAuthorKindOf(d))}`)
+            if (pkg === 'quest' && isQuestDocument(d) && !d.folderId) visible.add(`folder:${questViewKey(questAuthorKindOf(d))}`)
           }
         })
       }
@@ -285,7 +285,7 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
           const entry: FlowEntry = { kind: 'folder', key: viewKey }, id = entryId(entry)
           const kind = questViewKind(viewKey)!
           const matching = state.documents
-            .filter((d) => d.package === 'quest' && questAuthorKindOf(d) === kind)
+            .filter((d) => d.package === 'quest' && !d.folderId && questAuthorKindOf(d) === kind)
             .sort((a, b) => a.name.localeCompare(b.name, 'zh-CN', { numeric: true }))
           if (query && !visible.has(id) && !matching.some((d) => visible.has(`document:${d.key}`))) continue
           result.push({ entry, name: QUEST_VIEW_NAMES[viewKey] ?? viewKey, depth, parent: null, pkg })
@@ -370,7 +370,7 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
       if (entry.kind === 'folder' && isQuestViewKey(entry.key)) next.add(entryId(entry))
       if (entry.kind === 'document') {
         const doc = state.documents.find((d) => d.key === entry.key)
-        if (doc && isQuestDocument(doc)) next.add(`folder:${questViewKey(questAuthorKindOf(doc))}`)
+        if (doc && isQuestDocument(doc) && !doc.folderId) next.add(`folder:${questViewKey(questAuthorKindOf(doc))}`)
       }
       let parent = entry.kind === 'folder' && !isQuestViewKey(entry.key)
         ? state.folders.find((f) => f.key === entry.key)?.parentId ?? null

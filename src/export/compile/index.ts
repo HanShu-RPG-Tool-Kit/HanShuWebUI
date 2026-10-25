@@ -1,5 +1,5 @@
 import {effectiveBuiltinScripts} from '../../scriptResources'
-import type { Project, Workspace } from '../../workspace'
+import {sourcePathOf,type Project,type Workspace} from '../../workspace'
 import { ensureBuiltinCompilers } from './compilers/registerBuiltin'
 import { hasLinkErrors, linkArtifacts } from './link'
 import { listFileCompilers, listPackagePasses } from './registry'
@@ -17,11 +17,11 @@ export type { LocaleExportRule, LocaleAssetExportPolicy, LocaleExportOwner } fro
 export { ensureBuiltinCompilers } from './compilers/registerBuiltin'
 
 function buildIndex(workspace: Workspace, pkg: Project): CompileIndex {
-  const scriptsByName = new Map(pkg.scripts.map((s) => [s.name, s]))
+  const scriptsByPath = new Map(pkg.scripts.map((s) => [sourcePathOf(s), s]))
   const assetsByPath = new Map(
     pkg.assets.map((a) => [a.path.replace(/\\/g, '/'), a]),
   )
-  return { workspace, package: pkg, scriptsByName, assetsByPath }
+  return { workspace, package: pkg, scriptsByPath, assetsByPath }
 }
 
 /**

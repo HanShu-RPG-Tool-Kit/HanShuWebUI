@@ -5,7 +5,7 @@ import { createFlow, isObject, parseFlow } from './model'
 import { parseJsonValue } from '../../utils/strictJson'
 
 export const FLOW_STORAGE_KEY = 'hanshu.progressWorkspace.v1'
-export type FlowPackageId = 'script' | 'quest' | 'actor' | 'reputation' | 'region' | 'navigator' | 'shop' | 'items' | 'entities' | 'gift'
+export type FlowPackageId = import('../../resourceTypes').GameplayCategoryId
 export type FlowDocument = {
   key: string
   name: string

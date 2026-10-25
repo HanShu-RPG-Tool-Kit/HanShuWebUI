@@ -505,5 +505,13 @@ await test('多个编辑计划共享同一写权时，结束一个不释放另�
   assert.equal(service.leases.has(NEXT), false)
 }))
 
+await test('源操作等待计划期间不把旧组织快照套在新版本上', () => fixture(async (client, service) => {
+  const path='meta/explorer.json'
+  client.baseline.set(path,'old-version')
+  service.transformPlan=plan=>{client.baseline.set(path,'new-version');return plan}
+  await assert.rejects(client.sourceCommands([{path:SOURCE,destination:null}], [{op:'write',path,data:'{"version":1,"folders":[],"placements":{}}'}]),/资源组织已变化/)
+  assert.equal(service.count('/api/files/commit'),0)
+}))
+
 if (failures.length) throw new Error(`${failures.length} 项编辑会话回归失败：${failures.join('；')}`)
 console.log(`编辑会话与写权生命周期 ${checks} 项检查通过。`)

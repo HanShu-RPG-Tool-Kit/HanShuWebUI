@@ -1,3 +1,4 @@
+import {EXPLORER_ORGANIZATION_PATH,serializeOrganization} from '../project/explorerOrganization'
 import JSZip from 'jszip'
 import { isAudioAsset } from '../assets/paths'
 import { getAssetBlob } from '../assets/idb'
@@ -33,6 +34,7 @@ export async function buildProjectPackZip(
       if (norm) folders.add(norm)
     }
 
+    if(pkg.explorer){zip.file(`${root}/${EXPLORER_ORGANIZATION_PATH}`,serializeOrganization(pkg.explorer));fileCount++}
     for (const script of pkg.scripts) {
       // 工程结构：源文件进 `src/<kind>/`（`xx.hs` → `src/hanshu/xx.hs`）
       zip.file(`${root}/${sourcePathOf(script)}`, script.content)

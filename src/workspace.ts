@@ -1,3 +1,6 @@
+import {resourceBaseError} from './resourceNames'
+import {RESOURCE_TYPES,resourceNameKey} from './resourceTypes'
+import type { ExplorerOrganization } from './project/explorerOrganization'
 import {scriptType,type ScriptType} from './scriptResources/types'
 import { isTextAssetName } from './i18n/textMap'
 import { defaultHsSeed } from './hanshu/defaultSeed'
@@ -6,21 +9,7 @@ const WORKSPACE_KEY = 'hanshu.workspace.v2'
 const LEGACY_DRAFT_KEY = 'hanshu.draft.v1'
 
 /** 包内允许的后缀 */
-export const ALLOWED_EXTENSIONS = [
-  '.hs',
-  '.md',
-  '.char',
-  '.py',
-  '.lang',
-  '.voice',
-  '.tts',
-  '.ttsservice',
-  '.quest',
-  '.nav',
-  '.item',
-  '.entity',
-  '.kit',
-] as const
+export const ALLOWED_EXTENSIONS = [...RESOURCE_TYPES.map(type=>type.ext), '.lang', '.voice'] as const
 export type AllowedExtension = (typeof ALLOWED_EXTENSIONS)[number]
 
 /**
@@ -35,20 +24,7 @@ export type AllowedExtension = (typeof ALLOWED_EXTENSIONS)[number]
  * 值可以是多层路径，归位校验比较 `${根目录}/${相对路径}` 与 `sourceRelativePath`，
  * 不假设只有一层。
  */
-export const FILE_DIRS: Record<string, string> = {
-  '.hs': 'src/hanshu',
-  '.char': 'src/character',
-  /** 脚本统一使用 src/script/<类型>/（由 SourceFile.srcKind 分流） */
-  '.py': 'src/script/common',
-  '.quest': 'src/quest',
-  '.nav': 'src/navigator',
-  '.item': 'src/items',
-  '.entity': 'src/entities',
-  '.kit': 'src/gift',
-  '.md': 'meta/docs',
-  '.tts': 'meta/voice',
-  '.ttsservice': 'meta/voice/service',
-}
+export const FILE_DIRS: Record<string, string> = Object.fromEntries(RESOURCE_TYPES.map(type=>[type.ext,type.directory]))
 
 /** 运行时源目录（会进 PAK）；导出目录骨架与分组展示都按它排 */
 export const SOURCE_KIND_ORDER = [
@@ -161,19 +137,6 @@ export function groupDirPrefix(group: string): string {
 export const ALLOWED_EXTENSIONS_LABEL = ALLOWED_EXTENSIONS.join('  ')
 
 /**
- * 手动新建 / 改名的后缀：
- *
- * - `.lang` / `.voice` 的名字都由剧本名派生（见 `localeLayout`：改名 `.hs` 会连带搬走它们），
- *   手工造这两个名字会切断派生关系。
- * - `.ttsservice` 是**服务定义**，只该由服务编辑器写 —— 手建一个没有 `provider` 的空壳
- *   只会被校验器拒掉。
- *
- * 所以界面上的「新建」与「改名」都不接受它们。
- *
- * 注意：它们仍是合法的包内文件格式（`ALLOWED_EXTENSIONS`），**Agent 的写入能力不受限** ——
- * `write_source` 走的是 `normalizeResourceName`，照样能建、能改。
- */
-/**
  * 可手工新建 / 改名的后缀。
  *
  * `.lang` / `.voice` 不行 —— 它们的名字由剧本名派生（改名剧本时会一起搬），
@@ -239,6 +202,7 @@ export type Project = {
   scripts: SourceFile[]
   assets: AssetFile[]
   /** 显式文件夹（可为空），如 assets/voice/zh */
+  explorer?: ExplorerOrganization
   assetFolders: string[]
 }
 
@@ -271,7 +235,7 @@ export function normalizeResourceName(raw: string): string | null {
   if (!name) return null
   if (/[\\/:*?"<>|]/.test(name)) return null
   const ext = getExtension(name)
-  if (!isAllowedExtension(ext)) return null
+  if (!isAllowedExtension(ext) || resourceBaseError(name.slice(0,-ext.length))) return null
   return name
 }
 
@@ -439,15 +403,13 @@ export function findScriptByName(
   workspace: Workspace,
   fileName: string,
 ): { pkg: ScriptPackage; script: ScriptFile } | null {
-  const target = fileName.trim().toLowerCase()
+  const target = resourceNameKey(fileName.trim())
   if (!target) return null
-  for (const pkg of workspace.packages) {
-    const script = pkg.scripts.find(
-      (item) => item.name.toLowerCase() === target,
-    )
-    if (script) return { pkg, script }
-  }
-  return null
+  const hits = workspace.packages.flatMap(pkg=>pkg.scripts
+    .filter(script=>resourceNameKey(target.includes('/')?sourcePathOf(script):script.name)===target)
+    .map(script=>({pkg,script})))
+  if (hits.length>1) throw new Error(`资源名称不唯一：${fileName}，请使用完整工程路径`)
+  return hits[0] ?? null
 }
 
 export function updateScriptContent(
@@ -675,4 +637,12 @@ export function removeAssetFolder(
     }),
   }
   return { workspace: next, removed }
+}
+
+/** Reject paths the flat source model cannot represent; never silently relocate input. */
+export function assertCanonicalSourcePath(path:string):void {
+  const name=path.split('/').at(-1) ?? ''
+  if(sourceRelativePath(name,srcKindFromDiskPath(path))!==path) {
+    throw new Error(`非规范资源路径：${path}。源文件应放入 ${sourceRelativePath(name,srcKindFromDiskPath(path))}；整理目录请使用共享虚拟文件夹。`)
+  }
 }

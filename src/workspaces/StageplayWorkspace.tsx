@@ -1,3 +1,4 @@
+import {resourceNameKey} from '../resourceTypes'
 import {PythonEditor} from '../monaco/python/PythonEditor'
 import {scriptType} from '../scriptResources/types'
 import {
@@ -1835,7 +1836,7 @@ export const StageplayWorkspace = forwardRef<
       return `文件名无效。新建允许的后缀：${MANUAL_FILE_EXTENSIONS_LABEL}`
     }
     // 重名只看**目标包**：不同包是两份独立工程，同名文件本来就允许
-    if (pkg.scripts.some((item) => sourcePathOf(item).toLowerCase() === sourcePathOf({name:normalized,srcKind:type.srcKind}).toLowerCase())) {
+    if (pkg.scripts.some((item) => resourceNameKey(sourcePathOf(item)) === resourceNameKey(sourcePathOf({name:normalized,srcKind:type.srcKind})))) {
       return `「${normalized}」已经存在`
     }
 

@@ -43,7 +43,7 @@ assert.deepEqual(displayTextRuntimeTranslations(displayTextReferences('entity', 
 
 ensureBuiltinCompilers()
 const pkg = createProject('display-text-locale')
-const context: CompileContext = { index: { workspace: { packages: [pkg], activeScriptId: null, activeAssetId: null }, package: pkg, scriptsByName: new Map(), assetsByPath: new Map() }, report: diagnostic => { throw Error(diagnostic.message) } }
+const context: CompileContext = { index: { workspace: { packages: [pkg], activeScriptId: null, activeAssetId: null }, package: pkg, scriptsByPath: new Map(), assetsByPath: new Map() }, report: diagnostic => { throw Error(diagnostic.message) } }
 for (const [kind, name, content, compiler, key] of [
   ['item', 'sword.item', stringifyItem(item), itemCompiler, nameKey],
   ['entity', 'guard.entity', stringifyEntity(entity), entityCompiler, entityKey],

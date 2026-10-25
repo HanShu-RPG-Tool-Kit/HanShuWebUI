@@ -1,3 +1,5 @@
+import {resourceBaseError} from '../../resourceNames'
+import {GAMEPLAY_CATEGORIES, RESOURCE_TYPES, categoryExtensions, resourceNameKey} from '../../resourceTypes'
 import {SCRIPT_TYPES,SCRIPT_TYPE_NAMES,scriptSection,scriptTypeFromSection,type ScriptType} from '../../scriptResources/types'
 import { randomId } from '../../project/crypto'
 import { stampDocument, type FlowFolder, type FlowPackageId, type FlowWorkspaceState } from './storage'
@@ -15,19 +17,8 @@ export type FlowEntry =
 
 export type FlowSectionDef = { id: string; name: string }
 
-export const FLOW_PACKAGE_ORDER: FlowPackageId[] = ['script', 'quest', 'actor', 'reputation', 'region', 'navigator', 'shop', 'gift', 'items', 'entities']
-export const FLOW_PACKAGE_NAMES: Record<FlowPackageId, string> = {
-  script: '脚本',
-  quest: '任务',
-  actor: '演员',
-  reputation: '声誉',
-  region: '区域',
-  navigator: '导航器',
-  shop: '商店',
-  items: '物品库',
-  entities: '实体库',
-  gift: '礼包',
-}
+export const FLOW_PACKAGE_ORDER = Object.keys(GAMEPLAY_CATEGORIES) as FlowPackageId[]
+export const FLOW_PACKAGE_NAMES = Object.fromEntries(Object.entries(GAMEPLAY_CATEGORIES).map(([id,def])=>[id,def.name])) as Record<FlowPackageId,string>
 /** 顶层分类下的内置二级分类（稳定键、不可重命名/移动/删除）。任务的单/多进度是视图，不走这里。 */
 export const FLOW_PACKAGE_SECTIONS: Partial<Record<FlowPackageId, FlowSectionDef[]>> = {
   script: SCRIPT_TYPES.map(type=>({id:scriptSection(type),name:SCRIPT_TYPE_NAMES[type]})),
@@ -42,27 +33,15 @@ export const packageAllowsQuest = (id: FlowPackageId) => id === 'quest'
 export const packageAllowsNavigation = (id: FlowPackageId) => id === 'navigator'
 export const packageAllowsEntities = (id: FlowPackageId) => id === 'entities'
 export const packageAllowsItems = (id: FlowPackageId) => id === 'items'
-export const packageAllowsDocuments = (id: FlowPackageId) =>
-  packageAllowsQuest(id) || packageAllowsScripts(id) || packageAllowsKits(id) || packageAllowsNavigation(id) || packageAllowsItems(id) || packageAllowsEntities(id)
-export const packageAcceptsImportFile = (id: FlowPackageId, fileName: string) => {
-  const lower = fileName.toLowerCase()
-  if (id === 'script') return lower.endsWith('.py')
-  if (id === 'gift') return lower.endsWith('.kit')
-  if (id === 'quest') return lower.endsWith('.quest') || lower.endsWith('.json')
-  if (id === 'navigator') return lower.endsWith('.nav') || lower.endsWith('.json')
-  if (id === 'entities') return lower.endsWith('.entity')
-  if (id === 'items') return lower.endsWith('.item') || lower.endsWith('.itemstack') || lower.endsWith('.json')
-  return false
-}
-export type PackageDocumentExt = '.quest' | '.py' | '.kit' | '.nav' | '.item' | '.entity'
-export const packageDocumentExt = (id: FlowPackageId): PackageDocumentExt | null =>
-  id === 'quest' ? QUEST_EXT
-    : id === 'script' ? '.py'
-      : id === 'gift' ? '.kit'
-        : id === 'navigator' ? '.nav'
-          : id === 'entities' ? '.entity'
-            : id === 'items' ? '.item'
-              : null
+export const packageAllowsDocuments = (id: FlowPackageId) => categoryExtensions(id).length > 0
+
+export const packageAcceptsImportFile = (id:FlowPackageId,name:string) =>
+  (GAMEPLAY_CATEGORIES[id].imports as readonly string[]).some(ext=>name.toLowerCase().endsWith(ext))
+type CategoryResourceType = (typeof GAMEPLAY_CATEGORIES)[FlowPackageId]['types'][number]
+export type PackageDocumentExt = Extract<(typeof RESOURCE_TYPES)[number],{id:CategoryResourceType}>['ext']
+/** First format is the default for new documents, not the only permitted format. */
+export const packageDocumentExt = (id:FlowPackageId):PackageDocumentExt|null =>
+  categoryExtensions(id)[0] as PackageDocumentExt ?? null
 
 /** 「物品库」虚拟表视图（稳定键，不落盘） */
 export const ITEM_LIBRARY_TABLE_KEY = 'builtin:item-library-table'
@@ -93,15 +72,12 @@ export const isItemDocument = (document: { key?: string; package: FlowPackageId;
   if (document.key && isLibraryTableKey(document.key)) return false
   return document.package === 'items' || document.name.toLowerCase().endsWith('.item')
 }
-export function documentExtOf(document: { package: FlowPackageId; name: string }): PackageDocumentExt {
-  return packageDocumentExt(document.package)
-    ?? (isEntityDocument(document) ? '.entity' : isItemDocument(document) ? '.item'
-      : isNavigationDocument(document) ? '.nav'
-        : isQuestDocument(document) ? QUEST_EXT
-          : isKitDocument(document) ? '.kit'
-            : isScriptDocument(document) ? '.py'
-              : QUEST_EXT)
+export function documentExtOf(document:{package:FlowPackageId;name:string}):PackageDocumentExt {
+  const ext=categoryExtensions(document.package).find(ext=>document.name.toLowerCase().endsWith(ext))
+  if(!ext)throw new Error(`文件类型与分类不一致：${document.name}`)
+  return ext as PackageDocumentExt
 }
+
 export function questKindOfDocument(document: { package: FlowPackageId; name: string; source?: string }): QuestAuthorKind | null {
   return isQuestDocument(document) ? questAuthorKindOf(document) : null
 }
@@ -181,14 +157,14 @@ export function entryFolder(state: FlowWorkspaceState, entry: FlowEntry): string
 export function resourceName(value: string, documentExt: boolean | PackageDocumentExt = false) {
   const name = value.trim()
   if (!name || name === '.' || name === '..' || /[\\/:*?"<>|]/.test(name) || [...name].some((char) => char.charCodeAt(0) < 32) || /[. ]$/.test(name)) throw new Error('请输入有效名称，不可包含路径分隔符或特殊字符。')
-  if (!documentExt) return name
+  if (!documentExt) { const error=resourceBaseError(name);if(error)throw new Error(error);return name }
   const ext = documentExt === true ? QUEST_EXT : documentExt
   const lower = name.toLowerCase()
+  const previousExtension=[...RESOURCE_TYPES.map(type=>type.ext),'.json','.itemstack'].find(known=>lower.endsWith(known))
+  const base=previousExtension?name.slice(0,-previousExtension.length):name
+  const error=resourceBaseError(base);if(error)throw new Error(error)
   if (lower.endsWith(ext)) return name
-  if (/\.(quest|py|json|kit|nav|itemstack|item|entity)$/i.test(name)) {
-    return name.replace(/\.(quest|py|json|kit|nav|itemstack|item|entity)$/i, ext)
-  }
-  return `${name}${ext}`
+  return `${base}${ext}`
 }
 
 function requireFolder(state: FlowWorkspaceState, parent: string | null) {
@@ -210,7 +186,7 @@ export function requireAvailableName(
     const folder = state.folders.find((item) => item.key === parent)
     if (!folder || folder.package !== pkg) throw new Error('目标文件夹不在当前分类中。')
   }
-  const same = (other: string) => other.normalize('NFC').toLocaleLowerCase() === name.normalize('NFC').toLocaleLowerCase()
+  const same = (other: string) => resourceNameKey(other) === resourceNameKey(name)
   if (kind === 'folder') {
     if (state.folders.some((folder) => folder.key !== except && folder.package === pkg && folder.parentId === parent && same(folder.name))) {
       throw new Error('此位置已有同名文件夹。')
@@ -281,7 +257,7 @@ export function canMoveFlowEntry(state: FlowWorkspaceState, entry: FlowEntry, pk
     if (isScriptDocument(document)) return packageAllowsScripts(pkg)
     return packageAllowsFlows(pkg)
   }
-  if (!state.folders.some((folder) => folder.key === entry.key)) return false
+  if (!state.folders.some((folder) => folder.key === entry.key && folder.package === pkg)) return false
   let ancestor = parent
   while (ancestor !== null) {
     if (ancestor === entry.key) return false
@@ -290,7 +266,7 @@ export function canMoveFlowEntry(state: FlowWorkspaceState, entry: FlowEntry, pk
   return true
 }
 
-function retargetPackageSubtree(state: FlowWorkspaceState, folderKey: string, pkg: FlowPackageId): FlowWorkspaceState {
+function folderSubtreeKeys(state: FlowWorkspaceState, folderKey: string): Set<string> {
   const queue = [folderKey]
   const folderKeys = new Set<string>()
   while (queue.length) {
@@ -298,6 +274,10 @@ function retargetPackageSubtree(state: FlowWorkspaceState, folderKey: string, pk
     folderKeys.add(key)
     for (const child of state.folders) if (child.parentId === key) queue.push(child.key)
   }
+  return folderKeys
+}
+
+function retargetPackageSubtree(state: FlowWorkspaceState, folderKeys: ReadonlySet<string>, pkg: FlowPackageId): FlowWorkspaceState {
   return {
     ...state,
     folders: state.folders.map((folder) => folderKeys.has(folder.key) ? { ...folder, package: pkg } : folder),
@@ -320,11 +300,17 @@ export function moveFlowEntry(state: FlowWorkspaceState, entry: FlowEntry, pkg: 
   const name = entry.kind === 'folder' ? state.folders.find((folder) => folder.key === entry.key)!.name : state.documents.find((document) => document.key === entry.key)!.name
   requireAvailableName(state, name, pkg, parent, entry.key, entry.kind === 'folder' ? 'folder' : 'document')
   if (entry.kind === 'folder') {
+    const movedFolderKeys = folderSubtreeKeys(state, entry.key)
     const next = {
       ...state,
       folders: state.folders.map((folder) => folder.key === entry.key ? { ...folder, parentId: parent, package: pkg } : folder),
     }
-    return retargetPackageSubtree(next, entry.key, pkg)
+    const moved = retargetPackageSubtree(next, movedFolderKeys, pkg)
+    for (const doc of moved.documents) {
+      if (!doc.folderId || !movedFolderKeys.has(doc.folderId) || isBuiltinScriptDocumentKey(doc.key) || isLibraryTableKey(doc.key)) continue
+      requireAvailableName(moved, doc.name, doc.package, doc.folderId, doc.key)
+    }
+    return moved
   }
   return {
     ...state,

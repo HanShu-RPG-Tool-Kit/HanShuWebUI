@@ -43,7 +43,7 @@ export type CompileArtifact = {
 export type CompileIndex = {
   workspace: Workspace
   package: Project
-  scriptsByName: Map<string, SourceFile>
+  scriptsByPath: Map<string, SourceFile>
   assetsByPath: Map<string, AssetFile>
 }
 

@@ -1,3 +1,4 @@
+import {EXPLORER_ORGANIZATION_PATH,parseOrganization} from './explorerOrganization'
 import { assetCacheEpoch, cacheRemoteAsset, deleteCachedAsset, getAssetBlob } from '../assets/idb'
 import { isVoiceRefPath, parseVoiceRefContent } from '../i18n/voiceMap'
 import { createScript, registerAsset, removeAssetMeta, sourcePathOf, srcKindFromDiskPath, type Workspace } from '../workspace'
@@ -9,7 +10,7 @@ import { getProjectClient, type FileEdit, type ProjectClient } from './serviceCl
 const runtime = Date.now() + Math.random()
 const RUNTIME = '@runtime'
 const contains = (parent: string, path: string) => parent === path || path.startsWith(`${parent}/`)
-const sourcePath = (path: string) => path.startsWith('src/') || path.startsWith('meta/')
+const sourcePath = (path: string) => path !== EXPLORER_ORGANIZATION_PATH && (path.startsWith('src/') || path.startsWith('meta/'))
 const touched = (edit: FileEdit, path: string) => contains(edit.path, path) || (!!edit.destination && contains(edit.destination, path))
 
 /** Freeze the projection we started from; replay must not discard later local edits. */
@@ -33,8 +34,13 @@ export function reconcileSourceEdits(workspace: Workspace, edits: FileEdit[]): W
   const packages = workspace.packages.map(pkg => {
     let scripts = [...pkg.scripts]
     let name = pkg.name
+    let explorer=pkg.explorer
     for (const edit of edits) {
       const captured = edit.localContents ?? {}
+      if(edit.path===EXPLORER_ORGANIZATION_PATH){
+        if(edit.op==='write'&&typeof edit.data==='string')explorer=parseOrganization(edit.data)
+        if(edit.op==='remove')explorer=parseOrganization(null)
+      }
       if (edit.path === 'project.json' && edit.op === 'write' && typeof edit.data === 'string' && name === captured['project.json']) {
         try { const manifest = JSON.parse(edit.data); if (typeof manifest.name === 'string') name = manifest.name } catch { /* A failed parse never replaces an existing name. */ }
       }
@@ -60,7 +66,7 @@ export function reconcileSourceEdits(workspace: Workspace, edits: FileEdit[]): W
         if (index < 0) scripts.push(file); else scripts[index] = file
       }
     }
-    return { ...pkg, name, scripts }
+    return { ...pkg, name, explorer, scripts }
   })
   const activeScriptId = packages.some(pkg => pkg.scripts.some(file => file.id === workspace.activeScriptId))
     ? workspace.activeScriptId : packages.flatMap(pkg => pkg.scripts)[0]?.id ?? null
@@ -80,7 +86,14 @@ const mimeOf = (path: string) => /\.(lang|ref)$/i.test(path) ? 'text/plain' : /\
 export function attachReconciliation(client: ProjectClient) {
   client.onCapture = edit => captureWorkspaceEdit(getProjectSession().workspace, edit)
   client.onCommitted = async (edits, replayed) => {
-    if (!replayed || getProjectClient() !== client) return
+    if(getProjectClient()!==client)return
+    const metadata=edits.find(edit=>edit.path===EXPLORER_ORGANIZATION_PATH)
+    if(metadata){
+      const live=getProjectSession()
+      const explorer=metadata.op==='write'&&typeof metadata.data==='string'?parseOrganization(metadata.data):metadata.op==='remove'?parseOrganization(null):undefined
+      if(explorer)setProjectSession({workspace:{...live.workspace,packages:live.workspace.packages.map(pkg=>({...pkg,explorer}))}})
+    }
+    if (!replayed) return
     const stillCurrent = () => getProjectClient() === client && getProjectSession().binding?.handle.client === client
     for (const edit of edits) {
       const pkg = getProjectSession().workspace.packages.find(item => item.id === client.assetPackageId)

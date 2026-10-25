@@ -14,12 +14,12 @@ const workspace={packages:[{id:'p',name:'test',scripts,assets:[],assetFolders:[]
 const base=ensurePackageSections({documents:sourcesToProgressDocuments(scripts),folders:[],activeKey:null})
 assert.deepEqual(applyProgressDocumentsToWorkspace(workspace,base.documents,base.folders).packages[0].scripts.map(s=>s.srcKind),[...SCRIPT_TYPES])
 for(const type of SCRIPT_TYPES){const parent=sectionFolderKey('script',type==='goal'?'goal-def':type);assert.equal(scriptTypeInFolder(base,parent),type);assert.throws(()=>requireAvailableName(base,'shared.py','script',parent));assert.equal(uniqueDocumentName(base,'shared.py','script',parent),'shared (2).py')}
-const builtin=BUILTIN_SCRIPTS.find(s=>s.type==='goal'&&s.name==='core_item_collect.py')!
+const builtin=BUILTIN_SCRIPTS.find(s=>s.type==='goal'&&s.name==='core_item_mc_type_hold.py')!
 const replacement={id:'override',name:builtin.name,srcKind:'goal',content:'@goal("test:replacement")\n@config()\nclass Replacement(BaseGoalPy):\n    pass\n',updatedAt:1}
 const sources=[...scripts,replacement]
 const state=ensurePackageSections({documents:sourcesToProgressDocuments(sources),folders:[],activeKey:null})
 const view=withBuiltinScripts(state);assert(!view.documents.some(d=>d.key.startsWith('builtin:')&&d.name===builtin.name));assert.equal(stripBuiltinScripts(view).documents.length,sources.length)
-const catalog=buildGoalDefinitionCatalog(state);assert(catalog.byKind.has('test:replacement'));assert(!catalog.byKind.has('core:item_collect'),'old definitions in overridden file must disappear')
+const catalog=buildGoalDefinitionCatalog(state);assert(catalog.byKind.has('test:replacement'));assert(!catalog.byKind.has('core:item_mc_type_hold'),'old definitions in overridden file must disappear')
 workspace.packages[0].scripts=sources
 const graph=await buildCompileGraph(workspace)
 assert.equal(graph.artifacts.filter(a=>a.path===`script/goal/${builtin.name}`).length,1)

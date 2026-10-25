@@ -1,3 +1,5 @@
+import {EXPLORER_ORGANIZATION_PATH,serializeOrganization,parseOrganization} from './explorerOrganization'
+import {resourceTypeForExtension,GAMEPLAY_CATEGORIES,categoryExtensions,type GameplayCategoryId} from '../resourceTypes'
 import {scriptType,scriptSection} from '../scriptResources/types'
 /**
  * 跨工作区共享的「当前工程」会话：剧本与进度读写同一 Workspace / 绑定目录。
@@ -25,19 +27,14 @@ import type {
 } from '../workspaces/gameplay/storage'
 import { stampDocument } from '../workspaces/gameplay/storage'
 
-export const PROGRESS_UI_STORAGE_KEY = 'hanshu.progressUi.v1'
+export const PROGRESS_UI_STORAGE_KEY = 'hanshu.gameplayUi.v2'
 /** 旧整库草稿；迁入工程后删除 */
 export const LEGACY_PROGRESS_WORKSPACE_KEY = 'hanshu.progressWorkspace.v1'
 
 /** 进度工作区认领的源文件后缀（含目标定义用的 .py） */
-export const PROGRESS_SOURCE_EXTS = new Set([
-  '.quest',
-  '.nav',
-  '.item',
-  '.entity',
-  '.kit',
-  '.py',
-])
+export const PROGRESS_SOURCE_EXTS = new Set(
+  (Object.keys(GAMEPLAY_CATEGORIES) as GameplayCategoryId[]).flatMap(categoryExtensions),
+)
 
 /** 剧本资源树展示的 kind（不含进度专属目录） */
 export const SCRIPT_EXPLORER_KINDS = new Set([
@@ -86,6 +83,7 @@ export function setProjectSession(next: Partial<Session>) {
       ...p.scripts.filter(s => s.content !== client.texts.get(sourcePathOf(s))).map(sourcePathOf),
       ...p.assets.filter(a => client.assetEpochs.get(a.path) !== assetCacheEpoch(p.id, a.path)).map(a => a.path),
       ...(p.name !== session.binding?.manifest.name ? ['project.json'] : []),
+      ...(p.explorer&&serializeOrganization(p.explorer)!==serializeOrganization(parseOrganization(client.texts.get(EXPLORER_ORGANIZATION_PATH)??null))?[EXPLORER_ORGANIZATION_PATH]:[]),
     ]))
     if (next.workspace && next.workspace !== previousWorkspace) client.transactions.changed()
   }
@@ -97,16 +95,8 @@ export function useProjectSession(): Session {
 }
 
 export function packageIdOfExt(ext: string): FlowPackageId | null {
-  switch (ext.toLowerCase()) {
-    case '.quest':
-      return 'quest'
-    case '.nav': return 'navigator'
-    case '.item': return 'items'
-    case '.entity': return 'entities'
-    case '.kit': return 'gift'
-    case '.py': return 'script'
-    default: return null
-  }
+  const category=resourceTypeForExtension(ext)?.category
+  return category && PROGRESS_SOURCE_EXTS.has(ext.toLowerCase()) ? category as FlowPackageId : null
 }
 
 export function isProgressSourceName(name: string): boolean {
@@ -178,36 +168,9 @@ export function applyProgressDocumentsToWorkspace(
   }
 }
 
-export type ProgressUiState = Pick<FlowWorkspaceState, 'openKeys' | 'activeKey' | 'pinnedKeys' | 'split' | 'folders'> & {
-  /** documentKey → folderId；缺省或 null 表示分类根 */
-  documentFolders?: ProgressDocumentFolders
-}
-
-const EMPTY_PROGRESS_UI: ProgressUiState = {
-  openKeys: [],
-  activeKey: null,
-  pinnedKeys: [],
-  folders: [],
-  documentFolders: {},
-}
-
-function readDocumentFolders(value: unknown): ProgressDocumentFolders {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
-  const out: ProgressDocumentFolders = {}
-  for (const [key, folderId] of Object.entries(value as Record<string, unknown>)) {
-    if (!key) continue
-    out[key] = typeof folderId === 'string' && folderId ? folderId : null
-  }
-  return out
-}
-
-export function documentFoldersFromDocuments(documents: FlowDocument[]): ProgressDocumentFolders {
-  const out: ProgressDocumentFolders = {}
-  for (const doc of documents) {
-    out[doc.key] = doc.folderId ?? null
-  }
-  return out
-}
+/** Personal view state; shared folders never belong in this cache. */
+export type ProgressUiState = Pick<FlowWorkspaceState, 'openKeys' | 'activeKey' | 'pinnedKeys' | 'split'>
+const EMPTY_PROGRESS_UI: ProgressUiState = {openKeys:[],activeKey:null,pinnedKeys:[]}
 
 export function loadProgressUiState(): ProgressUiState {
   try {
@@ -219,8 +182,6 @@ export function loadProgressUiState(): ProgressUiState {
       activeKey: data.activeKey ?? null,
       pinnedKeys: Array.isArray(data.pinnedKeys) ? data.pinnedKeys : [],
       split: data.split,
-      folders: Array.isArray(data.folders) ? data.folders : [],
-      documentFolders: readDocumentFolders(data.documentFolders),
     }
   } catch {
     return { ...EMPTY_PROGRESS_UI }
@@ -228,7 +189,8 @@ export function loadProgressUiState(): ProgressUiState {
 }
 
 export function saveProgressUiState(state: ProgressUiState) {
-  localStorage.setItem(PROGRESS_UI_STORAGE_KEY, JSON.stringify(state))
+  const {openKeys,activeKey,pinnedKeys,split}=state
+  localStorage.setItem(PROGRESS_UI_STORAGE_KEY, JSON.stringify({openKeys,activeKey,pinnedKeys,split}))
 }
 
 /** 把旧 progressWorkspace.v1 文档并入工程源文件（按文件名去重），然后删除旧键。 */
@@ -266,10 +228,4 @@ export function consumeLegacyProgressWorkspace(workspace: Workspace): Workspace 
   } catch {
     return workspace
   }
-}
-
-export function ensureProgressPlaceholderFolders(
-  folders: FlowWorkspaceState['folders'],
-): FlowWorkspaceState['folders'] {
-  return folders
 }

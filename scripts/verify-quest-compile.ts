@@ -34,7 +34,7 @@ const pkg = createProject('quest-compile')
 const index: CompileIndex = {
   workspace: { packages: [pkg], activeScriptId: null, activeAssetId: null },
   package: pkg,
-  scriptsByName: new Map(),
+  scriptsByPath: new Map(),
   assetsByPath: new Map(),
 }
 const diagnostics: { severity: string; code?: string }[] = []

@@ -2,7 +2,7 @@
 
 ## 目录与身份
 
-脚本有七种类型：common（通用）、goal（目标定义）、kit（礼包）、item（物品）、entity（实体）、enchantment（附魔定义）、player（玩家）。工程统一保存为 `src/script/<类型>/<文件名>.py`；PAK 对应 `script/<类型>/<文件名>.py`，均属于 server 平面。类型是真实分类，类型内的用户文件夹仅整理视图；文件名在同类型内唯一，不同类型可以同名。
+脚本有七种类型：common（通用）、goal（目标定义）、kit（礼包）、item（物品）、entity（实体）、enchantment（附魔定义）、player（玩家）。工程统一保存为 `src/script/<类型>/<文件名>.py`；PAK 对应 `script/<类型>/<文件名>.py`，均属于 server 平面。类型是真实分类，类型内的用户文件夹是保存到工程 `meta/explorer.json` 的共享整理视图，不创建磁盘子目录；文件名在同类型内唯一，不同类型可以同名。
 
 脚本类型由工程路径决定，不通过执行 Python 猜测类型。拖动到另一类型属于类型转换，会改变源文件路径，经 S 的版本校验与事务执行；代码不会被自动改写成新类型。检查入口后再转换。目录规则集中在 scriptResources/types.ts、workspace.ts，禁止业务页面自己拼另一套路径。
 

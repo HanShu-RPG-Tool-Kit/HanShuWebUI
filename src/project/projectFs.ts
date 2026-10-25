@@ -1,3 +1,6 @@
+import {resourceNameKey} from '../resourceTypes'
+import {EXPLORER_ORGANIZATION_PATH,emptyOrganization,parseOrganization,serializeOrganization} from './explorerOrganization'
+import {assertCanonicalSourcePath} from '../workspace'
 import { sha256Hex } from './crypto'
 import { ServiceError } from '../collab/protocol'
 import { getProjectSession, setProjectSession } from './projectSession'
@@ -187,11 +190,12 @@ async function readPackageFromDirectory(
   const scripts: SourceFile[] = []
   const seen = new Set<string>()
   const addScript = async (name: string, path: string) => {
+    assertCanonicalSourcePath(path)
     if(name.toLowerCase().endsWith('.py')&&!/^src\/script\/(common|goal|kit|item|entity|enchantment|player)\/[^/]+\.py$/i.test(path))throw new Error(`脚本目录需要调整：${path}。请放入 src/script/<common|goal|kit|item|entity|enchantment|player>/。`)
-    if (seen.has(path.toLowerCase())) return
+    if (seen.has(resourceNameKey(path))) throw new Error(`存在重名资源路径：${path}`)
     const file = await readFileAtPath(root, path)
     if (!file) return
-    seen.add(path.toLowerCase())
+    seen.add(resourceNameKey(path))
     const text = await file.text()
     const srcKind = srcKindFromDiskPath(path)
     root.client.texts.set(path, text)
@@ -222,6 +226,7 @@ async function readPackageFromDirectory(
     collapsed: Boolean(manifest.collapsed),
     assetsCollapsed: Boolean(manifest.assetsCollapsed),
     scripts,
+    explorer: parseOrganization(await root.client.text(EXPLORER_ORGANIZATION_PATH)),
     assets,
     assetFolders,
   }
@@ -287,6 +292,7 @@ export async function refreshServiceProject(binding: BoundProject, current: Work
   const staged: Array<{path:string;content:string;version:string}> = []
   const remote = client.tree.entries.filter(e => e.kind === 'file' && TEXT_ROOT_DIRS.some(root => e.path.startsWith(`${root}/`)) && isProjectLoadableFile(e.path.split('/').at(-1)!))
   for (const entry of remote) {
+    assertCanonicalSourcePath(entry.path)
     const index = scripts.findIndex(s => sourcePathOf(s) === entry.path)
     const local = scripts[index]
     if (local && client.texts.get(entry.path) !== local.content) continue
@@ -328,11 +334,37 @@ export async function refreshServiceProject(binding: BoundProject, current: Work
     if(assetCacheEpoch(pkg.id,asset.path)!==epoch)continue
     assets=assets.filter(a=>a.path!==asset.path);client.baseline.delete(asset.path);assetChanges++
   }
+  const organizationEntry = client.entry(EXPLORER_ORGANIZATION_PATH)
+  const organizationVersion = organizationEntry?.version ?? null
+  const organizationBaseline = client.baseline.get(EXPLORER_ORGANIZATION_PATH) ?? null
+  const organizationBefore = serializeOrganization(pkg.explorer ?? emptyOrganization())
+  const organizationDirty = client.transactions.hasDraft(EXPLORER_ORGANIZATION_PATH)
+  // Stage the exact snapshot without advancing the base of a draft created during this read.
+  const organizationRaw = organizationDirty || !organizationEntry ? null
+    : await (await client.readSnapshot(EXPLORER_ORGANIZATION_PATH, false, organizationEntry.version)).file.text()
+  const explorer = organizationDirty ? undefined : parseOrganization(organizationRaw)
   const live = getProjectSession()
   if (live.binding?.handle.client !== client) return current
   const latest = live.workspace
   const latestPkg = latest.packages.find(p => p.id === pkg.id)
   if (!latestPkg) return latest
+  const adoptOrganization = explorer !== undefined && !client.transactions.hasDraft(EXPLORER_ORGANIZATION_PATH)
+    && serializeOrganization(latestPkg.explorer ?? emptyOrganization()) === organizationBefore
+    && (client.entry(EXPLORER_ORGANIZATION_PATH)?.version ?? null) === organizationVersion
+    && (client.baseline.get(EXPLORER_ORGANIZATION_PATH) ?? null) === organizationBaseline
+  const mergedExplorer = adoptOrganization ? explorer : latestPkg.explorer
+  if (adoptOrganization) {
+    // The projection, original bytes and CAS version are accepted together, after all awaits.
+    if (organizationVersion !== null && organizationRaw !== null) {
+      client.texts.set(EXPLORER_ORGANIZATION_PATH, organizationRaw)
+      client.baseline.set(EXPLORER_ORGANIZATION_PATH, organizationVersion)
+      client.originals.set(EXPLORER_ORGANIZATION_PATH, { version: organizationVersion, data: organizationRaw })
+    } else {
+      client.texts.delete(EXPLORER_ORGANIZATION_PATH)
+      client.baseline.delete(EXPLORER_ORGANIZATION_PATH)
+      client.originals.delete(EXPLORER_ORGANIZATION_PATH)
+    }
+  }
   const merged = [...latestPkg.scripts]
   for (const stage of staged) {
     const i = merged.findIndex(s => sourcePathOf(s) === stage.path)
@@ -345,7 +377,7 @@ export async function refreshServiceProject(binding: BoundProject, current: Work
   for(const before of pkg.scripts)if(!kept.some(s=>s.id===before.id) && merged.find(s=>s.id===before.id)?.content===before.content){client.baseline.delete(sourcePathOf(before));client.texts.delete(sourcePathOf(before))}
   const result = merged.filter(s => kept.some(k => k.id === s.id) || !pkg.scripts.some(p => p.id === s.id && p.content === s.content))
   if (staged.length || assetChanges || result.length !== pkg.scripts.length) client.remoteEpoch++
-  const packages = latest.packages.map(p => p.id === pkg.id ? { ...p, scripts: result, assets: latestPkg.assets === pkg.assets ? assets : latestPkg.assets } : p)
+  const packages = latest.packages.map(p => p.id === pkg.id ? { ...p, explorer:mergedExplorer, scripts: result, assets: latestPkg.assets === pkg.assets ? assets : latestPkg.assets } : p)
   const activeScriptId = result.some(s => s.id === latest.activeScriptId) ? latest.activeScriptId : result[0]?.id ?? null
   return { ...latest, packages, activeScriptId }
 }
@@ -377,6 +409,10 @@ export async function collectProjectChanges(binding: BoundProject, current: Work
     const pkg = current.packages.find(p => p.id === binding.manifest.id)
     if (!pkg) throw new Error('没有可保存的工程')
     const edits: import('./serviceClient').FileEdit[] = []
+    if(pkg.explorer){
+      const raw=serializeOrganization(pkg.explorer)
+      if(raw!==serializeOrganization(parseOrganization(client.texts.get(EXPLORER_ORGANIZATION_PATH)??null)))edits.push({op:'write',path:EXPLORER_ORGANIZATION_PATH,data:raw})
+    }
     if (pkg.name !== binding.manifest.name) edits.push({ op: 'write', path: PROJECT_FILE, data: serializeManifest({ ...binding.manifest, name: pkg.name }) })
     for (const source of pkg.scripts) {
       const path = sourcePathOf(source)

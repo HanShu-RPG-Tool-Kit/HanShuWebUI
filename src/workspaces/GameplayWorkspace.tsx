@@ -1,3 +1,4 @@
+import {EXPLORER_ORGANIZATION_PATH,documentPlacements,emptyOrganization,organizationFromDocuments,serializeOrganization} from '../project/explorerOrganization'
 import {PythonEditor} from '../monaco/python/PythonEditor'
 import {scriptType,scriptSection,scriptTemplate} from '../scriptResources'
 import {scriptTypeInFolder,sectionFolderKey} from './gameplay/library'
@@ -59,7 +60,6 @@ import {
 } from './gameplay/progressLocale'
 import {
   applyProgressDocumentsToWorkspace,
-  documentFoldersFromDocuments,
   getProjectSession,
   isProgressSourceName,
   loadProgressUiState,
@@ -118,11 +118,11 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
   const pendingSeedsRef = useRef(new Map<string, Record<string, string>>())
   const migratedKeysRef = useRef(new Set<string>())
   const documents = useMemo(() => {
-    const folders = ui.folders ?? []
+    const folders = session.workspace.packages[0]?.explorer?.folders ?? []
     const folderKeys = new Set(folders.map((folder) => folder.key))
     return sourcesToProgressDocuments(
       session.workspace.packages[0]?.scripts ?? [],
-      ui.documentFolders,
+      documentPlacements(session.workspace.packages[0]?.scripts ?? [],session.workspace.packages[0]?.explorer??emptyOrganization()),
     ).map((doc) => {
       let folderId = doc.folderId && (folderKeys.has(doc.folderId) || isSectionFolder(doc.folderId)) ? doc.folderId : null
       const source = session.workspace.packages[0]?.scripts.find(source => source.id === doc.key)
@@ -132,17 +132,17 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
       }
       return folderId === (doc.folderId ?? null) ? doc : { ...doc, folderId }
     })
-  }, [session.workspace, ui.documentFolders, ui.folders])
+  }, [session.workspace])
   const baseState = useMemo(
     () => ensurePackageSections({
       documents,
-      folders: ui.folders ?? [],
+      folders: session.workspace.packages[0]?.explorer?.folders ?? [],
       openKeys: ui.openKeys ?? [],
       activeKey: ui.activeKey ?? null,
       pinnedKeys: ui.pinnedKeys ?? [],
       split: ui.split,
     }),
-    [documents, ui],
+    [documents, ui, session.workspace],
   )
   /** 先叠虚拟内置文档 / 物品库表视图，再清理页条——否则虚拟页会被当成失效键清掉 */
   const state = useMemo(
@@ -160,6 +160,13 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
     const live = getProjectSession()
     const binding = live.binding
     const prevScripts = live.workspace.packages[0]?.scripts ?? []
+    const previousOrganization = live.workspace.packages[0]?.explorer ?? emptyOrganization()
+    const nextOrganization = organizationFromDocuments(next.documents, next.folders ?? [], {
+      organization: previousOrganization, sourcePaths: prevScripts.map(sourcePathOf),
+    })
+    const metadataChanged = serializeOrganization(nextOrganization) !== serializeOrganization(previousOrganization)
+    const organization = metadataChanged ? nextOrganization : previousOrganization
+    const metadataEdits:import('../project/serviceClient').FileEdit[]=metadataChanged?[{op:'write',path:EXPLORER_ORGANIZATION_PATH,data:serializeOrganization(organization)}]:[]
     const renames = next.documents.flatMap(doc => {
       const old = prevScripts.find(script => script.id === doc.key)
       if (!old) return []
@@ -173,21 +180,31 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
     const applyUi = (workspace: typeof live.workspace) => {
       const nextUi = {
         openKeys: next.openKeys ?? [], activeKey: next.activeKey ?? null,
-        pinnedKeys: next.pinnedKeys ?? [], split: next.split, folders: next.folders ?? [],
-        documentFolders: documentFoldersFromDocuments(next.documents),
+        pinnedKeys: next.pinnedKeys ?? [], split: next.split,
       }
       setUi(nextUi)
       saveProgressUiState(nextUi)
       const structuralIds = new Set(renames.map(item => item.doc.key))
       const currentSources = workspace.packages[0]?.scripts ?? []
-      const projected = next.documents.map(doc => {
-        if (!structuralPendingRef.current || structuralIds.has(doc.key)) return doc
+      const currentOrganization=workspace.packages[0]?.explorer??emptyOrganization()
+      const appliedOrganization=structuralPendingRef.current&&serializeOrganization(currentOrganization)!==serializeOrganization(organization)?currentOrganization:organization
+      const projected = next.documents.flatMap(doc => {
+        if (!structuralPendingRef.current || structuralIds.has(doc.key)) return [doc]
         const current = currentSources.find(source => source.id === doc.key)
-        return current ? { ...doc, source: current.content, updatedAt: new Date(current.updatedAt).toISOString() } : doc
+        return current ? [{ ...doc, source: current.content, updatedAt: new Date(current.updatedAt).toISOString() }] : []
       })
-      if (binding) setProjectSession({ workspace: applyProgressDocumentsToWorkspace(workspace, projected, next.folders ?? []) })
+      // A peer can create resources while this transaction is in flight.
+      if(structuralPendingRef.current){
+        const removedIds=new Set(removed.map(source=>source.id))
+        const additions=sourcesToProgressDocuments(currentSources,documentPlacements(currentSources,appliedOrganization))
+        for(const doc of additions)if(!removedIds.has(doc.key)&&!projected.some(item=>item.key===doc.key))projected.push(doc)
+      }
+      if (binding) {
+        const updated=applyProgressDocumentsToWorkspace(workspace, projected, ensurePackageSections({...next,folders:appliedOrganization.folders}).folders)
+        setProjectSession({workspace:{...updated,packages:updated.packages.map((pkg,index)=>index===0?{...pkg,explorer:appliedOrganization}:pkg)}})
+      }
     }
-    if (!binding || (!renames.length && !removed.length)) { applyUi(live.workspace); return }
+    if (!binding || (!renames.length && !removed.length && !metadataChanged)) { applyUi(live.workspace); return }
     try {
       for (const { doc } of renames) {
         const renamed = renameScriptAssets(live.workspace, doc.key, doc.name)
@@ -201,7 +218,7 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
     }
     const serverRenames = renames.filter(({ old }) => onServer(old))
     const serverRemoves = removed.filter((old) => onServer(old))
-    if (!serverRenames.length && !serverRemoves.length) {
+    if (!serverRenames.length && !serverRemoves.length && !metadataChanged) {
       applyUi(live.workspace)
       if (removed.length) {
         const ids = new Set(removed.map((old) => old.id))
@@ -221,7 +238,7 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
       await binding.handle.client.sourceCommands([
         ...serverRenames.map(({ old, doc, srcKind }) => ({ path: sourcePathOf(old), destination: sourcePathOf({ name: doc.name, srcKind }), content: doc.source })),
         ...serverRemoves.map((old) => ({ path: sourcePathOf(old), destination: null })),
-      ])
+      ],metadataEdits)
       acknowledged = true
       // A project switch while S was working must not replace the new project's view.
       if (getProjectSession().binding?.handle.client !== binding.handle.client) return
@@ -248,15 +265,14 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
       setNotice('工程结构已保存。')
     })().catch(error => {
       if (!acknowledged && getProjectSession().binding?.handle.client === binding.handle.client) {
-        setProjectSession({ workspace: revertWorkspace })
-        const revertDocs = stripLibraryTables(stripBuiltinScripts(previous)).documents
+        // Folder-only rollback must not discard text edited or refreshed while waiting.
+        const current=getProjectSession().workspace
+        setProjectSession({ workspace: renames.length||removed.length?revertWorkspace:{...current,packages:current.packages.map((pkg,index)=>index===0?{...pkg,explorer:revertWorkspace.packages[0]?.explorer}:pkg)} })
         const revertUi = {
           openKeys: previous.openKeys ?? [],
           activeKey: previous.activeKey ?? null,
           pinnedKeys: previous.pinnedKeys ?? [],
           split: previous.split,
-          folders: previous.folders ?? [],
-          documentFolders: documentFoldersFromDocuments(revertDocs),
         }
         setUi(revertUi)
         saveProgressUiState(revertUi)
