@@ -1,7 +1,8 @@
 import type {ComponentType} from 'react'
 import type {NbtValue} from '../tnbtJson'
 import type {EntityDocument} from '../entityDoc'
-export type EntityFieldEditorProps={data:Readonly<Record<string,NbtValue>>;entityType:string;disabled:boolean;onChange:(data:Record<string,NbtValue>)=>void}
+import type {GetTextLocalization} from '../displayTextNbt'
+export type EntityFieldEditorProps={data:Readonly<Record<string,NbtValue>>;entityType:string;disabled:boolean;getTextLocalization?:GetTextLocalization;onChange:(data:Record<string,NbtValue>)=>void}
 export type EntityFieldEditor={
  id:string;title:string;tone?:'steel'|'violet'|'amber'|'green';order?:number;
  /** Exclusive root NBT keys owned by this card. Other keys cannot be overwritten. */

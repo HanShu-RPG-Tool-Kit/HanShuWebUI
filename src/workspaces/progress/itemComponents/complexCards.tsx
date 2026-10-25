@@ -3,7 +3,10 @@
 import {useId,useState} from 'react'
 import {readNbt,type ItemComponents,type NbtValue} from '../tnbtJson'
 import {registerItemComponentEditor,type ComponentEditorProps} from './registry'
-import {acceptsEnchantments,acceptsAttributes,identifier,literalText,setLiteralText,stringTag,numeric,newAttribute,patchAttribute,renameEnchantment,operations,slots} from './complexModel'
+import {LocalizedTextField,type LocalizedTextFieldProps} from '../../../textComponent/LocalizedTextField'
+import {readDisplayText,writeDisplayText,localizedDisplayText,type GetTextLocalization} from '../displayTextNbt'
+import {textComponentSegments,itemNameBaseStyle} from '../itemTooltip'
+import {acceptsEnchantments,acceptsAttributes,identifier,stringTag,numeric,newAttribute,patchAttribute,renameEnchantment,operations,slots} from './complexModel'
 
 const enchants={sharpness:'锋利',smite:'亡灵杀手',bane_of_arthropods:'节肢杀手',unbreaking:'耐久',mending:'经验修补',efficiency:'效率',fortune:'时运',silk_touch:'精准采集',protection:'保护',fire_protection:'火焰保护',blast_protection:'爆炸保护',projectile_protection:'弹射物保护',feather_falling:'摔落缓冲',power:'力量',punch:'冲击',flame:'火矢',infinity:'无限',looting:'抢夺',knockback:'击退',fire_aspect:'火焰附加',sweeping_edge:'横扫之刃',respiration:'水下呼吸',aqua_affinity:'水下速掘',thorns:'荆棘',depth_strider:'深海探索者',frost_walker:'冰霜行者',soul_speed:'灵魂疾行',swift_sneak:'迅捷潜行',loyalty:'忠诚',impaling:'穿刺',riptide:'激流',channeling:'引雷',multishot:'多重射击',quick_charge:'快速装填',piercing:'穿透',luck_of_the_sea:'海之眷顾',lure:'饵钓',binding_curse:'绑定诅咒',vanishing_curse:'消失诅咒',density:'致密',breach:'破甲',wind_burst:'风爆'}
 const attributes={attack_damage:'攻击伤害',attack_speed:'攻击速度',armor:'护甲',armor_toughness:'护甲韧性',max_health:'最大生命值',movement_speed:'移动速度',knockback_resistance:'击退抗性',attack_knockback:'攻击击退',luck:'幸运',scale:'体型',block_interaction_range:'方块交互距离',entity_interaction_range:'实体交互距离',jump_strength:'跳跃力度',gravity:'重力'}
@@ -63,30 +66,55 @@ function AttributeModifiers({value,disabled,onChange}:ComponentEditorProps) {
   </div>
 }
 
-function LiteralInput({value,disabled,label,onChange}:{value:NbtValue|undefined;disabled:boolean;label:string;onChange:(value:NbtValue)=>void}) {
-  const text=literalText(value)
-  return text===undefined?<span className="item-card-note">复杂文本保留，请在组件树中编辑。</span>:<input className="item-complex-input" aria-label={label} disabled={disabled} value={text} placeholder="未设置" onChange={e=>onChange(setLiteralText(value,e.target.value))}/>
+function AppearanceText({value,field,label,disabled,getTextLocalization,onChange,baseStyle}:{value:NbtValue|undefined;field:string;label:string;disabled:boolean;getTextLocalization?:GetTextLocalization;onChange:(value:NbtValue)=>void;baseStyle?:LocalizedTextFieldProps['baseStyle']}) {
+  const component=readDisplayText(value)
+  return <LocalizedTextField label={label} value={component} baseStyle={baseStyle} disabled={disabled} localization={getTextLocalization?.(field,component)} onChange={next=>onChange(writeDisplayText(next,value))}/>
 }
-const appearanceIds=['minecraft:custom_name','minecraft:lore','minecraft:item_model','minecraft:rarity','minecraft:enchantment_glint_override']
-function Appearance({components,disabled,onChange}:{components:ItemComponents;disabled:boolean;onChange:(next:ItemComponents)=>void}) {
+const appearanceIds=['minecraft:item_name','minecraft:custom_name','minecraft:lore','minecraft:item_model','minecraft:rarity','minecraft:enchantment_glint_override']
+function Appearance({components,disabled,onChange,getTextLocalization}:{components:ItemComponents;disabled:boolean;onChange:(next:ItemComponents)=>void;getTextLocalization?:GetTextLocalization}) {
   const set=(id:string,v:NbtValue)=>{if(!disabled)onChange({...components,[id]:v})}
   const remove=(id:string)=>{if(disabled)return;const next={...components};delete next[id];onChange(next)}
   const lore=components['minecraft:lore'],model=components['minecraft:item_model'],rarity=components['minecraft:rarity'],glint=components['minecraft:enchantment_glint_override']
   const control=(id:string)=>Object.hasOwn(components,id)&&<button type="button" className="item-complex-remove" aria-label={`移除 ${id}`} disabled={disabled} onClick={()=>remove(id)}>×</button>
+  const baseNameStyle=itemNameBaseStyle(components)
+  const effectiveId=components['minecraft:custom_name']?'custom_name':components['minecraft:item_name']?'item_name':null
+  const effective=effectiveId?readDisplayText(components[`minecraft:${effectiveId}`]):undefined
+  const binding=effectiveId?getTextLocalization?.(`item.${effectiveId}`,effective):undefined
+  const preview=textComponentSegments(localizedDisplayText(effective,binding),{...baseNameStyle,...(effectiveId==='custom_name'?{italic:true}:{})},false)
+  const display=components['minecraft:tooltip_display']
+  const hiddenLore=display?.type==='compound'&&display.value.hidden_components?.type==='list'&&display.value.hidden_components.value.some(v=>v.type==='string'&&v.value==='minecraft:lore')
+  function moveLore(index:number,offset:number){if(disabled||lore?.type!=='list')return;const next=[...lore.value];[next[index],next[index+offset]]=[next[index+offset],next[index]];set('minecraft:lore',{...lore,value:next})}
   return <div className="item-complex-body">
-    <div className="item-appearance-field"><span>名称</span><LiteralInput value={components['minecraft:custom_name']} disabled={disabled} label="物品名称" onChange={next=>set('minecraft:custom_name',next)}/>{control('minecraft:custom_name')}</div>
-    <div className="item-appearance-field"><span>物品模型</span>{!model||model.type==='string'?<CommitInput label="物品模型" value={model?.type==='string'?model.value:''} disabled={disabled} placeholder="namespace:item/model" validate={v=>!identifier.test(v)?'填写 namespace:path 格式的模型 ID':''} onCommit={next=>set('minecraft:item_model',stringTag(next))}/>:<span className="item-card-note">此模型数据请在组件树中编辑。</span>}{control('minecraft:item_model')}</div>
+    <p className="item-card-note">名称优先级：custom_name → item_name → 物品默认名称</p>
+    {(['item_name','custom_name'] as const).map(id=><div className="item-appearance-text" key={id}><AppearanceText value={components[`minecraft:${id}`]} field={`item.${id}`} baseStyle={{...baseNameStyle,...(id==='custom_name'?{italic:true}:{})}} disabled={disabled} label={id==='item_name'?'基础显示名称（item_name）':'自定义名称（custom_name）'} getTextLocalization={getTextLocalization} onChange={next=>set(`minecraft:${id}`,next)}/>{control(`minecraft:${id}`)}</div>)}
+    <p className="item-effective-name" aria-label="实际生效名称">实际生效名称：{effectiveId?preview.map((segment,index)=><span key={index} style={{color:segment.color,fontWeight:segment.bold?700:undefined,fontStyle:segment.italic?'italic':undefined}}>{segment.text}</span>):'物品默认名称'}<small>{effectiveId?`来自 ${effectiveId}`:''}</small></p>
+    <div className="item-entry-heading"><span>说明文本（lore）</span>{control('minecraft:lore')}</div>
+    {hiddenLore&&<p className="item-card-note">说明文本已在提示框中隐藏。</p>}
+    {!lore||lore.type==='list'?<>
+      {(lore?.type==='list'?lore.value:[]).map((line,index)=><div className="item-lore-rich-row" key={index}><AppearanceText value={line} field={`item.lore.${index}`} baseStyle={{color:'#AA00AA',italic:true}} disabled={disabled} label={`说明文本 ${index+1}`} getTextLocalization={getTextLocalization} onChange={next=>{if(lore?.type==='list')set('minecraft:lore',{...lore,value:lore.value.map((v,i)=>i===index?next:v)})}}/><div className="item-lore-actions"><button type="button" aria-label={`上移说明 ${index+1}`} disabled={disabled||index===0} onClick={()=>moveLore(index,-1)}>↑</button><button type="button" aria-label={`下移说明 ${index+1}`} disabled={disabled||index===(lore?.type==='list'?lore.value.length:0)-1} onClick={()=>moveLore(index,1)}>↓</button><button type="button" className="item-complex-remove" aria-label={`移除说明 ${index+1}`} disabled={disabled} onClick={()=>{if(lore?.type==='list')set('minecraft:lore',{...lore,value:lore.value.filter((_,i)=>i!==index)})}}>×</button></div></div>)}
+      <button type="button" className="item-complex-button" disabled={disabled||(lore?.type==='list'&&lore.value.length>=256)} onClick={()=>set('minecraft:lore',{type:'list',value:[...(lore?.type==='list'?lore.value:[]),stringTag('')]})}>＋ 添加说明行</button>
+    </>:<p className="item-card-note">此说明格式请在组件树中编辑。</p>}
     <div className="item-appearance-options">
       <label>稀有度{!rarity||rarity.type==='string'?<select className="item-complex-input" aria-label="物品稀有度" disabled={disabled} value={rarity?.type==='string'?rarity.value:''} onChange={e=>e.target.value?set('minecraft:rarity',stringTag(e.target.value)):remove('minecraft:rarity')}><option value="">未设置</option>{rarity?.type==='string'&&!['common','uncommon','rare','epic'].includes(rarity.value)&&<option value={rarity.value}>{rarity.value}</option>}<option value="common">普通</option><option value="uncommon">罕见</option><option value="rare">稀有</option><option value="epic">史诗</option></select>:<span className="item-card-note">此数据格式请在下方组件树中编辑。</span>}</label>
       <label>附魔光效{!glint||(glint.type==='byte'&&(glint.value===0||glint.value===1))?<select className="item-complex-input" aria-label="附魔光效" disabled={disabled} value={glint?.type==='byte'?String(glint.value):''} onChange={e=>e.target.value?set('minecraft:enchantment_glint_override',{type:'byte',value:Number(e.target.value)}):remove('minecraft:enchantment_glint_override')}><option value="">未设置</option><option value="1">开启</option><option value="0">关闭</option></select>:<span className="item-card-note">此数据格式请在下方组件树中编辑。</span>}</label>
     </div>
-    <div className="item-entry-heading"><span>说明文本</span>{control('minecraft:lore')}</div>
-    {!lore||lore.type==='list'?<>
-      {(lore?.type==='list'?lore.value:[]).map((line,index)=><div className="item-lore-row" key={index}><span className="item-row-index">{index+1}</span><LiteralInput value={line} disabled={disabled} label={`说明文本 ${index+1}`} onChange={next=>{if(lore?.type==='list')set('minecraft:lore',{...lore,value:lore.value.map((v,i)=>i===index?next:v)})}}/><button type="button" className="item-complex-remove" aria-label={`移除说明 ${index+1}`} disabled={disabled} onClick={()=>{if(lore?.type==='list')set('minecraft:lore',{...lore,value:lore.value.filter((_,i)=>i!==index)})}}>×</button></div>)}
-      <button type="button" className="item-complex-button" disabled={disabled||(lore?.type==='list'&&lore.value.length>=256)} onClick={()=>set('minecraft:lore',{type:'list',value:[...(lore?.type==='list'?lore.value:[]),stringTag('')]})}>＋ 添加说明行</button>
-    </>:<p className="item-card-note">复杂说明数据保留，请在组件树中编辑。</p>}
+    <div className="item-appearance-field"><span>物品模型</span>{!model||model.type==='string'?<CommitInput label="物品模型" value={model?.type==='string'?model.value:''} disabled={disabled} placeholder="namespace:item/model" validate={v=>!identifier.test(v)?'填写 namespace:path 格式的模型 ID':''} onCommit={next=>set('minecraft:item_model',stringTag(next))}/>:<span className="item-card-note">此模型数据请在组件树中编辑。</span>}{control('minecraft:item_model')}</div>
   </div>
 }
-for(const [id,title] of [['minecraft:enchantments','附魔'],['minecraft:stored_enchantments','存储附魔']] as const)registerItemComponentEditor({id,title,tone:'violet',wide:true,order:id==='minecraft:enchantments'?10:11,createValue:()=>({type:'compound',value:{}}),accepts:acceptsEnchantments,Editor:Enchantments})
-registerItemComponentEditor({id:'minecraft:attribute_modifiers',title:'属性修改器',tone:'amber',wide:true,order:20,createValue:()=>({type:'list',value:[]}),accepts:acceptsAttributes,Editor:AttributeModifiers})
-registerItemComponentEditor({kind:'group',alwaysVisible:true,id:'hanshu:appearance',title:'外观',caption:'名称 · 说明 · 模型 · 稀有度 · 光效',tone:'steel',order:0,componentIds:appearanceIds,createComponents:()=>({'minecraft:rarity':stringTag('common')}),Editor:Appearance})
+function acceptsTooltipDisplay(value:NbtValue){return value.type==='compound'&&(!value.value.hide_tooltip||(value.value.hide_tooltip.type==='byte'&&[0,1].includes(value.value.hide_tooltip.value)))&&(!value.value.hidden_components||(value.value.hidden_components.type==='list'&&value.value.hidden_components.value.every(entry=>entry.type==='string')))}
+function TooltipDisplay({value,disabled,onChange}:ComponentEditorProps){
+  if(value.type!=='compound')return null
+  const hidden=value.value.hidden_components?.type==='list'?value.value.hidden_components.value:[]
+  const write=(key:string,next:NbtValue)=>{if(!disabled)onChange({...value,value:{...value.value,[key]:next}})}
+  return <div className="item-complex-body"><label className="item-tooltip-toggle">隐藏整个提示框<input type="checkbox" role="switch" aria-label="隐藏整个提示框" disabled={disabled} checked={value.value.hide_tooltip?.value===1} onChange={e=>write('hide_tooltip',{type:'byte',value:e.target.checked?1:0})}/></label><label className="item-tooltip-hidden">隐藏组件（hidden_components）<CommitInput label="隐藏组件" value={hidden.map(v=>String(v.value)).join(', ')} disabled={disabled} placeholder="minecraft:lore, minecraft:enchantments" validate={raw=>raw.split(/[,，]/).map(v=>v.trim()).filter(Boolean).every(v=>identifier.test(v))?'':'填写以逗号分隔的 namespace:id'} onCommit={raw=>write('hidden_components',{type:'list',value:[...new Set(raw.split(/[,，]/).map(v=>v.trim()).filter(Boolean))].map(stringTag)})}/></label></div>
+}
+const disposers: Array<()=>void> = []
+disposers.push(registerItemComponentEditor({kind:'group',id:'hanshu:tooltip_display',title:'提示框显示策略',caption:'',tone:'steel',alwaysVisible:true,order:1,componentIds:['minecraft:tooltip_display'],createComponents:()=>({}),Editor:({components,disabled,onChange})=>{
+  const value=components['minecraft:tooltip_display']??{type:'compound' as const,value:{}}
+  return acceptsTooltipDisplay(value)?<TooltipDisplay value={value} disabled={disabled} onChange={next=>onChange({...components,'minecraft:tooltip_display':next})}/>:<p className="item-card-note">此显示策略请在组件树中编辑。</p>
+}}))
+for(const [id,title] of [['minecraft:enchantments','附魔'],['minecraft:stored_enchantments','存储附魔']] as const)disposers.push(registerItemComponentEditor({id,title,tone:'violet',wide:true,order:id==='minecraft:enchantments'?10:11,createValue:()=>({type:'compound',value:{}}),accepts:acceptsEnchantments,Editor:Enchantments}))
+disposers.push(registerItemComponentEditor({id:'minecraft:attribute_modifiers',title:'属性修改器',tone:'amber',wide:true,order:20,createValue:()=>({type:'list',value:[]}),accepts:acceptsAttributes,Editor:AttributeModifiers}))
+disposers.push(registerItemComponentEditor({kind:'group',alwaysVisible:true,id:'hanshu:appearance',title:'外观',caption:'',tone:'steel',order:0,componentIds:appearanceIds,createComponents:()=>({'minecraft:rarity':stringTag('common')}),Editor:Appearance}))
+
+if(import.meta.hot)import.meta.hot.dispose(()=>disposers.forEach(remove=>remove()))

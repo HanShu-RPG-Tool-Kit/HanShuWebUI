@@ -5,8 +5,9 @@ import {NbtTree} from './NbtComponentsEditor'
 import {EntityFieldCards} from './entityFields/EntityFieldCards'
 import {EntityPreview} from './EntityPreview'
 import {openEntityEditInGame} from '../../gameDevServer/entityWorkbench'
+import type {GetTextLocalization} from './displayTextNbt'
 import './EntityEditor.css'
-export function EntityEditor({source,onChange,disabled,active=true,documentKey}:{source:string;onChange:(source:string)=>void;disabled?:boolean;active?:boolean;documentKey?:string}){
+export function EntityEditor({source,onChange,disabled,active=true,documentKey,getTextLocalization}:{source:string;onChange:(source:string)=>void;disabled?:boolean;active?:boolean;documentKey?:string;getTextLocalization?:GetTextLocalization}){
  const typesId=useId()
  const connection=useSyncExternalStore(subscribeControlHub,getControlHubSnapshot),online=connection.phase==='open'
  const [types,setTypes]=useState<{id:string;name:string}[]>([]),[error,setError]=useState('')
@@ -15,7 +16,7 @@ export function EntityEditor({source,onChange,disabled,active=true,documentKey}:
  const update=(next:EntityDocument)=>{if(disabled)return;try{const checked=parseEntity(stringifyEntity(next));setError('');onChange(stringifyEntity(checked))}catch(e){setError(String(e))}}
  return <div className="entity-editor"><aside><EntityPreview template={doc} active={active}/><button type="button" disabled={!online||disabled||!active||!documentKey} onClick={()=>{if(documentKey)void openEntityEditInGame(documentKey,doc).catch(e=>setError(String(e)))}}>发送到游戏内编辑</button>{error&&<p role="alert">{error}</p>}</aside>
   <main><section className="entity-card"><h3>实体定义</h3><label>实体类型<input list={typesId} aria-label="实体类型" disabled={disabled} key={doc.entity.id} defaultValue={doc.entity.id} onBlur={e=>{if(e.target.value!==doc.entity.id)update({...doc,entity:{...doc.entity,id:e.target.value}})}}/><datalist id={typesId}>{types.map(type=><option value={type.id} key={type.id}>{type.name}</option>)}</datalist></label><label>标签<input aria-label="实体标签" disabled={disabled} defaultValue={doc.tags.join(', ')} key={doc.tags.join(',')} onBlur={e=>update({...doc,tags:[...new Set(e.target.value.split(/[,，]/).map(t=>t.trim()).filter(Boolean))]})}/></label></section>
-   <EntityFieldCards document={doc} disabled={!!disabled} onChange={update}/>
+   <EntityFieldCards document={doc} disabled={!!disabled} getTextLocalization={getTextLocalization} onChange={update}/>
    <section className="entity-card"><h3>完整实体数据</h3><NbtTree value={doc.entity.data} disabled={disabled} onChange={data=>{if(data.type==='compound')update({...doc,entity:{...doc.entity,data}})}}/></section>
   </main></div>
 }

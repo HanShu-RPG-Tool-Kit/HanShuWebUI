@@ -34,6 +34,7 @@ import {
 } from './workspaces/progress/navigationPoint'
 import { createProgress, stringifyProgress } from './workspaces/progress/progressDoc'
 import { createItem, stringifyItem } from './workspaces/progress/itemDoc'
+import { createEntity, stringifyEntity } from './workspaces/progress/entityDoc'
 import type { GoalDefinition } from './workspaces/progress/goalDefinitions'
 import { blankServiceDefinition, stringifyServiceDefinition } from './tts/service'
 import { stringifyVoicePlan, type VoicePlan } from './tts/plan'
@@ -58,6 +59,7 @@ export type NewFileTypeId =
   | 'hflow'
   | 'nav'
   | 'item'
+  | 'entity'
   | 'kit'
   | 'md'
   | 'tts'
@@ -357,6 +359,16 @@ export const NEW_FILE_TYPES: readonly NewFileType[] = [
      * 物品（而 `minecraft:` 命名空间的东西也不该由文件名决定）。用户进去改成自己的 id。
      */
     seed: () => stringifyItem(createItem()),
+  },
+  {
+    id: 'entity',
+    ext: '.entity',
+    label: '实体',
+    hint: '名称、属性与装备',
+    icon: 'entity',
+    group: 'progress',
+    defaultBase: '新实体',
+    seed: () => stringifyEntity(createEntity()),
   },
   {
     id: 'kit',

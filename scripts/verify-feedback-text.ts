@@ -9,7 +9,7 @@ import {
   replaceFeedbackPlainText,
   stringifyFeedbackText,
 } from '../src/workspaces/progress/feedbackText'
-import { textComponentSegments } from '../src/workspaces/progress/itemTooltip'
+import { textComponentSegments, itemNameBaseStyle } from '../src/workspaces/progress/itemTooltip'
 
 function roundTrip(raw: string) {
   return stringifyFeedbackText(parseFeedbackText(raw))
@@ -155,3 +155,5 @@ assert.deepEqual(replaceFeedbackPlainText(richSuffix,'XCD'),[
 ])
 assert.deepEqual(replaceFeedbackPlainText([{text:'颜色',color:'#FF5555'}],'前颜色'),[{text:'前颜色',color:'#FF5555'}])
 
+assert.deepEqual(itemNameBaseStyle({}),{color:'#FFFFFF'})
+assert.deepEqual(itemNameBaseStyle({'minecraft:rarity':{type:'string',value:'rare'}}),{color:'#55FFFF'})

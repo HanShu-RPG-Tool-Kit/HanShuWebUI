@@ -72,6 +72,7 @@ function applyStyle(base: Style, source: Record<string, unknown>): Style {
   if (typeof source.color === 'string') next.color = COLORS[source.color] ?? (source.color.startsWith('#') ? source.color : next.color)
   for (const key of ['bold', 'italic', 'underlined', 'strikethrough', 'obfuscated'] as const) {
     if (typeof source[key] === 'boolean') next[key] = source[key] as boolean
+    else if(source[key]===0||source[key]===1)next[key]=source[key]===1
   }
   return next
 }
@@ -86,12 +87,12 @@ function clean(segment: ItemTextSegment): ItemTextSegment {
 }
 
 /** Minecraft 文本组件：字符串 / 对象 / 数组；1.20.5~1.21.4 的 JSON 字符串形态也兼容 */
-export function textComponentSegments(value: unknown, base: Style = {}): ItemTextSegment[] {
+export function textComponentSegments(value: unknown, base: Style = {}, serialized = true): ItemTextSegment[] {
   if (typeof value === 'string') {
     const trimmed = value.trim()
-    if (/^[[{"]/.test(trimmed)) {
+    if (serialized && /^[[{"]/.test(trimmed)) {
       try {
-        return textComponentSegments(JSON.parse(trimmed), base)
+        return textComponentSegments(JSON.parse(trimmed), base, false)
       } catch { /* 当普通文本 */ }
     }
     return [clean({ ...base, text: value })]
@@ -100,9 +101,9 @@ export function textComponentSegments(value: unknown, base: Style = {}): ItemTex
   if (Array.isArray(value)) {
     if (value.length === 0) return []
     const [first, ...rest] = value
-    const head = textComponentSegments(first, base)
+    const head = textComponentSegments(first, base, false)
     const style = isObject(first) ? applyStyle(base, first) : base
-    return [...head, ...rest.flatMap((child) => textComponentSegments(child, style))]
+    return [...head, ...rest.flatMap((child) => textComponentSegments(child, style, false))]
   }
   if (!isObject(value)) return []
   const style = applyStyle(base, value)
@@ -112,7 +113,7 @@ export function textComponentSegments(value: unknown, base: Style = {}): ItemTex
   else if (typeof value.keybind === 'string') text = value.keybind
   else if (typeof value.selector === 'string') text = value.selector
   const own = text ? [clean({ ...style, text })] : []
-  const extra = Array.isArray(value.extra) ? value.extra.flatMap((child) => textComponentSegments(child, style)) : []
+  const extra = Array.isArray(value.extra) ? value.extra.flatMap((child) => textComponentSegments(child, style, false)) : []
   return [...own, ...extra]
 }
 
@@ -144,11 +145,18 @@ function hiddenComponents(components: Record<string, unknown>): Set<string> {
   return new Set(display.hidden_components.filter((id): id is string => typeof id === 'string').map(stripNamespace))
 }
 
+/** Display-only defaults shared by the text surface and the final tooltip preview. */
+export function itemNameBaseStyle(components: Record<string, unknown>): { color: string } {
+  let rarity = typeof component(components, 'rarity') === 'string' ? stripNamespace(component(components, 'rarity') as string) : 'common'
+  if (readEnchantments(component(components, 'enchantments')).entries.length > 0) rarity = rarity === 'common' || rarity === 'uncommon' ? 'rare' : rarity === 'rare' ? 'epic' : rarity
+  return { color: RARITY_COLORS[rarity] ?? '#FFFFFF' }
+}
+
 export function renderItemTooltip(item: ItemLike): Omit<ItemPresentation, 'source' | 'iconStale' | 'defaultColor'> {
   const components = item.components
   const tooltipDisplay = component(components, 'tooltip_display')
   const hidden = component(components, 'hide_tooltip') !== undefined
-    || (isObject(tooltipDisplay) && tooltipDisplay.hide_tooltip === true)
+    || (isObject(tooltipDisplay) && (tooltipDisplay.hide_tooltip === true || tooltipDisplay.hide_tooltip === 1))
   const hiddenSet = hiddenComponents(components)
   const hideAdditional = component(components, 'hide_additional_tooltip') !== undefined
 
@@ -157,16 +165,14 @@ export function renderItemTooltip(item: ItemLike): Omit<ItemPresentation, 'sourc
   const glintOverride = component(components, 'enchantment_glint_override')
   const foil = typeof glintOverride === 'boolean' ? glintOverride : enchantments.entries.length > 0
 
-  let rarity = typeof component(components, 'rarity') === 'string' ? stripNamespace(component(components, 'rarity') as string) : 'common'
-  if (enchantments.entries.length > 0) rarity = rarity === 'common' || rarity === 'uncommon' ? 'rare' : rarity === 'rare' ? 'epic' : rarity
-  const rarityColor = RARITY_COLORS[rarity] ?? '#FFFFFF'
+  const rarityColor = itemNameBaseStyle(components).color
 
   const customName = component(components, 'custom_name')
   const itemName = component(components, 'item_name')
   const name = customName !== undefined
-    ? textComponentSegments(customName, { color: rarityColor, italic: true })
+    ? textComponentSegments(customName, { color: rarityColor, italic: true }, false)
     : itemName !== undefined
-      ? textComponentSegments(itemName, { color: rarityColor })
+      ? textComponentSegments(itemName, { color: rarityColor }, false)
       : [{ text: humanize(item.id || '未填 ID'), color: rarityColor }]
 
   const lines: ItemTextSegment[][] = [name]
@@ -178,7 +184,7 @@ export function renderItemTooltip(item: ItemLike): Omit<ItemPresentation, 'sourc
   }
   const lore = component(components, 'lore')
   if (Array.isArray(lore) && !hiddenSet.has('lore')) {
-    for (const line of lore) lines.push(textComponentSegments(line, { color: '#AA00AA', italic: true }))
+    for (const line of lore) lines.push(textComponentSegments(line, { color: '#AA00AA', italic: true }, false))
   }
   const unbreakable = component(components, 'unbreakable')
   if (unbreakable !== undefined && !hiddenSet.has('unbreakable') && !(isObject(unbreakable) && unbreakable.show_in_tooltip === false)) {

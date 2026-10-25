@@ -39,6 +39,7 @@ export const EXPLORER_ICON_KINDS = [
   'hflow',
   'nav',
   'item',
+  'entity',
   'kit',
   'image',
   'audio',
@@ -69,6 +70,7 @@ const PATHS: Record<ExplorerIconKind, string> = {
   nav: 'M12 21a9 9 0 100-18 9 9 0 000 18z M14.5 9.5l-2 5-5 2 2-5 5-2z',
   // 与 `kit`（礼物盒）刻意分开：物品是"一块宝石"，盒子留给礼包
   item: 'M6 3h12l4 6-10 12L2 9z M2 9h20',
+  entity: 'M8 3h8v6H8z M5 21v-6a7 7 0 0114 0v6 M8 15v6 M16 15v6',
   kit: 'M4 11h16v10H4z M2 7h20v4H2z M12 7v14 M12 7c0-2.5-2-4-4-4S5 5.5 5 7h7 M12 7c0-2.5 2-4 4-4s3 1.5 3 4h-7',
   image: 'M3 4h18v16H3z M3 16l5-5 4 4 3-3 6 6 M15.5 9.5a1.5 1.5 0 100-3 1.5 1.5 0 000 3z',
   audio: 'M9 18V5l12-2v13 M9 18a3 3 0 11-6 0 3 3 0 016 0z M21 16a3 3 0 11-6 0 3 3 0 016 0z',
@@ -95,6 +97,7 @@ const BY_EXT: Record<string, ExplorerIconKind> = {
   '.hflow': 'hflow',
   '.nav': 'nav',
   '.item': 'item',
+  '.entity': 'entity',
   '.kit': 'kit',
   '.png': 'image',
   '.jpg': 'image',

@@ -21,6 +21,7 @@ import {
   SOURCE_KIND_ORDER,
   WORKSPACE_GROUP_ORDER,
   sourceKindOf,
+  sourcePathOf,
 } from '../src/workspace.ts'
 import {
   MAX_BASE_LENGTH,
@@ -41,6 +42,7 @@ import { parseCharTextSpans } from '../src/monaco/charTextSpans.ts'
 import { collectSourceKeys } from '../src/hanshu/sourceKeys.ts'
 import { parseProgress, stringifyProgress } from '../src/workspaces/progress/progressDoc.ts'
 import { parseItem, stringifyItem } from '../src/workspaces/progress/itemDoc.ts'
+import { parseEntity, stringifyEntity } from '../src/workspaces/progress/entityDoc.ts'
 import { parseKit } from '../src/workspaces/progress/kit.ts'
 import { parseNavigationPoint, validateNavigationPoint } from '../src/workspaces/progress/navigationPoint.ts'
 import { parseFlow } from '../src/workspaces/progress/model.ts'
@@ -137,6 +139,7 @@ assert.equal(fileIconKind('a.progress'), 'progress')
 assert.equal(fileIconKind('a.hflow'), 'hflow')
 assert.equal(fileIconKind('a.nav'), 'nav')
 assert.equal(fileIconKind('a.kit'), 'kit')
+assert.equal(fileIconKind('a.entity'), 'entity')
 assert.equal(fileIconKind('a.ttsservice'), 'ttsservice')
 assert.equal(fileIconKind('a.tts'), 'tts')
 assert.notEqual(fileIconKind('a.tts'), fileIconKind('a.ttsservice'), '方案与服务定义必须是两个图标')
@@ -176,6 +179,7 @@ assert.deepEqual(
     'navigator',
     'gift',
     'items',
+    'entities',
     'meta',
   ],
   'WORKSPACE_GROUP_ORDER 必须覆盖全部源类型 + meta（资源树按它建桶）',
@@ -395,6 +399,14 @@ assert.equal(parseKit(kitSeed).name, 'name', '礼包名是语义键，种子不�
 const itemSeed = seedOf('item')
 assert.equal(stringifyItem(parseItem(itemSeed)), itemSeed, '.item 种子应能原样往返')
 assert.equal(parseItem(itemSeed).item.id, 'minecraft:stick', '.item 种子用 itemDoc 的默认 id')
+// `.entity` follows the same valid template seed and source directory as the entity workspace.
+const entitySeed = seedOf('entity')
+const entityDoc = parseEntity(entitySeed)
+assert.equal(stringifyEntity(entityDoc), entitySeed, '.entity 种子应能原样往返')
+assert.equal(entityDoc.entity.id, 'minecraft:pig', '.entity 种子使用构造器的默认实体类型')
+assert.deepEqual(entityDoc.entity.data, { type: 'compound', value: {} })
+assert.equal(sourceKindOf(newFileName(type('entity'), '新实体')), 'entities')
+assert.equal(sourcePathOf({ name: newFileName(type('entity'), '新实体') }), 'src/entities/新实体.entity')
 // `.nav`：解析回来还得过校验（坐标 / 维度 / 半径都得是合法值）
 const navPoint = parseNavigationPoint(seedOf('nav'))
 assert.deepEqual(validateNavigationPoint(navPoint), [], '.nav 种子应是一份合法导航点')
