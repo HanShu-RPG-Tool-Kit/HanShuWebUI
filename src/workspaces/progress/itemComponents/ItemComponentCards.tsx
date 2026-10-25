@@ -2,12 +2,14 @@ import { readComponents, readNbt, type ItemComponents } from '../tnbtJson'
 import { useRef, useState, useSyncExternalStore } from 'react'
 import { NodeContextMenu } from '../../../nodeEditor/ContextMenu'
 import { componentEditors, componentKey, isComponentGroup, subscribeComponentEditors, writeComponent, type ItemComponentGroupEditor } from './registry'
+import type {GetTextLocalization} from '../displayTextNbt'
 import './builtins'
 import './complexCards'
 
-export function ItemComponentCards({ components, disabled = false, onChange }: {
+export function ItemComponentCards({ components, disabled = false, onChange, getTextLocalization }: {
   components: Record<string, unknown>
   disabled?: boolean
+  getTextLocalization?: GetTextLocalization
   onChange: (components: ItemComponents) => void
 }) {
   const editors = useSyncExternalStore(subscribeComponentEditors, componentEditors)
@@ -35,9 +37,9 @@ export function ItemComponentCards({ components, disabled = false, onChange }: {
       if (isComponentGroup(editor)) {
         const Editor = editor.Editor
         return <article className={`item-component-card is-wide is-${editor.tone ?? 'steel'}`} key={editor.id} aria-label={editor.title}>
-          <header><div className="item-component-caption"><h4>{editor.title}</h4><code>{editor.caption}</code></div>
+          <header><div className="item-component-caption"><h4>{editor.title}</h4>{editor.caption&&<code>{editor.caption}</code>}</div>
             <button type="button" className="item-tree-action" aria-label={`${editor.alwaysVisible ? '清空' : '移除'}${editor.title}`} title={`${editor.alwaysVisible ? '清空已设置的组件，保留编辑区' : '删除此分组的组件'}`} disabled={disabled} onClick={()=>{if(disabled)return;const next={...values};for(const id of editor.componentIds)delete next[id];onChange(next)}}>×</button></header>
-          <Editor components={values} disabled={disabled} onChange={next=>updateGroup(editor,next)}/>
+          <Editor components={values} disabled={disabled} getTextLocalization={getTextLocalization} onChange={next=>updateGroup(editor,next)}/>
         </article>
       }
 

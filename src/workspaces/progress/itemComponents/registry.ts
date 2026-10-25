@@ -1,5 +1,6 @@
 import type { NbtValue, ItemComponents } from '../tnbtJson'
 import type { ComponentType } from 'react'
+import type {GetTextLocalization} from '../displayTextNbt'
 
 export type ComponentEditorProps = {
   value: NbtValue
@@ -31,7 +32,7 @@ export type ItemComponentGroupEditor = {
   order?: number
   componentIds: readonly string[]
   createComponents: () => ItemComponents
-  Editor: ComponentType<{components: ItemComponents; disabled: boolean; onChange: (components: ItemComponents) => void}>
+  Editor: ComponentType<{components: ItemComponents; disabled: boolean; getTextLocalization?: GetTextLocalization; onChange: (components: ItemComponents) => void}>
 }
 export type ItemComponentCard = ItemComponentEditor | ItemComponentGroupEditor
 export const isComponentGroup = (editor: ItemComponentCard): editor is ItemComponentGroupEditor => 'kind' in editor && editor.kind === 'group'

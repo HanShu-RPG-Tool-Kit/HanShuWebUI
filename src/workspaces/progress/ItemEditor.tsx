@@ -20,7 +20,7 @@ import {
   useItemPresentation,
   useItemSnapshotStatus,
 } from './itemPresentation'
-import { type ItemPresentation } from './itemTooltip'
+import { renderItemTooltip, type ItemPresentation } from './itemTooltip'
 import {
   DEFAULT_ITEM_ID,
   itemPresentable,
@@ -31,6 +31,7 @@ import {
 } from './itemDoc'
 import { ItemComponentCards } from './itemComponents/ItemComponentCards'
 import { ComponentsTree } from './NbtComponentsEditor'
+import {readDisplayText,writeDisplayText,localizedDisplayText,type GetTextLocalization} from './displayTextNbt'
 import './ItemEditor.css'
 import './KitEditor.css'
 
@@ -163,8 +164,9 @@ function Section({ title, hint, action, children }: {
   </section>
 }
 
-export function ItemEditor({ doc, error, disabled, onChange, onEditInGame }: {
+export function ItemEditor({ doc, error, disabled, onChange, onEditInGame, getTextLocalization }: {
   doc: ItemDocument
+  getTextLocalization?: GetTextLocalization
   error?: string
   disabled?: boolean
   onChange: (source: string) => void
@@ -172,7 +174,23 @@ export function ItemEditor({ doc, error, disabled, onChange, onEditInGame }: {
 }) {
   const online=useSyncExternalStore(subscribeControlHub,getControlHubSnapshot).phase==='open'
   const presentable = useMemo(() => itemPresentable(doc), [doc])
-  const presentation = useItemPresentation(presentable)
+  const snapshotPresentation = useItemPresentation(presentable)
+  const localizedComponents={...doc.item.components}
+  let hasLocalizedPreview=false
+  if(getTextLocalization){
+    for(const id of ['item_name','custom_name']){
+      const source=localizedComponents[`minecraft:${id}`],component=readDisplayText(source)
+      const display=localizedDisplayText(component,getTextLocalization(`item.${id}`,component))
+      if(display!==component){localizedComponents[`minecraft:${id}`]=writeDisplayText(display);hasLocalizedPreview=true}
+    }
+    const lore=localizedComponents['minecraft:lore']
+    if(lore?.type==='list')localizedComponents['minecraft:lore']={...lore,value:lore.value.map((source,index)=>{
+      const component=readDisplayText(source),display=localizedDisplayText(component,getTextLocalization(`item.lore.${index}`,component))
+      if(display===component)return source
+      hasLocalizedPreview=true;return writeDisplayText(display)
+    })}
+  }
+  const presentation=hasLocalizedPreview?{...snapshotPresentation,...renderItemTooltip({...presentable,components:localizedComponents}),source:'webui' as const}:snapshotPresentation
   const fingerprint = useMemo(() => itemFingerprint(doc.item), [doc.item])
 
   function update(patch: Partial<ItemDocument> | { item: Partial<ItemDocument['item']> }) {
@@ -223,7 +241,7 @@ export function ItemEditor({ doc, error, disabled, onChange, onEditInGame }: {
             </label>
             <ItemTagField tags={doc.tags} disabled={disabled} onChange={(tags) => update({ tags })} />
           </Section>
-          <ItemComponentCards components={doc.item.components} disabled={disabled}
+          <ItemComponentCards components={doc.item.components} disabled={disabled} getTextLocalization={getTextLocalization}
               onChange={(components) => update({ item: { components } })} />
           <ItemSyncEditor components={doc.item.components} value={doc.sync} disabled={disabled} onChange={(sync) => update({ sync })} />
           <Section title="组件树" hint="右键管理 · 双击键名重命名"
