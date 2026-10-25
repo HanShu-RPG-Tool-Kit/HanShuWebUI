@@ -21,7 +21,7 @@
     "test:file-editing": "node scripts/run-verification.mjs scripts/verify-file-editing.ts",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "test": "npm run test:text-live-geometry && npm run test:text-edit-session && npm run test:text-key-anim && npm run test:new-file-types && npm run test:script-resources && npm run test:text-key-rules && npm run test:hs-diag && npm run test:hs-compile && npm run test:progress && npm run test:progress-locale && npm run test:progress-edit-session && npm run test:kit-expr && npm run test:kit-script && npm run test:feedback-text && npm run test:display-appearance && npm run test:display-text-locale && npm run test:item-protocol && npm run test:item-sync && npm run test:tnbt-json && npm run test:item-snapshot-cache && npm run test:editor-groups && npm run test:skin-codec && npm run test:tts && npm run test:edit-transactions && npm run test:editor-transactions && npm run test:project-crypto && npm run test:file-editing && npm run test:skin-drafts && npm run test:skin-operation-ui && npm run test:resource-status",
+    "test": "npm run test:text-live-geometry && npm run test:text-edit-session && npm run test:text-key-anim && npm run test:new-file-types && npm run test:script-resources && npm run test:text-key-rules && npm run test:hs-diag && npm run test:hs-compile && npm run test:progress && npm run test:progress-locale && npm run test:progress-edit-session && npm run test:kit-expr && npm run test:kit-script && npm run test:feedback-text && npm run test:display-appearance && npm run test:display-text-locale && npm run test:display-localization && npm run test:item-protocol && npm run test:item-sync && npm run test:tnbt-json && npm run test:item-snapshot-cache && npm run test:editor-groups && npm run test:skin-codec && npm run test:tts && npm run test:edit-transactions && npm run test:editor-transactions && npm run test:project-crypto && npm run test:file-editing && npm run test:skin-drafts && npm run test:skin-operation-ui && npm run test:resource-status",
     "check:hs": "esbuild scripts/check-hanshu-coloring.ts --bundle --platform=node --format=cjs --outfile=node_modules/.cache/check-hanshu-coloring.cjs --log-level=warning && node node_modules/.cache/check-hanshu-coloring.cjs",
     "preview": "vite preview",
     "tauri": "node scripts/desktop.mjs",
@@ -95,7 +95,9 @@
     "test:node-directions:ui": "node scripts/verify-node-directions-ui.mjs",
     "test:node-editor:ui": "node scripts/verify-node-editor-ui.mjs",
     "test:display-appearance": "node scripts/run-verification.mjs scripts/verify-display-appearance.ts",
-    "test:display-text-locale": "node scripts/run-verification.mjs scripts/verify-display-text-locale.ts"
+    "test:display-text-locale": "node scripts/run-verification.mjs scripts/verify-display-text-locale.ts",
+    "test:display-localization": "node scripts/run-verification.mjs scripts/verify-display-localization.ts",
+    "test:display-localization:integration": "node scripts/verify-display-localization-integration.mjs"
   },
   "dependencies": {
     "@audio/encode-ogg": "^1.3.0",

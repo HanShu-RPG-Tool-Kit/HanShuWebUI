@@ -95,9 +95,9 @@ WebUI 在 Control `phase===open` 时主动发 `{ type: request, id, method, para
 | WebUI → mod | `items.edit.open` | request；成功即完，不 hold |
 | mod → WebUI | `items.edit.done` | notify；用户在 IBE 点完成时另发 |
 
-`params` / `done` 载荷：`{ uuid, hash, item: { id, components } }`（也接受扁平 `id`/`components`）。`uuid` 仅 hint（原样回传，业务可忽略）；`hash` 为 WebUI 版本令牌（当前用 `itemFingerprint`），写回时与本地指纹比对。无 cancel 通知、无写锁。
+基础物品载荷为 `{ uuid, hash, item: { id, components } }`，并带下文的 TNBT 格式标记。`hash` 为 WebUI 的物品指纹；WebUI 同时按不透明 `uuid` 绑定原工程、文档和版本。无 cancel 通知；打开编辑器不持有工程写锁。
 
-WebUI 入口：物品库资源树对 `.item` 右键 **发送到游戏内编辑**，或点击物品编辑器预览下方的同名按钮。冲突或找不到文档时丢弃并走 [活动列表](#activity-list)。
+WebUI 入口：物品库资源树对 `.item` 右键 **发送到游戏内编辑**，或点击物品编辑器预览下方的同名按钮。结果按原源文件和语言版本组成一个事务提交。源文件、译文或本窗口草稿发生冲突时，整批不写入，冻结的结果进入协作面板的可恢复提交，并走 [活动列表](#activity-list) 提示。
 
 ## 边界
 
@@ -131,9 +131,9 @@ ControlHub.INSTANCE.request("items.list", null)
 }
 ```
 
-open 中 count 忽略，Mod 强制为 1；done 不携带 count，返回全部生效持久化组件。Mod 不计算 hash，uuid/hash 原样回传；C 侧原有接收者应先验证格式与原版本，再走原有草稿/事务路径，不能把 notify 当作工程写权限。关闭 IBE 不发取消消息。
+open 中 count 忽略，Mod 强制为 1；done 不携带 count，返回全部生效持久化组件。Mod 不计算 hash，uuid/hash 原样回传；C 侧接收者验证格式、原会话与原版本，再走工程事务路径，不能把 notify 当作工程写权限。关闭 IBE 不发取消消息。
 
-参考 Mod `docs/itemedit.md`。本次协议适配不新增 WebUI IBE 按钮或替换现有回写协调实现。
+参考 Mod `docs/itemedit.md`。
 
 ### 工程显示文本本地化 v2
 

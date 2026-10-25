@@ -2,7 +2,7 @@ import {PythonEditor} from '../monaco/python/PythonEditor'
 import {scriptType,scriptSection,scriptTemplate} from '../scriptResources'
 import {scriptTypeInFolder,sectionFolderKey} from './progress/library'
 import {openEntityEditInGame} from '../gameDevServer/entityWorkbench'
-import {EntityEditor} from './progress/EntityEditor'
+import {LocalizedItemEditor, LocalizedEntityEditor} from './progress/LocalizedAppearanceEditors'
 import {createEntity,parseEntity,stringifyEntity} from './progress/entityDoc'
 import { useEffect, useImperativeHandle, useMemo, useRef, useState, type DragEvent, type Ref } from 'react'
 import { createPortal } from 'react-dom'
@@ -28,11 +28,10 @@ import {
   isItemSnapshotRefreshOnline,
   setAutoItemSnapshotRefreshEnabled,
 } from './progress/itemSnapshotCache'
-import { isItemStackFileName, itemFingerprint } from './progress/itemstack'
+import { isItemStackFileName } from './progress/itemstack'
 import {
   ensureItemEditNotifyStarted,
   openItemEditInGame,
-  subscribeItemEditDone,
 } from '../gameDevServer'
 import { itemRefFromFileName } from './progress/kit'
 import {
@@ -45,7 +44,6 @@ import { KitEditor } from './progress/KitEditor'
 import { ProgressCollaborativeEditor } from './progress/ProgressCollaborativeEditor'
 import { progressEditorSession } from './progress/progressEditRegistry'
 import { NavigationEditor } from './progress/NavigationEditor'
-import { ItemEditor } from './progress/ItemEditor'
 import {EntityLibraryTable} from './progress/EntityLibraryTable'
 import { ItemLibraryTable } from './progress/ItemLibraryTable'
 import { useEditorFontSize } from './progress/editorFont'
@@ -603,41 +601,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
       documents: previous.documents.map((item) => item.key === key ? stampDocument({ ...item, source }) : item),
     }))
   }
-  const changeSourceRef = useRef(changeSource)
-  changeSourceRef.current = changeSource
-  const readOnlyRef = useRef(readOnly)
-  readOnlyRef.current = readOnly
-
-  useEffect(() => {
-    ensureItemEditNotifyStarted()
-    return subscribeItemEditDone((event) => {
-      if (!event.documentKey) {
-        notify('游戏中编辑已完成，但找不到对应的 .item', { kind: 'warning', source: 'items' })
-        return
-      }
-      const document = stateRef.current.documents.find((item) => item.key === event.documentKey)
-      if (!document || !isItemDocument(document)) {
-        notify('游戏中编辑已完成，但对应 .item 已不存在', { kind: 'warning', source: 'items' })
-        return
-      }
-      const parsed = readItemSource(document.source)
-      if (parsed.error) {
-        notify(`无法写回游戏编辑结果：${parsed.error}`, { kind: 'error', source: 'items' })
-        return
-      }
-      if (itemFingerprint(parsed.doc.item) !== event.hash) {
-        notify('本地物品已变更，已丢弃游戏中的编辑结果', { kind: 'warning', source: 'items' })
-        return
-      }
-      if (readOnlyRef.current) {
-        notify('工程只读，无法写回游戏中的编辑', { kind: 'warning', source: 'items' })
-        return
-      }
-      changeSourceRef.current(stringifyItem({ ...parsed.doc, item: event.item }), false, event.documentKey)
-      forceRequestItemSnapshots([event.item])
-      notify('已应用游戏中编辑结果', { kind: 'success', source: 'items' })
-    })
-  }, [])
+  useEffect(() => { ensureItemEditNotifyStarted() }, [])
 
   async function openEntityInGame(key:string){
     const document=state.documents.find(d=>d.key===key)
@@ -1260,7 +1224,7 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
       </div>
     }
     if(paneEntityTable)return <EntityLibraryTable active={active} documents={state.documents} onOpen={key=>updateGroups(previous=>openOppositeToKey(previous,ENTITY_LIBRARY_TABLE_KEY,key,focusedGroup))}/>
-    if(paneEntity)return <div className="flow-kit-pane"><EntityEditor key={`${client?.snapshot.projectId??''}/${paneDoc.key}`} documentKey={paneDoc.key} source={paneDoc.source} disabled={disabledPane} active={active} onChange={source=>{if(!disabledPane)changeSource(source,false,paneDoc.key)}}/></div>
+    if(paneEntity)return <div className="flow-kit-pane"><LocalizedEntityEditor name={paneDoc.name} locale={locale} onLocaleChange={tag=>{setLocale(tag);saveLocale(tag)}} key={`${client?.snapshot.projectId??''}/${paneDoc.key}`} documentKey={paneDoc.key} source={paneDoc.source} disabled={disabledPane} active={active} onChange={source=>{if(!disabledPane)changeSource(source,false,paneDoc.key)}}/></div>
     if (paneItemTable) {
       return <div className="flow-kit-pane">
         <ItemLibraryTable
@@ -1291,7 +1255,8 @@ export function ProgressFlowWorkspace({ active, workspaceRef }: { active: boolea
         </div>
       }
       return <div className="flow-kit-pane">
-        <ItemEditor
+        <LocalizedItemEditor
+          name={paneDoc.name} locale={locale} onLocaleChange={tag=>{setLocale(tag);saveLocale(tag)}}
           key={paneDoc.key}
           doc={paneItemParsed.doc}
           onEditInGame={()=>{void openItemInGame(paneDoc.key)}}

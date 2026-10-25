@@ -184,6 +184,39 @@ function journalFixture() {
   return { journal, fail(value: boolean) { fail = value }, records: () => structuredClone(records) }
 }
 
+await test('游戏编辑本地冲突只持久保存冻结批次，恢复重试仍使用原版本且保留后续草稿', async () => {
+  const local=journalFixture(),first=fixture()
+  await first.tx.restore(local.journal)
+  const result:FileEdit[]=[
+    {op:'write',path:'src/items/sword.item',data:'game source',version:'source-open-version'},
+    {op:'write',path:'assets/zh_cn/lang_item/sword.lang',data:'game translation',version:'locale-open-version'},
+    {op:'write',path:'assets/en_us/lang_item/sword.lang',data:'unchanged English',version:null,adopt:true},
+  ]
+  const id=await first.tx.retainConflict('游戏编辑结果待恢复',result,'源文档草稿已改变')
+  assert.equal(first.sent.length,0)
+  assert.equal(first.tx.getSnapshot().transactions[0].phase,'conflict')
+  assert.deepEqual(local.records()[0].edits,result)
+  result[0].data='mutated caller object';result[1].version='newer-caller-version'
+  assert.equal(local.records()[0].edits[0].data,'game source')
+  const restored=fixture()
+  restored.versions.set('src/items/sword.item','new-peer-source-version')
+  restored.versions.set('assets/zh_cn/lang_item/sword.lang','new-peer-locale-version')
+  await restored.tx.restore(local.journal)
+  assert.equal(restored.sent.length,0)
+  await restored.tx.stageWrite({op:'write',path:'assets/zh_cn/lang_item/sword.lang',data:'new local draft',version:'locale-open-version'})
+  await assert.rejects(restored.tx.submit('覆盖冲突范围',()=>[{op:'write',path:'src/items/sword.item',data:'unsafe new payload'}]),/未处理的提交/)
+  assert.equal(restored.sent.length,0)
+  await restored.tx.retry(id)
+  assert.equal(restored.sent.length,1)
+  assert.deepEqual(restored.sent[0].map(edit=>[edit.path,edit.data,edit.version,edit.adopt]),[
+    ['src/items/sword.item','game source','source-open-version',undefined],
+    ['assets/zh_cn/lang_item/sword.lang','game translation','locale-open-version',undefined],
+    ['assets/en_us/lang_item/sword.lang','unchanged English',null,true],
+  ])
+  assert.equal(restored.tx.stagedText('assets/zh_cn/lang_item/sword.lang'),'new local draft')
+  assert.equal(local.records().length,0)
+})
+
 await test('确定拒绝换新编号，未知结果重试和只查询保留原编号', async () => {
   let phase = 0
   const { tx, attempts, sent } = fixture(async () => {

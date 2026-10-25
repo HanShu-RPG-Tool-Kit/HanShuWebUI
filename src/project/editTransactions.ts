@@ -176,6 +176,15 @@ export class EditTransactions {
     this.emit()
     return job.info.id
   }
+  /** Preserve a remote editor result which conflicts with a local draft, without sending it. */
+  async retainConflict(label: string, edits: FileEdit[], message: string): Promise<number> {
+    const frozen = this.capture(edits)
+    const job: Job = { info: { id: this.nextId++, requestId: randomId(), label, phase: 'conflict', paths: pathsOf(frozen), message, code: 'conflict' }, collect: () => [], includeStaged: false, edits: frozen, staged: new Map(), unresolved: true }
+    this.jobs.push(job)
+    await this.persist()
+    this.emit()
+    return job.info.id
+  }
   /** Call even when the set of dirty paths stays the same: their contents may change. */
   changed() { this.revision++; this.emit() }
   /** Register asynchronous initialization before it produces a staged draft. Saves
