@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict'
-import {readDisplayText,writeDisplayText,localizedDisplayText} from '../src/workspaces/quest/displayTextNbt'
-import {renderItemTooltip} from '../src/workspaces/quest/itemTooltip'
-import {entityFieldEditors} from '../src/workspaces/quest/entityFields/registry'
-import '../src/workspaces/quest/entityFields/registerBuiltins'
-import type {NbtValue} from '../src/workspaces/quest/tnbtJson'
+import {readDisplayText,writeDisplayText,localizedDisplayText} from '../src/workspaces/gameplay/displayTextNbt'
+import {renderItemTooltip} from '../src/workspaces/gameplay/itemTooltip'
+import {entityFieldEditors} from '../src/workspaces/gameplay/entityFields/registry'
+import '../src/workspaces/gameplay/entityFields/registerBuiltins'
+import type {NbtValue} from '../src/workspaces/gameplay/tnbtJson'
 import type {TextLocalizationAdapter} from '../src/textComponent/LocalizedTextField'
 
 assert.equal(readDisplayText(undefined),undefined)

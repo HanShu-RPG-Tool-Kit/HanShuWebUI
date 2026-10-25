@@ -6,7 +6,7 @@ import { getExtension } from './workspace'
  * 新增文件类型时**必须**给它一个专属 kind（见 `newFileTypes.ts`）：树里 `.quest` 与
  * `.kit` 都退化成通用文件图标时，一眼看不出哪个是任务、哪个是礼包，右键点错了才发现。
  *
- * 形状与任务工作区（`workspaces/quest/FlowExplorer.tsx` 的 `Icon`）**同源**：
+ * 形状与游戏性工作区（`workspaces/gameplay/FlowExplorer.tsx` 的 `Icon`）**同源**：
  * 同一个文件类型在两个资源树里长得一样，用户不必学两套。新建菜单里单/多进度
  * 都是 `.quest`，用 `progress` / `hflow` 图标区分作者态；资源树按后缀只认 `quest`。
  */

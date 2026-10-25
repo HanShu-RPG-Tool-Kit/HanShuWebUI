@@ -182,7 +182,7 @@ html.splash-windowed .app {
   display: flex;
 }
 
-.script-workspace {
+.stageplay-workspace {
   flex: 1;
   min-height: 0;
   display: flex;
@@ -2532,7 +2532,7 @@ body.is-resizing .monaco-editor {
 
 
 /* ================= 剧本编辑器：皮肤管理器同款 Blender 式方角面板 ================= */
-.script-workspace {
+.stageplay-workspace {
   --bg: #1d1d1d;
   --bg-title: #383838;
   --bg-menu-hover: #3d3d3d;
@@ -2570,80 +2570,80 @@ body.is-resizing .monaco-editor {
   background: var(--border);
 }
 
-.script-workspace ::-webkit-scrollbar { width: 10px; height: 10px; }
-.script-workspace ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.12); border: 2px solid transparent; background-clip: content-box; }
-.script-workspace ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.2); border: 2px solid transparent; background-clip: content-box; }
-.script-workspace ::-webkit-scrollbar-track { background: transparent; }
+.stageplay-workspace ::-webkit-scrollbar { width: 10px; height: 10px; }
+.stageplay-workspace ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.12); border: 2px solid transparent; background-clip: content-box; }
+.stageplay-workspace ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.2); border: 2px solid transparent; background-clip: content-box; }
+.stageplay-workspace ::-webkit-scrollbar-track { background: transparent; }
 
 /* 面板之间 2px 缝，底色透出 */
-.script-workspace .workspace { gap: 2px; padding: 2px; background: var(--border); }
-.script-workspace .editor-column { background: var(--bg); }
-.script-workspace .split-handle {
+.stageplay-workspace .workspace { gap: 2px; padding: 2px; background: var(--border); }
+.stageplay-workspace .editor-column { background: var(--bg); }
+.stageplay-workspace .split-handle {
   flex: 0 0 2px;
   width: 2px;
   margin: 0 -2px;
   background: var(--border-soft);
 }
-.script-workspace .split-handle:hover,
-body.is-resizing .script-workspace .split-handle { background: var(--accent); }
+.stageplay-workspace .split-handle:hover,
+body.is-resizing .stageplay-workspace .split-handle { background: var(--accent); }
 
 /* 标签条 */
-.script-workspace .tabbar { height: calc(26px * var(--sw-s)); align-items: stretch; background: var(--sw-panel-2); border-bottom: 1px solid var(--border); box-sizing: content-box; }
-.script-workspace .tab { position: relative; height: auto; gap: 6px; padding: 0 10px; border-top: 0; background: var(--sw-head); color: var(--text-bright); font-size: var(--sw-font-sm); }
-.script-workspace .tab.active::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--accent); }
-.script-workspace .tab-close { opacity: 0.55; font-size: var(--sw-font); }
-.script-workspace .tab-action { align-self: center; height: calc(20px * var(--sw-s)); margin: 0 4px 0 auto; padding: 0 10px; border: 1px solid var(--border-soft); border-radius: 0; background: var(--sw-panel-2); color: var(--text-dim); font-size: var(--sw-font-xs); }
-.script-workspace .tab-action + .tab-action { margin-left: 0; }
-.script-workspace .tab-action:hover { background: var(--sw-hover); border-color: var(--border-soft); color: var(--text-bright); }
-.script-workspace .tab-action.on { background: rgba(74, 108, 247, 0.16); border-color: var(--border-soft); color: #9db4f0; }
+.stageplay-workspace .tabbar { height: calc(26px * var(--sw-s)); align-items: stretch; background: var(--sw-panel-2); border-bottom: 1px solid var(--border); box-sizing: content-box; }
+.stageplay-workspace .tab { position: relative; height: auto; gap: 6px; padding: 0 10px; border-top: 0; background: var(--sw-head); color: var(--text-bright); font-size: var(--sw-font-sm); }
+.stageplay-workspace .tab.active::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--accent); }
+.stageplay-workspace .tab-close { opacity: 0.55; font-size: var(--sw-font); }
+.stageplay-workspace .tab-action { align-self: center; height: calc(20px * var(--sw-s)); margin: 0 4px 0 auto; padding: 0 10px; border: 1px solid var(--border-soft); border-radius: 0; background: var(--sw-panel-2); color: var(--text-dim); font-size: var(--sw-font-xs); }
+.stageplay-workspace .tab-action + .tab-action { margin-left: 0; }
+.stageplay-workspace .tab-action:hover { background: var(--sw-hover); border-color: var(--border-soft); color: var(--text-bright); }
+.stageplay-workspace .tab-action.on { background: rgba(74, 108, 247, 0.16); border-color: var(--border-soft); color: #9db4f0; }
 
 /* 资源管理器 */
-.script-workspace .explorer { border-right: 0; }
-.script-workspace .explorer-header { height: calc(26px * var(--sw-s)); box-sizing: content-box; padding: 0 6px 0 8px; background: var(--sw-head); border-bottom: 1px solid var(--border); color: var(--text); font-size: var(--sw-font-sm); }
-.script-workspace .explorer-actions button { height: calc(20px * var(--sw-s)); padding: 0 8px; border: 1px solid var(--border-soft); border-radius: 0; background: var(--sw-panel-2); color: var(--text-dim); font-size: var(--sw-font-xs); }
-.script-workspace .explorer-actions button:hover { background: var(--sw-hover); color: var(--text-bright); }
-.script-workspace .explorer-tree { padding: 2px 0 8px; }
-.script-workspace .explorer-row:hover { background: var(--sw-hover); }
-.script-workspace .explorer-file-row.active { background: var(--sw-active); }
-.script-workspace .explorer-file-row.active .explorer-label { color: var(--text-bright); }
-.script-workspace .explorer-label { font-size: var(--sw-font-sm); }
-.script-workspace .explorer-asset-row .explorer-label { font-size: var(--sw-font-sm); }
-.script-workspace .explorer-twist { width: 14px; font-size: var(--sw-font-xs); color: #9a9aa5; }
-.script-workspace .explorer-file-row { padding-left: 18px; }
-.script-workspace .explorer-kind-row { padding: 2px 8px 2px 18px; font-size: var(--sw-font-xs); color: var(--text-dim); }
-.script-workspace .explorer-icon { width: calc(16px * var(--sw-s)); height: calc(16px * var(--sw-s)); }
-.script-workspace .explorer-kind-row .explorer-icon { width: calc(13px * var(--sw-s)); height: calc(13px * var(--sw-s)); }
-.script-workspace .explorer-pkg-path { font-size: var(--sw-font-xs); color: #888888; opacity: 1; }
-.script-workspace .explorer-count { font-size: var(--sw-font-xs); color: #888888; }
-.script-workspace .explorer-empty { font-size: var(--sw-font-xs); color: #888888; }
-.script-workspace .explorer-row-actions button,
-.script-workspace .explorer-upload { border-radius: 0; font-size: var(--sw-font-xs); }
-.script-workspace .explorer-row-actions button:hover,
-.script-workspace .explorer-upload:hover { background: rgba(255, 255, 255, 0.1); }
-.script-workspace .explorer-context-menu { padding: 4px; background: var(--sw-panel-2); border: 1px solid var(--border); box-shadow: 0 10px 32px rgba(0, 0, 0, 0.55); font-size: var(--sw-font-sm); }
-.script-workspace .explorer-context-menu li button { padding: 5px 10px; }
-.script-workspace .explorer-context-menu li button:hover { background: var(--sw-hover); }
+.stageplay-workspace .explorer { border-right: 0; }
+.stageplay-workspace .explorer-header { height: calc(26px * var(--sw-s)); box-sizing: content-box; padding: 0 6px 0 8px; background: var(--sw-head); border-bottom: 1px solid var(--border); color: var(--text); font-size: var(--sw-font-sm); }
+.stageplay-workspace .explorer-actions button { height: calc(20px * var(--sw-s)); padding: 0 8px; border: 1px solid var(--border-soft); border-radius: 0; background: var(--sw-panel-2); color: var(--text-dim); font-size: var(--sw-font-xs); }
+.stageplay-workspace .explorer-actions button:hover { background: var(--sw-hover); color: var(--text-bright); }
+.stageplay-workspace .explorer-tree { padding: 2px 0 8px; }
+.stageplay-workspace .explorer-row:hover { background: var(--sw-hover); }
+.stageplay-workspace .explorer-file-row.active { background: var(--sw-active); }
+.stageplay-workspace .explorer-file-row.active .explorer-label { color: var(--text-bright); }
+.stageplay-workspace .explorer-label { font-size: var(--sw-font-sm); }
+.stageplay-workspace .explorer-asset-row .explorer-label { font-size: var(--sw-font-sm); }
+.stageplay-workspace .explorer-twist { width: 14px; font-size: var(--sw-font-xs); color: #9a9aa5; }
+.stageplay-workspace .explorer-file-row { padding-left: 18px; }
+.stageplay-workspace .explorer-kind-row { padding: 2px 8px 2px 18px; font-size: var(--sw-font-xs); color: var(--text-dim); }
+.stageplay-workspace .explorer-icon { width: calc(16px * var(--sw-s)); height: calc(16px * var(--sw-s)); }
+.stageplay-workspace .explorer-kind-row .explorer-icon { width: calc(13px * var(--sw-s)); height: calc(13px * var(--sw-s)); }
+.stageplay-workspace .explorer-pkg-path { font-size: var(--sw-font-xs); color: #888888; opacity: 1; }
+.stageplay-workspace .explorer-count { font-size: var(--sw-font-xs); color: #888888; }
+.stageplay-workspace .explorer-empty { font-size: var(--sw-font-xs); color: #888888; }
+.stageplay-workspace .explorer-row-actions button,
+.stageplay-workspace .explorer-upload { border-radius: 0; font-size: var(--sw-font-xs); }
+.stageplay-workspace .explorer-row-actions button:hover,
+.stageplay-workspace .explorer-upload:hover { background: rgba(255, 255, 255, 0.1); }
+.stageplay-workspace .explorer-context-menu { padding: 4px; background: var(--sw-panel-2); border: 1px solid var(--border); box-shadow: 0 10px 32px rgba(0, 0, 0, 0.55); font-size: var(--sw-font-sm); }
+.stageplay-workspace .explorer-context-menu li button { padding: 5px 10px; }
+.stageplay-workspace .explorer-context-menu li button:hover { background: var(--sw-hover); }
 
 /* 侧栏（Agent / 角色栏）标题条 */
-.script-workspace .agent-panel { border-right: 0; }
-.script-workspace .agent-header { background: var(--sw-head); }
-.script-workspace .agent-header-actions button,
-.script-workspace .agent-input-actions button { border-radius: 0; }
-.script-workspace .role-panel { border-left: 0; }
-.script-workspace .role-panel-header { height: auto; padding: 4px 8px; background: var(--sw-head); border-bottom: 1px solid var(--border); color: var(--text); font-size: var(--sw-font-sm); }
-.script-workspace .role-slot:hover { background: var(--sw-hover); }
-.script-workspace .role-index { border-radius: 0; }
-.script-workspace .role-input:focus { background: var(--sw-panel-2); }
+.stageplay-workspace .agent-panel { border-right: 0; }
+.stageplay-workspace .agent-header { background: var(--sw-head); }
+.stageplay-workspace .agent-header-actions button,
+.stageplay-workspace .agent-input-actions button { border-radius: 0; }
+.stageplay-workspace .role-panel { border-left: 0; }
+.stageplay-workspace .role-panel-header { height: auto; padding: 4px 8px; background: var(--sw-head); border-bottom: 1px solid var(--border); color: var(--text); font-size: var(--sw-font-sm); }
+.stageplay-workspace .role-slot:hover { background: var(--sw-hover); }
+.stageplay-workspace .role-index { border-radius: 0; }
+.stageplay-workspace .role-input:focus { background: var(--sw-panel-2); }
 
 /* 编辑区 */
-.script-workspace .asset-preview-text,
-.script-workspace .asset-preview-editor,
-.script-workspace .asset-preview-save { border-radius: 0; }
+.stageplay-workspace .asset-preview-text,
+.stageplay-workspace .asset-preview-editor,
+.stageplay-workspace .asset-preview-save { border-radius: 0; }
 
 /* 状态栏：中性灰，替换原来的蓝条 */
-.script-workspace .statusbar { background: var(--sw-head); color: var(--text-dim); font-size: var(--sw-font-xs); }
-.script-workspace .statusbar span:hover,
-.script-workspace .statusbar .lang-select .lang-trigger:hover,
-.script-workspace .statusbar .lang-select .lang-trigger.open { background: rgba(255, 255, 255, 0.08); }
-.script-workspace .statusbar .status-on { background: rgba(74, 108, 247, 0.16); color: #9db4f0; }
-.script-workspace .statusbar .status-warn { color: var(--danger); }
+.stageplay-workspace .statusbar { background: var(--sw-head); color: var(--text-dim); font-size: var(--sw-font-xs); }
+.stageplay-workspace .statusbar span:hover,
+.stageplay-workspace .statusbar .lang-select .lang-trigger:hover,
+.stageplay-workspace .statusbar .lang-select .lang-trigger.open { background: rgba(255, 255, 255, 0.08); }
+.stageplay-workspace .statusbar .status-on { background: rgba(74, 108, 247, 0.16); color: #9db4f0; }
+.stageplay-workspace .statusbar .status-warn { color: var(--danger); }

@@ -3,8 +3,8 @@
  * 覆盖 compileSimpleQuestDocument 与 questCompiler 入口。
  */
 import assert from 'node:assert/strict'
-import { createProgress, stringifyProgress } from '../src/workspaces/quest/progressDoc.ts'
-import { MULTI_QUEST_FORMAT, SIMPLE_QUEST_FORMAT } from '../src/workspaces/quest/questKind.ts'
+import { createProgress, stringifyProgress } from '../src/workspaces/gameplay/progressDoc.ts'
+import { MULTI_QUEST_FORMAT, SIMPLE_QUEST_FORMAT } from '../src/workspaces/gameplay/questKind.ts'
 import { compileSimpleQuestDocument, questCompiler } from '../src/export/compile/compilers/quest.ts'
 import type { CompileContext, CompileIndex } from '../src/export/compile/types.ts'
 import { createProject, type SourceFile } from '../src/workspace.ts'

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
-import { goalAliases, parseCompletionGraph, canConnectCompletion, completionIssues, evaluateCompletion, layoutCompletion, type CompletionGraph } from '../src/workspaces/quest/completionGraph'
-import { createProgress, parseProgress, stringifyProgress, type ProgressGoal } from '../src/workspaces/quest/progressDoc'
-import { progressDocumentEffects, applyProgressEffects } from '../src/workspaces/quest/progressOperations'
+import { goalAliases, parseCompletionGraph, canConnectCompletion, completionIssues, evaluateCompletion, layoutCompletion, type CompletionGraph } from '../src/workspaces/gameplay/completionGraph'
+import { createProgress, parseProgress, stringifyProgress, type ProgressGoal } from '../src/workspaces/gameplay/progressDoc'
+import { progressDocumentEffects, applyProgressEffects } from '../src/workspaces/gameplay/progressOperations'
 const goals: ProgressGoal[] = ['kill','collect','kill','talk','collect'].map((kind,i)=>({id:`goal-${i}`,kind,config:{}}))
 assert.deepEqual([...goalAliases(goals).values()],['A1','B1','A2','C1','B2'])
 assert.deepEqual([...goalAliases([goals[1],goals[0],goals[4]]) .values()],['A1','B1','A2'])

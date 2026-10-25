@@ -50,7 +50,7 @@ WebUI 不主动捕获游戏目标。请在游戏中使用复制魔杖右键实�
 
 ## 注册常用字段卡片
 
-入口 `src/workspaces/quest/entityFields/registry.ts` 的 `registerEntityFieldEditor`。内置外观／行为、属性和装备也走同一注册接口。定义唯一命名空间 `id`、`title`、`tone`、`order`、所管理的根 NBT `fields` 和 React `Editor`；`appliesTo(document)` 可限制实体类型或支持的数据形状。返回值用于注销，注册／注销后已打开的界面即时更新。
+入口 `src/workspaces/gameplay/entityFields/registry.ts` 的 `registerEntityFieldEditor`。内置外观／行为、属性和装备也走同一注册接口。定义唯一命名空间 `id`、`title`、`tone`、`order`、所管理的根 NBT `fields` 和 React `Editor`；`appliesTo(document)` 可限制实体类型或支持的数据形状。返回值用于注销，注册／注销后已打开的界面即时更新。
 
 编辑器收到只读 `data`、`entityType`、`disabled` 和 `onChange(nextData)`，必须用不可变更新并遵循只读状态。宿主只采纳该卡声明的字段，其他字段始终从原数据保留；省略已声明字段表示删除它。禁止重复 ID 或重叠的根字段归属，同一复合字段的多个编辑入口应合并为一张卡。完整 TNBT 树仍是通用兜底，不受卡片覆盖范围限制。
 

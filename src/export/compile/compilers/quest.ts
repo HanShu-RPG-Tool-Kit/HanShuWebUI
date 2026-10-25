@@ -1,6 +1,6 @@
 import { getExtension } from '../../../workspace'
-import { parseProgress, PROGRESS_FORMAT, type ProgressDocument } from '../../../workspaces/quest/progressDoc'
-import { MULTI_QUEST_FORMAT, questAuthorKindFromSource, QUEST_EXT } from '../../../workspaces/quest/questKind'
+import { parseProgress, PROGRESS_FORMAT, type ProgressDocument } from '../../../workspaces/gameplay/progressDoc'
+import { MULTI_QUEST_FORMAT, questAuthorKindFromSource, QUEST_EXT } from '../../../workspaces/gameplay/questKind'
 import type { FileCompiler } from '../types'
 
 function pakQuestPath(fileName: string): string {

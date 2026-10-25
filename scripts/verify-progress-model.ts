@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict'
-import { addNode, canConnectNodes, clone, connectEntry, connectNodes, createFlow, disconnectLink, findCanvasCycle, getCanvasNote, hasContentNode, inputPorts, linkSourcePort, makeNode, outgoingCount, outputPorts, parseFlow, portKind, removeNode, renameNode, swapInPort, swapOutPort, text, validateFlow, type ProgressFlow } from '../src/workspaces/quest/model.ts'
-import { FLOW_STORAGE_KEY, createFlowDocument, importFlowDocument, loadFlowWorkspace, saveFlowWorkspace } from '../src/workspaces/quest/storage.ts'
-import { addFlowFolder, moveFlowEntry, renameFlowEntry, uniqueDocumentName } from '../src/workspaces/quest/library.ts'
-import { addNextCheckpoint, createCanvasNote, removeCanvasItems, updateCanvasNote, removeCanvasNote, groupCanvasNodes, moveCanvasNodes, nodeMetrics, createCheckpoint, createEndNode, createGoalNode, createPredicateNode, createTransitionNode, createConditionalNode, createDiffNode, createMergeNode, createSwapNode, layoutCanvas, moveCheckpoint, socketOffset, withCanvasPositions } from '../src/workspaces/quest/canvas.ts'
-import { smartArrangeCanvas } from '../src/workspaces/quest/arrange.ts'
+import { addNode, canConnectNodes, clone, connectEntry, connectNodes, createFlow, disconnectLink, findCanvasCycle, getCanvasNote, hasContentNode, inputPorts, linkSourcePort, makeNode, outgoingCount, outputPorts, parseFlow, portKind, removeNode, renameNode, swapInPort, swapOutPort, text, validateFlow, type ProgressFlow } from '../src/workspaces/gameplay/model.ts'
+import { FLOW_STORAGE_KEY, createFlowDocument, importFlowDocument, loadFlowWorkspace, saveFlowWorkspace } from '../src/workspaces/gameplay/storage.ts'
+import { addFlowFolder, moveFlowEntry, renameFlowEntry, uniqueDocumentName } from '../src/workspaces/gameplay/library.ts'
+import { addNextCheckpoint, createCanvasNote, removeCanvasItems, updateCanvasNote, removeCanvasNote, groupCanvasNodes, moveCanvasNodes, nodeMetrics, createCheckpoint, createEndNode, createGoalNode, createPredicateNode, createTransitionNode, createConditionalNode, createDiffNode, createMergeNode, createSwapNode, layoutCanvas, moveCheckpoint, socketOffset, withCanvasPositions } from '../src/workspaces/gameplay/canvas.ts'
+import { smartArrangeCanvas } from '../src/workspaces/gameplay/arrange.ts'
 import { MAX_CANVAS_ZOOM, MIN_CANVAS_ZOOM, worldPoint, zoomCamera } from '../src/nodeEditor/camera.ts'
-import { CKPT_STATES, GOAL_STATES, PREDICATE_STATES, ckptState, createSimState, fireCkptTransition, fireGoalComplete, fireGoalNo, fireGoalYes, firePredicateComplete, fireStart, goalState, mergeSim, outgoingSignalTargets, predicateState, propagateSignals, resetSimState, syncSimState } from '../src/workspaces/quest/signals.ts'
-import { createKit, createKitItem, flattenKit, mergeKitLayer, parseKit, stringifyKit } from '../src/workspaces/quest/kit.ts'
+import { CKPT_STATES, GOAL_STATES, PREDICATE_STATES, ckptState, createSimState, fireCkptTransition, fireGoalComplete, fireGoalNo, fireGoalYes, firePredicateComplete, fireStart, goalState, mergeSim, outgoingSignalTargets, predicateState, propagateSignals, resetSimState, syncSimState } from '../src/workspaces/gameplay/signals.ts'
+import { createKit, createKitItem, flattenKit, mergeKitLayer, parseKit, stringifyKit } from '../src/workspaces/gameplay/kit.ts'
 
 let passed = 0
 const pending: Promise<void>[] = []
@@ -1164,8 +1164,8 @@ test('Kit stringify/parse keeps extends and includes', () => {
 })
 
 test('Kit item can link to .item library by filename stem', async () => {
-  const { createKitItemLink, expandKitItem, isKitItemLink, normalizeItemRef, resolveKit } = await import('../src/workspaces/quest/kit.ts')
-  const { createItem } = await import('../src/workspaces/quest/itemDoc.ts')
+  const { createKitItemLink, expandKitItem, isKitItemLink, normalizeItemRef, resolveKit } = await import('../src/workspaces/gameplay/kit.ts')
+  const { createItem } = await import('../src/workspaces/gameplay/itemDoc.ts')
   const linked = createKitItemLink('diamond_spear.item', 3)
   assert.equal(linked.item, 'diamond_spear')
   assert.ok(isKitItemLink(linked))

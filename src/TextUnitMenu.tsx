@@ -4,7 +4,7 @@ import { useEffect, useLayoutEffect, useRef } from 'react'
  * 上级容器（文本 + 配音按钮）的右键菜单。
  *
  * **可扩展**：条目完全由调用方给（`items`），加一条就多一个功能；
- * 默认的 Edit Key / Edit Text / Edit Voice / Delete 在 ScriptWorkspace 里组装。
+ * 默认的 Edit Key / Edit Text / Edit Voice / Delete 在 StageplayWorkspace 里组装。
  *
  * 定位与关闭照仓库既有右键菜单（Explorer 的资源右键）的惯例：
  * `position: fixed` + window 的 click / scroll / Escape 关闭。

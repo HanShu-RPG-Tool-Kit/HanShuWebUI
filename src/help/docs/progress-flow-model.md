@@ -1,6 +1,6 @@
 # 多进度任务（树图）模型
 
-本文描述任务工作区中**多进度**作者态的画布模型与信号运行时（`src/workspaces/quest/model.ts`、`signals.ts`）。文件为 **`.quest`**（`format: "hanshu.progress-tree"`）。单进度表单见 [任务文档](#progress-document)。画布操作用法见 [任务工作区](#progress-workspace)。
+本文描述游戏性工作区中**多进度**作者态的画布模型与信号运行时（`src/workspaces/gameplay/model.ts`、`signals.ts`）。文件为 **`.quest`**（`format: "hanshu.progress-tree"`）。单进度表单见 [任务文档](#progress-document)。画布操作用法见 [游戏性工作区](#gameplay-workspace)。
 
 ## 1. 模型定位
 
@@ -160,9 +160,9 @@ Goal / Predicate 的 `kind`（人工、计数、信号、等待阶段、外部�
 
 ## 7. 相关代码
 
-- 结构与连线：`src/workspaces/quest/model.ts`
-- 信号与模拟：`src/workspaces/quest/signals.ts`
-- 画布创建：`src/workspaces/quest/canvas.ts`
+- 结构与连线：`src/workspaces/gameplay/model.ts`
+- 信号与模拟：`src/workspaces/gameplay/signals.ts`
+- 画布创建：`src/workspaces/gameplay/canvas.ts`
 - 回归：`npm run test:progress`（`scripts/verify-progress-model.ts`）
 
 ## 画布实现与扩展

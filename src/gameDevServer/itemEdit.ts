@@ -8,9 +8,9 @@ import {prepareTextEditing,applyTextEditing,supportsTextEditing,type TextSession
 
 import { randomId } from '../project/crypto'
 import { notify } from '../activity'
-import { itemFingerprint } from '../workspaces/quest/itemstack'
-import { readComponents } from '../workspaces/quest/tnbtJson'
-import { parseItem, stringifyItem, type ItemData } from '../workspaces/quest/itemDoc'
+import { itemFingerprint } from '../workspaces/gameplay/itemstack'
+import { readComponents } from '../workspaces/gameplay/tnbtJson'
+import { parseItem, stringifyItem, type ItemData } from '../workspaces/gameplay/itemDoc'
 import { prepareDisplayLocalization, supportsDisplayLocalization, commitLocalizedResult, localizedResultEdits, legacyLocalizedResultEdits, preserveReadOnlyDisplayText, type LocalizationSession } from './displayLocalization'
 import {
   controlRequest,
@@ -165,7 +165,7 @@ async function handleEditDoneNotify(params: unknown): Promise<void> {
     const old = parseItem(pending.session.source)
     const incoming = parseItem(stringifyItem({...old,item}))
     const textResult=pending.text?applyTextEditing(pending.session,pending.text,incoming,params.displayText):undefined
-    const candidate = textResult?textResult.document as import('../workspaces/quest/itemDoc').ItemDocument:pending.version === 2 ? incoming : preserveReadOnlyDisplayText(pending.session,incoming,true)
+    const candidate = textResult?textResult.document as import('../workspaces/gameplay/itemDoc').ItemDocument:pending.version === 2 ? incoming : preserveReadOnlyDisplayText(pending.session,incoming,true)
     const edits = textResult?textResult.edits:pending.version === 2 ? localizedResultEdits(pending.session,candidate,params.localization) : legacyLocalizedResultEdits(pending.session,candidate)
     const preserved = textResult?candidate:preserveReadOnlyDisplayText(pending.session,candidate,pending.version !== 2)
     await commitLocalizedResult(pending.session,stringifyItem(preserved),edits)

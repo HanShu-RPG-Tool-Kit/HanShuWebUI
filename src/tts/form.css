@@ -7,7 +7,7 @@
  * 2. **配色只用主题变量**（`App.css` 的 `:root`）；语义色用 `--ok / --warn / --danger`。
  * 3. **一行 = 一个 grid**（标签列 + 控件列），窄屏下整行塌成一列，结构不用改。
  *
- * 唯一被外部复用的类名是 `.tts-form-btn` 与 `.tts-form-link`（ScriptWorkspace 的原始编辑
+ * 唯一被外部复用的类名是 `.tts-form-btn` 与 `.tts-form-link`（StageplayWorkspace 的原始编辑
  * 提示条在用），改名要一并改那边。
  *
  * **这里刻意没有的东西**：汇总条、副标题、置顶的问题清单。检查结论一律贴在出问题的那
@@ -436,7 +436,7 @@ p.tts-note {
   }
 }
 
-/* ===== 原始编辑时的提示条（由 ScriptWorkspace 渲染）===== */
+/* ===== 原始编辑时的提示条（由 StageplayWorkspace 渲染）===== */
 
 /* 打开这两类文件时，编辑器外壳改成竖排 */
 .editor-shell.tts-file {

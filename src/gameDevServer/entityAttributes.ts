@@ -1,6 +1,6 @@
 import {randomId} from '../project/crypto'
-import type {EntityDocument} from '../workspaces/quest/entityDoc'
-import type {NbtValue} from '../workspaces/quest/tnbtJson'
+import type {EntityDocument} from '../workspaces/gameplay/entityDoc'
+import type {NbtValue} from '../workspaces/gameplay/tnbtJson'
 
 export const ENTITY_ATTRIBUTES_PROTOCOL = 'hanshu-entity-attributes-v2'
 export const ENTITY_ATTRIBUTE_OPERATIONS = ['add_value','add_multiplied_base','add_multiplied_total'] as const

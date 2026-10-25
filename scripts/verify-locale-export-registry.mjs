@@ -17,9 +17,9 @@ try {
   const {exportPaks}=await import('/src/export/pack/exportPaks.ts')
   const {putAssetBlob}=await import('/src/assets/idb.ts')
   const {createProject}=await import('/src/workspace.ts')
-  const {createProgress,stringifyProgress}=await import('/src/workspaces/quest/progressDoc.ts')
-  const {createFlow}=await import('/src/workspaces/quest/model.ts')
-  const {stringifyNavigationPoint,createNavigationPoint}=await import('/src/workspaces/quest/navigationPoint.ts')
+  const {createProgress,stringifyProgress}=await import('/src/workspaces/gameplay/progressDoc.ts')
+  const {createFlow}=await import('/src/workspaces/gameplay/model.ts')
+  const {stringifyNavigationPoint,createNavigationPoint}=await import('/src/workspaces/gameplay/navigationPoint.ts')
   const check=(condition,message)=>{if(!condition)throw new Error(message)}
   registry.clearCompileRegistry();api.ensureBuiltinCompilers()
   // hanshu / item / entity / kit / quest / identity

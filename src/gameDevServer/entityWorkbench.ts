@@ -6,8 +6,8 @@ import {randomId} from '../project/crypto'
 import {getProjectSession,setProjectSession,subscribeProjectSession} from '../project/projectSession'
 import type {ProjectClient} from '../project/serviceClient'
 import {normalizeResourceName,sourcePathOf} from '../workspace'
-import {parseEntity,stringifyEntity,runtimeEntity,type EntityDocument} from '../workspaces/quest/entityDoc'
-import {entityFingerprint} from '../workspaces/quest/entitySnapshot'
+import {parseEntity,stringifyEntity,runtimeEntity,type EntityDocument} from '../workspaces/gameplay/entityDoc'
+import {entityFingerprint} from '../workspaces/gameplay/entitySnapshot'
 import {controlRequest,getControlHubSnapshot,subscribeControlHub,subscribeControlNotify} from './controlHub'
 
 let receiver:{token:string;client:ProjectClient}|null=null

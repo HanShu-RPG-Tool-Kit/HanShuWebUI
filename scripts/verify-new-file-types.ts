@@ -40,12 +40,12 @@ import { analyzeHsDiagnostics } from '../src/monaco/hsDiagnostics.ts'
 import { analyzeCharDiagnostics } from '../src/monaco/charDiagnostics.ts'
 import { parseCharTextSpans } from '../src/monaco/charTextSpans.ts'
 import { collectSourceKeys } from '../src/hanshu/sourceKeys.ts'
-import { parseProgress, stringifyProgress } from '../src/workspaces/quest/progressDoc.ts'
-import { parseItem, stringifyItem } from '../src/workspaces/quest/itemDoc.ts'
-import { parseEntity, stringifyEntity } from '../src/workspaces/quest/entityDoc.ts'
-import { parseKit } from '../src/workspaces/quest/kit.ts'
-import { parseNavigationPoint, validateNavigationPoint } from '../src/workspaces/quest/navigationPoint.ts'
-import { parseFlow } from '../src/workspaces/quest/model.ts'
+import { parseProgress, stringifyProgress } from '../src/workspaces/gameplay/progressDoc.ts'
+import { parseItem, stringifyItem } from '../src/workspaces/gameplay/itemDoc.ts'
+import { parseEntity, stringifyEntity } from '../src/workspaces/gameplay/entityDoc.ts'
+import { parseKit } from '../src/workspaces/gameplay/kit.ts'
+import { parseNavigationPoint, validateNavigationPoint } from '../src/workspaces/gameplay/navigationPoint.ts'
+import { parseFlow } from '../src/workspaces/gameplay/model.ts'
 import { readVoicePlan } from '../src/tts/plan.ts'
 import { readServiceDefinition, resolveService } from '../src/tts/service.ts'
 import { AUTH_SHAPES, PROTOCOLS } from '../src/tts/spec.ts'
@@ -61,7 +61,7 @@ const type = (id: string): NewFileType => {
  * 去掉注释，只留代码。
  *
  * 源码级护栏必须只看**代码**：`Explorer.tsx` 的注释里正大光明地写着
- * `SCRIPT_WORKSPACE_GROUP_ORDER`（解释 D-1 是怎么来的），拿原文做子串匹配会误判。
+ * `STAGEPLAY_WORKSPACE_GROUP_ORDER`（解释 D-1 是怎么来的），拿原文做子串匹配会误判。
  * 这个剥离器不追求通用（不认识字符串字面量里的 `//`），够这里用即可 ——
  * 判据是"标识符还在不在代码里"，被多剥掉一段只会让断言更严，不会放过回归。
  */
@@ -152,7 +152,7 @@ assert.notEqual(type('progress').icon, type('hflow').icon, '单/多进度在新�
 // ===== 2b. 注册表建得出来的文件，资源树必须渲染得出来 =====
 
 /*
- * 守的是 D-1 那个 bug：资源树当时只给 `SCRIPT_WORKSPACE_GROUP_ORDER`
+ * 守的是 D-1 那个 bug：资源树当时只给 `STAGEPLAY_WORKSPACE_GROUP_ORDER`
  * （hanshu / character / script / meta）建桶，而 `sourceKindOf` 返回
  * goal / progress / story / navigator / gift 的文件**既不入桶也不入 root**，
  * 被静默丢掉 —— 从「+剧」新建进度 / 流程 / 导航 / 礼包 / 目标定义（11 种里的 5 种）
@@ -200,7 +200,7 @@ for (const item of NEW_FILE_TYPES) {
 
 /*
  * 源码级护栏：`Explorer.tsx` 分桶必须用 `WORKSPACE_GROUP_ORDER`，
- * 且**不能**再出现按 `SCRIPT_WORKSPACE_GROUP_ORDER` 分桶的写法。
+ * 且**不能**再出现按 `STAGEPLAY_WORKSPACE_GROUP_ORDER` 分桶的写法。
  *
  * 为什么要读源码而不是 import：见上面那段（CSS 让 tsx 起不来）。
  * 它挡的正是 D-1 的原始形态 —— 有人觉得"剧本树只该列剧本那几个目录"，把常量换回去。
@@ -213,8 +213,8 @@ assert.ok(
   'Explorer.tsx 应按 WORKSPACE_GROUP_ORDER 给资源树建桶',
 )
 assert.ok(
-  !/SCRIPT_WORKSPACE_GROUP_ORDER/.test(explorerSource),
-  'Explorer.tsx 不能再按 SCRIPT_WORKSPACE_GROUP_ORDER 建桶 —— 那会让进度/流程/导航/礼包/目标定义在树里消失',
+  !/STAGEPLAY_WORKSPACE_GROUP_ORDER/.test(explorerSource),
+  'Explorer.tsx 不能再按 STAGEPLAY_WORKSPACE_GROUP_ORDER 建桶 —— 那会让进度/流程/导航/礼包/目标定义在树里消失',
 )
 
 // ===== 2c. 菜单能滚：滚轮不能被"关菜单"或"穿透去滚树"吃掉 =====
@@ -388,7 +388,7 @@ for (const id of ['py', 'py-goal']) {
 const progressSeed = seedOf('progress')
 const progressDoc = parseProgress(progressSeed)
 assert.equal(progressSeed, stringifyProgress(progressDoc), '单进度 .quest 种子应能原样往返')
-assert.deepEqual(progressDoc.goals, [], '新建单进度任务不带目标，由用户在任务工作区加')
+assert.deepEqual(progressDoc.goals, [], '新建单进度任务不带目标，由用户在游戏性工作区加')
 assert.equal(newFileName(type('progress'), '示例'), '示例.quest')
 
 // `.kit`

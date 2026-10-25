@@ -3,13 +3,13 @@
  * 与树里的内联命名行。
  *
  * 为什么单开一个文件而不是写进 App.css：这段只服务资源管理器的新建流程，
- * 而 App.css 已经背着剧本编辑器的整套皮肤覆盖（`.script-workspace .explorer-*`）。
+ * 而 App.css 已经背着剧本编辑器的整套皮肤覆盖（`.stageplay-workspace .explorer-*`）。
  * 独立成文件后，改这里的任何一条都不会波及那一片 —— 反过来也一样。
  *
  * 观感对齐现有深色 VS Code 风：一律吃 App.css 里的主题变量（`--bg-dropdown` /
  * `--border-soft` / `--accent` / `--text-dim` …），不硬编码颜色。
- * 剧本工作区会把这一组变量重定义一遍（`.script-workspace { --bg-dropdown: … }`），
- * 所以这里跟着变量走就自动是那套方角深色，不需要再来一份 `.script-workspace` 覆盖。
+ * 剧本工作区会把这一组变量重定义一遍（`.stageplay-workspace { --bg-dropdown: … }`），
+ * 所以这里跟着变量走就自动是那套方角深色，不需要再来一份 `.stageplay-workspace` 覆盖。
  * 尺寸同理走 `--sw-s` / `--sw-font-*`：那三个变量只在剧本工作区里定义，
  * 别处用 `var(--x, 兜底值)` 退回 1 倍与常规字号。
  */
@@ -120,8 +120,8 @@
  * `calc(16px * var(--sw-s))` 都在 App.css 里，是图标尺寸的唯一出处。
  *
  * 这里曾经写过 `calc(15px * var(--sw-s, 1))`，但那两条规则是**死规则**：
- * 与 App.css 的 `.script-workspace .explorer-icon` 同为 (0,2,0)，而 App.css 后加载，
- * 于是永远被它盖掉（下拉菜单在 DOM 上是 `.script-workspace` 的后代，选择器命中）。
+ * 与 App.css 的 `.stageplay-workspace .explorer-icon` 同为 (0,2,0)，而 App.css 后加载，
+ * 于是永远被它盖掉（下拉菜单在 DOM 上是 `.stageplay-workspace` 的后代，选择器命中）。
  * 留着的坏处是"看着像在调尺寸、实际没生效"—— 改它的人会白花时间。
  * 尺寸真要单独调，就加高特异性（例如带上 `.explorer-newfile-menu` 前缀）再说。
  */

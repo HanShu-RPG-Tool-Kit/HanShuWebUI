@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
-import { createFlow, displayText, parseFlow } from '../src/workspaces/quest/model.ts'
-import { createCheckpoint } from '../src/workspaces/quest/canvas.ts'
+import { createFlow, displayText, parseFlow } from '../src/workspaces/gameplay/model.ts'
+import { createCheckpoint } from '../src/workspaces/gameplay/canvas.ts'
 import {
   defaultFlowLocaleSeeds,
   defaultKitLocaleSeeds,
@@ -14,10 +14,10 @@ import {
   KIT_FEEDBACK_TITLE_KEY,
   KIT_NAME_KEY,
   NAV_LABEL_KEY,
-} from '../src/workspaces/quest/progressLocale.ts'
-import { createProgress, createProgressLocaleSeeds, stringifyProgress } from '../src/workspaces/quest/progressDoc.ts'
-import { createKit, stringifyKit } from '../src/workspaces/quest/kit.ts'
-import { createNavigationPoint, stringifyNavigationPoint } from '../src/workspaces/quest/navigationPoint.ts'
+} from '../src/workspaces/gameplay/progressLocale.ts'
+import { createProgress, createProgressLocaleSeeds, stringifyProgress } from '../src/workspaces/gameplay/progressDoc.ts'
+import { createKit, stringifyKit } from '../src/workspaces/gameplay/kit.ts'
+import { createNavigationPoint, stringifyNavigationPoint } from '../src/workspaces/gameplay/navigationPoint.ts'
 import { normalizeTextMapKey, TextMap, type TextSink } from '../src/i18n/textMap.ts'
 import { textAssetPath } from '../src/i18n/localeLayout.ts'
 

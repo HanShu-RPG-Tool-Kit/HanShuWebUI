@@ -8,9 +8,9 @@ import { entityCompiler } from './entity'
 import { itemCompiler } from './item'
 import { localeAssetsPass } from './localeAssets'
 import { questCompiler } from './quest'
-import { displayTextReferences, displayTextRuntimeTranslations, type DisplayTextKind } from '../../../workspaces/quest/displayTextLocale'
-import { parseItem } from '../../../workspaces/quest/itemDoc'
-import { parseEntity } from '../../../workspaces/quest/entityDoc'
+import { displayTextReferences, displayTextRuntimeTranslations, type DisplayTextKind } from '../../../workspaces/gameplay/displayTextLocale'
+import { parseItem } from '../../../workspaces/gameplay/itemDoc'
+import { parseEntity } from '../../../workspaces/gameplay/entityDoc'
 
 const displayBindings = (kind: DisplayTextKind, content: string) => displayTextReferences(kind, kind === 'item' ? parseItem(content) : parseEntity(content))
 

@@ -11,8 +11,8 @@ import {
   resolveKitNumber,
   type KitExprModifierDecl,
   type KitExprParamDecl,
-} from '../src/workspaces/quest/kitExpr.ts'
-import { createKit, createKitModifier, flattenKit, parseKit, resolveKit, stringifyKit } from '../src/workspaces/quest/kit.ts'
+} from '../src/workspaces/gameplay/kitExpr.ts'
+import { createKit, createKitModifier, flattenKit, parseKit, resolveKit, stringifyKit } from '../src/workspaces/gameplay/kit.ts'
 
 let passed = 0
 function test(name: string, check: () => void) { check(); passed++; console.log(`[OK] ${name}`) }

@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict'
 import {writeFile} from 'node:fs/promises'
-import {readItemSync,defaultItemSync,synchronizeComponents,syncRuleErrors,TEMPLATE_COMPONENT} from '../src/workspaces/quest/itemSync'
-import {createItem,parseItem,stringifyItem,itemFromItemStack} from '../src/workspaces/quest/itemDoc'
-import {readComponents,type NbtValue} from '../src/workspaces/quest/tnbtJson'
+import {readItemSync,defaultItemSync,synchronizeComponents,syncRuleErrors,TEMPLATE_COMPONENT} from '../src/workspaces/gameplay/itemSync'
+import {createItem,parseItem,stringifyItem,itemFromItemStack} from '../src/workspaces/gameplay/itemDoc'
+import {readComponents,type NbtValue} from '../src/workspaces/gameplay/tnbtJson'
 import {itemTemplateArtifact} from '../src/export/compile/compilers/item'
 const n=(v:number):NbtValue=>({type:'int',value:v})
 const template=readComponents({'minecraft:custom_data':{type:'compound',value:{magazine:{type:'compound',value:{ammo:n(30),capacity:n(30)}},version:n(2)}}})

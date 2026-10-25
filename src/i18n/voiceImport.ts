@@ -72,7 +72,7 @@ export type VoiceImportProcessor = {
   ): Promise<Uint8Array>
 }
 
-/** 资产读写（由 ScriptWorkspace 用工作区模型 + IndexedDB + 工程磁盘实现） */
+/** 资产读写（由 StageplayWorkspace 用工作区模型 + IndexedDB + 工程磁盘实现） */
 export type VoiceImportIo = {
   /** 读源字节；不存在返回 null */
   read(path: string): Promise<Uint8Array | null>

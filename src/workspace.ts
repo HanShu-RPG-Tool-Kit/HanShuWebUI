@@ -86,7 +86,7 @@ export function defaultPlaneForFile(name: string): FilePlane {
 }
 
 /** 剧本工作区资源树分组（不含进度专属目录） */
-export const SCRIPT_WORKSPACE_GROUP_ORDER = ['hanshu', 'character', 'script', 'meta'] as const
+export const STAGEPLAY_WORKSPACE_GROUP_ORDER = ['hanshu', 'character', 'script', 'meta'] as const
 
 /** 工作区分组顺序：全部源类型 + 创作资料 `meta` */
 export const WORKSPACE_GROUP_ORDER = [...SOURCE_KIND_ORDER, 'meta'] as const
@@ -222,7 +222,7 @@ export type AssetFile = {
    *
    * 为什么放元数据里：配音解析（四态）是**同步**的 —— 编辑器渲染期就要问，而 `.ref`
    * 的正文得异步读。所以在**加载**（projectFs 读盘时顺手解）与**写入**
-   * （ScriptWorkspace 的 referenceVoicesForKeys）两个时刻把目标解好放这儿，
+   * （StageplayWorkspace 的 referenceVoicesForKeys）两个时刻把目标解好放这儿，
    * 解析层只比字符串，不碰 IO。
    */
   refTarget?: string | null

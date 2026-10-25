@@ -1,8 +1,8 @@
-import { readItemSync, syncRuleErrors } from '../../../workspaces/quest/itemSync'
-import { isItemFileName, parseItem, unionItemTags, type ItemDocument } from '../../../workspaces/quest/itemDoc'
+import { readItemSync, syncRuleErrors } from '../../../workspaces/gameplay/itemSync'
+import { isItemFileName, parseItem, unionItemTags, type ItemDocument } from '../../../workspaces/gameplay/itemDoc'
 import { sourcePathOf } from '../../../workspace'
 import type { FileCompiler } from '../types'
-import { displayTextReferences } from '../../../workspaces/quest/displayTextLocale'
+import { displayTextReferences } from '../../../workspaces/gameplay/displayTextLocale'
 
 export function itemTemplateArtifact(doc: ItemDocument) {
   const sync=readItemSync(doc.sync), errors=syncRuleErrors(sync,doc.item.components)

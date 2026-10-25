@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
 import {readFile,writeFile} from 'node:fs/promises'
-import {parseItemStack,stringifyItemStack} from '../src/workspaces/quest/itemstack'
-import {itemFromItemStack} from '../src/workspaces/quest/itemDoc'
+import {parseItemStack,stringifyItemStack} from '../src/workspaces/gameplay/itemstack'
+import {itemFromItemStack} from '../src/workspaces/gameplay/itemDoc'
 import {drainSnapshotQueueForTests} from '../src/gameDevServer/itemSnapshotRefresh'
-import {markSnapshotNeeded,getCachedDisplaySync,resetItemSnapshotCacheForTests,useMemoryItemSnapshotStore as installMemorySnapshotStore} from '../src/workspaces/quest/itemSnapshotCache'
-import {itemFingerprint} from '../src/workspaces/quest/itemstack'
+import {markSnapshotNeeded,getCachedDisplaySync,resetItemSnapshotCacheForTests,useMemoryItemSnapshotStore as installMemorySnapshotStore} from '../src/workspaces/gameplay/itemSnapshotCache'
+import {itemFingerprint} from '../src/workspaces/gameplay/itemstack'
 
 const fixture=process.env.TNBT_MOD_EXPORT ?? 'scripts/fixtures/itemstack-tnbt-v3.json'
 const parsed=parseItemStack(await readFile(fixture,'utf8'))

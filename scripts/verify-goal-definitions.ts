@@ -5,8 +5,8 @@ import {
   isBuiltinScriptDocumentKey,
   parseGoalDefinitionsFromSource,
   withBuiltinScripts,
-} from '../src/workspaces/quest/goalDefinitions.ts'
-import { ensurePackageSections, sectionFolderKey } from '../src/workspaces/quest/library.ts'
+} from '../src/workspaces/gameplay/goalDefinitions.ts'
+import { ensurePackageSections, sectionFolderKey } from '../src/workspaces/gameplay/library.ts'
 
 let passed = 0
 function test(name: string, check: () => void) { check(); passed++; console.log(`[OK] ${name}`) }

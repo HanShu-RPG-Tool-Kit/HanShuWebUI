@@ -5,8 +5,8 @@ import {
   pickGoalLocaleName,
   renderGoalLocalizeTemplate,
   resolveGoalWidget,
-} from '../src/workspaces/quest/goalWidgets/index.ts'
-import type { GoalConfigField } from '../src/workspaces/quest/goalDefinitions.ts'
+} from '../src/workspaces/gameplay/goalWidgets/index.ts'
+import type { GoalConfigField } from '../src/workspaces/gameplay/goalDefinitions.ts'
 
 let passed = 0
 function test(name: string, check: () => void) {

@@ -1,5 +1,5 @@
 import type { MenuContribution, MenuCommand } from './types'
-import { isAutoItemSnapshotRefreshEnabled } from '../../workspaces/quest/itemSnapshotCache'
+import { isAutoItemSnapshotRefreshEnabled } from '../../workspaces/gameplay/itemSnapshotCache'
 
 const always = () => true
 
@@ -18,7 +18,7 @@ function cmd(
 }
 
 /** 进度工作区菜单贡献 */
-export const questMenuContribution: MenuContribution = {
+export const gameplayMenuContribution: MenuContribution = {
   menus: [
     {
       id: 'file',

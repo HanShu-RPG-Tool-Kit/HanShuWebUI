@@ -15,15 +15,15 @@ import {
 import { getExtension } from '../workspace'
 import { sourcePathOf } from '../workspace'
 import { assetCacheEpoch } from '../assets/idb'
-import {scriptTypeInFolder} from '../workspaces/quest/library'
-import { sectionFolderKey } from '../workspaces/quest/library'
+import {scriptTypeInFolder} from '../workspaces/gameplay/library'
+import { sectionFolderKey } from '../workspaces/gameplay/library'
 import type {
   FlowDocument,
   FlowFolder,
   FlowPackageId,
   FlowWorkspaceState,
-} from '../workspaces/quest/storage'
-import { stampDocument } from '../workspaces/quest/storage'
+} from '../workspaces/gameplay/storage'
+import { stampDocument } from '../workspaces/gameplay/storage'
 
 export const PROGRESS_UI_STORAGE_KEY = 'hanshu.progressUi.v1'
 /** 旧整库草稿；迁入工程后删除 */

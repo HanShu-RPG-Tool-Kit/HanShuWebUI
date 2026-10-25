@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
-import { readNbt, readComponents, defaultNbt, NBT_TYPES } from '../src/workspaces/quest/tnbtJson'
-import {createItem,parseItem,stringifyItem,itemFromItemStack} from '../src/workspaces/quest/itemDoc'
-import {parseItemStack,stringifyItemStack,itemFingerprint} from '../src/workspaces/quest/itemstack'
+import { readNbt, readComponents, defaultNbt, NBT_TYPES } from '../src/workspaces/gameplay/tnbtJson'
+import {createItem,parseItem,stringifyItem,itemFromItemStack} from '../src/workspaces/gameplay/itemDoc'
+import {parseItemStack,stringifyItemStack,itemFingerprint} from '../src/workspaces/gameplay/itemstack'
 import {parseJsonValue} from '../src/utils/strictJson'
 const compound = {type:'compound',value:Object.fromEntries([
   ['',{type:'string',value:''}],['__proto__',{type:'int',value:1}],
@@ -31,7 +31,7 @@ assert.notEqual(itemFingerprint({id:'minecraft:stick',components:{'example:x':{t
 assert.equal(itemFingerprint({id:'minecraft:stick',components:{'example:x':{type:'compound',value:{b:{type:'int',value:2},a:{type:'int',value:1}}}}}),itemFingerprint({id:'minecraft:stick',components:{'example:x':{type:'compound',value:{a:{type:'int',value:1},b:{type:'int',value:2}}}}}))
 console.log('TNBT JSON：12 类型、精度、特殊值、空/特殊键、异构列表、格式往返、旧格式拒绝、无效值与指纹检查通过')
 
-const {acceptsEnchantments,acceptsAttributes,renameEnchantment,patchAttribute,newAttribute,literalText,setLiteralText,stringTag}=await import('../src/workspaces/quest/itemComponents/complexModel')
+const {acceptsEnchantments,acceptsAttributes,renameEnchantment,patchAttribute,newAttribute,literalText,setLiteralText,stringTag}=await import('../src/workspaces/gameplay/itemComponents/complexModel')
 const ench={type:'compound',value:{'minecraft:sharpness':{type:'int',value:5},'example:custom':{type:'short',value:7}}} as const
 assert.ok(acceptsEnchantments(ench))
 assert.ok(!acceptsEnchantments({type:'compound',value:{'minecraft:sharpness':{type:'int',value:0}}}))

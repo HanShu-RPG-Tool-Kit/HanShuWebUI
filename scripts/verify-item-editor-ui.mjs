@@ -7,16 +7,16 @@ const base=`http://127.0.0.1:${server.httpServer.address().port}`
 server.config.server.port=server.httpServer.address().port
 const browser=await chromium.launch({headless:true,...(process.platform==='win32'?{channel:'msedge'}:{}),args:['--disable-features=LocalNetworkAccessChecks']})
 try {
-const transformed=await(await fetch(base+'/src/workspaces/quest/ItemEditor.tsx')).text()
+const transformed=await(await fetch(base+'/src/workspaces/gameplay/ItemEditor.tsx')).text()
 const reactUrl=transformed.match(/"([^"]*deps\/react\.js[^"]*)"/)[1]
 const version=new URL(reactUrl,base).search
 const reactDomUrl=reactUrl.replace(/react\.js.*$/, 'react-dom_client.js')+version
 const page=await browser.newPage({viewport:{width:1200,height:850}})
-await page.route('**/__item-editor-review',route=>route.fulfill({contentType:'text/html',body:`<html><meta charset="utf-8"><script type="module">import RefreshRuntime from '/@react-refresh';RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;</script><body><div id="review" class="app flow-workspace"></div><script type="module">
+await page.route('**/__item-editor-review',route=>route.fulfill({contentType:'text/html',body:`<html><meta charset="utf-8"><script type="module">import RefreshRuntime from '/@react-refresh';RefreshRuntime.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>type=>type;window.__vite_plugin_react_preamble_installed__=true;</script><body><div id="review" class="app gameplay-workspace"></div><script type="module">
 import React from '${reactUrl}';
 import ReactDOM from '${reactDomUrl}';
-import {ItemEditor} from '/src/workspaces/quest/ItemEditor.tsx';
-import '/src/index.css';import '/src/App.css';import '/src/workspaces/QuestWorkspace.css';
+import {ItemEditor} from '/src/workspaces/gameplay/ItemEditor.tsx';
+import '/src/index.css';import '/src/App.css';import '/src/workspaces/GameplayWorkspace.css';
 function Review(){const [doc,setDoc]=React.useState({format:'rpgtoolkit:item',schemaVersion:2,tags:['装备','任务奖励'],item:{id:'minecraft:diamond_sword',components:{'minecraft:custom_name':{type:'string',value:'旅人的长剑'},'minecraft:lore':{type:'list',value:[{type:'string',value:'为下一段旅程做好准备。'}]},'minecraft:damage':{type:'int',value:8},'minecraft:rarity':{type:'string',value:'rare'},'example:extra':{type:'compound',value:{keep:{type:'long',value:'9223372036854775807'}}}}}});window.reviewDoc=doc;window.reviewSetDoc=setDoc;const [disabled,setDisabled]=React.useState(false);window.reviewReadonly=(value=true)=>setDisabled(value);return React.createElement(ItemEditor,{doc,disabled,onChange:s=>setDoc(JSON.parse(s))});}ReactDOM.createRoot(document.getElementById('review')).render(React.createElement(Review));</script></body></html>`}))
 page.on('pageerror',e=>console.log('PAGE ERROR',e.message))
 page.on('console',m=>{if(m.type()==='error')console.log(m.text())})
@@ -159,7 +159,7 @@ await page.getByRole('spinbutton',{name:'新值'}).press('Enter')
 assert.deepEqual(await page.evaluate(()=>window.reviewDoc.item.components['example:bytes']),{type:'byte_array',value:[127]})
 console.log('通过：卡片与树互通，Byte布尔、Long精度/越界保护、空键、容器和类型数组编辑')
 await page.evaluate(async reactUrl=>{
-  const {registerItemComponentEditor}=await import('/src/workspaces/quest/itemComponents/registry.ts')
+  const {registerItemComponentEditor}=await import('/src/workspaces/gameplay/itemComponents/registry.ts')
   const {default:React}=await import(reactUrl)
   window.unregisterReviewCard=registerItemComponentEditor({id:'example:extra',title:'扩展组件',createValue:()=>({type:'compound',value:{}}),accepts:v=>v.type==='compound',Editor:({value,disabled,onChange})=>React.createElement('input',{type:'text','aria-label':'扩展长整数',disabled,value:value.value.keep.value,onChange:e=>onChange({...value,value:{...value.value,keep:{type:'long',value:e.target.value}}})})})
 },reactUrl)
@@ -291,9 +291,9 @@ console.log('通过：偏移/滚动的460×320编辑区内所有菜单不越界�
 await page.evaluate(async ({reactUrl,reactDomUrl})=>{
   const {default:React}=await import(reactUrl)
   const {default:ReactDOM}=await import(reactDomUrl)
-  const {NbtComponentsEditor}=await import('/src/workspaces/quest/NbtComponentsEditor.tsx')
-  const {parseItemStack}=await import('/src/workspaces/quest/itemstack.ts')
-  const mount=document.createElement('div');mount.className='app flow-workspace';document.body.appendChild(mount)
+  const {NbtComponentsEditor}=await import('/src/workspaces/gameplay/NbtComponentsEditor.tsx')
+  const {parseItemStack}=await import('/src/workspaces/gameplay/itemstack.ts')
+  const mount=document.createElement('div');mount.className='app gameplay-workspace';document.body.appendChild(mount)
   function Stack(){const [item,setItem]=React.useState(()=>parseItemStack(JSON.stringify({format:'rpgtoolkit:itemstack',schemaVersion:3,item:{id:'minecraft:stick',count:4,components:{'minecraft:damage':{type:'int',value:3},'example:long':{type:'long',value:'9223372036854775807'}}}})).item);React.useEffect(()=>{window.reviewStack=item},[item]);return React.createElement(NbtComponentsEditor,{value:item.components,onChange:components=>setItem({...item,components})})}
   ReactDOM.createRoot(mount).render(React.createElement(Stack))
 },{reactUrl,reactDomUrl})

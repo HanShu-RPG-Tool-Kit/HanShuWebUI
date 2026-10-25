@@ -41,7 +41,7 @@
 
 | 文档 | 受众 | 内容 |
 | --- | --- | --- |
-| [任务工作区](#progress-workspace) | 用户 · 开发 | 资源树（任务包）、`src/quest`、虚拟单/多进度视图 |
+| [游戏性工作区](#gameplay-workspace) | 用户 · 开发 | 资源树（任务包）、`src/quest`、虚拟单/多进度视图 |
 | [实体库：模板与串流预览](#entity-guide) | 用户 · 开发 | 实体模板、捕获、在线取景、快照与生成 |
 | [物品库：.item 与 .itemstack](#item-guide) | 用户 · 开发 | 物品定义、快照导入、标签、礼包链接 |
 | [游戏开发服务器](#game-dev-server) | 开发 | 本机 Control 连接、物品库查询 API、控制台 |

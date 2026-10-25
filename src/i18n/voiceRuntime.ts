@@ -35,7 +35,7 @@ export type VoiceDecodeResult =
   | { ok: true; info: VoiceAudioInfo }
   | { ok: false; reason: string }
 
-/** 资产取用接口：由 ScriptWorkspace 注入（IndexedDB blob / 资产清单） */
+/** 资产取用接口：由 StageplayWorkspace 注入（IndexedDB blob / 资产清单） */
 export type VoiceSource = {
   /** 同步判断资产在不在清单里，并给出内容版本（用于缓存失效）；不在返回 null */
   stat(path: string): { revision: string } | null

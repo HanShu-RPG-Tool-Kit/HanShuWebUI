@@ -13,8 +13,8 @@ import {
   snapshotsNeededCount,
   type SnapshotNeededItem,
   type SnapshotRefreshScheduleOptions,
-} from '../workspaces/quest/itemSnapshotCache'
-import { readItemStackDisplay } from '../workspaces/quest/itemstack'
+} from '../workspaces/gameplay/itemSnapshotCache'
+import { readItemStackDisplay } from '../workspaces/gameplay/itemstack'
 import { controlRequest, isControlConnected } from './controlHub'
 
 /** 与 mod `items.renderSnapshots` 上限对齐；超过则 too_many_items */

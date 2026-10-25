@@ -2,7 +2,7 @@
  * Agent 工具的纯逻辑：只认用户可见的**逻辑名**（如 `序章.hs`），
  * 不暴露磁盘路径、`src/<kind>/` 结构或 `assets/` 下的资产路径。
  *
- * React 侧（`ScriptWorkspace`）只负责：调用这里 → 提交工作区 → 刷新 TextMap → 记历史。
+ * React 侧（`StageplayWorkspace`）只负责：调用这里 → 提交工作区 → 刷新 TextMap → 记历史。
  */
 
 import { getAssetBlob, deleteAssetBlob, putAssetBlob } from '../assets/idb'

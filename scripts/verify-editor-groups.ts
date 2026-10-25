@@ -9,8 +9,8 @@ import {
   readGroup,
   splitTab,
   togglePinInGroup,
-} from '../src/workspaces/quest/editorGroups.ts'
-import type { FlowDocument, FlowWorkspaceState } from '../src/workspaces/quest/storage.ts'
+} from '../src/workspaces/gameplay/editorGroups.ts'
+import type { FlowDocument, FlowWorkspaceState } from '../src/workspaces/gameplay/storage.ts'
 
 let passed = 0
 function test(name: string, check: () => void) { check(); passed++; console.log(`[OK] ${name}`) }

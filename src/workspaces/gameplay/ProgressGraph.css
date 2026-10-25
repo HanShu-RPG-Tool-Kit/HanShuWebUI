@@ -3,21 +3,21 @@
   display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 280px;
   height: 100%; overflow: hidden; color: #d5d5d5; background: #242424;
 }
-.flow-workspace .flow-graph button { font: inherit; color: inherit; cursor: pointer; }
-.flow-workspace .flow-graph button:disabled { opacity: .42; cursor: default; }
-.flow-workspace .flow-graph button:focus-visible, .flow-graph-viewport:focus-visible { outline: 1px solid var(--node-accent); outline-offset: 2px; }
+.gameplay-workspace .flow-graph button { font: inherit; color: inherit; cursor: pointer; }
+.gameplay-workspace .flow-graph button:disabled { opacity: .42; cursor: default; }
+.gameplay-workspace .flow-graph button:focus-visible, .flow-graph-viewport:focus-visible { outline: 1px solid var(--node-accent); outline-offset: 2px; }
 .flow-graph-toolbar {
   display: flex; align-items: center; gap: 8px; min-height: calc(26px * var(--fl-s, 1.25)); box-sizing: content-box; padding: 0 8px;
   border-bottom: 1px solid var(--border, #1a1a1a); background: var(--fl-head, #383838); font-size: var(--fl-font-xs, 11px); flex-shrink: 0;
 }
 .flow-graph-editor-icon { font-size: var(--fl-font, 18px); color: #b5b5b5; line-height: 1; }
 .flow-graph-editor-name { font-size: var(--fl-font-sm, 12px); color: var(--text, #e0e0e0); white-space: nowrap; }
-.flow-workspace .flow-graph-toolbar button {
+.gameplay-workspace .flow-graph-toolbar button {
   border: 1px solid var(--border-soft, #404040); border-radius: 0; padding: 2px 8px;
   background: var(--fl-panel-2, #232323); min-height: calc(20px * var(--fl-s, 1.25)); color: var(--text, #d1d1d1); font-size: var(--fl-font-xs, 11px);
 }
-.flow-workspace .flow-graph-toolbar button:hover:not(:disabled) { background: var(--fl-hover, #3d3d3d); color: #fff; }
-.flow-workspace .flow-graph-toolbar .flow-graph-add { margin-left: 4px; }
+.gameplay-workspace .flow-graph-toolbar button:hover:not(:disabled) { background: var(--fl-hover, #3d3d3d); color: #fff; }
+.gameplay-workspace .flow-graph-toolbar .flow-graph-add { margin-left: 4px; }
 .flow-graph-count { padding-left: 10px; border-left: 1px solid #4a4a4a; color: var(--text-dim, #a0a0a0); white-space: nowrap; }
 .flow-graph-sim {
   display: flex; align-items: center; gap: 6px; margin-left: 8px; padding-left: 10px;
@@ -28,24 +28,24 @@
 }
 .flow-graph-zoom { display: flex; align-items: center; gap: 3px; margin-left: auto; }
 .flow-graph-zoom output { width: 38px; text-align: center; font-variant-numeric: tabular-nums; color: #a8a8a8; }
-.flow-workspace .flow-graph-zoom button { min-width: 24px; }
-.flow-workspace .flow-graph .flow-graph-node {
+.gameplay-workspace .flow-graph-zoom button { min-width: 24px; }
+.gameplay-workspace .flow-graph .flow-graph-node {
   position: absolute; z-index: 2; display: block; padding: 0; text-align: left; pointer-events: auto;
   border: 1px solid #171717; border-radius: 5px; background: #353535;
   color: #e0e0e0; box-shadow: 0 2px 5px #0005; overflow: visible;
   touch-action: none; user-select: none; cursor: grab; white-space: normal;
 }
-.flow-workspace .flow-graph .flow-graph-node:hover:not(:disabled) { border-color: #878787; background: #373737; color: #eaeaea; }
-.flow-workspace .flow-graph .flow-graph-node.is-selected { border-color: var(--node-accent); box-shadow: 0 0 0 1px var(--node-accent), 0 5px 12px #0007; }
-.flow-workspace .flow-graph .flow-graph-node:focus-within { border-color: var(--node-accent); }
-.flow-workspace .flow-graph .flow-graph-node.is-dragging { z-index: 3; cursor: grabbing; }
-.flow-workspace .flow-graph .flow-graph-node-body {
+.gameplay-workspace .flow-graph .flow-graph-node:hover:not(:disabled) { border-color: #878787; background: #373737; color: #eaeaea; }
+.gameplay-workspace .flow-graph .flow-graph-node.is-selected { border-color: var(--node-accent); box-shadow: 0 0 0 1px var(--node-accent), 0 5px 12px #0007; }
+.gameplay-workspace .flow-graph .flow-graph-node:focus-within { border-color: var(--node-accent); }
+.gameplay-workspace .flow-graph .flow-graph-node.is-dragging { z-index: 3; cursor: grabbing; }
+.gameplay-workspace .flow-graph .flow-graph-node-body {
   position: absolute; inset: 0; width: 100%; height: 100%; padding: 0;
   border: 0; border-radius: 4px; background: transparent; text-align: left;
   color: inherit; cursor: inherit; white-space: normal; touch-action: none;
 }
-.flow-workspace .flow-graph .flow-graph-node-body:focus-visible { outline: 1px solid var(--node-accent); outline-offset: 1px; }
-.flow-workspace .flow-graph .flow-graph-node-body:hover:not(:disabled) { background: transparent; color: inherit; }
+.gameplay-workspace .flow-graph .flow-graph-node-body:focus-visible { outline: 1px solid var(--node-accent); outline-offset: 1px; }
+.gameplay-workspace .flow-graph .flow-graph-node-body:hover:not(:disabled) { background: transparent; color: inherit; }
 .flow-graph-node-header {
   position: absolute; top: 0; left: 0; right: 0;
   display: flex; align-items: center; gap: 7px; height: 24px; padding: 0 10px;

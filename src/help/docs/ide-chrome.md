@@ -20,7 +20,7 @@
 ## 菜单栏
 
 - **全局贡献**（`src/chrome/menu/globalMenus.ts`）：打开/新建/分享/连接/关闭工程、导出 PAK / 工程包 / 自动发版、历史、界面比例、帮助、退出、游戏开发服务器、协作面板等。
-- **工作区贡献**：剧本 `scriptMenus.ts`、进度 `questMenus.ts`；按当前工作区与全局合并（`mergeMenus`）。
+- **工作区贡献**：剧本 `stageplayMenus.ts`、游戏性 `gameplayMenus.ts`；按当前工作区与全局合并（`mergeMenus`）。
 - 每项有稳定 **`id`**（分发与启用规则）和显示用 **`label`**。
 - `run: 'app'` 由 `runAppMenuAction` 处理（工程会话经 `openProjectUi`，导出/发版经 `project/exportActions`）；`run: 'workspace'` 交给当前工作区 `handleMenuAction(id)`。
 - 导出前用 `flushProjectEditors` 冲各工作区编辑缓冲进 `projectSession`；工作区通过 `registerProjectEditorFlush` 登记。
@@ -49,3 +49,5 @@
 - 不要在工作区内再写 `footer.statusbar` / `flow-statusbar` 之类第二条底栏。
 - 不要用中文 label 当分发键；用稳定 `id`。
 - 不要把会话令牌写入状态栏或活动文案。
+
+应用工作区 ID 与资源分类分开：剧本为 `stageplay`，游戏性为 `gameplay`，皮肤管理器为 `mc-skin`。对应入口是 `StageplayWorkspace.tsx`、`GameplayWorkspace.tsx`，游戏性编辑器位于 `src/workspaces/gameplay/`；资源目录 `src/script`、`src/quest` 和 `.quest` 格式不因此改名。

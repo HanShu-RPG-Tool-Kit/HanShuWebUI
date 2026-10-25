@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import {createKit,parseKit,stringifyKit,flattenKit} from '../src/workspaces/quest/kit'
+import {createKit,parseKit,stringifyKit,flattenKit} from '../src/workspaces/gameplay/kit'
 import {buildCompileGraph} from '../src/export/compile'
 import type {Workspace} from '../src/workspace'
 const kit=createKit('test');kit.script=[{ref:'reward.py'}]

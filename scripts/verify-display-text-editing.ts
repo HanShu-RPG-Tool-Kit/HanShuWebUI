@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
 import {prepareTextEditing,applyTextEditing,rowValue,DISPLAY_TEXT_PROTOCOL} from '../src/gameDevServer/displayTextEditing'
 import type {LocalizationSession} from '../src/gameDevServer/displayLocalization'
-import {createItem} from '../src/workspaces/quest/itemDoc'
-import {createEntity} from '../src/workspaces/quest/entityDoc'
-import {writeDisplayText,readDisplayText} from '../src/workspaces/quest/displayTextNbt'
-import {displayTextRuntimeKey} from '../src/workspaces/quest/displayTextLocale'
+import {createItem} from '../src/workspaces/gameplay/itemDoc'
+import {createEntity} from '../src/workspaces/gameplay/entityDoc'
+import {writeDisplayText,readDisplayText} from '../src/workspaces/gameplay/displayTextNbt'
+import {displayTextRuntimeKey} from '../src/workspaces/gameplay/displayTextLocale'
 const doc=createItem(),a=displayTextRuntimeKey('item','display.lore.a','a'),b=displayTextRuntimeKey('item','display.lore.b','b')
 doc.item.components['minecraft:lore']={type:'list',value:[writeDisplayText('same'),writeDisplayText('same')]}
 doc.displayTextEditor={'item.lore.0':{localized:false,reference:{translate:a}},'item.lore.1':{localized:false,reference:{translate:b}}}

@@ -26,17 +26,17 @@ import {
 } from './workspace'
 import { defaultHsSeed } from './hanshu/defaultSeed'
 import type { ExplorerIconKind } from './explorerIcons'
-import { createFlow } from './workspaces/quest/model'
-import { createFlowDocument } from './workspaces/quest/storage'
-import { createKit, stringifyKit } from './workspaces/quest/kit'
+import { createFlow } from './workspaces/gameplay/model'
+import { createFlowDocument } from './workspaces/gameplay/storage'
+import { createKit, stringifyKit } from './workspaces/gameplay/kit'
 import {
   createNavigationPoint,
   stringifyNavigationPoint,
-} from './workspaces/quest/navigationPoint'
-import { createProgress, stringifyProgress } from './workspaces/quest/progressDoc'
-import { createItem, stringifyItem } from './workspaces/quest/itemDoc'
-import { createEntity, stringifyEntity } from './workspaces/quest/entityDoc'
-import type { GoalDefinition } from './workspaces/quest/goalDefinitions'
+} from './workspaces/gameplay/navigationPoint'
+import { createProgress, stringifyProgress } from './workspaces/gameplay/progressDoc'
+import { createItem, stringifyItem } from './workspaces/gameplay/itemDoc'
+import { createEntity, stringifyEntity } from './workspaces/gameplay/entityDoc'
+import type { GoalDefinition } from './workspaces/gameplay/goalDefinitions'
 import { blankServiceDefinition, stringifyServiceDefinition } from './tts/service'
 import { stringifyVoicePlan, type VoicePlan } from './tts/plan'
 import type { ProviderPreset } from './tts/providers'
@@ -76,7 +76,7 @@ export type NewFileTypeId =
  * 播种上下文。注册表**不自己去读工作区**，需要什么由调用方给（见文件头第 3 条）。
  *
  * 这些字段只喂 `seed`：命名校验不需要上下文（重名判断要的是目标包的文件名表，
- * 那是创建管线的事，见 `ScriptWorkspace.handleNewFile`）。
+ * 那是创建管线的事，见 `StageplayWorkspace.handleNewFile`）。
  */
 export type NewFileSeedContext = {
   /**
@@ -275,7 +275,7 @@ export const NEW_FILE_TYPES: readonly NewFileType[] = [
     defaultBase: '新单进度任务',
     /*
      * `createProgress` 忽略标题（文档里的 `name` 是**语义键**，译文在 lang_quest），
-     * 所以文件名不会进正文 —— 名称由用户在任务工作区填，`progressIssues` 会提示"请填写进度名称"。
+     * 所以文件名不会进正文 —— 名称由用户在游戏性工作区填，`progressIssues` 会提示"请填写进度名称"。
      * 这是有意的：新建时猜一个显示名，只会让译文表里多一条没人认领的条目。
      */
     seed: (base, ctx) => stringifyProgress(createProgress(base.trim(), ctx.goalDefinitions)),
@@ -293,7 +293,7 @@ export const NEW_FILE_TYPES: readonly NewFileType[] = [
      * 而 `createFlowDocument` 会按 flow 标题另拼一个 `.quest` 名，与这里的选择无关。
      *
      * `base` 传进 `createFlow` 的标题位是**眼下用不上**的（`_title` 收了不用：标题是语义键，
-     * 译文在 lang_quest）。与任务工作区的 `newFlow` 同一写法 —— 它也是把标题传进同一个位置。
+     * 译文在 lang_quest）。与游戏性工作区的 `newFlow` 同一写法 —— 它也是把标题传进同一个位置。
      *
      * `package: 'quest'` 是分类的合理默认：剧本工作区没有"分类"这个概念，任务归任务
      * 工作区；`folderId` 留空即落在该分类根（`sourcesToProgressDocuments` 同样这么认）。

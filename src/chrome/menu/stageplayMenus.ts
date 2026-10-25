@@ -11,7 +11,7 @@ function cmd(
 }
 
 /** 剧本工作区菜单贡献 */
-export const scriptMenuContribution: MenuContribution = {
+export const stageplayMenuContribution: MenuContribution = {
   menus: [
     {
       id: 'file',

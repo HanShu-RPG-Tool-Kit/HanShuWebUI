@@ -5,13 +5,13 @@ import { getProjectSession, setProjectSession } from '../src/project/projectSess
 import { attachReconciliation } from '../src/project/reconcileEdits'
 import { openEditJournal } from '../src/project/editJournal'
 import { saveLocale } from '../src/storage'
-import { parseItem, stringifyItem } from '../src/workspaces/quest/itemDoc'
-import { parseEntity, stringifyEntity } from '../src/workspaces/quest/entityDoc'
+import { parseItem, stringifyItem } from '../src/workspaces/gameplay/itemDoc'
+import { parseEntity, stringifyEntity } from '../src/workspaces/gameplay/entityDoc'
 import {
   LOCALIZATION_PROTOCOL, commitLocalizedResult, localizedResultEdits,
   prepareDisplayLocalization, type LocalizationSession,
 } from '../src/gameDevServer/displayLocalization'
-import type { DisplayTextKind } from '../src/workspaces/quest/displayTextLocale'
+import type { DisplayTextKind } from '../src/workspaces/gameplay/displayTextLocale'
 import type { Snapshot } from '../src/collab/protocol'
 
 type Credentials = { token: string; snapshot: Snapshot }

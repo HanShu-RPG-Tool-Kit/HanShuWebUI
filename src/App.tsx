@@ -13,13 +13,13 @@ import {
 } from './workspaces/activeWorkspace.ts'
 import { APP_WORKSPACES } from './workspaces/registry.ts'
 import { McSkinWorkspace } from './workspaces/McSkinWorkspace.tsx'
-import { QuestWorkspace, type ProgressWorkspaceHandle } from './workspaces/QuestWorkspace.tsx'
-import { ScriptWorkspace } from './workspaces/ScriptWorkspace.tsx'
+import { GameplayWorkspace, type GameplayWorkspaceHandle } from './workspaces/GameplayWorkspace.tsx'
+import { StageplayWorkspace } from './workspaces/StageplayWorkspace.tsx'
 import {
   ensureGameDevControlStarted,
   GameDevServerPanel,
 } from './gameDevServer'
-import type { ScriptWorkspaceHandle } from './workspaces/scriptTypes.ts'
+import type { StageplayWorkspaceHandle } from './workspaces/stageplayTypes.ts'
 import { HelpModal } from './help/HelpModal.tsx'
 import type { HelpTopicId } from './help/topics.ts'
 import type { AppWorkspaceId } from './workspaces/types.ts'
@@ -63,11 +63,11 @@ const WORKSPACE_IDS = APP_WORKSPACES.map((w) => w.id)
 function renderToolWorkspace(
   id: AppWorkspaceId,
   active: boolean,
-  progressRef: Ref<ProgressWorkspaceHandle>,
+  gameplayRef: Ref<GameplayWorkspaceHandle>,
 ) {
   switch (id) {
-    case 'quest':
-      return <QuestWorkspace active={active} workspaceRef={progressRef} />
+    case 'gameplay':
+      return <GameplayWorkspace active={active} workspaceRef={gameplayRef} />
     case 'mc-skin':
       return <McSkinWorkspace active={active} />
     default:
@@ -97,8 +97,8 @@ function App() {
   /** Bumps to remount splash when replaying via debug shortcut. */
   const [splashPreviewKey, setSplashPreviewKey] = useState(0)
   const splashPreview = !isDesktopShell
-  const scriptRef = useRef<ScriptWorkspaceHandle>(null)
-  const progressRef = useRef<ProgressWorkspaceHandle>(null)
+  const stageplayRef = useRef<StageplayWorkspaceHandle>(null)
+  const gameplayRef = useRef<GameplayWorkspaceHandle>(null)
 
   useEffect(() => {
     applyUiScale(uiScale)
@@ -214,12 +214,12 @@ function App() {
         return
       }
 
-      if (activeWorkspaceId === 'quest') {
-        progressRef.current?.handleMenuAction(item.id)
+      if (activeWorkspaceId === 'gameplay') {
+        gameplayRef.current?.handleMenuAction(item.id)
         return
       }
-      if (activeWorkspaceId === 'script') {
-        scriptRef.current?.handleMenuAction(item.id)
+      if (activeWorkspaceId === 'stageplay') {
+        stageplayRef.current?.handleMenuAction(item.id)
       }
     },
     [activeWorkspaceId, changeUiScale],
@@ -300,19 +300,19 @@ function App() {
       <div className="app-body">
         <div
           className={`app-workspace-pane${
-            activeWorkspaceId === 'script' ? ' active' : ''
+            activeWorkspaceId === 'stageplay' ? ' active' : ''
           }`}
         >
-          <ScriptWorkspace ref={scriptRef} isActive={activeWorkspaceId === 'script'} />
+          <StageplayWorkspace ref={stageplayRef} isActive={activeWorkspaceId === 'stageplay'} />
         </div>
-        {APP_WORKSPACES.filter((w) => w.id !== 'script').map((ws) => (
+        {APP_WORKSPACES.filter((w) => w.id !== 'stageplay').map((ws) => (
           <div
             key={ws.id}
             className={`app-workspace-pane${
               activeWorkspaceId === ws.id ? ' active' : ''
             }`}
           >
-            {renderToolWorkspace(ws.id, activeWorkspaceId === ws.id, progressRef)}
+            {renderToolWorkspace(ws.id, activeWorkspaceId === ws.id, gameplayRef)}
           </div>
         ))}
       </div>

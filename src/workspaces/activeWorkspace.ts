@@ -1,15 +1,15 @@
 import type { AppWorkspaceId } from './types'
 
 const STORAGE_KEY = 'hanshu.activeWorkspace.v1'
-export const DEFAULT_WORKSPACE_ID: AppWorkspaceId = 'script'
+export const DEFAULT_WORKSPACE_ID: AppWorkspaceId = 'stageplay'
 
 export function loadActiveWorkspaceId(
   validIds: readonly AppWorkspaceId[],
 ): AppWorkspaceId {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
-    // 旧工作区 id progress-flow → quest
-    const id = raw === 'progress-flow' ? 'quest' : raw
+    // Keep the selected application when upgrading local workspace preferences.
+    const id = raw === 'script' ? 'stageplay' : raw === 'quest' || raw === 'progress-flow' ? 'gameplay' : raw
     if (id && validIds.includes(id)) return id
   } catch {
     // ignore

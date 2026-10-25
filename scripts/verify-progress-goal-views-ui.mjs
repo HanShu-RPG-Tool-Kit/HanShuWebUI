@@ -8,9 +8,9 @@ const browser=await chromium.launch({headless:true,...(process.platform==='win32
 try {
  const page=await browser.newPage({viewport:{width:1280,height:1100}}),errors=[]
  page.on('pageerror',e=>errors.push(e.message))
- const transformed=await(await fetch(base+'/src/workspaces/quest/ProgressEditor.tsx')).text(),react=transformed.match(/"([^" ]*deps\/react\.js[^" ]*)"/)[1],dom=react.replace(/react\.js.*$/,'react-dom_client.js')+new URL(react,base).search
+ const transformed=await(await fetch(base+'/src/workspaces/gameplay/ProgressEditor.tsx')).text(),react=transformed.match(/"([^" ]*deps\/react\.js[^" ]*)"/)[1],dom=react.replace(/react\.js.*$/,'react-dom_client.js')+new URL(react,base).search
  await page.route('**/__goal-views',r=>r.fulfill({contentType:'text/html',body:`<meta charset="utf-8"><style>body{margin:0}#root{display:flex;height:100vh}</style><script type="module">import R from '/@react-refresh';R.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>t=>t;window.__vite_plugin_react_preamble_installed__=true;</script><div id="root"></div><script type="module">
- import React from '${react}';import DOM from '${dom}';import {ProgressEditor} from '/src/workspaces/quest/ProgressEditor.tsx';import {createProgress,parseProgress} from '/src/workspaces/quest/progressDoc.ts';
+ import React from '${react}';import DOM from '${dom}';import {ProgressEditor} from '/src/workspaces/gameplay/ProgressEditor.tsx';import {createProgress,parseProgress} from '/src/workspaces/gameplay/progressDoc.ts';
  const definitions=[1,4,2].map((count,i)=>({kind:'type'+i,label:['击杀','收集','对话'][i],fields:Array.from({length:count},(_,j)=>({key:'f'+j,type:'int',label:'数量'+j,required:false,default:1})),sourceKey:null,sourceName:'fixture'})),catalog={definitions,byKind:new Map(definitions.map(d=>[d.kind,d])),errors:[]};
  let seed=createProgress();seed.goals=Array.from({length:7},(_,i)=>({id:'g'+i,kind:'type'+i%3,config:{}}));window.edits=0;
  function App(){const [doc,D]=React.useState(seed);window.doc=doc;return React.createElement(ProgressEditor,{doc,goalCatalog:catalog,onChange:source=>{window.edits++;D(parseProgress(source))}})}DOM.createRoot(document.getElementById('root')).render(React.createElement(App));

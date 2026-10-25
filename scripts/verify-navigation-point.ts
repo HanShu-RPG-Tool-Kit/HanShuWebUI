@@ -6,7 +6,7 @@ import {
   stringifyNavigationPoint,
   toEngineObject,
   validateNavigationPoint,
-} from '../src/workspaces/quest/navigationPoint.ts'
+} from '../src/workspaces/gameplay/navigationPoint.ts'
 
 let passed = 0
 function test(name: string, check: () => void) { check(); passed++; console.log(`[OK] ${name}`) }

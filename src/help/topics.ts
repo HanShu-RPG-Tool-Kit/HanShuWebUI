@@ -20,7 +20,7 @@ import kitRuntime from './docs/kit-runtime.md?raw'
 import tnbtJson from './docs/tnbt-json.md?raw'
 import itemGuide from './docs/item-guide.md?raw'
 import gameDevServer from './docs/game-dev-server.md?raw'
-import progressWorkspace from './docs/progress-workspace.md?raw'
+import gameplayWorkspace from './docs/gameplay-workspace.md?raw'
 import progressFlowModel from './docs/progress-flow-model.md?raw'
 import progressDocument from './docs/progress-document.md?raw'
 import progressDesign from './docs/progress-design.md?raw'
@@ -54,7 +54,7 @@ export type HelpTopicId =
   | 'item-guide'
   | 'tnbt-json'
   | 'game-dev-server'
-  | 'progress-workspace'
+  | 'gameplay-workspace'
   | 'progress-flow-model'
   | 'progress-document'
   | 'progress-design'
@@ -179,12 +179,12 @@ export const HELP_TOPICS: HelpTopic[] = [
     body: gameDevServer,
   },
   {
-    id: 'progress-workspace',
-    title: '进度工作区',
+    id: 'gameplay-workspace',
+    title: '游戏性工作区',
     group: '进度',
     audience: 'both',
     inDocs: true,
-    body: progressWorkspace,
+    body: gameplayWorkspace,
   },
   {
     id: 'progress-flow-model',

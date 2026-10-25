@@ -58,7 +58,7 @@ import './studio.css'
  * 配音模式提示 → 预览窗（可拖拽 + 波形）→ 播放与进度条 → 音频信息（路径/时长/格式/声道）
  * → 共用的资产搜索与资源树（见 studio/VoiceAssetBrowser）。
  *
- * 组件是**受控**的：选中了哪些键、当前什么模式都由 ScriptWorkspace 持有
+ * 组件是**受控**的：选中了哪些键、当前什么模式都由 StageplayWorkspace 持有
  * （因为选中动作发生在编辑器里，见 monaco/textEditor 的录音棚选择模式）。
  */
 
@@ -102,7 +102,7 @@ export type StudioTtsPanel = {
    * 正在生成。
    *
    * **它必须把「生成配音」按住。** 合成是逐键串行的,而导入共用同一份进度与取消引用
-   * (见 ScriptWorkspace 的 `runVoiceImportForKeys`) —— 同一个按钮点两下会跑起两条
+   * (见 StageplayWorkspace 的 `runVoiceImportForKeys`) —— 同一个按钮点两下会跑起两条
    * 合成循环,进度条互相覆盖、取消也取消不干净。
    */
   busy: boolean

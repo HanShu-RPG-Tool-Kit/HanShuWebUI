@@ -18,7 +18,7 @@ import {
   type NewFileSeedContext,
   type NewFileTypeId,
 } from '../newFileTypes'
-import { parseGoalDefinitionsFromSource } from '../workspaces/quest/goalDefinitions'
+import { parseGoalDefinitionsFromSource } from '../workspaces/gameplay/goalDefinitions'
 import {
   CHAR_THEME_ID,
   registerCharLanguage,
@@ -144,9 +144,9 @@ import {
 } from '../project'
 
 import type {
-  ScriptChromeInfo,
-  ScriptWorkspaceHandle,
-} from './scriptTypes'
+  StageplayChromeInfo,
+  StageplayWorkspaceHandle,
+} from './stageplayTypes'
 import { StatusBarSlots } from '../chrome'
 import { LocaleSelect } from '../LocaleSelect'
 import { FilePresenceBar } from '../project/FilePresenceBar'
@@ -233,15 +233,15 @@ function nowStamp(): number {
   return Date.now()
 }
 
-type ScriptWorkspaceProps = {
-  onChromeInfo?: (info: ScriptChromeInfo) => void
+type StageplayWorkspaceProps = {
+  onChromeInfo?: (info: StageplayChromeInfo) => void
   isActive?: boolean
 }
 
-export const ScriptWorkspace = forwardRef<
-  ScriptWorkspaceHandle,
-  ScriptWorkspaceProps
->(function ScriptWorkspace({ onChromeInfo, isActive = true }, ref) {
+export const StageplayWorkspace = forwardRef<
+  StageplayWorkspaceHandle,
+  StageplayWorkspaceProps
+>(function StageplayWorkspace({ onChromeInfo, isActive = true }, ref) {
   const serviceSession = useProjectSession()
   const [workspace, setWorkspace] = useState<Workspace>(() => emptyWorkspace())
   const [project, setProject] = useState<BoundProject | null>(null)
@@ -3140,7 +3140,7 @@ export const ScriptWorkspace = forwardRef<
   }, [titleName, packageName, project?.folderName, projectBusy, onChromeInfo])
 
   return (
-    <div className="script-workspace">
+    <div className="stageplay-workspace">
       <div className="workspace">
         <Explorer
           workspace={workspace}

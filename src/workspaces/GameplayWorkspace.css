@@ -1,6 +1,6 @@
 /* 进度流程：与皮肤管理器同一套 Blender 式方角面板语言（中性灰、2px 面板缝、#383838 标题条）。
    在根上覆盖应用级颜色变量，子组件（礼包表单、画布菜单）随之换色。 */
-:is(.flow-workspace, .flow-editor-dialog, .flow-alert-dialog, .flow-node-menu) {
+:is(.gameplay-workspace, .flow-editor-dialog, .flow-alert-dialog, .flow-node-menu) {
   --bg: #1d1d1d;
   --bg-title: #383838;
   --bg-menu-hover: #3d3d3d;
@@ -34,23 +34,23 @@
   color-scheme: dark;
 }
 
-.flow-workspace { flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; background: var(--bg); color: var(--text); font-family: -apple-system, 'PingFang SC', 'Segoe UI', sans-serif; font-size: var(--fl-font-sm); }
-:is(.flow-workspace, .flow-editor-dialog, .flow-alert-dialog) :is(button, input, select, textarea) { font: inherit; color: inherit; }
-:is(.flow-workspace, .flow-editor-dialog, .flow-alert-dialog) button { border: 1px solid var(--border-soft); border-radius: var(--fl-radius); background: var(--fl-panel-2); padding: 5px 12px; cursor: pointer; white-space: nowrap; transition: background .15s ease, border-color .15s ease; }
-:is(.flow-workspace, .flow-editor-dialog, .flow-alert-dialog) button:hover:not(:disabled) { background: var(--fl-hover); color: var(--text-bright); }
-:is(.flow-workspace, .flow-editor-dialog, .flow-alert-dialog) button:disabled { opacity: .55; cursor: default; }
-:is(.flow-workspace, .flow-editor-dialog, .flow-alert-dialog) :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-:is(.flow-workspace, .flow-editor-dialog, .flow-alert-dialog) :is(input, select, textarea) { min-width: 0; width: 100%; border: 1px solid var(--border-soft); border-radius: var(--fl-radius); padding: 5px 8px; background: var(--fl-panel-2); user-select: text; transition: border-color .15s ease; }
-:is(.flow-workspace, .flow-editor-dialog, .flow-alert-dialog) :is(input, select, textarea):focus { outline: none; border-color: var(--accent); }
-:is(.flow-workspace, .flow-editor-dialog, .flow-alert-dialog) textarea { resize: vertical; line-height: 1.6; }
-:is(.flow-workspace, .flow-editor-dialog, .flow-alert-dialog) button.flow-primary { background: var(--accent); border-color: transparent; color: #fff; }
-:is(.flow-workspace, .flow-editor-dialog, .flow-alert-dialog) button.flow-primary:hover:not(:disabled) { background: #5a7cff; color: #fff; }
-:is(.flow-workspace, .flow-editor-dialog, .flow-alert-dialog) button.flow-danger { color: var(--fl-danger); }
+.gameplay-workspace { flex: 1; display: flex; flex-direction: column; min-height: 0; overflow: hidden; background: var(--bg); color: var(--text); font-family: -apple-system, 'PingFang SC', 'Segoe UI', sans-serif; font-size: var(--fl-font-sm); }
+:is(.gameplay-workspace, .flow-editor-dialog, .flow-alert-dialog) :is(button, input, select, textarea) { font: inherit; color: inherit; }
+:is(.gameplay-workspace, .flow-editor-dialog, .flow-alert-dialog) button { border: 1px solid var(--border-soft); border-radius: var(--fl-radius); background: var(--fl-panel-2); padding: 5px 12px; cursor: pointer; white-space: nowrap; transition: background .15s ease, border-color .15s ease; }
+:is(.gameplay-workspace, .flow-editor-dialog, .flow-alert-dialog) button:hover:not(:disabled) { background: var(--fl-hover); color: var(--text-bright); }
+:is(.gameplay-workspace, .flow-editor-dialog, .flow-alert-dialog) button:disabled { opacity: .55; cursor: default; }
+:is(.gameplay-workspace, .flow-editor-dialog, .flow-alert-dialog) :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+:is(.gameplay-workspace, .flow-editor-dialog, .flow-alert-dialog) :is(input, select, textarea) { min-width: 0; width: 100%; border: 1px solid var(--border-soft); border-radius: var(--fl-radius); padding: 5px 8px; background: var(--fl-panel-2); user-select: text; transition: border-color .15s ease; }
+:is(.gameplay-workspace, .flow-editor-dialog, .flow-alert-dialog) :is(input, select, textarea):focus { outline: none; border-color: var(--accent); }
+:is(.gameplay-workspace, .flow-editor-dialog, .flow-alert-dialog) textarea { resize: vertical; line-height: 1.6; }
+:is(.gameplay-workspace, .flow-editor-dialog, .flow-alert-dialog) button.flow-primary { background: var(--accent); border-color: transparent; color: #fff; }
+:is(.gameplay-workspace, .flow-editor-dialog, .flow-alert-dialog) button.flow-primary:hover:not(:disabled) { background: #5a7cff; color: #fff; }
+:is(.gameplay-workspace, .flow-editor-dialog, .flow-alert-dialog) button.flow-danger { color: var(--fl-danger); }
 
-.flow-workspace ::-webkit-scrollbar, .flow-editor-dialog ::-webkit-scrollbar { width: 10px; height: 10px; }
-.flow-workspace ::-webkit-scrollbar-thumb, .flow-editor-dialog ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, .12); border: 2px solid transparent; background-clip: content-box; }
-.flow-workspace ::-webkit-scrollbar-thumb:hover, .flow-editor-dialog ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, .2); border: 2px solid transparent; background-clip: content-box; }
-.flow-workspace ::-webkit-scrollbar-track, .flow-editor-dialog ::-webkit-scrollbar-track { background: transparent; }
+.gameplay-workspace ::-webkit-scrollbar, .flow-editor-dialog ::-webkit-scrollbar { width: 10px; height: 10px; }
+.gameplay-workspace ::-webkit-scrollbar-thumb, .flow-editor-dialog ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, .12); border: 2px solid transparent; background-clip: content-box; }
+.gameplay-workspace ::-webkit-scrollbar-thumb:hover, .flow-editor-dialog ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, .2); border: 2px solid transparent; background-clip: content-box; }
+.gameplay-workspace ::-webkit-scrollbar-track, .flow-editor-dialog ::-webkit-scrollbar-track { background: transparent; }
 
 .flow-layout { display: flex; flex: 1; gap: 2px; padding: 2px; min-height: 0; min-width: 0; overflow: auto; background: var(--border); }
 .flow-library { flex: 0 0 280px; width: 280px; display: flex; flex-direction: column; min-height: 0; overflow: hidden; background: var(--fl-panel); }
@@ -190,12 +190,12 @@
 }
 .flow-page-tab.is-dragging { opacity: 0.45; }
 .flow-page-tab.is-drop { box-shadow: inset 2px 0 0 var(--accent); }
-.flow-workspace .flow-page-tab button {
+.gameplay-workspace .flow-page-tab button {
   appearance: none; height: 100%; margin: 0; border: 0; border-radius: 0;
   background: transparent; color: inherit; font: inherit; cursor: pointer;
 }
-.flow-workspace .flow-page-tab button:hover:not(:disabled) { background: transparent; }
-.flow-workspace .flow-page-tab-name {
+.gameplay-workspace .flow-page-tab button:hover:not(:disabled) { background: transparent; }
+.gameplay-workspace .flow-page-tab-name {
   display: flex; align-items: center; gap: 6px; min-width: 0; padding: 0 2px 0 10px;
 }
 .flow-page-tab.is-pinned .flow-page-tab-name { padding-right: 10px; }
@@ -220,14 +220,14 @@
   transform: rotate(45deg);
 }
 .flow-page-tab.is-active .flow-page-pin { color: var(--accent); }
-.flow-workspace .flow-page-tab-close {
+.gameplay-workspace .flow-page-tab-close {
   display: grid; place-items: center;
   width: calc(20px * var(--fl-s, 1.25));
   margin-right: 4px; padding: 0; line-height: 1; opacity: 0;
 }
 .flow-page-tab:hover .flow-page-tab-close,
 .flow-page-tab.is-active .flow-page-tab-close { opacity: 0.55; }
-.flow-workspace .flow-page-tab .flow-page-tab-close:hover:not(:disabled) {
+.gameplay-workspace .flow-page-tab .flow-page-tab-close:hover:not(:disabled) {
   opacity: 1; color: var(--text-bright); background: rgba(255, 255, 255, 0.08);
 }
 
@@ -235,11 +235,11 @@
 .flow-explorer-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; height: calc(26px * var(--fl-s)); box-sizing: content-box; padding: 0 6px 0 8px; background: var(--fl-head); border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .flow-explorer-heading strong { font-size: var(--fl-font-sm); font-weight: 400; color: var(--text); white-space: nowrap; }
 .flow-explorer-actions { display: flex; gap: 2px; }
-.flow-workspace .flow-explorer-actions button { display: flex; align-items: center; justify-content: center; width: calc(20px * var(--fl-s)); height: calc(20px * var(--fl-s)); padding: 2px; border: 1px solid var(--border-soft); background: var(--fl-panel-2); }
-.flow-workspace .flow-explorer-actions button:hover:not(:disabled) { background: var(--fl-hover); }
+.gameplay-workspace .flow-explorer-actions button { display: flex; align-items: center; justify-content: center; width: calc(20px * var(--fl-s)); height: calc(20px * var(--fl-s)); padding: 2px; border: 1px solid var(--border-soft); background: var(--fl-panel-2); }
+.gameplay-workspace .flow-explorer-actions button:hover:not(:disabled) { background: var(--fl-hover); }
 .flow-explorer-actions .flow-resource-icon { width: calc(14px * var(--fl-s)); height: calc(14px * var(--fl-s)); color: var(--text-dim); }
-.flow-workspace .flow-search { flex-shrink: 0; margin: 6px 8px; width: calc(100% - 16px); padding: 4px 6px; font-size: var(--fl-font-sm); }
-.flow-workspace .flow-search::placeholder { color: var(--fl-faint); }
+.gameplay-workspace .flow-search { flex-shrink: 0; margin: 6px 8px; width: calc(100% - 16px); padding: 4px 6px; font-size: var(--fl-font-sm); }
+.gameplay-workspace .flow-search::placeholder { color: var(--fl-faint); }
 
 .flow-resource-icon { width: var(--fl-icon); height: var(--fl-icon); flex-shrink: 0; color: #9db4d4; }
 .flow-resource-row .is-folder, .flow-resource-new .is-folder { color: #d4b47d; }
@@ -281,21 +281,21 @@
 .flow-resource-twist { display: inline-flex; align-items: center; justify-content: center; width: 12px; flex-shrink: 0; font-size: var(--fl-font-xs); color: #9a9aa5; }
 .flow-resource-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .flow-resource-edit { display: flex; flex: 1; min-width: 0; }
-.flow-workspace .flow-resource-edit input, .flow-workspace .flow-resource-new input { height: auto; padding: 2px 6px; border-color: var(--accent); font-size: var(--fl-font-sm); }
+.gameplay-workspace .flow-resource-edit input, .gameplay-workspace .flow-resource-new input { height: auto; padding: 2px 6px; border-color: var(--accent); font-size: var(--fl-font-sm); }
 .flow-resource-new { padding-top: 2px; padding-bottom: 2px; }
 .flow-explorer-empty { padding: 6px 12px; font-size: var(--fl-font-xs); color: var(--fl-faint); line-height: 1.7; }
 .flow-explorer-edit-panel { padding: 8px; background: var(--fl-panel-2); border-top: 1px solid var(--border); font-size: var(--fl-font-sm); }
 .flow-explorer-edit-panel p { font-size: var(--fl-font-xs); color: var(--text-dim); line-height: 1.6; margin: 0 0 6px; }
 .flow-explorer-edit-panel label { display: flex; flex-direction: column; gap: 4px; font-size: var(--fl-font-sm); color: var(--text-dim); }
 .flow-explorer-edit-panel > div { display: flex; gap: 6px; margin-top: 8px; }
-.flow-workspace .flow-explorer-edit-panel button { padding: 4px 10px; font-size: var(--fl-font-xs); }
-.flow-workspace .flow-explorer-edit-panel button:first-child { background: var(--accent); border-color: transparent; color: #fff; }
+.gameplay-workspace .flow-explorer-edit-panel button { padding: 4px 10px; font-size: var(--fl-font-xs); }
+.gameplay-workspace .flow-explorer-edit-panel button:first-child { background: var(--accent); border-color: transparent; color: #fff; }
 .flow-library-footer { flex-shrink: 0; padding: 4px 8px; border-top: 1px solid var(--border); background: var(--fl-head); font-size: var(--fl-font-xs); color: var(--fl-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* ---- 主区通用 ---- */
 .flow-field { display: flex; flex-direction: column; gap: 4px; margin: 10px 0; }
 .flow-field > span { color: var(--text-dim); font-size: var(--fl-font-xs); }
-:is(.flow-workspace, .flow-editor-dialog) .flow-code { font: calc(12px * var(--fl-s))/1.7 Consolas, 'Microsoft YaHei', monospace; tab-size: 2; }
+:is(.gameplay-workspace, .flow-editor-dialog) .flow-code { font: calc(12px * var(--fl-s))/1.7 Consolas, 'Microsoft YaHei', monospace; tab-size: 2; }
 .flow-hint { color: var(--fl-faint); font-size: var(--fl-font-xs); line-height: 1.7; overflow-wrap: anywhere; }
 .flow-inline-actions { display: flex; gap: 6px; flex-wrap: wrap; margin: 10px 0; }
 .flow-check { display: flex; align-items: center; gap: 8px; margin: 12px 0; }
@@ -303,7 +303,7 @@
 .flow-badge { font-size: var(--fl-font-xs); color: var(--fl-ok); background: rgba(125, 202, 138, .12); border: 1px solid rgba(125, 202, 138, .35); padding: 0 5px; margin-left: 5px; vertical-align: middle; }
 .flow-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: 12px; }
 .flow-section-heading h4 { font-weight: 600; margin: 0; font-size: var(--fl-font-sm); }
-.flow-workspace .flow-section-heading button, .flow-editor-dialog .flow-section-heading button { padding: 2px 8px; font-size: var(--fl-font-xs); }
+.gameplay-workspace .flow-section-heading button, .flow-editor-dialog .flow-section-heading button { padding: 2px 8px; font-size: var(--fl-font-xs); }
 .flow-goal { margin: 12px 0; padding: 0 10px 10px; border: 1px solid var(--border); background: var(--fl-panel-2); }
 .flow-goal .flow-section-heading strong { font-size: var(--fl-font-sm); font-weight: 600; color: var(--text); }
 .flow-route { font: calc(12px * var(--fl-s)) Consolas, monospace; overflow-wrap: anywhere; line-height: 1.8; }
@@ -311,8 +311,8 @@
 
 .flow-validation { flex-shrink: 0; border-top: 1px solid var(--border); background: var(--fl-head); }
 .flow-validation.has-cycle { background: #3d3626; border-top-color: #6b5a30; }
-.flow-workspace .flow-validation-toggle { display: flex; justify-content: space-between; width: 100%; padding: 5px 10px; border: 0; background: transparent; font-size: var(--fl-font-xs); }
-.flow-workspace .flow-validation-toggle:hover:not(:disabled) { background: var(--fl-hover); }
+.gameplay-workspace .flow-validation-toggle { display: flex; justify-content: space-between; width: 100%; padding: 5px 10px; border: 0; background: transparent; font-size: var(--fl-font-xs); }
+.gameplay-workspace .flow-validation-toggle:hover:not(:disabled) { background: var(--fl-hover); }
 .flow-validation.has-cycle .flow-validation-toggle { color: #f0dfb8; }
 .flow-validation-toggle > span:last-child { color: var(--fl-faint); }
 .flow-validation.has-cycle .flow-validation-toggle > span:last-child { color: var(--fl-warn); }
@@ -340,8 +340,8 @@
 .flow-source-pane { flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 10px 12px 12px; gap: 8px; }
 .flow-source-heading { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; color: var(--text-dim); }
 .flow-source-heading strong { color: var(--text-bright); font-weight: 600; }
-.flow-workspace .flow-source { flex: 1; resize: none; white-space: pre; min-height: 120px; padding: 12px; overflow: auto; }
-.flow-workspace .flow-script-pane { padding: 0; gap: 0; height: 100%; }
+.gameplay-workspace .flow-source { flex: 1; resize: none; white-space: pre; min-height: 120px; padding: 12px; overflow: auto; }
+.gameplay-workspace .flow-script-pane { padding: 0; gap: 0; height: 100%; }
 .flow-script-readonly-bar {
   flex: 0 0 auto; display: flex; align-items: center; gap: 10px; margin: 0;
   padding: 6px 10px; border-bottom: 1px solid var(--fl-border, #333);
@@ -378,8 +378,8 @@
   font-size: var(--fl-font-xs);
 }
 .flow-statusbar-right { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }
-.flow-workspace .lang-select { height: auto; margin-right: 0; font-size: var(--fl-font-xs); }
-.flow-workspace .lang-select .lang-trigger {
+.gameplay-workspace .lang-select { height: auto; margin-right: 0; font-size: var(--fl-font-xs); }
+.gameplay-workspace .lang-select .lang-trigger {
   height: auto;
   min-height: 22px;
   padding: 0 8px;
@@ -389,12 +389,12 @@
   cursor: pointer;
   white-space: nowrap;
 }
-.flow-workspace .lang-select .lang-trigger:hover,
-.flow-workspace .lang-select .lang-trigger.open {
+.gameplay-workspace .lang-select .lang-trigger:hover,
+.gameplay-workspace .lang-select .lang-trigger.open {
   background: rgba(255, 255, 255, 0.08);
   color: var(--text-bright);
 }
-.flow-workspace .lang-select .lang-dropdown {
+.gameplay-workspace .lang-select .lang-dropdown {
   top: auto;
   bottom: calc(100% + 2px);
   right: 0;
@@ -405,7 +405,7 @@
   background: var(--fl-panel);
   box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.45);
 }
-.flow-workspace .lang-select .lang-item {
+.gameplay-workspace .lang-select .lang-item {
   border: 0;
   border-radius: 0;
   background: transparent;
@@ -413,8 +413,8 @@
   width: 100%;
   padding: 6px 10px;
 }
-.flow-workspace .lang-select .lang-item:hover,
-.flow-workspace .lang-select .lang-item.on {
+.gameplay-workspace .lang-select .lang-item:hover,
+.gameplay-workspace .lang-select .lang-item.on {
   background: var(--fl-hover);
 }
 

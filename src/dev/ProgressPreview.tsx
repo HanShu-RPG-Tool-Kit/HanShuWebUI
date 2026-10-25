@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { ProgressEditor } from '../workspaces/quest/ProgressEditor'
-import { createProgress, createProgressGoal, parseProgress, stringifyProgress } from '../workspaces/quest/progressDoc'
-import { buildGoalDefinitionCatalog, type GoalDefinitionCatalog } from '../workspaces/quest/goalDefinitions'
-import { loadFlowWorkspace } from '../workspaces/quest/storage'
-import { isKitDocument } from '../workspaces/quest/library'
-import { kitRefFromFileName, readKitSource } from '../workspaces/quest/kit'
-import { isProgressLocaleKey } from '../workspaces/quest/progressLocale'
-import '../workspaces/QuestWorkspace.css'
+import { ProgressEditor } from '../workspaces/gameplay/ProgressEditor'
+import { createProgress, createProgressGoal, parseProgress, stringifyProgress } from '../workspaces/gameplay/progressDoc'
+import { buildGoalDefinitionCatalog, type GoalDefinitionCatalog } from '../workspaces/gameplay/goalDefinitions'
+import { loadFlowWorkspace } from '../workspaces/gameplay/storage'
+import { isKitDocument } from '../workspaces/gameplay/library'
+import { kitRefFromFileName, readKitSource } from '../workspaces/gameplay/kit'
+import { isProgressLocaleKey } from '../workspaces/gameplay/progressLocale'
+import '../workspaces/GameplayWorkspace.css'
 import './ProgressPreview.css'
 
 // Review the production form using this origin's actual workspace scripts, never a second type registry.
@@ -63,7 +63,7 @@ function App() {
   return <div className="progress-preview-shell">
     <header className="preview-app-header"><strong>HanShu <span>RPG Tool Kit</span></strong><span>进度流程 <i>/</i> 进度项目</span><button onClick={() => setCatalogs(loadCatalogs())}>刷新脚本目录</button><button onClick={download}>导出 .quest</button></header>
     <div className="preview-app-body"><aside className="preview-app-sidebar"><div className="preview-sidebar-title">资源管理器</div><p>⌄　进度</p><button className="preview-file-active" onClick={() => setShowSource(false)}>◇　progress.quest</button><p>⌄　脚本 / 目标定义</p>{catalogs.goals.definitions.map(item => <span key={item.kind}>{item.sourceName} · {item.kind}</span>)}{!catalogs.goals.definitions.length && <span>当前工作区没有目标定义脚本</span>}<div className="preview-sidebar-actions"><button onClick={() => change(stringifyProgress(createProgress()))}>新建空白</button><button onClick={() => setShowSource(value => !value)}>{showSource ? '返回表单' : '查看数据'}</button><a href="/" target="_blank" rel="noreferrer">打开工作区管理脚本</a></div></aside>
-      <main className="flow-workspace"><div className="preview-file-tab">◇　{doc.name || '新建进度'}.quest <span>表单</span></div>
+      <main className="gameplay-workspace"><div className="preview-file-tab">◇　{doc.name || '新建进度'}.quest <span>表单</span></div>
         {catalogs.error && <p role="alert">{catalogs.error}</p>}
         {showSource ? <pre className="preview-source">{history.source}</pre> : <ProgressEditor doc={doc} goalCatalog={catalogs.goals} kitOptions={catalogs.kits} onChange={change} />}
       </main>

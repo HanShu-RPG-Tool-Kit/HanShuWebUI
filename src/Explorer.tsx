@@ -752,7 +752,7 @@ function PackageNode({
    * 源文件按 `src/<kind>/` 分组、创作资料归 `meta/`。
    *
    * 桶按 `WORKSPACE_GROUP_ORDER`（**全部**源类型 + `meta`）建，不是剧本工作区那套
-   * `SCRIPT_WORKSPACE_GROUP_ORDER`（只有 hanshu / character / script / meta）。
+   * `STAGEPLAY_WORKSPACE_GROUP_ORDER`（只有 hanshu / character / script / meta）。
    * 用后者时 `sourceKindOf` 返回 goal / progress / story / navigator / gift 的文件
    * **既不入桶也不入 root**，被 `continue` 静默丢掉：从「+剧」新建进度 / 流程 / 导航 /
    * 礼包 / 目标定义（11 种里的 5 种）建完就在树里消失 —— 文件其实建成了、还成了活动文件，

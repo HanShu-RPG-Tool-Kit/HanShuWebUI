@@ -51,7 +51,7 @@ const registry: NodeRegistry = {
 />
 ```
 
-`editDraft` 是示意名称，接入时使用当前编辑会话的真实草稿入口。完整独立示例见 `nodeEditor/Example.tsx`：不导入进度模块，可以独立创建节点、连线、分组和注释。进度适配器参考 `workspaces/quest/graphAdapter.ts`。
+`editDraft` 是示意名称，接入时使用当前编辑会话的真实草稿入口。完整独立示例见 `nodeEditor/Example.tsx`：不导入进度模块，可以独立创建节点、连线、分组和注释。进度适配器参考 `workspaces/gameplay/graphAdapter.ts`。
 
 `documentId` 是画布实例身份；切换文档会重建独立的 React Flow Provider，旧拖动、连线、小刀、菜单和视口状态不跨文档续接。同一文档可同时在多个窗格打开，每个组件实例有独立视口和选择状态。
 

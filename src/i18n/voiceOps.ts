@@ -2,7 +2,7 @@ import type { ProjectDirectory } from '../project/serviceClient'
 /**
  * 配音资产的**写、删、引用** —— 与界面无关的那一半。
  *
- * 这些逻辑原先住在 `ScriptWorkspace`（三千九百多行的组件）里，只因为要取
+ * 这些逻辑原先住在 `StageplayWorkspace`（三千九百多行的组件）里，只因为要取
  * `workspaceRef` / `commitWorkspace` / `activePackage` 这几个闭包变量。
  * 但它们是**领域逻辑**，不是界面逻辑：
  * - 「一个键只有一个来源」这条规矩（写 `.ogg` 清 `.ref`，写 `.ref` 清 `.ogg`）；

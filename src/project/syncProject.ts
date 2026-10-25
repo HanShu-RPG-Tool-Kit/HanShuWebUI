@@ -1,7 +1,7 @@
 import { ServiceError } from '../collab/protocol'
 import { cacheRemoteAsset, deleteCachedAsset, assetCacheEpoch, getAssetBlob, putAssetBlob } from '../assets/idb'
 import { sourcePathOf } from '../workspace'
-import { getProgressEditor } from '../workspaces/quest/progressEditRegistry'
+import { getProgressEditor } from '../workspaces/gameplay/progressEditRegistry'
 import { getProjectClient, type FileEdit, type ProjectClient } from './serviceClient'
 import { collectProjectChanges, refreshServiceProject, refreshProjectManifest } from './projectFs'
 import { getProjectSession, setProjectSession } from './projectSession'

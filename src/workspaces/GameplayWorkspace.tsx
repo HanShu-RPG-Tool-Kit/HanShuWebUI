@@ -1,53 +1,53 @@
 import {PythonEditor} from '../monaco/python/PythonEditor'
 import {scriptType,scriptSection,scriptTemplate} from '../scriptResources'
-import {scriptTypeInFolder,sectionFolderKey} from './quest/library'
+import {scriptTypeInFolder,sectionFolderKey} from './gameplay/library'
 import {openEntityEditInGame} from '../gameDevServer/entityWorkbench'
-import {LocalizedItemEditor, LocalizedEntityEditor} from './quest/LocalizedAppearanceEditors'
-import {createEntity,parseEntity,stringifyEntity} from './quest/entityDoc'
+import {LocalizedItemEditor, LocalizedEntityEditor} from './gameplay/LocalizedAppearanceEditors'
+import {createEntity,parseEntity,stringifyEntity} from './gameplay/entityDoc'
 import { useEffect, useImperativeHandle, useMemo, useRef, useState, type DragEvent, type Ref } from 'react'
 import { createPortal } from 'react-dom'
-import { connectEntry, connectNodes, createFlow, disconnectLink, hasContentNode, parseFlow, validateFlow, type CanvasNodeType, type FlowCanvasNote, type FlowInputPort, type FlowPort, type FlowPosition, type FlowSelection, type ProgressFlow } from './quest/model'
-import { addNextCheckpoint, createCanvasNote, updateCanvasNote, removeCanvasItems, createCheckpoint, createEndNode, createGoalNode, createPredicateNode, createTransitionNode, createConditionalNode, createDiffNode, createMergeNode, createSwapNode, groupCanvasNodes, moveCanvasNodes, renameCanvasGroup, ungroupCanvasNodes, withCanvasPositions } from './quest/canvas'
-import { smartArrangeCanvas } from './quest/arrange'
-import { ProgressGraph } from './quest/ProgressGraph'
-import { FlowEditorDialog } from './quest/FlowEditorDialog'
-import { FlowDocumentProperties } from './quest/FlowDocumentProperties'
-import { FlowExplorer } from './quest/FlowExplorer'
-import { PageList } from './quest/PageList'
-import { EditorSplit } from './quest/EditorSplit'
-import { closeAllInGroup, closeInGroup, closeOthersInGroup, closeRightInGroup, focusedGroupId, focusGroup, joinGroups, moveTab, normalizeGroups, openAsRightSplit, openInGroup, openOppositeToKey, readGroup, setSplitRatio, splitTab, togglePinInGroup, type GroupId, type SplitZone } from './quest/editorGroups'
-import { ensurePackageSections, folderPath, isBuiltinScriptFolder, isEntityDocument, isItemDocument, isItemLibraryTableKey, isLibraryTableKey, isEntityLibraryTableKey, ENTITY_LIBRARY_TABLE_KEY, ITEM_LIBRARY_TABLE_KEY, isKitDocument, isMultiQuestDocument, isNavigationDocument, isQuestDocument, isScriptDocument, isSectionFolder, isSimpleQuestDocument, packageAcceptsImportFile, packageAllowsDocuments, packageDocumentExt, renameFlowEntry, stripLibraryTables, uniqueDocumentName, withLibraryTables } from './quest/library'
-import { normalizeQuestFileName, questAuthorKindFromSource } from './quest/questKind'
-import { createFlowDocument, downloadFlowFile, importFlowDocument, stampDocument, type FlowDocument, type FlowPackageId, type FlowWorkspaceState } from './quest/storage'
-import { createKit, kitRefFromFileName, readKitSource, stringifyKit, parseKit } from './quest/kit'
-import { createProgress, createProgressLocaleSeeds, readProgressSource, stringifyProgress, parseProgress } from './quest/progressDoc'
-import { createNavigationPoint, readNavigationSource, stringifyNavigationPoint, parseNavigationPoint } from './quest/navigationPoint'
-import { createItem, itemFromItemStackSource, parseItem, readItemSource, stringifyItem } from './quest/itemDoc'
+import { connectEntry, connectNodes, createFlow, disconnectLink, hasContentNode, parseFlow, validateFlow, type CanvasNodeType, type FlowCanvasNote, type FlowInputPort, type FlowPort, type FlowPosition, type FlowSelection, type ProgressFlow } from './gameplay/model'
+import { addNextCheckpoint, createCanvasNote, updateCanvasNote, removeCanvasItems, createCheckpoint, createEndNode, createGoalNode, createPredicateNode, createTransitionNode, createConditionalNode, createDiffNode, createMergeNode, createSwapNode, groupCanvasNodes, moveCanvasNodes, renameCanvasGroup, ungroupCanvasNodes, withCanvasPositions } from './gameplay/canvas'
+import { smartArrangeCanvas } from './gameplay/arrange'
+import { ProgressGraph } from './gameplay/ProgressGraph'
+import { FlowEditorDialog } from './gameplay/FlowEditorDialog'
+import { FlowDocumentProperties } from './gameplay/FlowDocumentProperties'
+import { FlowExplorer } from './gameplay/FlowExplorer'
+import { PageList } from './gameplay/PageList'
+import { EditorSplit } from './gameplay/EditorSplit'
+import { closeAllInGroup, closeInGroup, closeOthersInGroup, closeRightInGroup, focusedGroupId, focusGroup, joinGroups, moveTab, normalizeGroups, openAsRightSplit, openInGroup, openOppositeToKey, readGroup, setSplitRatio, splitTab, togglePinInGroup, type GroupId, type SplitZone } from './gameplay/editorGroups'
+import { ensurePackageSections, folderPath, isBuiltinScriptFolder, isEntityDocument, isItemDocument, isItemLibraryTableKey, isLibraryTableKey, isEntityLibraryTableKey, ENTITY_LIBRARY_TABLE_KEY, ITEM_LIBRARY_TABLE_KEY, isKitDocument, isMultiQuestDocument, isNavigationDocument, isQuestDocument, isScriptDocument, isSectionFolder, isSimpleQuestDocument, packageAcceptsImportFile, packageAllowsDocuments, packageDocumentExt, renameFlowEntry, stripLibraryTables, uniqueDocumentName, withLibraryTables } from './gameplay/library'
+import { normalizeQuestFileName, questAuthorKindFromSource } from './gameplay/questKind'
+import { createFlowDocument, downloadFlowFile, importFlowDocument, stampDocument, type FlowDocument, type FlowPackageId, type FlowWorkspaceState } from './gameplay/storage'
+import { createKit, kitRefFromFileName, readKitSource, stringifyKit, parseKit } from './gameplay/kit'
+import { createProgress, createProgressLocaleSeeds, readProgressSource, stringifyProgress, parseProgress } from './gameplay/progressDoc'
+import { createNavigationPoint, readNavigationSource, stringifyNavigationPoint, parseNavigationPoint } from './gameplay/navigationPoint'
+import { createItem, itemFromItemStackSource, parseItem, readItemSource, stringifyItem } from './gameplay/itemDoc'
 import {
   forceRequestItemSnapshots,
   isAutoItemSnapshotRefreshEnabled,
   isItemSnapshotRefreshOnline,
   setAutoItemSnapshotRefreshEnabled,
-} from './quest/itemSnapshotCache'
-import { isItemStackFileName } from './quest/itemstack'
+} from './gameplay/itemSnapshotCache'
+import { isItemStackFileName } from './gameplay/itemstack'
 import {
   ensureItemEditNotifyStarted,
   openItemEditInGame,
 } from '../gameDevServer'
-import { itemRefFromFileName } from './quest/kit'
+import { itemRefFromFileName } from './gameplay/kit'
 import {
   buildGoalDefinitionCatalog,
   isBuiltinScriptDocumentKey,
   stripBuiltinScripts,
   withBuiltinScripts,
-} from './quest/goalDefinitions'
-import { KitEditor } from './quest/KitEditor'
-import { ProgressCollaborativeEditor } from './quest/ProgressCollaborativeEditor'
-import { progressEditorSession } from './quest/progressEditRegistry'
-import { NavigationEditor } from './quest/NavigationEditor'
-import {EntityLibraryTable} from './quest/EntityLibraryTable'
-import { ItemLibraryTable } from './quest/ItemLibraryTable'
-import { useEditorFontSize } from './quest/editorFont'
+} from './gameplay/goalDefinitions'
+import { KitEditor } from './gameplay/KitEditor'
+import { ProgressCollaborativeEditor } from './gameplay/ProgressCollaborativeEditor'
+import { progressEditorSession } from './gameplay/progressEditRegistry'
+import { NavigationEditor } from './gameplay/NavigationEditor'
+import {EntityLibraryTable} from './gameplay/EntityLibraryTable'
+import { ItemLibraryTable } from './gameplay/ItemLibraryTable'
+import { useEditorFontSize } from './gameplay/editorFont'
 import {
   defaultFlowLocaleSeeds,
   defaultKitLocaleSeeds,
@@ -56,7 +56,7 @@ import {
   ensureKitLocaleKeys,
   ensureNavLocaleKeys,
   isProgressLocaleKey,
-} from './quest/progressLocale'
+} from './gameplay/progressLocale'
 import {
   applyProgressDocumentsToWorkspace,
   documentFoldersFromDocuments,
@@ -85,9 +85,9 @@ import { loadLocale, saveLocale } from '../storage'
 import { LocaleSelect } from '../LocaleSelect'
 import Editor from '@monaco-editor/react'
 import { HANSHU_THEME_ID, registerHanshuLanguage } from '../monaco/hanshuLanguage'
-import './QuestWorkspace.css'
+import './GameplayWorkspace.css'
 
-export type ProgressWorkspaceHandle = { handleMenuAction: (item: string) => void }
+export type GameplayWorkspaceHandle = { handleMenuAction: (item: string) => void }
 
 type History = { past: string[]; future: string[]; lastEdit: number }
 type DropZone = SplitZone | 'center'
@@ -103,7 +103,7 @@ function dropZoneAt(event: DragEvent, splitOn: boolean): DropZone {
   return distance < 0.3 ? zone : 'center'
 }
 
-export function QuestWorkspace({ active, workspaceRef }: { active: boolean; workspaceRef?: Ref<ProgressWorkspaceHandle> }) {
+export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; workspaceRef?: Ref<GameplayWorkspaceHandle> }) {
   const session = useProjectSession()
   const client = session.binding?.handle.client
   const projectBound = Boolean(session.binding)
@@ -1039,7 +1039,7 @@ export function QuestWorkspace({ active, workspaceRef }: { active: boolean; work
     if (locked || busy) return
     // 先让当前输入失焦，把 defaultValue/草稿类字段刷进文档，再落盘（否则 Ctrl+S 会存旧值）。
     const focused = document.activeElement
-    if (focused instanceof HTMLElement && focused.closest('.flow-workspace')) focused.blur()
+    if (focused instanceof HTMLElement && focused.closest('.gameplay-workspace')) focused.blur()
     await new Promise<void>((resolve) => queueMicrotask(() => queueMicrotask(resolve)))
     const live = getProjectSession()
     if (!live.binding) {
@@ -1435,7 +1435,7 @@ export function QuestWorkspace({ active, workspaceRef }: { active: boolean; work
     </div>
   }
 
-  return <section className="flow-workspace" aria-label="故事流程工作区">
+  return <section className="gameplay-workspace" aria-label="游戏性工作区">
     <input ref={fileInput} type="file" multiple hidden onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ''; void importFiles(files) }} />
     <div className="flow-layout">
       <FlowExplorer onOverrideBuiltinScript={key=>{const d=state.documents.find(d=>d.key===key);if(!d)return;const type=scriptTypeInFolder(state,d.folderId??null);newFlow(d.name,sectionFolderKey('script',scriptSection(type)),'script','default.py',d.source)}} readOnly={readOnly} state={explorerState} active={active} disabled={locked || busy} onChange={(next) => setState((previous) => normalizeGroups({ ...previous, documents: next.documents, folders: next.folders }))} onSelect={(key) => selectDocument(key)} onNew={newFlow} onImport={requestImport} onImportFiles={(files, folderId, packageId) => { void importFiles(files, { folderId, package: packageId }) }} onExport={exportFlow} onDownload={downloadDraft} onRemove={removeResources} onProperties={setPropertiesKey} onViewSource={viewProgressSource} onOpenEntityInGame={key=>{void openEntityInGame(key)}} onOpenItemInGame={(key) => { void openItemInGame(key) }} onNotice={setNotice} />

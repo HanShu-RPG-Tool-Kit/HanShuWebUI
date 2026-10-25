@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
-import { ProgressEditSession, type ProgressSessionAdapter, type ProgressSessionRecovery } from '../src/workspaces/quest/progressEditSession'
-import { applyProgressEffects, coalesceProgressEffects, progressDocumentEffects, progressSlot, sameProgressValue, type ProgressAcknowledgement, type ProgressCommand, type ProgressEffect } from '../src/workspaces/quest/progressOperations'
-import { createProgress, parseProgress, stringifyProgress } from '../src/workspaces/quest/progressDoc'
+import { ProgressEditSession, type ProgressSessionAdapter, type ProgressSessionRecovery } from '../src/workspaces/gameplay/progressEditSession'
+import { applyProgressEffects, coalesceProgressEffects, progressDocumentEffects, progressSlot, sameProgressValue, type ProgressAcknowledgement, type ProgressCommand, type ProgressEffect } from '../src/workspaces/gameplay/progressOperations'
+import { createProgress, parseProgress, stringifyProgress } from '../src/workspaces/gameplay/progressDoc'
 
 const document = () => ({ ...createProgress(), id: 'document-a', goals: [{ id: 'goal-a', kind: 'counter', config: { target: 1, bonus: 3 } }] })
 const wait = (ms = 0) => new Promise(resolve => setTimeout(resolve, ms))
