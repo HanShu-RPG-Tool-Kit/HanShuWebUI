@@ -1,0 +1,207 @@
+[
+  {
+    "id": "literal",
+    "input": {
+      "text": "木棍"
+    },
+    "editable": true,
+    "text": "木棍",
+    "segments": [
+      {
+        "text": "木棍"
+      }
+    ]
+  },
+  {
+    "id": "single-color",
+    "input": {
+      "text": "金剑",
+      "color": "gold"
+    },
+    "editable": true,
+    "text": "金剑",
+    "segments": [
+      {
+        "text": "金剑",
+        "color": "#FFAA00"
+      }
+    ]
+  },
+  {
+    "id": "multisegment",
+    "input": {
+      "text": "",
+      "extra": [
+        {
+          "text": "甲",
+          "bold": true
+        },
+        {
+          "text": "乙",
+          "italic": false
+        }
+      ]
+    },
+    "editable": true,
+    "text": "甲乙",
+    "segments": [
+      {
+        "text": "甲",
+        "bold": true
+      },
+      {
+        "text": "乙",
+        "italic": false
+      }
+    ]
+  },
+  {
+    "id": "merge-equal-style",
+    "input": {
+      "text": "",
+      "extra": [
+        {
+          "text": "甲",
+          "bold": true
+        },
+        {
+          "text": "乙",
+          "bold": true
+        }
+      ]
+    },
+    "editable": true,
+    "text": "甲乙",
+    "segments": [
+      {
+        "text": "甲乙",
+        "bold": true
+      }
+    ]
+  },
+  {
+    "id": "empty-sibling",
+    "input": {
+      "text": "",
+      "extra": [
+        {
+          "text": ""
+        },
+        {
+          "text": "甲",
+          "color": "#FFAA00"
+        }
+      ]
+    },
+    "editable": true,
+    "text": "甲",
+    "segments": [
+      {
+        "text": "甲",
+        "color": "#FFAA00"
+      }
+    ]
+  },
+  {
+    "id": "false-vs-inherited",
+    "input": {
+      "text": "",
+      "extra": [
+        {
+          "text": "甲"
+        },
+        {
+          "text": "乙",
+          "italic": false
+        }
+      ]
+    },
+    "editable": true,
+    "text": "甲乙",
+    "segments": [
+      {
+        "text": "甲"
+      },
+      {
+        "text": "乙",
+        "italic": false
+      }
+    ]
+  },
+  {
+    "id": "translate-preserved",
+    "input": {
+      "translate": "test.missing.key",
+      "fallback": "木棍",
+      "with": [
+        {
+          "text": "参数"
+        }
+      ]
+    },
+    "editable": false,
+    "text": "木棍"
+  },
+  {
+    "id": "unknown-preserved",
+    "input": {
+      "text": "保留",
+      "future_extension": {
+        "value": 1
+      }
+    },
+    "editable": false,
+    "text": "保留",
+    "javaCodec": false
+  },
+  {
+    "id": "empty-styled",
+    "input": {
+      "text": "",
+      "color": "gold",
+      "italic": false
+    },
+    "editable": true,
+    "text": "",
+    "segments": [
+      {
+        "text": "",
+        "color": "#FFAA00",
+        "italic": false
+      }
+    ]
+  },
+  {
+    "id": "nested-array-root",
+    "input": [
+      [
+        {
+          "text": "A",
+          "bold": true,
+          "color": "gold"
+        }
+      ],
+      {
+        "text": "B"
+      },
+      {
+        "text": "C",
+        "bold": false
+      }
+    ],
+    "editable": true,
+    "text": "ABC",
+    "segments": [
+      {
+        "text": "AB",
+        "bold": true,
+        "color": "#FFAA00"
+      },
+      {
+        "text": "C",
+        "bold": false,
+        "color": "#FFAA00"
+      }
+    ]
+  }
+]
