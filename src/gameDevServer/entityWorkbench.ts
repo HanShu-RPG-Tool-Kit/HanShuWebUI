@@ -1,4 +1,5 @@
 import {notify} from '../activity'
+import {prepareDisplayLocalization,supportsDisplayLocalization,localizedResultEdits,legacyLocalizedResultEdits,commitLocalizedResult,preserveReadOnlyDisplayText,type LocalizationSession} from './displayLocalization'
 import {randomId} from '../project/crypto'
 import {getProjectSession,setProjectSession,subscribeProjectSession} from '../project/projectSession'
 import type {ProjectClient} from '../project/serviceClient'
@@ -9,7 +10,7 @@ import {controlRequest,getControlHubSnapshot,subscribeControlHub,subscribeContro
 
 let receiver:{token:string;client:ProjectClient}|null=null
 let started=false
-const pending=new Map<string,{client:ProjectClient;documentKey:string;hash:string;receiver:string;result?:EntityDocument}>()
+const pending=new Map<string,{client:ProjectClient;documentKey:string;hash:string;receiver:string;session:LocalizationSession;version:number;localized:boolean;receiving?:boolean}>()
 const imports=new Map<string,{promise:Promise<unknown>;settled:boolean}>()
 function object(value:unknown):Record<string,unknown>{if(!value||typeof value!=='object'||Array.isArray(value))throw Error('实体消息无效');return value as Record<string,unknown>}
 function currentClient(){return getProjectSession().binding?.handle.client??null}
@@ -58,37 +59,36 @@ export async function openEntityEditInGame(documentKey:string,template:EntityDoc
  const source=getProjectSession().workspace.packages.flatMap(p=>p.scripts).find(s=>s.id===documentKey)
  if(!source||entityFingerprint(parseEntity(source.content))!==entityFingerprint(template))throw Error('实体草稿已改变，请重试')
  if(pending.size>=64)throw Error('待接收的游戏编辑过多，请先完成已有编辑')
+ const localizationSession=await prepareDisplayLocalization(documentKey,'entity',template)
+ if(entityFingerprint(parseEntity(localizationSession.source))!==entityFingerprint(template))throw Error('实体草稿已改变，请重试')
+ const capable=await supportsDisplayLocalization(controlRequest),version=capable?2:1
+ if(!capable&&localizationSession.localization.readOnlyFields?.length)notify('游戏端 IBE 不支持工程本地化编辑；绑定与高级文本只读，相关修改不会保存',{kind:'warning',source:'entities'})
  const editId=randomId(),hash=entityFingerprint(template)
- pending.set(editId,{client:r.client,documentKey,hash,receiver:r.token})
- try{const result=object(await controlRequest('entities.edit.open',{version:1,editId,hash,receiver:r.token,template}));if(result.version!==1||result.opened!==true||result.editId!==editId)throw Error('无法打开 IBE 实体编辑器');for(const [id,entry] of pending){if(id!==editId&&!entry.result)pending.delete(id)}}
+ pending.set(editId,{client:r.client,documentKey,hash,receiver:r.token,session:localizationSession,version,localized:capable})
+ try{const result=object(await controlRequest('entities.edit.open',{version,editId,hash,receiver:r.token,template,...(capable?{localization:localizationSession.localization}:{})}));if(result.version!==version||result.opened!==true||result.editId!==editId)throw Error('无法打开 IBE 实体编辑器')}
  catch(error){pending.delete(editId);throw error}
 }
-function applyReadyEdits(){
- const session=getProjectSession(),client=session.binding?.handle.client;if(!client?.writable)return
- for(const [id,p] of pending){
-  if(p.client!==client||!p.result)continue
-  pending.delete(id)
-  const pkg=getProjectSession().workspace.packages[0];if(!pkg)continue
-  const source=pkg.scripts.find(s=>s.id===p.documentKey)
-  let unchanged=false;try{unchanged=!!source&&entityFingerprint(parseEntity(source.content))===p.hash}catch{/* retain malformed source */}
-  let next
-  if(unchanged&&source){const old=parseEntity(source.content);next={...source,content:stringifyEntity({...p.result,tags:old.tags}),updatedAt:Date.now()}}
-  else{
-   const stem=(source?.name??'实体').replace(/\.entity$/i,'')+'-游戏编辑结果';let name=stem+'.entity',i=2;while(pkg.scripts.some(s=>s.name.toLocaleLowerCase()===name.toLocaleLowerCase()))name=stem+'-'+i++ +'.entity'
-   next={id:randomId(),name,content:stringifyEntity(p.result),updatedAt:Date.now()}
-  }
-  const latest=getProjectSession();setProjectSession({workspace:{...latest.workspace,packages:latest.workspace.packages.map(pack=>pack.id===pkg.id?{...pack,scripts:unchanged?pack.scripts.map(s=>s.id===p.documentKey?next:s):[...pack.scripts,next]}:pack)}})
-  notify(unchanged?'已应用游戏中的实体编辑，请保存工程':'实体已在本机修改，游戏结果保留为独立 .entity 草稿',{kind:unchanged?'success':'warning',source:'entities'})
- }
-}
-export function receiveEntityEditDone(params:unknown){
- try{const p=object(params),entry=typeof p.editId==='string'?pending.get(p.editId):undefined;if(!entry||p.version!==1||entry.receiver!==p.receiver||entry.hash!==p.hash)return;entry.result=parseEntity(JSON.stringify(p.template));applyReadyEdits()}catch(error){notify(`实体编辑结果无效：${String(error)}`,{kind:'warning',source:'entities'})}
+export async function receiveEntityEditDone(params:unknown){
+ let editId:string|undefined
+ try{
+  const p=object(params),entry=typeof p.editId==='string'?pending.get(p.editId):undefined
+  if(!entry||p.version!==entry.version||entry.receiver!==p.receiver||entry.hash!==p.hash||entry.receiving)return
+  editId=p.editId as string;entry.receiving=true
+  const original=parseEntity(entry.session.source),candidate=parseEntity(JSON.stringify(p.template))
+  let result={...candidate,tags:original.tags}
+  if(!entry.localized)result=preserveReadOnlyDisplayText(entry.session,result,true)
+  const edits=entry.localized?localizedResultEdits(entry.session,result,p.localization):legacyLocalizedResultEdits(entry.session,result)
+  result=preserveReadOnlyDisplayText(entry.session,result,!entry.localized)
+  await commitLocalizedResult(entry.session,stringifyEntity(result),edits)
+  notify('已保存游戏中的实体与本地化编辑',{kind:'success',source:'entities'})
+ }catch(error){notify(`实体编辑未写回：${String(error)}；提交冲突可在协作面板中恢复`,{kind:'warning',source:'entities'})}
+ finally{if(editId)pending.delete(editId)}
 }
 export function ensureEntityWorkbenchStarted(){
  if(started)return;started=true
  let phase=getControlHubSnapshot().phase,lastClient=currentClient(),writable=lastClient?.writable
- subscribeControlNotify(note=>{if(note.method==='entities.edit.done')receiveEntityEditDone(note.params)})
+ subscribeControlNotify(note=>{if(note.method==='entities.edit.done')void receiveEntityEditDone(note.params)})
  subscribeControlHub(()=>{const next=getControlHubSnapshot().phase;if(next!==phase){phase=next;if(phase==='open')bind(document.hasFocus())}})
- subscribeProjectSession(()=>{const c=currentClient(),w=c?.writable;if(c!==lastClient||w!==writable){lastClient=c;writable=w;bind(document.hasFocus())}applyReadyEdits()})
+ subscribeProjectSession(()=>{const c=currentClient(),w=c?.writable;if(c!==lastClient||w!==writable){lastClient=c;writable=w;bind(document.hasFocus())}})
  window.addEventListener('focus',()=>bind(true));setInterval(()=>bind(false),30000);bind(document.hasFocus())
 }

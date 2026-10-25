@@ -2,14 +2,15 @@
  * 物品编辑（IBE）：`items.edit.open` / `items.edit.done`
  *
  * open 与 done 是两条独立消息：open 成功即结束；done 是之后的 notify。
- * 写回只认 hash（版本令牌）；uuid 仅日志 hint。
+ * uuid/editId 绑定原工程会话；源文档和语言按 open 时版本原子提交。
  */
 
 import { randomId } from '../project/crypto'
 import { notify } from '../activity'
 import { itemFingerprint } from '../workspaces/progress/itemstack'
 import { readComponents } from '../workspaces/progress/tnbtJson'
-import type { ItemData } from '../workspaces/progress/itemDoc'
+import { parseItem, stringifyItem, type ItemData } from '../workspaces/progress/itemDoc'
+import { prepareDisplayLocalization, supportsDisplayLocalization, commitLocalizedResult, localizedResultEdits, legacyLocalizedResultEdits, preserveReadOnlyDisplayText, type LocalizationSession } from './displayLocalization'
 import {
   controlRequest,
   isControlConnected,
@@ -35,9 +36,9 @@ export type ItemEditDoneEvent = {
   conflict: boolean
 }
 
-type Pending = ItemEditPending
+type Pending = ItemEditPending & { session: LocalizationSession; version: number; receiving?: boolean }
 
-const pendingByHash = new Map<string, Pending>()
+const pendingByUuid = new Map<string, Pending>()
 const doneListeners = new Set<(event: ItemEditDoneEvent) => void>()
 let notifyStarted = false
 
@@ -83,8 +84,7 @@ export function isItemEditControlOnline(): boolean {
 }
 
 /**
- * 出站 `items.edit.open`：成功即完，不持有协议会话。
- * 本地只短暂记住 hash → documentKey，供之后的 done 写回比对。
+ * open 请求成功后结束运输层请求；本地保留冻结的编辑会话供独立 done 校验。
  */
 export async function openItemEditInGame(
   documentKey: string,
@@ -98,19 +98,21 @@ export async function openItemEditInGame(
 
   const uuid = hintUuid()
   const hash = itemFingerprint(item)
-  const params = itemEditOpenParams(uuid, hash, { ...item, id })
-
-  const raw = await controlRequest('items.edit.open', params, OPEN_TIMEOUT_MS)
-  if (!isObject(raw) || raw.componentFormat !== 'tnbt-json-v1' || raw.componentMode !== 'complete' || raw.opened !== true) {
+  const source = await prepareDisplayLocalization(documentKey, 'item', {format:'rpgtoolkit:item',schemaVersion:2,tags:[],item})
+  if (itemFingerprint(parseItem(source.source).item) !== hash) throw Error('物品草稿已改变，请重试')
+  const capable = await supportsDisplayLocalization(controlRequest)
+  const version = capable ? 2 : 1
+  if (!capable && source.localization.readOnlyFields?.length) notify('游戏端 IBE 版本不支持工程本地化编辑；绑定与高级文本只读，相关修改不会保存', {kind:'warning',source:'items'})
+  const params = {...itemEditOpenParams(uuid, hash, { ...item, id }), ...(capable ? {version:2,editId:uuid,receiver:uuid,localization:source.localization} : {})}
+  if (pendingByUuid.size >= 64) throw Error('待接收的游戏编辑过多')
+  pendingByUuid.set(uuid,{documentKey,hash,uuid,openedAt:Date.now(),session:source,version})
+  let raw: unknown
+  try { raw = await controlRequest('items.edit.open', params, OPEN_TIMEOUT_MS) } catch(error) {pendingByUuid.delete(uuid);throw error}
+  if (!isObject(raw) || raw.componentFormat !== 'tnbt-json-v1' || raw.componentMode !== 'complete' || raw.opened !== true || (capable && (raw.version !== 2 || raw.editId !== uuid))) {
+    pendingByUuid.delete(uuid)
     throw new Error('editor_open_failed')
   }
 
-  pendingByHash.set(hash, {
-    documentKey,
-    hash,
-    uuid,
-    openedAt: Date.now(),
-  })
   return { uuid, hash }
 }
 
@@ -125,7 +127,7 @@ export function subscribeItemEditDone(
 
 /** 供写回前再比对：本地当前版是否仍是该 hash */
 export function peekItemEditPending(hash: string): ItemEditPending | undefined {
-  return pendingByHash.get(hash)
+  return [...pendingByUuid.values()].find(entry=>entry.hash===hash)
 }
 
 function emitDone(event: ItemEditDoneEvent): void {
@@ -138,7 +140,7 @@ function emitDone(event: ItemEditDoneEvent): void {
   }
 }
 
-function handleEditDoneNotify(params: unknown): void {
+async function handleEditDoneNotify(params: unknown): Promise<void> {
   if (!isObject(params)) return
   if (params.componentFormat !== 'tnbt-json-v1' || params.componentMode !== 'complete') {
     notify('游戏物品编辑结果的组件格式不受支持', { kind: 'warning', source: 'items' })
@@ -152,22 +154,29 @@ function handleEditDoneNotify(params: unknown): void {
     return
   }
 
-  const pending = pendingByHash.get(hash)
-  pendingByHash.delete(hash)
+  const pending = pendingByUuid.get(uuid)
+  if (!pending || pending.hash !== hash || pending.receiving) return
+  if (pending.version === 2 && (params.version !== 2 || params.editId !== uuid || params.receiver !== uuid)) return
+  pending.receiving = true
+  try {
+    const old = parseItem(pending.session.source)
+    const incoming = parseItem(stringifyItem({...old,item}))
+    const candidate = pending.version === 2 ? incoming : preserveReadOnlyDisplayText(pending.session,incoming,true)
+    const edits = pending.version === 2 ? localizedResultEdits(pending.session,candidate,params.localization) : legacyLocalizedResultEdits(pending.session,candidate)
+    const preserved = preserveReadOnlyDisplayText(pending.session,candidate,pending.version !== 2)
+    await commitLocalizedResult(pending.session,stringifyItem(preserved),edits)
+    emitDone({uuid,hash,item:preserved.item,documentKey:pending.documentKey,conflict:false})
+    notify('已保存游戏中的物品与本地化编辑', {kind:'success',source:'items'})
+  } catch (error) {
+    notify(`游戏物品编辑未写回：${String(error)}；提交冲突可在协作面板中恢复`,{kind:'warning',source:'items'})
+  } finally { pendingByUuid.delete(uuid) }
 
-  emitDone({
-    uuid,
-    hash,
-    item,
-    documentKey: pending?.documentKey ?? null,
-    conflict: false,
-  })
 }
 
 export function ensureItemEditNotifyStarted(): void {
   if (notifyStarted) return
   notifyStarted = true
   subscribeControlNotify((note) => {
-    if (note.method === 'items.edit.done') handleEditDoneNotify(note.params)
+    if (note.method === 'items.edit.done') void handleEditDoneNotify(note.params)
   })
 }
