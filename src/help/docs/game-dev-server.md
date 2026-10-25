@@ -135,6 +135,18 @@ open 中 count 忽略，Mod 强制为 1；done 不携带 count，返回全部生
 
 参考 Mod `docs/itemedit.md`。本次协议适配不新增 WebUI IBE 按钮或替换现有回写协调实现。
 
+### 工程显示文本本地化 v2
+
+打开物品或实体前，WebUI 请求 `localization.capabilities`；支持端返回 `{version: 1, protocols: ["hanshu-localization-v1"]}`。新会话使用 `version: 2`，物品增加 `editId`、`receiver`（均为本次不透明接收标识）；实体沿用原有 `editId`、`receiver`。成功响应须回显 `version` 与 `editId`，done 须回显接收标识和源 `hash`。
+
+open 的可选 `localization` 包含 `protocol`、`activeLocale`、`availableLocales` 和 `bindings`。每条绑定仅包含不透明 `bindingId`、字段名、`semanticKey`、只读 `runtimeKey`、`componentKind: "translate"` 及本次授权语言的 `translations`。不下发工程文件路径。IBE 的语言分类编辑译文，源 Component 保持引用；绑定创建、解除及删除绑定行在 WebUI 完成。
+
+done 的 `localization` 回传 `{protocol: "hanshu-localization-v1", operations: [...]}`。首版只接受 `translation.set`、`translation.remove`，字段为 `bindingId`、`locale`、`expected` 和 set 的 `value`。`expected: null` 表示缺失，与空字符串不同。重复操作、未知绑定/语言/操作、附带任意路径、原值不匹配，以及被替换或重复的翻译引用均拒绝。
+
+WebUI 保留 open 时的源正文、源版本、所有授权语言正文和版本。结果通过 `ProjectClient.apply` 将源文件与语言修改一次提交；未修改语言以版本检查参与同一事务。IBE 无语言文件写入能力。提交结果未知时沿用事务日志原编号查询，不能创建新请求重做；本地草稿冲突也先持久保存冻结结果，供协作面板恢复。
+
+旧端不支持该能力时，WebUI 提示本地化不可编辑，仍允许编辑其他字段；回写时要求原本地化 Component 原样保留。旧端若转换绑定或高级文本，WebUI 恢复 open 时冻结的原始 TNBT，再提交其他字段；包含绑定的 Lore 列表整体只读，不接受旧端重排或删除。新版 open 还携带只读字段列表 `readOnlyFields`；没有稳定绑定身份的高级 Lore 使用 `freezeLore` 禁止结构操作。游戏端规范化未知字段也不会改写这些源文本。普通游戏内 IBE 会话没有工程本地化分类。
+
 ## 礼包 Python 语言服务
 
 礼包脚本编辑器使用 `monaco-pyright-lsp@0.1.7` 自带的 Pyright 1.1.386 Worker，提供语法诊断、类型推导、成员补全、悬浮类型和参数提示。Worker 与 typeshed 跟随 C 部署，运行时不请求 CDN、不执行作者脚本；未连接 Minecraft 时仅保留文本编辑、撤销与普通语法着色，不创建 Python Worker，不提供语言服务诊断、补全、悬浮或参数提示。连接后先准备 `python.stubs` 和玩家类型，再分析脚本，避免用不完整的上下文产生红线。
