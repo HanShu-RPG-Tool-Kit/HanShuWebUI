@@ -1,0 +1,42 @@
+.editor-expansion { position: relative; min-width: 0; }
+.editor-expansion.is-form { width: 100%; height: 100%; }
+.editor-expansion-host { position: relative; min-width: 0; }
+.editor-expansion-host.is-form { width: 100%; height: 100%; }
+.editor-expansion-placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; height: 100%; min-height: 80px; padding: 18px; box-sizing: border-box; border: 1px dashed #608ba0; border-radius: 7px; background: #28343b; color: #b6d9e9; font-size: 12px; }
+.editor-expansion-placeholder span { color: #859ba7; font-size: 11px; }
+.editor-expansion-dialog:not([open]) { display: none; }
+.editor-expansion-dialog[open] { position: fixed; display: flex; flex-direction: column; width: min(1440px, calc(100vw - 64px)); height: calc(100dvh - 64px); max-width: none; max-height: none; padding: 0; margin: auto; overflow: hidden; border: 1px solid #5f8598; border-radius: 10px; background: #262729; color: #e9e7e2; box-shadow: 0 20px 80px #000a; }
+.editor-expansion-dialog::backdrop { background: #10161ccc; backdrop-filter: blur(3px); }
+.editor-expansion-heading { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px 18px; border-bottom: 1px solid #46535e; background: #2e3d48; }
+.editor-expansion-heading > div { display: flex; align-items: baseline; gap: 14px; }
+.editor-expansion-heading strong { font-size: 14px; font-weight: 600; }
+.editor-expansion-heading span { color: #a0b4c1; font-size: 11px; }
+.editor-expansion-heading button { padding: 6px 10px; border: 1px solid #6a8799; border-radius: 5px; background: #3b5263; color: #e5f1f8; font-size: 12px; }
+.editor-expansion-destination { position: relative; display: flex; flex: 1; min-height: 0; min-width: 0; padding: 16px; }
+.editor-expansion-destination > .editor-expansion-host { flex: 1; min-height: 0; width: 100%; height: 100%; }
+.editor-expansion-dialog.is-form .editor-expansion-destination { padding: 0; }
+.editor-expansion-dialog .node-form-view { border: 0; border-radius: 0; box-shadow: none; }
+.editor-expansion-dialog .node-form-header { cursor: default; }
+.editor-expansion-dialog .node-form-resize,.editor-expansion-dialog .node-form-expand { display: none; }
+.editor-expansion-dialog .node-form-progress-layout { align-items: stretch; }
+.editor-expansion-dialog .node-form-body { display: flex; flex-direction: column; }
+.editor-expansion-dialog .node-form-progress-layout { flex: 1; }
+.editor-expansion-dialog .node-form-progress-layout:not(:has(> .editor-expansion.is-graph)) { grid-template-columns: minmax(240px, .8fr) minmax(320px, 1.2fr); }
+.editor-expansion-dialog .node-form-graph { height: 100%; min-height: 450px; }
+.node-form-field-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 4px; color: #a1a2a6; font-size: 11px; }
+.node-form-text { position: relative; display: flex; flex-direction: column; min-width: 0; margin-bottom: 12px; }
+.node-form-text .flow-field > span { padding-right: 60px; }
+.node-form-text .flow-field { margin: 0; }
+.node-form-text .flow-field textarea { width: 100%; box-sizing: border-box; }
+.node-form-field-heading button,.node-form-graph-heading button { padding: 2px 6px; border: 1px solid #59636c; border-radius: 4px; background: #30383f; color: #b8cedc; font-size: 11px; }
+.node-form-field-expand { position: absolute; top: -2px; right: 0; padding: 1px 6px; border: 1px solid #59636c; border-radius: 4px; background: #30383f; color: #b8cedc; font-size: 11px !important; }
+.node-form-header .node-form-enlarge { padding: 3px 8px; border: 1px solid #6b899955; background: #ffffff08; border-radius: 4px; color: #bfdae7; font-size: 11px; }
+.node-form-graph-heading { flex: none; display: flex; justify-content: space-between; align-items: center; padding: 5px 10px; color: #b6c3cc; font-size: 11px; background: #2d3338; }
+.editor-expansion.is-graph { grid-column: 1 / -1; min-width: 0; }
+.editor-expansion-host.is-graph { height: 100%; }
+.editor-expansion-dialog.is-text .node-form-text { height: 100%; margin: 0; }
+.editor-expansion-dialog.is-text .node-form-text .flow-field { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.editor-expansion-dialog.is-text .node-form-text textarea { flex: 1; resize: none; line-height: 1.8; padding: 16px; font-size: 15px; }
+.editor-expansion-dialog.is-graph .node-form-graph { height: 100%; min-height: 0; }
+@container quest-form (min-width: 1000px) { .editor-expansion.is-graph { grid-column: auto; } }
+@media (max-width: 640px) { .editor-expansion-dialog[open] { width: calc(100vw - 16px); height: calc(100dvh - 16px); } .editor-expansion-heading > div { flex-direction: column; gap: 3px; } }

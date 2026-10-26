@@ -6,7 +6,7 @@ import { SignalDebugger } from './SignalDebugger'
 import type { CanvasNodeType, FlowCanvasNote, FlowInputPort, FlowOutputPort, FlowPosition, ProgressFlow, FlowSelection } from './model'
 import { NodeEditor, NoteNode } from '../../nodeEditor'
 import { NodeContextMenu } from '../../nodeEditor/ContextMenu'
-import type { EditorSelection, MenuContext, MenuItem, NodeEditorApi, NodeRegistry, NodeViewProps } from '../../nodeEditor'
+import type { EditorEdge, EditorSelection, MenuContext, MenuItem, NodeEditorApi, NodeRegistry, NodeViewProps } from '../../nodeEditor'
 import { progressEdges, progressNodes, nodeSelection, edgeSelection } from './graphAdapter'
 import { ProgressNode } from './ProgressNode'
 import { NodeFormView, type NodeFormKind } from './NodeFormView'
@@ -21,7 +21,7 @@ function FormNode({ node: view }: NodeViewProps) {
     flow: ProgressFlow; nodeId: string; kind: NodeFormKind; definitions: readonly GoalDefinition[]
     kitOptions: readonly ProgressGraphKitOption[]; resolveText?: (key: string) => string | null
     setText?: (key: string, value: string) => void; onChange: (flow: ProgressFlow) => void
-    onClose: () => void; disabled: boolean
+    onClose: () => void; onActivate: () => void; onResize: (size: { width: number; height: number }, reveal?: boolean) => void; active: boolean; disabled: boolean
   }
   return <NodeFormView {...data} />
 }
@@ -29,8 +29,9 @@ function FormNode({ node: view }: NodeViewProps) {
 const registry: NodeRegistry = { progress: { component: ProgressNode }, form: { component: FormNode }, note: { component: NoteNode } }
 
 const FORM_PREFIX = 'form:'
-const FORM_WIDTH = 380
-const FORM_HEIGHT = 460
+const FORM_WIDTH = 760
+const FORM_HEIGHT = 540
+const ASSOCIATION_PORT = '__form_association__'
 
 export function ProgressGraph({ flow, selection, onSelect, onCreate, onChangeFlow, onMove, onGroup, onUngroup, onRenameGroup, onDelete, onDeleteMany, onArrange, onUpdateNote, onConnect, onDisconnect, onCut, definitions, kitOptions = [], active, disabled = false, resolveText, setText }: {
   flow: ProgressFlow; selection: FlowSelection; onSelect: (selection: FlowSelection) => void
@@ -94,8 +95,11 @@ export function ProgressGraph({ flow, selection, onSelect, onCreate, onChangeFlo
   const [localSelection, setLocalSelection] = useState<EditorSelection>({ nodes: [], edges: [] })
   const [createMenu, setCreateMenu] = useState<{ x: number; y: number; position: FlowPosition } | null>(null)
   const [zoom, setZoom] = useState(1)
+  const [toolsExpanded, setToolsExpanded] = useState(false)
   /** 打开的表单视图：节点 ID → 视图位置（会话内，不写文档） */
   const [forms, setForms] = useState<Record<string, FlowPosition>>({})
+  const [formSizes, setFormSizes] = useState<Record<string, { width: number; height: number }>>({})
+  const [activeFormId, setActiveFormId] = useState<string | null>(null)
 
   useEffect(() => {
     if (previousFlow.current !== flow) {
@@ -105,7 +109,7 @@ export function ProgressGraph({ flow, selection, onSelect, onCreate, onChangeFlo
       if (JSON.stringify(prior) === JSON.stringify(flow)) return
       setDebugGeneration(value=>value+1);setSim(S.createSimState(flow)); setPlaying(false); setRunTo(null);setSkipTrace(null);setPausedAt(null);setStopReason('')
       setBreakpoints(previous=>changedDocument?{nodes:[],links:[]}:{nodes:previous.nodes.filter(id=>M.hasContentNode(flow,id)),links:previous.links.filter(id=>flow.logic?.links.some(link=>link.id===id))})
-      if (changedDocument) { setLocalSelection({ nodes: [], edges: [] }); setCreateMenu(null); setForms({}) }
+      if (changedDocument) { setLocalSelection({ nodes: [], edges: [] }); setCreateMenu(null); setForms({}); setFormSizes({}); setActiveFormId(null) }
     }
   }, [flow])
   useEffect(() => {
@@ -117,35 +121,46 @@ export function ProgressGraph({ flow, selection, onSelect, onCreate, onChangeFlo
     if (disabled || locked) return
     const kind = nodeKind(id)
     if (!kind) return
-    setForms(previous => {
-      if (Object.hasOwn(previous, id)) return previous
+    setActiveFormId(id)
+    if (!Object.hasOwn(forms, id)) setForms(previous => {
       const base = layoutPosition(id)
       return { ...previous, [id]: { x: base.x + 260, y: base.y } }
     })
+    requestAnimationFrame(() => requestAnimationFrame(() => api.current?.reveal(`${FORM_PREFIX}${id}`)))
   }
-  const closeForm = (id: string) => setForms(previous => Object.fromEntries(Object.entries(previous).filter(([key]) => key !== id)))
+  const closeForm = (id: string) => {
+    setForms(previous => Object.fromEntries(Object.entries(previous).filter(([key]) => key !== id)))
+    setActiveFormId(previous => previous === id ? null : previous)
+  }
 
   const nodes = useMemo(() => {
-    const base = progressNodes(flow, sim, onUpdateNote, resolveText).map(node=>({...node, draggable: !locked, readOnly: locked, className: `${node.className ?? ''}${breakpoints.nodes.includes(node.id)?' flow-sim-breakpoint':''}${runTo===node.id?' flow-sim-run-target':''}`}))
+    const base = progressNodes(flow, sim, onUpdateNote, resolveText).map(node=>{
+      const formPosition=forms[node.id]
+      const formOnRight=formPosition ? formPosition.x >= node.position.x + node.width / 2 : true
+      return {...node, ports: formPosition ? [...node.ports, { id: ASSOCIATION_PORT, direction: 'output' as const, side: formOnRight ? 'right' as const : 'left' as const, y: node.height / 2, label: '关联表单', kind: 'association' }] : node.ports, draggable: !locked, readOnly: locked, className: `${node.className ?? ''}${breakpoints.nodes.includes(node.id)?' flow-sim-breakpoint':''}${runTo===node.id?' flow-sim-run-target':''}`}
+    })
     const formsNodes = Object.entries(forms).map(([nodeId, position]) => {
       const kind = nodeKind(nodeId)
+      const size = formSizes[nodeId] ?? { width: FORM_WIDTH, height: FORM_HEIGHT }
       return {
         id: `${FORM_PREFIX}${nodeId}`,
         type: 'form',
         position,
-        width: FORM_WIDTH,
-        height: FORM_HEIGHT,
-        ports: [],
+        ...size,
+        ports: [{ id: ASSOCIATION_PORT, direction: 'input' as const, side: position.x >= layoutPosition(nodeId).x + 108 ? 'left' as const : 'right' as const, y: size.height / 2, label: '关联节点', kind: 'association' }],
         deletable: false,
+        dragHandle: '.node-form-header',
         label: `表单 ${nodeId}`,
-        data: { flow, nodeId, kind, definitions, kitOptions, resolveText, setText: locked ? undefined : setText, disabled: disabled || locked, onChange: locked ? () => {} : onChangeFlow, onClose: () => closeForm(nodeId) },
+        className: activeFormId === nodeId ? 'is-active-form' : undefined,
+        data: { flow, nodeId, kind, definitions, kitOptions, resolveText, setText: locked ? undefined : setText, active: activeFormId === nodeId, disabled: disabled || locked, onActivate: () => setActiveFormId(nodeId), onResize: (size: { width: number; height: number }, reveal?: boolean) => { setFormSizes(previous => ({ ...previous, [nodeId]: size })); if (reveal) requestAnimationFrame(() => requestAnimationFrame(() => api.current?.reveal(`${FORM_PREFIX}${nodeId}`))) }, onChange: locked ? () => {} : onChangeFlow, onClose: () => closeForm(nodeId) },
       }
     }).filter(node => node.data.kind !== null)
     return [...base, ...formsNodes]
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [flow, sim, forms, definitions, kitOptions, disabled, locked, breakpoints.nodes, runTo, resolveText, setText, onChangeFlow, onUpdateNote])
+  }, [flow, sim, forms, formSizes, activeFormId, definitions, kitOptions, disabled, locked, breakpoints.nodes, runTo, resolveText, setText, onChangeFlow, onUpdateNote])
   const delivery = sim.queue[0]
   const edges = useMemo(() => progressEdges(flow, delivery ? { delivery, key: sim.queue.length ? flightKey : `last:${sim.pulse}:${sim.log.length}`, durationMs: duration || 1, running: active && playing && !stopped } : undefined).map(edge=>({...edge,kind:breakpoints.links.includes(edge.id.slice(6))?'breakpoint':edge.kind})), [breakpoints.links, stopped, flow, delivery, flightKey, duration, active, playing, sim.queue.length, sim.pulse, sim.log.length])
+  const formEdges = useMemo<EditorEdge[]>(() => Object.keys(forms).filter(id => M.hasContentNode(flow, id)).map(id => ({ id: `association:${id}`, source: id, target: `${FORM_PREFIX}${id}`, sourcePort: ASSOCIATION_PORT, targetPort: ASSOCIATION_PORT, kind: activeFormId === id ? 'association-active' : 'association', color: '#65c7f2', label: '节点关联表单' })), [forms, flow, activeFormId])
   const groups = useMemo(() => Object.entries(flow.layout?.groups ?? {}).map(([id, group], i) => ({ id, name: group.name?.trim() || `Group ${i + 1}`, nodes: group.nodes })), [flow.layout?.groups])
   const graphSelection: EditorSelection = selection.kind === 'flow' ? localSelection
     : selection.kind === 'logic-link' ? { nodes: [], edges: [`logic:${selection.id}`] }
@@ -228,16 +243,17 @@ export function ProgressGraph({ flow, selection, onSelect, onCreate, onChangeFlo
     return [...debug,...businessMenuItems(context)]
   }
 
-  return <div className="flow-graph">
-    <div className="flow-graph-toolbar">
-      <span className="flow-graph-editor-icon">◇</span><span className="flow-graph-editor-name">进度节点</span>
+  const viewTools = <>
       <button type="button" className="flow-graph-add" disabled={disabled || !active || locked} onClick={event => { const rect = event.currentTarget.getBoundingClientRect(); setCreateMenu({ x: rect.left, y: rect.bottom + 4, position: api.current?.center() ?? { x: 64, y: 64 } }) }}>＋ 节点</button>
-      <span className="flow-graph-count">{nodes.length} 节点 · {edges.length} 连接</span>
-      <div className="flow-graph-zoom"><button type="button" aria-label="缩小画布" onClick={() => { api.current?.zoom(-.1) }}>−</button><output>{Math.round(zoom * 100)}%</output><button type="button" aria-label="放大画布" onClick={() => { api.current?.zoom(.1) }}>+</button><button type="button" onClick={() => api.current?.fit()}>显示全部</button><button type="button" onClick={() => api.current?.focus(flow.start)}>定位开始</button></div>
-    </div>
-    <NodeEditor ref={api} documentId={flow.id} nodes={nodes} edges={edges} groups={groups} registry={registry} selection={graphSelection} active={active} readOnly={disabled} features={{ connections: !locked, knife: !locked, groups: !locked, arrange: !locked }} initialFocusId={flow.start} onViewportChange={viewport => setZoom(viewport.zoom)}
+      <div className="flow-graph-zoom"><button type="button" aria-label="缩小画布" title="缩小画布 · 滚轮也可缩放" onClick={() => { api.current?.zoom(-.1) }}>−</button><output>{Math.round(zoom * 100)}%</output><button type="button" aria-label="放大画布" title="放大画布" onClick={() => { api.current?.zoom(.1) }}>+</button></div>
+      <button type="button" title="调整视口以显示全部节点" onClick={() => api.current?.fit()}>显示全部</button><button type="button" title="定位开始进度节点" onClick={() => api.current?.focus(flow.start)}>定位开始</button>
+    </>
+  return <div className="flow-graph">
+    <NodeEditor ref={api} documentId={flow.id} nodes={nodes} edges={[...edges, ...formEdges]} groups={groups} registry={registry} selection={graphSelection} active={active} readOnly={disabled} features={{ connections: !locked, knife: !locked, groups: !locked, arrange: !locked }} initialFocusId={flow.start} onViewportChange={viewport => setZoom(viewport.zoom)}
       onSelectionChange={next => {
         setLocalSelection(next)
+        const selectedForm=next.nodes.find(id => id.startsWith(FORM_PREFIX))
+        setActiveFormId(selectedForm ? selectedForm.slice(FORM_PREFIX.length) : null)
         const items = next.nodes.filter(id => !id.startsWith(FORM_PREFIX))
         onSelect(items.length === 1 && !next.edges.length ? nodeSelection(flow, items[0]) : next.edges.length === 1 && !next.nodes.length ? edgeSelection(next.edges[0]) : { kind: 'flow' })
       }}
@@ -253,8 +269,7 @@ export function ProgressGraph({ flow, selection, onSelect, onCreate, onChangeFlo
         if (M.getPredicateNode(flow, id)) { togglePredicate(id); return }
         if (M.getProgressNode(flow, id) && S.progressState(sim, id) === 'running') settle(id, event.shiftKey ? 'failed' : 'succeeded')
       }} />
-    <SignalDebugger key={`${flow.id}:${debugGeneration}`} flow={flow} sim={sim} playing={playing} duration={duration} breakpoints={breakpoints} stopReason={stopReason} onClearBreakpoints={()=>{setBreakpoints({nodes:[],links:[]});setPausedAt(null);setStopReason('')}} disabled={disabled || !active} resolveText={resolveText} onInitialize={initialize} onStep={step} onPlay={play} onReset={()=>{setPlaying(false);flight.current={key:'',elapsed:0};setDebugGeneration(value=>value+1);setSim(S.resetSimState(flow));setRunTo(null);setSkipTrace(null);setPausedAt(null);setStopReason('')}} onDuration={setDuration} onFocus={delivery=>{api.current?.focus(delivery.to);onSelect(delivery.link ? {kind:'logic-link',id:delivery.link} : nodeSelection(flow,delivery.to))}} />
-    <div className="flow-graph-legend"><span>开始进度 · 进度 · 谓词 · 变迁 · 结束</span><span>双击节点在画布上打开表单 · 初始化时播报已为真的谓词 · 未联通的节点是草稿</span></div>
+    <SignalDebugger key={`${flow.id}:${debugGeneration}`} viewTools={viewTools} expanded={toolsExpanded} onToggleExpanded={()=>setToolsExpanded(value=>!value)} flow={flow} sim={sim} playing={playing} duration={duration} breakpoints={breakpoints} stopReason={stopReason} onClearBreakpoints={()=>{setBreakpoints({nodes:[],links:[]});setPausedAt(null);setStopReason('')}} disabled={disabled || !active} resolveText={resolveText} onInitialize={initialize} onStep={step} onPlay={play} onReset={()=>{setPlaying(false);flight.current={key:'',elapsed:0};setDebugGeneration(value=>value+1);setSim(S.resetSimState(flow));setRunTo(null);setSkipTrace(null);setPausedAt(null);setStopReason('')}} onDuration={setDuration} onFocus={delivery=>{api.current?.focus(delivery.to);onSelect(delivery.link ? {kind:'logic-link',id:delivery.link} : nodeSelection(flow,delivery.to))}} />
     {createMenu && <NodeContextMenu {...createMenu} title="节点画布" label="新建节点" items={createItems(createMenu.position)} onClose={() => setCreateMenu(null)} />}
   </div>
 }

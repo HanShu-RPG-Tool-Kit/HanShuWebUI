@@ -3,20 +3,24 @@
   display: flex; flex-direction: column; min-width: 0;
   border: 1px solid #1b1b1b; border-radius: 5px;
   background: #2e2e2e; color: #dcdcdc;
-  box-shadow: 0 6px 18px #0008;
+  box-shadow: 0 8px 24px #0009;
   overflow: hidden;
 }
+.node-form-view.is-active { border-color: #65c7f2; box-shadow: 0 0 0 1px #65c7f255, 0 10px 28px #000a; }
 .node-form-view.is-readonly { opacity: .8; }
 .node-form-header {
   display: flex; align-items: center; gap: 7px;
   height: 28px; flex: none; padding: 0 9px;
   background: #3c4a5c; color: #e6ecf3; font-size: 12px;
   border-bottom: 1px solid #1b1b1b;
+  cursor: grab;
 }
+.node-form-header:active { cursor: grabbing; }
 .node-form-kind { padding: 0 5px; border: 1px solid #7f90a4; border-radius: 3px; color: #cfd8e3; font-size: 10px; }
 .node-form-header strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
-.node-form-close { border: 0; background: transparent; color: #cfd8e3; font-size: 15px; line-height: 1; padding: 0 2px; cursor: pointer; }
-.node-form-body { flex: 1; min-height: 0; overflow: auto; padding: 8px 10px 12px; }
+.node-form-close { display:grid;place-items:center;width:24px;height:24px;border:0;border-radius:3px;background:transparent;color:#cfd8e3;font-size:17px;line-height:1;padding:0;cursor:pointer; }
+.node-form-close:hover { background:#ffffff16;color:#fff; }
+.node-form-body { flex: 1; min-height: 0; overflow: auto; overscroll-behavior:contain; padding: 11px 12px 14px; scrollbar-width:thin; scrollbar-color:#607080 #252525; }
 .node-form-body .flow-field { margin-bottom: 7px; }
 .node-form-body .flow-field > span { display: block; margin-bottom: 3px; color: #b6b6b6; font-size: 11px; }
 .node-form-body input, .node-form-body select, .node-form-body textarea { box-sizing: border-box; min-width: 0; }
@@ -36,12 +40,57 @@
 .node-form-param { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 11px; }
 .node-form-param > span { flex: none; min-width: 72px; color: #a9a9a9; }
 .node-form-param > input { flex: 1; min-width: 0; }
-.node-form-condition { display: grid; grid-template-columns: 74px 82px minmax(0, 1fr) auto; gap: 4px; align-items: center; margin-bottom: 4px; }
-.node-form-condition > input { min-width: 0; }
+.node-form-condition { display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px 10px;margin-bottom:9px;padding:9px;border:1px solid #454b52;border-radius:5px;background:#292b2e; }
+.node-form-condition-head { grid-column:1/-1;display:flex;align-items:center;justify-content:space-between;min-width:0; }
+.node-form-condition-head strong { color:#cbd4dc;font-size:11px;font-weight:600; }
+.node-form-condition > label { display:flex;min-width:0;flex-direction:column;gap:4px;color:#9fa9b3;font-size:10px; }
+.node-form-condition select,.node-form-condition input { width:100%;min-width:0; }
+.node-form-condition-target { grid-column:1/-1; }
+.node-form-condition-target .flow-hint { min-height:26px;box-sizing:border-box;margin:0;padding:5px 7px;border:1px solid #3f444a;border-radius:3px;background:#25272a; }
 .node-form-chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .node-form-chip { display: inline-flex; align-items: center; gap: 3px; padding: 1px 5px; border: 1px solid #596b59; border-radius: 3px; font-size: 11px; }
 .node-form-chip button { border: 0; background: transparent; color: inherit; cursor: pointer; padding: 0; font-size: 12px; }
 .node-form-kit-add { display: flex; gap: 4px; margin-top: 6px; }
 .node-form-kit-add input { flex: 1; min-width: 0; }
-.node-form-graph { display: flex; flex-direction: column; height: 300px; }
-.node-form-graph .node-editor { flex: 1; min-height: 240px; }
+.node-form-graph { display: flex; flex-direction: column; height: 410px; }
+.node-form-graph .node-editor { flex: 1; min-height: 330px; }
+
+/* Use the single-progress editor's Goal cards, widgets and completion switch. */
+.node-form-view.progress-editor { container-name: quest-form; border-radius: 8px; }
+.node-form-header { height: 38px; padding: 0 10px 0 14px; gap: 10px; background: #344754; }
+.node-form-header strong { font-size: 13px; }
+.node-form-header .node-form-expand { padding: 3px 8px; border: 1px solid #6b899955; background: #ffffff08; border-radius: 4px; color: #bfdae7; font-size: 11px; }
+.node-form-header .node-form-close { width: 28px; height: 28px; margin-left: 2px; padding: 6px; border: 1px solid transparent; border-radius: 5px; background: #17232b55; color: #c9d9e2; }
+.node-form-header .node-form-close:hover { border-color: #e9b0a855; background: #af514433; color: #ffd1c8; }
+.node-form-close svg,.node-form-resize svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.5; }
+.node-form-body { padding: 16px 16px 22px; background: var(--pr-bg); }
+.node-form-progress-layout { display: grid; grid-template-columns: minmax(220px, .8fr) minmax(300px, 1.2fr); gap: 18px; align-items: start; }
+.node-form-info,.node-form-goals-section { min-width: 0; }
+.node-form-body h2 { font-size: 13px; font-weight: 600; color: #d6dce3; margin: 0 0 12px; }
+.node-form-body .flow-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
+.node-form-body .flow-field > span { font-size: 11px; color: var(--pr-muted); }
+.node-form-body .flow-field textarea { resize: vertical; min-height: 68px; }
+.node-form-goals-section .progress-section-head { margin-bottom: 8px; }
+.node-form-goals-section .progress-completion-switch { display: flex; margin-bottom: 14px; }
+.node-form-goals-section .progress-completion-switch button { flex: 1; padding: 5px 7px; }
+.node-form-goals { display: grid; gap: 12px; }
+.node-form-goals-section .progress-add-row { margin-top: 12px; }
+.node-form-rules .progress-visibility-row { margin-bottom: 10px; }
+.node-form-goals .progress-goal { width: 100%; }
+.node-form-goals .progress-parameters { display: flex; flex-direction: column; }
+.node-form-goals .progress-goal-open { min-width: 0; }
+.node-form-goals .progress-goal-open strong { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.node-form-graph { grid-column: 1 / -1; min-width: 0; height: 390px; margin: 0; padding: 0; border: 1px solid var(--pr-line); border-radius: 6px; overflow: hidden; }
+.node-form-graph > header { display: none; }
+.node-form-graph .progress-completion-editor { display: flex; flex-direction: column; min-height: 0; height: 100%; }
+.node-form-graph .completion-canvas { flex: 1; min-height: 0; height: auto; }
+.node-form-graph .node-editor { min-height: 0; }
+.node-form-resize { position: absolute; right: 0; bottom: 0; display: grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 6px 0 6px 0; background: #344754; color: #a8cbdc; cursor: nwse-resize !important; touch-action: none; }
+.node-form-condition { background: var(--pr-surface); border-color: var(--pr-line); padding: 12px; }
+@container quest-form (min-width: 1000px) {
+  .node-form-progress-layout { grid-template-columns: minmax(210px, .75fr) minmax(290px, 1fr) minmax(390px, 1.4fr); }
+  .node-form-graph { grid-column: auto; height: 450px; }
+}
+@container quest-form (max-width: 600px) {
+  .node-form-progress-layout { grid-template-columns: minmax(0, 1fr); }
+}

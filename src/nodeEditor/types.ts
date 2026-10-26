@@ -6,7 +6,7 @@ export type PortSide = 'left' | 'right' | 'top' | 'bottom'
 export type Port = { id: string; direction: 'input' | 'output'; side?: PortSide; x?: number; y?: number; label: string; kind?: string; color?:string }
 export type EditorNode = {
   id: string; type: string; position: Point; width: number; height: number; ports: Port[]
-  data: unknown; label: string; className?: string; deletable?: boolean; draggable?: boolean; readOnly?: boolean
+  data: unknown; label: string; className?: string; deletable?: boolean; draggable?: boolean; dragHandle?: string; readOnly?: boolean
 }
 export type EditorEdge = { id: string; source: string; target: string; sourcePort: string; targetPort: string; kind?: string; color?:string; label?: string; sourceBadge?: number; targetBadge?: number; activity?: { key: string; label: string; color: string; reverse?: boolean; durationMs: number; running: boolean } }
 export type EditorGroup = { id: string; name: string; nodes: string[] }
@@ -38,4 +38,4 @@ export type NodeEditorProps = {
   initialFocusId?: string
   onViewportChange?: (viewport:Point & {zoom:number})=>void
 }
-export type NodeEditorApi = { fit: () => void; focus: (id: string) => void; zoom: (delta: number) => void; center: () => Point }
+export type NodeEditorApi = { fit: () => void; focus: (id: string) => void; reveal: (id: string) => void; zoom: (delta: number) => void; center: () => Point }

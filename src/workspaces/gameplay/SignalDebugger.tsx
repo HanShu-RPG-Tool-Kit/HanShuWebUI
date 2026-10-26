@@ -1,16 +1,18 @@
-import { useMemo, useRef, useState } from 'react'
+import { useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import * as M from './model'
 import * as S from './signals'
 import type { SignalBreakpoints } from './signalDebugging'
 type TraceRow = S.Delivery & Partial<Pick<S.SimDelivery,'accepted' | 'reason' | 'emitted' | 'changes' | 'rolledBack' | 'assessment'>>
 
-export function SignalDebugger({ flow, sim, playing, duration, disabled, onInitialize, onStep, onPlay, onReset, onDuration, onFocus, resolveText, breakpoints, stopReason, onClearBreakpoints }: {
+export function SignalDebugger({ flow, sim, playing, duration, disabled, onInitialize, onStep, onPlay, onReset, onDuration, onFocus, resolveText, breakpoints, stopReason, onClearBreakpoints, viewTools, expanded = true, onToggleExpanded }: {
+  viewTools?: ReactNode; expanded?: boolean; onToggleExpanded?: () => void
   breakpoints: SignalBreakpoints; stopReason: string; onClearBreakpoints: () => void
   flow: M.ProgressFlow; sim: S.FlowSimState; playing: boolean; duration: number; disabled: boolean
   onInitialize: () => void; onStep: () => void; onPlay: () => void; onReset: () => void; onDuration: (value: number) => void
   onFocus: (delivery: S.Delivery) => void; resolveText?: (key: string) => string | null
 }) {
   const [inspected, setInspected] = useState<number | null>(null)
+  const detailsId=useId()
   const [kind, setKind] = useState('all')
   const [search, setSearch] = useState('')
   const [scroll, setScroll] = useState(0)
@@ -41,18 +43,26 @@ export function SignalDebugger({ flow, sim, playing, duration, disabled, onIniti
   const inspectId = (id: number) => {setInspected(id);const row=index.get(id);if(row)onFocus(row)}
   const busy = S.isBusy(sim)
   const rowHeight = 28, firstRow = Math.max(0,Math.min(Math.floor(scroll/rowHeight)-3,rows.length-1)), shown = rows.slice(firstRow,firstRow+18)
-  return <section className="signal-debugger" aria-label="信号调试器">
-    <header className="signal-debugger-controls">
-      <span className={`signal-debugger-status${sim.outcome ? ` is-terminal is-${sim.outcome.result}` : ''}${sim.fault ? ' is-fault' : ''}`} role="status">{sim.fault ? '执行故障 · 已回退' : sim.outcome ? `任务${sim.outcome.result === 'success' ? '成功' : '失败'} · ${label(sim.outcome.endId)}` : !sim.initialized ? '未初始化' : busy ? `${playing ? '播放中' : '已暂停'} · 待投递 ${sim.queue.length}` : '等待事件'}</span>
-      <button type="button" disabled={disabled || sim.initialized || !!sim.fault} onClick={onInitialize}>初始化任务</button>
+  return <section className={`signal-debugger quest-graph-tools${expanded ? ' is-expanded' : ''}`} aria-label="信号调试器">
+    <header className="quest-tools-bar" aria-label="Quest 图工具栏">
+      <div className="quest-view-tools" role="group" aria-label="画布视图工具">{viewTools}</div>
+      <div className="quest-sim-tools" role="group" aria-label="模拟控制">
+      <button type="button" disabled={disabled || sim.initialized || !!sim.fault} title="初始化任务，开始模拟" onClick={onInitialize}>初始化任务</button>
+      <button type="button" className="quest-play" disabled={disabled || !busy} title={playing ? '暂停信号播放' : '播放待投递信号'} onClick={onPlay}><span aria-hidden="true">{playing ? 'Ⅱ' : '▷'}</span>{playing ? '暂停' : '播放'}</button>
       <button type="button" disabled={disabled || !busy} title="处理队首的一条信号" onClick={onStep}>单步</button>
-      <button type="button" disabled={disabled || !busy} onClick={onPlay}>{playing ? '暂停' : '播放'}</button>
+      </div>
+      <span className={`signal-debugger-status${sim.outcome ? ` is-terminal is-${sim.outcome.result}` : ''}${sim.fault ? ' is-fault' : ''}`} role="status">{sim.fault ? '执行故障 · 已回退' : sim.outcome ? `任务${sim.outcome.result === 'success' ? '成功' : '失败'} · ${label(sim.outcome.endId)}` : !sim.initialized ? '未初始化' : busy ? `${playing ? '播放中' : '已暂停'} · 待投递 ${sim.queue.length}` : '等待事件'}</span>
+      {onToggleExpanded && <button type="button" className="quest-tools-toggle" aria-expanded={expanded} aria-controls={detailsId} title={expanded ? '收起调试详情，扩大画布' : '展开速度、断点与信号记录'} onClick={onToggleExpanded}><span aria-hidden="true" className="quest-tools-chevron">⌃</span>{expanded ? '收起' : '调试'}{!!sim.queue.length && <span className="quest-tools-badge">{sim.queue.length}</span>}</button>}
+    </header>
+    {stopReason&&<div className="signal-debugger-stop" role="status">● {stopReason}</div>}
+    <div id={detailsId} className="quest-tools-details" hidden={!expanded}>
+    <div className="signal-debugger-controls">
+      <span className="quest-tools-section-label">模拟设置</span>
       <label className="signal-debugger-speed">速度<select aria-label="信号播放速度" value={duration} onChange={event=>onDuration(Number(event.target.value))}><option value={1200}>慢速</option><option value={600}>正常</option><option value={180}>快速</option><option value={0}>无动画</option></select></label>
       <button type="button" disabled={disabled} onClick={onReset}>重置模拟</button>
       <button type="button" disabled={!breakpoints.nodes.length&&!breakpoints.links.length} title="清除所有本地断点" onClick={onClearBreakpoints}>断点 {breakpoints.nodes.length+breakpoints.links.length} ×</button>
       <span className="signal-debugger-counter">事件 #{sim.pulse}{sim.execution ? ` · ${sim.execution.processed}/${sim.execution.budget}` : ''}</span>
-    </header>
-    {stopReason&&<div className="signal-debugger-stop" role="status">● {stopReason}</div>}
+    </div>
     <div className="signal-debugger-body">
       <div className="signal-debugger-queue">
         <nav aria-label="信号记录"><button type="button" className={tab==='queue'?'is-active':''} onClick={()=>chooseTab('queue')}>待投递 {sim.queue.length}</button><button type="button" className={tab==='history'?'is-active':''} onClick={()=>chooseTab('history')}>已处理 {sim.log.length}</button><button type="button" className={tab==='discarded'?'is-active':''} onClick={()=>chooseTab('discarded')}>已丢弃 {sim.discarded.length}</button></nav>
@@ -83,6 +93,7 @@ export function SignalDebugger({ flow, sim, playing, duration, disabled, onIniti
         </> : inspected!==null ? <><strong>#{inspected} 不在当前保留的轨迹中</strong><p>该历史已裁剪，不会用当前状态冒充当时状态。</p></> : <><strong>FIFO · 因果追踪</strong><p>点击任意投递检查当时的变化、父信号与新增投递。</p><p>右键节点或连线添加断点，或运行到选中节点。断点在投递前暂停；单步可越过当前断点。</p></>}
         {inspected!==null&&<button type="button" className="signal-debugger-follow" onClick={()=>setInspected(null)}>跟随最新投递</button>}
       </aside>
+    </div>
     </div>
   </section>
 }

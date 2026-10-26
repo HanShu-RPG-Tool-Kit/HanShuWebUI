@@ -1,4 +1,4 @@
-import { createContext, createElement, forwardRef, useCallback, useContext, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
+import { createContext, createElement, forwardRef, useCallback, useContext, useEffect, useId, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { ReactFlow, ReactFlowProvider, Background, BackgroundVariant, Handle, Position, ConnectionMode, SelectionMode, applyNodeChanges, applyEdgeChanges, useReactFlow, useUpdateNodeInternals, useStoreApi, type Node, type Edge, type NodeProps, type EdgeProps, type Connection, type EdgeChange, type ConnectionLineComponentProps } from '@xyflow/react'
 import type { EditorEdge, EditorGroup, EditorNode, EditorSelection, MenuContext, NodeEditorApi, NodeEditorProps, Point } from './types'
 import { normalizeConnection, segmentsCross, wireGeometry, portSide, portOffset } from './geometry'
@@ -15,19 +15,23 @@ type FlowEdge = Edge<Pick<EditorEdge, 'kind' | 'color' | 'activity' | 'sourceBad
 const PortContext=createContext<(id:string,port:string)=>void>(()=>{})
 const EMPTY_CUTS=new Set<string>()
 const CutContext=createContext<Set<string>>(EMPTY_CUTS)
+const ContentContext=createContext<ReadonlyMap<string,ViewData>>(new Map())
 const GroupContext = createContext<{ rename(id:string,name:string):void; readOnly:boolean; selectedNodes:string[]; editingGroup:string|null; editGroup:(id:string|null)=>void }>({ rename() {},readOnly:true,selectedNodes:[],editingGroup:null,editGroup(){} })
 
 function ContentNode({ id, data, selected, dragging }: NodeProps<FlowNode>) {
+  // Controlled fields must see the caller's current values in this render, not
+  // the copy that crosses our drag projection and React Flow's effect/store.
+  const content=useContext(ContentContext).get(id)??data
   const update = useUpdateNodeInternals(),keyboard=useContext(PortContext)
   const signature = JSON.stringify([data.view.width,data.view.height,data.view.ports.map(port=>[port.id,port.direction,portSide(port),portOffset(port)])])
   const previousPorts=useRef(signature)
   useEffect(()=>{if(previousPorts.current!==signature){previousPorts.current=signature;update(id)}},[id,signature,update])
-  const Component = data.registry[data.view.type]?.component
+  const Component = content.registry[content.view.type]?.component
   return <div className={`node-editor-content ${data.view.className ?? ''}`} data-canvas-node={id}>
-    {Component ? createElement(Component,{ node:data.view,selected,dragging:!!dragging,readOnly:data.readOnly }) : <span>未知节点类型：{data.view.type}</span>}
+    {Component ? createElement(Component,{ node:content.view,selected,dragging:!!dragging,readOnly:content.readOnly }) : <span>未知节点类型：{content.view.type}</span>}
     {data.view.ports.map(port=><Handle key={port.id} id={port.id} type={port.direction==='output'?'source':'target'} position={({left:Position.Left,right:Position.Right,top:Position.Top,bottom:Position.Bottom})[portSide(port)]}
       style={{...(portSide(port)==='top'||portSide(port)==='bottom'?{left:portOffset(port)}:{top:portOffset(port)}),background:port.color}} className={`node-editor-port is-kind-${port.kind ?? 'default'}`} data-flow-socket={port.id} data-node-id={id}
-      aria-label={`${data.view.label}，${port.label}端口`} title={port.label} isConnectable={data.connections} tabIndex={data.readOnly?-1:0} role="button" onKeyDown={event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();if(!data.readOnly)keyboard(id,port.id)}}} />)}
+      aria-label={`${data.view.label}，${port.label}端口`} title={port.label} isConnectable={data.connections&&port.kind!=='association'} tabIndex={port.kind==='association'||data.readOnly?-1:0} role="button" onKeyDown={event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();event.stopPropagation();if(!data.readOnly&&port.kind!=='association')keyboard(id,port.id)}}} />)}
   </div>
 }
 function GroupNode({ data }: NodeProps<FlowNode>) {
@@ -44,15 +48,16 @@ function GroupNode({ data }: NodeProps<FlowNode>) {
 }
 function Wire({ id,sourceX,sourceY,targetX,targetY,source,target,sourcePosition,targetPosition,selected,data }: EdgeProps<FlowEdge>) {
   const cutting=useContext(CutContext).has(id)
+  const association=data?.kind==='association'||data?.kind==='association-active'
   const geometry=wireGeometry({x:sourceX,y:sourceY},{x:targetX,y:targetY},source===target,sourcePosition,targetPosition)
-  const path=geometry.path, sourceBadge=geometry.sample(.32), targetBadge=geometry.sample(.68)
+  const path=association?`M ${sourceX} ${sourceY} L ${targetX} ${targetY}`:geometry.path, sourceBadge=geometry.sample(.32), targetBadge=geometry.sample(.68)
   return <g className={`node-editor-wire is-kind-${data?.kind ?? 'default'}${selected?' is-selected':''}`}>
-    <path d={path} className="node-editor-wire-shadow"/>
+    {!association&&<path d={path} className="node-editor-wire-shadow"/>}
     <path d={path} className="node-editor-wire-line" style={{stroke:cutting?'#fa7777':selected?'#efb26a':data?.color}}/>
     {data?.sourceBadge !== undefined && <g className="node-editor-wire-badge" transform={`translate(${sourceBadge.x},${sourceBadge.y - 12})`}><circle r="9"/><text>{data.sourceBadge + 1}</text></g>}
     {data?.targetBadge !== undefined && <g className="node-editor-wire-badge is-reverse" transform={`translate(${targetBadge.x},${targetBadge.y - 12})`}><circle r="9"/><text>{data.targetBadge + 1}</text></g>}
     {data?.activity && <g key={data.activity.key} className="node-editor-wire-signal" data-signal={data.activity.label} style={{ color: data.activity.color, offsetPath: `path("${path}")`, offsetRotate: '0deg', offsetAnchor: '0px 0px', animationDuration: `${data.activity.durationMs}ms`, animationDirection: data.activity.reverse ? 'reverse' : 'normal', animationPlayState: data.activity.running ? 'running' : 'paused' }}><circle r="10"/><text>{data.activity.label}</text></g>}
-    <path d={path} className="node-editor-wire-hit react-flow__edge-interaction" data-editor-edge={id}/>
+    {!association&&<path d={path} className="node-editor-wire-hit react-flow__edge-interaction" data-editor-edge={id}/>}
   </g>
 }
 function ConnectionPreview({fromX,fromY,toX,toY,fromHandle,fromPosition,toPosition}:ConnectionLineComponentProps){
@@ -89,8 +94,25 @@ const EditorSurface=forwardRef<NodeEditorApi,NodeEditorProps>(function EditorSur
   const drag=useRef<Drag|null>(null),lastBlank=useRef<{x:number;y:number;at:number}|null>(null)
   const knife=useRef<Knife|null>(null),[knifeView,setKnifeView]=useState<Knife|null>(null)
   const suppressContext=useRef(false),rightDown=useRef<Point|null>(null),initialized=useRef(false)
+  const rightTarget=useRef<Element|null>(null)
+  const isNestedEditorEvent=(target:EventTarget|null)=>target instanceof Element&&target.closest('.node-editor')!==root.current
+  const scope=useId().replace(/[^a-zA-Z0-9_-]/g,'')
+  const noPanClassName=`editor-nopan-${scope}`,noWheelClassName=`editor-nowheel-${scope}`
+  const nativeField=(target:EventTarget|null)=>target instanceof Element&&!!target.closest('input,textarea,select,[contenteditable="true"]')
+  // XYFlow's pan/zoom filters use closest(), which otherwise sees the containing
+  // form's nopan/nowheel even inside a nested canvas. Bridge public markers into
+  // instance-local tokens during capture, before native D3 listeners execute.
+  const scopeInteraction=(target:EventTarget|null,marker:string,token:string)=>{
+    if(!(target instanceof Element))return
+    const boundary=target.closest(`.${marker}`)
+    if(!isNestedEditorEvent(target)&&boundary?.closest('.node-editor')!==root.current)return
+    if(target.classList.contains(token))return
+    target.classList.add(token)
+    // A microtask may run between native event listeners, before D3's filter.
+    setTimeout(()=>target.classList.remove(token),0)
+  }
   const projection=useMemo(()=>{
-    const result:FlowNode[]=props.nodes.map(view=>({id:view.id,type:'content',position:view.position,width:view.width,height:view.height,style:{width:view.width,height:view.height},data:{view,registry:props.registry,readOnly:!!disabled||!!view.readOnly,connections:!disabled&&features.connections!==false},deletable:false,draggable:!disabled&&view.draggable!==false,selected:false,ariaLabel:view.label,dragHandle:undefined}))
+    const result:FlowNode[]=props.nodes.map(view=>({id:view.id,type:'content',position:view.position,width:view.width,height:view.height,style:{width:view.width,height:view.height},data:{view,registry:props.registry,readOnly:!!disabled||!!view.readOnly,connections:!disabled&&features.connections!==false},deletable:false,draggable:!disabled&&view.draggable!==false,selected:false,ariaLabel:view.label,dragHandle:view.dragHandle}))
     if(features.groups!==false)for(const group of groups){
       let id=`node-editor:group:${group.id}`;while(result.some(node=>node.id===id))id='_'+id
       const view:EditorNode={id,type:'group',position:{x:0,y:0},width:0,height:0,ports:[],label:group.name,data:group}
@@ -98,6 +120,7 @@ const EditorSurface=forwardRef<NodeEditorApi,NodeEditorProps>(function EditorSur
     }
     return withGroupBounds(result,groups)
   },[props.nodes,props.registry,groups,disabled,features.groups,features.connections])
+  const content=useMemo(()=>new Map(projection.map(node=>[node.id,node.data])),[projection])
   useEffect(()=>{setNodes(previous=>{const byId=new Map(previous.map(node=>[node.id,node]));return projection.map(node=>{
     const old=byId.get(node.id)
     return {...node,measured:old?.measured,selected:selectionRef.current.nodes.includes(node.id),position:drag.current?.starts[node.id]&&old?old.position:node.position}
@@ -118,7 +141,7 @@ const EditorSurface=forwardRef<NodeEditorApi,NodeEditorProps>(function EditorSur
     if(!node||!element||props.active===false)return
     const viewport=api.getViewport(),left=node.position.x*viewport.zoom+viewport.x,top=node.position.y*viewport.zoom+viewport.y
     const right=left+(node.width??216)*viewport.zoom,bottom=top+(node.height??100)*viewport.zoom
-    const dx=left<24?24-left:right>element.clientWidth-24?element.clientWidth-24-right:0,dy=top<24?24-top:bottom>element.clientHeight-24?element.clientHeight-24-bottom:0
+    const dx=left<24||right-left>element.clientWidth-48?24-left:right>element.clientWidth-24?element.clientWidth-24-right:0,dy=top<24||bottom-top>element.clientHeight-48?24-top:bottom>element.clientHeight-24?element.clientHeight-24-bottom:0
     if(dx||dy)void api.setViewport({...viewport,x:viewport.x+dx,y:viewport.y+dy})
   },[props.selection,props.active,select,api])
   const onSelectionChange=useCallback(({nodes:selectedNodes,edges:selectedEdges}:{nodes:FlowNode[];edges:FlowEdge[]})=>{
@@ -132,6 +155,7 @@ const EditorSurface=forwardRef<NodeEditorApi,NodeEditorProps>(function EditorSur
     const left=Math.min(start.x,event.clientX),right=Math.max(start.x,event.clientX),top=Math.min(start.y,event.clientY),bottom=Math.max(start.y,event.clientY)
     const inside=(p:Point)=>p.x>=left&&p.x<=right&&p.y>=top&&p.y<=bottom
     const hits=[...(root.current?.querySelectorAll<SVGPathElement>('[data-editor-edge]')??[])].filter(path=>{
+      if(path.closest('.node-editor')!==root.current)return false
       const matrix=path.getScreenCTM(),length=path.getTotalLength(),steps=Math.max(16,Math.ceil(length*api.getZoom()/6))
       let last:Point|null=null
       for(let i=0;i<=steps;i++){
@@ -180,12 +204,37 @@ const EditorSurface=forwardRef<NodeEditorApi,NodeEditorProps>(function EditorSur
     if(kind==='group'){const group=groups.find(item=>item.id===id);if(group)select({nodes:group.nodes,edges:[]})}
     setMenu({kind,id,selection:selectionRef.current,position:api.screenToFlowPosition({x:event.clientX,y:event.clientY}),x:event.clientX,y:event.clientY})
   }
+  const menuAtTarget=(event:{preventDefault():void;clientX:number;clientY:number},target:Element|null)=>{
+    if(nativeField(target))return
+    const nodeElement=target?.closest<HTMLElement>('.react-flow__node[data-id]'),node=nodes.find(item=>item.id===nodeElement?.dataset.id)
+    const edgeElement=target?.closest<SVGElement>('[data-editor-edge]')
+    if(node)openMenu(event,node.type==='group'?'group':'node',node.type==='group'?(node.data.view.data as EditorGroup).id:node.id)
+    else if(edgeElement?.dataset.editorEdge)openMenu(event,'edge',edgeElement.dataset.editorEdge)
+    else openMenu(event,'pane')
+  }
+  useEffect(()=>{
+    const move=(event:PointerEvent)=>{if(rightDown.current&&Math.hypot(event.clientX-rightDown.current.x,event.clientY-rightDown.current.y)>4)suppressContext.current=true}
+    const up=(event:PointerEvent)=>{
+      if(event.button!==2||!rightDown.current)return
+      move(event)
+      const target=rightTarget.current,point={clientX:event.clientX,clientY:event.clientY,preventDefault(){}}
+      if(!suppressContext.current&&!nativeField(target))setTimeout(()=>menuAtTarget(point,target),0)
+      rightDown.current=null;setTimeout(()=>{suppressContext.current=false},100)
+    }
+    window.addEventListener('pointermove',move,true);window.addEventListener('pointerup',up,true)
+    return()=>{window.removeEventListener('pointermove',move,true);window.removeEventListener('pointerup',up,true)}
+  })
   const remove=()=>{
     if(disabled)return
     const nodes=selectionRef.current.nodes.filter(id=>props.nodes.find(node=>node.id===id)?.deletable!==false)
     if(nodes.length||selectionRef.current.edges.length)props.onDelete?.({nodes,edges:selectionRef.current.edges})
   }
-  useImperativeHandle(ref,()=>({fit:()=>{void api.fitView({padding:.15})},focus:(id)=>{const node=api.getNode(id);if(node)void api.setCenter(node.position.x+(node.width??216)/2,node.position.y+(node.height??100)/2,{zoom:api.getZoom()})},zoom:(delta)=>{void api.zoomTo(Math.max(interaction.minZoom??MIN_CANVAS_ZOOM,Math.min(interaction.maxZoom??MAX_CANVAS_ZOOM,api.getZoom()+delta)))},center:()=>{const rect=root.current!.getBoundingClientRect();return api.screenToFlowPosition({x:rect.left+rect.width/2,y:rect.top+rect.height/2})}}),[api,interaction.minZoom,interaction.maxZoom])
+  useImperativeHandle(ref,()=>({fit:()=>{void api.fitView({padding:.15})},focus:(id)=>{const node=api.getNode(id);if(node)void api.setCenter(node.position.x+(node.width??216)/2,node.position.y+(node.height??100)/2,{zoom:api.getZoom()})},reveal:(id)=>{
+    const node=api.getNode(id),element=root.current;if(!node||!element)return
+    const viewport=api.getViewport(),left=node.position.x*viewport.zoom+viewport.x,top=node.position.y*viewport.zoom+viewport.y,right=left+(node.width??216)*viewport.zoom,bottom=top+(node.height??100)*viewport.zoom
+    const dx=left<24||right-left>element.clientWidth-48?24-left:right>element.clientWidth-24?element.clientWidth-24-right:0,dy=top<24||bottom-top>element.clientHeight-48?24-top:bottom>element.clientHeight-24?element.clientHeight-24-bottom:0
+    if(dx||dy)void api.setViewport({...viewport,x:viewport.x+dx,y:viewport.y+dy})
+  },zoom:(delta)=>{void api.zoomTo(Math.max(interaction.minZoom??MIN_CANVAS_ZOOM,Math.min(interaction.maxZoom??MAX_CANVAS_ZOOM,api.getZoom()+delta)))},center:()=>{const rect=root.current!.getBoundingClientRect();return api.screenToFlowPosition({x:rect.left+rect.width/2,y:rect.top+rect.height/2})}}),[api,interaction.minZoom,interaction.maxZoom])
   useEffect(()=>{
     if(initialized.current||!nodes.length)return
     initialized.current=true
@@ -227,9 +276,28 @@ const EditorSurface=forwardRef<NodeEditorApi,NodeEditorProps>(function EditorSur
     const connection=normalizeConnection(props.nodes,{source:start.node,target:id,sourcePort:start.port,targetPort:port})
     if(connection&&(props.canConnect?.(connection)??true)){keyboardPort.current=null;props.onConnect?.(connection)}
   }
-  return <CutContext.Provider value={knifeView?.cuts??EMPTY_CUTS}><PortContext.Provider value={connectKeyboard}><GroupContext.Provider value={{rename:(id,name)=>{if(!disabled)props.onRenameGroup?.(id,name)},readOnly:!!disabled,selectedNodes:selection.nodes,editingGroup,editGroup:setEditingGroup}}>
+  return <ContentContext.Provider value={content}><CutContext.Provider value={knifeView?.cuts??EMPTY_CUTS}><PortContext.Provider value={connectKeyboard}><GroupContext.Provider value={{rename:(id,name)=>{if(!disabled)props.onRenameGroup?.(id,name)},readOnly:!!disabled,selectedNodes:selection.nodes,editingGroup,editGroup:setEditingGroup}}>
     <div ref={root} className={`node-editor${knifeView?' is-cutting':''}`} tabIndex={0} aria-label="节点画布，可拖拽框选或右键创建节点"
+      onMouseDownCapture={event=>{
+        const rightPan=event.button===2&&(interaction.panOnDrag===undefined||interaction.panOnDrag===true||Array.isArray(interaction.panOnDrag)&&interaction.panOnDrag.includes(2))
+        if(!rightPan||isNestedEditorEvent(event.target)){scopeInteraction(event.target,'nopan',noPanClassName);return}
+        // Right-drag belongs to this viewport even when starting on a node or
+        // native field. Keep D3's gesture/transform handling; only relax its
+        // instance-local pan exclusion for this mousedown dispatch.
+        const removed:Element[]=[]
+        let element:Element|null=event.target as Element
+        while(element&&element!==root.current){if(element.classList.contains(noPanClassName)){element.classList.remove(noPanClassName);removed.push(element)}element=element.parentElement}
+        setTimeout(()=>removed.forEach(element=>element.classList.add(noPanClassName)),0)
+      }}
+      onWheelCapture={event=>scopeInteraction(event.target,'nowheel',noWheelClassName)}
+      onClick={event=>event.stopPropagation()} onDoubleClick={event=>event.stopPropagation()} onContextMenu={event=>event.stopPropagation()}
+      onContextMenuCapture={event=>{
+        if(isNestedEditorEvent(event.target))return
+        if(suppressContext.current){event.preventDefault();event.stopPropagation();return}
+        if(nativeField(event.target))event.stopPropagation()
+      }}
       onKeyDownCapture={event=>{
+        if(isNestedEditorEvent(event.target))return
         if((event.target as Element).closest('input,textarea,[contenteditable="true"]'))return
         if(event.key==='Escape'){event.preventDefault();cancel();return}
         if(disabled)return
@@ -249,23 +317,30 @@ const EditorSurface=forwardRef<NodeEditorApi,NodeEditorProps>(function EditorSur
         if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='g'&&features.groups!==false){event.preventDefault();event.stopPropagation();if(event.shiftKey&&selectedGroup)props.onUngroup?.(selectedGroup.id);else if(selection.nodes.length>1)props.onGroup?.(selection.nodes)}
       }}
       onPointerDownCapture={event=>{
+        if(isNestedEditorEvent(event.target))return
         if(event.button===0)downPoint.current={x:event.clientX,y:event.clientY}
-        if(event.button===2){rightDown.current={x:event.clientX,y:event.clientY};suppressContext.current=false;setMenu(null);return}
+        if(event.button===2){rightDown.current={x:event.clientX,y:event.clientY};rightTarget.current=event.target instanceof Element?event.target:null;suppressContext.current=false;setMenu(null);return}
         if(disabled||features.knife===false||event.button!==0||!(event.target as Element).classList.contains('react-flow__pane'))return
         const previous=lastBlank.current;lastBlank.current={x:event.clientX,y:event.clientY,at:event.timeStamp}
         if(!previous||event.timeStamp-previous.at>500||Math.hypot(previous.x-event.clientX,previous.y-event.clientY)>6)return
         event.preventDefault();event.stopPropagation()
-        const paths=[...(root.current?.querySelectorAll<SVGPathElement>('[data-editor-edge]')??[])].map(path=>{
+        const paths=[...(root.current?.querySelectorAll<SVGPathElement>('[data-editor-edge]')??[])].filter(path=>path.closest('.node-editor')===root.current).map(path=>{
           const transform=path.getScreenCTM(),length=path.getTotalLength(),steps=Math.max(16,Math.ceil(length*api.getZoom()/3))
           return {id:path.dataset.editorEdge!,points:Array.from({length:steps+1},(_,i)=>{const p=path.getPointAtLength(length*i/steps);const point=new DOMPoint(p.x,p.y);return transform?point.matrixTransform(transform):point})}
         })
         knife.current={pointer:event.pointerId,points:[{x:event.clientX,y:event.clientY}],cuts:new Set(),paths};setKnifeView({...knife.current});event.currentTarget.setPointerCapture(event.pointerId)
       }} onPointerMoveCapture={event=>{
+        if(isNestedEditorEvent(event.target))return
         if(rightDown.current&&Math.hypot(event.clientX-rightDown.current.x,event.clientY-rightDown.current.y)>4)suppressContext.current=true
         if(knife.current){event.preventDefault();event.stopPropagation();knifeMove(event)}
-      }} onPointerUpCapture={event=>{if(event.button===2){rightDown.current=null;setTimeout(()=>{suppressContext.current=false},100)}if(knife.current){event.stopPropagation();knifeEnd(event)}}}
+      }} onPointerUpCapture={event=>{
+        if(isNestedEditorEvent(event.target))return
+        if(knife.current){event.stopPropagation();knifeEnd(event)}
+      }}
       onPointerCancel={event=>knifeEnd(event,true)} onLostPointerCapture={event=>knifeEnd(event,true)}>
       <ReactFlow<FlowNode,FlowEdge> nodes={nodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes}
+        proOptions={{ hideAttribution: true }}
+        noPanClassName={noPanClassName} noWheelClassName={noWheelClassName}
         onNodesChange={changes=>setNodes(previous=>applyNodeChanges(changes.filter(change=>!disabled||change.type==='dimensions'),previous))}
         onEdgesChange={(changes:EdgeChange<FlowEdge>[])=>setEdges(previous=>applyEdgeChanges(changes,previous))}
         onSelectionChange={onSelectionChange} onSelectionEnd={event=>{lastBlank.current=null;selectionEnd(event)}} onNodeDragStart={dragStart} onNodeDrag={dragMove} onNodeDragStop={dragStop}
@@ -275,15 +350,10 @@ const EditorSurface=forwardRef<NodeEditorApi,NodeEditorProps>(function EditorSur
         onEdgeDoubleClick={(_event,edge)=>{if(!disabled)props.onEdgeDoubleClick?.(edge.id)}}
         onNodeContextMenu={(event,node)=>openMenu(event,node.type==='group'?'group':'node',node.type==='group'?(node.data.view.data as EditorGroup).id:node.id)}
         onEdgeContextMenu={(event,edge)=>openMenu(event,'edge',edge.id)} onPaneContextMenu={event=>{
+          if(nativeField(event.target))return
           // Right-button pan end can report a pane context menu even when a
           // non-draggable node was clicked. Resolve its real hit target again.
-          const target=event.target instanceof Element?event.target:null
-          const nodeElement=target?.closest<HTMLElement>('.react-flow__node[data-id]')
-          const node=nodes.find(item=>item.id===nodeElement?.dataset.id)
-          const edgeElement=target?.closest<SVGElement>('[data-editor-edge]')
-          if(node)openMenu(event,node.type==='group'?'group':'node',node.type==='group'?(node.data.view.data as EditorGroup).id:node.id)
-          else if(edgeElement?.dataset.editorEdge)openMenu(event,'edge',edgeElement.dataset.editorEdge)
-          else openMenu(event,'pane')
+          menuAtTarget(event,rightTarget.current??(event.target instanceof Element?event.target:null))
         }}
         onConnect={connection=>{if(!valid(connection))return;const result=normalizeConnection(props.nodes,{source:connection.source,target:connection.target,sourcePort:connection.sourceHandle??'',targetPort:connection.targetHandle??''});if(result)props.onConnect?.(result)}}
         isValidConnection={valid} connectionMode={ConnectionMode.Loose} connectOnClick connectionRadius={22} connectionLineComponent={ConnectionPreview}
@@ -298,7 +368,7 @@ const EditorSurface=forwardRef<NodeEditorApi,NodeEditorProps>(function EditorSur
       {knifeView&&<svg className="node-editor-knife" style={{left:-root.current!.getBoundingClientRect().left,top:-root.current!.getBoundingClientRect().top}}><polyline points={knifeView.points.map(p=>`${p.x},${p.y}`).join(' ')}/><image href={knifeIcon} x={knifeView.points.at(-1)!.x-2} y={knifeView.points.at(-1)!.y-22} width="24" height="24"/></svg>}
       {menu&&menuItems.length>0&&<NodeContextMenu x={menu.x} y={menu.y} title={menu.kind==='pane'?'节点画布':menu.kind==='group'?'Group 操作':menu.kind==='edge'?'连接操作':'节点操作'} label="节点编辑操作" items={menuItems} onClose={()=>setMenu(null)} boundary={root}/>}
     </div>
-  </GroupContext.Provider></PortContext.Provider></CutContext.Provider>
+  </GroupContext.Provider></PortContext.Provider></CutContext.Provider></ContentContext.Provider>
 })
 
 export const NodeEditor=forwardRef<NodeEditorApi,NodeEditorProps>(function NodeEditor(props,ref){

@@ -4,11 +4,17 @@
 .node-editor-content { position:relative; width:100%; height:100%; }
 .node-editor .node-editor-port { z-index:4; width:12px; height:12px; min-width:12px; min-height:12px; background:#7a9aab; border:2px solid #171717; border-radius:50%; }
 .node-editor .node-editor-port:hover, .node-editor .node-editor-port.connectingto { filter:brightness(1.4); box-shadow:0 0 0 2px #ffffff40; }
+.node-editor .node-editor-port.is-kind-association { opacity:0; pointer-events:none; }
 .node-editor-wire path { fill:none; }
 .node-editor-wire-line { stroke:#a6a6a6; stroke-width:2.5; }
 .node-editor-wire-shadow { stroke:#1118; stroke-width:5; }
 .node-editor-wire-hit { stroke:transparent; stroke-width:18; pointer-events:stroke; cursor:pointer; }
 .node-editor-wire.is-selected .node-editor-wire-line, .node-editor-wire:hover .node-editor-wire-line { stroke:#efb26a; }
+.node-editor-wire.is-kind-association,.node-editor-wire.is-kind-association-active { pointer-events:none; }
+.node-editor-wire.is-kind-association .node-editor-wire-line,.node-editor-wire.is-kind-association-active .node-editor-wire-line { stroke:#65c7f2;stroke-width:1.6;stroke-dasharray:7 7;opacity:.5; }
+.node-editor-wire.is-kind-association-active .node-editor-wire-line { stroke-width:2.2;opacity:1;filter:drop-shadow(0 0 3px #65c7f288);animation:node-editor-association-flow 1s linear infinite; }
+@keyframes node-editor-association-flow { from { stroke-dashoffset:0; } to { stroke-dashoffset:-28; } }
+@media (prefers-reduced-motion:reduce) { .node-editor-wire.is-kind-association-active .node-editor-wire-line { animation-duration:3s; } }
 .node-editor-group-frame { width:100%;height:100%;box-sizing:border-box;border:1px solid #70707080;border-radius:7px;background:#ffffff04;pointer-events:none; }
 .node-editor-group-heading { position:absolute;top:3px;left:10px;display:flex;gap:15px;align-items:center;max-width:calc(100% - 20px);height:24px;padding:2px 5px;color:#bababa;font:11px sans-serif;cursor:grab;pointer-events:auto; }
 .node-editor-group-heading span {overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}

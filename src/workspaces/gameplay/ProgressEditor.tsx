@@ -153,7 +153,7 @@ function NumberInput({ value, onChange, label, integer = false, min, allowUnset 
   </span>
 }
 
-function GoalPicker({ definitions, current, onChoose, onClose, locale }: {
+export function GoalPicker({ definitions, current, onChoose, onClose, locale }: {
   definitions: readonly GoalDefinition[]; current?: string; onChoose: (kind: string) => void; onClose: () => void; locale: string
 }) {
   const ref = useRef<HTMLDialogElement>(null)

@@ -117,5 +117,8 @@ export function NodeContextMenu({ x, y, title, items, onClose, label = '节点�
       window.removeEventListener('blur', close)
     }
   }, [onClose, anchor])
-  return createPortal(<div ref={root}><MenuLevel key={`${x}:${y}`} x={x} y={y} title={title} items={items} onClose={onClose} label={label} className={className} boundary={boundary} /></div>, document.body)
+  // Menus of an expanded editor must remain inside its modal top layer; body
+  // siblings of a native modal dialog are inert and cannot receive input.
+  const portalRoot=boundary?.current?.closest('dialog[open]')??anchor?.current?.closest('dialog[open]')??document.body
+  return createPortal(<div ref={root}><MenuLevel key={`${x}:${y}`} x={x} y={y} title={title} items={items} onClose={onClose} label={label} className={className} boundary={boundary} /></div>, portalRoot)
 }
