@@ -154,3 +154,6 @@ const ports: Port[] = [
 `EditorEdge.activity` 可提供 `{key,label,color,reverse,durationMs,running}`，在实际曲线路径上展示带字母的移动标记。`reverse` 仅改变视觉方向；通用层不执行信号、不等待动画回调、不产生业务修改。`key` 表示一次投递，暂停/恢复保持该 key；`running` 控制 CSS 动画暂停。`sourceBadge` / `targetBadge` 显示零基局部序号（UI 加一）。业务适配器决定内容，不得将这些视图字段写回业务模型。
 
 `EditorNode.readOnly` 让单个节点内部控件只读，`draggable:false` 禁止拖动；图级业务回调仍需自行保护。quest 模拟器据此在保持选择、定位和模拟快捷操作的同时锁定文档编辑。
+
+
+右键平移结束可能由 React Flow 以画布菜单回调报告，即便实际点在不可拖动节点上。通用层会根据真实事件目标重新识别节点或连线，避免业务调试菜单在局部只读/不可拖动时被画布菜单覆盖；该行为不赋予业务写入权限。

@@ -13,7 +13,7 @@ try{
  import React from '${react}';import DOM from '${dom}';import {ProgressGraph} from '/src/workspaces/gameplay/ProgressGraph.tsx';import * as M from '/src/workspaces/gameplay/model.ts';import * as C from '/src/workspaces/gameplay/canvas.ts';
  let f=M.createFlow('调试示例');f.progress[f.start].title={text:'启程'};let a=C.createProgressNode(f,{x:420,y:0});f=a.flow;f.progress[a.id].title={text:'寻找线索'};let b=C.createProgressNode(f,{x:420,y:230});f=b.flow;f.progress[b.id].title={text:'探索营地'};let e=C.createEndNode(f,{x:790,y:0});f=e.flow;f.ends[e.id].title={text:'调查完成'};
  f=C.moveCanvasNodes(f,{[f.start]:{x:60,y:100}});f=M.connectNodes(f,f.start,a.id,'input','output').flow;f=M.connectNodes(f,f.start,b.id,'input','output').flow;f=M.connectNodes(f,a.id,e.id,'input','output').flow;f=M.connectNodes(f,a.id,e.id,'input2','output').flow;
- window.ids={start:f.start,a:a.id,b:b.id,end:e.id};window.commits=0;
+ window.ids={start:f.start,a:a.id,b:b.id,end:e.id};window.originalFlow=JSON.stringify(f);window.commits=0;
  function App(){const [flow,F]=React.useState(f),[selection,S]=React.useState({kind:'flow'});window.flow=flow;window.refreshUnchanged=()=>F(previous=>structuredClone(previous));return React.createElement('div',{className:'gameplay-workspace'},React.createElement(ProgressGraph,{flow,selection,onSelect:S,active:true,definitions:[],onCreate:()=>{},onChangeFlow:F,onMove:p=>{window.commits++;F(prev=>C.moveCanvasNodes(prev,p))},onGroup:()=>null,onUngroup:()=>{},onRenameGroup:()=>{},onDelete:()=>{},onDeleteMany:()=>{},onArrange:()=>{},onUpdateNote:()=>{},onConnect:()=>{},onDisconnect:()=>{},onCut:()=>{}}))}DOM.createRoot(document.getElementById('root')).render(React.createElement(App));</script>`}))
  await page.goto(base+'/__quest-simulator');await page.locator('.signal-debugger').waitFor();await page.waitForTimeout(300);await page.getByRole('button',{name:'显示全部',exact:true}).click();await page.waitForTimeout(300)
  const ids=await page.evaluate(()=>window.ids),node=id=>page.locator(`[data-canvas-node="${id}"]`)
@@ -59,4 +59,71 @@ try{
  assert.equal(await node(ids.a).locator('[data-progress-state]').getAttribute('data-progress-state'),'inactive')
  assert.deepEqual(errors,[])
  console.log('PASS reset releases simulation and browser has no runtime errors')
+
+ // Local node breakpoints pause BEFORE delivery and continue bypasses only that delivery.
+ await node(ids.b).click({button:'right'});await page.getByRole('menuitem',{name:'添加节点断点',exact:true}).click()
+ await page.getByRole('button',{name:'初始化任务',exact:true}).click();await node(ids.start).click({modifiers:['Control']})
+ await page.getByLabel('信号播放速度').selectOption('0');await page.getByRole('button',{name:'播放',exact:true}).click()
+ await page.getByText('命中节点断点，尚未处理该信号',{exact:false}).waitFor()
+ assert.equal(await node(ids.b).locator('[data-progress-state]').getAttribute('data-progress-state'),'inactive')
+ const pausedStatus=await page.locator('.signal-debugger-status').innerText();await page.waitForTimeout(100);assert.equal(await page.locator('.signal-debugger-status').innerText(),pausedStatus)
+ await page.getByRole('button',{name:'播放',exact:true}).click();await page.waitForFunction(()=>document.querySelector('.signal-debugger-status').textContent==='等待事件')
+ await page.waitForFunction(id=>document.querySelector(`[data-canvas-node="${id}"] [data-progress-state]`)?.getAttribute('data-progress-state')==='running',ids.b)
+ console.log('PASS node breakpoint pauses before arrival; continue consumes current delivery once')
+ // Inspect older cancellation, follow its causal parent and then its emitted child.
+ await page.getByRole('button',{name:/^已处理 /}).click();await page.getByLabel('筛选信号类型').selectOption('cancel')
+ const history=page.getByRole('list',{name:'已处理信号',exact:true});assert.equal(await history.getByRole('listitem').count(),2)
+ await history.getByRole('listitem').first().click()
+ const inspector=page.getByRole('complementary',{name:'投递检查器',exact:true})
+ await inspector.getByRole('button',{name:'检查来源 #2',exact:true}).click()
+ await inspector.getByText('探索营地：未激活 → 运行中',{exact:true}).waitFor()
+ await inspector.getByRole('button',{name:'检查子投递 #4',exact:true}).click()
+ await inspector.getByText('本次传播已处理相同状态的取消',{exact:true}).waitFor()
+ await page.getByLabel('筛选信号节点').fill('#2');assert.equal(await history.getByRole('listitem').count(),0)
+ await page.getByLabel('筛选信号类型').selectOption('all');assert.equal(await history.getByRole('listitem').count(),1)
+ await history.getByRole('listitem').click();await inspector.getByText('探索营地：未激活 → 运行中',{exact:true}).waitFor()
+ await page.getByLabel('筛选信号节点').fill('');await page.getByLabel('筛选信号类型').selectOption('ignored');assert.equal(await history.getByRole('listitem').count(),2)
+ await page.screenshot({path:'node_modules/.cache/quest-simulator/causality.png'})
+ console.log('PASS historical state, parent/child trace navigation and signal/node/ignored filters')
+ // A link breakpoint also stops on reverse cancellation over that same wire.
+ await page.getByRole('button',{name:/^断点 1/}).click();await page.getByRole('button',{name:'重置模拟',exact:true}).click()
+ await page.getByRole('button',{name:'显示全部',exact:true}).click();await page.waitForTimeout(300)
+ const linkId=await page.evaluate(ids=>window.flow.logic.links.find(link=>link.from===ids.start&&link.to===ids.a).id,ids)
+ const point=await page.locator(`[data-editor-edge="logic:${linkId}"]`).evaluate(path=>{const point=path.getPointAtLength(path.getTotalLength()*.55),screen=new DOMPoint(point.x,point.y).matrixTransform(path.getScreenCTM());return {x:screen.x,y:screen.y}})
+ await page.mouse.click(point.x,point.y,{button:'right'});await page.getByRole('menuitem',{name:'添加连线断点',exact:true}).click()
+ await page.getByRole('button',{name:'初始化任务',exact:true}).click();await node(ids.start).click({modifiers:['Control']});await page.getByRole('button',{name:'播放',exact:true}).click()
+ await page.getByText('命中连线断点，尚未处理该信号',{exact:false}).waitFor()
+ assert.equal(await node(ids.a).locator('[data-progress-state]').getAttribute('data-progress-state'),'inactive')
+ await page.getByRole('button',{name:'单步',exact:true}).click();await page.getByRole('button',{name:'播放',exact:true}).click()
+ await page.getByText('命中连线断点，尚未处理该信号',{exact:false}).waitFor()
+ await page.getByRole('button',{name:'播放',exact:true}).click();await page.waitForFunction(()=>document.querySelector('.signal-debugger-status').textContent==='等待事件')
+ console.log('PASS wire breakpoint applies to distinct forward and reverse deliveries')
+ // Run-to is a one-shot local stop, not a permanent breakpoint or reordered queue.
+ await page.getByRole('button',{name:/^断点 1/}).click();await page.getByRole('button',{name:'重置模拟',exact:true}).click()
+ await page.getByRole('button',{name:'初始化任务',exact:true}).click();await node(ids.start).click({modifiers:['Control']})
+ await node(ids.b).click({button:'right'});await page.getByRole('menuitem',{name:'运行到此节点',exact:true}).click()
+ await page.getByText('已到达目标节点，尚未处理该信号',{exact:false}).waitFor()
+ assert.equal(await node(ids.b).locator('[data-progress-state]').getAttribute('data-progress-state'),'inactive')
+ assert(await page.getByRole('button',{name:/^断点 0/}).isDisabled())
+ await page.getByRole('button',{name:'播放',exact:true}).click();await page.waitForFunction(()=>document.querySelector('.signal-debugger-status').textContent==='等待事件')
+ assert.deepEqual(errors,[])
+ console.log('PASS run-to pauses before target, leaves no permanent breakpoint, resume drains normally')
+ await page.getByRole('button',{name:'重置模拟',exact:true}).click();await page.getByRole('button',{name:'初始化任务',exact:true}).click();await node(ids.start).click({modifiers:['Control']})
+ await node(ids.end).click({button:'right'});await page.getByRole('menuitem',{name:'运行到此节点',exact:true}).click()
+ await page.getByText('本轮传播已结束，未到达目标节点',{exact:false}).waitFor()
+ await node(ids.a).click({modifiers:['Control']});await page.waitForFunction(()=>!document.querySelector('.signal-debugger-stop'))
+ assert.equal(await page.evaluate(()=>JSON.stringify(window.flow)===window.originalFlow),true)
+ assert.equal(await page.evaluate(()=>window.commits),0)
+ console.log('PASS unreachable run-to reports completion without inventing events; debugging never changes quest source')
+
+
+ // Virtual history remains fully scrollable; the former 100-row cutoff must not return.
+ await page.route('**/__quest-history',route=>route.fulfill({contentType:'text/html',body:`<meta charset="utf-8"><style>body{margin:0;background:#242424;color:#ddd}.host{height:600px;display:flex;align-items:flex-end}</style><script type="module">import R from '/@react-refresh';R.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>t=>t;window.__vite_plugin_react_preamble_installed__=true;</script><div id="root"></div><script type="module">import React from '${react}';import DOM from '${dom}';import {SignalDebugger} from '/src/workspaces/gameplay/SignalDebugger.tsx';import * as M from '/src/workspaces/gameplay/model.ts';import * as S from '/src/workspaces/gameplay/signals.ts';import '/src/workspaces/gameplay/ProgressGraph.css';const flow=M.createFlow('history');const sim=S.createSimState(flow);sim.initialized=true;sim.pulse=1;sim.events=[{id:1,label:'history fixture'}];sim.log=Array.from({length:1000},(_,i)=>({traceId:i+1,eventId:1,parentId:null,from:flow.start,to:flow.start,port:'input',signal:{kind:'activate'},accepted:true,changes:[{id:flow.start,text:'历史变化 '+(i+1)}]}));DOM.createRoot(document.getElementById('root')).render(React.createElement('div',{className:'host'},React.createElement(SignalDebugger,{flow,sim,playing:false,duration:0,breakpoints:{nodes:[],links:[]},stopReason:'',onClearBreakpoints:()=>{},disabled:false,onInitialize:()=>{},onStep:()=>{},onPlay:()=>{},onReset:()=>{},onDuration:()=>{},onFocus:()=>{}})));</script>`}))
+ await page.goto(base+'/__quest-history');await page.getByRole('button',{name:'已处理 1000',exact:true}).click()
+ const virtual=page.getByRole('list',{name:'已处理信号',exact:true});assert(await virtual.getByRole('listitem').count()<100)
+ await virtual.evaluate(element=>{element.scrollTop=element.scrollHeight})
+ await virtual.locator('[data-trace-id="1"]').click()
+ await page.getByRole('complementary',{name:'投递检查器',exact:true}).getByText(/历史变化 1$/).waitFor()
+ assert.deepEqual(errors,[])
+ console.log('PASS 1000-entry virtual history is bounded in DOM and oldest entry remains inspectable')
 }finally{await browser.close();await server.close()}

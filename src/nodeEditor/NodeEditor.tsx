@@ -274,7 +274,17 @@ const EditorSurface=forwardRef<NodeEditorApi,NodeEditorProps>(function EditorSur
         onNodeDoubleClick={(_event,node)=>{if(!disabled&&node.type!=='group')props.onNodeDoubleClick?.(node.id)}}
         onEdgeDoubleClick={(_event,edge)=>{if(!disabled)props.onEdgeDoubleClick?.(edge.id)}}
         onNodeContextMenu={(event,node)=>openMenu(event,node.type==='group'?'group':'node',node.type==='group'?(node.data.view.data as EditorGroup).id:node.id)}
-        onEdgeContextMenu={(event,edge)=>openMenu(event,'edge',edge.id)} onPaneContextMenu={event=>openMenu(event,'pane')}
+        onEdgeContextMenu={(event,edge)=>openMenu(event,'edge',edge.id)} onPaneContextMenu={event=>{
+          // Right-button pan end can report a pane context menu even when a
+          // non-draggable node was clicked. Resolve its real hit target again.
+          const target=event.target instanceof Element?event.target:null
+          const nodeElement=target?.closest<HTMLElement>('.react-flow__node[data-id]')
+          const node=nodes.find(item=>item.id===nodeElement?.dataset.id)
+          const edgeElement=target?.closest<SVGElement>('[data-editor-edge]')
+          if(node)openMenu(event,node.type==='group'?'group':'node',node.type==='group'?(node.data.view.data as EditorGroup).id:node.id)
+          else if(edgeElement?.dataset.editorEdge)openMenu(event,'edge',edgeElement.dataset.editorEdge)
+          else openMenu(event,'pane')
+        }}
         onConnect={connection=>{if(!valid(connection))return;const result=normalizeConnection(props.nodes,{source:connection.source,target:connection.target,sourcePort:connection.sourceHandle??'',targetPort:connection.targetHandle??''});if(result)props.onConnect?.(result)}}
         isValidConnection={valid} connectionMode={ConnectionMode.Loose} connectOnClick connectionRadius={22} connectionLineComponent={ConnectionPreview}
         nodesDraggable={!disabled} nodesConnectable={!disabled&&features.connections!==false} elementsSelectable={features.selection!==false&&props.active!==false}

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import * as M from './model'
 import * as S from './signals'
+import { signalStop, type SignalBreakpoints } from './signalDebugging'
 import { SignalDebugger } from './SignalDebugger'
 import type { CanvasNodeType, FlowCanvasNote, FlowInputPort, FlowOutputPort, FlowPosition, ProgressFlow, FlowSelection } from './model'
 import { NodeEditor, NoteNode } from '../../nodeEditor'
@@ -51,6 +52,21 @@ export function ProgressGraph({ flow, selection, onSelect, onCreate, onChangeFlo
   const [sim, setSim] = useState(() => S.createSimState(flow))
   const [playing, setPlaying] = useState(false)
   const [duration, setDuration] = useState(600)
+  const [debugGeneration, setDebugGeneration] = useState(0)
+  const [breakpoints, setBreakpoints] = useState<SignalBreakpoints>({nodes:[],links:[]})
+  const [runTo, setRunTo] = useState<string | null>(null)
+  const [skipTrace, setSkipTrace] = useState<number | null>(null)
+  const [stopReason, setStopReason] = useState('')
+  const [pausedAt, setPausedAt] = useState<number | null>(null)
+  const stop = signalStop(sim,breakpoints,runTo)
+  const stopped = stop && stop.traceId !== skipTrace
+  const toggleBreakpoint = (kind: 'nodes' | 'links', id: string) => setBreakpoints(previous=>({...previous,[kind]:previous[kind].includes(id)?previous[kind].filter(value=>value!==id):[...previous[kind],id]}))
+  const play = () => {
+    if (playing) {setPlaying(false);return}
+    setStopReason(''); setSkipTrace(stop && stop.traceId===pausedAt ? stop.traceId : null);setPausedAt(null); setPlaying(true)
+  }
+  const step = () => {setPlaying(false);setSkipTrace(null);setPausedAt(null);setStopReason('');setSim(previous=>S.stepSignal(flow,previous))}
+  const runUntil = (id: string) => {setRunTo(id);setSkipTrace(null);setPausedAt(null);setStopReason('');setPlaying(true)}
   const locked = sim.initialized || !!sim.fault
   const eventDisabled = disabled || !active || !S.canTrigger(sim)
   const flight = useRef({ key: '', elapsed: 0 })
@@ -58,12 +74,23 @@ export function ProgressGraph({ flow, selection, onSelect, onCreate, onChangeFlo
   const flightKey = `${sim.pulse}:${sim.execution?.processed ?? sim.log.length}:${sim.queue[0]?.link ?? ''}`
   useEffect(() => {
     if (!playing || disabled || !active || !sim.queue.length) return
+    if (stopped) {
+      setPlaying(false);setPausedAt(stop.traceId);setStopReason(stop.reason === 'target' ? '已到达目标节点，尚未处理该信号' : stop.reason === 'node' ? '命中节点断点，尚未处理该信号' : '命中连线断点，尚未处理该信号')
+      if (stop.reason === 'target') setRunTo(null)
+      return
+    }
     if (flight.current.key !== flightKey) flight.current = { key: flightKey, elapsed: 0 }
     const started = performance.now()
     const timer = window.setTimeout(() => { flight.current.elapsed = 0; setSim(previous => S.stepSignal(flow, previous)) }, Math.max(0, duration - flight.current.elapsed))
     return () => { window.clearTimeout(timer); flight.current.elapsed += performance.now() - started }
-  }, [playing, disabled, active, sim.queue.length, flightKey, duration, flow])
-  useEffect(() => { if (!sim.queue.length || disabled || !active) setPlaying(false) }, [sim.queue.length, disabled, active])
+  }, [playing, disabled, active, sim.queue.length, flightKey, duration, flow, stopped, stop?.traceId, stop?.reason])
+  useEffect(() => {
+    if (!sim.queue.length || disabled || !active) setPlaying(false)
+    if (!sim.queue.length && runTo) {
+      if (!sim.outcome && !sim.fault) setStopReason('本轮传播已结束，未到达目标节点')
+      setRunTo(null)
+    }
+  }, [sim.queue.length, disabled, active, runTo, sim.outcome, sim.fault])
   const [localSelection, setLocalSelection] = useState<EditorSelection>({ nodes: [], edges: [] })
   const [createMenu, setCreateMenu] = useState<{ x: number; y: number; position: FlowPosition } | null>(null)
   const [zoom, setZoom] = useState(1)
@@ -76,7 +103,8 @@ export function ProgressGraph({ flow, selection, onSelect, onCreate, onChangeFlo
       const changedDocument = prior.id !== flow.id
       previousFlow.current = flow
       if (JSON.stringify(prior) === JSON.stringify(flow)) return
-      setSim(S.createSimState(flow)); setPlaying(false)
+      setDebugGeneration(value=>value+1);setSim(S.createSimState(flow)); setPlaying(false); setRunTo(null);setSkipTrace(null);setPausedAt(null);setStopReason('')
+      setBreakpoints(previous=>changedDocument?{nodes:[],links:[]}:{nodes:previous.nodes.filter(id=>M.hasContentNode(flow,id)),links:previous.links.filter(id=>flow.logic?.links.some(link=>link.id===id))})
       if (changedDocument) { setLocalSelection({ nodes: [], edges: [] }); setCreateMenu(null); setForms({}) }
     }
   }, [flow])
@@ -98,7 +126,7 @@ export function ProgressGraph({ flow, selection, onSelect, onCreate, onChangeFlo
   const closeForm = (id: string) => setForms(previous => Object.fromEntries(Object.entries(previous).filter(([key]) => key !== id)))
 
   const nodes = useMemo(() => {
-    const base = progressNodes(flow, sim, onUpdateNote, resolveText).map(node=>({...node, draggable: !locked, readOnly: locked}))
+    const base = progressNodes(flow, sim, onUpdateNote, resolveText).map(node=>({...node, draggable: !locked, readOnly: locked, className: `${node.className ?? ''}${breakpoints.nodes.includes(node.id)?' flow-sim-breakpoint':''}${runTo===node.id?' flow-sim-run-target':''}`}))
     const formsNodes = Object.entries(forms).map(([nodeId, position]) => {
       const kind = nodeKind(nodeId)
       return {
@@ -115,9 +143,9 @@ export function ProgressGraph({ flow, selection, onSelect, onCreate, onChangeFlo
     }).filter(node => node.data.kind !== null)
     return [...base, ...formsNodes]
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [flow, sim, forms, definitions, kitOptions, disabled, locked, resolveText, setText, onChangeFlow, onUpdateNote])
+  }, [flow, sim, forms, definitions, kitOptions, disabled, locked, breakpoints.nodes, runTo, resolveText, setText, onChangeFlow, onUpdateNote])
   const delivery = sim.queue[0]
-  const edges = useMemo(() => progressEdges(flow, delivery ? { delivery, key: sim.queue.length ? flightKey : `last:${sim.pulse}:${sim.log.length}`, durationMs: duration || 1, running: active && (playing || !sim.queue.length) } : undefined), [flow, delivery, flightKey, duration, active, playing, sim.queue.length, sim.pulse, sim.log.length])
+  const edges = useMemo(() => progressEdges(flow, delivery ? { delivery, key: sim.queue.length ? flightKey : `last:${sim.pulse}:${sim.log.length}`, durationMs: duration || 1, running: active && playing && !stopped } : undefined).map(edge=>({...edge,kind:breakpoints.links.includes(edge.id.slice(6))?'breakpoint':edge.kind})), [breakpoints.links, stopped, flow, delivery, flightKey, duration, active, playing, sim.queue.length, sim.pulse, sim.log.length])
   const groups = useMemo(() => Object.entries(flow.layout?.groups ?? {}).map(([id, group], i) => ({ id, name: group.name?.trim() || `Group ${i + 1}`, nodes: group.nodes })), [flow.layout?.groups])
   const graphSelection: EditorSelection = selection.kind === 'flow' ? localSelection
     : selection.kind === 'logic-link' ? { nodes: [], edges: [`logic:${selection.id}`] }
@@ -139,9 +167,13 @@ export function ProgressGraph({ flow, selection, onSelect, onCreate, onChangeFlo
     if (Object.keys(itemPositions).length) onMove(itemPositions)
   }
 
-  const initialize = () => { if (!eventDisabled) setSim(previous => S.initializeQuest(flow, previous, true)) }
-  const settle = (id: string, outcome: 'succeeded' | 'failed') => { if (!eventDisabled) setSim(previous => S.settleProgress(flow, previous, id, outcome, true)) }
-  const togglePredicate = (id: string) => { if (!eventDisabled) setSim(previous => S.setPredicateTruth(flow, previous, id, !S.predicateTruth(previous, id), true)) }
+  const trigger = (update: (previous: S.FlowSimState) => S.FlowSimState) => {
+    if (eventDisabled) return
+    setStopReason('');setPausedAt(null);setSkipTrace(null);setSim(update)
+  }
+  const initialize = () => trigger(previous=>S.initializeQuest(flow,previous,true))
+  const settle = (id: string, outcome: 'succeeded' | 'failed') => trigger(previous=>S.settleProgress(flow,previous,id,outcome,true))
+  const togglePredicate = (id: string) => trigger(previous=>S.setPredicateTruth(flow,previous,id,!S.predicateTruth(previous,id),true))
 
   const createItems = (position: FlowPosition): MenuItem[] => [
     { label: '新建进度', action: () => onCreate(position, 'progress') },
@@ -151,7 +183,7 @@ export function ProgressGraph({ flow, selection, onSelect, onCreate, onChangeFlo
     { label: '添加注释', action: () => onCreate(position, 'note') },
   ]
 
-  const menuItems = (context: MenuContext): MenuItem[] => {
+  const businessMenuItems = (context: MenuContext): MenuItem[] => {
     const id = context.id
     if (context.kind === 'pane') return [
       { label: '编辑任务信息…', action: () => openForm(flow.start) },
@@ -186,6 +218,16 @@ export function ProgressGraph({ flow, selection, onSelect, onCreate, onChangeFlo
     return []
   }
 
+  const menuItems = (context: MenuContext): MenuItem[] => {
+    const id=context.id
+    const debug: MenuItem[] = context.kind==='edge' && id ? [{label:breakpoints.links.includes(id.slice(6))?'移除连线断点':'添加连线断点',action:()=>toggleBreakpoint('links',id.slice(6))}]
+      : context.kind==='node' && id && M.hasContentNode(flow,id) ? [
+        {label:breakpoints.nodes.includes(id)?'移除节点断点':'添加节点断点',action:()=>toggleBreakpoint('nodes',id)},
+        {label:'运行到此节点',disabled:!S.isBusy(sim)||disabled||!active,action:()=>runUntil(id)},
+      ] : []
+    return [...debug,...businessMenuItems(context)]
+  }
+
   return <div className="flow-graph">
     <div className="flow-graph-toolbar">
       <span className="flow-graph-editor-icon">◇</span><span className="flow-graph-editor-name">进度节点</span>
@@ -211,7 +253,7 @@ export function ProgressGraph({ flow, selection, onSelect, onCreate, onChangeFlo
         if (M.getPredicateNode(flow, id)) { togglePredicate(id); return }
         if (M.getProgressNode(flow, id) && S.progressState(sim, id) === 'running') settle(id, event.shiftKey ? 'failed' : 'succeeded')
       }} />
-    <SignalDebugger flow={flow} sim={sim} playing={playing} duration={duration} disabled={disabled || !active} resolveText={resolveText} onInitialize={initialize} onStep={()=>{setPlaying(false);setSim(previous=>S.stepSignal(flow,previous))}} onPlay={()=>setPlaying(previous=>!previous)} onReset={()=>{setPlaying(false);flight.current={key:'',elapsed:0};setSim(S.resetSimState(flow))}} onDuration={setDuration} onFocus={delivery=>{api.current?.focus(delivery.to);onSelect(delivery.link ? {kind:'logic-link',id:delivery.link} : nodeSelection(flow,delivery.to))}} />
+    <SignalDebugger key={`${flow.id}:${debugGeneration}`} flow={flow} sim={sim} playing={playing} duration={duration} breakpoints={breakpoints} stopReason={stopReason} onClearBreakpoints={()=>{setBreakpoints({nodes:[],links:[]});setPausedAt(null);setStopReason('')}} disabled={disabled || !active} resolveText={resolveText} onInitialize={initialize} onStep={step} onPlay={play} onReset={()=>{setPlaying(false);flight.current={key:'',elapsed:0};setDebugGeneration(value=>value+1);setSim(S.resetSimState(flow));setRunTo(null);setSkipTrace(null);setPausedAt(null);setStopReason('')}} onDuration={setDuration} onFocus={delivery=>{api.current?.focus(delivery.to);onSelect(delivery.link ? {kind:'logic-link',id:delivery.link} : nodeSelection(flow,delivery.to))}} />
     <div className="flow-graph-legend"><span>开始进度 · 进度 · 谓词 · 变迁 · 结束</span><span>双击节点在画布上打开表单 · 初始化时播报已为真的谓词 · 未联通的节点是草稿</span></div>
     {createMenu && <NodeContextMenu {...createMenu} title="节点画布" label="新建节点" items={createItems(createMenu.position)} onClose={() => setCreateMenu(null)} />}
   </div>

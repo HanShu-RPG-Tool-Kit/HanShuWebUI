@@ -114,3 +114,23 @@
 
 .signal-debugger-status.is-failure { color:#e4a09b; }
 .flow-graph-node.is-end[data-end-outcome="failure"] .flow-graph-node-header { background:#7a4646; color:#f2dede; }
+
+.signal-debugger-body { height:220px; }
+.signal-debugger-filters { display:flex; align-items:center; gap:8px; padding:5px 12px; border-bottom:1px solid #353a40; }
+.signal-debugger-filters input { min-width:90px; width:220px; max-width:50%; border:1px solid #474f59; border-radius:4px; padding:3px 7px; background:#22272d; color:#d4dce5; font:inherit; }
+.signal-debugger-filters select { padding:2px 5px; }.signal-debugger-filters small { color:#8e9aa7; margin-left:auto; }
+.signal-debugger-row { left:0; box-sizing:border-box; overflow:hidden; white-space:nowrap; }
+.signal-debugger-index { width:42px; text-align:left; }
+.signal-debugger-row.is-inspected { outline:1px solid #7491ad; outline-offset:-1px; background:#3a434e!important; }
+.signal-debugger-stop { padding:4px 12px; background:#493b2b; border-top:1px solid #6d553b; color:#e8c493; font-size:11px; }
+.signal-debugger-causes { display:flex; flex-direction:column; align-items:stretch; gap:4px; margin:10px 0; }
+.signal-debugger-causes small { color:#8e9daa; }.signal-debugger-causes p { margin:0; }
+.signal-debugger-causes button { text-align:left; padding:3px 6px; font-size:11px; overflow-wrap:anywhere; }
+.signal-debugger-follow { margin-top:8px; padding:3px 8px; }.signal-debugger-fault { color:#e9a590; }
+.signal-debugger-event { color:#8faec8; }
+.flow-sim-breakpoint .flow-graph-node::after { content:''; position:absolute; right:-6px; top:-6px; width:10px; height:10px; background:#ec8994; border:2px solid #422a31; border-radius:50%; box-shadow:0 0 0 2px #242424; pointer-events:none; }
+.flow-sim-run-target .flow-graph-node { outline:2px dashed #a0bddf; outline-offset:5px; }
+.flow-graph .node-editor-wire.is-kind-breakpoint .node-editor-wire-shadow { stroke:#e78a97; stroke-width:7; opacity:.55; }
+@media(max-width:800px) { .signal-debugger-body { height:180px; } }
+
+.signal-debugger-queue,.signal-debugger-rows,.signal-debugger-detail { min-height:0; }
