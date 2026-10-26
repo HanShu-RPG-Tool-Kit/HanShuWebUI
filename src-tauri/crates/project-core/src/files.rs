@@ -33,7 +33,10 @@ use std::{
     path::{Path, PathBuf},
 };
 use transactions::{CommitJournal, TransactionCache, TransactionRecord};
-pub use transactions::{FileTransactionError, FileTransactionReceipt, FileTransactionStatus};
+pub use transactions::{
+    inspect_transaction_archives, ArchiveDiagnostic, ArchiveDiagnostics, ArchiveStats,
+    FileTransactionError, FileTransactionReceipt, FileTransactionStatus,
+};
 use ts_rs::TS;
 
 pub(crate) type Tree = BTreeMap<String, Option<Vec<u8>>>;
@@ -78,6 +81,7 @@ pub(crate) struct ProjectFiles {
     pub revision: u64,
     healthy: bool,
     transactions: std::cell::RefCell<TransactionCache>,
+    archive_diagnostics: ArchiveDiagnostics,
     history: std::cell::RefCell<HistoryState>,
 }
 
@@ -159,6 +163,7 @@ impl ProjectFiles {
             revision: 1,
             healthy: true,
             transactions: std::cell::RefCell::new(TransactionCache::default()),
+            archive_diagnostics: ArchiveDiagnostics::default(),
             history: Self::history_state(project_id),
         };
         out.prepare_staging()?;

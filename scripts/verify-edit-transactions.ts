@@ -783,5 +783,41 @@ await test('编辑器恢复原请求不立即发包，持久保存同ID并阻止
   assert.equal(mock.client.transactions.getSnapshot().transactions[0].requestId, 'original-progress-id')
 }))
 
+await test('隔离回执保留诊断与原请求身份，查询和重试不再提交或允许遗忘', async () => wireTest(async mock => {
+  let originalId = ''
+  mock.onCommit = body => { originalId = body.transactionId; return json({code:'receipt_quarantined',message:`事务 ${body.transactionId} 已隔离：archive/aa/bad.json.gz`}, 500) }
+  await assert.rejects(mock.client.apply([write('src/a.hs','draft')]), /已隔离/)
+  const first = mock.client.transactions.getSnapshot().transactions[0]
+  assert.equal(first.phase,'uncertain'); assert.equal(first.requestId,originalId)
+  mock.onQuery = id => { assert.equal(id,originalId); return json({code:'receipt_quarantined',message:`事务 ${id} 已隔离：archive/aa/bad.json.gz`},500) }
+  for (const action of [() => mock.client.transactions.confirm(first.id), () => mock.client.transactions.retry(first.id)]) {
+    await assert.rejects(action(), /已隔离/)
+    const pending = mock.client.transactions.getSnapshot().transactions[0]
+    assert.equal(pending.phase,'uncertain'); assert.equal(pending.requestId,originalId)
+    assert.match(pending.message,/管理员/)
+  }
+  assert.equal(mock.calls.filter(call => call.path === '/api/files/commit').length,1)
+  await assert.rejects(mock.client.transactions.forget(first.id), /不能/)
+}))
+
+for (const op of ['progress-command','history-restore'] as const) {
+  await test(`${op} 的隔离结果始终保留原身份并停止重发`, async () => wireTest(async mock => {
+    const edit: FileEdit = op === 'progress-command'
+      ? {op,path:progressPath,data:JSON.stringify(progressCommand)}
+      : {op,path:'project.json',data:JSON.stringify({revisionId:'old-revision'}),affectedPaths:[]}
+    // Even a transport incorrectly returning 400 must not turn quarantine into a
+    // definitive rejection that permits a new request ID.
+    mock.onCommit = () => json({code:'receipt_quarantined',message:'原回执已隔离：archive/aa/test.json.gz'},400)
+    await assert.rejects(mock.client.apply([edit]),/已隔离/)
+    const first = mock.client.transactions.getSnapshot().transactions[0]
+    assert.equal(first.phase,'uncertain')
+    mock.onQuery = () => json({code:'receipt_quarantined',message:'原回执已隔离：archive/aa/test.json.gz'},500)
+    await assert.rejects(mock.client.transactions.confirm(first.id),/已隔离/)
+    await assert.rejects(mock.client.transactions.retry(first.id),/已隔离/)
+    assert.equal(mock.calls.filter(call => call.path === '/api/files/commit').length,1)
+    assert.equal(mock.client.transactions.getSnapshot().transactions[0].requestId,first.requestId)
+  }))
+}
+
 console.log(`编辑事务验证完成：${checks} 项通过，${failures.length} 项失败。`)
 if (failures.length) throw new Error(`编辑事务验证失败：${failures.join('；')}`)

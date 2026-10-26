@@ -36,6 +36,14 @@ function validateReceipt(value: FileTransactionReceipt | null, id: string): File
   return value
 }
 
+// Quarantine is evidence of an unresolved original outcome, never permission to
+// retry with a new identity. Preserve the administrator's actionable diagnosis.
+function uncertainResult(error: unknown, fallback: string): ServiceError {
+  return new ServiceError('commit_uncertain', error instanceof ServiceError && error.code === 'receipt_quarantined'
+    ? `${error.message}；原提交与草稿已保留，请联系本机管理员检查事务归档。不要换编号重新提交。`
+    : fallback)
+}
+
 /** A remote project capability, not an OS directory handle. It cannot open arbitrary local paths. */
 export class ProjectClient {
   tree: ProjectFileTree = { revision: 0, entries: [] }
@@ -248,7 +256,7 @@ export class ProjectClient {
     let receipt: FileTransactionReceipt | null = null
     if (attempt.uncertain) {
       try { receipt = await this.receipt(attempt.transactionId) }
-      catch { throw new ServiceError('commit_uncertain', '暂时无法查询进度操作结果；原请求已保留') }
+      catch (error) { throw uncertainResult(error, '暂时无法查询进度操作结果；原请求已保留') }
       if (!receipt && attempt.queryOnly) throw new ServiceError('commit_uncertain', '服务暂无进度回执，可重试原请求')
     }
     if (!receipt) {
@@ -256,8 +264,9 @@ export class ProjectClient {
       try {
         receipt = validateReceipt(await request<FileTransactionReceipt>(this.connection, '/api/files/commit', 'POST', { transactionId: attempt.transactionId, changes: [{ op: edit.op, path: edit.path, version: null, leaseId: '', content: bytesToBase64(new TextEncoder().encode(edit.data)), destination: null, destinationVersion: null }] }), attempt.transactionId)
       } catch (error) {
+        if (error instanceof ServiceError && error.code === 'receipt_quarantined') throw uncertainResult(error, '')
         if (!attempt.uncertain && error instanceof ServiceError && (['unauthorized', 'forbidden', 'invalid', 'busy', 'transaction_mismatch', 'transaction_limit'].includes(error.code) || [400, 413, 415].includes(error.status ?? 0))) throw error
-        throw new ServiceError('commit_uncertain', '进度操作结果待确认。请查询原提交；后续输入已保留。')
+        throw uncertainResult(error, '进度操作结果待确认。请查询原提交；后续输入已保留。')
       }
     }
     this.rememberProgress(receipt, edit.path)
@@ -287,7 +296,7 @@ export class ProjectClient {
     let receipt: FileTransactionReceipt | null = null
     if (attempt.uncertain) {
       try { receipt = await this.receipt(attempt.transactionId) }
-      catch { throw new ServiceError('commit_uncertain', '暂时无法查询恢复结果；原恢复请求已保留') }
+      catch (error) { throw uncertainResult(error, '暂时无法查询恢复结果；原恢复请求已保留') }
       if (!receipt && attempt.queryOnly) throw new ServiceError('commit_uncertain', '服务暂无恢复回执，可重试原恢复请求')
     }
     if (!receipt) {
@@ -296,8 +305,9 @@ export class ProjectClient {
       try {
         receipt = validateReceipt(await request<FileTransactionReceipt>(this.connection, '/api/files/commit', 'POST', { transactionId: attempt.transactionId, changes: [{ op: edit.op, path: 'project.json', version: null, leaseId: '', content: bytesToBase64(new TextEncoder().encode(edit.data)), destination: null, destinationVersion: null }] }), attempt.transactionId)
       } catch (error) {
+        if (error instanceof ServiceError && error.code === 'receipt_quarantined') throw uncertainResult(error, '')
         if (!attempt.uncertain && error instanceof ServiceError && ['unauthorized', 'forbidden', 'invalid'].includes(error.code)) throw error
-        throw new ServiceError('commit_uncertain', '恢复结果待确认。请查询原回执，不要重新创建恢复操作。')
+        throw uncertainResult(error, '恢复结果待确认。请查询原回执，不要重新创建恢复操作。')
       }
     }
     if (receipt.status === 'rejected') throw new ServiceError(receipt.error!.code, receipt.error!.message)
@@ -319,7 +329,7 @@ export class ProjectClient {
     let receipt: FileTransactionReceipt | null = null
     if (attempt.uncertain) {
       try { receipt = await this.receipt(attempt.transactionId) }
-      catch { throw new ServiceError('commit_uncertain', '暂时无法查询提交结果；原提交保留，可在恢复连接后继续查询') }
+      catch (error) { throw uncertainResult(error, '暂时无法查询提交结果；原提交保留，可在恢复连接后继续查询') }
       if (!receipt && attempt.queryOnly) throw new ServiceError('commit_uncertain', '服务尚无这次提交的结果。可以重试原提交，仍使用同一提交编号')
     }
     if (receipt?.status === 'rejected') throw new ServiceError(receipt.error!.code, receipt.error!.message)
@@ -349,8 +359,9 @@ export class ProjectClient {
           } catch (error) {
             // Only a definitive protocol rejection can start a new attempt. Network,
             // storage and malformed responses retain identity, even across a reload.
+            if (error instanceof ServiceError && error.code === 'receipt_quarantined') throw uncertainResult(error, '')
             if (!attempt.uncertain && error instanceof ServiceError && (['unauthorized','forbidden','invalid','busy','transaction_mismatch','transaction_limit'].includes(error.code) || [400,413,415].includes(error.status ?? 0))) throw error
-            throw new ServiceError('commit_uncertain', '提交结果待确认：服务可能已经保存。请查询结果，或重试同一提交')
+            throw uncertainResult(error, '提交结果待确认：服务可能已经保存。请查询结果，或重试同一提交')
           }
         } finally {
           // A language/binary sidecar must not keep blocking peers after its batch.

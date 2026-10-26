@@ -1,8 +1,14 @@
 //! Immutable receipts and the durable commit decision share the file undo journal.
 //! A prepared journal rolls back; a committed journal publishes its receipt without replaying writes.
 use super::*;
-use flate2::{read::GzDecoder, write::GzEncoder, Compression};
+use flate2::{write::GzEncoder, Compression};
 use std::{collections::VecDeque, io::Read};
+
+#[path = "transaction_archives.rs"]
+mod archives;
+pub use archives::{
+    inspect_transaction_archives, ArchiveDiagnostic, ArchiveDiagnostics, ArchiveStats,
+};
 
 const MAX_HOT_TRANSACTIONS: usize = 64;
 const MAX_HOT_BYTES: usize = 8 * 1024 * 1024;
@@ -262,46 +268,18 @@ impl ProjectFiles {
         Self::checked_directory(&self.archive_directory(), false)
     }
 
-    fn decode_record(bytes: &[u8]) -> Result<TransactionRecord> {
-        require(
-            bytes.len() <= MAX_RECORD_BYTES,
-            "storage",
-            "事务回执超过单条大小限制",
-        )?;
-        let record: TransactionRecord = serde_json::from_slice(bytes)
-            .map_err(|_| Error::new("storage", "事务记录损坏，拒绝使用"))?;
-        record.validate()?;
-        Ok(record)
-    }
-
     fn read_archive(&self, path: &Path) -> Result<(TransactionRecord, usize)> {
-        let meta = fs::symlink_metadata(path)?;
-        require(
-            meta.is_file()
-                && !reparse(&meta)
-                && meta.len() <= (MAX_RECORD_BYTES + 1024 * 1024) as u64,
-            "storage",
-            "事务归档无效、过大或为链接",
-        )?;
-        let mut bytes = Vec::new();
-        GzDecoder::new(fs::File::open(path)?)
-            .take((MAX_RECORD_BYTES + 1) as u64)
-            .read_to_end(&mut bytes)
-            .map_err(|_| Error::new("storage", "事务归档损坏，拒绝使用"))?;
-        let record = Self::decode_record(&bytes)?;
-        require(
-            path == self.transaction_path(&record.receipt.transaction_id),
-            "storage",
-            "事务记录名称无效",
-        )?;
-        Ok((record, bytes.len()))
+        let (record, entry) =
+            archives::read_record(&self.root, path, false).map_err(|entry| entry.error())?;
+        Ok((record, entry.uncompressed_bytes.unwrap_or(0) as usize))
     }
 
     fn transaction(&self, id: &str) -> Result<Option<TransactionRecord>> {
+        self.checked_archive()?;
+        self.check_quarantined(id)?;
         if let Some(record) = self.transactions.borrow_mut().get(id) {
             return Ok(Some(record));
         }
-        self.checked_archive()?;
         let path = self.transaction_path(id);
         match fs::symlink_metadata(path.parent().unwrap()) {
             Ok(_) => Self::checked_directory(path.parent().unwrap(), false)?,
@@ -320,9 +298,27 @@ impl ProjectFiles {
     }
 
     pub(super) fn load_transactions(&mut self) -> Result<()> {
+        let started = std::time::Instant::now();
         let directory = self.transaction_directory();
         Self::checked_directory(&directory, true)?;
         Self::checked_directory(&self.archive_directory(), true)?;
+        let root = self.root.clone();
+        let mut diagnostics =
+            archives::scan_transaction_archives(&root, |record, bytes, legacy| {
+                self.revision = self
+                    .revision
+                    .max(record.receipt.tree.as_ref().map_or(1, |tree| tree.revision));
+                if !legacy {
+                    self.transactions.borrow_mut().insert(record, bytes);
+                }
+            })?;
+        // Validate the whole recovery decision, including history and contradictory
+        // prepared/committed outcomes, before touching any historical evidence.
+        if let Some(journal) = self.read_pending_journal()? {
+            self.validate_pending_journal(&journal)?;
+        }
+        self.initialize_revision_watermark(&diagnostics)?;
+        self.quarantine_archives(&mut diagnostics)?;
         // Upgrade old receipts one at a time. Publish and verify the immutable
         // archive before deleting its old copy. A crash can safely leave both.
         for entry in fs::read_dir(&directory)? {
@@ -337,7 +333,8 @@ impl ProjectFiles {
                 "storage",
                 "事务回执超过单条大小限制或类型无效",
             )?;
-            let record = Self::decode_record(&fs::read(&path)?)?;
+            let (record, _) =
+                archives::read_record(&self.root, &path, true).map_err(|entry| entry.error())?;
             require(
                 path == directory.join(format!(
                     "{}.json",
@@ -352,33 +349,10 @@ impl ProjectFiles {
             Self::same_record(&record, &archived)?;
             fs::remove_file(path)?;
         }
-        // Scan one archive at a time to validate storage and recover the greatest
-        // revision. Startup I/O grows with history, but live memory stays bounded.
-        for shard in fs::read_dir(self.archive_directory())? {
-            let shard = shard?.path();
-            Self::checked_directory(&shard, false)?;
-            require(
-                shard
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .is_some_and(|name| {
-                        name.len() == 2
-                            && name
-                                .bytes()
-                                .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
-                    }),
-                "storage",
-                "事务归档分片名称无效",
-            )?;
-            for entry in fs::read_dir(shard)? {
-                let path = entry?.path();
-                let (record, bytes) = self.read_archive(&path)?;
-                self.revision = self
-                    .revision
-                    .max(record.receipt.tree.as_ref().map_or(1, |t| t.revision));
-                self.transactions.borrow_mut().insert(record, bytes);
-            }
-        }
+        // The diagnostic scan already decoded each archive once and populated the
+        // bounded cache. Only old plain JSON copies need the migration work above.
+        diagnostics.scan_duration_ms = started.elapsed().as_millis() as u64;
+        self.archive_diagnostics = diagnostics;
         Ok(())
     }
 
@@ -409,6 +383,9 @@ impl ProjectFiles {
             return Self::same_record(&existing, record);
         }
         let bytes = self.record_bytes(record)?;
+        if let Some(tree) = &record.receipt.tree {
+            self.reserve_transaction_revision(tree.revision)?;
+        }
         let mut encoder = GzEncoder::new(Vec::new(), Compression::fast());
         encoder.write_all(&bytes)?;
         let compressed = encoder.finish()?;
@@ -453,13 +430,25 @@ impl ProjectFiles {
         )
     }
 
-    pub(super) fn recover_transaction(&mut self) -> Result<()> {
-        if !self.journal().exists() {
-            return Ok(());
+    fn read_pending_journal(&self) -> Result<Option<CommitJournal>> {
+        let path = self.journal();
+        match fs::symlink_metadata(&path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(error.into()),
+            Ok(meta) => require(
+                meta.is_file() && !reparse(&meta),
+                "storage",
+                ".hanshu/service/file-undo.json: 事务恢复日志类型无效或为链接",
+            )?,
         }
-        let mut journal: CommitJournal = serde_json::from_slice(&fs::read(self.journal())?)
+        let journal: CommitJournal = serde_json::from_slice(&fs::read(path)?)
             .map_err(|_| Error::new("storage", "事务恢复日志损坏，拒绝启动"))?;
+        Ok(Some(journal))
+    }
+
+    fn validate_pending_journal(&self, journal: &CommitJournal) -> Result<()> {
         journal.transaction.validate()?;
+        Self::undo_values(journal)?;
         if let Some(revision) = &journal.history {
             self.validate_history_transaction(
                 revision,
@@ -489,6 +478,14 @@ impl ProjectFiles {
                 )?;
             }
         }
+        Ok(())
+    }
+
+    pub(super) fn recover_transaction(&mut self) -> Result<()> {
+        let Some(mut journal) = self.read_pending_journal()? else {
+            return Ok(());
+        };
+        self.validate_pending_journal(&journal)?;
         if !journal.committed {
             self.apply(&Self::undo_values(&journal)?)?;
             // A rejection may have been persisted just before journal removal failed.
@@ -524,6 +521,9 @@ impl ProjectFiles {
         // Reject an oversized individual receipt before the journal or files are
         // changed. History count and aggregate archive size are not write limits.
         self.record_bytes(&journal.transaction)?;
+        if let Some(tree) = &journal.transaction.receipt.tree {
+            self.reserve_transaction_revision(tree.revision)?;
+        }
         self.write_journal(&journal)?;
         if let Err(error) = self.apply(writes) {
             if self.apply(&Self::undo_values(&journal)?).is_err() {
@@ -567,6 +567,15 @@ impl ProjectFiles {
 }
 
 impl Engine {
+    /// Diagnostics from this engine's opening scan; offline inspection is also available.
+    pub fn transaction_archive_diagnostics(&self) -> Result<&ArchiveDiagnostics> {
+        Ok(&self
+            .files
+            .as_ref()
+            .ok_or_else(|| Error::new("invalid", "未打开目录工程"))?
+            .archive_diagnostics)
+    }
+
     pub fn file_transaction(
         &self,
         sid: &str,
@@ -692,7 +701,8 @@ impl Engine {
             Err(error) => {
                 let store = self.files.as_mut().unwrap();
                 // An unresolved journal must be recovered before calling an attempt rejected.
-                if !store.healthy || store.journal().exists() {
+                if !store.healthy || store.journal().exists() || error.code == "receipt_quarantined"
+                {
                     return Err(error);
                 }
                 record.reject(&error);

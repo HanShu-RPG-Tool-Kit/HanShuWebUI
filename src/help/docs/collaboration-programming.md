@@ -107,3 +107,10 @@ await client.apply([{ op: 'write', path, data: next, version }], '修改资源')
 远端改名在没有可靠身份映射时按旧路径消失处理，不猜测同名资源身份。`detached` 是客户端草稿状态，不写入资源协议或共享组织元数据。新编辑器应复用此生命周期，避免留下全局保存、同步参与者和协作焦点的旧路径引用。
 
 验证入口：`npm run test:resource-lifecycle`、`npm run test:resource-lifecycle:ui`；后者启动真实工程服务并用浏览器验证改名续编、删除注销与草稿恢复。
+
+
+## 归档隔离不是提交拒绝
+
+`receipt_quarantined` 表示服务器保留了原事务的损坏证据，无法提供可信结果。C 必须保留原事务编号、载荷与草稿，按结果待确认处理，展示管理员诊断；禁止当作 `not_found`、成功或确定失败，更不能换编号自动重做。HTTP 错误状态本身不能替代此业务语义。
+
+隔离只能作用于不参与恢复决议的坏历史归档。journal 依赖、身份矛盾、不安全路径、链接及 I/O 故障必须继续 fail-closed。体检命令和运维边界见[工程服务与多人协作](#collaboration-service)。

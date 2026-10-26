@@ -57,7 +57,7 @@ impl IntoResponse for ApiError {
             "not_found" => StatusCode::NOT_FOUND,
             "locked" => StatusCode::LOCKED,
             "conflict" => StatusCode::CONFLICT,
-            "storage" => StatusCode::INTERNAL_SERVER_ERROR,
+            "storage" | "receipt_quarantined" => StatusCode::INTERNAL_SERVER_ERROR,
             "busy" => StatusCode::TOO_MANY_REQUESTS,
             _ => StatusCode::BAD_REQUEST,
         };
@@ -544,7 +544,23 @@ async fn start_inner(
             ));
         }
     }
+    let opening = std::time::Instant::now();
     let engine = Engine::open_project(root)?;
+    let open_duration_ms = opening.elapsed().as_millis();
+    let diagnostics = engine.transaction_archive_diagnostics()?;
+    eprintln!(
+        "事务归档：{} 条，{} 字节，扫描 {} ms；工程打开 {} ms",
+        diagnostics.stats.archive_count + diagnostics.stats.legacy_count,
+        diagnostics.stats.compressed_bytes,
+        diagnostics.scan_duration_ms,
+        open_duration_ms
+    );
+    if diagnostics.stats.quarantined_count > 0 {
+        eprintln!(
+            "警告：{} 笔事务回执已隔离，工程可继续使用；原事务不能重试执行或撤销。请运行 --project <工程目录> --archive-check 查看诊断。",
+            diagnostics.stats.quarantined_count
+        );
+    }
     let listener = TcpListener::bind(address).await?;
     let address = listener.local_addr()?;
     origins.extend([

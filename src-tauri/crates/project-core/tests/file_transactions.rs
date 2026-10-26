@@ -3,7 +3,7 @@ use project_core::*;
 use serde_json::Value;
 use std::{
     fs,
-    io::Read,
+    io::{Read, Write},
     path::{Path, PathBuf},
 };
 
@@ -53,6 +53,33 @@ fn stored(root: &Path, transaction: &str) -> (PathBuf, Value) {
             (value["receipt"]["transactionId"] == transaction).then_some((path, value))
         })
         .unwrap()
+}
+
+fn write_archive(path: &Path, record: &Value) -> Vec<u8> {
+    let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    encoder
+        .write_all(&serde_json::to_vec(record).unwrap())
+        .unwrap();
+    let bytes = encoder.finish().unwrap();
+    fs::write(path, &bytes).unwrap();
+    bytes
+}
+
+fn quarantine(root: &Path) -> PathBuf {
+    root.join(".hanshu/service/file-transactions/archive-quarantine")
+}
+
+fn quarantined_evidence(root: &Path, source: &Path) -> (PathBuf, PathBuf) {
+    let hash = source
+        .file_name()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .trim_end_matches(".json.gz");
+    (
+        quarantine(root).join(format!("{hash}.tombstone.json")),
+        quarantine(root).join(source.file_name().unwrap()),
+    )
 }
 
 #[test]
@@ -482,7 +509,8 @@ fn corrupted_cold_receipt_is_never_treated_as_an_unknown_id() {
     let directory = tempfile::tempdir().unwrap();
     let (mut e, sid, _) = open(directory.path());
     let edit = write(&mut e, &sid, "assets/a.txt", "original");
-    e.commit_files(&sid, "cold", vec![edit.clone()], 1000)
+    let committed = e
+        .commit_files(&sid, "cold", vec![edit.clone()], 1000)
         .unwrap();
     let (path, _) = stored(directory.path(), "cold");
     evict_hot_receipts(&mut e, &sid);
@@ -492,7 +520,7 @@ fn corrupted_cold_receipt_is_never_treated_as_an_unknown_id() {
         "storage"
     );
     assert_eq!(
-        e.commit_files(&sid, "cold", vec![edit], 1000)
+        e.commit_files(&sid, "cold", vec![edit.clone()], 1000)
             .unwrap_err()
             .code,
         "storage"
@@ -502,10 +530,33 @@ fn corrupted_cold_receipt_is_never_treated_as_an_unknown_id() {
         "original"
     );
     drop(e);
+    let (mut e, sid, _) = open(directory.path());
     assert_eq!(
-        Engine::open_project(directory.path()).err().unwrap().code,
-        "storage"
+        e.file_transaction(&sid, "cold").unwrap_err().code,
+        "receipt_quarantined"
     );
+    assert_eq!(
+        e.commit_files(&sid, "cold", vec![edit], 1000)
+            .unwrap_err()
+            .code,
+        "receipt_quarantined"
+    );
+    assert_eq!(
+        fs::read_to_string(directory.path().join("assets/a.txt")).unwrap(),
+        "original"
+    );
+    assert!(e.files_snapshot(&sid).unwrap().revision >= committed.tree.unwrap().revision);
+    let next = write(&mut e, &sid, "assets/a.txt", "new transaction");
+    assert_eq!(
+        e.commit_files(&sid, "after-quarantine", vec![next], 1000)
+            .unwrap()
+            .status,
+        FileTransactionStatus::Committed
+    );
+    let (marker, evidence) = quarantined_evidence(directory.path(), &path);
+    assert!(marker.is_file());
+    assert_eq!(fs::read(evidence).unwrap(), b"incomplete archive");
+    assert!(!path.exists());
 }
 
 #[test]
@@ -674,7 +725,7 @@ fn crash_staging_is_private_and_startup_only_removes_owned_temporary_files() {
 }
 
 #[test]
-fn malformed_persistent_receipt_or_commit_decision_fails_closed() {
+fn malformed_historical_receipt_is_quarantined_but_commit_decision_fails_closed() {
     let directory = tempfile::tempdir().unwrap();
     let (mut e, sid, _) = open(directory.path());
     let edit = write(&mut e, &sid, "assets/a.txt", "original");
@@ -682,14 +733,32 @@ fn malformed_persistent_receipt_or_commit_decision_fails_closed() {
     let (path, mut record) = stored(directory.path(), "valid");
     drop(e);
     record["receipt"]["tree"] = Value::Null;
-    fs::write(path, serde_json::to_vec(&record).unwrap()).unwrap();
+    let damaged = write_archive(&path, &record);
+    let before = inspect_transaction_archives(directory.path()).unwrap();
+    let entry = before
+        .entries
+        .iter()
+        .find(|entry| entry.transaction_id.as_deref() == Some("valid"))
+        .unwrap();
+    assert_eq!(entry.status, "corrupt");
+    assert_eq!(entry.code.as_deref(), Some("invalid_record"));
+    assert_eq!(before.stats.corrupt_count, 1);
+    assert_eq!(fs::read(&path).unwrap(), damaged);
+    assert!(!quarantine(directory.path()).exists());
+    let (e, sid, _) = open(directory.path());
     assert_eq!(
-        project_core::Engine::open_project(directory.path())
-            .err()
-            .unwrap()
-            .code,
-        "storage"
+        e.file_transaction(&sid, "valid").unwrap_err().code,
+        "receipt_quarantined"
     );
+    let (marker, evidence) = quarantined_evidence(directory.path(), &path);
+    assert!(marker.is_file());
+    assert_eq!(fs::read(evidence).unwrap(), damaged);
+    let after = inspect_transaction_archives(directory.path()).unwrap();
+    assert_eq!(after.stats.quarantined_count, 1);
+    assert_eq!(after.stats.corrupt_count, 0);
+    assert_eq!(after.entries[0].transaction_id.as_deref(), Some("valid"));
+    assert_eq!(after.entries[0].status, "quarantined");
+    drop(e);
 
     let directory = tempfile::tempdir().unwrap();
     let (_, _, mut record) = moved_file(directory.path());
@@ -710,6 +779,11 @@ fn malformed_persistent_receipt_or_commit_decision_fails_closed() {
         fs::read_to_string(directory.path().join("assets/after.txt")).unwrap(),
         "original"
     );
+    assert!(directory
+        .path()
+        .join(".hanshu/service/file-undo.json")
+        .is_file());
+    assert!(!quarantine(directory.path()).exists());
 }
 
 fn check(e: &mut project_core::Engine, sid: &str, path: &str) -> FileChange {
@@ -717,6 +791,552 @@ fn check(e: &mut project_core::Engine, sid: &str, path: &str) -> FileChange {
     edit.op = "check".into();
     edit.content = None;
     edit
+}
+
+fn disk_snapshot(root: &Path) -> Vec<(PathBuf, bool, Vec<u8>, Option<std::time::SystemTime>)> {
+    fn visit(
+        root: &Path,
+        directory: &Path,
+        out: &mut Vec<(PathBuf, bool, Vec<u8>, Option<std::time::SystemTime>)>,
+    ) {
+        for entry in fs::read_dir(directory).unwrap() {
+            let path = entry.unwrap().path();
+            let metadata = fs::symlink_metadata(&path).unwrap();
+            assert!(!metadata.file_type().is_symlink());
+            out.push((
+                path.strip_prefix(root).unwrap().to_owned(),
+                metadata.is_dir(),
+                if metadata.is_file() {
+                    fs::read(&path).unwrap()
+                } else {
+                    Vec::new()
+                },
+                metadata.modified().ok(),
+            ));
+            if metadata.is_dir() {
+                visit(root, &path, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    visit(root, root, &mut out);
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+#[test]
+fn archive_diagnostics_are_read_only_and_count_mixed_legacy_and_compressed_receipts() {
+    let directory = tempfile::tempdir().unwrap();
+    let empty = inspect_transaction_archives(directory.path()).unwrap();
+    assert!(empty.entries.is_empty());
+    assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 0);
+
+    let (mut e, sid, _) = open(directory.path());
+    for id in ["compressed", "legacy-offline", "broken-offline"] {
+        e.commit_files(&sid, id, vec![], 1000).unwrap();
+    }
+    let (compressed, _) = stored(directory.path(), "compressed");
+    let (legacy_archive, legacy_record) = stored(directory.path(), "legacy-offline");
+    let (broken, _) = stored(directory.path(), "broken-offline");
+    drop(e);
+    let legacy = directory
+        .path()
+        .join(".hanshu/service/file-transactions")
+        .join(legacy_archive.file_stem().unwrap());
+    let legacy_bytes = serde_json::to_vec(&legacy_record).unwrap();
+    fs::write(&legacy, &legacy_bytes).unwrap();
+    fs::remove_file(legacy_archive).unwrap();
+    fs::write(&broken, b"not gzip").unwrap();
+    let before = disk_snapshot(directory.path());
+    let report = inspect_transaction_archives(directory.path()).unwrap();
+    assert_eq!(disk_snapshot(directory.path()), before);
+    assert_eq!(report.entries.len(), 3);
+    assert_eq!(report.stats.archive_count, 2);
+    assert_eq!(report.stats.legacy_count, 1);
+    assert_eq!(report.stats.valid_count, 2);
+    assert_eq!(report.stats.corrupt_count, 1);
+    assert_eq!(report.stats.quarantined_count, 0);
+    assert_eq!(
+        report.stats.protected_count + report.stats.unsafe_count + report.stats.io_error_count,
+        0
+    );
+    assert_eq!(
+        report.stats.compressed_bytes,
+        fs::metadata(&compressed).unwrap().len() + legacy_bytes.len() as u64 + 8
+    );
+    let mut decoded = Vec::new();
+    flate2::read::GzDecoder::new(fs::File::open(compressed).unwrap())
+        .read_to_end(&mut decoded)
+        .unwrap();
+    assert_eq!(
+        report.stats.uncompressed_bytes,
+        decoded.len() as u64 + legacy_bytes.len() as u64
+    );
+    assert!(report.scanned_at_ms > 0);
+    assert!(report.stats.oldest_modified_at_ms.is_some());
+    assert!(report.stats.oldest_modified_at_ms <= report.stats.newest_modified_at_ms);
+    assert!(report
+        .entries
+        .iter()
+        .all(|entry| !Path::new(&entry.relative_path).is_absolute()));
+    let damaged = report
+        .entries
+        .iter()
+        .find(|entry| entry.status == "corrupt")
+        .unwrap();
+    assert_eq!(damaged.transaction_id, None);
+    assert_eq!(damaged.code.as_deref(), Some("invalid_gzip"));
+    assert!(damaged
+        .message
+        .as_deref()
+        .is_some_and(|message| !message.is_empty()));
+}
+
+#[test]
+fn corrupt_archive_required_by_prepared_or_committed_journal_is_never_quarantined() {
+    for committed in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let (_, expected, record) = moved_file(directory.path());
+        interrupted_journal(directory.path(), true, record.clone());
+        let (e, sid, _) = open(directory.path());
+        assert_eq!(e.file_transaction(&sid, "movement").unwrap(), expected);
+        let (archive, _) = stored(directory.path(), "movement");
+        drop(e);
+        interrupted_journal(directory.path(), committed, record);
+        fs::write(&archive, b"damaged recovery dependency").unwrap();
+        let before = disk_snapshot(directory.path());
+        let report = inspect_transaction_archives(directory.path()).unwrap();
+        assert_eq!(disk_snapshot(directory.path()), before);
+        assert_eq!(report.stats.protected_count, 1);
+        assert_eq!(report.stats.corrupt_count, 0);
+        let entry = report
+            .entries
+            .iter()
+            .find(|entry| entry.status == "protected")
+            .unwrap();
+        assert_eq!(entry.code.as_deref(), Some("recovery_receipt_corrupt"));
+        assert_eq!(
+            Engine::open_project(directory.path()).err().unwrap().code,
+            "storage"
+        );
+        assert_eq!(fs::read(&archive).unwrap(), b"damaged recovery dependency");
+        assert!(directory
+            .path()
+            .join(".hanshu/service/file-undo.json")
+            .is_file());
+        assert!(!quarantine(directory.path()).exists());
+        assert!(!directory.path().join("assets/before.txt").exists());
+        assert_eq!(
+            fs::read_to_string(directory.path().join("assets/after.txt")).unwrap(),
+            "original"
+        );
+    }
+}
+
+#[test]
+fn unsafe_archive_structure_prevents_quarantine_of_other_bad_contents() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut e, sid, _) = open(directory.path());
+    e.commit_files(&sid, "corrupt-with-unsafe-sibling", vec![], 1000)
+        .unwrap();
+    let (archive, _) = stored(directory.path(), "corrupt-with-unsafe-sibling");
+    drop(e);
+    fs::write(&archive, b"bad history").unwrap();
+    let obstruction = directory
+        .path()
+        .join(".hanshu/service/file-transactions/archive/not-a-shard");
+    fs::write(&obstruction, b"preserve this structural evidence").unwrap();
+    let report = inspect_transaction_archives(directory.path()).unwrap();
+    assert_eq!(report.stats.corrupt_count, 1);
+    assert_eq!(report.stats.unsafe_count, 1);
+    assert_eq!(
+        Engine::open_project(directory.path()).err().unwrap().code,
+        "storage"
+    );
+    assert_eq!(fs::read(archive).unwrap(), b"bad history");
+    assert_eq!(
+        fs::read(obstruction).unwrap(),
+        b"preserve this structural evidence"
+    );
+    assert!(!quarantine(directory.path()).exists());
+}
+
+#[test]
+fn archive_identity_mismatch_is_unsafe_and_preserves_evidence() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut e, sid, _) = open(directory.path());
+    e.commit_files(&sid, "named-record", vec![], 1000).unwrap();
+    let (archive, mut record) = stored(directory.path(), "named-record");
+    drop(e);
+    record["receipt"]["transactionId"] = Value::String("different-record".into());
+    let evidence = write_archive(&archive, &record);
+    let report = inspect_transaction_archives(directory.path()).unwrap();
+    assert_eq!(report.stats.unsafe_count, 1);
+    assert_eq!(report.stats.corrupt_count, 0);
+    assert_eq!(
+        report.entries[0].code.as_deref(),
+        Some("receipt_identity_mismatch")
+    );
+    assert_eq!(
+        Engine::open_project(directory.path()).err().unwrap().code,
+        "storage"
+    );
+    assert_eq!(fs::read(archive).unwrap(), evidence);
+    assert!(!quarantine(directory.path()).exists());
+}
+
+#[cfg(windows)]
+#[test]
+fn archive_read_io_failure_is_not_content_corruption_and_never_quarantined() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let directory = tempfile::tempdir().unwrap();
+    let (mut e, sid, _) = open(directory.path());
+    e.commit_files(&sid, "locked-archive", vec![], 1000)
+        .unwrap();
+    let (archive, _) = stored(directory.path(), "locked-archive");
+    drop(e);
+    let evidence = fs::read(&archive).unwrap();
+    let handle = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(&archive)
+        .unwrap();
+    let report = inspect_transaction_archives(directory.path()).unwrap();
+    assert_eq!(report.stats.io_error_count, 1);
+    assert_eq!(report.stats.corrupt_count, 0);
+    assert_eq!(
+        Engine::open_project(directory.path()).err().unwrap().code,
+        "storage"
+    );
+    assert!(!quarantine(directory.path()).exists());
+    drop(handle);
+    assert_eq!(fs::read(&archive).unwrap(), evidence);
+    let (e, sid, _) = open(directory.path());
+    assert_eq!(
+        e.file_transaction(&sid, "locked-archive").unwrap().status,
+        FileTransactionStatus::Rejected
+    );
+}
+
+#[test]
+fn quarantine_resumes_after_tombstone_publication_without_releasing_the_id() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut e, sid, _) = open(directory.path());
+    let original = write(&mut e, &sid, "assets/a.txt", "original");
+    e.commit_files(&sid, "quarantine-interrupted", vec![original.clone()], 1000)
+        .unwrap();
+    let (archive, _) = stored(directory.path(), "quarantine-interrupted");
+    drop(e);
+    fs::write(&archive, b"damaged before quarantine").unwrap();
+    let (e, sid, _) = open(directory.path());
+    assert_eq!(
+        e.file_transaction(&sid, "quarantine-interrupted")
+            .unwrap_err()
+            .code,
+        "receipt_quarantined"
+    );
+    drop(e);
+    let (marker, evidence) = quarantined_evidence(directory.path(), &archive);
+    let marker_bytes = fs::read(&marker).unwrap();
+    // Model a crash after publishing the tombstone but before moving its payload.
+    fs::rename(&evidence, &archive).unwrap();
+    let before = disk_snapshot(directory.path());
+    let report = inspect_transaction_archives(directory.path()).unwrap();
+    assert_eq!(disk_snapshot(directory.path()), before);
+    assert!(report
+        .entries
+        .iter()
+        .any(|entry| entry.status == "quarantined"));
+    let (mut e, sid, _) = open(directory.path());
+    assert!(!archive.exists());
+    assert_eq!(fs::read(&evidence).unwrap(), b"damaged before quarantine");
+    assert_eq!(fs::read(&marker).unwrap(), marker_bytes);
+    assert_eq!(
+        e.file_transaction(&sid, "quarantine-interrupted")
+            .unwrap_err()
+            .code,
+        "receipt_quarantined"
+    );
+    assert_eq!(
+        e.commit_files(&sid, "quarantine-interrupted", vec![original], 1000)
+            .unwrap_err()
+            .code,
+        "receipt_quarantined"
+    );
+    assert_eq!(
+        fs::read_to_string(directory.path().join("assets/a.txt")).unwrap(),
+        "original"
+    );
+    let report = inspect_transaction_archives(directory.path()).unwrap();
+    assert_eq!(report.stats.quarantined_count, 1);
+    assert_eq!(report.stats.corrupt_count, 0);
+}
+
+#[test]
+fn damaged_quarantine_tombstone_fails_closed_without_reexecuting_the_transaction() {
+    let directory = tempfile::tempdir().unwrap();
+    let (mut e, sid, _) = open(directory.path());
+    let original = write(&mut e, &sid, "assets/a.txt", "original");
+    e.commit_files(&sid, "damaged-marker", vec![original.clone()], 1000)
+        .unwrap();
+    let newer = write(&mut e, &sid, "assets/a.txt", "newer content");
+    e.commit_files(&sid, "after-damaged-marker", vec![newer], 1000)
+        .unwrap();
+    let (archive, _) = stored(directory.path(), "damaged-marker");
+    drop(e);
+    fs::write(&archive, b"retained damaged payload").unwrap();
+    let (mut e, sid, _) = open(directory.path());
+    let (marker, evidence) = quarantined_evidence(directory.path(), &archive);
+    fs::write(&marker, b"truncated marker").unwrap();
+    // The live engine holds a Windows byte-range lock on service.lock; inspect
+    // the archive subtree here, while offline tests compare the entire project.
+    let transaction_directory = directory.path().join(".hanshu/service/file-transactions");
+    let before = disk_snapshot(&transaction_directory);
+    let report = inspect_transaction_archives(directory.path()).unwrap();
+    assert_eq!(disk_snapshot(&transaction_directory), before);
+    assert_eq!(report.stats.unsafe_count, 1);
+    let unsafe_entry = report
+        .entries
+        .iter()
+        .find(|entry| entry.status == "unsafe")
+        .unwrap();
+    assert_eq!(unsafe_entry.code.as_deref(), Some("invalid_tombstone"));
+    assert_eq!(
+        e.file_transaction(&sid, "damaged-marker").unwrap_err().code,
+        "storage"
+    );
+    assert_eq!(
+        e.commit_files(&sid, "damaged-marker", vec![original], 1000)
+            .unwrap_err()
+            .code,
+        "storage"
+    );
+    drop(e);
+    assert_eq!(
+        Engine::open_project(directory.path()).err().unwrap().code,
+        "storage"
+    );
+    assert_eq!(fs::read(&marker).unwrap(), b"truncated marker");
+    assert_eq!(fs::read(&evidence).unwrap(), b"retained damaged payload");
+    assert!(!archive.exists());
+    assert_eq!(
+        fs::read_to_string(directory.path().join("assets/a.txt")).unwrap(),
+        "newer content"
+    );
+}
+
+#[test]
+fn archive_tree_paths_outside_public_resources_are_unsafe_and_never_quarantined() {
+    for invalid_path in ["../outside", ".hanshu/service/secret"] {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut e, sid, _) = open(directory.path());
+        let original = write(&mut e, &sid, "assets/a.txt", "preserved resource");
+        e.commit_files(&sid, "unsafe-tree", vec![original], 1000)
+            .unwrap();
+        let (archive, mut record) = stored(directory.path(), "unsafe-tree");
+        drop(e);
+        let file = record["receipt"]["tree"]["entries"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|file| file["path"] == "assets/a.txt")
+            .unwrap();
+        file["path"] = Value::String(invalid_path.into());
+        let evidence = write_archive(&archive, &record);
+        let before = disk_snapshot(directory.path());
+        let report = inspect_transaction_archives(directory.path()).unwrap();
+        assert_eq!(disk_snapshot(directory.path()), before);
+        assert_eq!(report.stats.unsafe_count, 1);
+        assert_eq!(report.stats.corrupt_count, 0);
+        let entry = report
+            .entries
+            .iter()
+            .find(|entry| entry.transaction_id.as_deref() == Some("unsafe-tree"))
+            .unwrap();
+        assert_eq!(entry.status, "unsafe");
+        assert_eq!(entry.code.as_deref(), Some("unsafe_receipt_path"));
+        assert_eq!(
+            Engine::open_project(directory.path()).err().unwrap().code,
+            "storage"
+        );
+        assert_eq!(fs::read(&archive).unwrap(), evidence);
+        assert!(!quarantine(directory.path()).exists());
+        assert_eq!(
+            fs::read_to_string(directory.path().join("assets/a.txt")).unwrap(),
+            "preserved resource"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn archive_symlink_is_not_followed_or_quarantined() {
+    use std::os::unix::fs::symlink;
+    let directory = tempfile::tempdir().unwrap();
+    let external = tempfile::tempdir().unwrap();
+    let (mut e, sid, _) = open(directory.path());
+    e.commit_files(&sid, "linked-archive", vec![], 1000)
+        .unwrap();
+    let (archive, _) = stored(directory.path(), "linked-archive");
+    drop(e);
+    let target = external.path().join("untouchable.json.gz");
+    fs::rename(&archive, &target).unwrap();
+    let evidence = fs::read(&target).unwrap();
+    symlink(&target, &archive).unwrap();
+    let report = inspect_transaction_archives(directory.path()).unwrap();
+    assert_eq!(report.stats.unsafe_count, 1);
+    assert_eq!(report.stats.corrupt_count, 0);
+    assert_eq!(
+        Engine::open_project(directory.path()).err().unwrap().code,
+        "storage"
+    );
+    assert!(fs::symlink_metadata(&archive)
+        .unwrap()
+        .file_type()
+        .is_symlink());
+    assert_eq!(fs::read(target).unwrap(), evidence);
+    assert!(!quarantine(directory.path()).exists());
+}
+
+#[test]
+fn quarantining_latest_receipt_preserves_revision_and_allows_new_commits() {
+    for legacy_without_watermark in [false, true] {
+        let directory = tempfile::tempdir().unwrap();
+        let (mut e, sid, _) = open(directory.path());
+        let mut latest = 0;
+        for index in 0..5 {
+            let edit = write(&mut e, &sid, "assets/a.txt", &format!("value {index}"));
+            latest = e
+                .commit_files(&sid, &format!("revision-{index}"), vec![edit], 1000)
+                .unwrap()
+                .tree
+                .unwrap()
+                .revision;
+        }
+        let (archive, _) = stored(directory.path(), "revision-4");
+        drop(e);
+        if legacy_without_watermark {
+            let watermark = directory
+                .path()
+                .join(".hanshu/service/file-transactions/revision-watermark");
+            assert!(watermark.exists());
+            fs::remove_file(watermark).unwrap();
+        }
+        fs::write(&archive, b"damaged newest receipt").unwrap();
+        let (mut e, sid, _) = open(directory.path());
+        let reopened = e.files_snapshot(&sid).unwrap().revision;
+        assert!(
+            reopened >= latest,
+            "revision regressed from {latest} to {reopened}"
+        );
+        let edit = write(&mut e, &sid, "assets/a.txt", "after recovery");
+        let next = e
+            .commit_files(&sid, "revision-after-recovery", vec![edit], 1000)
+            .unwrap()
+            .tree
+            .unwrap()
+            .revision;
+        assert!(next > reopened);
+        drop(e);
+        let (e, sid, _) = open(directory.path());
+        assert!(e.files_snapshot(&sid).unwrap().revision >= next);
+        assert_eq!(
+            e.file_transaction(&sid, "revision-4").unwrap_err().code,
+            "receipt_quarantined"
+        );
+    }
+}
+
+#[test]
+fn progress_undo_of_quarantined_receipt_stays_unknown_and_other_undo_still_works() {
+    let directory = tempfile::tempdir().unwrap();
+    const SOURCE: &str = "src/quest/quest.quest";
+    fs::create_dir_all(directory.path().join("src/quest")).unwrap();
+    fs::write(directory.path().join(SOURCE), serde_json::to_vec(&serde_json::json!({
+        "format":"hanshu.progress","version":1,"id":"document-1","name":"name","description":"description",
+        "tags":[],"completion":"all","goals":[],"visibility":[],"acceptance":[],"abandonable":true,
+        "autoStartWhenAcceptable":false,"repeat":{"kind":"once"},"rewardKits":[]
+    })).unwrap()).unwrap();
+    let change = |body: Value| FileChange {
+        op: "progress-command".into(),
+        path: SOURCE.into(),
+        version: None,
+        content: Some(STANDARD.encode(serde_json::to_vec(&body).unwrap())),
+        destination: None,
+        destination_version: None,
+        lease_id: String::new(),
+    };
+    let apply_field = |field: &str, expected: Value, value: Value| {
+        change(serde_json::json!({
+            "command":"apply","documentId":"document-1","changes":[{
+                "target":{"kind":"field","field":field},
+                "expected":{"present":true,"value":expected},"value":{"present":true,"value":value}
+            }]
+        }))
+    };
+    let (mut e, sid, _) = open(directory.path());
+    let first = e
+        .commit_files(
+            &sid,
+            "progress-damaged",
+            vec![apply_field(
+                "completion",
+                Value::String("all".into()),
+                Value::String("any".into()),
+            )],
+            1000,
+        )
+        .unwrap();
+    assert_eq!(first.status, FileTransactionStatus::Committed);
+    let second = e
+        .commit_files(
+            &sid,
+            "progress-healthy",
+            vec![apply_field(
+                "abandonable",
+                Value::Bool(true),
+                Value::Bool(false),
+            )],
+            1000,
+        )
+        .unwrap();
+    assert_eq!(second.status, FileTransactionStatus::Committed);
+    let (archive, _) = stored(directory.path(), "progress-damaged");
+    drop(e);
+    fs::write(archive, b"lost progress receipt").unwrap();
+    let (mut e, sid, _) = open(directory.path());
+    let before = fs::read(directory.path().join(SOURCE)).unwrap();
+    let undone = e
+        .commit_files(
+            &sid,
+            "undo-damaged",
+            vec![change(serde_json::json!({
+                "command":"revert","transactionId":"progress-damaged"
+            }))],
+            1000,
+        )
+        .unwrap_err();
+    assert_eq!(undone.code, "receipt_quarantined");
+    assert_eq!(
+        e.file_transaction(&sid, "undo-damaged").unwrap_err().code,
+        "not_found"
+    );
+    assert_eq!(fs::read(directory.path().join(SOURCE)).unwrap(), before);
+    let healthy = e
+        .commit_files(
+            &sid,
+            "undo-healthy",
+            vec![change(serde_json::json!({
+                "command":"revert","transactionId":"progress-healthy"
+            }))],
+            1000,
+        )
+        .unwrap();
+    assert_eq!(healthy.status, FileTransactionStatus::Committed);
+    let document: Value =
+        serde_json::from_slice(&fs::read(directory.path().join(SOURCE)).unwrap()).unwrap();
+    assert_eq!(document["completion"], "any");
+    assert_eq!(document["abandonable"], true);
 }
 
 #[test]

@@ -77,3 +77,12 @@ npm run lint
 协议 TypeScript 类型由 Rust 模型生成：修改模型后运行 `npm run generate:protocol`。
 
 协作面板「修改 → 放弃冲突修改并同步修改」会先查未知回执，再去掉冲突文件／字段，提交其余可提交修改，刷新服务器状态。断线、临时锁定或结果仍未知时保留对应草稿，并明确报告尚未完成。
+
+
+工程因事务归档报错时，可在 `src-tauri` 执行只读体检：
+
+```powershell
+cargo run -p project-server -- --project "E:/projects/example" --archive-check
+```
+
+输出 JSON 统计、异常相对路径与原因；退出码 2 表示发现异常或隔离记录。不要手动删除回执或隔离标记。隔离边界及恢复注意事项见[工程服务与多人协作](src/help/docs/collaboration-service.md)。

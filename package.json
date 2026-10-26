@@ -104,6 +104,7 @@
     "test:display-localization:integration": "node scripts/verify-display-localization-integration.mjs",
     "test:entity-attributes": "node scripts/run-verification.mjs scripts/verify-entity-attributes.ts",
     "test:resource-organization": "node scripts/run-verification.mjs scripts/verify-resource-organization.ts && node scripts/run-verification.mjs scripts/verify-resource-organization-concurrency.ts && node scripts/run-verification.mjs scripts/verify-resource-organization-sync.ts && node scripts/run-verification.mjs scripts/verify-resource-organization-commands.ts",
+    "test:archive-diagnostics": "node scripts/verify-archive-diagnostics.mjs",
     "test:resource-lifecycle": "node scripts/run-verification.mjs scripts/verify-resource-lifecycle.ts",
     "test:resource-lifecycle:ui": "node scripts/verify-resource-lifecycle-ui.mjs",
     "test:resource-organization:ui": "node scripts/verify-resource-organization-ui.mjs"
