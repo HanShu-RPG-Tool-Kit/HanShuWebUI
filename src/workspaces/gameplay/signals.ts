@@ -48,7 +48,7 @@ export type FlowSimState = {
   events: { id: number; label: string; nodeId?: string }[]
   /** 实例是否已初始化；初始化之前改谓词真值只是「预置」，不广播。 */
   initialized: boolean
-  outcome: { endId: string; result: 'success' | 'failure' } | null
+  outcome: { endId: string; result: 'success' | 'failure' } | { endId: null; result: 'failure'; reason: 'no-running-progress' | 'no-reachable-end' } | null
   queue: Delivery[]
   discarded: (Delivery & { reason: string })[]
   last: { delivery: Delivery; emitted: Delivery[]; accepted: boolean; reason?: string; changes: SignalChange[] } | null
@@ -281,6 +281,30 @@ function snapshot(sim: FlowSimState): RuntimeSnapshot {
 const signature = (flow: ProgressFlow) => JSON.stringify([flow.start, flow.progress, flow.predicates, flow.transitions, flow.ends, orderedLinks(flow)])
 export const isBusy = (sim: FlowSimState) => sim.queue.length > 0
 export const canTrigger = (sim: FlowSimState) => !isBusy(sim) && !sim.outcome && !sim.fault
+export const AUTO_FAILURE_REASONS = {
+  'no-running-progress': '没有运行中的进度',
+  'no-reachable-end': '运行中的进度均无法到达结束节点',
+} as const
+
+/** Quiescence only: queued predicate, query and cancellation effects settle first.
+ * Reverse reachability follows business edges, never inverse Q/C or layout. */
+function finishPulse(flow: ProgressFlow, sim: FlowSimState): void {
+  if (!sim.initialized || sim.outcome || sim.fault || sim.queue.length) return
+  const running = Object.keys(flow.progress).filter(id => progressState(sim, id) === 'running')
+  const upstream = new Map<string, string[]>()
+  for (const link of flow.logic?.links ?? []) {
+    const sources = upstream.get(link.to) ?? []
+    sources.push(link.from); upstream.set(link.to, sources)
+  }
+  const reachable = new Set(Object.keys(flow.ends ?? {})), pending = [...reachable]
+  for (let index = 0; index < pending.length; index++) for (const id of upstream.get(pending[index]) ?? []) {
+    if (!reachable.has(id)) { reachable.add(id); pending.push(id) }
+  }
+  if (running.some(id => reachable.has(id))) return
+  sim.outcome = { endId: null, result: 'failure', reason: running.length ? 'no-reachable-end' : 'no-running-progress' }
+  for (const id of running) sim.progress[id] = 'terminated'
+  sim.execution = null
+}
 function fail(sim: FlowSimState, code: string, message: string) {
   if (sim.execution) Object.assign(sim, structuredClone(sim.execution.checkpoint))
   sim.discarded.push(...sim.queue.map(delivery => ({ ...delivery, reason: '传播故障，状态已回退' })))
@@ -299,7 +323,7 @@ function begin(flow: ProgressFlow, sim: FlowSimState, base: FlowSimState, seeds:
   const errors = validateFlow(flow).filter(issue => issue.severity === 'error')
   if (errors.length) fail(next, 'invalid-graph', errors[0].message)
   else if (seeds.length > budget) fail(next, 'budget-exceeded', `初始队列超过 ${budget} 条预算。`)
-  else if (!seeds.length) next.execution = null
+  else if (!seeds.length) { next.execution = null; finishPulse(flow, next) }
   return next
 }
 /** Mutates only this execution's working copy; callers return an immutable snapshot. */
@@ -332,7 +356,7 @@ function advance(flow: ProgressFlow, next: FlowSimState, verify = true): void {
     next.queue.push(...emitted); fail(next, 'budget-exceeded', `信号队列超过 ${run.budget} 条预算；本次事件的业务状态已回退。`)
   } else {
     next.queue.push(...emitted)
-    if (!next.queue.length) next.execution = null
+    if (!next.queue.length) { next.execution = null; finishPulse(flow, next) }
   }
 }
 export function stepSignal(flow: ProgressFlow, sim: FlowSimState): FlowSimState {
@@ -343,6 +367,7 @@ export function drainSignals(flow: ProgressFlow, sim: FlowSimState): FlowSimStat
   const next = structuredClone(sim)
   if (next.execution && next.execution.signature !== signature(flow)) { fail(next, 'graph-changed', '传播期间图发生变化，请重置模拟。'); return next }
   while (next.queue.length && !next.fault && !next.outcome) advance(flow, next, false)
+  finishPulse(flow, next)
   return next
 }
 export function propagateSignals(flow: ProgressFlow, sim: FlowSimState, seeds: Delivery[], deferred = false): FlowSimState {

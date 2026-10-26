@@ -404,7 +404,7 @@ export function validateFlow(flow: ProgressFlow): FlowIssue[] {
       if (rule.kind !== 'repeat' && !rule.target.trim() && !drafts.has(id)) warning(`predicates.${id}`, `第 ${index + 1} 个条件还没有填写对象。`)
     })
   }
-  if (!Object.keys(flow.ends ?? {}).some(id => connected.has(id))) warning('ends', '没有任何与开始联通的结束节点，任务不会结束。')
+  if (!Object.keys(flow.ends ?? {}).some(id => connected.has(id))) warning('ends', '没有任何与开始联通的结束节点，任务开始并完成首轮信号结算后将自动失败。')
   return issues
 }
 

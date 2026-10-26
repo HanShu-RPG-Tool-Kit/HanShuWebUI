@@ -8,6 +8,7 @@ function fork(){
  let f=M.createFlow('signals'),a=C.createProgressNode(f,{x:400,y:0});f=a.flow
  const b=C.createProgressNode(f,{x:400,y:220});f=b.flow
  f=M.connectNodes(f,f.start,a.id,'input','output').flow;f=M.connectNodes(f,f.start,b.id,'input','output').flow
+ const end=C.createEndNode(f,{x:800,y:400});f=M.connectNodes(end.flow,b.id,end.id,'input','output').flow
  return {flow:f,a:a.id,b:b.id}
 }
 test('one delivery is atomic; FIFO appends generated cancellation after pending activation',()=>{
@@ -84,6 +85,7 @@ test('changing executable graph mid-pulse faults and restores checkpoint',()=>{
 test('draft predicate can be preset but never broadcasts after initialization',()=>{
  let f=M.createFlow();const p=C.createPredicateNode(f,{x:0,y:400});f=p.flow
  const n=C.createProgressNode(f,{x:400,y:400});f=n.flow;f=M.connectNodes(f,p.id,n.id,'input').flow
+ const end=C.createEndNode(f,{x:800,y:0});f=M.connectNodes(end.flow,f.start,end.id,'input','output').flow
  const init=S.initializeQuest(f,S.createSimState(f)),changed=S.setPredicateTruth(f,init,p.id,true,true)
  assert.equal(changed.predicates[p.id],true);assert.equal(changed.queue.length,0);assert.equal(changed.pulse,init.pulse)
  assert.equal(S.progressState(changed,n.id),'inactive')
@@ -110,9 +112,88 @@ test('inverse diamond cancellation does not repeatedly expand the same inactive 
  const a=C.createProgressNode(f,{x:400,y:0});f=a.flow;const b=C.createProgressNode(f,{x:400,y:200});f=b.flow
  const join=C.createProgressNode(f,{x:600,y:0});f=join.flow
  for(const [from,to] of [[f.start,u.id],[u.id,a.id],[u.id,b.id],[a.id,join.id],[b.id,join.id]])f=M.connectNodes(f,from,to,'input','output').flow
+ const end=C.createEndNode(f,{x:900,y:0});f=M.connectNodes(end.flow,join.id,end.id,'input','output').flow
  const sim=S.injectSignal(f,S.initializeQuest(f,S.createSimState(f)),join.id,'output',{kind:'cancel'})
  assert.equal(sim.fault,null)
  assert(sim.log.some(row=>row.reason?.includes('相同状态的取消')))
  assert.equal(sim.log.filter(row=>row.to===f.start).length,1)
+})
+test('no end is valid syntax but initialization fails immediately, including deferred empty pulses',()=>{
+ const flow=M.createFlow('no-end'),before=S.createSimState(flow)
+ assert.equal(M.validateFlow(flow).filter(issue=>issue.severity==='error').length,0)
+ for(const deferred of [false,true]){
+   const sim=S.initializeQuest(flow,before,deferred)
+   assert.deepEqual(sim.outcome,{endId:null,result:'failure',reason:'no-reachable-end'})
+   assert.equal(sim.progress[flow.start],'terminated');assert.equal(sim.fault,null)
+   assert.equal(sim.execution,null);assert.equal(sim.queue.length,0);assert.deepEqual(sim.ends,{})
+   assert.equal(S.settleProgress(flow,sim,flow.start,'succeeded'),sim)
+ }
+ assert.equal(before.initialized,false);assert.equal(before.outcome,null)
+ assert.equal(S.resetSimState(flow).outcome,null)
+})
+test('both end ports and both progress outputs count structurally; unused settlement port fails without deliveries',()=>{
+ let flow=M.createFlow('failure-only');const end=C.createEndNode(flow,{x:-900,y:-700});flow=end.flow
+ flow=M.connectNodes(flow,flow.start,end.id,'input2','output2').flow
+ const base=S.initializeQuest(flow,S.createSimState(flow));assert.equal(base.outcome,null)
+ const failure=S.settleProgress(flow,base,flow.start,'failed')
+ assert.deepEqual(failure.outcome,{endId:end.id,result:'failure'})
+ const noOutput=S.settleProgress(flow,base,flow.start,'succeeded',true)
+ assert.deepEqual(noOutput.outcome,{endId:null,result:'failure',reason:'no-running-progress'})
+ assert.equal(noOutput.ends[end.id],null)
+})
+test('leaf progress may run and settle beside a live main line; stranded leaves cannot keep quest alive',()=>{
+ const {flow,a,b}=fork();let sim=S.settleProgress(flow,S.initializeQuest(flow,S.createSimState(flow)),flow.start,'succeeded')
+ assert.equal(sim.outcome,null);assert.equal(sim.progress[a],'running');assert.equal(sim.progress[b],'running')
+ const leafDone=S.settleProgress(flow,sim,a,'succeeded',true)
+ assert.equal(leafDone.queue.length,0);assert.equal(leafDone.outcome,null);assert.equal(leafDone.progress[b],'running')
+ sim=S.settleProgress(flow,sim,b,'failed',true)
+ assert.deepEqual(sim.outcome,{endId:null,result:'failure',reason:'no-reachable-end'})
+ assert.equal(sim.progress[a],'terminated');assert.equal(sim.progress[b],'failed')
+ assert(Object.values(sim.ends).every(value=>value===null),'automatic failure does not trigger an end or its reward')
+})
+function waitingGate(){
+ let flow=M.createFlow('waiting-gate');const predicate=C.createPredicateNode(flow,{x:0,y:200});flow=predicate.flow
+ const gate=C.createTransitionNode(flow,{x:300,y:0});flow=gate.flow
+ const end=C.createEndNode(flow,{x:600,y:0});flow=end.flow
+ flow=M.connectNodes(flow,flow.start,gate.id,'input','output').flow
+ flow=M.connectNodes(flow,predicate.id,gate.id,'input2','output').flow
+ flow=M.connectNodes(flow,gate.id,end.id,'input','output').flow
+ return {flow,predicate:predicate.id,end:end.id}
+}
+test('pending Q/N deliveries and debugger pauses postpone automatic failure until the final signal',()=>{
+ const {flow,predicate}=waitingGate(),base=S.initializeQuest(flow,S.createSimState(flow))
+ let sim=S.settleProgress(flow,base,flow.start,'succeeded',true)
+ assert.equal(sim.outcome,null);assert(!Object.values(sim.progress).includes('running'))
+ const expected=S.drainSignals(flow,sim)
+ while(sim.queue.length){assert.equal(sim.outcome,null);sim=S.stepSignal(flow,sim)}
+ assert.deepEqual(sim,expected)
+ assert.deepEqual(sim.outcome,{endId:null,result:'failure',reason:'no-running-progress'})
+ assert.equal(S.setPredicateTruth(flow,sim,predicate,true),sim,'future predicate truth cannot rescue a failed quest')
+ assert.equal(S.injectSignal(flow,sim,flow.start,'output',{kind:'activate'}),sim)
+})
+test('preset predicate signals may reach an explicit end in this pulse; explicit terminal wins',()=>{
+ const {flow,predicate,end}=waitingGate()
+ const preset=S.setPredicateTruth(flow,S.createSimState(flow),predicate,true)
+ const base=S.initializeQuest(flow,preset)
+ assert.equal(base.outcome,null)
+ const sim=S.settleProgress(flow,base,flow.start,'succeeded')
+ assert.deepEqual(sim.outcome,{endId:end,result:'success'})
+})
+test('weak connectivity and a future predicate path do not substitute for forward reachability',()=>{
+ let flow=M.createFlow('reverse-only');const leaf=C.createProgressNode(flow,{x:300,y:0});flow=leaf.flow
+ const predicate=C.createPredicateNode(flow,{x:0,y:200});flow=predicate.flow
+ const end=C.createEndNode(flow,{x:600,y:200});flow=end.flow
+ flow=M.connectNodes(flow,flow.start,leaf.id,'input','output').flow
+ flow=M.connectNodes(flow,predicate.id,leaf.id,'input','output').flow
+ flow=M.connectNodes(flow,predicate.id,end.id,'input','output').flow
+ assert(M.connectedToStart(flow).has(end.id))
+ const sim=S.initializeQuest(flow,S.createSimState(flow))
+ assert.equal(sim.outcome?.endId,null);assert.equal(sim.outcome?.result,'failure')
+ assert.equal(S.setPredicateTruth(flow,sim,predicate.id,true),sim)
+ // The same preset truth can end this quest during initialization: its queued A
+ // must settle before structural failure is considered.
+ const preset=S.setPredicateTruth(flow,S.createSimState(flow),predicate.id,true)
+ const explicit=S.initializeQuest(flow,preset,true);assert.equal(explicit.outcome,null);assert(explicit.queue.length)
+ assert.deepEqual(S.drainSignals(flow,explicit).outcome,{endId:end.id,result:'success'})
 })
 console.log(`${checks} quest signal checks passed`)

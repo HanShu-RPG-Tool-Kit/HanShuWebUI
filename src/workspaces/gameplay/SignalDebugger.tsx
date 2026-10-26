@@ -42,6 +42,7 @@ export function SignalDebugger({ flow, sim, playing, duration, disabled, onIniti
   const inspect = (delivery: S.Delivery) => {setInspected(delivery.traceId ?? null);onFocus(delivery)}
   const inspectId = (id: number) => {setInspected(id);const row=index.get(id);if(row)onFocus(row)}
   const busy = S.isBusy(sim)
+  const autoFailure = sim.outcome?.endId === null ? S.AUTO_FAILURE_REASONS[sim.outcome.reason] : null
   const rowHeight = 28, firstRow = Math.max(0,Math.min(Math.floor(scroll/rowHeight)-3,rows.length-1)), shown = rows.slice(firstRow,firstRow+18)
   return <section className={`signal-debugger quest-graph-tools${expanded ? ' is-expanded' : ''}`} aria-label="信号调试器">
     <header className="quest-tools-bar" aria-label="Quest 图工具栏">
@@ -50,8 +51,9 @@ export function SignalDebugger({ flow, sim, playing, duration, disabled, onIniti
       <button type="button" disabled={disabled || sim.initialized || !!sim.fault} title="初始化任务，开始模拟" onClick={onInitialize}>初始化任务</button>
       <button type="button" className="quest-play" disabled={disabled || !busy} title={playing ? '暂停信号播放' : '播放待投递信号'} onClick={onPlay}><span aria-hidden="true">{playing ? 'Ⅱ' : '▷'}</span>{playing ? '暂停' : '播放'}</button>
       <button type="button" disabled={disabled || !busy} title="处理队首的一条信号" onClick={onStep}>单步</button>
+      <button type="button" disabled={disabled} title="清空本地模拟状态，恢复图编辑" onClick={onReset}>重置模拟</button>
       </div>
-      <span className={`signal-debugger-status${sim.outcome ? ` is-terminal is-${sim.outcome.result}` : ''}${sim.fault ? ' is-fault' : ''}`} role="status">{sim.fault ? '执行故障 · 已回退' : sim.outcome ? `任务${sim.outcome.result === 'success' ? '成功' : '失败'} · ${label(sim.outcome.endId)}` : !sim.initialized ? '未初始化' : busy ? `${playing ? '播放中' : '已暂停'} · 待投递 ${sim.queue.length}` : '等待事件'}</span>
+      <span className={`signal-debugger-status${sim.outcome ? ` is-terminal is-${sim.outcome.result}` : ''}${sim.fault ? ' is-fault' : ''}`} role="status" title={autoFailure ?? undefined}>{sim.fault ? '执行故障 · 已回退' : autoFailure ? `任务自动失败 · ${autoFailure}` : sim.outcome ? `任务${sim.outcome.result === 'success' ? '成功' : '失败'} · ${label(sim.outcome.endId)}` : !sim.initialized ? '未初始化' : busy ? `${playing ? '播放中' : '已暂停'} · 待投递 ${sim.queue.length}` : '等待事件'}</span>
       {onToggleExpanded && <button type="button" className="quest-tools-toggle" aria-expanded={expanded} aria-controls={detailsId} title={expanded ? '收起调试详情，扩大画布' : '展开速度、断点与信号记录'} onClick={onToggleExpanded}><span aria-hidden="true" className="quest-tools-chevron">⌃</span>{expanded ? '收起' : '调试'}{!!sim.queue.length && <span className="quest-tools-badge">{sim.queue.length}</span>}</button>}
     </header>
     {stopReason&&<div className="signal-debugger-stop" role="status">● {stopReason}</div>}
@@ -59,7 +61,6 @@ export function SignalDebugger({ flow, sim, playing, duration, disabled, onIniti
     <div className="signal-debugger-controls">
       <span className="quest-tools-section-label">模拟设置</span>
       <label className="signal-debugger-speed">速度<select aria-label="信号播放速度" value={duration} onChange={event=>onDuration(Number(event.target.value))}><option value={1200}>慢速</option><option value={600}>正常</option><option value={180}>快速</option><option value={0}>无动画</option></select></label>
-      <button type="button" disabled={disabled} onClick={onReset}>重置模拟</button>
       <button type="button" disabled={!breakpoints.nodes.length&&!breakpoints.links.length} title="清除所有本地断点" onClick={onClearBreakpoints}>断点 {breakpoints.nodes.length+breakpoints.links.length} ×</button>
       <span className="signal-debugger-counter">事件 #{sim.pulse}{sim.execution ? ` · ${sim.execution.processed}/${sim.execution.budget}` : ''}</span>
     </div>
@@ -77,6 +78,7 @@ export function SignalDebugger({ flow, sim, playing, duration, disabled, onIniti
       <aside className="signal-debugger-detail" aria-label="投递检查器">
         <small>{inspected===null?'最近已处理':'正在检查历史 / 队列'}</small>
         {sim.fault&&<p className="signal-debugger-fault">{sim.fault.message}</p>}
+        {autoFailure&&<p className="signal-debugger-fault">任务自动失败：{autoFailure}。未触发结束节点奖励。</p>}
         {selected ? <>
           <strong><b className={`signal-kind is-${selected.signal.kind}`}>{S.SIGNAL_LABELS[selected.signal.kind]}</b> #{selected.traceId} · {label(selected.to)}</strong>
           <p>{selected.rolledBack?'本次事件已回退 · 以下变化不生效':selected.accepted===undefined ? '尚未投递' : selected.accepted?'已接收':'已忽略'}{selected.round===undefined?'':` · 查询轮次 #${selected.round}`}</p>

@@ -16,6 +16,10 @@ function test(name: string, check: () => void | Promise<void>) {
 const errors = (f: ProgressFlow) => validateFlow(f).filter(i => i.severity === 'error')
 const A = { kind: 'activate' } as const
 const C = { kind: 'cancel' } as const
+function withEnd(flow: ProgressFlow, from: string) {
+  const end = createEndNode(flow, { x: 1200, y: 0 })
+  return connectNodes(end.flow, from, end.id, 'input', 'output').flow
+}
 
 /** 开始进度 → t1 → p2，另给开始配一个失败去向。 */
 function chain() {
@@ -25,6 +29,7 @@ function chain() {
   const p2 = createProgressNode(flow, { x: 700, y: 0 }); flow = p2.flow
   flow = connectNodes(flow, start, t1.id, 'input', 'output').flow
   flow = connectNodes(flow, t1.id, p2.id, 'input', 'output').flow
+  flow = withEnd(flow, p2.id)
   return { flow, start, t1: t1.id, p2: p2.id }
 }
 
@@ -111,6 +116,7 @@ test('进度激活时向左端口发 C，消费上游', () => {
   flow = connectNodes(flow, flow.start, up.id, 'input', 'output').flow
   flow = connectNodes(flow, up.id, t.id, 'input', 'output').flow
   flow = connectNodes(flow, t.id, p.id, 'input', 'output').flow
+  flow = withEnd(flow, p.id)
   let sim = initializeQuest(flow, createSimState(flow))
   sim = settleProgress(flow, sim, flow.start, 'succeeded')
   assert.equal(progressState(sim, up.id), 'running')
@@ -127,6 +133,7 @@ test('失败口：结算失败只走失败边；成功边不触发', () => {
   const bad = createProgressNode(flow, { x: 300, y: 240 }); flow = bad.flow
   flow = connectNodes(flow, start, ok.id, 'input', 'output').flow
   flow = connectNodes(flow, start, bad.id, 'input', 'output2').flow
+  flow = withEnd(flow, ok.id); flow = withEnd(flow, bad.id)
   let sim = initializeQuest(flow, createSimState(flow))
   sim = settleProgress(flow, sim, start, 'failed')
   assert.equal(progressState(sim, ok.id), 'inactive')
@@ -145,6 +152,7 @@ test('合取：两个进度都成功才放行；先到的成功会被新的一�
   flow = connectNodes(flow, a.id, t.id, 'input', 'output').flow
   flow = connectNodes(flow, b.id, t.id, 'input', 'output').flow
   flow = connectNodes(flow, t.id, next.id, 'input', 'output').flow
+  flow = withEnd(flow, next.id)
   let sim = initializeQuest(flow, createSimState(flow))
   sim = settleProgress(flow, sim, start, 'succeeded')
   assert.equal(progressState(sim, a.id), 'running')
@@ -168,6 +176,7 @@ test('析取：任一成功即放行，并取消其余运行中的输入', () =>
   flow = connectNodes(flow, a.id, t.id, 'input2', 'output').flow
   flow = connectNodes(flow, b.id, t.id, 'input2', 'output').flow
   flow = connectNodes(flow, t.id, next.id, 'input', 'output').flow
+  flow = withEnd(flow, next.id)
   let sim = initializeQuest(flow, createSimState(flow))
   sim = settleProgress(flow, sim, start, 'succeeded')
   sim = settleProgress(flow, sim, a.id, 'succeeded')
@@ -184,6 +193,11 @@ test('合取端口 + 析取端口：非空端口都要满足，谓词可以当�
   flow = connectNodes(flow, start, t.id, 'input', 'output').flow
   flow = connectNodes(flow, predicate.id, t.id, 'input2', 'output').flow
   flow = connectNodes(flow, t.id, next.id, 'input', 'output').flow
+  flow = withEnd(flow, next.id)
+  // Keep another live branch while the gate waits for a future predicate.
+  const keepAlive = createProgressNode(flow, { x: 300, y: 480 }); flow = keepAlive.flow
+  flow = connectNodes(flow, start, keepAlive.id, 'input', 'output').flow
+  flow = withEnd(flow, keepAlive.id)
   let sim = initializeQuest(flow, createSimState(flow))
   sim = settleProgress(flow, sim, start, 'succeeded')
   assert.equal(progressState(sim, next.id), 'inactive', '谓词为假时不放行')
@@ -247,6 +261,7 @@ test('取消：运行中变已取消；已成功忽略；未激活向输入侧�
   flow = connectNodes(flow, start, a.id, 'input', 'output').flow
   flow = connectNodes(flow, a.id, t.id, 'input', 'output').flow
   flow = connectNodes(flow, t.id, b.id, 'input', 'output').flow
+  flow = withEnd(flow, b.id)
   let sim = initializeQuest(flow, createSimState(flow))
   sim = settleProgress(flow, sim, start, 'succeeded')
   assert.equal(progressState(sim, a.id), 'running')
@@ -267,6 +282,7 @@ test('查询：运行中回 N；结算后新一轮回 A 并放行；失败只回
   const next = createProgressNode(flow, { x: 600, y: 0 }); flow = next.flow
   flow = connectNodes(flow, start, t.id, 'input', 'output').flow
   flow = connectNodes(flow, t.id, next.id, 'input', 'output').flow
+  flow = withEnd(flow, next.id)
   let sim = initializeQuest(flow, createSimState(flow))
   sim = injectSignal(flow, sim, t.id, 'input', A)
   assert.ok(sim.log.some(item => item.signal.kind === 'none' && item.to === t.id), '运行中的进度对 Q 回 N')
@@ -280,6 +296,7 @@ test('查询：运行中回 N；结算后新一轮回 A 并放行；失败只回
   const fnext = createProgressNode(failedFlow, { x: 600, y: 0 }); failedFlow = fnext.flow
   failedFlow = connectNodes(failedFlow, f, ft.id, 'input', 'output2').flow
   failedFlow = connectNodes(failedFlow, ft.id, fnext.id, 'input', 'output').flow
+  failedFlow = withEnd(failedFlow, fnext.id)
   let failedSim = initializeQuest(failedFlow, createSimState(failedFlow))
   failedSim = settleProgress(failedFlow, failedSim, f, 'failed')
   assert.equal(progressState(failedSim, fnext.id), 'running')
@@ -354,7 +371,7 @@ test('删除节点会清理连线、位置与分组，但不能删开始进度',
 test('画布布局、端口坐标与自由拖动', () => {
   const { flow, start, t1 } = chain()
   const layout = layoutCanvas(flow)
-  assert.equal(layout.positions.size, 3)
+  assert.equal(layout.positions.size, 4)
   assert.deepEqual(nodeMetrics(flow, start), { width: 216, height: 118, socketY: 44 })
   assert.deepEqual(nodeMetrics(flow, t1), { width: 180, height: 96, socketY: 48 })
   const moved = moveCanvasNodes(flow, { [start]: { x: -120, y: 40 } })

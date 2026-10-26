@@ -17,6 +17,7 @@ try{
  function App(){const [flow,F]=React.useState(f),[selection,S]=React.useState({kind:'flow'});window.flow=flow;window.refreshUnchanged=()=>F(previous=>structuredClone(previous));return React.createElement('div',{className:'gameplay-workspace'},React.createElement(ProgressGraph,{flow,selection,onSelect:S,active:true,definitions:[],onCreate:()=>{},onChangeFlow:F,onMove:p=>{window.commits++;F(prev=>C.moveCanvasNodes(prev,p))},onGroup:()=>null,onUngroup:()=>{},onRenameGroup:()=>{},onDelete:()=>{},onDeleteMany:()=>{},onArrange:()=>{},onUpdateNote:()=>{},onConnect:()=>{},onDisconnect:()=>{},onCut:()=>{}}))}DOM.createRoot(document.getElementById('root')).render(React.createElement(App));</script>`}))
  await page.goto(base+'/__quest-simulator');await page.locator('.signal-debugger').waitFor();await page.waitForTimeout(300);await page.getByRole('button',{name:'显示全部',exact:true}).click();await page.waitForTimeout(300)
  assert.equal(await page.locator('.quest-tools-toggle').getAttribute('aria-expanded'),'false','Quest tools start compact')
+ assert(await page.getByRole('button',{name:'重置模拟',exact:true}).isVisible(),'reset stays visible with details collapsed')
  const compactCanvasHeight=await page.locator('.flow-graph > .node-editor').evaluate(element=>element.clientHeight)
  await mkdir('node_modules/.cache/quest-sim-ui',{recursive:true})
  await page.screenshot({path:'node_modules/.cache/quest-sim-ui/toolbar-collapsed.png'})
@@ -128,6 +129,24 @@ try{
  assert.equal(await page.evaluate(()=>JSON.stringify(window.flow)===window.originalFlow),true)
  assert.equal(await page.evaluate(()=>window.commits),0)
  console.log('PASS unreachable run-to reports completion without inventing events; debugging never changes quest source')
+
+ // The surviving orphan branch cannot keep the quest alive after its main line
+ // settles through an unconnected failure output. Reset is available collapsed.
+ await page.getByRole('button',{name:'重置模拟',exact:true}).click()
+ await page.getByRole('button',{name:'初始化任务',exact:true}).click();await node(ids.start).click({modifiers:['Control']})
+ await page.getByRole('button',{name:'播放',exact:true}).click();await page.waitForFunction(()=>document.querySelector('.signal-debugger-status').textContent==='等待事件')
+ await page.locator('.quest-tools-toggle').click()
+ await node(ids.a).click({modifiers:['Control','Shift']})
+ await page.waitForFunction(()=>document.querySelector('.signal-debugger-status').textContent.includes('任务自动失败'))
+ assert.match(await page.locator('.signal-debugger-status').innerText(),/运行中的进度均无法到达结束节点/)
+ assert.equal(await node(ids.b).locator('[data-progress-state]').getAttribute('data-progress-state'),'terminated')
+ assert.equal(await node(ids.end).locator('[data-end-outcome]').count(),0,'auto failure does not mark an end as reached')
+ await page.screenshot({path:'node_modules/.cache/quest-simulator/auto-failure.png'})
+ assert(await page.getByRole('button',{name:'重置模拟',exact:true}).isVisible())
+ await page.getByRole('button',{name:'重置模拟',exact:true}).click()
+ assert.equal(await page.locator('.signal-debugger-status').innerText(),'未初始化')
+ assert.equal(await page.locator('.quest-tools-toggle').getAttribute('aria-expanded'),'false','reset preserves collapsed toolbar')
+ console.log('PASS stranded main line auto-fails, orphan terminates, reason and reset remain visible collapsed')
 
 
  // Virtual history remains fully scrollable; the former 100-row cutoff must not return.

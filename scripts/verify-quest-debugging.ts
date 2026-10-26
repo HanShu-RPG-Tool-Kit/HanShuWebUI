@@ -12,6 +12,9 @@ function gate(){
  flow=M.connectNodes(flow,flow.start,t.id,'input','output').flow
  flow=M.connectNodes(flow,predicate.id,t.id,'input2','output').flow
  flow=M.connectNodes(flow,t.id,next.id,'input','output').flow
+ const end=C.createEndNode(flow,{x:900,y:0});flow=M.connectNodes(end.flow,next.id,end.id,'input','output').flow
+ const keepAlive=C.createProgressNode(flow,{x:300,y:480});flow=M.connectNodes(keepAlive.flow,flow.start,keepAlive.id,'input','output').flow
+ flow=M.connectNodes(flow,keepAlive.id,end.id,'input','output').flow
  let sim=S.initializeQuest(flow,S.createSimState(flow));sim=S.settleProgress(flow,sim,flow.start,'succeeded')
  sim=S.setPredicateTruth(flow,sim,predicate.id,true,true)
  return {flow,sim,t:t.id,next:next.id,predicate:predicate.id}
