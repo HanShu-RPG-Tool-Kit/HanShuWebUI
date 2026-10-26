@@ -1,595 +1,323 @@
-import { getConditionalNode, getDiffNode, getEndNode, getGoalNode, getMergeNode, getNode, getPredicateNode, getSwapNode, getTransitionNode, isOutputPort, linkSourcePort, parseSwapInIndex, parseSwapOutIndex, swapInPort, swapOutPort, type FlowInputPort, type FlowPort, type ProgressFlow } from './model'
+import { connectedToStart, getEndNode, getPredicateNode, getProgressNode, getTransitionNode, linkSourcePort, type FlowPort, type ProgressFlow } from './model'
 
-/** Checkpoint runtime states. Authoring document does not store these. */
-export const CKPT_STATES = {
+/** 进度节点是唯一有持久运行状态的节点；其余节点没有跨事件的业务状态。 */
+export const PROGRESS_STATES = {
   inactive: '未激活',
-  active: '活跃中',
-  activated: '已激活',
+  running: '运行中',
+  succeeded: '已成功',
+  failed: '已失败',
   cancelled: '已取消',
 } as const
-export type CkptState = keyof typeof CKPT_STATES
-
-/** Goal runtime states. */
-export const GOAL_STATES = {
-  inactive: '未激活',
-  subscribed: '订阅中',
-  closed: '已关闭',
-} as const
-export type GoalState = keyof typeof GOAL_STATES
-export const PREDICATE_STATES = GOAL_STATES
-export type PredicateState = GoalState
+export type ProgressState = keyof typeof PROGRESS_STATES
 
 /**
- * Signals on wires:
- * - S = ckpt-transition
- * - A = activation
- * - G = goal-complete（线性变迁 Goal 合取）
- * - G-Y = goal-yes（差分变迁成功）
- * - G-N = goal-no（差分变迁失败）
- * - P = predicate-complete（条件变迁谓词）
- * - D = cancel
- * - C = query
- * - C-R = query-response
- * - S-C = cancel-cascade（任一 ckpt 进入已激活时从 S 入点发出）
- * - G-C = goal-cancel-cascade（活跃中 ckpt 收到 S-C 后从 S 入点发出）
+ * 线上只有四种信号：
+ * - A activate：顺流。「我被激活 / 我成立 / 这是我的结局」
+ * - Q query：逆流。「你现在是什么状态？」
+ * - C cancel：逆流。「这个消费者不要你了」
+ * - N none：逆流。「对 Q 的否定应答」；也是任何未特别说明节点的默认回应
  */
-export type FlowSignal =
-  | { kind: 'ckpt-transition'; from: CkptState; to: CkptState }
-  | { kind: 'activation' }
-  | { kind: 'goal-complete' }
-  | { kind: 'goal-yes' }
-  | { kind: 'goal-no' }
-  | { kind: 'predicate-complete' }
-  | { kind: 'cancel' }
-  | { kind: 'query' }
-  | { kind: 'query-response' }
-  | { kind: 'cancel-cascade' }
-  | { kind: 'goal-cancel-cascade' }
+export type FlowSignal = { kind: 'activate' } | { kind: 'query' } | { kind: 'cancel' } | { kind: 'none' }
+export const SIGNAL_LABELS: Record<FlowSignal['kind'], string> = { activate: 'A', query: 'Q', cancel: 'C', none: 'N' }
 
 export type SimDelivery = {
   from: string | null
   to: string
   port: FlowPort
+  link?: string
   signal: FlowSignal
   accepted: boolean
   reason?: string
 }
 
-/** Per merge / linear-Goal query round: which upstream sources must still return C-R. */
-export type MergeSimState = { awaiting: string[]; reported: string[] }
-export type TransitionSimState = MergeSimState
+/**
+ * 变迁一轮查询的临时簿记：轮次编号让"对上一轮的迟到应答"不会开启新的一轮。
+ * 它只在模拟器内存里，不落盘。
+ */
+export type TransitionRound = { open: boolean; id: number; answered: Record<string, 'activate' | 'none'> }
 
 export type FlowSimState = {
-  ckpt: Record<string, CkptState>
-  goals: Record<string, GoalState>
-  predicates: Record<string, PredicateState>
-  merges: Record<string, MergeSimState>
-  transitions: Record<string, TransitionSimState>
+  progress: Record<string, ProgressState>
+  predicates: Record<string, boolean>
+  rounds: Record<string, TransitionRound>
+  ends: Record<string, 'success' | 'failure' | null>
   log: SimDelivery[]
   pulse: number
+  /** 实例是否已初始化；初始化之前改谓词真值只是「预置」，不广播。 */
+  initialized: boolean
 }
 
-export type SignalSeed = { from: string | null; to: string; port: FlowPort; signal: FlowSignal }
-type Emit = { from: string; via: FlowPort; signal: FlowSignal; onlyTo?: string }
-type SimPatch = Partial<Pick<FlowSimState, 'ckpt' | 'goals' | 'predicates' | 'merges' | 'transitions'>>
+type Delivery = { signal: FlowSignal; to: string; port: FlowPort; link?: string; round?: number; from: string | null }
 
-export const START_SIGNAL: FlowSignal = { kind: 'ckpt-transition', from: 'inactive', to: 'activated' }
-export const SIGNAL_LABELS: Record<FlowSignal['kind'], string> = {
-  'ckpt-transition': 'S',
-  activation: 'A',
-  'goal-complete': 'G',
-  'goal-yes': 'G-Y',
-  'goal-no': 'G-N',
-  'predicate-complete': 'P',
-  cancel: 'D',
-  query: 'C',
-  'query-response': 'C-R',
-  'cancel-cascade': 'S-C',
-  'goal-cancel-cascade': 'G-C',
-}
+const A: FlowSignal = { kind: 'activate' }
+const Q: FlowSignal = { kind: 'query' }
+const C: FlowSignal = { kind: 'cancel' }
+const N: FlowSignal = { kind: 'none' }
 
-export function ckptState(sim: FlowSimState, id: string): CkptState {
-  return Object.hasOwn(sim.ckpt, id) ? sim.ckpt[id] : 'inactive'
+const emptyRound = (): TransitionRound => ({ open: false, id: 0, answered: {} })
+
+export function progressState(sim: FlowSimState, id: string): ProgressState {
+  return Object.hasOwn(sim.progress, id) ? sim.progress[id] : 'inactive'
 }
-export function goalState(sim: FlowSimState, id: string): GoalState {
-  return Object.hasOwn(sim.goals, id) ? sim.goals[id] : 'inactive'
+export function predicateTruth(sim: FlowSimState, id: string): boolean {
+  return Object.hasOwn(sim.predicates, id) ? sim.predicates[id] : false
 }
-export function predicateState(sim: FlowSimState, id: string): PredicateState {
-  return Object.hasOwn(sim.predicates, id) ? sim.predicates[id] : 'inactive'
+export function transitionRound(sim: FlowSimState, id: string): TransitionRound {
+  return Object.hasOwn(sim.rounds, id) ? sim.rounds[id] : emptyRound()
 }
-export function mergeSim(sim: FlowSimState, id: string): MergeSimState {
-  return Object.hasOwn(sim.merges, id) ? sim.merges[id] : { awaiting: [], reported: [] }
-}
-export function transitionSim(sim: FlowSimState, id: string): TransitionSimState {
-  return Object.hasOwn(sim.transitions, id) ? sim.transitions[id] : { awaiting: [], reported: [] }
+export function endOutcome(sim: FlowSimState, id: string): 'success' | 'failure' | null {
+  return Object.hasOwn(sim.ends, id) ? sim.ends[id] : null
 }
 
 export function createSimState(flow: ProgressFlow): FlowSimState {
-  const ckpt: Record<string, CkptState> = {}
-  const goals: Record<string, GoalState> = {}
-  const predicates: Record<string, PredicateState> = {}
-  const merges: Record<string, MergeSimState> = {}
-  const transitions: Record<string, TransitionSimState> = {}
-  for (const id of Object.keys(flow.nodes)) ckpt[id] = 'inactive'
-  for (const id of Object.keys(flow.goals ?? {})) goals[id] = 'inactive'
-  for (const id of Object.keys(flow.predicates ?? {})) predicates[id] = 'inactive'
-  for (const id of Object.keys(flow.merges ?? {})) merges[id] = { awaiting: [], reported: [] }
-  for (const id of Object.keys(flow.transitions ?? {})) transitions[id] = { awaiting: [], reported: [] }
-  return { ckpt, goals, predicates, merges, transitions, log: [], pulse: 0 }
+  const progress: Record<string, ProgressState> = {}
+  const predicates: Record<string, boolean> = {}
+  const rounds: Record<string, TransitionRound> = {}
+  const ends: Record<string, 'success' | 'failure' | null> = {}
+  for (const id of Object.keys(flow.progress)) progress[id] = 'inactive'
+  for (const id of Object.keys(flow.predicates ?? {})) predicates[id] = false
+  for (const id of Object.keys(flow.transitions ?? {})) rounds[id] = emptyRound()
+  for (const id of Object.keys(flow.ends ?? {})) ends[id] = null
+  return { progress, predicates, rounds, ends, log: [], pulse: 0, initialized: false }
 }
 
 /** Drop removed nodes; keep surviving runtime state when the graph is edited. */
 export function syncSimState(sim: FlowSimState, flow: ProgressFlow): FlowSimState {
-  const ckpt: Record<string, CkptState> = {}
-  const goals: Record<string, GoalState> = {}
-  const predicates: Record<string, PredicateState> = {}
-  const merges: Record<string, MergeSimState> = {}
-  const transitions: Record<string, TransitionSimState> = {}
-  let changed = false
-  for (const id of Object.keys(flow.nodes)) {
-    ckpt[id] = Object.hasOwn(sim.ckpt, id) ? sim.ckpt[id] : 'inactive'
-    if (!Object.hasOwn(sim.ckpt, id)) changed = true
-  }
-  for (const id of Object.keys(sim.ckpt)) if (!Object.hasOwn(flow.nodes, id)) changed = true
-  for (const id of Object.keys(flow.goals ?? {})) {
-    goals[id] = Object.hasOwn(sim.goals, id) ? sim.goals[id] : 'inactive'
-    if (!Object.hasOwn(sim.goals, id)) changed = true
-  }
-  for (const id of Object.keys(sim.goals)) if (!Object.hasOwn(flow.goals ?? {}, id)) changed = true
-  for (const id of Object.keys(flow.predicates ?? {})) {
-    predicates[id] = Object.hasOwn(sim.predicates, id) ? sim.predicates[id] : 'inactive'
-    if (!Object.hasOwn(sim.predicates, id)) changed = true
-  }
-  for (const id of Object.keys(sim.predicates ?? {})) if (!Object.hasOwn(flow.predicates ?? {}, id)) changed = true
-  for (const id of Object.keys(flow.merges ?? {})) {
-    merges[id] = Object.hasOwn(sim.merges, id) ? sim.merges[id] : { awaiting: [], reported: [] }
-    if (!Object.hasOwn(sim.merges, id)) changed = true
-  }
-  for (const id of Object.keys(sim.merges)) if (!Object.hasOwn(flow.merges ?? {}, id)) changed = true
-  for (const id of Object.keys(flow.transitions ?? {})) {
-    transitions[id] = Object.hasOwn(sim.transitions, id) ? sim.transitions[id] : { awaiting: [], reported: [] }
-    if (!Object.hasOwn(sim.transitions, id)) changed = true
-  }
-  for (const id of Object.keys(sim.transitions)) if (!Object.hasOwn(flow.transitions ?? {}, id)) changed = true
-  if (!changed
-    && Object.keys(sim.ckpt).length === Object.keys(ckpt).length
-    && Object.keys(sim.goals).length === Object.keys(goals).length
-    && Object.keys(sim.predicates ?? {}).length === Object.keys(predicates).length
-    && Object.keys(sim.merges).length === Object.keys(merges).length
-    && Object.keys(sim.transitions).length === Object.keys(transitions).length) return sim
-  return { ...sim, ckpt, goals, predicates, merges, transitions }
+  const progress: Record<string, ProgressState> = {}
+  const predicates: Record<string, boolean> = {}
+  const rounds: Record<string, TransitionRound> = {}
+  const ends: Record<string, 'success' | 'failure' | null> = {}
+  for (const id of Object.keys(flow.progress)) progress[id] = Object.hasOwn(sim.progress, id) ? sim.progress[id] : 'inactive'
+  for (const id of Object.keys(flow.predicates ?? {})) predicates[id] = Object.hasOwn(sim.predicates, id) ? sim.predicates[id] : false
+  for (const id of Object.keys(flow.transitions ?? {})) rounds[id] = Object.hasOwn(sim.rounds, id) ? sim.rounds[id] : emptyRound()
+  for (const id of Object.keys(flow.ends ?? {})) ends[id] = Object.hasOwn(sim.ends, id) ? sim.ends[id] : null
+  const same = (a: object, b: object) => Object.keys(a).length === Object.keys(b).length && Object.keys(a).every(key => Object.hasOwn(b, key))
+  if (same(sim.progress, progress) && same(sim.predicates, predicates) && same(sim.rounds, rounds) && same(sim.ends, ends)) return sim
+  return { ...sim, progress, predicates, rounds, ends }
 }
 
 export function resetSimState(flow: ProgressFlow): FlowSimState {
   return createSimState(flow)
 }
 
-/** Forward outgoing wire endpoints from a node (entry uses its single target). */
-export function outgoingSignalTargets(flow: ProgressFlow, from: string, via: FlowPort = 'output'): { to: string; port: FlowInputPort }[] {
-  return emitTargets(flow, from, via, START_SIGNAL)
-    .filter(seed => seed.port === 'input' || seed.port === 'input2')
-    .map(seed => ({ to: seed.to, port: seed.port as FlowInputPort }))
+/** 顺流：沿 from 的输出端口发出，落到连线的目标输入端口。 */
+function forward(flow: ProgressFlow, from: string, port: FlowPort, signal: FlowSignal): Delivery[] {
+  return (flow.logic?.links ?? [])
+    .filter(link => link.from === from && linkSourcePort(flow, link.from, link.fromPort) === port)
+    .map(link => ({ signal, to: link.to, port: link.port, link: link.id, from }))
+}
+/** 逆流：沿连到 from 的该端口的入线，回到上游节点的输出端口。 */
+function backward(flow: ProgressFlow, from: string, port: FlowPort, signal: FlowSignal): Delivery[] {
+  return (flow.logic?.links ?? [])
+    .filter(link => link.to === from && link.port === port)
+    .map(link => ({ signal, to: link.from, port: linkSourcePort(flow, link.from, link.fromPort), link: link.id, from }))
+}
+/** 本轮查询：Q 逆流，携带轮次编号。 */
+function queryRound(flow: ProgressFlow, id: string, round: number): Delivery[] {
+  return [...backward(flow, id, 'input', Q), ...backward(flow, id, 'input2', Q)]
+    .map(delivery => ({ ...delivery, round }))
+}
+/** 对 Q 的应答沿同一通道送回发起方。 */
+function reply(flow: ProgressFlow, delivery: Delivery, signal: FlowSignal): Delivery[] {
+  const link = (flow.logic?.links ?? []).find(item => item.id === delivery.link)
+  return link ? [{ signal, to: link.to, port: link.port, link: link.id, round: delivery.round, from: link.from }] : []
 }
 
-/**
- * Resolve emit targets for a port.
- * Output ports follow wires forward; input ports emit back along incoming wires (Goal / 合并入点 / Parent).
- * onlyTo limits reverse fan-out to a single upstream source (e.g. D back to the Goal that just sent G).
- */
-export function emitTargets(flow: ProgressFlow, from: string, via: FlowPort, signal: FlowSignal, onlyTo?: string): SignalSeed[] {
-  if (isOutputPort(via)) {
-    if (from === flow.entry.id) {
-      if (via !== 'output' || flow.entry.target === null) return []
-      return [{ from, to: flow.entry.target, port: flow.entry.port ?? 'input', signal }]
-    }
-    const seeds: SignalSeed[] = []
-    
-    for (const link of flow.logic?.links ?? []) {
-      if (link.from === from && linkSourcePort(flow, link.from, link.to, link.port, link.fromPort) === via) {
-        seeds.push({ from, to: link.to, port: link.port, signal })
-      }
-    }
-    return seeds
+function accept(sim: FlowSimState, delivery: Delivery): void {
+  sim.log.push({ from: delivery.from, to: delivery.to, port: delivery.port, link: delivery.link, signal: delivery.signal, accepted: true })
+}
+function reject(sim: FlowSimState, delivery: Delivery, reason: string): void {
+  sim.log.push({ from: delivery.from, to: delivery.to, port: delivery.port, link: delivery.link, signal: delivery.signal, accepted: false, reason })
+}
+
+function deliverProgress(flow: ProgressFlow, sim: FlowSimState, delivery: Delivery, id: string): Delivery[] {
+  const current = progressState(sim, id)
+  if (delivery.signal.kind === 'activate') {
+    if (current !== 'inactive') { reject(sim, delivery, `进度当前为「${PROGRESS_STATES[current]}」，只有未激活能被激活`); return [] }
+    sim.progress[id] = 'running'
+    accept(sim, delivery)
+    // 激活即消费输入：上游不必再为这个进度等待或重复触发。
+    return backward(flow, id, 'input', C)
   }
-  const seeds: SignalSeed[] = []
-  for (const link of flow.logic?.links ?? []) {
-    if (link.to === from && link.port === via) {
-      if (onlyTo && link.from !== onlyTo) continue
-      seeds.push({ from, to: link.from, port: 'output', signal })
-    }
+  if (delivery.signal.kind === 'query') {
+    const answer = (current === 'succeeded' && delivery.port === 'output') || (current === 'failed' && delivery.port === 'output2') ? A : N
+    accept(sim, delivery)
+    return reply(flow, delivery, answer)
   }
-  return seeds
-}
-
-function reject(sim: FlowSimState, from: string | null, to: string, port: FlowPort, signal: FlowSignal, reason: string): { sim: FlowSimState; emit: Emit[] } {
-  return { sim: { ...sim, log: [...sim.log, { from, to, port, signal, accepted: false, reason }] }, emit: [] }
-}
-
-function accept(sim: FlowSimState, from: string | null, to: string, port: FlowPort, signal: FlowSignal, patch: SimPatch, emit: Emit[]): { sim: FlowSimState; emit: Emit[] } {
-  return {
-    sim: {
-      ...sim,
-      ckpt: patch.ckpt ?? sim.ckpt,
-      goals: patch.goals ?? sim.goals,
-      predicates: patch.predicates ?? sim.predicates,
-      merges: patch.merges ?? sim.merges,
-      transitions: patch.transitions ?? sim.transitions,
-      log: [...sim.log, { from, to, port, signal, accepted: true }],
-    },
-    emit,
-  }
-}
-
-function incomingSources(flow: ProgressFlow, id: string, port: FlowInputPort = 'input') {
-  return (flow.logic?.links ?? []).filter(link => link.to === id && link.port === port).map(link => link.from)
-}
-
-function deliverCkpt(_flow: ProgressFlow, sim: FlowSimState, from: string | null, to: string, port: FlowPort, signal: FlowSignal) {
-  // Query C arrives on the ckpt output socket (reverse wire from 合并变迁).
-  if (signal.kind === 'query') {
-    if (port !== 'output') return reject(sim, from, to, port, signal, '查询信号 C 应到达 checkpoint 出点')
-    if (ckptState(sim, to) !== 'activated') return reject(sim, from, to, port, signal, `checkpoint 当前为「${CKPT_STATES[ckptState(sim, to)]}」，未已激活则不回报 C-R`)
-    return accept(sim, from, to, port, signal, {}, [{ from: to, via: 'output', signal: { kind: 'query-response' } }])
-  }
-  // S-C:
-  // - 入点收到：不转发（活跃中仍取消并发 G-C；未激活只吞掉）
-  // - 其它端口（通常出点回灌）：活跃中→已取消并发 G-C；未激活只转发、不改自身状态
-  if (signal.kind === 'cancel-cascade') {
-    const current = ckptState(sim, to)
-    if (port === 'input') {
-      if (current === 'active') {
-        return accept(sim, from, to, port, signal, { ckpt: { ...sim.ckpt, [to]: 'cancelled' } }, [
-          { from: to, via: 'input', signal: { kind: 'goal-cancel-cascade' } },
-        ])
-      }
-      if (current === 'inactive') return accept(sim, from, to, port, signal, {}, [])
-      return reject(sim, from, to, port, signal, `checkpoint 当前为「${CKPT_STATES[current]}」，入点忽略 S-C`)
-    }
-    if (current === 'active') {
-      return accept(sim, from, to, port, signal, { ckpt: { ...sim.ckpt, [to]: 'cancelled' } }, [
-        { from: to, via: 'input', signal: { kind: 'goal-cancel-cascade' } },
-      ])
+  if (delivery.signal.kind === 'cancel') {
+    if (current === 'running') {
+      sim.progress[id] = 'cancelled'
+      accept(sim, delivery)
+      return []
     }
     if (current === 'inactive') {
-      return accept(sim, from, to, port, signal, {}, [
-        { from: to, via: 'input', signal: { kind: 'cancel-cascade' } },
-      ])
+      accept(sim, delivery)
+      return backward(flow, id, 'input', C)
     }
-    return reject(sim, from, to, port, signal, `checkpoint 当前为「${CKPT_STATES[current]}」，忽略 S-C`)
+    reject(sim, delivery, `进度当前为「${PROGRESS_STATES[current]}」，忽略取消`)
+    return []
   }
-  if (signal.kind !== 'ckpt-transition') return reject(sim, from, to, port, signal, 'checkpoint 入点只接受状态转移信号 S')
-  const current = ckptState(sim, to)
-  if (current !== signal.from) return reject(sim, from, to, port, signal, `当前为「${CKPT_STATES[current]}」，与信号原状态「${CKPT_STATES[signal.from]}」不符`)
-  const emit: Emit[] = []
-  if (signal.to === 'activated') {
-    emit.push({ from: to, via: 'output', signal: { kind: 'activation' } })
-    // 从任意状态进入已激活：从 S 入点发出 S-C
-    emit.push({ from: to, via: 'input', signal: { kind: 'cancel-cascade' } })
-  }
-  return accept(sim, from, to, port, signal, { ckpt: { ...sim.ckpt, [to]: signal.to } }, emit)
+  reject(sim, delivery, '进度不接收 N')
+  return []
 }
 
-function deliverGoal(sim: FlowSimState, from: string | null, to: string, port: FlowPort, signal: FlowSignal) {
-  const current = goalState(sim, to)
-  // C arrives on Goal output (reverse wire from 线性变迁 Goal 合取询问)
-  if (signal.kind === 'query') {
-    if (port !== 'output') return reject(sim, from, to, port, signal, '查询信号 C 应到达 Goal 出点')
-    if (current !== 'closed') return reject(sim, from, to, port, signal, `Goal 当前为「${GOAL_STATES[current]}」，未关闭则不回报 C-R`)
-    return accept(sim, from, to, port, signal, {}, [{ from: to, via: 'output', signal: { kind: 'query-response' } }])
+function deliverPredicate(flow: ProgressFlow, sim: FlowSimState, delivery: Delivery, id: string): Delivery[] {
+  if (delivery.signal.kind === 'query') {
+    accept(sim, delivery)
+    return reply(flow, delivery, predicateTruth(sim, id) ? A : N)
   }
-  if (signal.kind === 'activation') {
-    if (current !== 'inactive') return reject(sim, from, to, port, signal, `Goal 当前为「${GOAL_STATES[current]}」，无法再订阅`)
-    return accept(sim, from, to, port, signal, { goals: { ...sim.goals, [to]: 'subscribed' } }, [])
-  }
-  if (signal.kind === 'cancel') {
-    if (current !== 'subscribed') return reject(sim, from, to, port, signal, `Goal 当前为「${GOAL_STATES[current]}」，无法关闭`)
-    return accept(sim, from, to, port, signal, { goals: { ...sim.goals, [to]: 'closed' } }, [])
-  }
-  return reject(sim, from, to, port, signal, 'Goal 只接受激活信号 A、取消信号 D 与查询信号 C')
+  if (delivery.signal.kind === 'cancel') { accept(sim, delivery); return [] }
+  reject(sim, delivery, '谓词没有左端口，只接受查询')
+  return []
 }
 
-function deliverPredicate(sim: FlowSimState, from: string | null, to: string, port: FlowPort, signal: FlowSignal) {
-  const current = predicateState(sim, to)
-  if (signal.kind === 'activation') {
-    if (current !== 'inactive') return reject(sim, from, to, port, signal, `Predicate 当前为「${PREDICATE_STATES[current]}」，无法再订阅`)
-    return accept(sim, from, to, port, signal, { predicates: { ...sim.predicates, [to]: 'subscribed' } }, [])
-  }
-  if (signal.kind === 'cancel') {
-    if (current !== 'subscribed') return reject(sim, from, to, port, signal, `Predicate 当前为「${PREDICATE_STATES[current]}」，无法关闭`)
-    return accept(sim, from, to, port, signal, { predicates: { ...sim.predicates, [to]: 'closed' } }, [])
-  }
-  return reject(sim, from, to, port, signal, 'Predicate 只接受激活信号 A 与取消信号 D')
+function deliverEnd(sim: FlowSimState, delivery: Delivery, id: string): Delivery[] {
+  if (delivery.signal.kind !== 'activate') { reject(sim, delivery, '结束节点只接受 A'); return [] }
+  sim.ends[id] = delivery.port === 'input2' ? 'failure' : 'success'
+  accept(sim, delivery)
+  return []
 }
 
-function deliverTransition(flow: ProgressFlow, sim: FlowSimState, from: string | null, to: string, port: FlowPort, signal: FlowSignal) {
-  // Next 口收到 S-C → 转发到所有激活信号来源（Parent）
-  if (signal.kind === 'cancel-cascade') {
-    if (port !== 'output') return reject(sim, from, to, port, signal, '线性变迁从 Next 接收 S-C')
-    return accept(sim, from, to, port, signal, {}, [{ from: to, via: 'input2', signal: { kind: 'cancel-cascade' } }])
+/** 一轮问答收齐后判定：非空端口都要满足；合取=全部 A，析取=任一 A。 */
+function settleRound(flow: ProgressFlow, sim: FlowSimState, id: string): Delivery[] {
+  const incoming = (flow.logic?.links ?? []).filter(link => link.to === id)
+  const round = transitionRound(sim, id)
+  if (!round.open || !incoming.every(link => Object.hasOwn(round.answered, link.id))) return []
+  const conj = incoming.filter(link => link.port === 'input')
+  const disj = incoming.filter(link => link.port === 'input2')
+  const conjOk = conj.length === 0 || conj.every(link => round.answered[link.id] === 'activate')
+  const disjOk = disj.length === 0 || disj.some(link => round.answered[link.id] === 'activate')
+  sim.rounds[id] = { open: false, id: round.id, answered: {} }
+  if (!conjOk || !disjOk) return []
+  return [
+    ...forward(flow, id, 'output', A),
+    ...backward(flow, id, 'input', C),
+    ...backward(flow, id, 'input2', C),
+  ]
+}
+
+function deliverTransition(flow: ProgressFlow, sim: FlowSimState, delivery: Delivery, id: string): Delivery[] {
+  if (delivery.signal.kind === 'query') {
+    accept(sim, delivery)
+    return reply(flow, delivery, N)
   }
-  // Next 口收到 G-C → 从 Goal 入点向全部 Goal 发出 D
-  if (signal.kind === 'goal-cancel-cascade') {
-    if (port !== 'output') return reject(sim, from, to, port, signal, '线性变迁从 Next 接收 G-C')
-    return accept(sim, from, to, port, signal, {}, [{ from: to, via: 'input', signal: { kind: 'cancel' } }])
+  if (delivery.signal.kind === 'cancel') {
+    accept(sim, delivery)
+    const round = transitionRound(sim, id)
+    sim.rounds[id] = { open: false, id: round.id, answered: {} }
+    return [...backward(flow, id, 'input', C), ...backward(flow, id, 'input2', C)]
   }
-  if (port === 'input2') {
-    if (signal.kind !== 'activation') return reject(sim, from, to, port, signal, 'Parent 只接受激活信号 A')
-    const goals = incomingSources(flow, to, 'input')
-    const emit: Emit[] = [
-      { from: to, via: 'output', signal: { kind: 'ckpt-transition', from: 'inactive', to: 'active' } },
-      { from: to, via: 'input', signal: { kind: 'activation' } },
-    ]
-    // 无 Goal 线：空合取成立，直接推进 活跃中→已激活
-    if (!goals.length) emit.push({ from: to, via: 'output', signal: { kind: 'ckpt-transition', from: 'active', to: 'activated' } })
-    return accept(sim, from, to, port, signal, { transitions: { ...sim.transitions, [to]: { awaiting: [], reported: [] } } }, emit)
-  }
-  if (port === 'input') {
-    if (signal.kind === 'goal-complete') {
-      if (from === null) return reject(sim, from, to, port, signal, 'G 缺少来源')
-      const awaiting = incomingSources(flow, to, 'input')
-      const emit: Emit[] = [
-        // 只关闭刚完成的 Goal，再向全部 Goal 发 C（与合并每次 A 重开查询一致）
-        { from: to, via: 'input', signal: { kind: 'cancel' }, onlyTo: from },
-        { from: to, via: 'input', signal: { kind: 'query' } },
-      ]
-      if (!awaiting.length) emit.push({ from: to, via: 'output', signal: { kind: 'ckpt-transition', from: 'active', to: 'activated' } })
-      return accept(sim, from, to, port, signal, { transitions: { ...sim.transitions, [to]: { awaiting, reported: [] } } }, emit)
+  const round = transitionRound(sim, id)
+  if (delivery.signal.kind === 'activate') {
+    if (delivery.port !== 'input' && delivery.port !== 'input2') { reject(sim, delivery, '变迁只从左端口接收 A'); return [] }
+    if (delivery.round !== undefined) {
+      // 对某轮 Q 的应答；过期轮次直接吞掉，不能开新一轮。
+      if (!round.open || round.id !== delivery.round) { accept(sim, delivery); return [] }
+      if (delivery.link) round.answered[delivery.link] = 'activate'
+      accept(sim, delivery)
+      return settleRound(flow, sim, id)
     }
-    if (signal.kind === 'query-response') {
-      if (from === null) return reject(sim, from, to, port, signal, 'C-R 缺少来源')
-      const current = transitionSim(sim, to)
-      if (!current.awaiting.length) return reject(sim, from, to, port, signal, '线性变迁当前没有进行中的 Goal 查询')
-      if (!current.awaiting.includes(from)) return reject(sim, from, to, port, signal, '该来源不在本次查询名单中')
-      if (current.reported.includes(from)) return reject(sim, from, to, port, signal, '该来源已回报过 C-R')
-      const reported = [...current.reported, from]
-      const done = current.awaiting.every(id => reported.includes(id))
-      const nextQuery = done ? { awaiting: [], reported: [] } : { awaiting: current.awaiting, reported }
-      const emit: Emit[] = done
-        ? [{ from: to, via: 'output', signal: { kind: 'ckpt-transition', from: 'active', to: 'activated' } }]
-        : []
-      return accept(sim, from, to, port, signal, { transitions: { ...sim.transitions, [to]: nextQuery } }, emit)
+    if (!round.open) {
+      const answered: Record<string, 'activate' | 'none'> = delivery.link ? { [delivery.link]: 'activate' } : {}
+      const next: TransitionRound = { open: true, id: round.id + 1, answered }
+      sim.rounds[id] = next
+      accept(sim, delivery)
+      // 没有非触发器入线时（例如开始直接连变迁），这一轮当场判定，不需要等应答。
+      return [...queryRound(flow, id, next.id), ...settleRound(flow, sim, id)]
     }
-    return reject(sim, from, to, port, signal, 'Goal 入点只接受完成信号 G 与回报信号 C-R')
+    if (delivery.link) round.answered[delivery.link] = 'activate'
+    accept(sim, delivery)
+    return settleRound(flow, sim, id)
   }
-  return reject(sim, from, to, port, signal, '未知的线性变迁端口')
+  if (delivery.signal.kind === 'none') {
+    if (delivery.round === undefined) { reject(sim, delivery, '没有查询轮次的 N'); return [] }
+    if (!round.open || round.id !== delivery.round) { accept(sim, delivery); return [] }
+    if (delivery.link && !Object.hasOwn(round.answered, delivery.link)) round.answered[delivery.link] = 'none'
+    accept(sim, delivery)
+    return settleRound(flow, sim, id)
+  }
+  return []
 }
 
-function deliverMerge(flow: ProgressFlow, sim: FlowSimState, from: string | null, to: string, port: FlowPort, signal: FlowSignal) {
-  // Next 口收到 S-C → 转发到所有激活信号来源（入点多线）
-  if (signal.kind === 'cancel-cascade') {
-    if (port !== 'output') return reject(sim, from, to, port, signal, '合并变迁从 Next 接收 S-C')
-    return accept(sim, from, to, port, signal, {}, [{ from: to, via: 'input', signal: { kind: 'cancel-cascade' } }])
-  }
-  if (port !== 'input') return reject(sim, from, to, port, signal, '合并变迁只有一个入点')
-  if (signal.kind === 'activation') {
-    const awaiting = incomingSources(flow, to, 'input')
-    const emit: Emit[] = [
-      { from: to, via: 'output', signal: { kind: 'ckpt-transition', from: 'inactive', to: 'active' } },
-      { from: to, via: 'input', signal: { kind: 'query' } },
-    ]
-    // No incoming wires: vacuous "all lines reported" → also advance 活跃中→已激活 (已完成).
-    if (!awaiting.length) emit.push({ from: to, via: 'output', signal: { kind: 'ckpt-transition', from: 'active', to: 'activated' } })
-    return accept(sim, from, to, port, signal, { merges: { ...sim.merges, [to]: { awaiting, reported: [] } } }, emit)
-  }
-  if (signal.kind === 'query-response') {
-    if (from === null) return reject(sim, from, to, port, signal, 'C-R 缺少来源')
-    const current = mergeSim(sim, to)
-    if (!current.awaiting.length) return reject(sim, from, to, port, signal, '合并变迁当前没有进行中的查询')
-    if (!current.awaiting.includes(from)) return reject(sim, from, to, port, signal, '该来源不在本次查询名单中')
-    if (current.reported.includes(from)) return reject(sim, from, to, port, signal, '该来源已回报过 C-R')
-    const reported = [...current.reported, from]
-    const done = current.awaiting.every(id => reported.includes(id))
-    const nextMerge = done ? { awaiting: [], reported: [] } : { awaiting: current.awaiting, reported }
-    const emit: Emit[] = done
-      ? [{ from: to, via: 'output', signal: { kind: 'ckpt-transition', from: 'active', to: 'activated' } }]
-      : []
-    return accept(sim, from, to, port, signal, { merges: { ...sim.merges, [to]: nextMerge } }, emit)
-  }
-  return reject(sim, from, to, port, signal, '合并变迁入点只接受激活信号 A 与回报信号 C-R')
-}
-
-function deliverSwap(flow: ProgressFlow, sim: FlowSimState, from: string | null, to: string, port: FlowPort, signal: FlowSignal) {
-  const inIndex = parseSwapInIndex(port)
-  if (inIndex !== null) {
-    if (signal.kind !== 'activation') return reject(sim, from, to, port, signal, '交换变迁入点只接受激活信号 A')
-    const swap = getSwapNode(flow, to)!
-    const emit: Emit[] = [
-      { from: to, via: swapOutPort(inIndex), signal: { kind: 'ckpt-transition', from: 'inactive', to: 'activated' } },
-    ]
-    for (let j = 0; j < swap.entries; j++) {
-      if (j === inIndex) continue
-      emit.push({ from: to, via: swapInPort(j), signal: { kind: 'cancel-cascade' } })
-    }
-    return accept(sim, from, to, port, signal, {}, emit)
-  }
-  const outIndex = parseSwapOutIndex(port)
-  if (outIndex !== null) {
-    // Out 口收到 S-C → 转发到同条目激活来源
-    if (signal.kind === 'cancel-cascade') {
-      return accept(sim, from, to, port, signal, {}, [{ from: to, via: swapInPort(outIndex), signal: { kind: 'cancel-cascade' } }])
-    }
-    return reject(sim, from, to, port, signal, '交换变迁出点只转发 S-C')
-  }
-  return reject(sim, from, to, port, signal, '未知的交换变迁端口')
-}
-
-function deliverDiff(_flow: ProgressFlow, sim: FlowSimState, from: string | null, to: string, port: FlowPort, signal: FlowSignal) {
-  // 成功/失败出点收到 S-C → 转发到 Parent，并对 Goal 发 D
-  if (signal.kind === 'cancel-cascade') {
-    if (port !== 'output' && port !== 'output2') return reject(sim, from, to, port, signal, '差分变迁从成功/失败出点接收 S-C')
-    return accept(sim, from, to, port, signal, {}, [
-      { from: to, via: 'input2', signal: { kind: 'cancel-cascade' } },
-      { from: to, via: 'input', signal: { kind: 'cancel' } },
-    ])
-  }
-  // 成功/失败出点收到 G-C → 对 Goal 发 D
-  if (signal.kind === 'goal-cancel-cascade') {
-    if (port !== 'output' && port !== 'output2') return reject(sim, from, to, port, signal, '差分变迁从成功/失败出点接收 G-C')
-    return accept(sim, from, to, port, signal, {}, [{ from: to, via: 'input', signal: { kind: 'cancel' } }])
-  }
-  if (port === 'input2') {
-    if (signal.kind !== 'activation') return reject(sim, from, to, port, signal, 'Parent 只接受激活信号 A')
-    return accept(sim, from, to, port, signal, {}, [
-      { from: to, via: 'output', signal: { kind: 'ckpt-transition', from: 'inactive', to: 'active' } },
-      { from: to, via: 'input', signal: { kind: 'activation' } },
-    ])
-  }
-  if (port === 'input') {
-    if (signal.kind === 'goal-yes') {
-      return accept(sim, from, to, port, signal, {}, [
-        { from: to, via: 'input', signal: { kind: 'cancel' }, ...(from ? { onlyTo: from } : {}) },
-        { from: to, via: 'output', signal: { kind: 'ckpt-transition', from: 'active', to: 'activated' } },
-      ])
-    }
-    if (signal.kind === 'goal-no') {
-      return accept(sim, from, to, port, signal, {}, [
-        { from: to, via: 'input', signal: { kind: 'cancel' }, ...(from ? { onlyTo: from } : {}) },
-        { from: to, via: 'output', signal: { kind: 'cancel-cascade' } },
-        { from: to, via: 'output2', signal: { kind: 'ckpt-transition', from: 'inactive', to: 'activated' } },
-      ])
-    }
-    return reject(sim, from, to, port, signal, '差分变迁 Goal 入点只接受 G-Y / G-N')
-  }
-  return reject(sim, from, to, port, signal, '未知的差分变迁端口')
-}
-
-function deliverConditional(flow: ProgressFlow, sim: FlowSimState, from: string | null, to: string, port: FlowPort, signal: FlowSignal) {
-  // Next 口收到 S-C → 转发到 Parent
-  if (signal.kind === 'cancel-cascade') {
-    if (port !== 'output') return reject(sim, from, to, port, signal, '条件变迁从 Next 接收 S-C')
-    return accept(sim, from, to, port, signal, {}, [{ from: to, via: 'input2', signal: { kind: 'cancel-cascade' } }])
-  }
-  // Next 口收到 G-C → 对 Predicate 发 D
-  if (signal.kind === 'goal-cancel-cascade') {
-    if (port !== 'output') return reject(sim, from, to, port, signal, '条件变迁从 Next 接收 G-C')
-    return accept(sim, from, to, port, signal, {}, [{ from: to, via: 'input', signal: { kind: 'cancel' } }])
-  }
-  if (port === 'input2') {
-    if (signal.kind !== 'activation') return reject(sim, from, to, port, signal, 'Parent 只接受激活信号 A')
-    const predicates = incomingSources(flow, to, 'input')
-    const emit: Emit[] = [
-      { from: to, via: 'output', signal: { kind: 'ckpt-transition', from: 'inactive', to: 'active' } },
-      { from: to, via: 'input', signal: { kind: 'activation' } },
-    ]
-    // 无 Predicate：空条件成立，直接推进 活跃中→已激活
-    if (!predicates.length) emit.push({ from: to, via: 'output', signal: { kind: 'ckpt-transition', from: 'active', to: 'activated' } })
-    return accept(sim, from, to, port, signal, {}, emit)
-  }
-  if (port === 'input') {
-    if (signal.kind !== 'predicate-complete') return reject(sim, from, to, port, signal, '条件变迁 Predicate 入点只接受 P')
-    return accept(sim, from, to, port, signal, {}, [
-      { from: to, via: 'input', signal: { kind: 'cancel' }, ...(from ? { onlyTo: from } : {}) },
-      { from: to, via: 'output', signal: { kind: 'ckpt-transition', from: 'active', to: 'activated' } },
-    ])
-  }
-  return reject(sim, from, to, port, signal, '未知的条件变迁端口')
-}
-
-function deliverEnd(sim: FlowSimState, from: string | null, to: string, port: FlowPort, signal: FlowSignal): { sim: FlowSimState; emit: Emit[] } {
-  if (signal.kind === 'activation' || signal.kind === 'ckpt-transition' || signal.kind === 'cancel-cascade') {
-    return accept(sim, from, to, port, signal, {}, [])
-  }
-  return reject(sim, from, to, port, signal, '结束节点只吸收激活、状态转移与 S-C 信号')
-}
-
-function deliverOne(flow: ProgressFlow, sim: FlowSimState, seed: SignalSeed): { sim: FlowSimState; emit: Emit[] } {
-  const { from, to, port, signal } = seed
-  if (getEndNode(flow, to)) return deliverEnd(sim, from, to, port, signal)
-  if (getNode(flow, to)) return deliverCkpt(flow, sim, from, to, port, signal)
-  if (getGoalNode(flow, to)) return deliverGoal(sim, from, to, port, signal)
-  if (getPredicateNode(flow, to)) return deliverPredicate(sim, from, to, port, signal)
-  if (getTransitionNode(flow, to)) return deliverTransition(flow, sim, from, to, port, signal)
-  if (getConditionalNode(flow, to)) return deliverConditional(flow, sim, from, to, port, signal)
-  if (getDiffNode(flow, to)) return deliverDiff(flow, sim, from, to, port, signal)
-  if (getMergeNode(flow, to)) return deliverMerge(flow, sim, from, to, port, signal)
-  if (getSwapNode(flow, to)) return deliverSwap(flow, sim, from, to, port, signal)
-  return reject(sim, from, to, port, signal, '该节点尚未接入信号运行时')
+function deliverOne(flow: ProgressFlow, sim: FlowSimState, delivery: Delivery): Delivery[] {
+  if (getProgressNode(flow, delivery.to)) return deliverProgress(flow, sim, delivery, delivery.to)
+  if (getPredicateNode(flow, delivery.to)) return deliverPredicate(flow, sim, delivery, delivery.to)
+  if (getTransitionNode(flow, delivery.to)) return deliverTransition(flow, sim, delivery, delivery.to)
+  if (getEndNode(flow, delivery.to)) return deliverEnd(sim, delivery, delivery.to)
+  reject(sim, delivery, '目标节点不存在')
+  return []
 }
 
 /** Propagate signals through wires until the queue drains. */
-export function propagateSignals(flow: ProgressFlow, sim: FlowSimState, seeds: SignalSeed[]): FlowSimState {
-  let next: FlowSimState = { ...sim, log: [...sim.log], ckpt: { ...sim.ckpt }, goals: { ...sim.goals }, predicates: { ...sim.predicates }, merges: { ...sim.merges }, transitions: { ...sim.transitions }, pulse: sim.pulse + 1 }
-  const queue = [...seeds]
-  const nodeCount = Object.keys(flow.nodes).length + Object.keys(flow.goals ?? {}).length + Object.keys(flow.predicates ?? {}).length + Object.keys(flow.transitions ?? {}).length + Object.keys(flow.conditionals ?? {}).length + Object.keys(flow.diffs ?? {}).length + Object.keys(flow.merges ?? {}).length + Object.keys(flow.swaps ?? {}).length + Object.keys(flow.ends ?? {}).length
-  const guard = Math.max(64, nodeCount * 16 + 16)
-  for (let i = 0; i < queue.length && i < guard; i++) {
-    const result = deliverOne(flow, next, queue[i])
-    next = result.sim
-    for (const out of result.emit) queue.push(...emitTargets(flow, out.from, out.via, out.signal, out.onlyTo))
+export function propagateSignals(flow: ProgressFlow, sim: FlowSimState, seeds: Delivery[]): FlowSimState {
+  const next: FlowSimState = {
+    progress: { ...sim.progress },
+    predicates: { ...sim.predicates },
+    rounds: Object.fromEntries(Object.entries(sim.rounds).map(([id, round]) => [id, { open: round.open, id: round.id, answered: { ...round.answered } }])),
+    ends: { ...sim.ends },
+    log: [...sim.log],
+    pulse: sim.pulse + 1,
+    initialized: sim.initialized,
   }
+  const queue = [...seeds]
+  const nodeCount = Object.keys(flow.progress).length + Object.keys(flow.predicates ?? {}).length + Object.keys(flow.transitions ?? {}).length + Object.keys(flow.ends ?? {}).length
+  const guard = Math.max(64, nodeCount * 32 + 32)
+  for (let i = 0; i < queue.length && i < guard; i++) queue.push(...deliverOne(flow, next, queue[i]))
   return next
 }
 
-/** Start node system event: emit S(未激活, 已激活) on its single outgoing wire. */
-export function fireStart(flow: ProgressFlow, sim: FlowSimState): FlowSimState {
-  const targets = emitTargets(flow, flow.entry.id, 'output', START_SIGNAL)
-  if (!targets.length) {
-    return {
-      ...sim,
-      pulse: sim.pulse + 1,
-      log: [...sim.log, { from: flow.entry.id, to: flow.entry.id, port: 'output', signal: START_SIGNAL, accepted: false, reason: '开始节点尚未连接' }],
-    }
+/**
+ * 初始化 quest 实例（首次接取或 load）：
+ * 1. 开始进度节点进入运行中；
+ * 2. 对每个生效谓词按当前真值整体求值；
+ * 3. 按节点 ID 的稳定顺序，为真值谓词各广播一次 A；
+ * 4. 运行信号队列。
+ * 只广播一次；之后谓词只在 假→真 的上升沿增量广播。
+ */
+export function initializeQuest(flow: ProgressFlow, sim: FlowSimState): FlowSimState {
+  if (sim.initialized || !getProgressNode(flow, flow.start)) return sim
+  const base: FlowSimState = {
+    ...sim,
+    initialized: true,
+    progress: { ...sim.progress, [flow.start]: 'running' },
+    log: [...sim.log, { from: flow.start, to: flow.start, port: 'input' as FlowPort, signal: A, accepted: true }],
   }
-  return propagateSignals(flow, sim, targets)
+  const effective = connectedToStart(flow)
+  const seeds = Object.keys(flow.predicates ?? {})
+    .filter(id => effective.has(id) && predicateTruth(sim, id))
+    .sort()
+    .flatMap(id => forward(flow, id, 'output', A))
+  if (!seeds.length) return { ...base, pulse: sim.pulse + 1 }
+  return propagateSignals(flow, base, seeds)
 }
 
-/** Goal signal source: emit G / G-Y / G-N on its single outgoing wire while 订阅中. */
-export function fireGoalSignal(flow: ProgressFlow, sim: FlowSimState, id: string, kind: 'goal-complete' | 'goal-yes' | 'goal-no'): FlowSimState {
-  if (!getGoalNode(flow, id)) return sim
-  const label = SIGNAL_LABELS[kind]
-  const current = goalState(sim, id)
-  if (current !== 'subscribed') {
-    return {
-      ...sim,
-      pulse: sim.pulse + 1,
-      log: [...sim.log, { from: id, to: id, port: 'output', signal: { kind }, accepted: false, reason: current === 'inactive' ? `Goal 尚未订阅，无法发出 ${label}` : `Goal 已关闭，无法发出 ${label}` }],
-    }
+/** 模拟器手动结算：只有运行中的进度能结算，成功/失败从对应端口发 A。 */
+export function settleProgress(flow: ProgressFlow, sim: FlowSimState, id: string, outcome: 'succeeded' | 'failed'): FlowSimState {
+  if (!getProgressNode(flow, id)) return sim
+  if (progressState(sim, id) !== 'running') return sim
+  const port: FlowPort = outcome === 'succeeded' ? 'output' : 'output2'
+  const next = {
+    ...sim,
+    progress: { ...sim.progress, [id]: outcome },
+    log: [...sim.log, { from: id, to: id, port, signal: A, accepted: true }],
   }
-  const targets = emitTargets(flow, id, 'output', { kind })
-  if (!targets.length) {
-    return {
-      ...sim,
-      pulse: sim.pulse + 1,
-      log: [...sim.log, { from: id, to: id, port: 'output', signal: { kind }, accepted: false, reason: 'Goal 尚未连接' }],
-    }
-  }
-  return propagateSignals(flow, sim, targets)
+  return propagateSignals(flow, next, forward(flow, id, port, A))
 }
 
-export function fireGoalComplete(flow: ProgressFlow, sim: FlowSimState, id: string): FlowSimState {
-  return fireGoalSignal(flow, sim, id, 'goal-complete')
-}
-export function fireGoalYes(flow: ProgressFlow, sim: FlowSimState, id: string): FlowSimState {
-  return fireGoalSignal(flow, sim, id, 'goal-yes')
-}
-export function fireGoalNo(flow: ProgressFlow, sim: FlowSimState, id: string): FlowSimState {
-  return fireGoalSignal(flow, sim, id, 'goal-no')
-}
-
-/** Predicate signal source: emit P on its single outgoing wire while 订阅中. */
-export function firePredicateComplete(flow: ProgressFlow, sim: FlowSimState, id: string): FlowSimState {
+/**
+ * 模拟器手动改谓词真值。
+ * 初始化之前只算「预置」，不发信号；初始化之后只在 假→真 的上升沿广播 A。
+ */
+export function setPredicateTruth(flow: ProgressFlow, sim: FlowSimState, id: string, truth: boolean): FlowSimState {
   if (!getPredicateNode(flow, id)) return sim
-  const current = predicateState(sim, id)
-  if (current !== 'subscribed') {
-    return {
-      ...sim,
-      pulse: sim.pulse + 1,
-      log: [...sim.log, { from: id, to: id, port: 'output', signal: { kind: 'predicate-complete' }, accepted: false, reason: current === 'inactive' ? 'Predicate 尚未订阅，无法发出 P' : 'Predicate 已关闭，无法发出 P' }],
-    }
-  }
-  const targets = emitTargets(flow, id, 'output', { kind: 'predicate-complete' })
-  if (!targets.length) {
-    return {
-      ...sim,
-      pulse: sim.pulse + 1,
-      log: [...sim.log, { from: id, to: id, port: 'output', signal: { kind: 'predicate-complete' }, accepted: false, reason: 'Predicate 尚未连接' }],
-    }
-  }
-  return propagateSignals(flow, sim, targets)
+  const was = predicateTruth(sim, id)
+  if (was === truth) return sim
+  const next = { ...sim, predicates: { ...sim.predicates, [id]: truth } }
+  if (!sim.initialized || !truth) return next
+  return propagateSignals(flow, next, forward(flow, id, 'output', A))
 }
 
-/** Inject an arbitrary transition into a checkpoint (tests / future sources). */
-export function fireCkptTransition(flow: ProgressFlow, sim: FlowSimState, id: string, from: CkptState, to: CkptState): FlowSimState {
-  if (!getNode(flow, id)) return sim
-  return propagateSignals(flow, sim, [{ from: null, to: id, port: 'input', signal: { kind: 'ckpt-transition', from, to } }])
+/** 测试 / 工具：向某节点注入任意信号。 */
+export function injectSignal(flow: ProgressFlow, sim: FlowSimState, to: string, port: FlowPort, signal: FlowSignal): FlowSimState {
+  return propagateSignals(flow, sim, [{ signal, to, port, from: null }])
 }

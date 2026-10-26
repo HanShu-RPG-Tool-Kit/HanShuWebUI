@@ -23,6 +23,7 @@ import itemGuide from './docs/item-guide.md?raw'
 import gameDevServer from './docs/game-dev-server.md?raw'
 import gameplayWorkspace from './docs/gameplay-workspace.md?raw'
 import progressFlowModel from './docs/progress-flow-model.md?raw'
+import progressNodeGraph from './docs/progress-node-graph.md?raw'
 import progressDocument from './docs/progress-document.md?raw'
 import progressDesign from './docs/progress-design.md?raw'
 import ttsSpec from './docs/tts-spec.md?raw'
@@ -57,6 +58,7 @@ export type HelpTopicId =
   | 'game-dev-server'
   | 'gameplay-workspace'
   | 'progress-flow-model'
+  | 'progress-node-graph'
   | 'progress-document'
   | 'progress-design'
   | 'tts-spec'
@@ -196,6 +198,14 @@ export const HELP_TOPICS: HelpTopic[] = [
     audience: 'dev',
     inDocs: true,
     body: progressFlowModel,
+  },
+  {
+    id: 'progress-node-graph',
+    title: '多进度节点图：节点、端口与信号',
+    group: '进度',
+    audience: 'dev',
+    inDocs: true,
+    body: progressNodeGraph,
   },
   {
     id: 'progress-document',

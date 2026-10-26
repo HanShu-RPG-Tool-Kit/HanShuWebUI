@@ -8,11 +8,10 @@ import {LocalizedItemEditor, LocalizedEntityEditor} from './gameplay/LocalizedAp
 import {createEntity,parseEntity,stringifyEntity} from './gameplay/entityDoc'
 import { useEffect, useImperativeHandle, useMemo, useRef, useState, type DragEvent, type Ref } from 'react'
 import { createPortal } from 'react-dom'
-import { connectEntry, connectNodes, createFlow, disconnectLink, hasContentNode, parseFlow, validateFlow, type CanvasNodeType, type FlowCanvasNote, type FlowInputPort, type FlowPort, type FlowPosition, type FlowSelection, type ProgressFlow } from './gameplay/model'
-import { addNextCheckpoint, createCanvasNote, updateCanvasNote, removeCanvasItems, createCheckpoint, createEndNode, createGoalNode, createPredicateNode, createTransitionNode, createConditionalNode, createDiffNode, createMergeNode, createSwapNode, groupCanvasNodes, moveCanvasNodes, renameCanvasGroup, ungroupCanvasNodes, withCanvasPositions } from './gameplay/canvas'
+import { connectNodes, createFlow, disconnectLink, parseFlow, validateFlow, type CanvasNodeType, type FlowCanvasNote, type FlowInputPort, type FlowOutputPort, type FlowPosition, type FlowSelection, type ProgressFlow } from './gameplay/model'
+import { createCanvasNote, createEndNode, createPredicateNode, createProgressNode, createTransitionNode, groupCanvasNodes, moveCanvasNodes, removeCanvasItems, renameCanvasGroup, ungroupCanvasNodes, updateCanvasNote, withCanvasPositions } from './gameplay/canvas'
 import { smartArrangeCanvas } from './gameplay/arrange'
 import { ProgressGraph } from './gameplay/ProgressGraph'
-import { FlowEditorDialog } from './gameplay/FlowEditorDialog'
 import { FlowDocumentProperties } from './gameplay/FlowDocumentProperties'
 import { FlowExplorer } from './gameplay/FlowExplorer'
 import { PageList } from './gameplay/PageList'
@@ -292,7 +291,6 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
     notify(message, { source: 'progress' })
   }
   const [selection, setSelection] = useState<FlowSelection>({ kind: 'flow' })
-  const [editor, setEditor] = useState<{ key: string; flow: ProgressFlow; selection: FlowSelection; origin: HTMLElement | null } | null>(null)
   const [busy, setBusy] = useState(false)
   const [showIssues, setShowIssues] = useState(false)
   const [cycleAlert, setCycleAlert] = useState<string | null>(null)
@@ -343,13 +341,6 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
   function setLocaleText(key: string, value: string) {
     if (progressDoc && !progressEditable) return
     textMapRef.current?.set(key, value)
-    setLocaleTick((tick) => tick + 1)
-  }
-
-  function renameLocaleKeys(moves: Array<[string, string]>) {
-    const map = textMapRef.current
-    if (!map) return
-    for (const [from, to] of moves) map.renameKey(from, to)
     setLocaleTick((tick) => tick + 1)
   }
 
@@ -411,7 +402,7 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
   const issues = useMemo(() => parsed.flow ? validateFlow(parsed.flow) : [], [parsed.flow])
   const cycleWarning = issues.find(issue => issue.path === 'graph' && issue.message.includes('环'))
   const readOnly = !client?.writable
-  const locked = !projectBound || editor !== null || propertiesKey !== null
+  const locked = !projectBound || propertiesKey !== null
   const propertiesDoc = propertiesKey ? state.documents.find((item) => item.key === propertiesKey) ?? null : null
   const flowLocalizable = Boolean(doc && !scriptDoc && !kitDoc && !progressDoc && !navigationDoc && !itemDoc && !entityDoc && !itemTableDoc)
   const localeDoc = Boolean(doc && (flowLocalizable || kitDoc || navigationDoc))
@@ -652,26 +643,15 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
     }
   }
   const changeFlow = (flow: ProgressFlow, key = focusedKey ?? undefined) => changeSource(JSON.stringify(flow, null, 2), false, key)
-  function openEditor(nextSelection: FlowSelection) {
-    if (!doc || !parsed.flow || locked || busy) return
-    if (nextSelection.kind !== 'entry' && nextSelection.kind !== 'entry-link' && nextSelection.kind !== 'node') return
-    setSelection(nextSelection)
-    setEditor({ key: doc.key, flow: parsed.flow, selection: nextSelection, origin: document.activeElement instanceof HTMLElement ? document.activeElement : null })
-  }
-  function addNextNode(parent: string) {
-    if (!parsed.flow || locked || busy) return
-    try {
-      const result = addNextCheckpoint(parsed.flow, parent)
-      changeFlow(result.flow); setSelection({ kind: 'node', id: result.id })
-      if (doc && 'localeSeeds' in result && result.localeSeeds) {
-        queueLocaleSeeds(doc.key, result.localeSeeds as Record<string, string>)
-      }
-    } catch (error) { setNotice(String(error)) }
-  }
   function createNode(position: FlowPosition, operator?: CanvasNodeType) {
     if (!parsed.flow || locked || busy) return
-    const result = operator === 'end' ? createEndNode(parsed.flow, position) : operator === 'transition' ? createTransitionNode(parsed.flow, position) : operator === 'conditional' ? createConditionalNode(parsed.flow, position) : operator === 'diff' ? createDiffNode(parsed.flow, position) : operator === 'merge' ? createMergeNode(parsed.flow, position) : operator === 'swap' ? createSwapNode(parsed.flow, position) : operator === 'note' ? createCanvasNote(parsed.flow, position) : operator === 'goal' ? createGoalNode(parsed.flow, position) : operator === 'predicate' ? createPredicateNode(parsed.flow, position) : createCheckpoint(parsed.flow, position)
-    changeFlow(result.flow); setSelection({ kind: operator === 'end' ? 'end' : operator === 'transition' ? 'transition' : operator === 'conditional' ? 'conditional' : operator === 'diff' ? 'diff' : operator === 'merge' ? 'merge' : operator === 'swap' ? 'swap' : operator === 'note' ? 'note' : operator === 'goal' ? 'goal' : operator === 'predicate' ? 'predicate' : 'node', id: result.id })
+    const result = operator === 'predicate' ? createPredicateNode(parsed.flow, position)
+      : operator === 'transition' ? createTransitionNode(parsed.flow, position)
+        : operator === 'end' ? createEndNode(parsed.flow, position)
+          : operator === 'note' ? createCanvasNote(parsed.flow, position)
+            : createProgressNode(parsed.flow, position)
+    const kind = operator === 'predicate' ? 'predicate' : operator === 'transition' ? 'transition' : operator === 'end' ? 'end' : operator === 'note' ? 'note' : 'progress'
+    changeFlow(result.flow); setSelection({ kind, id: result.id } as FlowSelection)
     if (doc && 'localeSeeds' in result && result.localeSeeds) {
       queueLocaleSeeds(doc.key, result.localeSeeds as Record<string, string>)
     }
@@ -710,11 +690,7 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
     if (!parsed.flow || locked || busy) return
     changeFlow(updateCanvasNote(parsed.flow, id, patch))
   }
-  function setEntryTarget(id: string | null) {
-    if (!parsed.flow || locked || busy || (id !== null && !hasContentNode(parsed.flow, id))) return
-    changeFlow(connectEntry(withCanvasPositions(parsed.flow), id))
-  }
-  function connectCanvasNodes(from: string, to: string, port: FlowInputPort, fromPort?: FlowPort) {
+  function connectCanvasNodes(from: string, to: string, port: FlowInputPort, fromPort?: FlowOutputPort) {
     if (!parsed.flow || locked || busy) return
     try {
       const fixed = withCanvasPositions(parsed.flow), result = connectNodes(fixed, from, to, port, fromPort ?? 'output')
@@ -1353,9 +1329,11 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
           flow={paneFlow}
           selection={graphLive ? selection : { kind: 'flow' }}
           onSelect={(next) => { if (graphLive) setSelection(next) }}
-          onEdit={graphLive ? openEditor : () => undefined}
-          onAddNext={graphLive ? addNextNode : () => undefined}
           onCreate={graphLive ? createNode : () => undefined}
+          onChangeFlow={graphLive ? (next) => changeFlow(next) : () => undefined}
+          definitions={goalCatalog.definitions}
+          kitOptions={kitCatalog.options}
+          setText={paneDoc.key === focusedKey ? setLocaleText : undefined}
           onMove={graphLive ? moveCanvasSelection : () => undefined}
           onGroup={graphLive ? groupCanvasSelection : () => null}
           onUngroup={graphLive ? ungroupCanvasSelection : () => undefined}
@@ -1364,7 +1342,6 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
           onDeleteMany={graphLive ? deleteNodes : () => undefined}
           onArrange={graphLive ? arrangeSelection : () => undefined}
           onUpdateNote={graphLive ? updateNote : () => undefined}
-          onConnectEntry={graphLive ? setEntryTarget : () => undefined}
           resolveText={paneDoc.key === focusedKey ? (key) => textMapRef.current?.get(key) ?? null : undefined}
           onConnect={graphLive ? connectCanvasNodes : () => undefined}
           onDisconnect={graphLive ? disconnectCanvasLink : () => undefined}
@@ -1388,7 +1365,7 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
         {graphLive && showIssues && <div className="flow-issues">
           {paneError && <p className="flow-error">{paneError}</p>}
           {paneIssues.map((issue, index) => <p key={index} className={issue.severity === 'error' ? 'flow-error' : 'flow-warning'}><code>{issue.path}</code> {issue.message}</p>)}
-          <p className="flow-hint">保留独立起点，checkpoint 可自由创建和删除；检查连接引用、条件声明，以及画布连线是否成环（仅警告）。任务归属及执行规则留待后续设计。</p>
+          <p className="flow-hint">保留独立起点；进度、谓词、变迁、结束可自由创建和删除。检查端口与连接引用，以及画布连线是否成环（仅警告）。目标判定与外部激活留待后续接入。</p>
         </div>}
       </div>
     </>
@@ -1492,24 +1469,12 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
         </>
       }
     />
-    {editor && active && (
-      <FlowEditorDialog
-        key={editor.key}
-        flow={editor.flow}
-        initialSelection={editor.selection}
-        origin={editor.origin}
-        resolveText={resolveLocaleText}
-        setText={setLocaleText}
-        renameLocaleKeys={renameLocaleKeys}
-        onComplete={(flow, nextSelection) => { changeFlow(flow, editor.key); setSelection(nextSelection); setEditor(null) }}
-        onCancel={() => setEditor(null)}
-      />
-    )}    {propertiesDoc && active && <FlowDocumentProperties key={propertiesDoc.key} doc={propertiesDoc} onSave={(next) => saveProperties(propertiesDoc.key, next)} onCancel={() => setPropertiesKey(null)} />}
+    {propertiesDoc && active && <FlowDocumentProperties key={propertiesDoc.key} doc={propertiesDoc} onSave={(next) => saveProperties(propertiesDoc.key, next)} onCancel={() => setPropertiesKey(null)} />}
     {createPortal(<dialog ref={cycleDialog} className="flow-alert-dialog" aria-labelledby="flow-cycle-alert-title" onCancel={(event) => { event.preventDefault(); setCycleAlert(null) }}>
       <header><strong id="flow-cycle-alert-title">画布连线成环</strong></header>
       <div className="flow-alert-body">
         <p className="flow-warning">{cycleAlert}</p>
-        <p className="flow-hint">这只是警告，仍可继续编辑与保存。若需要保持 DAG，请断开环上的某条连线。</p>
+        <p className="flow-hint">这是结构错误：画布连线不能成环。请断开环上的某条连线，否则校验不会通过。</p>
       </div>
       <footer>
         <button type="button" onClick={() => { setShowIssues(true); setCycleAlert(null) }}>查看问题列表</button>

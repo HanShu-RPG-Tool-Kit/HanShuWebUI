@@ -24,7 +24,7 @@
   border-left: 1px solid #4a4a4a; min-width: 0;
 }
 .flow-graph-sim-log {
-  color: #9ab0a0; font-size: var(--fl-font-xs, 11px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 280px;
+  color: #9ab0a0; font-size: var(--fl-font-xs, 11px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 320px;
 }
 .flow-graph-zoom { display: flex; align-items: center; gap: 3px; margin-left: auto; }
 .flow-graph-zoom output { width: 38px; text-align: center; font-variant-numeric: tabular-nums; color: #a8a8a8; }
@@ -39,86 +39,42 @@
 .gameplay-workspace .flow-graph .flow-graph-node.is-selected { border-color: var(--node-accent); box-shadow: 0 0 0 1px var(--node-accent), 0 5px 12px #0007; }
 .gameplay-workspace .flow-graph .flow-graph-node:focus-within { border-color: var(--node-accent); }
 .gameplay-workspace .flow-graph .flow-graph-node.is-dragging { z-index: 3; cursor: grabbing; }
-.gameplay-workspace .flow-graph .flow-graph-node-body {
-  position: absolute; inset: 0; width: 100%; height: 100%; padding: 0;
-  border: 0; border-radius: 4px; background: transparent; text-align: left;
-  color: inherit; cursor: inherit; white-space: normal; touch-action: none;
-}
-.gameplay-workspace .flow-graph .flow-graph-node-body:focus-visible { outline: 1px solid var(--node-accent); outline-offset: 1px; }
-.gameplay-workspace .flow-graph .flow-graph-node-body:hover:not(:disabled) { background: transparent; color: inherit; }
 .flow-graph-node-header {
   position: absolute; top: 0; left: 0; right: 0;
   display: flex; align-items: center; gap: 7px; height: 24px; padding: 0 10px;
   background: #465c69; border-radius: 4px 4px 0 0; color: #e4ebee; font-size: 11px; font-weight: 500;
 }
-.flow-graph-node.is-entry .flow-graph-node-header { background: #536a49; color: #e3eddf; }
-.flow-graph-node.is-ckpt-inactive .flow-graph-node-header { background: #465c69; }
-.flow-graph-node.is-ckpt-active .flow-graph-node-header { background: #6a5a3a; color: #f2e8d4; }
-.flow-graph-node.is-ckpt-activated .flow-graph-node-header { background: #3f6a52; color: #dff0e6; }
-.flow-graph-node.is-ckpt-cancelled .flow-graph-node-header { background: #5a4545; color: #eddede; }
-.flow-graph-node.is-sim-pulse { box-shadow: 0 0 0 1px #8fbf9a, 0 5px 14px #0008; }
-.flow-graph-node.is-goal .flow-graph-node-header { background: #796443; color: #f0e6d4; }
-.flow-graph-node.is-goal-inactive .flow-graph-node-header { background: #5c5344; color: #d9d0c0; }
-.flow-graph-node.is-goal-subscribed .flow-graph-node-header { background: #8a6b2e; color: #f7ecd4; }
-.flow-graph-node.is-goal-closed .flow-graph-node-header { background: #4a4540; color: #cfc8bf; }
-.flow-graph-node.is-signal-source.is-goal-subscribed { box-shadow: 0 0 0 1px #d0ad7288; }
-.flow-graph-node.is-end .flow-graph-node-header { background: #8b4545; }
-.flow-graph-node.is-end .flow-graph-node-symbol { color: #f0d4d4; }
 .flow-graph-node-symbol { color: #ffffffb0; font-size: 15px; }
 .flow-graph-lock { width: 13px; height: 13px; margin-left: auto; fill: none; stroke: #d7e6cf; stroke-width: 1.3px; }
-.flow-graph-header-tag { margin-left: auto; font-size: 10px; font-weight: 400; color: #d6c9bb; }
+.flow-graph-header-tag { margin-left: auto; font-size: 10px; font-weight: 400; color: #e6dccd; }
 .flow-graph-node-title { position: absolute; top: 31px; left: 11px; right: 11px; display: block; margin: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12px; line-height: 18px; font-weight: 500; }
-.flow-graph-node.is-entry .flow-graph-node-title { color: #babfba; font-size: 12px; font-weight: 400; }
-.flow-graph-node.is-entry .flow-graph-node-title { top: 35px; font-size: 11px; }
-.flow-graph-ports { position: absolute; top: 51px; left: 0; right: 0; height: 16px; display: flex; align-items: center; justify-content: space-between; padding: 0 11px; font-size: 10px; color: #bcbcbc; }
-.flow-graph-node.is-entry .flow-graph-ports { top: 36px; }
-.flow-graph-port-output { margin-left: auto; }
-.flow-graph-node-description { position: absolute; top: 76px; left: 11px; right: 11px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #a8a8a8; font-size: 10px; line-height: 15px; }
-.flow-graph-node.is-goal .flow-graph-node-description { top: 73px; }
-.flow-graph-node-description.is-empty { color: #909090; }
-.flow-graph-extra { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; max-height: 100px; overflow: auto; padding: 8px 12px; border-top: 1px solid #151515; background: #303030; font-size: 11px; color: #d0b18a; }
+.flow-graph-node-description { position: absolute; top: 56px; left: 11px; right: 11px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: #a8a8a8; font-size: 10px; line-height: 15px; }
+.flow-graph-node-description.is-empty { color: #8c8c8c; }
 .flow-graph-legend { display: flex; flex-wrap: wrap; align-items: center; gap: 15px; min-height: 27px; padding: 4px 12px; border-top: 1px solid #171717; background: #2c2c2c; color: #9e9e9e; font-size: 10px; flex-shrink: 0; }
 .flow-graph-legend span { display: flex; align-items: center; gap: 5px; }
 .flow-graph-legend span:last-child { margin-left: auto; }
-.flow-graph-legend i { width: 7px; height: 7px; border-radius: 2px; }
-.flow-graph-legend i.is-entry { background: #7b956b; }
-.flow-graph-legend i.is-checkpoint { background: #6c8da0; }
-.flow-graph-legend i.is-goal { background: #ba9860; }
-@media (max-width: 1000px) { .flow-graph-count { display: none; } .flow-graph-toolbar { flex-wrap: wrap; } }
+
+.flow-graph-node.is-progress .flow-graph-node-header { background: #4f5d7a; color: #e4e9f2; }
+.flow-graph-node.is-start .flow-graph-node-header { background: #536a49; color: #e3eddf; }
+.flow-graph-node.is-draft { opacity: .55; border-style: dashed; }
+.flow-graph-node.is-draft .flow-graph-node-header { background: #4a4a4a; color: #bdbdbd; }
+.flow-graph-node.is-progress .flow-graph-node-title { font-size: 13px; }
+.flow-graph-node.is-progress-inactive .flow-graph-node-header { background: #46505e; }
+.flow-graph-node.is-progress-running .flow-graph-node-header { background: #6a5a3a; color: #f2e8d4; }
+.flow-graph-node.is-progress-succeeded .flow-graph-node-header { background: #3f6a52; color: #dff0e6; }
+.flow-graph-node.is-progress-failed .flow-graph-node-header { background: #7a4646; color: #f2dede; }
+.flow-graph-node.is-progress-cancelled .flow-graph-node-header { background: #5a4545; color: #e6d6d6; }
+.flow-graph-node.is-progress-running { box-shadow: 0 0 0 1px #c9b07a55, 0 2px 5px #0005; }
+
+.flow-graph-node.is-predicate .flow-graph-node-header { background: #6b5a3e; color: #f0e6d4; }
+.flow-graph-node.is-predicate.is-true .flow-graph-node-header { background: #8a6b2e; color: #f7ecd4; }
+.flow-graph-node.is-predicate.is-true { box-shadow: 0 0 0 1px #d0ad7255, 0 2px 5px #0005; }
 
 .flow-graph-node.is-transition .flow-graph-node-header { background: #4e6862; color: #e1ece8; }
-.flow-graph-node.is-transition .flow-graph-ports { position: absolute; inset: 0; height: auto; display: block; padding: 0; }
-.flow-transition-input-one, .flow-transition-input-two { position: absolute; left: 11px; line-height: 16px; }
-.flow-transition-input-one { top: 50px; color: #d0ad72; }
-.flow-transition-input-two { top: 78px; color: #7a9aab; }
-.flow-graph-node.is-transition .flow-graph-port-output { position: absolute; right: 11px; top: 64px; line-height: 16px; color: #7a9aab; }
-.flow-graph-legend i.is-transition { background: #87aaa0; }
-.flow-graph-node.is-conditional .flow-graph-node-header { background: #4a5f6e; color: #dde8f0; }
-.flow-graph-node.is-conditional .flow-graph-ports { position: absolute; inset: 0; height: auto; display: block; padding: 0; }
-.flow-graph-node.is-conditional .flow-graph-port-output { position: absolute; right: 11px; top: 64px; line-height: 16px; color: #7a9aab; }
-.flow-graph-legend i.is-conditional { background: #7a9ab0; }
-.flow-graph-node.is-predicate .flow-graph-node-header { background: #6b5a3e; color: #f0e6d4; }
-.flow-graph-node.is-predicate-inactive .flow-graph-node-header { background: #554c3c; color: #d9d0c0; }
-.flow-graph-node.is-predicate-subscribed .flow-graph-node-header { background: #7a6230; color: #f7ecd4; }
-.flow-graph-node.is-predicate-closed .flow-graph-node-header { background: #4a4540; color: #cfc8bf; }
-.flow-graph-node.is-signal-source.is-predicate-subscribed { box-shadow: 0 0 0 1px #d0ad7288; }
-.flow-graph-node.is-predicate .flow-graph-node-description { top: 73px; }
-.flow-graph-legend i.is-predicate { background: #c4a06a; }
-.flow-graph-node.is-diff .flow-graph-node-header { background: #5a4a62; color: #ebe0f0; }
-.flow-graph-node.is-diff .flow-graph-header-tag { color: #d4c2dc; }
-.flow-graph-node.is-diff .flow-graph-ports { position: absolute; inset: 0; height: auto; display: block; padding: 0; }
-.flow-diff-output-one, .flow-diff-output-two { position: absolute; right: 11px; line-height: 16px; }
-.flow-diff-output-one { top: 50px; color: #7a9aab; }
-.flow-diff-output-two { top: 78px; color: #c47f6a; }
-.flow-graph-legend i.is-diff { background: #9a7aaa; }
-.flow-graph-node.is-merge .flow-graph-node-header { background: #6a4558; color: #f0e0e8; }
-.flow-graph-node.is-merge .flow-graph-header-tag { color: #d4b8c4; }
-.flow-graph-legend i.is-merge { background: #b07890; }
-.flow-graph-node.is-swap .flow-graph-node-header { background: #5a5348; color: #efe6d6; }
-.flow-graph-node.is-swap .flow-graph-header-tag { color: #d4c4a8; }
-.flow-graph-node.is-swap .flow-graph-ports { position: absolute; inset: 0; height: auto; display: block; padding: 0; }
-.flow-swap-entry-in, .flow-swap-entry-out { position: absolute; line-height: 16px; color: #7a9aab; }
-.flow-swap-entry-in { left: 11px; }
-.flow-swap-entry-out { right: 11px; }
-.flow-graph-legend i.is-swap { background: #a89070; }
-.flow-graph-legend i.is-end { background: #8b4545; }
+.flow-graph-node.is-transition.is-waiting { box-shadow: 0 0 0 1px #9fc4b644, 0 2px 5px #0005; }
+
+.flow-graph-node.is-end .flow-graph-node-header { background: #8b4545; color: #f0dede; }
+.flow-graph-node.is-end.is-reached .flow-graph-node-header { background: #3f6a52; color: #dff0e6; }
+.flow-graph-node.is-end .flow-graph-node-title { display: none; }
+
+@media (max-width: 1000px) { .flow-graph-count { display: none; } .flow-graph-toolbar { flex-wrap: wrap; } }

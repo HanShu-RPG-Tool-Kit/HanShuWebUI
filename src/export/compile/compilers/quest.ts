@@ -14,17 +14,26 @@ function pakQuestPath(fileName: string): string {
  * 已是 progress-tree 的 `.quest` 原样进包。
  */
 export function compileSimpleQuestDocument(doc: ProgressDocument): string {
+  const start = 'progress_start'
+  const title = typeof doc.name === 'string' ? doc.name : 'name'
+  const description = typeof doc.description === 'string' ? doc.description : 'description'
   const tree = {
     format: MULTI_QUEST_FORMAT,
     version: 1 as const,
     id: doc.id,
-    entry: {
-      id: 'entry',
-      target: null,
-      title: { text: typeof doc.name === 'string' ? doc.name : 'name' },
-      description: { text: typeof doc.description === 'string' ? doc.description : 'description' },
+    start,
+    progress: {
+      [start]: {
+        title: { text: title },
+        questTitle: { text: title },
+        description: { text: description },
+        runningLog: { text: '' },
+        completedLog: { text: '' },
+        goals: doc.goals.map(goal => ({ id: goal.id, kind: goal.kind, params: goal.config })),
+        completion: doc.completion === 'custom' ? 'custom' : doc.completion === 'any' ? 'any' : 'all',
+        ...(doc.completion === 'custom' && doc.completionGraph ? { completionGraph: doc.completionGraph } : {}),
+      },
     },
-    nodes: {},
     extensions: {
       hanshuSimpleQuest: doc,
     },

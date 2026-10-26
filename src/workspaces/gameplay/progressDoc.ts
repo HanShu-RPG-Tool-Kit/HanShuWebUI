@@ -3,34 +3,14 @@ import { randomId } from '../../project/crypto'
 import { isObject } from './model'
 import { parseJsonValue } from '../../utils/strictJson'
 import { type GoalConfigValue, type GoalDefinition } from './goalDefinitions'
+import { parseConditionRules, type ProgressConditionRule } from './conditions'
+
+export { conditionStatesFor, createConditionRule } from './conditions'
+export { DIALOGUE_VISIBILITY_STATES, EXPR_VISIBILITY_STATES, REPEAT_CYCLE_STATES, TASK_VISIBILITY_STATES } from './conditions'
+export type { ProgressConditionRule } from './conditions'
 
 export const PROGRESS_FORMAT = 'hanshu.progress'
 export type ProgressConfigValue = GoalConfigValue
-export const TASK_VISIBILITY_STATES = { before_accept: '接取之前', after_accept: '接取之后', active: '激活中', succeeded: '成功后', ended: '结束后' } as const
-export const DIALOGUE_VISIBILITY_STATES = { before: '之前', after: '之后' } as const
-/** 条件求值器：表达式本身即条件，仅「满足」一态 */
-export const EXPR_VISIBILITY_STATES = { true: '满足' } as const
-/** 本进度重复周期；仅允许写入可见性条件。可承接侧由引擎投影「已满足」，不占条件槽。 */
-export const REPEAT_CYCLE_STATES = { satisfied: '已满足', unsatisfied: '不满足' } as const
-export type ProgressConditionRule =
-  | { kind: 'task'; state: keyof typeof TASK_VISIBILITY_STATES; target: string }
-  | { kind: 'dialogue'; state: keyof typeof DIALOGUE_VISIBILITY_STATES; target: string }
-  | { kind: 'expr'; state: keyof typeof EXPR_VISIBILITY_STATES; target: string }
-  | { kind: 'repeat'; state: keyof typeof REPEAT_CYCLE_STATES; target: '' }
-
-export function conditionStatesFor(kind: ProgressConditionRule['kind']) {
-  if (kind === 'task') return TASK_VISIBILITY_STATES
-  if (kind === 'dialogue') return DIALOGUE_VISIBILITY_STATES
-  if (kind === 'repeat') return REPEAT_CYCLE_STATES
-  return EXPR_VISIBILITY_STATES
-}
-
-export function createConditionRule(kind: ProgressConditionRule['kind']): ProgressConditionRule {
-  if (kind === 'task') return { kind: 'task', state: 'succeeded', target: '' }
-  if (kind === 'dialogue') return { kind: 'dialogue', state: 'after', target: '' }
-  if (kind === 'repeat') return { kind: 'repeat', state: 'satisfied', target: '' }
-  return { kind: 'expr', state: 'true', target: '' }
-}
 export type ProgressRepeatKind = 'once' | 'game_daily' | 'game_weekly' | 'real_daily' | 'real_weekly' | 'real_monthly' | 'duration' | 'manual'
 export type ProgressGoal = { id: string; kind: string; config: Record<string, ProgressConfigValue> }
 export type ProgressDocument = {
@@ -107,31 +87,8 @@ export function parseProgress(source: string, _definitions: readonly GoalDefinit
     ids.add(value); return value
   }
   const str = (value: unknown, path: string): string => { check(typeof value === 'string', `${path} 必须是文本`); return value }
-  const readConditions = (values: unknown, label: string, allowRepeat: boolean): ProgressConditionRule[] => {
-    check(Array.isArray(values), `${label}必须是条件数组`)
-    return values.map((value): ProgressConditionRule => {
-    check(isObject(value), `${label}无效`)
-    const target = str(value.target, '条件对象')
-    if (value.kind === 'task') {
-      check(Object.hasOwn(TASK_VISIBILITY_STATES, String(value.state)), '任务条件状态无效')
-      return { kind: 'task', state: value.state as keyof typeof TASK_VISIBILITY_STATES, target }
-    }
-    if (value.kind === 'dialogue') {
-      check(Object.hasOwn(DIALOGUE_VISIBILITY_STATES, String(value.state)), '对话条件状态无效')
-      return { kind: 'dialogue', state: value.state as keyof typeof DIALOGUE_VISIBILITY_STATES, target }
-    }
-    if (value.kind === 'repeat') {
-      check(allowRepeat, '可承接条件不能写入重复周期；周期由引擎投影，不占条件槽')
-      check(Object.hasOwn(REPEAT_CYCLE_STATES, String(value.state)), '重复周期条件状态无效')
-      check(target === '', '重复周期条件不需要对象')
-      return { kind: 'repeat', state: value.state as keyof typeof REPEAT_CYCLE_STATES, target: '' }
-    }
-    check(value.kind === 'expr' && Object.hasOwn(EXPR_VISIBILITY_STATES, String(value.state)), '求值条件状态无效')
-    return { kind: 'expr', state: value.state as keyof typeof EXPR_VISIBILITY_STATES, target }
-    })
-  }
-  const visibility = readConditions(raw.visibility, '可见性条件', true)
-  const acceptance = readConditions(raw.acceptance, '可承接条件', false)
+  const visibility = parseConditionRules(raw.visibility, '可见性条件', true)
+  const acceptance = parseConditionRules(raw.acceptance, '可承接条件', false)
   const docId = id(raw.id, '进度')
   check(raw.completion === 'all' || raw.completion === 'any' || raw.completion === 'custom', 'completion 必须是 all、any 或 custom')
   const completionGraph = raw.completionGraph === undefined ? undefined : parseCompletionGraph(raw.completionGraph)

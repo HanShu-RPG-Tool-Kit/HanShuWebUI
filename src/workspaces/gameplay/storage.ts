@@ -58,7 +58,7 @@ export function stampDocument(document: FlowDocument, touch = true): FlowDocumen
 
 export const createFlowDocument = (flow = createFlow(), pkg: FlowPackageId = 'quest'): FlowDocument => stampDocument({
   key: randomId(),
-  name: `${(flow.entry.title.text.trim() || flow.id).replace(/[\\/:*?"<>|]/g, '_')}.quest`,
+  name: `${((flow.progress[flow.start]?.questTitle?.text ?? flow.progress[flow.start]?.title.text) ?? flow.id).replace(/[\\/:*?"<>|]/g, '_')}.quest`,
   source: JSON.stringify(flow, null, 2),
   package: pkg,
 })

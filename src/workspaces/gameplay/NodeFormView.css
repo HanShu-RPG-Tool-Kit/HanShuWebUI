@@ -1,0 +1,47 @@
+.node-form-view {
+  position: absolute; inset: 0;
+  display: flex; flex-direction: column; min-width: 0;
+  border: 1px solid #1b1b1b; border-radius: 5px;
+  background: #2e2e2e; color: #dcdcdc;
+  box-shadow: 0 6px 18px #0008;
+  overflow: hidden;
+}
+.node-form-view.is-readonly { opacity: .8; }
+.node-form-header {
+  display: flex; align-items: center; gap: 7px;
+  height: 28px; flex: none; padding: 0 9px;
+  background: #3c4a5c; color: #e6ecf3; font-size: 12px;
+  border-bottom: 1px solid #1b1b1b;
+}
+.node-form-kind { padding: 0 5px; border: 1px solid #7f90a4; border-radius: 3px; color: #cfd8e3; font-size: 10px; }
+.node-form-header strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.node-form-close { border: 0; background: transparent; color: #cfd8e3; font-size: 15px; line-height: 1; padding: 0 2px; cursor: pointer; }
+.node-form-body { flex: 1; min-height: 0; overflow: auto; padding: 8px 10px 12px; }
+.node-form-body .flow-field { margin-bottom: 7px; }
+.node-form-body .flow-field > span { display: block; margin-bottom: 3px; color: #b6b6b6; font-size: 11px; }
+.node-form-body input, .node-form-body select, .node-form-body textarea { box-sizing: border-box; min-width: 0; }
+.node-form-body .flow-field input, .node-form-body .flow-field select, .node-form-body .flow-field textarea { width: 100%; }
+.node-form-section { margin-top: 10px; padding-top: 8px; border-top: 1px solid #444; }
+.node-form-section > header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 6px; color: #c9c9c9; font-size: 11px;
+}
+.node-form-section > header button, .node-form-goal button, .node-form-condition button, .node-form-kit-add button {
+  border: 1px solid #4c4c4c; background: #262626; color: #d6d6d6;
+  border-radius: 3px; padding: 1px 6px; font-size: 11px; cursor: pointer;
+}
+.node-form-goal { margin-bottom: 6px; padding: 6px; border: 1px solid #414141; border-radius: 4px; }
+.node-form-goal-head { display: flex; gap: 5px; }
+.node-form-goal-head select { flex: 1; min-width: 0; }
+.node-form-param { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 11px; }
+.node-form-param > span { flex: none; min-width: 72px; color: #a9a9a9; }
+.node-form-param > input { flex: 1; min-width: 0; }
+.node-form-condition { display: grid; grid-template-columns: 74px 82px minmax(0, 1fr) auto; gap: 4px; align-items: center; margin-bottom: 4px; }
+.node-form-condition > input { min-width: 0; }
+.node-form-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.node-form-chip { display: inline-flex; align-items: center; gap: 3px; padding: 1px 5px; border: 1px solid #596b59; border-radius: 3px; font-size: 11px; }
+.node-form-chip button { border: 0; background: transparent; color: inherit; cursor: pointer; padding: 0; font-size: 12px; }
+.node-form-kit-add { display: flex; gap: 4px; margin-top: 6px; }
+.node-form-kit-add input { flex: 1; min-width: 0; }
+.node-form-graph { display: flex; flex-direction: column; height: 300px; }
+.node-form-graph .node-editor { flex: 1; min-height: 240px; }

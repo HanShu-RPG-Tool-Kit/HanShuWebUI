@@ -31,26 +31,10 @@ export function isProgressLocaleKey(value: string): boolean {
   return PROGRESS_LOCALE_KEY_RE.test(value.trim())
 }
 
-export function flowEntryTitleKey(): string {
-  return 'entry.title'
-}
-
-export function flowEntryDescriptionKey(): string {
-  return 'entry.description'
-}
-
 export function flowNodeFieldKey(
-  collection:
-    | 'nodes'
-    | 'goals'
-    | 'predicates'
-    | 'transitions'
-    | 'conditionals'
-    | 'diffs'
-    | 'merges'
-    | 'swaps',
+  collection: 'progress' | 'predicates' | 'ends',
   id: string,
-  field: 'title' | 'description',
+  field: string,
 ): string {
   return `${collection}.${id}.${field}`
 }
@@ -115,62 +99,33 @@ export function ensureFlowLocaleKeys(flow: ProgressFlow): {
   seeds: Record<string, string>
 } {
   const seeds: Record<string, string> = {}
-  const next: ProgressFlow = {
-    ...flow,
-    entry: {
-      ...flow.entry,
-      title: migrateFlowText(flow.entry.title, flowEntryTitleKey(), seeds),
-      description: migrateFlowText(
-        flow.entry.description,
-        flowEntryDescriptionKey(),
-        seeds,
-      ),
-    },
-    nodes: { ...flow.nodes },
-  }
+  const next: ProgressFlow = { ...flow, progress: { ...flow.progress } }
 
-  for (const [id, node] of Object.entries(flow.nodes)) {
-    next.nodes[id] = {
+  for (const [id, node] of Object.entries(flow.progress)) {
+    const migrated: typeof node = {
       ...node,
-      title: migrateFlowText(node.title, flowNodeFieldKey('nodes', id, 'title'), seeds),
-      description: migrateFlowText(
-        node.description,
-        flowNodeFieldKey('nodes', id, 'description'),
-        seeds,
-      ),
+      title: migrateFlowText(node.title, flowNodeFieldKey('progress', id, 'title'), seeds),
+      runningLog: migrateFlowText(node.runningLog, flowNodeFieldKey('progress', id, 'runningLog'), seeds),
+      completedLog: migrateFlowText(node.completedLog, flowNodeFieldKey('progress', id, 'completedLog'), seeds),
     }
+    if (id === flow.start) {
+      migrated.questTitle = migrateFlowText(node.questTitle ?? text(''), flowNodeFieldKey('progress', id, 'questTitle'), seeds)
+      migrated.description = migrateFlowText(node.description ?? text(''), flowNodeFieldKey('progress', id, 'description'), seeds)
+    }
+    next.progress[id] = migrated
   }
 
-  const collections = [
-    'goals',
-    'predicates',
-    'transitions',
-    'conditionals',
-    'diffs',
-    'merges',
-    'swaps',
-  ] as const
-
-  for (const collection of collections) {
-    const bag = flow[collection]
-    if (!bag) continue
-    const copy: Record<string, (typeof bag)[string]> = { ...bag }
-    for (const [id, node] of Object.entries(bag)) {
-      copy[id] = {
-        ...node,
-        title: migrateFlowText(
-          node.title,
-          flowNodeFieldKey(collection, id, 'title'),
-          seeds,
-        ),
-        description: migrateFlowText(
-          node.description,
-          flowNodeFieldKey(collection, id, 'description'),
-          seeds,
-        ),
-      }
-    }
-    ;(next as ProgressFlow)[collection] = copy as never
+  if (flow.predicates) {
+    next.predicates = Object.fromEntries(Object.entries(flow.predicates).map(([id, node]) => [id, {
+      ...node,
+      title: migrateFlowText(node.title, flowNodeFieldKey('predicates', id, 'title'), seeds),
+    }]))
+  }
+  if (flow.ends) {
+    next.ends = Object.fromEntries(Object.entries(flow.ends).map(([id, node]) => [id, {
+      ...node,
+      title: migrateFlowText(node.title, flowNodeFieldKey('ends', id, 'title'), seeds),
+    }]))
   }
 
   return { flow: next, seeds }
@@ -189,29 +144,20 @@ export function defaultFlowLocaleSeeds(
   title = '新的进度流程',
 ): Record<string, string> {
   return {
-    [flowEntryTitleKey()]: title,
-    [flowEntryDescriptionKey()]: '',
+    [flowNodeFieldKey('progress', 'progress_start', 'questTitle')]: title,
+    [flowNodeFieldKey('progress', 'progress_start', 'description')]: '',
+    [flowNodeFieldKey('progress', 'progress_start', 'title')]: title,
+    [flowNodeFieldKey('progress', 'progress_start', 'runningLog')]: '',
+    [flowNodeFieldKey('progress', 'progress_start', 'completedLog')]: '',
   }
 }
 
 export function flowNodeLocaleSeeds(
-  collection:
-    | 'nodes'
-    | 'goals'
-    | 'predicates'
-    | 'transitions'
-    | 'conditionals'
-    | 'diffs'
-    | 'merges'
-    | 'swaps',
+  collection: 'progress' | 'predicates' | 'ends',
   id: string,
   title: string,
-  description = '',
 ): Record<string, string> {
-  return {
-    [flowNodeFieldKey(collection, id, 'title')]: title,
-    [flowNodeFieldKey(collection, id, 'description')]: description,
-  }
+  return { [flowNodeFieldKey(collection, id, 'title')]: title }
 }
 
 /** 节点 ID 重命名时，.lang 内键的搬家列表 */
@@ -219,26 +165,19 @@ export function flowNodeLocaleKeyMoves(
   oldId: string,
   newId: string,
 ): Array<[string, string]> {
-  const collections = [
-    'nodes',
-    'goals',
-    'predicates',
-    'transitions',
-    'conditionals',
-    'diffs',
-    'merges',
-    'swaps',
-  ] as const
+  const fields: Record<'progress' | 'predicates' | 'ends', readonly string[]> = {
+    progress: ['title', 'runningLog', 'completedLog', 'questTitle', 'description'],
+    predicates: ['title'],
+    ends: ['title'],
+  }
   const moves: Array<[string, string]> = []
-  for (const collection of collections) {
-    moves.push([
-      flowNodeFieldKey(collection, oldId, 'title'),
-      flowNodeFieldKey(collection, newId, 'title'),
-    ])
-    moves.push([
-      flowNodeFieldKey(collection, oldId, 'description'),
-      flowNodeFieldKey(collection, newId, 'description'),
-    ])
+  for (const [collection, keys] of Object.entries(fields) as Array<['progress' | 'predicates' | 'ends', readonly string[]]>) {
+    for (const field of keys) {
+      moves.push([
+        flowNodeFieldKey(collection, oldId, field),
+        flowNodeFieldKey(collection, newId, field),
+      ])
+    }
   }
   return moves
 }

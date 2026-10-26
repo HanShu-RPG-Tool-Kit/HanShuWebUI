@@ -1,36 +1,84 @@
 import * as M from './model'
-import { layoutCanvas,nodeMetrics,socketOffset } from './canvas'
+import { layoutCanvas, nodeMetrics, socketOffset } from './canvas'
 import type { FlowSimState } from './signals'
-import type { EditorEdge,EditorNode } from '../../nodeEditor'
-export type ProgressNodeData={flow:M.ProgressFlow;sim:FlowSimState;resolveText?: (key:string)=>string|null}
-export function nodeSelection(flow:M.ProgressFlow,id:string):M.FlowSelection {
-  if(id===flow.entry.id)return {kind:'entry'}
-  const kind=M.getCanvasNote(flow,id)?'note':M.getEndNode(flow,id)?'end':M.getTransitionNode(flow,id)?'transition':M.getConditionalNode(flow,id)?'conditional':M.getDiffNode(flow,id)?'diff':M.getMergeNode(flow,id)?'merge':M.getSwapNode(flow,id)?'swap':M.getGoalNode(flow,id)?'goal':M.getPredicateNode(flow,id)?'predicate':'node'
-  return {kind,id}
+import type { EditorEdge, EditorNode } from '../../nodeEditor'
+
+export type ProgressNodeData = { flow: M.ProgressFlow; sim: FlowSimState; draft: boolean; resolveText?: (key: string) => string | null }
+
+const COLORS = {
+  activate: '#7a9aab',
+  success: '#7fae86',
+  failure: '#c07a7a',
+  conjunction: '#c9b07a',
+  disjunction: '#8fa9c9',
+  predicate: '#b79ad0',
+} as const
+
+export function nodeSelection(flow: M.ProgressFlow, id: string): M.FlowSelection {
+  if (M.getCanvasNote(flow, id)) return { kind: 'note', id }
+  if (M.getProgressNode(flow, id)) return { kind: 'progress', id }
+  if (M.getPredicateNode(flow, id)) return { kind: 'predicate', id }
+  if (M.getTransitionNode(flow, id)) return { kind: 'transition', id }
+  if (M.getEndNode(flow, id)) return { kind: 'end', id }
+  return { kind: 'flow' }
 }
-export function edgeSelection(id:string):M.FlowSelection{return id==='entry-link'?{kind:'entry-link'}:{kind:'logic-link',id:id.slice(6)}}
-export function progressLinks(flow:M.ProgressFlow){
-  const links=(flow.logic?.links??[]).map(link=>({...link,entry:false}))
-  return flow.entry.target===null?links:[{id:'entry-link',from:flow.entry.id,to:flow.entry.target,port:flow.entry.port??'input',fromPort:'output',entry:true} as typeof links[number],...links]
+export function edgeSelection(id: string): M.FlowSelection {
+  return { kind: 'logic-link', id: id.slice(6) }
 }
-export function progressEdges(flow:M.ProgressFlow):EditorEdge[]{
-  return progressLinks(flow).map(link=>({id:link.entry?'entry-link':`logic:${link.id}`,source:link.from,target:link.to,sourcePort:M.linkSourcePort(flow,link.from,link.to,link.port,link.fromPort),targetPort:link.port,kind:M.portKind(flow,link.from,M.linkSourcePort(flow,link.from,link.to,link.port,link.fromPort)),color:M.portKind(flow,link.from,M.linkSourcePort(flow,link.from,link.to,link.port,link.fromPort))==='goal'?'#d0ad72':'#7a9aab',label:link.entry?'起点连接':`连接 ${link.id}，${link.from} 到 ${link.to}`}))
+
+export function portColor(flow: M.ProgressFlow, id: string, port: M.FlowPort): string {
+  if (M.getProgressNode(flow, id)) return port === 'output' ? COLORS.success : port === 'output2' ? COLORS.failure : COLORS.activate
+  if (M.getTransitionNode(flow, id)) return port === 'input' ? COLORS.conjunction : port === 'input2' ? COLORS.disjunction : COLORS.activate
+  if (M.getEndNode(flow, id)) return port === 'input2' ? COLORS.failure : COLORS.success
+  if (M.getPredicateNode(flow, id)) return COLORS.predicate
+  return COLORS.activate
 }
-function portLabel(flow:M.ProgressFlow,id:string,port:M.FlowPort):string {
-  if(/^in\d+$/.test(port))return `A${Number(port.slice(2))+1} 入`
-  if(/^out\d+$/.test(port))return `S${Number(port.slice(3))+1} 出`
-  if(port==='input2')return 'Parent'
-  if(port==='input')return M.getTransitionNode(flow,id)||M.getDiffNode(flow,id)?'Goal':M.getConditionalNode(flow,id)?'Predicate':M.getMergeNode(flow,id)?'A 入':'S 入'
-  if(M.getDiffNode(flow,id))return port==='output2'?'失败 · S':'成功 · S'
-  return id===flow.entry.id?'S 出':M.getGoalNode(flow,id)?'G 出':M.getPredicateNode(flow,id)?'P 出':M.getTransitionNode(flow,id)||M.getConditionalNode(flow,id)||M.getMergeNode(flow,id)?'Next · S':'激活出'
+
+function portLabel(flow: M.ProgressFlow, id: string, port: M.FlowPort): string {
+  if (M.getProgressNode(flow, id)) return port === 'output' ? '成功' : port === 'output2' ? '失败' : '激活'
+  if (M.getTransitionNode(flow, id)) return port === 'input' ? '合取' : port === 'input2' ? '析取' : '通过'
+  if (M.getEndNode(flow, id)) return port === 'input2' ? '失败入' : '成功入'
+  if (M.getPredicateNode(flow, id)) return '查询'
+  return 'A'
 }
-export function progressNodes(flow:M.ProgressFlow,sim:FlowSimState,onUpdateNote:(id:string,patch:Partial<M.FlowCanvasNote>)=>void,resolveText?: (key:string)=>string|null):EditorNode[]{
-  const layout=layoutCanvas(flow)
-  return layout.ids.map(id=>{
-    const note=M.getCanvasNote(flow,id),metrics=nodeMetrics(flow,id)
-    const ports=[...M.inputPorts(flow,id),...M.outputPorts(flow,id)].map(port=>({id:port,direction:M.isOutputPort(port)?'output' as const:'input' as const,y:socketOffset(flow,id,port).y,label:portLabel(flow,id,port),kind:M.portKind(flow,id,port),color:M.portKind(flow,id,port)==='goal'?'#d0ad72':'#7a9aab'}))
-    return {id,type:note?'note':'progress',position:layout.positions.get(id)!,width:metrics.width,height:metrics.height,ports,deletable:id!==flow.entry.id,
-      label:id===flow.entry.id?'开始节点（信号源），不可删除':`${nodeSelection(flow,id).kind} ${id}`,
-      data:note?{...note,onChange:(patch:Partial<M.FlowCanvasNote>)=>onUpdateNote(id,patch)}:{flow,sim,resolveText}}
+
+export function progressEdges(flow: M.ProgressFlow): EditorEdge[] {
+  return (flow.logic?.links ?? []).map(link => {
+    const sourcePort = M.linkSourcePort(flow, link.from, link.fromPort)
+    return {
+      id: `logic:${link.id}`,
+      source: link.from,
+      target: link.to,
+      sourcePort,
+      targetPort: link.port,
+      color: portColor(flow, link.from, sourcePort),
+      label: `${portLabel(flow, link.from, sourcePort)} → ${portLabel(flow, link.to, link.port)}`,
+    }
+  })
+}
+
+export function progressNodes(flow: M.ProgressFlow, sim: FlowSimState, onUpdateNote: (id: string, patch: Partial<M.FlowCanvasNote>) => void, resolveText?: (key: string) => string | null): EditorNode[] {
+  const layout = layoutCanvas(flow)
+  const reachable = M.connectedToStart(flow)
+  return layout.ids.map(id => {
+    const note = M.getCanvasNote(flow, id), metrics = nodeMetrics(flow, id)
+    const ports = [...M.inputPorts(flow, id), ...M.outputPorts(flow, id)].map(port => ({
+      id: port,
+      direction: M.isOutputPort(port) ? 'output' as const : 'input' as const,
+      y: socketOffset(flow, id, port).y,
+      label: portLabel(flow, id, port),
+      color: portColor(flow, id, port),
+    }))
+    return {
+      id,
+      type: note ? 'note' : 'progress',
+      position: layout.positions.get(id)!,
+      width: metrics.width,
+      height: metrics.height,
+      ports,
+      deletable: id !== flow.start,
+      label: id === flow.start ? '开始进度节点，不可删除' : `${nodeSelection(flow, id).kind} ${id}`,
+      data: note ? { ...note, onChange: (patch: Partial<M.FlowCanvasNote>) => onUpdateNote(id, patch) } : { flow, sim, draft: !reachable.has(id), resolveText },
+    }
   })
 }

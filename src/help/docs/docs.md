@@ -47,6 +47,7 @@
 | [物品库：.item 与 .itemstack](#item-guide) | 用户 · 开发 | 物品定义、快照导入、标签、礼包链接 |
 | [游戏开发服务器](#game-dev-server) | 开发 | 本机 Control 连接、物品库查询 API、控制台 |
 | [多进度任务模型](#progress-flow-model) | 开发 | `.quest` 树图、信号运行时、校验 |
+| [多进度节点图：节点、端口与信号](#progress-node-graph) | 开发 · 规范 | 节点族、端口与连线规则、信号表与状态机；实现以此为准 |
 | [任务文档（单进度）](#progress-document) | 用户 · 开发 | `.quest` / `hanshu.progress` 表单字段与交互 |
 | [进度：任务与委托](#progress-design) | 草案 | 进度⊂任务；接取条件、目标组、冷却 |
 

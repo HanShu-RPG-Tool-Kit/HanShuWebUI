@@ -62,8 +62,12 @@ const multi = {
   format: MULTI_QUEST_FORMAT,
   version: 1 as const,
   id: 'tree-1',
-  entry: { id: 'entry', target: null, title: { text: 'entry.title' }, description: { text: 'entry.description' } },
-  nodes: {},
+  name: { text: 'name' },
+  description: { text: 'description' },
+  start: 'progress_start',
+  progress: {
+    progress_start: { title: { text: 'progress.progress_start.title' }, description: { text: 'progress.progress_start.description' }, goals: [], completion: 'all' as const },
+  },
 }
 const passthrough = await questCompiler.compile(
   file('b.quest', `${JSON.stringify(multi)}\n`),

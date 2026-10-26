@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createFlow, displayText, parseFlow } from '../src/workspaces/gameplay/model.ts'
-import { createCheckpoint } from '../src/workspaces/gameplay/canvas.ts'
+import { createPredicateNode, createProgressNode } from '../src/workspaces/gameplay/canvas.ts'
 import {
   defaultFlowLocaleSeeds,
   defaultKitLocaleSeeds,
@@ -9,7 +9,6 @@ import {
   ensureKitLocaleKeys,
   ensureNavLocaleKeys,
   ensureProgressLocaleKeys,
-  flowEntryTitleKey,
   flowNodeFieldKey,
   KIT_FEEDBACK_TITLE_KEY,
   KIT_NAME_KEY,
@@ -60,22 +59,30 @@ assert.deepEqual(migratedProgress.seeds, { name: '明文标题', description: '�
 assert.equal(JSON.parse(stringifyProgress(migratedProgress.doc)).name, 'name')
 
 const flow = createFlow(undefined, '图标题')
-assert.equal(flow.entry.title.text, flowEntryTitleKey())
-assert.deepEqual(defaultFlowLocaleSeeds('图标题')[flowEntryTitleKey()], '图标题')
-const legacyFlow = parseFlow(JSON.stringify({
-  ...flow,
-  entry: { ...flow.entry, title: { text: '旧流程名' }, description: { text: '旧说明' } },
-}))
-const migratedFlow = ensureFlowLocaleKeys(legacyFlow)
-assert.equal(migratedFlow.flow.entry.title.text, 'entry.title')
-assert.equal(migratedFlow.seeds['entry.title'], '旧流程名')
-assert.equal(migratedFlow.seeds['entry.description'], '旧说明')
+const startNode = () => flow.progress[flow.start]!
+assert.equal(startNode().questTitle!.text, '图标题')
+assert.equal(defaultFlowLocaleSeeds('图标题')['progress.progress_start.questTitle'], '图标题')
+assert.equal(defaultFlowLocaleSeeds('图标题')['progress.progress_start.runningLog'], '')
+const migratedFlow = ensureFlowLocaleKeys(flow)
+assert.equal(migratedFlow.flow.progress[flow.start]!.questTitle!.text, 'progress.progress_start.questTitle')
+assert.equal(migratedFlow.seeds['progress.progress_start.questTitle'], '图标题')
+assert.equal(migratedFlow.flow.progress[flow.start]!.title.text, 'progress.progress_start.title')
 
-const created = createCheckpoint(flow, { x: 10, y: 20 })
-assert.equal(created.flow.nodes[created.id]!.title.text, flowNodeFieldKey('nodes', created.id, 'title'))
-assert.equal(created.localeSeeds[flowNodeFieldKey('nodes', created.id, 'title')], '新 checkpoint')
-assert.equal(displayText(created.flow.nodes[created.id]!.title, (key) => created.localeSeeds[key] ?? null), '新 checkpoint')
-assert.equal(displayText(created.flow.nodes[created.id]!.title), flowNodeFieldKey('nodes', created.id, 'title'))
+const created = createProgressNode(flow, { x: 10, y: 20 })
+assert.equal(created.flow.progress[created.id]!.title.text, flowNodeFieldKey('progress', created.id, 'title'))
+assert.equal(created.localeSeeds[flowNodeFieldKey('progress', created.id, 'title')], '新进度')
+assert.equal(displayText(created.flow.progress[created.id]!.title, (key) => created.localeSeeds[key] ?? null), '新进度')
+assert.equal(displayText(created.flow.progress[created.id]!.title), flowNodeFieldKey('progress', created.id, 'title'))
+
+const predicate = createPredicateNode(created.flow, { x: 10, y: 200 })
+assert.equal(predicate.flow.predicates![predicate.id]!.title.text, flowNodeFieldKey('predicates', predicate.id, 'title'))
+assert.equal(predicate.localeSeeds[flowNodeFieldKey('predicates', predicate.id, 'title')], '新谓词')
+const migratedPredicate = ensureFlowLocaleKeys(parseFlow(JSON.stringify({
+  ...predicate.flow,
+  predicates: { ...predicate.flow.predicates, [predicate.id]: { ...predicate.flow.predicates![predicate.id], title: { text: '旧明文谓词' } } },
+})))
+assert.equal(migratedPredicate.flow.predicates![predicate.id]!.title.text, flowNodeFieldKey('predicates', predicate.id, 'title'))
+assert.equal(migratedPredicate.seeds[flowNodeFieldKey('predicates', predicate.id, 'title')], '旧明文谓词')
 
 const nav = createNavigationPoint('旧塔')
 assert.equal(nav.label, NAV_LABEL_KEY)
