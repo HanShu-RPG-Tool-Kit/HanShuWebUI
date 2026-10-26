@@ -1,4 +1,4 @@
-/** 条件求值器的状态闭集；谓词节点与单进度任务的可见性/可承接条件共用。 */
+/** 条件求值器的状态闭集；条件节点与单进度任务的可见性/可承接条件共用。 */
 
 export const TASK_VISIBILITY_STATES = { before_accept: '接取之前', after_accept: '接取之后', active: '激活中', succeeded: '成功后', ended: '结束后' } as const
 export const DIALOGUE_VISIBILITY_STATES = { before: '之前', after: '之后' } as const

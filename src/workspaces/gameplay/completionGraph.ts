@@ -2,7 +2,7 @@ import { randomId } from '../../project/crypto'
 import type { ProgressGoal } from './progressDoc'
 import type { Point } from '../../nodeEditor'
 
-export const LOGIC_LABELS = { and: '合取', or: '析取', not: '非', xor: '二元异或' } as const
+export const LOGIC_LABELS = { and: '并且', or: '或者', not: '非', xor: '二元异或' } as const
 export type CompletionLogic = keyof typeof LOGIC_LABELS
 export type CompletionNode = { id: string } & ({ type: 'goal'; goalId: string } | { type: 'logic'; op: CompletionLogic } | { type: 'output' })
 export type CompletionGraph = { nodes: CompletionNode[]; links: { id: string; from: string; to: string }[] }

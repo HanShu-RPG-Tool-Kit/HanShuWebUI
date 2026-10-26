@@ -45,9 +45,9 @@ export function ProgressNode({ node: view, selected, dragging }: NodeViewProps) 
   }
   if (predicate) {
     const truth = S.predicateTruth(sim, id)
-    const summary = predicate.conditions.length ? `${predicate.conditions.length} 个条件` : '无条件（恒假）'
+    const summary = predicate.conditions.length ? `${predicate.conditions.length} 项判断规则` : '未配置（恒假）'
     return <NodeFrame selected={selected} dragging={dragging} data-predicate-truth={truth ? 'true' : 'false'} className={`flow-graph-node is-predicate${truth ? ' is-true' : ''}${draftClass}`}>
-      <NodeHeader className="flow-graph-node-header" icon="⊢" title="谓词" badge={draftTag ?? <span className="flow-graph-header-tag">{truth ? '真' : '假'}</span>} />
+      <NodeHeader className="flow-graph-node-header" icon="⊢" title="条件" badge={draftTag ?? <span className="flow-graph-header-tag">{truth ? '真' : '假'}</span>} />
       <span className="flow-graph-node-title">{summary}</span>
       {ports}
     </NodeFrame>
@@ -56,7 +56,7 @@ export function ProgressNode({ node: view, selected, dragging }: NodeViewProps) 
   if (getTransitionNode(flow, id)) {
     const round = S.transitionRound(sim, id)
     return <NodeFrame selected={selected} dragging={dragging} className={`flow-graph-node is-transition${round.open ? ' is-waiting' : ''}${draftClass}`}>
-      <NodeHeader className="flow-graph-node-header" icon="→" title="变迁" badge={draftTag ?? (round.open ? <span className="flow-graph-header-tag">查询中</span> : undefined)} />
+      <NodeHeader className="flow-graph-node-header" icon="→" title="逻辑" badge={draftTag ?? (round.open ? <span className="flow-graph-header-tag">查询中</span> : undefined)} />
       {ports}
     </NodeFrame>
   }

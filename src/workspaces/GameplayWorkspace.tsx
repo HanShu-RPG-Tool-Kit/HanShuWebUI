@@ -1366,7 +1366,7 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
         {graphLive && showIssues && <div className="flow-issues">
           {paneError && <p className="flow-error">{paneError}</p>}
           {paneIssues.map((issue, index) => <p key={index} className={issue.severity === 'error' ? 'flow-error' : 'flow-warning'}><code>{issue.path}</code> {issue.message}</p>)}
-          <p className="flow-hint">保留独立起点；进度、谓词、变迁、结束可自由创建和删除。检查端口与连接引用，以及画布连线是否成环（仅警告）。目标判定与外部激活留待后续接入。</p>
+          <p className="flow-hint">开始进度始终保留；进度、条件、目标、逻辑、结束节点可自由创建和删除。逻辑使用“并且 / 或者”组合输入；条件提供当前真值，目标随任务启动。画布不允许成环。</p>
         </div>}
       </div>
     </>

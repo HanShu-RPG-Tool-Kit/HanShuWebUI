@@ -147,11 +147,11 @@ export function NodeFormView({ flow, nodeId, kind, active = false, disabled = fa
   } else if (kind === 'predicate') {
     const node = getPredicateNode(flow, nodeId)
     if (!node) return null
-    title = '谓词'
+    title = '条件'
     body = <>
       <section className="node-form-section node-form-rules">
         <header><h2>条件 <span>{node.conditions.length}</span></h2></header>
-        {node.conditions.length === 0 && <p className="flow-hint">没有条件时谓词恒假（不会发出 A）。</p>}
+        {node.conditions.length === 0 && <p className="flow-hint">未配置判断规则时，此节点恒假（不会发出 A）。</p>}
         {node.conditions.map((rule, index) => <div className="progress-visibility-row" key={index}>
           <select aria-label={`条件 ${index + 1} 类型`} disabled={disabled} value={rule.kind} onChange={event => update(next => {
             next.predicates![nodeId].conditions[index] = createConditionRule(event.target.value as ProgressConditionRule['kind'])

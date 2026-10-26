@@ -37,7 +37,7 @@ export function portColor(flow: M.ProgressFlow, id: string, port: M.FlowPort): s
 
 function portLabel(flow: M.ProgressFlow, id: string, port: M.FlowPort): string {
   if (M.getProgressNode(flow, id) || M.getObjectiveNode(flow, id)) return port === 'output' ? '成功' : port === 'output2' ? '失败' : '激活'
-  if (M.getTransitionNode(flow, id)) return port === 'input' ? '合取' : port === 'input2' ? '析取' : '通过'
+  if (M.getTransitionNode(flow, id)) return port === 'input' ? '并且' : port === 'input2' ? '或者' : '通过'
   if (M.getEndNode(flow, id)) return port === 'input2' ? '失败入' : '成功入'
   if (M.getPredicateNode(flow, id)) return '查询'
   return 'A'

@@ -67,14 +67,14 @@ export type FlowProgressNode = {
   description?: FlowText
   extensions?: Data
 }
-/** 谓词节点：无左端口，条件全部成立时发 A；对 Q 回报真 / N。空条件恒假。 */
+/** 条件节点：无左端口，条件全部成立时发 A；对 Q 回报真 / N。空条件恒假。 */
 export type FlowPredicateNode = {
   conditions: ProgressConditionRule[]
   extensions?: Data
 }
 /** Quest 级后台目标：随任务启动，结算锁存，不跟踪 UI，不响应取消或维持存活。 */
 export type FlowObjectiveNode = { goal: Omit<FlowProgressGoal, 'id'>; extensions?: Data }
-/** 变迁节点：左端口 合取 / 析取 收 A，右端口发 A；无内容。 */
+/** 逻辑节点：左端口 并且 / 或者 收 A，右端口发 A；无内容。 */
 export type FlowTransitionNode = { extensions?: Data }
 /** 结束节点：成功入 / 失败入，决定任务终局；携带结局标题与奖励礼包。 */
 export type FlowEndNode = {
@@ -140,13 +140,13 @@ export const isStartNode = (flow: ProgressFlow, id: string) => flow.start === id
 export const getCanvasNote = (flow: ProgressFlow, id: string) => flow.layout?.notes && Object.hasOwn(flow.layout.notes, id) ? flow.layout.notes[id] : undefined
 export const hasCanvasItem = (flow: ProgressFlow, id: string) => hasContentNode(flow, id) || !!getCanvasNote(flow, id)
 
-/** 左端口：开始进度节点没有；普通进度一个；变迁两个（合取 / 析取）；结束两个（成功入 / 失败入）。 */
+/** 左端口：开始进度节点没有；普通进度一个；逻辑两个（并且 / 或者）；结束两个（成功入 / 失败入）。 */
 export const inputPorts = (flow: ProgressFlow, id: string): FlowInputPort[] => {
   if (getProgressNode(flow, id)) return isStartNode(flow, id) ? [] : ['input']
   if (getTransitionNode(flow, id) || getEndNode(flow, id)) return ['input', 'input2']
   return []
 }
-/** 右端口：进度、目标两个（成功 / 失败）；谓词、变迁各一个；结束没有。 */
+/** 右端口：进度、目标两个（成功 / 失败）；条件、逻辑各一个；结束没有。 */
 export const outputPorts = (flow: ProgressFlow, id: string): FlowOutputPort[] => {
   if (getProgressNode(flow, id) || getObjectiveNode(flow, id)) return ['output', 'output2']
   if (getPredicateNode(flow, id) || getTransitionNode(flow, id)) return ['output']
@@ -157,7 +157,7 @@ export const linkSourcePort = (flow: ProgressFlow, from: string, fromPort?: Flow
 
 /**
  * 与开始进度节点**联通**的节点集合（把连线视为无向边）。
- * 谓词只有出边，若按有向可达会永远判成草稿，所以这里必须忽略方向。
+ * 条件只有出边，若按有向可达会永远判成草稿，所以这里必须忽略方向。
  */
 export function connectedToStart(flow: ProgressFlow): Set<string> {
   const adjacency = new Map<string, string[]>()
@@ -257,12 +257,12 @@ export function flowNodeLabel(flow: ProgressFlow, id: string, resolveText?: (key
   const progress = getProgressNode(flow, id)
   if (progress) return progress.identifier || '未填写进度标识符'
   const predicate = getPredicateNode(flow, id)
-  if (predicate) return `谓词 · ${predicate.conditions.length} 个条件`
+  if (predicate) return `条件 · ${predicate.conditions.length} 个条件`
   const objective = getObjectiveNode(flow, id)
   if (objective) return objective.goal.kind || '未选择目标'
   const end = getEndNode(flow, id)
   if (end) return displayText(end.title, resolveText) || '未命名结局'
-  return getTransitionNode(flow, id) ? '变迁' : id
+  return getTransitionNode(flow, id) ? '逻辑' : id
 }
 
 /** Shape checks protect views; semantic errors remain editable and appear in validation. */
@@ -348,7 +348,7 @@ export function parseFlow(source: string): ProgressFlow {
       require(Object.keys(raw).every(key => ['title', 'conditions', 'extensions'].includes(key)), `predicates.${id}（不支持旧草稿字段）`)
       checkExtensions(raw, `predicates.${id}`)
       if (Object.hasOwn(raw, 'title')) { checkText(raw.title, `predicates.${id}.title`); delete raw.title }
-      node.conditions = parseConditionRules(raw.conditions, '谓词条件', true)
+      node.conditions = parseConditionRules(raw.conditions, '条件节点', true)
     }
   }
   if (f.transitions !== undefined) {

@@ -192,9 +192,9 @@ export function ProgressGraph({ flow, selection, onSelect, onCreate, onChangeFlo
 
   const createItems = (position: FlowPosition): MenuItem[] => [
     { label: '新建进度', action: () => onCreate(position, 'progress') },
-    { label: '新建谓词', action: () => onCreate(position, 'predicate') },
+    { label: '新建条件', action: () => onCreate(position, 'predicate') },
     { label: '新建目标', action: () => onCreate(position, 'objective') },
-    { label: '新建变迁', action: () => onCreate(position, 'transition') },
+    { label: '新建逻辑', action: () => onCreate(position, 'transition') },
     { label: '新建结束', action: () => onCreate(position, 'end') },
     { label: '添加注释', action: () => onCreate(position, 'note') },
   ]
@@ -226,7 +226,7 @@ export function ProgressGraph({ flow, selection, onSelect, onCreate, onChangeFlo
       return [
         { label: '编辑…', disabled: locked, action: () => openForm(id) },
         { label: truth ? '置为假' : sim.initialized ? '置为真（发 A）' : '预置为真（初始化时广播）', disabled: eventDisabled, action: () => togglePredicate(id) },
-        { label: '删除谓词', disabled: locked, action: () => onDelete(id) },
+        { label: '删除条件', disabled: locked, action: () => onDelete(id) },
       ]
     }
     if (M.getObjectiveNode(flow, id)) {
@@ -238,7 +238,7 @@ export function ProgressGraph({ flow, selection, onSelect, onCreate, onChangeFlo
         { label: '删除目标', disabled: locked, action: () => onDelete(id) },
       ]
     }
-    if (M.getTransitionNode(flow, id)) return [{ label: '删除变迁', disabled: locked, action: () => onDelete(id) }]
+    if (M.getTransitionNode(flow, id)) return [{ label: '删除逻辑', disabled: locked, action: () => onDelete(id) }]
     if (M.getEndNode(flow, id)) return [{ label: '编辑…', disabled: locked, action: () => openForm(id) }, { label: '删除结束节点', disabled: locked, action: () => onDelete(id) }]
     return []
   }

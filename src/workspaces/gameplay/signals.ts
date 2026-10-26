@@ -33,7 +33,7 @@ export type SimDelivery = Delivery & {
 }
 
 /**
- * 变迁一轮查询的临时簿记：轮次编号让"对上一轮的迟到应答"不会开启新的一轮。
+ * 逻辑一轮查询的临时簿记：轮次编号让"对上一轮的迟到应答"不会开启新的一轮。
  * 它只在模拟器内存里，不落盘。
  */
 export type TransitionRound = { open: boolean; id: number; answered: Record<string, 'activate' | 'none'>; evidence?: Record<string, number> }
@@ -48,7 +48,7 @@ export type FlowSimState = {
   pulse: number
   nextTraceId: number
   events: { id: number; label: string; nodeId?: string }[]
-  /** 实例是否已初始化；初始化之前改谓词真值只是「预置」，不广播。 */
+  /** 实例是否已初始化；初始化之前改条件真值只是「预置」，不广播。 */
   initialized: boolean
   outcome: { endId: string; result: 'success' | 'failure' } | { endId: null; result: 'failure'; reason: 'no-running-progress' | 'no-reachable-end' } | null
   queue: Delivery[]
@@ -184,7 +184,7 @@ function deliverPredicate(flow: ProgressFlow, sim: FlowSimState, delivery: Deliv
     return reply(flow, delivery, predicateTruth(sim, id) ? A : N)
   }
   if (delivery.signal.kind === 'cancel') { accept(sim, delivery); return [] }
-  reject(sim, delivery, '谓词没有左端口，只接受查询')
+  reject(sim, delivery, '条件没有左端口，只接受查询')
   return []
 }
 
@@ -211,7 +211,7 @@ function deliverEnd(sim: FlowSimState, delivery: Delivery, id: string): Delivery
   return []
 }
 
-/** 一轮问答收齐后判定：非空端口都要满足；合取=全部 A，析取=任一 A。 */
+/** 一轮问答收齐后判定：非空端口都要满足；并且=全部 A，或者=任一 A。 */
 function settleRound(flow: ProgressFlow, sim: FlowSimState, id: string): Delivery[] {
   const incoming = (flow.logic?.links ?? []).filter(link => link.to === id)
   const round = transitionRound(sim, id)
@@ -251,7 +251,7 @@ function deliverTransition(flow: ProgressFlow, sim: FlowSimState, delivery: Deli
   }
   const round = transitionRound(sim, id)
   if (delivery.signal.kind === 'activate') {
-    if (delivery.port !== 'input' && delivery.port !== 'input2') { reject(sim, delivery, '变迁只从左端口接收 A'); return [] }
+    if (delivery.port !== 'input' && delivery.port !== 'input2') { reject(sim, delivery, '逻辑只从左端口接收 A'); return [] }
     if (delivery.round !== undefined) {
       // 对某轮 Q 的应答；过期轮次直接吞掉，不能开新一轮。
       if (!round.open || round.id !== delivery.round) { reject(sim, delivery, '过期查询应答，不启动新轮次'); return [] }
@@ -265,7 +265,7 @@ function deliverTransition(flow: ProgressFlow, sim: FlowSimState, delivery: Deli
       const next: TransitionRound = { open: true, id: round.id + 1, answered, evidence: delivery.link && delivery.traceId !== undefined ? { [delivery.link]: delivery.traceId } : {} }
       sim.rounds[id] = next
       accept(sim, delivery)
-      // 没有非触发器入线时（例如开始直接连变迁），这一轮当场判定，不需要等应答。
+      // 没有非触发器入线时（例如开始直接连逻辑），这一轮当场判定，不需要等应答。
       return [...queryRound(flow, id, next.id), ...settleRound(flow, sim, id)]
     }
     rememberAnswer(round,delivery,'activate')
@@ -415,7 +415,7 @@ export function setPredicateTruth(flow: ProgressFlow, sim: FlowSimState, id: str
   if (!canTrigger(sim) || !getPredicateNode(flow, id) || predicateTruth(sim, id) === truth) return sim
   const base = { ...sim, predicates: { ...sim.predicates, [id]: truth } }
   if (!sim.initialized || !truth || !connectedToStart(flow).has(id)) return base
-  const next = begin(flow, sim, base, forward(flow, id, 'output', A), { label: '谓词变真', nodeId: id })
+  const next = begin(flow, sim, base, forward(flow, id, 'output', A), { label: '条件变真', nodeId: id })
   return deferred ? next : drainSignals(flow, next)
 }
 /** Instance outcome injection only: no goal execution, counters or UI tracking here. */

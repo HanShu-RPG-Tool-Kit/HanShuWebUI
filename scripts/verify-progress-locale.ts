@@ -92,7 +92,7 @@ assert.equal(Object.keys(ensureFlowLocaleKeys(background.flow).seeds).some(key=>
 assert.equal(Object.hasOwn(predicate.flow.predicates![predicate.id]!, 'title'), false)
 const migratedPredicate = ensureFlowLocaleKeys(parseFlow(JSON.stringify({
   ...predicate.flow,
-  predicates: { ...predicate.flow.predicates, [predicate.id]: { ...predicate.flow.predicates![predicate.id], title: { text: '旧明文谓词' } } },
+  predicates: { ...predicate.flow.predicates, [predicate.id]: { ...predicate.flow.predicates![predicate.id], title: { text: '旧明文条件' } } },
 })))
 assert.equal(Object.hasOwn(migratedPredicate.flow.predicates![predicate.id]!, 'title'), false)
 assert.equal(Object.hasOwn(migratedPredicate.seeds, flowNodeFieldKey('predicates', predicate.id, 'title')), false)

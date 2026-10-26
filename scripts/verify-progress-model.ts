@@ -33,7 +33,7 @@ function chain() {
   return { flow, start, t1: t1.id, p2: p2.id }
 }
 
-test('v2 文档：开始进度 / 进度 / 谓词 / 变迁 / 结束 可解析并往返', () => {
+test('v2 文档：开始进度 / 进度 / 条件 / 逻辑 / 结束 可解析并往返', () => {
   const base = chain()
   const predicate = createPredicateNode(base.flow, { x: 200, y: 300 }); let flow = predicate.flow
   const end = createEndNode(flow, { x: 900, y: 0 }); flow = end.flow
@@ -72,7 +72,7 @@ test('进度标识符含开始进度和草稿，在 Quest 内唯一；不改变�
   assert(errors(draft.flow).some(issue => issue.path === `progress.${draft.id}.identifier`))
 })
 
-test('读取旧 v1 标题时规范化为非本地化标识符，移除谓词标题且保留任务本地化字段', () => {
+test('读取旧 v1 标题时规范化为非本地化标识符，移除条件标题且保留任务本地化字段', () => {
   const { flow, start, p2 } = chain()
   const predicate = createPredicateNode(flow, { x: 0, y: 300 })
   const old = JSON.parse(JSON.stringify(predicate.flow))
@@ -80,7 +80,7 @@ test('读取旧 v1 标题时规范化为非本地化标识符，移除谓词标�
     delete node.identifier
     node.title = { text: id === start ? `progress.${start}.title` : '旧阶段名称' }
   }
-  old.predicates[predicate.id].title = { text: '旧谓词标题' }
+  old.predicates[predicate.id].title = { text: '旧条件标题' }
   const parsed = parseFlow(JSON.stringify(old))
   assert.equal(parsed.progress[start].identifier, 'start')
   assert.equal(parsed.progress[p2].identifier, '旧阶段名称')
@@ -102,7 +102,7 @@ test('新建任务只有一个开始进度节点：无左端口、有成功/失�
   assert.equal(hasContentNode(flow, flow.start), true)
 })
 
-test('端口表：普通进度 1 入 2 出、变迁 2 入 1 出、结束 2 入、谓词无入', () => {
+test('端口表：普通进度 1 入 2 出、逻辑 2 入 1 出、结束 2 入、条件无入', () => {
   let flow = createFlow('ports')
   const p = createProgressNode(flow, { x: 0, y: 0 }); flow = p.flow
   const t = createTransitionNode(flow, { x: 0, y: 0 }); flow = t.flow
@@ -128,12 +128,12 @@ test('唯一连接约束：右端口 → 左端口，且拒绝自环与成环', 
   assert.throws(() => connectNodes(flow, b.id, a.id, 'input', 'output'), /成环/)
   assert.throws(() => connectNodes(flow, a.id, a.id, 'input', 'output'), /成环|右端口/)
   assert.throws(() => connectNodes(flow, b.id, flow.start, 'input', 'output'))
-  assert.equal(canConnectNodes(flow, t.id, a.id, 'input'), true, '变迁的右端口可以接普通进度的左端口')
+  assert.equal(canConnectNodes(flow, t.id, a.id, 'input'), true, '逻辑的右端口可以接普通进度的左端口')
   assert.equal(canConnectNodes(flow, a.id, t.id, 'input2', 'output2'), true)
   assert.equal(canConnectNodes(flow, flow.start, b.id, 'input'), true, '开始进度也有右端口')
 })
 
-test('成功链：开始运行中 → 结算成功 → 变迁放行 → 下一进度运行中', () => {
+test('成功链：开始运行中 → 结算成功 → 逻辑放行 → 下一进度运行中', () => {
   const { flow, start, p2 } = chain()
   let sim = createSimState(flow)
   sim = initializeQuest(flow, sim)
@@ -176,7 +176,7 @@ test('失败口：结算失败只走失败边；成功边不触发', () => {
   assert.equal(progressState(sim, bad.id), 'running')
 })
 
-test('合取：两个进度都成功才放行；先到的成功会被新的一轮重新问到', () => {
+test('并且：两个进度都成功才放行；先到的成功会被新的一轮重新问到', () => {
   let flow = createFlow('conjunction')
   const start = flow.start
   const a = createProgressNode(flow, { x: 300, y: 0 }); flow = a.flow
@@ -200,7 +200,7 @@ test('合取：两个进度都成功才放行；先到的成功会被新的一�
   assert.equal(transitionRound(sim, t.id).open, false)
 })
 
-test('析取：任一成功即放行，并取消其余运行中的输入', () => {
+test('或者：任一成功即放行，并取消其余运行中的输入', () => {
   let flow = createFlow('disjunction')
   const start = flow.start
   const a = createProgressNode(flow, { x: 300, y: 0 }); flow = a.flow
@@ -220,7 +220,7 @@ test('析取：任一成功即放行，并取消其余运行中的输入', () =>
   assert.equal(progressState(sim, b.id), 'cancelled')
 })
 
-test('合取端口 + 析取端口：非空端口都要满足，谓词可以当门', () => {
+test('并且端口 + 或者端口：非空端口都要满足，条件可以当门', () => {
   let flow = createFlow('gate')
   const start = flow.start
   const t = createTransitionNode(flow, { x: 300, y: 0 }); flow = t.flow
@@ -236,12 +236,12 @@ test('合取端口 + 析取端口：非空端口都要满足，谓词可以当�
   flow = withEnd(flow, keepAlive.id)
   let sim = initializeQuest(flow, createSimState(flow))
   sim = settleProgress(flow, sim, start, 'succeeded')
-  assert.equal(progressState(sim, next.id), 'inactive', '谓词为假时不放行')
+  assert.equal(progressState(sim, next.id), 'inactive', '条件为假时不放行')
   sim = setPredicateTruth(flow, sim, predicate.id, true)
-  assert.equal(progressState(sim, next.id), 'running', '谓词变真后重开一轮并放行')
+  assert.equal(progressState(sim, next.id), 'running', '条件变真后重开一轮并放行')
 })
 
-test('谓词：初始化后只在上升沿发 A；假时对 Q 回 N；没有输入端口', () => {
+test('条件：初始化后只在上升沿发 A；假时对 Q 回 N；没有输入端口', () => {
   let flow = createFlow('predicate')
   const predicate = createPredicateNode(flow, { x: 0, y: 0 }); flow = predicate.flow
   const t = createTransitionNode(flow, { x: 300, y: 0 }); flow = t.flow
@@ -263,14 +263,14 @@ test('谓词：初始化后只在上升沿发 A；假时对 Q 回 N；没有输�
   assert.equal(progressState(quiet, next.id), 'inactive')
 })
 
-test('初始化：预置为真的谓词在实例初始化时整体广播一次', () => {
+test('初始化：预置为真的条件在实例初始化时整体广播一次', () => {
   let flow = createFlow('init-broadcast')
   const t = createTransitionNode(flow, { x: 300, y: 0 }); flow = t.flow
   const next = createProgressNode(flow, { x: 600, y: 0 }); flow = next.flow
   const predicate = createPredicateNode(flow, { x: 300, y: 240 }); flow = predicate.flow
   flow = connectNodes(flow, predicate.id, t.id, 'input2', 'output').flow
   flow = connectNodes(flow, t.id, next.id, 'input', 'output').flow
-  // 用结束节点把谓词所在分量与开始进度连起来（开局广播只播报生效谓词）。
+  // 用结束节点把条件所在分量与开始进度连起来（开局广播只播报生效条件）。
   const end = createEndNode(flow, { x: 900, y: 0 }); flow = end.flow
   flow = connectNodes(flow, flow.start, end.id, 'input', 'output').flow
   flow = connectNodes(flow, next.id, end.id, 'input2', 'output').flow
@@ -350,7 +350,7 @@ test('结束节点：成功入 / 失败入决定终局', () => {
   assert.equal(errors(flow).length, 0)
 })
 
-test('草稿节点：与开始进度不联通才是草稿；谓词只有出边也算联通', () => {
+test('草稿节点：与开始进度不联通才是草稿；条件只有出边也算联通', () => {
   let flow = createFlow('draft')
   const orphan = createProgressNode(flow, { x: 300, y: 0 }); flow = orphan.flow
   assert.equal(connectedToStart(flow).has(orphan.id), false)
@@ -360,7 +360,7 @@ test('草稿节点：与开始进度不联通才是草稿；谓词只有出边�
   assert.equal(connectedToStart(linked).has(orphan.id), true)
   assert.ok(!validateFlow(linked).some(issue => issue.message.includes('草稿')))
 
-  // 谓词没有左端口，边只能从它出发；联通性必须视为无向。
+  // 条件没有左端口，边只能从它出发；联通性必须视为无向。
   let gated = createFlow('draft-predicate')
   const t = createTransitionNode(gated, { x: 300, y: 0 }); gated = t.flow
   const predicate = createPredicateNode(gated, { x: 300, y: 240 }); gated = predicate.flow
@@ -368,7 +368,7 @@ test('草稿节点：与开始进度不联通才是草稿；谓词只有出边�
   gated = connectNodes(gated, gated.start, t.id, 'input', 'output').flow
   gated = connectNodes(gated, predicate.id, t.id, 'input2', 'output').flow
   gated = connectNodes(gated, t.id, next.id, 'input', 'output').flow
-  assert.equal(connectedToStart(gated).has(predicate.id), true, '谓词接在生效变迁上就不再是草稿')
+  assert.equal(connectedToStart(gated).has(predicate.id), true, '条件接在生效逻辑上就不再是草稿')
   assert.ok(!validateFlow(gated).some(issue => issue.path === predicate.id && issue.message.includes('草稿')))
 })
 
