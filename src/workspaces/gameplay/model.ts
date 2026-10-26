@@ -12,7 +12,34 @@ export type FlowInputPort = 'input' | 'input2'
 export type FlowOutputPort = 'output' | 'output2'
 export type FlowPort = FlowInputPort | FlowOutputPort
 /** fromPort is required for progress outputs (成功 / 失败); otherwise inferred as `output`. */
-export type FlowLogicLink = { id: string; from: string; to: string; port: FlowInputPort; fromPort?: FlowOutputPort }
+export type FlowLogicLink = { id: string; from: string; to: string; port: FlowInputPort; fromPort?: FlowOutputPort; order?: number; reverseOrder?: number }
+/** Wire order is executable data; coordinates only author it. UTF-16 comparison is locale independent. */
+export const compareIds = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0
+export const FLOW_LIMITS = { nodes: 512, links: 4096, fanout: 128, deliveries: 250000 } as const
+export function normalizeLinkOrder(flow: ProgressFlow, reposition = false): ProgressFlow {
+  if (!flow.logic?.links.length) return flow
+  const links = flow.logic.links.map(link => ({ ...link }))
+  for (const reverse of [false, true]) {
+    const groups = new Map<string, FlowLogicLink[]>()
+    for (const link of links) {
+      const key = reverse ? `${link.to}\0${link.port}` : `${link.from}\0${linkSourcePort(flow, link.from, link.fromPort)}`
+      const group = groups.get(key) ?? []; group.push(link); groups.set(key, group)
+    }
+    const field = reverse ? 'reverseOrder' : 'order'
+    for (const group of groups.values()) {
+      if (!reposition && group.every(link => Number.isSafeInteger(link[field]) && link[field]! >= 0)) continue
+      const point = (link: FlowLogicLink) => flow.layout?.positions[reverse ? link.from : link.to] ?? { x: 0, y: 0 }
+      group.sort((a, b) => point(a).y - point(b).y || point(a).x - point(b).x || compareIds(a.id, b.id))
+      group.forEach((link, index) => { link[field] = index })
+    }
+  }
+  return { ...flow, logic: { ...flow.logic, links } }
+}
+export function orderedLinks(flow: ProgressFlow, reverse = false): FlowLogicLink[] {
+  const field = reverse ? 'reverseOrder' : 'order'
+  return [...(normalizeLinkOrder(flow).logic?.links ?? [])].sort((a, b) => (a[field]! - b[field]!) || compareIds(a.id, b.id))
+}
+
 /** 进度节点内的 goal 元素：条件本体内嵌在进度里，不再是画布节点。 */
 export type FlowProgressGoal = {
   id: string
@@ -294,7 +321,8 @@ export function parseFlow(source: string): ProgressFlow {
     for (const link of (f.logic as { links: unknown[] }).links) {
       require(isObject(link) && typeof link.id === 'string' && typeof link.from === 'string' && typeof link.to === 'string'
         && (link.port === 'input' || link.port === 'input2')
-        && (link.fromPort === undefined || link.fromPort === 'output' || link.fromPort === 'output2'), 'logic.links')
+        && (link.fromPort === undefined || link.fromPort === 'output' || link.fromPort === 'output2')
+        && [link.order, link.reverseOrder].every(value => value === undefined || (Number.isSafeInteger(value) && (value as number) >= 0)), 'logic.links')
     }
   }
   if (f.layout !== undefined) {
@@ -317,7 +345,7 @@ export function parseFlow(source: string): ProgressFlow {
       }
     }
   }
-  return v as ProgressFlow
+  return normalizeLinkOrder(v as ProgressFlow)
 }
 
 export function validateFlow(flow: ProgressFlow): FlowIssue[] {
@@ -325,6 +353,20 @@ export function validateFlow(flow: ProgressFlow): FlowIssue[] {
   const error = (path: string, message: string) => issues.push({ severity: 'error', path, message })
   const warning = (path: string, message: string) => issues.push({ severity: 'warning', path, message })
   if (!safeId(flow.id)) error('id', '请填写稳定的文档 ID。')
+  const count = Object.keys(flow.progress).length + Object.keys(flow.predicates ?? {}).length + Object.keys(flow.transitions ?? {}).length + Object.keys(flow.ends ?? {}).length
+  if (count > FLOW_LIMITS.nodes || (flow.logic?.links.length ?? 0) > FLOW_LIMITS.links) {
+    error('graph', `运行图最多 ${FLOW_LIMITS.nodes} 个节点、${FLOW_LIMITS.links} 条连接。`); return issues
+  }
+  const ports = new Map<string, number>(), signatures = new Set<string>()
+  for (const link of flow.logic?.links ?? []) {
+    const signature = JSON.stringify([link.from, linkSourcePort(flow, link.from, link.fromPort), link.to, link.port])
+    if (signatures.has(signature)) error('logic.links', '不允许重复连接。')
+    signatures.add(signature)
+    for (const key of [`o:${link.from}:${linkSourcePort(flow, link.from, link.fromPort)}`, `i:${link.to}:${link.port}`]) {
+      ports.set(key, (ports.get(key) ?? 0) + 1)
+      if (ports.get(key) === FLOW_LIMITS.fanout + 1) error('logic.links', `每个端口最多 ${FLOW_LIMITS.fanout} 条连接。`)
+    }
+  }
   const start = getProgressNode(flow, flow.start)
   if (!start) error('start', '开始进度节点不存在。')
   else if (!displayText(start.questTitle ?? { text: '' }).trim()) warning('start', '还没有为任务命名。')
@@ -430,7 +472,7 @@ export function connectNodes(flow: ProgressFlow, from: string, to: string, port:
   const record: FlowLogicLink = { id: `link_${n}`, from, to, port }
   if (getProgressNode(flow, from)) record.fromPort = source
   next.logic.links.push(record)
-  return { flow: next, selection: { kind: 'logic-link', id: record.id } }
+  return { flow: normalizeLinkOrder(next, true), selection: { kind: 'logic-link', id: record.id } }
 }
 
 export function disconnectLink(flow: ProgressFlow, selection: FlowSelection): ProgressFlow {

@@ -35,3 +35,12 @@
 
 .node-editor-note-resize{position:absolute;right:0;bottom:0;width:19px;height:19px;padding:2px;z-index:4;border:0;background:transparent;color:inherit;cursor:nwse-resize;}
 .node-editor-note-resize svg{width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:1;}
+
+.node-editor-wire-badge { pointer-events:none; }
+.node-editor-wire-badge circle { fill:#272b30; stroke:#7d8997; stroke-width:1; }
+.node-editor-wire-badge text { fill:#dae1e8; font:10px sans-serif; text-anchor:middle; dominant-baseline:central; }
+.node-editor-wire-badge.is-reverse { opacity:.7; }
+.node-editor-wire-signal { pointer-events:none; animation:node-editor-signal-travel linear both; filter:drop-shadow(0 0 5px currentColor); }
+.node-editor-wire-signal circle { fill:#20252b; stroke:currentColor; stroke-width:2; }
+.node-editor-wire-signal text { fill:currentColor; font:bold 11px sans-serif; text-anchor:middle; dominant-baseline:central; }
+@keyframes node-editor-signal-travel { from { offset-distance:0%; } to { offset-distance:100%; } }

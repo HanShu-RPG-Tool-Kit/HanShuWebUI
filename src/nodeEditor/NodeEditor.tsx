@@ -1,6 +1,6 @@
 import { createContext, createElement, forwardRef, useCallback, useContext, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { ReactFlow, ReactFlowProvider, Background, BackgroundVariant, Handle, Position, ConnectionMode, SelectionMode, applyNodeChanges, applyEdgeChanges, useReactFlow, useUpdateNodeInternals, useStoreApi, type Node, type Edge, type NodeProps, type EdgeProps, type Connection, type EdgeChange, type ConnectionLineComponentProps } from '@xyflow/react'
-import type { EditorGroup, EditorNode, EditorSelection, MenuContext, NodeEditorApi, NodeEditorProps, Point } from './types'
+import type { EditorEdge, EditorGroup, EditorNode, EditorSelection, MenuContext, NodeEditorApi, NodeEditorProps, Point } from './types'
 import { normalizeConnection, segmentsCross, wireGeometry, portSide, portOffset } from './geometry'
 import { arrangeNodes } from './arrange'
 import { MIN_CANVAS_ZOOM,MAX_CANVAS_ZOOM } from './camera'
@@ -11,7 +11,7 @@ import './NodeEditor.css'
 
 type ViewData = { view: EditorNode; registry: NodeEditorProps['registry']; readOnly: boolean; connections:boolean }
 type FlowNode = Node<ViewData, 'content' | 'group'>
-type FlowEdge = Edge<{ kind?: string; color?:string }, 'wire'>
+type FlowEdge = Edge<Pick<EditorEdge, 'kind' | 'color' | 'activity' | 'sourceBadge' | 'targetBadge'>, 'wire'>
 const PortContext=createContext<(id:string,port:string)=>void>(()=>{})
 const EMPTY_CUTS=new Set<string>()
 const CutContext=createContext<Set<string>>(EMPTY_CUTS)
@@ -44,10 +44,14 @@ function GroupNode({ data }: NodeProps<FlowNode>) {
 }
 function Wire({ id,sourceX,sourceY,targetX,targetY,source,target,sourcePosition,targetPosition,selected,data }: EdgeProps<FlowEdge>) {
   const cutting=useContext(CutContext).has(id)
-  const path=wireGeometry({x:sourceX,y:sourceY},{x:targetX,y:targetY},source===target,sourcePosition,targetPosition).path
+  const geometry=wireGeometry({x:sourceX,y:sourceY},{x:targetX,y:targetY},source===target,sourcePosition,targetPosition)
+  const path=geometry.path, sourceBadge=geometry.sample(.32), targetBadge=geometry.sample(.68)
   return <g className={`node-editor-wire is-kind-${data?.kind ?? 'default'}${selected?' is-selected':''}`}>
     <path d={path} className="node-editor-wire-shadow"/>
     <path d={path} className="node-editor-wire-line" style={{stroke:cutting?'#fa7777':selected?'#efb26a':data?.color}}/>
+    {data?.sourceBadge !== undefined && <g className="node-editor-wire-badge" transform={`translate(${sourceBadge.x},${sourceBadge.y - 12})`}><circle r="9"/><text>{data.sourceBadge + 1}</text></g>}
+    {data?.targetBadge !== undefined && <g className="node-editor-wire-badge is-reverse" transform={`translate(${targetBadge.x},${targetBadge.y - 12})`}><circle r="9"/><text>{data.targetBadge + 1}</text></g>}
+    {data?.activity && <g key={data.activity.key} className="node-editor-wire-signal" data-signal={data.activity.label} style={{ color: data.activity.color, offsetPath: `path("${path}")`, offsetRotate: '0deg', offsetAnchor: '0px 0px', animationDuration: `${data.activity.durationMs}ms`, animationDirection: data.activity.reverse ? 'reverse' : 'normal', animationPlayState: data.activity.running ? 'running' : 'paused' }}><circle r="10"/><text>{data.activity.label}</text></g>}
     <path d={path} className="node-editor-wire-hit react-flow__edge-interaction" data-editor-edge={id}/>
   </g>
 }
@@ -86,11 +90,11 @@ const EditorSurface=forwardRef<NodeEditorApi,NodeEditorProps>(function EditorSur
   const knife=useRef<Knife|null>(null),[knifeView,setKnifeView]=useState<Knife|null>(null)
   const suppressContext=useRef(false),rightDown=useRef<Point|null>(null),initialized=useRef(false)
   const projection=useMemo(()=>{
-    const result:FlowNode[]=props.nodes.map(view=>({id:view.id,type:'content',position:view.position,width:view.width,height:view.height,style:{width:view.width,height:view.height},data:{view,registry:props.registry,readOnly:!!disabled,connections:!disabled&&features.connections!==false},deletable:false,draggable:!disabled&&view.draggable!==false,selected:false,ariaLabel:view.label,dragHandle:undefined}))
+    const result:FlowNode[]=props.nodes.map(view=>({id:view.id,type:'content',position:view.position,width:view.width,height:view.height,style:{width:view.width,height:view.height},data:{view,registry:props.registry,readOnly:!!disabled||!!view.readOnly,connections:!disabled&&features.connections!==false},deletable:false,draggable:!disabled&&view.draggable!==false,selected:false,ariaLabel:view.label,dragHandle:undefined}))
     if(features.groups!==false)for(const group of groups){
       let id=`node-editor:group:${group.id}`;while(result.some(node=>node.id===id))id='_'+id
       const view:EditorNode={id,type:'group',position:{x:0,y:0},width:0,height:0,ports:[],label:group.name,data:group}
-      result.unshift({id,type:'group',position:view.position,data:{view,registry:props.registry,readOnly:!!disabled,connections:!disabled&&features.connections!==false},draggable:!disabled,deletable:false,selectable:false,dragHandle:'.node-editor-group-heading',zIndex:-1})
+      result.unshift({id,type:'group',position:view.position,data:{view,registry:props.registry,readOnly:!!disabled||!!view.readOnly,connections:!disabled&&features.connections!==false},draggable:!disabled,deletable:false,selectable:false,dragHandle:'.node-editor-group-heading',zIndex:-1})
     }
     return withGroupBounds(result,groups)
   },[props.nodes,props.registry,groups,disabled,features.groups,features.connections])
@@ -98,7 +102,7 @@ const EditorSurface=forwardRef<NodeEditorApi,NodeEditorProps>(function EditorSur
     const old=byId.get(node.id)
     return {...node,measured:old?.measured,selected:selectionRef.current.nodes.includes(node.id),position:drag.current?.starts[node.id]&&old?old.position:node.position}
   })})},[projection])
-  useEffect(()=>{setEdges(props.edges.map(edge=>({id:edge.id,source:edge.source,target:edge.target,sourceHandle:edge.sourcePort,targetHandle:edge.targetPort,type:'wire',data:{kind:edge.kind,color:edge.color},selected:selectionRef.current.edges.includes(edge.id),deletable:false,ariaLabel:edge.label??`${edge.source} → ${edge.target}`})))},[props.edges])
+  useEffect(()=>{setEdges(props.edges.map(edge=>({id:edge.id,source:edge.source,target:edge.target,sourceHandle:edge.sourcePort,targetHandle:edge.targetPort,type:'wire',data:{kind:edge.kind,color:edge.color,activity:edge.activity,sourceBadge:edge.sourceBadge,targetBadge:edge.targetBadge},selected:selectionRef.current.edges.includes(edge.id),deletable:false,ariaLabel:edge.label??`${edge.source} → ${edge.target}`})))},[props.edges])
   const select=useCallback((next:EditorSelection)=>{
     if(equal(selectionRef.current,next))return
     selectionRef.current=next;setSelection(next)

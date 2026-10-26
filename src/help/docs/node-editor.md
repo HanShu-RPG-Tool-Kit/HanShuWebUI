@@ -147,3 +147,10 @@ const ports: Port[] = [
 独立示例 `src/nodeEditor/DirectionalExample.tsx` 展示向下、向上、向左、向右的节点位置与端口配置，以及运行中移动端口、交换方位。它不依赖进度模型，不是行为树运行时。行为树接入时仍需业务模型保存孩子的显式执行顺序、校验父子关系并提供树形排列；拖动位置不能隐式改变执行顺序。通用轻度排版不会自动推断这些语义。
 
 验证：`npm run test:node-directions` 检查 16 种方位组合的曲线、默认值与偏移，`npm run test:node-directions:ui` 检查四种布局、反向起拖的预览和实际连接，以及端口移动、换边后的锚点更新。原有画布与大图回归继续使用 `test:node-editor:ui`。
+
+
+## 13. 临时连线活动与局部只读
+
+`EditorEdge.activity` 可提供 `{key,label,color,reverse,durationMs,running}`，在实际曲线路径上展示带字母的移动标记。`reverse` 仅改变视觉方向；通用层不执行信号、不等待动画回调、不产生业务修改。`key` 表示一次投递，暂停/恢复保持该 key；`running` 控制 CSS 动画暂停。`sourceBadge` / `targetBadge` 显示零基局部序号（UI 加一）。业务适配器决定内容，不得将这些视图字段写回业务模型。
+
+`EditorNode.readOnly` 让单个节点内部控件只读，`draggable:false` 禁止拖动；图级业务回调仍需自行保护。quest 模拟器据此在保持选择、定位和模拟快捷操作的同时锁定文档编辑。

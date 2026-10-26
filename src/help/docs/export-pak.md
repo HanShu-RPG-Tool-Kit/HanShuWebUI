@@ -115,7 +115,7 @@ registerLocaleExportRule({
 
 语言与配音的平面由注册规则决定，不由 `.lang` / `.ogg` 后缀统一决定。例如礼包 / 任务语言表随已导出源进入 shared，combined、client、server 均含译文。
 
-**任务编译（`questCompiler`）**：`.quest` 进包路径为 `quest/<名>.quest`，平面 **shared**。单进度（`hanshu.progress`）编译为多进度外壳（`hanshu.progress-tree`），完整表单暂放入 `extensions.hanshuSimpleQuest`；已是树图的原样进包。验证：`npm run test:quest-compile`。
+**任务编译（`questCompiler`）**：`.quest` 进包路径为 `quest/<名>.quest`，平面 **shared**。单进度（`hanshu.progress`）编译为多进度外壳（`hanshu.progress-tree`），完整表单暂放入 `extensions.hanshuSimpleQuest`；已是树图的先校验结构、规模与连线，再补齐缺失的 `order` / `reverseOrder` 进包，数组顺序不参与执行语义。验证：`npm run test:quest-compile`。
 
 ### 源目录与 PAK 顶层
 

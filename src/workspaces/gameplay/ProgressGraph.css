@@ -78,3 +78,39 @@
 .flow-graph-node.is-end .flow-graph-node-title { display: none; }
 
 @media (max-width: 1000px) { .flow-graph-count { display: none; } .flow-graph-toolbar { flex-wrap: wrap; } }
+
+.signal-debugger { flex-shrink:0; border-top:1px solid #151719; background:#292b2e; font:12px/1.5 system-ui,sans-serif; }
+.signal-debugger button,.signal-debugger select { color:#d3d8df; background:#32363b; border:1px solid #494e55; border-radius:4px; font:inherit; cursor:pointer; }
+.signal-debugger button:disabled { opacity:.38; cursor:default; }
+.signal-debugger-controls { display:flex; align-items:center; flex-wrap:wrap; gap:6px; padding:8px 12px; }
+.signal-debugger-controls button { padding:3px 10px; }
+.signal-debugger-status { min-width:132px; color:#acbed2; font-weight:600; margin-right:8px; }
+.signal-debugger-status.is-terminal { color:#9ed5ad; }
+.signal-debugger-status.is-fault { color:#ef9d87; }
+.signal-debugger-speed { display:flex; align-items:center; gap:6px; margin-left:4px; color:#9da5af; }
+.signal-debugger-speed select { padding:2px 6px; }
+.signal-debugger-counter { color:#9099a4; margin-left:auto; font-variant-numeric:tabular-nums; }
+.signal-debugger-body { display:grid; grid-template-columns:minmax(0,1fr) minmax(200px,28%); border-top:1px solid #393d43; height:156px; }
+.signal-debugger-queue { min-width:0; display:flex; flex-direction:column; }
+.signal-debugger-queue nav { display:flex; gap:12px; padding:0 12px; border-bottom:1px solid #353a40; }
+.signal-debugger-queue nav button { border:0; border-bottom:2px solid transparent; border-radius:0; background:none; color:#9aa3af; padding:5px 0; }
+.signal-debugger-queue nav button.is-active { border-bottom-color:#99b9dc; color:#d9e4ef; }
+.signal-debugger-rows { overflow:auto; flex:1; padding:4px 8px; scrollbar-width:thin; scrollbar-color:#555d67 transparent; }
+.signal-debugger-row { width:100%; display:flex; gap:9px; align-items:center; text-align:left; border:0!important; border-radius:3px; background:transparent!important; min-height:27px; padding:3px 6px; }
+.signal-debugger-row:hover { background:#3c424b!important; }
+.signal-debugger-row.is-head { background:#35424d!important; box-shadow:inset 2px 0 #8cafcf; }
+.signal-debugger-index { width:20px; text-align:center; flex-shrink:0; color:#8995a3; font:10px ui-monospace,monospace; }
+.signal-kind { display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px; flex-shrink:0; border-radius:4px; background:#1e252b; color:#81d3a6; font:600 12px ui-monospace,monospace; }
+.signal-kind.is-query { color:#7dbbfa; }.signal-kind.is-cancel { color:#ed9c82; }.signal-kind.is-none { color:#b8a0dd; }
+.signal-debugger-route { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }.signal-debugger-route i { color:#7d8c9b; font-style:normal; padding:0 5px; }
+.signal-debugger-row small { color:#9ea8b5; white-space:nowrap; }.signal-debugger-reason { overflow:hidden; text-overflow:ellipsis; }
+.signal-debugger-detail { border-left:1px solid #3a3e44; padding:10px 14px; overflow:auto; scrollbar-width:thin; color:#aab3bf; font-size:11px; }
+.signal-debugger-detail strong { display:flex; align-items:center; gap:8px; color:#d3deea; font-size:12px; }.signal-debugger-detail p { margin:6px 0; overflow-wrap:anywhere; }
+.signal-debugger-empty { color:#8f9aa7; padding:10px; margin:0; }
+.flow-sim-target.is-accepted .flow-graph-node { outline:2px solid #8fbea9; outline-offset:3px; }
+.flow-sim-target.is-rejected .flow-graph-node { outline:2px solid #bb9c88; outline-offset:3px; }
+.flow-graph-node.is-progress-terminated .flow-graph-node-header { background:#535a63; color:#c9d0d9; }
+@media(max-width:800px) { .signal-debugger-body { grid-template-columns:minmax(0,1fr); height:140px; }.signal-debugger-detail { display:none; }.signal-debugger-counter { display:none; } }
+
+.signal-debugger-status.is-failure { color:#e4a09b; }
+.flow-graph-node.is-end[data-end-outcome="failure"] .flow-graph-node-header { background:#7a4646; color:#f2dede; }

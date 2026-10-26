@@ -42,8 +42,9 @@ function portLabel(flow: M.ProgressFlow, id: string, port: M.FlowPort): string {
   return 'A'
 }
 
-export function progressEdges(flow: M.ProgressFlow): EditorEdge[] {
-  return (flow.logic?.links ?? []).map(link => {
+export function progressEdges(flow: M.ProgressFlow, activity?: { delivery: import('./signals').Delivery; key: string; durationMs: number; running: boolean }): EditorEdge[] {
+  const links = M.normalizeLinkOrder(flow).logic?.links ?? []
+  return links.map(link => {
     const sourcePort = M.linkSourcePort(flow, link.from, link.fromPort)
     return {
       id: `logic:${link.id}`,
@@ -51,6 +52,9 @@ export function progressEdges(flow: M.ProgressFlow): EditorEdge[] {
       target: link.to,
       sourcePort,
       targetPort: link.port,
+      sourceBadge: links.filter(item => item.from === link.from && M.linkSourcePort(flow, item.from, item.fromPort) === sourcePort).length > 1 ? link.order : undefined,
+      targetBadge: links.filter(item => item.to === link.to && item.port === link.port).length > 1 ? link.reverseOrder : undefined,
+      activity: activity?.delivery.link === link.id ? { key: activity.key, durationMs: activity.durationMs, running: activity.running, label: ({activate:'A',query:'Q',cancel:'C',none:'N'})[activity.delivery.signal.kind], color: ({activate:'#81d3a6',query:'#7dbbfa',cancel:'#ed9c82',none:'#b8a0dd'})[activity.delivery.signal.kind], reverse: activity.delivery.to === link.from } : undefined,
       color: portColor(flow, link.from, sourcePort),
       label: `${portLabel(flow, link.from, sourcePort)} → ${portLabel(flow, link.to, link.port)}`,
     }
@@ -77,6 +81,7 @@ export function progressNodes(flow: M.ProgressFlow, sim: FlowSimState, onUpdateN
       height: metrics.height,
       ports,
       deletable: id !== flow.start,
+      className: sim.last?.delivery.to === id ? `flow-sim-target ${sim.last.accepted ? 'is-accepted' : 'is-rejected'}` : '',
       label: id === flow.start ? '开始进度节点，不可删除' : `${nodeSelection(flow, id).kind} ${id}`,
       data: note ? { ...note, onChange: (patch: Partial<M.FlowCanvasNote>) => onUpdateNote(id, patch) } : { flow, sim, draft: !reachable.has(id), resolveText },
     }

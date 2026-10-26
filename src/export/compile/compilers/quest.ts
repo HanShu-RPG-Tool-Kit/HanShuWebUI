@@ -1,3 +1,4 @@
+import { parseFlow, validateFlow } from '../../../workspaces/gameplay/model'
 import { getExtension } from '../../../workspace'
 import { parseProgress, PROGRESS_FORMAT, type ProgressDocument } from '../../../workspaces/gameplay/progressDoc'
 import { MULTI_QUEST_FORMAT, questAuthorKindFromSource, QUEST_EXT } from '../../../workspaces/gameplay/questKind'
@@ -11,7 +12,7 @@ function pakQuestPath(fileName: string): string {
 /**
  * 单进度（hanshu.progress）→ 多进度树图外壳。
  * 完整表单语义暂放入 `extensions.hanshuSimpleQuest`，供引擎在原生图编译就绪前读取；
- * 已是 progress-tree 的 `.quest` 原样进包。
+ * 多进度 `.quest` 校验后进包，并补齐缺失的局部分支顺序。
  */
 export function compileSimpleQuestDocument(doc: ProgressDocument): string {
   const start = 'progress_start'
@@ -52,7 +53,15 @@ export const questCompiler: FileCompiler = {
     const plane = 'shared' as const
 
     if (kind === 'multi') {
-      return [{ path, bytes: file.content, plane, packageName: ctx.index.package.name, sourcePath: file.name }]
+      try {
+        const flow = parseFlow(file.content)
+        const errors = validateFlow(flow).filter(issue => issue.severity === 'error')
+        if (errors.length) throw new Error(errors.map(issue => issue.message).join('；'))
+        return [{ path, bytes: `${JSON.stringify(flow, null, 2)}\n`, plane, packageName: ctx.index.package.name, sourcePath: file.name }]
+      } catch (error) {
+        ctx.report({severity:'error',code:'quest_graph',message:`任务图无法导出：${error instanceof Error ? error.message : String(error)}`,sourcePath:file.name})
+        return []
+      }
     }
 
     if (kind === 'simple') {

@@ -1,3 +1,4 @@
+import { createFlow } from '../src/workspaces/gameplay/model.ts'
 /**
  * 单进度（hanshu.progress）→ 多进度外壳（hanshu.progress-tree + extensions.hanshuSimpleQuest）。
  * 覆盖 compileSimpleQuestDocument 与 questCompiler 入口。
@@ -58,17 +59,7 @@ const fromCompiler = JSON.parse(String(arts[0]!.bytes)) as typeof tree
 assert.equal(fromCompiler.format, MULTI_QUEST_FORMAT)
 assert.ok(fromCompiler.extensions?.hanshuSimpleQuest)
 
-const multi = {
-  format: MULTI_QUEST_FORMAT,
-  version: 1 as const,
-  id: 'tree-1',
-  name: { text: 'name' },
-  description: { text: 'description' },
-  start: 'progress_start',
-  progress: {
-    progress_start: { title: { text: 'progress.progress_start.title' }, description: { text: 'progress.progress_start.description' }, goals: [], completion: 'all' as const },
-  },
-}
+const multi = createFlow('tree-1')
 const passthrough = await questCompiler.compile(
   file('b.quest', `${JSON.stringify(multi)}\n`),
   ctx,
@@ -79,3 +70,10 @@ assert.equal(JSON.parse(String(passthrough[0]!.bytes)).format, MULTI_QUEST_FORMA
 assert.equal(JSON.parse(String(passthrough[0]!.bytes)).extensions, undefined)
 
 console.log('PASS: quest compile simple→multi with hanshuSimpleQuest; multi passthrough')
+
+const invalid = structuredClone(multi)
+invalid.logic = {links:[{id:'bad',from:multi.start,to:multi.start,port:'input',fromPort:'output'}]}
+const rejected = await questCompiler.compile(file('invalid.quest',JSON.stringify(invalid)),ctx)
+assert.equal(rejected.length,0)
+assert(diagnostics.some(d=>d.code==='quest_graph'))
+console.log('PASS: invalid multi graph is blocked before export')

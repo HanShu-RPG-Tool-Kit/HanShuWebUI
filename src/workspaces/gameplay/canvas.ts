@@ -1,5 +1,5 @@
 import { randomId } from '../../project/crypto'
-import { clone, getCanvasNote, getEndNode, getPredicateNode, getProgressNode, getTransitionNode, hasCanvasItem, hasContentNode, NOTE_COLORS, text, removeNode, type FlowCanvasNote, type FlowPort, type FlowPosition, type ProgressFlow } from './model'
+import { normalizeLinkOrder, clone, getCanvasNote, getEndNode, getPredicateNode, getProgressNode, getTransitionNode, hasCanvasItem, hasContentNode, NOTE_COLORS, text, removeNode, type FlowCanvasNote, type FlowPort, type FlowPosition, type ProgressFlow } from './model'
 
 export const NODE_WIDTH = 216
 export const NODE_HEIGHT = 118
@@ -195,7 +195,7 @@ export function moveCanvasNodes(flow: ProgressFlow, positions: Record<string, Fl
     requirePosition(position)
     if (id === flow.start || hasCanvasItem(flow, id)) next.layout!.positions[id] = { ...position }
   }
-  return next
+  return normalizeLinkOrder(next, true)
 }
 
 export function groupCanvasNodes(flow: ProgressFlow, ids: string[]) {

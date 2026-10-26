@@ -198,6 +198,10 @@ test('谓词：初始化后只在上升沿发 A；假时对 Q 回 N；没有输�
   const next = createProgressNode(flow, { x: 600, y: 0 }); flow = next.flow
   flow = connectNodes(flow, predicate.id, t.id, 'input2', 'output').flow
   flow = connectNodes(flow, t.id, next.id, 'input', 'output').flow
+  // Keep this predicate effective without triggering the endpoint during initialization.
+  const end = createEndNode(flow, { x: 900, y: 0 }); flow = end.flow
+  flow = connectNodes(flow, flow.start, end.id, 'input', 'output').flow
+  flow = connectNodes(flow, next.id, end.id, 'input2', 'output').flow
   let sim = initializeQuest(flow, createSimState(flow))
   assert.equal(predicateTruth(sim, predicate.id), false)
   assert.equal(progressState(sim, next.id), 'inactive')
