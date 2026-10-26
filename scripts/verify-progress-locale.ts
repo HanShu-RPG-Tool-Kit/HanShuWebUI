@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { createFlow, displayText, parseFlow } from '../src/workspaces/gameplay/model.ts'
-import { createPredicateNode, createProgressNode } from '../src/workspaces/gameplay/canvas.ts'
+import { createPredicateNode, createProgressNode, createObjectiveNode } from '../src/workspaces/gameplay/canvas.ts'
 import {
   defaultFlowLocaleSeeds,
   defaultKitLocaleSeeds,
@@ -66,23 +66,36 @@ assert.equal(defaultFlowLocaleSeeds('图标题')['progress.progress_start.runnin
 const migratedFlow = ensureFlowLocaleKeys(flow)
 assert.equal(migratedFlow.flow.progress[flow.start]!.questTitle!.text, 'progress.progress_start.questTitle')
 assert.equal(migratedFlow.seeds['progress.progress_start.questTitle'], '图标题')
-assert.equal(migratedFlow.flow.progress[flow.start]!.title.text, 'progress.progress_start.title')
+assert.equal(migratedFlow.flow.progress[flow.start]!.identifier, 'start')
+assert.equal(Object.hasOwn(migratedFlow.seeds, 'progress.progress_start.title'), false)
+for (const translatedTitle of ['旅途开始', 'Journey begins']) {
+  const resolve = (key: string) => key === 'progress.progress_start.questTitle' ? translatedTitle : null
+  assert.equal(displayText(migratedFlow.flow.progress[flow.start]!.questTitle!, resolve), translatedTitle)
+  assert.equal(migratedFlow.flow.progress[flow.start]!.identifier, 'start', 'language changes never translate the progress identifier')
+}
 
 const created = createProgressNode(flow, { x: 10, y: 20 })
-assert.equal(created.flow.progress[created.id]!.title.text, flowNodeFieldKey('progress', created.id, 'title'))
-assert.equal(created.localeSeeds[flowNodeFieldKey('progress', created.id, 'title')], '新进度')
-assert.equal(displayText(created.flow.progress[created.id]!.title, (key) => created.localeSeeds[key] ?? null), '新进度')
-assert.equal(displayText(created.flow.progress[created.id]!.title), flowNodeFieldKey('progress', created.id, 'title'))
+assert.equal(created.flow.progress[created.id]!.identifier, 'progress_1')
+assert.equal(Object.hasOwn(created.localeSeeds, flowNodeFieldKey('progress', created.id, 'title')), false)
+assert.equal(ensureFlowLocaleKeys(created.flow).flow.progress[created.id]!.identifier, 'progress_1')
+const sameIdentifier = ensureFlowLocaleKeys(created.flow)
+assert.equal(Object.keys(sameIdentifier.seeds).some(key => key.endsWith('.identifier') || key.endsWith('.title') && key.startsWith('progress.')), false)
+const renamedIdentifier = structuredClone(created.flow)
+renamedIdentifier.progress[created.id]!.identifier = 'collect.apples'
+assert.equal(ensureFlowLocaleKeys(renamedIdentifier).flow.progress[created.id]!.identifier, 'collect.apples', 'identifier resembling a locale key stays literal')
 
 const predicate = createPredicateNode(created.flow, { x: 10, y: 200 })
-assert.equal(predicate.flow.predicates![predicate.id]!.title.text, flowNodeFieldKey('predicates', predicate.id, 'title'))
-assert.equal(predicate.localeSeeds[flowNodeFieldKey('predicates', predicate.id, 'title')], '新谓词')
+const background=createObjectiveNode(created.flow,{x:10,y:400})
+background.flow.objectives![background.id].goal={kind:'collect',params:{item:'minecraft:apple'}}
+assert.deepEqual(ensureFlowLocaleKeys(background.flow).flow.objectives,background.flow.objectives)
+assert.equal(Object.keys(ensureFlowLocaleKeys(background.flow).seeds).some(key=>key.startsWith('objectives.')),false,'background goals have no player-facing localization fields')
+assert.equal(Object.hasOwn(predicate.flow.predicates![predicate.id]!, 'title'), false)
 const migratedPredicate = ensureFlowLocaleKeys(parseFlow(JSON.stringify({
   ...predicate.flow,
   predicates: { ...predicate.flow.predicates, [predicate.id]: { ...predicate.flow.predicates![predicate.id], title: { text: '旧明文谓词' } } },
 })))
-assert.equal(migratedPredicate.flow.predicates![predicate.id]!.title.text, flowNodeFieldKey('predicates', predicate.id, 'title'))
-assert.equal(migratedPredicate.seeds[flowNodeFieldKey('predicates', predicate.id, 'title')], '旧明文谓词')
+assert.equal(Object.hasOwn(migratedPredicate.flow.predicates![predicate.id]!, 'title'), false)
+assert.equal(Object.hasOwn(migratedPredicate.seeds, flowNodeFieldKey('predicates', predicate.id, 'title')), false)
 
 const nav = createNavigationPoint('旧塔')
 assert.equal(nav.label, NAV_LABEL_KEY)

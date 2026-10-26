@@ -25,7 +25,7 @@ export function compileSimpleQuestDocument(doc: ProgressDocument): string {
     start,
     progress: {
       [start]: {
-        title: { text: title },
+        identifier: 'start',
         questTitle: { text: title },
         description: { text: description },
         runningLog: { text: '' },

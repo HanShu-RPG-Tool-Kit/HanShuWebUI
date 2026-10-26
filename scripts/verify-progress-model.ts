@@ -40,7 +40,7 @@ test('v2 文档：开始进度 / 进度 / 谓词 / 变迁 / 结束 可解析并�
   flow = connectNodes(flow, base.p2, end.id, 'input', 'output').flow
   flow = connectNodes(flow, base.p2, end.id, 'input2', 'output2').flow
   assert.deepEqual(parseFlow(JSON.stringify(flow)), flow)
-  assert.equal(parseFlow(JSON.stringify(flow)).progress[base.start].title.text, `progress.${base.start}.title`)
+  assert.equal(parseFlow(JSON.stringify(flow)).progress[base.start].identifier, 'start')
   assert.ok(getPredicateNode(flow, predicate.id))
   assert.ok(getTransitionNode(flow, base.t1))
   assert.ok(getEndNode(flow, end.id))
@@ -53,6 +53,42 @@ test('旧草稿字段直接报错，不做迁移', () => {
   assert.throws(() => parseFlow(JSON.stringify({ ...flow, nodes: {} })), /旧草稿/)
   assert.throws(() => parseFlow(JSON.stringify({ ...flow, start: 'missing' })), /开始进度节点不存在/)
   assert.throws(() => parseFlow(JSON.stringify({ ...flow, version: 2 })), /格式或版本/)
+})
+
+test('进度标识符含开始进度和草稿，在 Quest 内唯一；不改变内部 ID 或连线', () => {
+  const { flow, start, p2 } = chain()
+  assert.equal(flow.progress[start].identifier, 'start')
+  const renamed = structuredClone(flow)
+  renamed.progress[p2].identifier = 'collect_supplies'
+  assert.deepEqual(renamed.logic, flow.logic)
+  assert.deepEqual(Object.keys(renamed.progress), Object.keys(flow.progress))
+  assert.equal(errors(renamed).length, 0)
+  renamed.progress[p2].identifier = 'start'
+  assert(errors(renamed).some(issue => issue.path.endsWith('.identifier') && issue.message.includes('唯一')))
+  renamed.progress[p2].identifier = ''
+  assert(errors(renamed).some(issue => issue.message.includes('不能为空')))
+  const draft = createProgressNode(flow, { x: 0, y: 300 })
+  draft.flow.progress[draft.id].identifier = 'start'
+  assert(errors(draft.flow).some(issue => issue.path === `progress.${draft.id}.identifier`))
+})
+
+test('读取旧 v1 标题时规范化为非本地化标识符，移除谓词标题且保留任务本地化字段', () => {
+  const { flow, start, p2 } = chain()
+  const predicate = createPredicateNode(flow, { x: 0, y: 300 })
+  const old = JSON.parse(JSON.stringify(predicate.flow))
+  for (const [id, node] of Object.entries(old.progress) as [string, Record<string, unknown>][]) {
+    delete node.identifier
+    node.title = { text: id === start ? `progress.${start}.title` : '旧阶段名称' }
+  }
+  old.predicates[predicate.id].title = { text: '旧谓词标题' }
+  const parsed = parseFlow(JSON.stringify(old))
+  assert.equal(parsed.progress[start].identifier, 'start')
+  assert.equal(parsed.progress[p2].identifier, '旧阶段名称')
+  assert.equal(Object.hasOwn(parsed.progress[start], 'title'), false)
+  assert.equal(Object.hasOwn(parsed.predicates![predicate.id], 'title'), false)
+  assert.deepEqual(parsed.progress[start].questTitle, flow.progress[start].questTitle)
+  assert.deepEqual(parsed.logic, predicate.flow.logic)
+  assert.deepEqual(parseFlow(JSON.stringify(parsed)), parsed)
 })
 
 test('新建任务只有一个开始进度节点：无左端口、有成功/失败出口、不可删除', () => {
@@ -372,7 +408,7 @@ test('画布布局、端口坐标与自由拖动', () => {
   const { flow, start, t1 } = chain()
   const layout = layoutCanvas(flow)
   assert.equal(layout.positions.size, 4)
-  assert.deepEqual(nodeMetrics(flow, start), { width: 216, height: 118, socketY: 44 })
+  assert.deepEqual(nodeMetrics(flow, start), { width: 216, height: 118, socketY: 86 })
   assert.deepEqual(nodeMetrics(flow, t1), { width: 180, height: 96, socketY: 48 })
   const moved = moveCanvasNodes(flow, { [start]: { x: -120, y: 40 } })
   assert.deepEqual(moved.layout!.positions[start], { x: -120, y: 40 })

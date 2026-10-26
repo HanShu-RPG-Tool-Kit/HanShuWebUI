@@ -1,4 +1,5 @@
 import { createFlow } from '../src/workspaces/gameplay/model.ts'
+import { createObjectiveNode } from '../src/workspaces/gameplay/canvas.ts'
 /**
  * 单进度（hanshu.progress）→ 多进度外壳（hanshu.progress-tree + extensions.hanshuSimpleQuest）。
  * 覆盖 compileSimpleQuestDocument 与 questCompiler 入口。
@@ -59,7 +60,9 @@ const fromCompiler = JSON.parse(String(arts[0]!.bytes)) as typeof tree
 assert.equal(fromCompiler.format, MULTI_QUEST_FORMAT)
 assert.ok(fromCompiler.extensions?.hanshuSimpleQuest)
 
-const multi = createFlow('tree-1')
+const multi = createObjectiveNode(createFlow('tree-1'),{x:300,y:0}).flow
+const backgroundId=Object.keys(multi.objectives!)[0]
+multi.objectives![backgroundId].goal={kind:'collect',params:{item:'minecraft:apple',count:3}}
 const passthrough = await questCompiler.compile(
   file('b.quest', `${JSON.stringify(multi)}\n`),
   ctx,
@@ -68,6 +71,7 @@ assert.equal(passthrough.length, 1)
 assert.equal(passthrough[0]!.path, 'quest/b.quest')
 assert.equal(JSON.parse(String(passthrough[0]!.bytes)).format, MULTI_QUEST_FORMAT)
 assert.equal(JSON.parse(String(passthrough[0]!.bytes)).extensions, undefined)
+assert.deepEqual(JSON.parse(String(passthrough[0]!.bytes)).objectives,multi.objectives,'background goal type and parameters survive export without runtime state')
 
 console.log('PASS: quest compile simple→multi with hanshuSimpleQuest; multi passthrough')
 

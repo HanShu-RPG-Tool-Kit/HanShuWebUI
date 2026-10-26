@@ -196,4 +196,90 @@ test('weak connectivity and a future predicate path do not substitute for forwar
  const explicit=S.initializeQuest(flow,preset,true);assert.equal(explicit.outcome,null);assert(explicit.queue.length)
  assert.deepEqual(S.drainSignals(flow,explicit).outcome,{endId:end.id,result:'success'})
 })
+function backgroundGoal() {
+ let flow=M.createFlow('background-goal')
+ const end=C.createEndNode(flow,{x:600,y:0});flow=M.connectNodes(end.flow,flow.start,end.id,'input','output').flow
+ const goal=C.createObjectiveNode(flow,{x:0,y:200});flow=goal.flow
+ const gate=C.createTransitionNode(flow,{x:300,y:200});flow=gate.flow
+ flow=M.connectNodes(flow,goal.id,gate.id,'input','output').flow
+ flow=M.connectNodes(flow,goal.id,gate.id,'input2','output2').flow
+ flow=M.connectNodes(flow,gate.id,end.id,'input','output').flow
+ flow.objectives![goal.id].goal={kind:'collect',params:{count:3}}
+ return {flow,goal:goal.id,gate:gate.id,end:end.id}
+}
+test('background goal roundtrip, two distinct outputs, no inputs; delete cleans links and layout',()=>{
+ const {flow,goal}=backgroundGoal()
+ const parsed=M.parseFlow(JSON.stringify(flow));assert.deepEqual(parsed,flow)
+ assert.deepEqual(M.inputPorts(flow,goal),[]);assert.deepEqual(M.outputPorts(flow,goal),['output','output2'])
+ assert.equal(M.canConnectNodes(flow,flow.start,goal,'input','output'),false)
+ assert.equal(M.validateFlow(flow).some(issue=>issue.severity==='error'),false)
+ assert.equal(C.socketOffset(flow,goal,'output2').y,104)
+ const removed=M.removeNode(flow,goal);assert(!removed.objectives![goal]);assert(!removed.logic!.links.some(link=>link.from===goal));assert(!removed.layout!.positions[goal])
+ for (const replacement of [{goal:{kind:'collect',params:{bad:[]}}},{goal:{kind:7,params:{}}}]) {
+  const invalid=structuredClone(flow) as any;invalid.objectives[goal]=replacement;assert.throws(()=>M.parseFlow(JSON.stringify(invalid)))
+ }
+ const duplicate=structuredClone(flow) as any;duplicate.predicates={[goal]:{conditions:[]}};assert.throws(()=>M.parseFlow(JSON.stringify(duplicate)))
+})
+test('effective goals start atomically; drafts stay inactive and cannot settle; reset returns all inactive',()=>{
+ let {flow,goal}=backgroundGoal();const draft=C.createObjectiveNode(flow,{x:0,y:400});flow=draft.flow
+ const empty=S.createSimState(flow);assert.equal(S.objectiveState(empty,goal),'inactive');assert.equal(S.settleObjective(flow,empty,goal,'succeeded'),empty)
+ const sim=S.initializeQuest(flow,empty,true);assert.equal(S.progressState(sim,flow.start),'running');assert.equal(S.objectiveState(sim,goal),'running');assert.equal(S.objectiveState(sim,draft.id),'inactive')
+ assert.equal(S.settleObjective(flow,sim,draft.id,'succeeded'),sim)
+ assert.equal(S.objectiveState(S.resetSimState(flow),goal),'inactive')
+})
+test('goal ignores C, rejects external A, answers Q by settled port, and never settles twice',()=>{
+ const {flow,goal}=backgroundGoal();let sim=S.initializeQuest(flow,S.createSimState(flow))
+ sim=S.injectSignal(flow,sim,goal,'output',{kind:'cancel'});assert.equal(S.objectiveState(sim,goal),'running')
+ sim=S.injectSignal(flow,sim,goal,'output',{kind:'activate'});assert.equal(sim.log.at(-1)!.accepted,false)
+ for (const outcome of ['succeeded','failed'] as const) {
+  const settled=S.settleObjective(flow,sim,goal,outcome);assert.equal(S.objectiveState(settled,goal),outcome)
+  assert.equal(S.settleObjective(flow,settled,goal,outcome==='succeeded'?'failed':'succeeded'),settled)
+  assert(settled.log.some(row=>row.to===goal&&row.signal.kind==='query'&&row.emitted?.[0]?.signal.kind==='activate'))
+  assert(settled.log.some(row=>row.to===goal&&row.signal.kind==='query'&&row.emitted?.[0]?.signal.kind==='none'))
+  assert.equal(S.objectiveState(S.injectSignal(flow,settled,goal,'output',{kind:'cancel'}),goal),outcome)
+ }
+})
+test('goal success and failure broadcast only their own outputs; quest terminal blocks late instance reports',()=>{
+ for (const outcome of ['succeeded','failed'] as const) {
+  let {flow,goal,end}=backgroundGoal();flow.logic!.links=flow.logic!.links.filter(link=>link.from!==goal)
+  flow=M.connectNodes(flow,goal,end,'input','output').flow;flow=M.connectNodes(flow,goal,end,'input2','output2').flow
+  const pending=S.settleObjective(flow,S.initializeQuest(flow,S.createSimState(flow)),goal,outcome,true)
+  assert.equal(pending.queue.length,1);assert.equal(pending.queue[0].port,outcome==='succeeded'?'input':'input2')
+  const terminal=S.drainSignals(flow,pending);assert.equal(terminal.outcome?.result,outcome==='succeeded'?'success':'failure')
+  assert.equal(S.settleObjective(flow,terminal,goal,'failed'),terminal)
+ }
+})
+test('running background goals do not sustain quest, even with their own path to an end',()=>{
+ let {flow,goal}=backgroundGoal();let sim=S.initializeQuest(flow,S.createSimState(flow))
+ sim=S.settleProgress(flow,sim,flow.start,'failed');assert.equal(sim.outcome?.endId,null);assert.equal(S.objectiveState(sim,goal),'running')
+ assert.equal(S.settleObjective(flow,sim,goal,'succeeded'),sim,'auto-failure cannot be revived')
+ const orphan=M.createFlow();const e=C.createEndNode(orphan,{x:600,y:0}),g=C.createObjectiveNode(e.flow,{x:0,y:200})
+ let stranded=M.connectNodes(g.flow,g.id,e.id,'input','output').flow
+ stranded=M.connectNodes(stranded,stranded.start,e.id,'input2','output2').flow
+ // The start has a structural end path, so it survives until cancelled; the goal still cannot sustain it.
+ const initialized=S.initializeQuest(stranded,S.createSimState(stranded))
+ const cancelled=S.injectSignal(stranded,initialized,stranded.start,'output',{kind:'cancel'})
+ assert.equal(cancelled.outcome?.endId,null);assert.equal(S.objectiveState(cancelled,g.id),'running')
+})
+test('goal instance outcomes obey pulse rollback, signature guards and event serialization',()=>{
+ const {flow,goal}=backgroundGoal();const initial=S.initializeQuest(flow,S.createSimState(flow))
+ const pending=S.settleObjective(flow,initial,goal,'succeeded',true)
+ assert.equal(S.settleObjective(flow,pending,goal,'failed'),pending)
+ const changed=structuredClone(flow);changed.objectives![goal].goal.params.count=5
+ const rolledBack=S.drainSignals(changed,pending);assert.equal(rolledBack.fault?.code,'graph-changed');assert.equal(S.objectiveState(rolledBack,goal),'running')
+ assert.equal(S.objectiveState(initial,goal),'running','original snapshots remain immutable')
+})
+test('background goal with end reachability cannot rescue a stranded running progress',()=>{
+ let {flow,goal}=backgroundGoal();const leaf=C.createProgressNode(flow,{x:300,y:500});flow=leaf.flow
+ flow=M.connectNodes(flow,flow.start,leaf.id,'input','output2').flow
+ const sim=S.settleProgress(flow,S.initializeQuest(flow,S.createSimState(flow)),flow.start,'failed')
+ assert.equal(sim.outcome?.endId,null);assert(sim.outcome&&'reason' in sim.outcome&&sim.outcome.reason==='no-reachable-end')
+ assert.equal(S.objectiveState(sim,goal),'running');assert.equal(S.progressState(sim,leaf.id),'terminated')
+})
+test('background goals count toward shared execution limits',()=>{
+ const {flow}=backgroundGoal()
+ flow.objectives=Object.fromEntries(Array.from({length:M.FLOW_LIMITS.nodes},(_,index)=>[`goal_${index}`,{goal:{kind:'collect',params:{}}}]))
+ assert(M.validateFlow(flow).some(issue=>issue.severity==='error'&&issue.path==='graph'))
+ assert.equal(S.initializeQuest(flow,S.createSimState(flow)).fault?.code,'invalid-graph')
+})
 console.log(`${checks} quest signal checks passed`)

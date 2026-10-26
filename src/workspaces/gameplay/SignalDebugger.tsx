@@ -22,8 +22,7 @@ export function SignalDebugger({ flow, sim, playing, duration, disabled, onIniti
   const chooseTab=(value: typeof tab)=>{resetScroll();setTab(value)}
   const label = (id: string | null) => {
     if (!id) return '手动注入'
-    const node = M.getProgressNode(flow,id) ?? M.getPredicateNode(flow,id) ?? M.getEndNode(flow,id)
-    return node ? M.displayText(node.title, resolveText) || (id === flow.start ? '开始进度' : id) : M.getTransitionNode(flow,id) ? `变迁 ${id}` : id
+    return M.flowNodeLabel(flow, id, resolveText)
   }
   const port = (delivery: S.Delivery) => M.getTransitionNode(flow,delivery.to) ? delivery.port === 'input' ? '合取' : delivery.port === 'input2' ? '析取' : '查询' : M.getEndNode(flow,delivery.to) ? delivery.port === 'input2' ? '失败入' : '成功入' : ({input:'激活',input2:'失败入',output:'成功 / 查询',output2:'失败 / 查询'})[delivery.port]
   const allRows: TraceRow[] = tab === 'queue' ? sim.queue : tab === 'history' ? [...sim.log].reverse() : sim.discarded

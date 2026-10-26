@@ -104,7 +104,6 @@ export function ensureFlowLocaleKeys(flow: ProgressFlow): {
   for (const [id, node] of Object.entries(flow.progress)) {
     const migrated: typeof node = {
       ...node,
-      title: migrateFlowText(node.title, flowNodeFieldKey('progress', id, 'title'), seeds),
       runningLog: migrateFlowText(node.runningLog, flowNodeFieldKey('progress', id, 'runningLog'), seeds),
       completedLog: migrateFlowText(node.completedLog, flowNodeFieldKey('progress', id, 'completedLog'), seeds),
     }
@@ -115,12 +114,6 @@ export function ensureFlowLocaleKeys(flow: ProgressFlow): {
     next.progress[id] = migrated
   }
 
-  if (flow.predicates) {
-    next.predicates = Object.fromEntries(Object.entries(flow.predicates).map(([id, node]) => [id, {
-      ...node,
-      title: migrateFlowText(node.title, flowNodeFieldKey('predicates', id, 'title'), seeds),
-    }]))
-  }
   if (flow.ends) {
     next.ends = Object.fromEntries(Object.entries(flow.ends).map(([id, node]) => [id, {
       ...node,
@@ -146,7 +139,6 @@ export function defaultFlowLocaleSeeds(
   return {
     [flowNodeFieldKey('progress', 'progress_start', 'questTitle')]: title,
     [flowNodeFieldKey('progress', 'progress_start', 'description')]: '',
-    [flowNodeFieldKey('progress', 'progress_start', 'title')]: title,
     [flowNodeFieldKey('progress', 'progress_start', 'runningLog')]: '',
     [flowNodeFieldKey('progress', 'progress_start', 'completedLog')]: '',
   }
@@ -157,7 +149,7 @@ export function flowNodeLocaleSeeds(
   id: string,
   title: string,
 ): Record<string, string> {
-  return { [flowNodeFieldKey(collection, id, 'title')]: title }
+  return collection === 'ends' ? { [flowNodeFieldKey(collection, id, 'title')]: title } : {}
 }
 
 /** 节点 ID 重命名时，.lang 内键的搬家列表 */
@@ -166,8 +158,8 @@ export function flowNodeLocaleKeyMoves(
   newId: string,
 ): Array<[string, string]> {
   const fields: Record<'progress' | 'predicates' | 'ends', readonly string[]> = {
-    progress: ['title', 'runningLog', 'completedLog', 'questTitle', 'description'],
-    predicates: ['title'],
+    progress: ['runningLog', 'completedLog', 'questTitle', 'description'],
+    predicates: [],
     ends: ['title'],
   }
   const moves: Array<[string, string]> = []

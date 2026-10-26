@@ -52,7 +52,12 @@
 
 .flow-graph-node.is-end .flow-graph-node-header { background: #8b4545; color: #f0dede; }
 .flow-graph-node.is-end.is-reached .flow-graph-node-header { background: #3f6a52; color: #dff0e6; }
-.flow-graph-node.is-end .flow-graph-node-title { display: none; }
+.flow-graph-node-port-band { position:absolute;top:76px;bottom:0;left:0;right:0;border-top:1px solid #ffffff0c;background:#0000000b;pointer-events:none; }
+.flow-graph-node.is-end .flow-graph-node-port-band { top:62px; }
+.flow-graph-node.is-progress .flow-graph-node-title { font-family:ui-monospace,Consolas,monospace; }
+.flow-graph-node.is-objective .flow-graph-node-header { background:#46666c;color:#e1eff1; }
+.flow-graph-node.is-objective[data-objective-state="succeeded"] .flow-graph-node-header { background:#3f6a52; }
+.flow-graph-node.is-objective[data-objective-state="failed"] .flow-graph-node-header { background:#7a4646; }
 
 
 .signal-debugger { flex-shrink:0; border-top:1px solid #151719; background:#292b2e; font:12px/1.5 system-ui,sans-serif; }

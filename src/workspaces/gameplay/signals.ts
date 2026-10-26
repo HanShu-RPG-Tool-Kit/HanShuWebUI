@@ -1,6 +1,6 @@
-import { FLOW_LIMITS, orderedLinks, validateFlow, connectedToStart, getEndNode, getPredicateNode, getProgressNode, getTransitionNode, linkSourcePort, type FlowPort, type ProgressFlow } from './model'
+import { FLOW_LIMITS, orderedLinks, validateFlow, connectedToStart, getEndNode, getPredicateNode, getObjectiveNode, getProgressNode, getTransitionNode, linkSourcePort, type FlowPort, type ProgressFlow } from './model'
 
-/** 进度持有阶段状态；唯一终局锁存在 quest 实例上，查询轮次仅为执行簿记。 */
+/** 进度持有阶段状态，后台目标持有结算状态；唯一终局锁存在 quest 实例上。 */
 export const PROGRESS_STATES = {
   inactive: '未激活',
   running: '运行中',
@@ -10,6 +10,7 @@ export const PROGRESS_STATES = {
   terminated: '随任务结束',
 } as const
 export type ProgressState = keyof typeof PROGRESS_STATES
+export type ObjectiveState = 'inactive' | 'running' | 'succeeded' | 'failed'
 
 /**
  * 线上只有四种信号：
@@ -39,6 +40,7 @@ export type TransitionRound = { open: boolean; id: number; answered: Record<stri
 
 export type FlowSimState = {
   progress: Record<string, ProgressState>
+  objectives: Record<string, ObjectiveState>
   predicates: Record<string, boolean>
   rounds: Record<string, TransitionRound>
   ends: Record<string, 'success' | 'failure' | null>
@@ -55,7 +57,7 @@ export type FlowSimState = {
   fault: { code: string; message: string } | null
   execution: { checkpoint: RuntimeSnapshot; signature: string; processed: number; budget: number; seen: string[] } | null
 }
-type RuntimeSnapshot = Pick<FlowSimState, 'progress' | 'predicates' | 'rounds' | 'ends' | 'outcome' | 'initialized'>
+type RuntimeSnapshot = Pick<FlowSimState, 'progress' | 'objectives' | 'predicates' | 'rounds' | 'ends' | 'outcome' | 'initialized'>
 
 export type Delivery = { signal: FlowSignal; to: string; port: FlowPort; link?: string; round?: number; from: string | null; traceId?: number; eventId?: number; parentId?: number | null; causes?: number[] }
 
@@ -72,6 +74,9 @@ export function progressState(sim: FlowSimState, id: string): ProgressState {
 export function predicateTruth(sim: FlowSimState, id: string): boolean {
   return Object.hasOwn(sim.predicates, id) ? sim.predicates[id] : false
 }
+export function objectiveState(sim: FlowSimState, id: string): ObjectiveState {
+  return Object.hasOwn(sim.objectives, id) ? sim.objectives[id] : 'inactive'
+}
 export function transitionRound(sim: FlowSimState, id: string): TransitionRound {
   return Object.hasOwn(sim.rounds, id) ? sim.rounds[id] : emptyRound()
 }
@@ -80,6 +85,7 @@ export function endOutcome(sim: FlowSimState, id: string): 'success' | 'failure'
 }
 
 export function createSimState(flow: ProgressFlow): FlowSimState {
+  const objectives: Record<string, ObjectiveState> = Object.fromEntries(Object.keys(flow.objectives ?? {}).map(id => [id, 'inactive']))
   const progress: Record<string, ProgressState> = {}
   const predicates: Record<string, boolean> = {}
   const rounds: Record<string, TransitionRound> = {}
@@ -88,11 +94,12 @@ export function createSimState(flow: ProgressFlow): FlowSimState {
   for (const id of Object.keys(flow.predicates ?? {})) predicates[id] = false
   for (const id of Object.keys(flow.transitions ?? {})) rounds[id] = emptyRound()
   for (const id of Object.keys(flow.ends ?? {})) ends[id] = null
-  return { progress, predicates, rounds, ends, log: [], pulse: 0, nextTraceId: 1, events: [], initialized: false, outcome: null, queue: [], discarded: [], last: null, fault: null, execution: null }
+  return { progress, objectives, predicates, rounds, ends, log: [], pulse: 0, nextTraceId: 1, events: [], initialized: false, outcome: null, queue: [], discarded: [], last: null, fault: null, execution: null }
 }
 
 /** Drop removed nodes; keep surviving runtime state when the graph is edited. */
 export function syncSimState(sim: FlowSimState, flow: ProgressFlow): FlowSimState {
+  const objectives: Record<string, ObjectiveState> = Object.fromEntries(Object.keys(flow.objectives ?? {}).map(id => [id, objectiveState(sim, id)]))
   const progress: Record<string, ProgressState> = {}
   const predicates: Record<string, boolean> = {}
   const rounds: Record<string, TransitionRound> = {}
@@ -102,8 +109,8 @@ export function syncSimState(sim: FlowSimState, flow: ProgressFlow): FlowSimStat
   for (const id of Object.keys(flow.transitions ?? {})) rounds[id] = Object.hasOwn(sim.rounds, id) ? sim.rounds[id] : emptyRound()
   for (const id of Object.keys(flow.ends ?? {})) ends[id] = Object.hasOwn(sim.ends, id) ? sim.ends[id] : null
   const same = (a: object, b: object) => Object.keys(a).length === Object.keys(b).length && Object.keys(a).every(key => Object.hasOwn(b, key))
-  if (same(sim.progress, progress) && same(sim.predicates, predicates) && same(sim.rounds, rounds) && same(sim.ends, ends)) return sim
-  return { ...sim, progress, predicates, rounds, ends }
+  if (same(sim.progress, progress) && same(sim.objectives, objectives) && same(sim.predicates, predicates) && same(sim.rounds, rounds) && same(sim.ends, ends)) return sim
+  return { ...sim, progress, objectives, predicates, rounds, ends }
 }
 
 export function resetSimState(flow: ProgressFlow): FlowSimState {
@@ -178,6 +185,17 @@ function deliverPredicate(flow: ProgressFlow, sim: FlowSimState, delivery: Deliv
   }
   if (delivery.signal.kind === 'cancel') { accept(sim, delivery); return [] }
   reject(sim, delivery, '谓词没有左端口，只接受查询')
+  return []
+}
+
+function deliverObjective(flow: ProgressFlow, sim: FlowSimState, delivery: Delivery, id: string): Delivery[] {
+  if (delivery.signal.kind === 'query') {
+    const state = objectiveState(sim, id)
+    accept(sim, delivery)
+    return reply(flow, delivery, (state === 'succeeded' && delivery.port === 'output') || (state === 'failed' && delivery.port === 'output2') ? A : N)
+  }
+  if (delivery.signal.kind === 'cancel') { accept(sim, delivery); return [] }
+  reject(sim, delivery, '目标没有左端口，只接受查询；结算由实例报告')
   return []
 }
 
@@ -268,6 +286,7 @@ function deliverTransition(flow: ProgressFlow, sim: FlowSimState, delivery: Deli
 function deliverOne(flow: ProgressFlow, sim: FlowSimState, delivery: Delivery): Delivery[] {
   if (getProgressNode(flow, delivery.to)) return deliverProgress(flow, sim, delivery, delivery.to)
   if (getPredicateNode(flow, delivery.to)) return deliverPredicate(flow, sim, delivery, delivery.to)
+  if (getObjectiveNode(flow, delivery.to)) return deliverObjective(flow, sim, delivery, delivery.to)
   if (getTransitionNode(flow, delivery.to)) return deliverTransition(flow, sim, delivery, delivery.to)
   if (getEndNode(flow, delivery.to)) return deliverEnd(sim, delivery, delivery.to)
   reject(sim, delivery, '目标节点不存在')
@@ -276,9 +295,9 @@ function deliverOne(flow: ProgressFlow, sim: FlowSimState, delivery: Delivery): 
 
 /** A pulse is atomic with respect to external events; animation never owns execution. */
 function snapshot(sim: FlowSimState): RuntimeSnapshot {
-  return structuredClone({ progress: sim.progress, predicates: sim.predicates, rounds: sim.rounds, ends: sim.ends, outcome: sim.outcome, initialized: sim.initialized })
+  return structuredClone({ progress: sim.progress, objectives: sim.objectives, predicates: sim.predicates, rounds: sim.rounds, ends: sim.ends, outcome: sim.outcome, initialized: sim.initialized })
 }
-const signature = (flow: ProgressFlow) => JSON.stringify([flow.start, flow.progress, flow.predicates, flow.transitions, flow.ends, orderedLinks(flow)])
+const signature = (flow: ProgressFlow) => JSON.stringify([flow.start, flow.progress, flow.objectives, flow.predicates, flow.transitions, flow.ends, orderedLinks(flow)])
 export const isBusy = (sim: FlowSimState) => sim.queue.length > 0
 export const canTrigger = (sim: FlowSimState) => !isBusy(sim) && !sim.outcome && !sim.fault
 export const AUTO_FAILURE_REASONS = {
@@ -315,7 +334,7 @@ function begin(flow: ProgressFlow, sim: FlowSimState, base: FlowSimState, seeds:
   if (!canTrigger(sim)) return sim
   const next = structuredClone(base)
   next.log = next.log.slice(-4000); next.pulse = sim.pulse + 1; next.last = null; next.discarded = []
-  const nodes = Object.keys(flow.progress).length + Object.keys(flow.predicates ?? {}).length + Object.keys(flow.transitions ?? {}).length + Object.keys(flow.ends ?? {}).length
+  const nodes = Object.keys(flow.progress).length + Object.keys(flow.objectives ?? {}).length + Object.keys(flow.predicates ?? {}).length + Object.keys(flow.transitions ?? {}).length + Object.keys(flow.ends ?? {}).length
   const budget = Math.min(FLOW_LIMITS.deliveries, Math.max(512, (flow.logic?.links.length ?? 0) * 128 + nodes * 32))
   next.execution = { checkpoint: snapshot(sim), signature: signature(flow), processed: 0, budget, seen: [] }
   next.events = [...next.events.slice(-3999), { id: next.pulse, ...event }]
@@ -377,8 +396,10 @@ export function propagateSignals(flow: ProgressFlow, sim: FlowSimState, seeds: D
 }
 export function initializeQuest(flow: ProgressFlow, sim: FlowSimState, deferred = false): FlowSimState {
   if (sim.initialized || !canTrigger(sim) || !getProgressNode(flow, flow.start)) return sim
-  const base = { ...sim, initialized: true, progress: { ...sim.progress, [flow.start]: 'running' as const } }
   const effective = connectedToStart(flow)
+  // All effective background goals start together, before any initialization deliveries.
+  const objectives: Record<string, ObjectiveState> = Object.fromEntries(Object.keys(flow.objectives ?? {}).map(id => [id, effective.has(id) ? 'running' : 'inactive']))
+  const base = { ...sim, initialized: true, objectives, progress: { ...sim.progress, [flow.start]: 'running' as const } }
   const seeds = Object.keys(flow.predicates ?? {}).filter(id => effective.has(id) && predicateTruth(sim, id)).sort().flatMap(id => forward(flow, id, 'output', A))
   const next = begin(flow, sim, base, seeds, { label: '初始化任务', nodeId: flow.start })
   return deferred ? next : drainSignals(flow, next)
@@ -395,6 +416,13 @@ export function setPredicateTruth(flow: ProgressFlow, sim: FlowSimState, id: str
   const base = { ...sim, predicates: { ...sim.predicates, [id]: truth } }
   if (!sim.initialized || !truth || !connectedToStart(flow).has(id)) return base
   const next = begin(flow, sim, base, forward(flow, id, 'output', A), { label: '谓词变真', nodeId: id })
+  return deferred ? next : drainSignals(flow, next)
+}
+/** Instance outcome injection only: no goal execution, counters or UI tracking here. */
+export function settleObjective(flow: ProgressFlow, sim: FlowSimState, id: string, outcome: 'succeeded' | 'failed', deferred = false): FlowSimState {
+  if (!canTrigger(sim) || !sim.initialized || !connectedToStart(flow).has(id) || !getObjectiveNode(flow, id) || objectiveState(sim, id) !== 'running') return sim
+  const base = { ...sim, objectives: { ...sim.objectives, [id]: outcome } }
+  const next = begin(flow, sim, base, forward(flow, id, outcome === 'succeeded' ? 'output' : 'output2', A), { label: outcome === 'succeeded' ? '目标结算成功' : '目标结算失败', nodeId: id })
   return deferred ? next : drainSignals(flow, next)
 }
 /** Debug injection has the same terminal, draft and safety boundaries. */

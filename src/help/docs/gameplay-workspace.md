@@ -16,7 +16,7 @@
   "start": "progress_start",
   "progress": {
     "progress_start": {
-      "title": { "text": "progress.progress_start.title" },
+      "identifier": "start",
       "questTitle": { "text": "progress.progress_start.questTitle" },
       "description": { "text": "progress.progress_start.description" },
       "runningLog": { "text": "progress.progress_start.runningLog" },
@@ -31,7 +31,8 @@
 
 - 根上的 `start` 指向**唯一**的开始进度节点；任务标题是它的 `questTitle`，任务说明是它的 `description`。
 - 开始进度节点没有左端口，任务开始时直接进入运行中；不可删除。
-- 其余节点：普通进度（唯一有持久运行状态，带 `runningLog` / `completedLog` / `goals` / `completion`）、谓词（`conditions`，空条件恒假）、变迁、结束（`title` + `rewardKits`）。节点按稳定 ID 平铺保存，`FlowText` 只含 `text`。
+- 所有进度节点（含开始进度）的 `identifier` 是 quest 内唯一、非本地化的进度标识符，与稳定节点 ID 分离；任务标题 `questTitle` 仍需本地化。谓词不设标题，只编辑条件。
+- 其余节点：普通进度（阶段状态，带 `runningLog` / `completedLog` / `goals` / `completion`）、谓词（`conditions`，空条件恒假）、目标（`objectives`，一个 `goal`，随任务启动且不维持存活）、变迁、结束（`title` + `rewardKits`）。目标不进入任务 UI 跟踪，实例执行 goal；图模拟器只手动结算和发信号。节点按稳定 ID 平铺保存，`FlowText` 只含 `text`。
 - **唯一连接约束**：右端口 → 左端口，且不能成环（含自环）。连接时拒绝，文档里手写出环是校验 error。
 - 与开始进度节点**联通**的节点是**生效节点**，其余是**草稿节点**（画布变暗，校验 warning）。联通性把连线视为无向边，否则只有出边的谓词永远会被误判成草稿。
 - 可选 `layout.positions` 单独保存 `{x, y}`（允许负数）；拖动只改位置。没有手工位置时按图结构初次排列。可选 `layout.groups` 保存 `{name?, nodes}`，只表示一起移动。可选 `layout.notes` 保存画布注释。
@@ -53,8 +54,8 @@
 
 ## 画布
 
-- 单击选择；双击进度 / 谓词 / 结束节点在**画布上**打开该节点的表单视图（每个节点最多一张，可同时开多个，位置只在会话内有效），也支持 Enter / F2。任务信息通过开始进度节点的表单或空白处右键「编辑任务信息…」编辑。
-- 空白处右键或工具栏「＋ 节点」创建**进度 / 谓词 / 变迁 / 结束**和注释；右键创建使用鼠标位置，工具栏创建使用当前视野中心。双击空白画布不创建节点。
+- 单击选择；双击进度 / 谓词 / 目标 / 结束节点在**画布上**打开该节点的表单视图（每个节点最多一张，可同时开多个，位置只在会话内有效），也支持 Enter / F2。任务信息通过开始进度节点的表单或空白处右键「编辑任务信息…」编辑。
+- 空白处右键或工具栏「＋ 节点」创建**进度 / 谓词 / 目标 / 变迁 / 结束**和注释；右键创建使用鼠标位置，工具栏创建使用当前视野中心。双击空白画布不创建节点。
 - 拖动节点调整位置，松开后保存为一次可撤销编辑。框选、Shift/Ctrl 追加选择；Ctrl+G 建 Group、Ctrl+Shift+G 解除。Group 标题双击重命名。
 - 拖动右侧输出端口到左侧输入端口连线，也支持反向拖；松开到空白处或 Esc 取消。**端口不匹配、会成环（含自环）或目标不存在**时连接被拒绝。重复连接同一对端口会选中已有连接。
 - 单击连线选择，Delete / Backspace 或右键「断开连接」移除；多选可一次断开。连线与断开都记为一次撤销。

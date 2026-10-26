@@ -10,7 +10,7 @@ import type { EditorEdge, EditorSelection, MenuContext, MenuItem, NodeEditorApi,
 import { progressEdges, progressNodes, nodeSelection, edgeSelection } from './graphAdapter'
 import { ProgressNode } from './ProgressNode'
 import { NodeFormView, type NodeFormKind } from './NodeFormView'
-import type { GoalDefinition } from './goalDefinitions'
+import { localizedGoalDefinitionLabel, type GoalDefinition } from './goalDefinitions'
 import './ProgressGraph.css'
 import './NodeFormView.css'
 
@@ -116,7 +116,7 @@ export function ProgressGraph({ flow, selection, onSelect, onCreate, onChangeFlo
     setForms(previous => Object.fromEntries(Object.entries(previous).filter(([id]) => M.hasContentNode(flow, id))))
   }, [flow])
 
-  const nodeKind = (id: string): NodeFormKind | null => M.getProgressNode(flow, id) ? 'progress' : M.getPredicateNode(flow, id) ? 'predicate' : M.getEndNode(flow, id) ? 'end' : null
+  const nodeKind = (id: string): NodeFormKind | null => M.getProgressNode(flow, id) ? 'progress' : M.getPredicateNode(flow, id) ? 'predicate' : M.getObjectiveNode(flow, id) ? 'objective' : M.getEndNode(flow, id) ? 'end' : null
   const openForm = (id: string) => {
     if (disabled || locked) return
     const kind = nodeKind(id)
@@ -134,7 +134,7 @@ export function ProgressGraph({ flow, selection, onSelect, onCreate, onChangeFlo
   }
 
   const nodes = useMemo(() => {
-    const base = progressNodes(flow, sim, onUpdateNote, resolveText).map(node=>{
+    const base = progressNodes(flow, sim, onUpdateNote, resolveText, Object.fromEntries(definitions.map(definition=>[definition.kind,localizedGoalDefinitionLabel(definition,'zh_cn')]))).map(node=>{
       const formPosition=forms[node.id]
       const formOnRight=formPosition ? formPosition.x >= node.position.x + node.width / 2 : true
       return {...node, ports: formPosition ? [...node.ports, { id: ASSOCIATION_PORT, direction: 'output' as const, side: formOnRight ? 'right' as const : 'left' as const, y: node.height / 2, label: '关联表单', kind: 'association' }] : node.ports, draggable: !locked, readOnly: locked, className: `${node.className ?? ''}${breakpoints.nodes.includes(node.id)?' flow-sim-breakpoint':''}${runTo===node.id?' flow-sim-run-target':''}`}
@@ -187,12 +187,13 @@ export function ProgressGraph({ flow, selection, onSelect, onCreate, onChangeFlo
     setStopReason('');setPausedAt(null);setSkipTrace(null);setSim(update)
   }
   const initialize = () => trigger(previous=>S.initializeQuest(flow,previous,true))
-  const settle = (id: string, outcome: 'succeeded' | 'failed') => trigger(previous=>S.settleProgress(flow,previous,id,outcome,true))
+  const settle = (id: string, outcome: 'succeeded' | 'failed') => trigger(previous=>M.getObjectiveNode(flow,id) ? S.settleObjective(flow,previous,id,outcome,true) : S.settleProgress(flow,previous,id,outcome,true))
   const togglePredicate = (id: string) => trigger(previous=>S.setPredicateTruth(flow,previous,id,!S.predicateTruth(previous,id),true))
 
   const createItems = (position: FlowPosition): MenuItem[] => [
     { label: '新建进度', action: () => onCreate(position, 'progress') },
     { label: '新建谓词', action: () => onCreate(position, 'predicate') },
+    { label: '新建目标', action: () => onCreate(position, 'objective') },
     { label: '新建变迁', action: () => onCreate(position, 'transition') },
     { label: '新建结束', action: () => onCreate(position, 'end') },
     { label: '添加注释', action: () => onCreate(position, 'note') },
@@ -226,6 +227,15 @@ export function ProgressGraph({ flow, selection, onSelect, onCreate, onChangeFlo
         { label: '编辑…', disabled: locked, action: () => openForm(id) },
         { label: truth ? '置为假' : sim.initialized ? '置为真（发 A）' : '预置为真（初始化时广播）', disabled: eventDisabled, action: () => togglePredicate(id) },
         { label: '删除谓词', disabled: locked, action: () => onDelete(id) },
+      ]
+    }
+    if (M.getObjectiveNode(flow, id)) {
+      const running = S.objectiveState(sim,id) === 'running'
+      return [
+        { label: '编辑…', disabled: locked, action: () => openForm(id) },
+        { label: '结算为成功（发 A）', disabled: eventDisabled || !running, action: () => settle(id,'succeeded') },
+        { label: '结算为失败（发 A）', disabled: eventDisabled || !running, action: () => settle(id,'failed') },
+        { label: '删除目标', disabled: locked, action: () => onDelete(id) },
       ]
     }
     if (M.getTransitionNode(flow, id)) return [{ label: '删除变迁', disabled: locked, action: () => onDelete(id) }]
@@ -268,6 +278,7 @@ export function ProgressGraph({ flow, selection, onSelect, onCreate, onChangeFlo
         if (M.isStartNode(flow, id) && !sim.initialized) { initialize(); return }
         if (M.getPredicateNode(flow, id)) { togglePredicate(id); return }
         if (M.getProgressNode(flow, id) && S.progressState(sim, id) === 'running') settle(id, event.shiftKey ? 'failed' : 'succeeded')
+        if (M.getObjectiveNode(flow, id) && S.objectiveState(sim, id) === 'running') settle(id, event.shiftKey ? 'failed' : 'succeeded')
       }} />
     <SignalDebugger key={`${flow.id}:${debugGeneration}`} viewTools={viewTools} expanded={toolsExpanded} onToggleExpanded={()=>setToolsExpanded(value=>!value)} flow={flow} sim={sim} playing={playing} duration={duration} breakpoints={breakpoints} stopReason={stopReason} onClearBreakpoints={()=>{setBreakpoints({nodes:[],links:[]});setPausedAt(null);setStopReason('')}} disabled={disabled || !active} resolveText={resolveText} onInitialize={initialize} onStep={step} onPlay={play} onReset={()=>{setPlaying(false);flight.current={key:'',elapsed:0};setDebugGeneration(value=>value+1);setSim(S.resetSimState(flow));setRunTo(null);setSkipTrace(null);setPausedAt(null);setStopReason('')}} onDuration={setDuration} onFocus={delivery=>{api.current?.focus(delivery.to);onSelect(delivery.link ? {kind:'logic-link',id:delivery.link} : nodeSelection(flow,delivery.to))}} />
     {createMenu && <NodeContextMenu {...createMenu} title="节点画布" label="新建节点" items={createItems(createMenu.position)} onClose={() => setCreateMenu(null)} />}

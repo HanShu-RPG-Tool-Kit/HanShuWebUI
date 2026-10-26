@@ -8,9 +8,9 @@ import { localizedGoalDefinitionLabel, type GoalDefinition } from './goalDefinit
 import { GoalParameterField } from './goalWidgets'
 import { GoalPicker } from './ProgressEditor'
 import { ProgressCompletionEditor } from './ProgressCompletionEditor'
-import { getEndNode, getPredicateNode, getProgressNode, isStartNode, type FlowText, type ProgressFlow } from './model'
+import { flowNodeLabel, progressIdentifierIssue, getEndNode, getPredicateNode, getObjectiveNode, getProgressNode, isStartNode, type FlowText, type ProgressFlow } from './model'
 
-export type NodeFormKind = 'progress' | 'predicate' | 'end'
+export type NodeFormKind = 'progress' | 'predicate' | 'objective' | 'end'
 
 export function NodeFormView({ flow, nodeId, kind, active = false, disabled = false, resolveText, setText, definitions, kitOptions, onChange, onClose, onActivate, onResize }: {
   flow: ProgressFlow
@@ -63,7 +63,8 @@ export function NodeFormView({ flow, nodeId, kind, active = false, disabled = fa
       <section className="node-form-info"><h2>进度信息</h2>
       {start && authorText('任务标题', node.questTitle ?? { text: '' }, (next, field) => { next.progress[nodeId].questTitle = field })}
       {start && authorText('任务说明', node.description ?? { text: '' }, (next, field) => { next.progress[nodeId].description = field }, true)}
-      {authorText('进度标题', node.title, (next, field) => { next.progress[nodeId].title = field })}
+      <TextField label="进度标识符" value={node.identifier} disabled={disabled} onChange={identifier => update(next => { next.progress[nodeId].identifier = identifier })} />
+      {progressIdentifierIssue(flow, nodeId, node.identifier) && <p className="progress-inline-warning" role="alert">{progressIdentifierIssue(flow, nodeId, node.identifier)}</p>}
       {authorText('进行时日志', node.runningLog, (next, field) => { next.progress[nodeId].runningLog = field }, true)}
       {authorText('完成时日志', node.completedLog, (next, field) => { next.progress[nodeId].completedLog = field }, true)}
       </section>
@@ -118,12 +119,36 @@ export function NodeFormView({ flow, nodeId, kind, active = false, disabled = fa
         }); setPicker(null)
       }} />}
     </div>
+  } else if (kind === 'objective') {
+    const node = getObjectiveNode(flow,nodeId)
+    if (!node) return null
+    title = '目标'
+    const definition = definitions.find(item=>item.kind === node.goal.kind)
+    body = <section className="node-form-section">
+      <header className="progress-section-head"><h2>{definition ? localizedGoalDefinitionLabel(definition,'zh_cn') : node.goal.kind || '未选择目标'}</h2>
+        <button type="button" disabled={disabled} onClick={()=>setPicker({})}>{node.goal.kind ? '更换类型' : '选择目标类型'}</button>
+      </header>
+      <p className="flow-hint">随任务启动的后台目标，不进入任务 UI 跟踪；不维持任务存活。</p>
+      {node.goal.kind && !definition && <p className="progress-inline-warning">未找到定义脚本，原参数已保留。</p>}
+      <div className="progress-parameters">{definition?.fields.map(field=><GoalParameterField key={`${node.goal.kind}:${field.key}`} field={field} value={['string','number','boolean'].includes(typeof node.goal.params[field.key]) ? node.goal.params[field.key] as string|number|boolean : undefined} disabled={disabled} locale="zh_cn" onChange={value=>update(next=>{
+        const params=next.objectives![nodeId].goal.params
+        if(value===undefined) delete params[field.key]
+        else Object.defineProperty(params,field.key,{value,writable:true,enumerable:true,configurable:true})
+      })} />)}</div>
+      {definition && !definition.fields.length && <p className="progress-node-empty">此目标无需配置参数</p>}
+      {picker && <GoalPicker definitions={definitions} current={node.goal.kind} locale="zh_cn" onClose={()=>setPicker(null)} onChoose={kind=>{
+        if (disabled) return
+        update(next=>{
+          typeDrafts.current.set(`objective:${node.goal.kind}`,{...node.goal.params})
+          next.objectives![nodeId].goal={kind,params:typeDrafts.current.get(`objective:${kind}`) ?? {}}
+        });setPicker(null)
+      }} />}
+    </section>
   } else if (kind === 'predicate') {
     const node = getPredicateNode(flow, nodeId)
     if (!node) return null
     title = '谓词'
     body = <>
-      {authorText('谓词标题', node.title, (next, field) => { next.predicates![nodeId].title = field })}
       <section className="node-form-section node-form-rules">
         <header><h2>条件 <span>{node.conditions.length}</span></h2></header>
         {node.conditions.length === 0 && <p className="flow-hint">没有条件时谓词恒假（不会发出 A）。</p>}
@@ -185,7 +210,7 @@ export function NodeFormView({ flow, nodeId, kind, active = false, disabled = fa
       onClose()
     }}>
       <span className="node-form-kind">{title}</span>
-      <strong>{read((kind === 'progress' ? getProgressNode(flow, nodeId)?.title : kind === 'predicate' ? getPredicateNode(flow, nodeId)?.title : getEndNode(flow, nodeId)?.title) ?? { text: '' })}</strong>
+      <strong>{flowNodeLabel(flow, nodeId, resolveText)}</strong>
       {!expanded && <button type="button" className="node-form-enlarge nodrag nopan" onClick={expand}>放大表单 ↗</button>}
       <button type="button" className="node-form-expand nodrag nopan" onClick={event => { const wide = event.currentTarget.parentElement!.parentElement!.getBoundingClientRect().width / viewport.zoom >= 1000; onResize({ width: wide ? 760 : 1180, height: 540 }, true); if (scroll.current) scroll.current.scrollTop = 0 }} title="切换横向展开">横向展开</button>
       <button type="button" className="node-form-close nodrag nopan" aria-label={expanded ? '还原表单' : '关闭表单'} title={expanded ? '还原表单' : '关闭表单'} onClick={expanded ? restore : onClose}><svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 4 8 8m0-8-8 8" /></svg></button>

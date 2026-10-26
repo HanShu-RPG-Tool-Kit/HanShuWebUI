@@ -1,5 +1,5 @@
 import { randomId } from '../../project/crypto'
-import { normalizeLinkOrder, clone, getCanvasNote, getEndNode, getPredicateNode, getProgressNode, getTransitionNode, hasCanvasItem, hasContentNode, NOTE_COLORS, text, removeNode, type FlowCanvasNote, type FlowPort, type FlowPosition, type ProgressFlow } from './model'
+import { normalizeLinkOrder, nextProgressIdentifier, clone, getCanvasNote, getEndNode, getPredicateNode, getObjectiveNode, getProgressNode, getTransitionNode, hasCanvasItem, hasContentNode, NOTE_COLORS, text, removeNode, type FlowCanvasNote, type FlowPort, type FlowPosition, type ProgressFlow } from './model'
 
 export const NODE_WIDTH = 216
 export const NODE_HEIGHT = 118
@@ -8,7 +8,7 @@ export const PREDICATE_HEIGHT = 84
 export const TRANSITION_WIDTH = 180
 export const TRANSITION_HEIGHT = 96
 export const END_WIDTH = 168
-export const END_HEIGHT = 84
+export const END_HEIGHT = 112
 const COLUMN_WIDTH = 276
 const ROW_HEIGHT = 150
 const PADDING = 64
@@ -18,25 +18,25 @@ export function nodeMetrics(flow: ProgressFlow, id: string) {
   if (note) return { width: note.width, height: note.height, socketY: 0 }
   if (getTransitionNode(flow, id)) return { width: TRANSITION_WIDTH, height: TRANSITION_HEIGHT, socketY: 48 }
   if (getEndNode(flow, id)) return { width: END_WIDTH, height: END_HEIGHT, socketY: 0 }
-  if (getPredicateNode(flow, id)) return { width: PREDICATE_WIDTH, height: PREDICATE_HEIGHT, socketY: 44 }
-  return { width: NODE_WIDTH, height: NODE_HEIGHT, socketY: 44 }
+  if (getPredicateNode(flow, id)) return { width: PREDICATE_WIDTH, height: PREDICATE_HEIGHT, socketY: 68 }
+  return { width: NODE_WIDTH, height: NODE_HEIGHT, socketY: 86 }
 }
 
 export function socketOffset(flow: ProgressFlow, id: string, port: FlowPort): FlowPosition {
   const metrics = nodeMetrics(flow, id)
   const right = port === 'output' || port === 'output2'
-  if (getProgressNode(flow, id)) return { x: right ? metrics.width : 0, y: port === 'output2' ? 78 : 42 }
+  if (getProgressNode(flow, id) || getObjectiveNode(flow, id)) return { x: right ? metrics.width : 0, y: port === 'output2' ? 104 : 86 }
   if (getTransitionNode(flow, id)) {
     if (port === 'input2') return { x: 0, y: 70 }
     return { x: right ? metrics.width : 0, y: 42 }
   }
-  if (getEndNode(flow, id)) return { x: 0, y: port === 'input2' ? 60 : 28 }
-  return { x: right ? metrics.width : 0, y: 44 }
+  if (getEndNode(flow, id)) return { x: 0, y: port === 'input2' ? 98 : 76 }
+  return { x: right ? metrics.width : 0, y: 68 }
 }
 
 /** Initial arrangement only. Once edited, saved positions keep unrelated nodes still. */
 export function layoutCanvas(flow: ProgressFlow) {
-  const ids = [...Object.keys(flow.progress), ...Object.keys(flow.predicates ?? {}), ...Object.keys(flow.transitions ?? {}), ...Object.keys(flow.ends ?? {}), ...Object.keys(flow.layout?.notes ?? {})], known = new Set(ids)
+  const ids = [...Object.keys(flow.progress), ...Object.keys(flow.predicates ?? {}), ...Object.keys(flow.objectives ?? {}), ...Object.keys(flow.transitions ?? {}), ...Object.keys(flow.ends ?? {}), ...Object.keys(flow.layout?.notes ?? {})], known = new Set(ids)
   const edges: { parent: string; target: string }[] = []
   for (const link of flow.logic?.links ?? []) edges.push({ parent: link.from, target: link.to })
   const outgoing = new Map(ids.map((id) => [id, [] as number[]]))
@@ -99,21 +99,21 @@ function requirePosition(position: FlowPosition) {
   if (!Number.isFinite(position.x) || !Number.isFinite(position.y)) throw new Error('节点位置必须是有效的画布坐标。')
 }
 
-/** 进度节点：阶段内容（标题 / 进行时日志 / 完成时日志）与内嵌 goal 元素；状态只在模拟器里。 */
+/** 进度节点：非本地化标识符、日志与内嵌 goal 元素；状态只在模拟器里。 */
 export function createProgressNode(flow: ProgressFlow, position: FlowPosition) {
   requirePosition(position)
   const next = withCanvasPositions(flow)
   let id: string
   do { id = `progress_${randomId()}` } while (hasCanvasItem(next, id) || id === next.start)
   next.progress[id] = {
-    title: text(`progress.${id}.title`),
+    identifier: nextProgressIdentifier(next),
     runningLog: text(`progress.${id}.runningLog`),
     completedLog: text(`progress.${id}.completedLog`),
     goals: [],
     completion: 'all',
   }
   next.layout!.positions[id] = { ...position }
-  return { flow: next, id, localeSeeds: { [`progress.${id}.title`]: '新进度', [`progress.${id}.runningLog`]: '', [`progress.${id}.completedLog`]: '' } }
+  return { flow: next, id, localeSeeds: { [`progress.${id}.runningLog`]: '', [`progress.${id}.completedLog`]: '' } }
 }
 
 export function createPredicateNode(flow: ProgressFlow, position: FlowPosition) {
@@ -123,11 +123,21 @@ export function createPredicateNode(flow: ProgressFlow, position: FlowPosition) 
   do { id = `predicate_${randomId()}` } while (hasCanvasItem(next, id) || id === next.start)
   next.predicates ??= {}
   next.predicates[id] = {
-    title: text(`predicates.${id}.title`),
     conditions: [],
   }
   next.layout!.positions[id] = { ...position }
-  return { flow: next, id, localeSeeds: { [`predicates.${id}.title`]: '新谓词' } }
+  return { flow: next, id }
+}
+
+export function createObjectiveNode(flow: ProgressFlow, position: FlowPosition) {
+  requirePosition(position)
+  const next = withCanvasPositions(flow)
+  let id: string
+  do { id = `objective_${randomId()}` } while (hasCanvasItem(next, id))
+  next.objectives ??= {}
+  next.objectives[id] = { goal: { kind: '', params: {} } }
+  next.layout!.positions[id] = { ...position }
+  return { flow: next, id }
 }
 
 export function createTransitionNode(flow: ProgressFlow, position: FlowPosition) {

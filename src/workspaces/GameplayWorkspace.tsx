@@ -9,7 +9,7 @@ import {createEntity,parseEntity,stringifyEntity} from './gameplay/entityDoc'
 import { useEffect, useImperativeHandle, useMemo, useRef, useState, type DragEvent, type Ref } from 'react'
 import { createPortal } from 'react-dom'
 import { connectNodes, createFlow, disconnectLink, parseFlow, validateFlow, type CanvasNodeType, type FlowCanvasNote, type FlowInputPort, type FlowOutputPort, type FlowPosition, type FlowSelection, type ProgressFlow } from './gameplay/model'
-import { createCanvasNote, createEndNode, createPredicateNode, createProgressNode, createTransitionNode, groupCanvasNodes, moveCanvasNodes, removeCanvasItems, renameCanvasGroup, ungroupCanvasNodes, updateCanvasNote, withCanvasPositions } from './gameplay/canvas'
+import { createCanvasNote, createEndNode, createPredicateNode, createObjectiveNode, createProgressNode, createTransitionNode, groupCanvasNodes, moveCanvasNodes, removeCanvasItems, renameCanvasGroup, ungroupCanvasNodes, updateCanvasNote, withCanvasPositions } from './gameplay/canvas'
 import { smartArrangeCanvas } from './gameplay/arrange'
 import { ProgressGraph } from './gameplay/ProgressGraph'
 import { FlowDocumentProperties } from './gameplay/FlowDocumentProperties'
@@ -645,7 +645,8 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
   const changeFlow = (flow: ProgressFlow, key = focusedKey ?? undefined) => changeSource(JSON.stringify(flow, null, 2), false, key)
   function createNode(position: FlowPosition, operator?: CanvasNodeType) {
     if (!parsed.flow || locked || busy) return
-    const result = operator === 'predicate' ? createPredicateNode(parsed.flow, position)
+    const result = operator === 'objective' ? createObjectiveNode(parsed.flow, position)
+      : operator === 'predicate' ? createPredicateNode(parsed.flow, position)
       : operator === 'transition' ? createTransitionNode(parsed.flow, position)
         : operator === 'end' ? createEndNode(parsed.flow, position)
           : operator === 'note' ? createCanvasNote(parsed.flow, position)

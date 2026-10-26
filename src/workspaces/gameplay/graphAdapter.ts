@@ -3,7 +3,7 @@ import { layoutCanvas, nodeMetrics, socketOffset } from './canvas'
 import type { FlowSimState } from './signals'
 import type { EditorEdge, EditorNode } from '../../nodeEditor'
 
-export type ProgressNodeData = { flow: M.ProgressFlow; sim: FlowSimState; draft: boolean; resolveText?: (key: string) => string | null }
+export type ProgressNodeData = { flow: M.ProgressFlow; sim: FlowSimState; draft: boolean; resolveText?: (key: string) => string | null; goalLabels?: Record<string,string> }
 
 const COLORS = {
   activate: '#7a9aab',
@@ -18,6 +18,7 @@ export function nodeSelection(flow: M.ProgressFlow, id: string): M.FlowSelection
   if (M.getCanvasNote(flow, id)) return { kind: 'note', id }
   if (M.getProgressNode(flow, id)) return { kind: 'progress', id }
   if (M.getPredicateNode(flow, id)) return { kind: 'predicate', id }
+  if (M.getObjectiveNode(flow, id)) return { kind: 'objective', id }
   if (M.getTransitionNode(flow, id)) return { kind: 'transition', id }
   if (M.getEndNode(flow, id)) return { kind: 'end', id }
   return { kind: 'flow' }
@@ -27,7 +28,7 @@ export function edgeSelection(id: string): M.FlowSelection {
 }
 
 export function portColor(flow: M.ProgressFlow, id: string, port: M.FlowPort): string {
-  if (M.getProgressNode(flow, id)) return port === 'output' ? COLORS.success : port === 'output2' ? COLORS.failure : COLORS.activate
+  if (M.getProgressNode(flow, id) || M.getObjectiveNode(flow, id)) return port === 'output' ? COLORS.success : port === 'output2' ? COLORS.failure : COLORS.activate
   if (M.getTransitionNode(flow, id)) return port === 'input' ? COLORS.conjunction : port === 'input2' ? COLORS.disjunction : COLORS.activate
   if (M.getEndNode(flow, id)) return port === 'input2' ? COLORS.failure : COLORS.success
   if (M.getPredicateNode(flow, id)) return COLORS.predicate
@@ -35,7 +36,7 @@ export function portColor(flow: M.ProgressFlow, id: string, port: M.FlowPort): s
 }
 
 function portLabel(flow: M.ProgressFlow, id: string, port: M.FlowPort): string {
-  if (M.getProgressNode(flow, id)) return port === 'output' ? '成功' : port === 'output2' ? '失败' : '激活'
+  if (M.getProgressNode(flow, id) || M.getObjectiveNode(flow, id)) return port === 'output' ? '成功' : port === 'output2' ? '失败' : '激活'
   if (M.getTransitionNode(flow, id)) return port === 'input' ? '合取' : port === 'input2' ? '析取' : '通过'
   if (M.getEndNode(flow, id)) return port === 'input2' ? '失败入' : '成功入'
   if (M.getPredicateNode(flow, id)) return '查询'
@@ -61,7 +62,7 @@ export function progressEdges(flow: M.ProgressFlow, activity?: { delivery: impor
   })
 }
 
-export function progressNodes(flow: M.ProgressFlow, sim: FlowSimState, onUpdateNote: (id: string, patch: Partial<M.FlowCanvasNote>) => void, resolveText?: (key: string) => string | null): EditorNode[] {
+export function progressNodes(flow: M.ProgressFlow, sim: FlowSimState, onUpdateNote: (id: string, patch: Partial<M.FlowCanvasNote>) => void, resolveText?: (key: string) => string | null, goalLabels?: Record<string,string>): EditorNode[] {
   const layout = layoutCanvas(flow)
   const reachable = M.connectedToStart(flow)
   return layout.ids.map(id => {
@@ -82,8 +83,8 @@ export function progressNodes(flow: M.ProgressFlow, sim: FlowSimState, onUpdateN
       ports,
       deletable: id !== flow.start,
       className: sim.last?.delivery.to === id ? `flow-sim-target ${sim.last.accepted ? 'is-accepted' : 'is-rejected'}` : '',
-      label: id === flow.start ? '开始进度节点，不可删除' : `${nodeSelection(flow, id).kind} ${id}`,
-      data: note ? { ...note, onChange: (patch: Partial<M.FlowCanvasNote>) => onUpdateNote(id, patch) } : { flow, sim, draft: !reachable.has(id), resolveText },
+      label: note ? note.title : `${M.flowNodeLabel(flow, id, resolveText)}${id === flow.start ? '，开始进度节点，不可删除' : ''}`,
+      data: note ? { ...note, onChange: (patch: Partial<M.FlowCanvasNote>) => onUpdateNote(id, patch) } : { flow, sim, draft: !reachable.has(id), resolveText, goalLabels },
     }
   })
 }
