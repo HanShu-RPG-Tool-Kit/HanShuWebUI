@@ -19,6 +19,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { confirmDialog } from './ui/dialogs'
 import {
   createLocalBackend,
   maskSecret,
@@ -95,17 +96,20 @@ export function TtsCredentialsModal({
   const canSave = trimmedName !== '' && !nameInvalid && newValue.trim() !== ''
 
   const add = () => {
+    void (async () => {
     if (!canSave) return
-    if (exists && !window.confirm(`「${trimmedName}」已存在，覆盖它？`)) return
+    if (exists && !(await confirmDialog(`「${trimmedName}」已存在，覆盖它？`))) return
     backend.set(trimmedName, newValue.trim())
     setNewName('')
     setNewValue('')
     refresh()
     nameRef.current?.focus()
+    })()
   }
 
   const remove = (name: string) => {
-    if (!window.confirm(`删除本机的「${name}」？工程里的引用不变，下次要用需重新填写。`)) {
+    void (async () => {
+    if (!(await confirmDialog({ message: `删除本机的「${name}」？工程里的引用不变，下次要用需重新填写。`, danger: true }))) {
       return
     }
     backend.remove(name)
@@ -115,6 +119,7 @@ export function TtsCredentialsModal({
       return next
     })
     refresh()
+    })()
   }
 
   /** 从"工程还需要"点过来：名称预填好，光标直接落到密钥那一格 */

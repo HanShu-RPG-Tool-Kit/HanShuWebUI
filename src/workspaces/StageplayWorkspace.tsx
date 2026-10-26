@@ -12,6 +12,26 @@ import {
 } from 'react'
 import Editor, { type OnMount } from '@monaco-editor/react'
 import { Explorer } from '../Explorer'
+import { PanelDock, resetPanelDock, type DockPanelSpec } from '../ui/PanelDock'
+import {
+  alertDialog,
+  chooseDialog as showChooseDialog,
+  confirmDialog as showConfirmDialog,
+  editorMenuActionId,
+  pickFontSize,
+  promptDialog as showPromptDialog,
+  type ConfirmDialogOptions,
+  runMonacoMenuAction,
+} from '../ui/dialogs'
+import { assignViewFlag, useViewFlags } from '../ui/viewFlags'
+import { runScriptCommandPalette } from './scriptCommands'
+import {
+  SCRIPT_FONT_MAX,
+  SCRIPT_FONT_MIN,
+  scriptEditorAppearance,
+  scriptViewFlags,
+  toggleScriptViewItem,
+} from './scriptView'
 import {
   findNewFileType,
   newFileName,
@@ -275,19 +295,13 @@ export const StageplayWorkspace = forwardRef<
   const [diskSavedAt, setDiskSavedAt] = useState<number | null>(null)
   const [mdPreviewOn, setMdPreviewOn] = useState(true)
   const [hscPreviewOn, setHscPreviewOn] = useState(false)
-  const [agentOpen, setAgentOpen] = useState(true)
+  const view = useViewFlags(scriptViewFlags)
+  const agentOpen = view.agent
+  const setAgentOpen = (next: boolean | ((open: boolean) => boolean)) => {
+    assignViewFlag(scriptViewFlags, 'agent', next)
+  }
   const [agentDiffs, setAgentDiffs] = useState<AgentDiffSnapshot[]>([])
   const [diffOpen, setDiffOpen] = useState(false)
-  const [agentPercent, setAgentPercent] = useState(() => {
-    const saved = Number(localStorage.getItem('hanshu.agentPercent'))
-    return Number.isFinite(saved) && saved >= 25 && saved <= 70 ? saved : 45
-  })
-  const splitRef = useRef<HTMLDivElement>(null)
-  const draggingRef = useRef(false)
-  /** 正在拖录音棚的右把手（存按下时的横向起点与宽度） */
-  const studioDragRef = useRef<{ startX: number; startWidth: number } | null>(
-    null,
-  )
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null)
   const rolesRef = useRef(roles)
   const valueRef = useRef(value)
@@ -307,6 +321,24 @@ export const StageplayWorkspace = forwardRef<
   workspaceRef.current = workspace
   activeIdRef.current = workspace.activeScriptId
   projectRef.current = project
+
+  // Custom dialogs yield while remote updates and project switches continue.
+  // A result must still belong to the project and resource that opened it.
+  const contextualDialog = async <T,>(run: () => Promise<T>, cancelled: T): Promise<T> => {
+    const client = projectRef.current?.handle.client
+    const scriptId = activeIdRef.current
+    const assetId = workspaceRef.current.activeAssetId
+    const result = await run()
+    return projectRef.current?.handle.client === client &&
+      activeIdRef.current === scriptId && workspaceRef.current.activeAssetId === assetId
+      ? result : cancelled
+  }
+  const confirmDialog = (input: string | ConfirmDialogOptions) =>
+    contextualDialog(() => typeof input === 'string' ? showConfirmDialog(input) : showConfirmDialog(input), false)
+  const promptDialog = (input: Parameters<typeof showPromptDialog>[0]) =>
+    contextualDialog(() => showPromptDialog(input), null)
+  const chooseDialog = (input: Parameters<typeof showChooseDialog>[0]) =>
+    contextualDialog(() => showChooseDialog(input), null)
 
   const lineCount = value.split('\n').length
   const charCount = value.length
@@ -479,12 +511,11 @@ export const StageplayWorkspace = forwardRef<
    */
   const [newFileMenuRequest, setNewFileMenuRequest] = useState(0)
 
-  // —— 录音棚（右侧可调宽面板，与 Agent 窗口一样从底部栏唤出）——
-  const [studioOpen, setStudioOpen] = useState(false)
-  const [studioWidth, setStudioWidth] = useState(() => {
-    const saved = Number(localStorage.getItem('hanshu.studioWidth'))
-    return Number.isFinite(saved) && saved >= 280 && saved <= 760 ? saved : 420
-  })
+  // 录音棚跟其他栏目一样进停靠布局，开关仍然走查看菜单。
+  const studioOpen = view.studio
+  const setStudioOpen = (next: boolean | ((open: boolean) => boolean)) => {
+    assignViewFlag(scriptViewFlags, 'studio', next)
+  }
   const [studioMode, setStudioMode] = useState<StudioMode>('single')
   /** 配音方式（固定音频 / TTS / 录音）：**单选与批量共用**，只是目标键集合不同 */
   const [studioSourceMode, setStudioSourceMode] =
@@ -1040,7 +1071,7 @@ export const StageplayWorkspace = forwardRef<
       await deleteAssetBlob(result.fromPackageId, result.fromPath)
       const current = moveAssetToDir(workspaceRef.current, assetId, targetPackageId, targetDir)
       if (current) commitWorkspace(current.workspace)
-    })().catch(e => window.alert(`移动资产失败：${String(e)}`))
+    })().catch(e => void alertDialog(`移动资产失败：${String(e)}`))
   }
 
   const handleDropIntoFolder = (
@@ -1080,6 +1111,8 @@ export const StageplayWorkspace = forwardRef<
         textBindingRef.current?.refreshVoice()
       },
       notify: (message, ok) => setVoiceToast({ id: Date.now(), message, ok }),
+      confirm: (message) => confirmDialog(message),
+      alert: (message) => alertDialog(message),
     })
 
   // ——————————————————————————————————————————————————————————————
@@ -1221,27 +1254,27 @@ export const StageplayWorkspace = forwardRef<
    * 调用方（方案设置页）紧接着要把新 id 写进方案，而那一步写的是"当前活动文件" ——
    * 这里如果顺手切过去，方案内容就会写进那个新服务里。
    */
-  const createTtsService = (): string | null => {
-    const raw = window.prompt('新服务的名字（也就是文件名，只用字母、数字、- 和 _）', 'my-service')
+  const createTtsService = async (): Promise<string | null> => {
+    const raw = await promptDialog({
+      title: '新建服务',
+      message: '名字会成为文件名。只用字母、数字、- 和 _。',
+      defaultValue: 'my-service',
+      validate: (value) =>
+        isValidServiceId(value) ? null : '这个名字不行 —— 只用字母、数字、- 和 _，且不能为空',
+    })
     if (raw === null) return null
     const id = raw.trim()
-    if (!isValidServiceId(id)) {
-      window.alert('这个名字不行 —— 只用字母、数字、- 和 _，且不能为空')
-      return null
-    }
-
-    // 新建**不切**文件，但当前那份的正文要先并回去：否则这一段写回要等自动记忆的定时器
     const current = flushEditorInto(workspaceRef.current)
     const fileName = serviceFileName(id)
     if (findScriptByName(current, fileName)) {
-      window.alert(`「${fileName}」已经存在`)
+      await alertDialog(`「${fileName}」已经存在`)
       return null
     }
     const pkg = findScript(current, current.activeScriptId)?.pkg ?? current.packages[0]
-    if (!pkg) return null
-
-    // 建成**能通过结构校验**的样子 —— 空壳会在方案的服务下拉里都出不来，
-    // 而那正是新建之后最需要看到它的地方
+    if (!pkg) {
+      await alertDialog('还没有包，请先打开或新建工程。')
+      return null
+    }
     const script = createScript(
       fileName,
       stringifyServiceDefinition(
@@ -1284,36 +1317,36 @@ export const StageplayWorkspace = forwardRef<
    * 建出来就带**一条语言**（工程语言表的第一条）与当前第一个服务 ——
    * 空 `voices` 会是一份结构校验不通过的文件，用户打开它还得先猜要加什么。
    */
-  const createTtsPlan = (): string | null => {
-    // 同 `createTtsService`：不切文件，但先把当前那份的正文并回去
-    const current = flushEditorInto(workspaceRef.current)
+  const createTtsPlan = async (): Promise<string | null> => {
     const taken = new Set(
-      current.packages
+      workspaceRef.current.packages
         .flatMap((pkg) => pkg.scripts)
         .map((script) => script.name.toLowerCase()),
     )
-    // 默认名：剧本里第一个还没有方案的说话人
     const suggested =
       rolesRef.current
         .map((role) => role.trim())
         .find((role) => role && !taken.has(planFileName(role).toLowerCase())) ?? ''
-
-    const raw = window.prompt('新配音方案的说话人名（文件名就是说话人的名字）', suggested)
+    const raw = await promptDialog({
+      title: '新建配音方案',
+      message: '文件名就是说话人的名字。',
+      defaultValue: suggested,
+      validate: (value) =>
+        isValidServiceId(value) ? null : '这个名字不行 —— 不能为空，也不能含 \\ / : * ? " < > |',
+    })
     if (raw === null) return null
     const character = raw.trim()
-    if (!isValidServiceId(character)) {
-      window.alert('这个名字不行 —— 不能为空，也不能含 \\ / : * ? " < > |')
-      return null
-    }
-
+    const current = flushEditorInto(workspaceRef.current)
     const fileName = planFileName(character)
     if (findScriptByName(current, fileName)) {
-      window.alert(`「${fileName}」已经存在`)
+      await alertDialog(`「${fileName}」已经存在`)
       return null
     }
     const pkg = findScript(current, current.activeScriptId)?.pkg ?? current.packages[0]
-    if (!pkg) return null
-
+    if (!pkg) {
+      await alertDialog('还没有包，请先打开或新建工程。')
+      return null
+    }
     // 语言就用**编辑器当前正在编辑的那一种**：那一份 `.lang` 才是合成的文本来源，
     // 方案的语言与它不一致时录音棚会拦着不让生成
     const firstLocale = isValidLocaleTag(locale) ? locale : (ttsProjectLocales[0] ?? null)
@@ -1559,20 +1592,23 @@ export const StageplayWorkspace = forwardRef<
   }
 
   const toggleStudio = () => {
-    setStudioOpen((open) => {
-      if (open) {
-        // 关掉时顺手清空选中：下次打开不该还挂着上次的键
-        setStudioSelection([])
-        setStudioMode('single')
-      }
-      return !open
-    })
+    const open = scriptViewFlags.get().studio
+    if (open) {
+      // 关掉时顺手清空选中：下次打开不该还挂着上次的键
+      setStudioSelection([])
+      setStudioMode('single')
+    }
+    scriptViewFlags.set({ studio: !open })
   }
 
   // 录音棚开关 → 编辑器进入 / 退出"键名选择"模式（常规交互被禁用）
   useEffect(() => {
     textBindingRef.current?.setStudioMode(studioOpen)
   }, [studioOpen, textBindingSeq])
+
+  useEffect(() => {
+    editorRef.current?.updateOptions(scriptEditorAppearance(view))
+  }, [view.fontSize, view.minimap, view.wordWrap])
 
   /**
    * 录音棚模式下 Ctrl / Cmd + A = **选中全部键名**。
@@ -1759,8 +1795,13 @@ export const StageplayWorkspace = forwardRef<
     setSavedAt(Date.now())
 
     if (projectRef.current) {
+      const boundId = projectRef.current.manifest.id
+      if (!workspaceRef.current.packages.some((pkg) => pkg.id === boundId)) {
+        void alertDialog('当前工程包已不在工作区，这次只记住了本机草稿，没有写入工程。')
+        return
+      }
       void flushProjectToDisk().catch((err) => {
-        window.alert(
+        void alertDialog(
           `写入工程文件夹失败：${err instanceof Error ? err.message : String(err)}`,
         )
       })
@@ -1915,13 +1956,23 @@ export const StageplayWorkspace = forwardRef<
   const handleRenamePackage = (packageId: string) => {
     const pkg = workspaceRef.current.packages.find((item) => item.id === packageId)
     if (!pkg) return
-    const name = window.prompt('重命名包', pkg.name)
-    if (!name?.trim() || name.trim() === pkg.name) return
-    commitWorkspace({
-      ...workspaceRef.current,
-      packages: workspaceRef.current.packages.map((item) =>
-        item.id === packageId ? { ...item, name: name.trim() } : item,
-      ),
+    const previous = pkg.name
+    void promptDialog({
+      title: '重命名包',
+      message: '输入新的包名。',
+      defaultValue: previous,
+      validate: (value) => (value.trim() ? null : '名字不能为空'),
+    }).then((name) => {
+      if (name == null) return
+      const trimmed = name.trim()
+      if (!trimmed || trimmed === previous) return
+      if (!workspaceRef.current.packages.some((item) => item.id === packageId)) return
+      commitWorkspace({
+        ...workspaceRef.current,
+        packages: workspaceRef.current.packages.map((item) =>
+          item.id === packageId ? { ...item, name: trimmed } : item,
+        ),
+      })
     })
   }
 
@@ -1993,64 +2044,52 @@ export const StageplayWorkspace = forwardRef<
   const handleRenameScript = async (scriptId: string) => {
     const hit = findScript(workspaceRef.current, scriptId)
     if (!hit) return
-    const name = window.prompt(
-      `重命名（后缀须为 ${MANUAL_FILE_EXTENSIONS_LABEL}）`,
-      hit.script.name,
-    )
+    const name = await promptDialog({
+      title: '重命名',
+      message: `后缀须为 ${MANUAL_FILE_EXTENSIONS_LABEL}`,
+      defaultValue: hit.script.name,
+      validate: (value) => {
+        const normalized = normalizeResourceName(value)
+        if (!normalized || !isManualFileName(normalized)) {
+          return `文件名无效。改名允许的后缀：${MANUAL_FILE_EXTENSIONS_LABEL}`
+        }
+        return null
+      },
+    })
     if (name == null) return
     const normalized = normalizeResourceName(name)
-    // `.lang` / `.voice` 的名字由剧本名派生，不接受单独改名
-    if (!normalized || !isManualFileName(normalized)) {
-      window.alert(
-        `文件名无效。改名允许的后缀：${MANUAL_FILE_EXTENSIONS_LABEL}`,
-      )
-      return
-    }
-    if (normalized === hit.script.name) return
-
+    if (!normalized || normalized === hit.script.name) return
     const result = await applyScriptRename(scriptId, normalized)
-    if (!result.ok) window.alert(`改名未执行：${result.error}`)
+    if (!result.ok) await alertDialog(`改名未执行：${result.error}`)
   }
 
   const handleDeletePackage = (packageId: string) => {
     const pkg = workspaceRef.current.packages.find((item) => item.id === packageId)
     if (!pkg) return
-    if (workspaceRef.current.packages.length <= 1) {
-      window.alert('至少保留一个包')
-      return
-    }
-    if (
-      !window.confirm(`删除包「${pkg.name}」及其全部剧本与 assets？`)
-    ) {
-      return
-    }
-
-    const wasActiveScript = pkg.scripts.some(
-      (script) => script.id === activeIdRef.current,
-    )
-    const wasActiveAsset = pkg.assets.some(
-      (asset) => asset.id === workspaceRef.current.activeAssetId,
-    )
-    const remaining = workspaceRef.current.packages.filter(
-      (item) => item.id !== packageId,
-    )
-    const next: Workspace = {
-      packages: remaining,
-      activeScriptId: wasActiveScript
-        ? (remaining[0]?.scripts[0]?.id ?? null)
-        : workspaceRef.current.activeScriptId,
-      activeAssetId: wasActiveAsset
-        ? null
-        : workspaceRef.current.activeAssetId,
-    }
-    commitWorkspace(next)
-    void deletePackageAssetBlobs(packageId)
-
-    if (wasActiveScript || wasActiveAsset) {
-      const hit = findScript(next, next.activeScriptId)
-      loadEditorContent(hit?.script.id ?? null, hit?.script.content ?? '', hit?.script.updatedAt ?? null)
-      setRoles(createDefaultRoles())
-    }
+    void confirmDialog({
+      title: '删除包',
+      message: `删除包「${pkg.name}」及其全部剧本与 assets？`,
+      danger: true,
+    }).then((ok) => {
+      if (!ok) return
+      const current = workspaceRef.current.packages.find((item) => item.id === packageId)
+      if (!current) return
+      const wasActiveScript = current.scripts.some((script) => script.id === activeIdRef.current)
+      const wasActiveAsset = current.assets.some((asset) => asset.id === workspaceRef.current.activeAssetId)
+      const remaining = workspaceRef.current.packages.filter((item) => item.id !== packageId)
+      const next: Workspace = {
+        packages: remaining,
+        activeScriptId: wasActiveScript ? (remaining[0]?.scripts[0]?.id ?? null) : workspaceRef.current.activeScriptId,
+        activeAssetId: wasActiveAsset ? null : workspaceRef.current.activeAssetId,
+      }
+      commitWorkspace(next)
+      void deletePackageAssetBlobs(packageId)
+      if (wasActiveScript || wasActiveAsset) {
+        const opened = findScript(next, next.activeScriptId)
+        loadEditorContent(opened?.script.id ?? null, opened?.script.content ?? '', opened?.script.updatedAt ?? null)
+        setRoles(createDefaultRoles())
+      }
+    })
   }
 
   /**
@@ -2070,7 +2109,7 @@ export const StageplayWorkspace = forwardRef<
       if (bound&&!hit.script.detached) await removeSourceFromDisk(bound.handle, sourceName, hit.script.srcKind)
     } catch (error) {
       setProjectBusy(false)
-      window.alert(`删除未提交，原文件与草稿已保留：${error instanceof Error ? error.message : String(error)}`)
+      void alertDialog(`删除未提交，原文件与草稿已保留：${error instanceof Error ? error.message : String(error)}`)
       return null
     }
     if (projectRef.current?.handle.client !== bound?.handle.client) { setProjectBusy(false); return { removedAssets: 0 } }
@@ -2108,7 +2147,7 @@ export const StageplayWorkspace = forwardRef<
     }
     return { removedAssets: cleaned.removed.length }
     } catch (error) {
-      window.alert(`服务器已删除，本地缓存更新失败，请重新打开工程：${String(error)}`)
+      void alertDialog(`服务器已删除，本地缓存更新失败，请重新打开工程：${String(error)}`)
       return null
     } finally { setProjectBusy(false) }
   }
@@ -2116,55 +2155,59 @@ export const StageplayWorkspace = forwardRef<
   const handleDeleteScript = async (scriptId: string) => {
     const hit = findScript(workspaceRef.current, scriptId)
     if (!hit) return
-    if (
-      !window.confirm(`删除剧本「${hit.script.name}」及其各语言的译文 / 配音？`)
-    ) {
-      return
-    }
+    if (!(await confirmDialog({ message: `删除剧本「${hit.script.name}」及其各语言的译文 / 配音？`, danger: true }))) return
     await deleteScriptWithAssets(scriptId)
   }
 
   const handleDeleteAsset = (assetId: string) => {
     const hit = findAsset(workspaceRef.current, assetId)
     if (!hit) return
-    if (!window.confirm(`删除资产「${hit.asset.path}」？`)) return
-    void voiceOps().removeAssetEverywhere(hit.pkg.id, [hit.asset.path]).catch(error => window.alert(`资产未删除：${String(error)}`))
+    void confirmDialog({ message: `删除资产「${hit.asset.path}」？`, danger: true }).then(async (ok) => {
+      if (!ok) return
+      try {
+        await voiceOps().removeAssetEverywhere(hit.pkg.id, [hit.asset.path])
+      } catch (error) {
+        await alertDialog(`资产未删除：${String(error)}`)
+      }
+    })
   }
 
   const handleNewAssetFolder = (packageId: string, parentPath: string) => {
-    const name = window.prompt('新建文件夹名称', 'voice')
-    if (!name?.trim()) return
-    if (/[\\/:*?"<>|]/.test(name.trim())) {
-      window.alert('文件夹名不能包含 \\ / : * ? " < > |')
-      return
-    }
-    const folder = normalizeFolderPath(`${parentPath}/${name.trim()}`)
-    if (!folder || folder === 'assets') {
-      window.alert('文件夹路径无效')
-      return
-    }
-    const client = projectRef.current?.handle.client
-    if (client) void client.apply([{op:'mkdir',path:folder}]).then(() => commitWorkspace(ensureAssetFolder(workspaceRef.current, packageId, folder))).catch(e => window.alert(String(e)))
+    void promptDialog({
+      title: '新建文件夹',
+      message: '文件夹名不能包含 \\ / : * ? " < > |',
+      defaultValue: 'voice',
+      validate: (value) => {
+        if (!value.trim()) return '名字不能为空'
+        if (/[\\/:*?"<>|]/.test(value.trim())) return '文件夹名不能包含 \\ / : * ? " < > |'
+        return null
+      },
+    }).then((name) => {
+      if (!name?.trim()) return
+      const folder = normalizeFolderPath(`${parentPath}/${name.trim()}`)
+      if (!folder || folder === 'assets') {
+        void alertDialog('文件夹路径无效')
+        return
+      }
+      const client = projectRef.current?.handle.client
+      if (client) void client.apply([{ op: 'mkdir', path: folder }]).then(() => commitWorkspace(ensureAssetFolder(workspaceRef.current, packageId, folder))).catch((error) => { void alertDialog(String(error)) })
+    })
   }
 
   const handleDeleteAssetFolder = (packageId: string, folderPath: string) => {
     if (folderPath === 'assets') return
-    if (
-      !window.confirm(
-        `删除文件夹「${folderPath}」及其下全部资产？`,
-      )
-    ) {
-      return
-    }
-    const client = projectRef.current?.handle.client
-    void (async () => {
-      if (client?.transactions.stagedWrites().some(edit => edit.path.startsWith(`${folderPath}/`))) throw new Error('文件夹内还有未保存的修改，请先保存或处理提交记录')
-      if (client?.entry(folderPath)) await client.apply([{ op: 'remove', path: folderPath }], '删除资产文件夹')
-      if (projectRef.current?.handle.client !== client) return
-      const { workspace: next, removed } = removeAssetFolder(workspaceRef.current, packageId, folderPath)
-      for (const asset of removed) await deleteAssetBlob(packageId, asset.path)
-      commitWorkspace(next)
-    })().catch(error => window.alert(`删除文件夹未完成：${String(error)}`))
+    void confirmDialog({ message: `删除文件夹「${folderPath}」及其下全部资产？`, danger: true }).then((ok) => {
+      if (!ok) return
+      const client = projectRef.current?.handle.client
+      void (async () => {
+        if (client?.transactions.stagedWrites().some((edit) => edit.path.startsWith(`${folderPath}/`))) throw new Error('文件夹内还有未保存的修改，请先保存或处理提交记录')
+        if (client?.entry(folderPath)) await client.apply([{ op: 'remove', path: folderPath }], '删除资产文件夹')
+        if (projectRef.current?.handle.client !== client) return
+        const { workspace: next, removed } = removeAssetFolder(workspaceRef.current, packageId, folderPath)
+        for (const asset of removed) await deleteAssetBlob(packageId, asset.path)
+        commitWorkspace(next)
+      })().catch((error) => { void alertDialog(`删除文件夹未完成：${String(error)}`) })
+    })
   }
 
   const handleImportAssets = async (
@@ -2217,14 +2260,14 @@ export const StageplayWorkspace = forwardRef<
     })
 
     if (failed.length > 0) {
-      window.alert(`部分文件导入失败：\n${failed.join('\n')}`)
+      void alertDialog(`部分文件导入失败：\n${failed.join('\n')}`)
     }
   }
 
   const handleGeneratePlaceholderVoice = async (scriptId: string) => {
     const hit = findScript(workspaceRef.current, scriptId)
     if (!hit || !isVoiceMapFile(hit.script.name)) {
-      window.alert('请选择 .voice 文件')
+      void alertDialog('请选择 .voice 文件')
       return
     }
 
@@ -2240,15 +2283,11 @@ export const StageplayWorkspace = forwardRef<
       hit.pkg.assets.map((a) => a.path),
     )
     if (missing.length === 0) {
-      window.alert('没有缺失的 ogg（或尚无有效 id）')
+      void alertDialog('没有缺失的 ogg（或尚无有效 id）')
       return
     }
 
-    if (
-      !window.confirm(
-        `将在 ${voiceRootDir(locale)}/ 生成 ${missing.length} 个空白 ogg，是否继续？`,
-      )
-    ) {
+    if (!(await confirmDialog(`将在 ${voiceRootDir(locale)}/ 生成 ${missing.length} 个空白 ogg，是否继续？`))) {
       return
     }
 
@@ -2279,7 +2318,7 @@ export const StageplayWorkspace = forwardRef<
     }
 
     commitWorkspace(next)
-    window.alert(
+    void alertDialog(
       failed.length > 0
         ? `已生成 ${created} 个；失败 ${failed.length}：\n${failed.join('\n')}`
         : `已生成 ${created} 个空白 ogg`,
@@ -2316,51 +2355,6 @@ export const StageplayWorkspace = forwardRef<
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [isActive])
 
-  useEffect(() => {
-    const onMove = (event: PointerEvent) => {
-      // 录音棚右把手：从"按下时的宽度"倒推，不依赖容器矩形
-      const studio = studioDragRef.current
-      if (studio) {
-        const next = Math.min(
-          760,
-          Math.max(280, studio.startWidth + (studio.startX - event.clientX)),
-        )
-        setStudioWidth(next)
-        return
-      }
-      if (!draggingRef.current || !splitRef.current) return
-      const rect = splitRef.current.getBoundingClientRect()
-      if (rect.width <= 0) return
-      const raw = ((event.clientX - rect.left) / rect.width) * 100
-      const next = Math.min(70, Math.max(25, raw))
-      setAgentPercent(next)
-    }
-    const onUp = () => {
-      if (studioDragRef.current) {
-        studioDragRef.current = null
-        document.body.classList.remove('is-resizing')
-        setStudioWidth((current) => {
-          localStorage.setItem('hanshu.studioWidth', String(Math.round(current)))
-          return current
-        })
-        return
-      }
-      if (!draggingRef.current) return
-      draggingRef.current = false
-      document.body.classList.remove('is-resizing')
-      setAgentPercent((current) => {
-        localStorage.setItem('hanshu.agentPercent', String(Math.round(current)))
-        return current
-      })
-    }
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-    return () => {
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-    }
-  }, [])
-
   const updateRole = (index: number, next: string) => {
     setRoles((prev) => {
       const copy = [...prev]
@@ -2377,6 +2371,7 @@ export const StageplayWorkspace = forwardRef<
   }
 
   const handleMenuAction = (item: string) => {
+    if (item !== 'voice-studio' && toggleScriptViewItem(item)) return
     switch (item) {
       case 'save-as-project':
         void exportProjectPack()
@@ -2385,24 +2380,54 @@ export const StageplayWorkspace = forwardRef<
         persistNow()
         return
       case 'new-package':
-        window.alert('请使用「新建工程…」创建本地工程文件夹；不再支持仅存在于浏览器缓存的包。')
+        void alertDialog('请使用「新建工程…」创建本地工程文件夹；不再支持仅存在于浏览器缓存的包。')
         return
       case 'new-script':
-        /*
-         * 菜单项与资源管理器的 `+剧` 是同一个入口：这里只把"请求"递过去，
-         * 真正打开类型选择器的是资源树 —— 目标包要按"当前活动文件在哪个包"算，
-         * 菜单锚点位置也在那儿。所以不在这里猜 pkgId。
-         */
         setNewFileMenuRequest((count) => count + 1)
-        return
-      case 'agent-panel':
-        setAgentOpen((open) => !open)
         return
       case 'voice-studio':
         toggleStudio()
         return
-      default:
+      case 'command-palette':
+        void runScriptCommandPalette(handleMenuAction)
         return
+      case 'appearance':
+        void pickFontSize(scriptViewFlags.get().fontSize, SCRIPT_FONT_MIN, SCRIPT_FONT_MAX).then((size) => {
+          if (size != null) scriptViewFlags.set({ fontSize: size })
+        })
+        return
+      case 'editor-layout':
+        void confirmDialog({
+          title: '编辑器布局',
+          message: '恢复默认停靠布局？当前拖过的栏目位置会丢掉。',
+          confirmLabel: '恢复',
+        }).then((ok) => {
+          if (ok) resetPanelDock()
+        })
+        return
+      case 'go-to-file':
+        void (async () => {
+          const options = workspaceRef.current.packages.flatMap((pkg) =>
+            pkg.scripts.map((script) => ({ id: script.id, label: script.name, detail: pkg.name })),
+          )
+          if (options.length === 0) {
+            await alertDialog('工程里还没有可打开的文件。')
+            return
+          }
+          const picked = await chooseDialog({
+            title: '转到文件',
+            message: '输入以筛选。',
+            options,
+            filterable: true,
+            placeholder: '文件名',
+          })
+          if (picked) openScript(picked)
+        })()
+        return
+      default: {
+        if (runMonacoMenuAction(editorRef.current, item)) return
+        if (editorMenuActionId(item)) void alertDialog('当前没有打开可编辑的文本。')
+      }
     }
   }
 
@@ -2488,7 +2513,7 @@ export const StageplayWorkspace = forwardRef<
     return hit.script.content
   }
 
-  const undoAgentDiff = (index: number) => {
+  const undoAgentDiff = async (index: number) => {
     const snap = agentDiffs[index]
     if (!snap) return
 
@@ -2497,9 +2522,7 @@ export const StageplayWorkspace = forwardRef<
       current != null &&
       current !== snap.after &&
       current !== snap.before &&
-      !window.confirm(
-        `「${snap.fileName}」在 Agent 写入后又有改动，仍要撤销到修改前？`,
-      )
+      !(await confirmDialog(`「${snap.fileName}」在 Agent 写入后又有改动，仍要撤销到修改前？`))
     ) {
       return
     }
@@ -2517,13 +2540,10 @@ export const StageplayWorkspace = forwardRef<
     removeAgentDiffAt(index)
   }
 
-  const undoAllAgentDiffs = () => {
+  const undoAllAgentDiffs = async () => {
     if (agentDiffs.length === 0) return
-    if (
-      !window.confirm(`撤销全部 ${agentDiffs.length} 处 Agent 修改？`)
-    ) {
-      return
-    }
+    if (!(await confirmDialog(`撤销全部 ${agentDiffs.length} 处 Agent 修改？`))) return
+
     // 从后往前，避免索引错位；新建删除与内容恢复互不依赖顺序
     for (let i = agentDiffs.length - 1; i >= 0; i -= 1) {
       const snap = agentDiffs[i]
@@ -3141,76 +3161,197 @@ export const StageplayWorkspace = forwardRef<
     })
   }, [titleName, packageName, project?.folderName, projectBusy, onChromeInfo])
 
+  const dockPanels: DockPanelSpec[] = [
+    {
+      id: 'explorer',
+      title: '资源管理器',
+      visible: view.explorer,
+      defaultPlacement: 'left' as const,
+      defaultSize: 280,
+      render: (dock) => (
+          <Explorer
+            workspace={workspace}
+            activeScriptId={workspace.activeScriptId}
+            activeAssetId={workspace.activeAssetId}
+            boundPackageId={project?.manifest.id ?? null}
+            boundFolderName={project?.folderName ?? null}
+            onOpenScript={openScript}
+            onOpenAsset={openAsset}
+            onTogglePackage={handleTogglePackage}
+            onToggleAssets={handleToggleAssets}
+            onNewPackage={handleNewPackage}
+            onNewFile={handleNewFile}
+            newFileMenuRequest={newFileMenuRequest}
+            onRenamePackage={handleRenamePackage}
+            onRenameScript={handleRenameScript}
+            onDeletePackage={handleDeletePackage}
+            onDeleteScript={handleDeleteScript}
+            onDeleteAsset={handleDeleteAsset}
+            onNewAssetFolder={handleNewAssetFolder}
+            onDeleteAssetFolder={handleDeleteAssetFolder}
+            onImportAssets={(packageId, files, targetDir) => {
+              void handleImportAssets(packageId, files, targetDir)
+            }}
+            onGeneratePlaceholderVoice={(scriptId) => {
+              void handleGeneratePlaceholderVoice(scriptId)
+            }}
+            onDropIntoFolder={handleDropIntoFolder}
+            placement={dock.placement}
+            onTitlePointerDown={dock.onTitlePointerDown}
+            onRedock={dock.onRedock}
+          />
+      ),
+    },
+    {
+      id: 'agent',
+      title: 'Agent',
+      visible: agentOpen,
+      defaultPlacement: 'left' as const,
+      defaultSize: 360,
+      minSize: 220,
+      render: (dock) => (
+        <AgentPanel
+          open={agentOpen}
+          host={agentHost}
+          onClose={() => setAgentOpen(false)}
+          placement={dock.placement}
+          onTitlePointerDown={dock.onTitlePointerDown}
+          onRedock={dock.onRedock}
+          getContext={() => ({
+            packageName,
+            fileName: titleName,
+            content: valueRef.current,
+            selection: getEditorSelection(),
+          })}
+        />
+      ),
+    },
+    {
+      id: 'roles',
+      title: '备选角色',
+      visible: view.roles && editingHanshu,
+      defaultPlacement: 'right' as const,
+      defaultSize: 190,
+      minSize: 140,
+      maxSize: 420,
+      render: (dock) => (
+          <aside className="role-panel" aria-label="备选角色栏">
+            <div
+              className="role-panel-header is-draggable"
+              onPointerDown={(event) => {
+                if (
+                  event.target instanceof Element &&
+                  event.target.closest('button, input, label, a, textarea, select')
+                ) {
+                  return
+                }
+                dock.onTitlePointerDown(event)
+              }}
+            >
+              <span
+                className="role-panel-title"
+                title={dock.placement === 'float' ? '拖动标题可停靠到边缘；松手在中间则保持弹层' : '拖动标题可停靠到左、右、上、下，拖到中间变成弹层'}
+              >
+                备选角色
+              </span>
+              {dock.onRedock && (
+                <button
+                  type="button"
+                  className="panel-dock-redock"
+                  title="停靠回上次的边缘"
+                  onClick={dock.onRedock}
+                >
+                  停靠
+                </button>
+              )}
+            </div>
+            <ul className="role-list">
+              {Array.from({ length: SPEAKER_SLOT_COUNT }, (_, index) => (
+                <li key={index} className="role-slot">
+                  <button
+                    type="button"
+                    className="role-index"
+                    title={
+                      roles[index].trim()
+                        ? `${numpadHint(index)} · 插入`
+                        : numpadHint(index)
+                    }
+                    disabled={!roles[index].trim()}
+                    onClick={() => insertRole(index)}
+                  >
+                    {numpadLabel(index)}
+                  </button>
+                  <input
+                    className="role-input"
+                    value={roles[index]}
+                    placeholder="空"
+                    spellCheck={false}
+                    onChange={(event) =>
+                      updateRole(index, event.target.value)
+                    }
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') {
+                        event.preventDefault()
+                        insertRole(index)
+                      }
+                    }}
+                  />
+                </li>
+              ))}
+            </ul>
+          </aside>
+      ),
+    },
+    {
+      id: 'studio',
+      title: '录音棚',
+      visible: studioOpen,
+      defaultPlacement: 'right' as const,
+      defaultSize: (() => {
+        try {
+          const saved = Number(localStorage.getItem('hanshu.studioWidth'))
+          if (Number.isFinite(saved) && saved >= 280 && saved <= 760) return saved
+        } catch {
+          /* keep the built-in width */
+        }
+        return 420
+      })(),
+      minSize: 280,
+      maxSize: 760,
+      render: (dock) => (
+        <RecordingStudio
+          mode={studioMode}
+          sourceMode={studioSourceMode}
+          selectedKeys={studioSelection}
+          library={
+            editingLocalizable
+              ? (voiceRuntime ?? voiceLibraryRef.current)
+              : null
+          }
+          /*
+            台词取自当前语言的文本映射（和 TTS 合成用的是同一份）：
+            录音的人要照着念的，就是编辑器里显示的那一句。
+          */
+          textFor={(key) => textMapRef.current?.get(key) ?? null}
+          onClose={() => toggleStudio()}
+          onModeChange={setStudioMode}
+          onSourceModeChange={setStudioSourceMode}
+          onClearSelection={() => setStudioSelection([])}
+          onClearVoice={(keys) => voiceOps().deleteVoices(keys)}
+          onImport={handleStudioImport}
+          onReference={handleStudioReference}
+          tts={studioTts}
+          onTitlePointerDown={dock.onTitlePointerDown}
+          onRedock={dock.onRedock}
+        />
+      ),
+    },
+  ]
+
   return (
     <div className="stageplay-workspace">
-      <div className="workspace">
-        <Explorer
-          workspace={workspace}
-          activeScriptId={workspace.activeScriptId}
-          activeAssetId={workspace.activeAssetId}
-          boundPackageId={project?.manifest.id ?? null}
-          boundFolderName={project?.folderName ?? null}
-          onOpenScript={openScript}
-          onOpenAsset={openAsset}
-          onTogglePackage={handleTogglePackage}
-          onToggleAssets={handleToggleAssets}
-          onNewPackage={handleNewPackage}
-          onNewFile={handleNewFile}
-          newFileMenuRequest={newFileMenuRequest}
-          onRenamePackage={handleRenamePackage}
-          onRenameScript={handleRenameScript}
-          onDeletePackage={handleDeletePackage}
-          onDeleteScript={handleDeleteScript}
-          onDeleteAsset={handleDeleteAsset}
-          onNewAssetFolder={handleNewAssetFolder}
-          onDeleteAssetFolder={handleDeleteAssetFolder}
-          onImportAssets={(packageId, files, targetDir) => {
-            void handleImportAssets(packageId, files, targetDir)
-          }}
-          onGeneratePlaceholderVoice={(scriptId) => {
-            void handleGeneratePlaceholderVoice(scriptId)
-          }}
-          onDropIntoFolder={handleDropIntoFolder}
-        />
-
-        <div className="main-split" ref={splitRef}>
-          <AgentPanel
-            open={agentOpen}
-            host={agentHost}
-            style={
-              agentOpen
-                ? { flex: `0 0 ${agentPercent}%`, width: `${agentPercent}%` }
-                : undefined
-            }
-            onClose={() => setAgentOpen(false)}
-            getContext={() => ({
-              packageName,
-              fileName: titleName,
-              content: valueRef.current,
-              selection: getEditorSelection(),
-            })}
-          />
-
-          {agentOpen && (
-            <div
-              className="split-handle"
-              title="拖动调整 Agent / 编辑器 宽度"
-              onPointerDown={(event) => {
-                event.preventDefault()
-                draggingRef.current = true
-                document.body.classList.add('is-resizing')
-              }}
-            />
-          )}
-
-          <div
-            className="editor-column"
-            style={
-              agentOpen
-                ? { flex: `1 1 ${100 - agentPercent}%` }
-                : { flex: '1 1 auto' }
-            }
-          >
+      <PanelDock panels={dockPanels}>
+          <div className="editor-column">
           <div className="tabbar">
             <div className="tab active">
               <span>{titleName}</span>
@@ -3319,6 +3460,7 @@ export const StageplayWorkspace = forwardRef<
                     }}
                     onMount={(editor, monaco) => {
                       editorRef.current = editor
+                      editor.updateOptions(scriptEditorAppearance(scriptViewFlags.get()))
                       bindTaggedCommentHotkeys(editor, monaco)
                       if (isHanshuFile(titleName)) {
                         bindChoiceInsertHotkeys(editor, monaco)
@@ -3378,18 +3520,15 @@ export const StageplayWorkspace = forwardRef<
                       if (bufferOwnerRef.current) writeScriptContent(bufferOwnerRef.current,text)
                     }}
                     options={{
-                      fontSize: 18,
+                      ...scriptEditorAppearance(view),
                       fontFamily:
                         'Consolas, "Courier New", "Sarasa Mono SC", monospace',
-                      lineHeight: 28,
                       /**
                        * 录音棚打开时编辑器是**只读**的：那会儿左键点键名是"选中"、
                        * 空白处按下是"划框"，不允许再改正文（正常交互整体让位）。
                        */
                       readOnly: projectBusy || studioOpen || serviceSession.binding?.handle.client.snapshot.role === 'viewer',
                       domReadOnly: studioOpen,
-                      minimap: { enabled: false },
-                      wordWrap: 'on',
                       scrollBeyondLastLine: false,
                       automaticLayout: true,
                       padding: { top: 14, bottom: 14 },
@@ -3422,94 +3561,9 @@ export const StageplayWorkspace = forwardRef<
             )}
           </main>
           </div>
-        </div>
 
-        {editingHanshu && (
-          <aside className="role-panel" aria-label="备选角色栏">
-            <div className="role-panel-header">
-              <span>备选角色</span>
-            </div>
-            <ul className="role-list">
-              {Array.from({ length: SPEAKER_SLOT_COUNT }, (_, index) => (
-                <li key={index} className="role-slot">
-                  <button
-                    type="button"
-                    className="role-index"
-                    title={
-                      roles[index].trim()
-                        ? `${numpadHint(index)} · 插入`
-                        : numpadHint(index)
-                    }
-                    disabled={!roles[index].trim()}
-                    onClick={() => insertRole(index)}
-                  >
-                    {numpadLabel(index)}
-                  </button>
-                  <input
-                    className="role-input"
-                    value={roles[index]}
-                    placeholder="空"
-                    spellCheck={false}
-                    onChange={(event) =>
-                      updateRole(index, event.target.value)
-                    }
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') {
-                        event.preventDefault()
-                        insertRole(index)
-                      }
-                    }}
-                  />
-                </li>
-              ))}
-            </ul>
-          </aside>
-        )}
 
-        {studioOpen && (
-          <>
-            <div
-              className="split-handle"
-              title="拖动调整录音棚宽度"
-              onPointerDown={(event) => {
-                event.preventDefault()
-                studioDragRef.current = {
-                  startX: event.clientX,
-                  startWidth: studioWidth,
-                }
-                document.body.classList.add('is-resizing')
-              }}
-            />
-            <RecordingStudio
-              mode={studioMode}
-              sourceMode={studioSourceMode}
-              selectedKeys={studioSelection}
-              library={
-                editingLocalizable
-                  ? (voiceRuntime ?? voiceLibraryRef.current)
-                  : null
-              }
-              /*
-                台词取自当前语言的文本映射（和 TTS 合成用的是同一份）：
-                录音的人要照着念的，就是编辑器里显示的那一句。
-              */
-              textFor={(key) => textMapRef.current?.get(key) ?? null}
-              onClose={() => toggleStudio()}
-              onModeChange={setStudioMode}
-              onSourceModeChange={setStudioSourceMode}
-              onClearSelection={() => setStudioSelection([])}
-              onClearVoice={(keys) => voiceOps().deleteVoices(keys)}
-              onImport={handleStudioImport}
-              onReference={handleStudioReference}
-              tts={studioTts}
-              style={{
-                flex: `0 0 ${studioWidth}px`,
-                width: `${studioWidth}px`,
-              }}
-            />
-          </>
-        )}
-      </div>
+      </PanelDock>
 
       {/*
         本地缓存（API KEY）**挂在工作区这一层**，不挂在录音棚里。
