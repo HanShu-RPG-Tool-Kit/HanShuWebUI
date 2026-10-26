@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import { getAgentConfig, hasAgentApiKey, setUsePro } from './agent/config'
 import {
   runAgentTurn,
@@ -15,6 +15,9 @@ type AgentPanelProps = {
   onClose: () => void
   onBeforeTurn?: () => void
   style?: CSSProperties
+  placement?: 'left' | 'right' | 'top' | 'bottom' | 'float'
+  onTitlePointerDown?: (event: ReactPointerEvent<HTMLElement>) => void
+  onRedock?: () => void
 }
 
 type UiMessage = {
@@ -30,6 +33,9 @@ export function AgentPanel({
   onClose,
   onBeforeTurn,
   style,
+  placement = 'left',
+  onTitlePointerDown,
+  onRedock,
 }: AgentPanelProps) {
   const [input, setInput] = useState('')
   const [messages, setMessages] = useState<UiMessage[]>([])
@@ -138,14 +144,30 @@ export function AgentPanel({
 
   return (
     <section className="agent-panel" style={style} aria-label="Agent">
-      <header className="agent-header">
-        <div className="agent-title">
+      <header
+        className={`agent-header${onTitlePointerDown ? ' is-draggable' : ''}`}
+        onPointerDown={(event) => {
+          if (
+            event.target instanceof Element &&
+            event.target.closest('button, input, label, a, textarea, select')
+          ) {
+            return
+          }
+          onTitlePointerDown?.(event)
+        }}
+      >
+        <div className="agent-title" title={onTitlePointerDown ? (placement === 'float' ? '拖动标题可停靠到边缘；松手在中间则保持弹层' : '拖动标题可停靠到左、右、上、下，拖到中间变成弹层') : 'Agent'}>
           <span>Agent</span>
           <span className="agent-sub">
             {model} · t={temperature} · {contextLabel}
           </span>
         </div>
         <div className="agent-header-actions">
+          {onRedock && (
+            <button type="button" title="停靠回上次的边缘" onClick={onRedock}>
+              停靠
+            </button>
+          )}
           <button
             type="button"
             className={`agent-pro-toggle${usePro ? ' on' : ''}`}

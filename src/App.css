@@ -1500,13 +1500,24 @@ body.is-resizing .monaco-editor {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
   font-size: 13px;
   color: var(--text-dim);
   user-select: none;
 }
 
+.explorer-title {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 .explorer-actions {
   display: flex;
+  flex: none;
   gap: 2px;
 }
 
@@ -1539,6 +1550,9 @@ body.is-resizing .monaco-editor {
   padding: 10px 14px;
   font-size: 13px;
   color: var(--text-dim);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .explorer-empty.nested {
@@ -1619,6 +1633,7 @@ body.is-resizing .monaco-editor {
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
+  white-space: nowrap;
   text-overflow: ellipsis;
 }
 
@@ -1631,6 +1646,7 @@ body.is-resizing .monaco-editor {
   opacity: 0.65;
   overflow: hidden;
   white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .explorer-icon { color: #9db4d4; }
@@ -1652,7 +1668,9 @@ body.is-resizing .monaco-editor {
 
 .explorer-name {
   min-width: 0;
+  flex: 1 1 auto;
   overflow: hidden;
+  white-space: nowrap;
   text-overflow: ellipsis;
 }
 
@@ -1844,7 +1862,7 @@ body.is-resizing .monaco-editor {
 
 .explorer-context-menu {
   position: fixed;
-  z-index: 200;
+  z-index: 2500;
   min-width: 168px;
   margin: 0;
   padding: 4px 0;
@@ -1982,10 +2000,13 @@ body.is-resizing .monaco-editor {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
   padding: 2px 8px 2px 18px;
+  overflow: hidden;
   color: var(--text-dim);
   font-size: 12px;
   user-select: none;
+  white-space: nowrap;
 }
 
 .asset-preview-error {
@@ -2647,3 +2668,469 @@ body.is-resizing .stageplay-workspace .split-handle { background: var(--accent);
 .stageplay-workspace .statusbar .lang-select .lang-trigger.open { background: rgba(255, 255, 255, 0.08); }
 .stageplay-workspace .statusbar .status-on { background: rgba(74, 108, 247, 0.16); color: #9db4f0; }
 .stageplay-workspace .statusbar .status-warn { color: var(--danger); }
+/* ===== 资源管理器停靠：左/右/上/下，或拖到中间变成弹层 ===== */
+.explorer-dock {
+  position: relative;
+}
+
+.explorer-dock-band {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+}
+
+.explorer-dock .explorer {
+  flex: 1 1 auto;
+  width: auto;
+  max-width: none;
+  height: auto;
+  min-width: 0;
+  min-height: 0;
+  align-self: stretch;
+  border-right: 0;
+  border-left: 0;
+}
+
+.explorer-dock-main {
+  display: flex;
+  flex-direction: row;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  align-items: stretch;
+}
+
+.stageplay-workspace .explorer-dock-main {
+  gap: 2px;
+}
+
+.explorer-dock.is-left .explorer-dock-band,
+.explorer-dock.is-right .explorer-dock-band {
+  flex: 0 0 var(--explorer-w);
+  width: var(--explorer-w);
+  max-width: var(--explorer-w);
+  align-self: stretch;
+}
+
+.explorer-dock.is-top,
+.explorer-dock.is-bottom {
+  flex-direction: column;
+}
+
+.explorer-dock.is-top .explorer-dock-band,
+.explorer-dock.is-bottom .explorer-dock-band {
+  flex: 0 0 var(--explorer-h);
+  width: auto;
+  max-width: none;
+  height: var(--explorer-h);
+  align-self: stretch;
+}
+
+.explorer-dock.is-right .explorer-dock-main,
+.explorer-dock.is-bottom .explorer-dock-main {
+  order: 1;
+}
+
+.explorer-dock.is-right .explorer-dock-sash,
+.explorer-dock.is-bottom .explorer-dock-sash {
+  order: 2;
+}
+
+.explorer-dock.is-right .explorer-dock-band,
+.explorer-dock.is-bottom .explorer-dock-band {
+  order: 3;
+}
+
+.explorer-dock-sash {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 6px;
+}
+
+.explorer-dock-sash-row {
+  width: auto;
+  height: 6px;
+  cursor: row-resize;
+  background: var(--border);
+}
+
+.explorer-dock-sash-row::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -3px;
+  bottom: -3px;
+}
+
+.explorer-dock-sash-row:hover,
+body.is-resizing-y .explorer-dock-sash-row {
+  background: var(--accent);
+}
+
+.stageplay-workspace .explorer-dock-sash-row {
+  flex-basis: 2px;
+  height: 2px;
+  margin: -2px 0;
+  background: var(--border-soft);
+}
+
+.stageplay-workspace .explorer-dock-sash-row:hover,
+body.is-resizing-y .stageplay-workspace .explorer-dock-sash-row {
+  background: var(--accent);
+}
+
+.explorer-dock.is-float .explorer-dock-band {
+  position: absolute;
+  z-index: 40;
+  flex: none;
+  width: auto;
+  max-width: none;
+  height: auto;
+  border: 1px solid var(--accent);
+  background: var(--bg-sidebar);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.explorer-header.is-draggable {
+  cursor: grab;
+  touch-action: none;
+}
+
+.explorer-dock-zones {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+  display: none;
+  pointer-events: none;
+}
+
+.explorer-dock-zones.is-open {
+  display: block;
+}
+
+.explorer-dock-zone {
+  position: absolute;
+  box-sizing: border-box;
+  display: none;
+  border: 1px solid var(--accent);
+  border-radius: 0;
+  background: var(--accent-dim);
+  box-shadow: inset 0 0 0 2px var(--accent);
+  pointer-events: none;
+}
+
+.explorer-dock-zone.is-hot {
+  display: block;
+}
+
+.explorer-dock-zone.is-line {
+  border: 0;
+  background: var(--accent);
+  box-shadow: none;
+}
+
+.explorer-float-handle {
+  position: absolute;
+  z-index: 3;
+  touch-action: none;
+}
+
+.explorer-float-handle.n,
+.explorer-float-handle.s {
+  left: 12px;
+  right: 12px;
+  height: 6px;
+  cursor: ns-resize;
+}
+
+.explorer-float-handle.n { top: 0; }
+.explorer-float-handle.s { bottom: 0; }
+
+.explorer-float-handle.e,
+.explorer-float-handle.w {
+  top: 12px;
+  bottom: 12px;
+  width: 6px;
+  cursor: ew-resize;
+}
+
+.explorer-float-handle.e { right: 0; }
+.explorer-float-handle.w { left: 0; }
+
+.explorer-float-handle.ne,
+.explorer-float-handle.nw,
+.explorer-float-handle.se,
+.explorer-float-handle.sw {
+  width: 12px;
+  height: 12px;
+}
+
+.explorer-float-handle.ne { top: 0; right: 0; cursor: nesw-resize; }
+.explorer-float-handle.nw { top: 0; left: 0; cursor: nwse-resize; }
+.explorer-float-handle.se { right: 0; bottom: 0; cursor: nwse-resize; }
+.explorer-float-handle.sw { left: 0; bottom: 0; cursor: nesw-resize; }
+
+body.is-panel-dragging,
+body.is-float-resizing,
+body.is-resizing-y {
+  user-select: none;
+}
+
+body.is-panel-dragging,
+body.is-panel-dragging .explorer-header.is-draggable {
+  cursor: grabbing;
+}
+
+body.is-resizing-y {
+  cursor: row-resize;
+}
+
+body.is-panel-dragging iframe,
+body.is-panel-dragging .monaco-editor,
+body.is-float-resizing iframe,
+body.is-float-resizing .monaco-editor,
+body.is-resizing-y iframe,
+body.is-resizing-y .monaco-editor {
+  pointer-events: none;
+}
+
+
+.panel-dock {
+  position: relative;
+  overflow: hidden;
+}
+
+.stageplay-workspace .panel-dock {
+  gap: 0;
+  padding: 0;
+}
+
+.panel-dock-band,
+.panel-dock-main,
+.panel-dock-sash,
+.panel-dock-zones {
+  position: absolute;
+  box-sizing: border-box;
+}
+
+.panel-dock:not(.is-measured) .panel-dock-band,
+.panel-dock:not(.is-measured) .panel-dock-main,
+.panel-dock:not(.is-measured) .panel-dock-sash,
+.panel-dock:not(.is-measured) .panel-dock-tabs {
+  visibility: hidden;
+}
+
+.panel-dock-band {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-sidebar);
+}
+
+.panel-dock-band.is-float {
+  z-index: 40;
+  border: 1px solid var(--accent);
+  background: var(--bg-sidebar);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+}
+.panel-dock-tabs {
+  position: absolute;
+  z-index: 5;
+  display: flex;
+  align-items: stretch;
+  box-sizing: border-box;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--sw-panel-2, var(--bg-sidebar));
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+}
+
+.panel-dock-tab {
+  display: flex;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 70%;
+  padding: 0 10px;
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1;
+  cursor: grab;
+}
+
+.panel-dock-tab span {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.panel-dock-tab.is-active {
+  color: var(--text-bright, var(--text));
+  background: var(--sw-head, var(--bg-sidebar));
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.panel-dock-tab-gap {
+  flex: 1 1 auto;
+  min-width: 8px;
+  cursor: grab;
+}
+
+
+.panel-dock-band > .explorer,
+.panel-dock-band > .agent-panel,
+.panel-dock-band > .role-panel,
+.panel-dock-band > .studio {
+  flex: 1 1 auto;
+  width: auto;
+  max-width: none;
+  height: auto;
+  min-width: 0;
+  min-height: 0;
+  align-self: stretch;
+  border: 0;
+}
+
+.panel-dock-band > .role-panel .role-list {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.panel-dock-main {
+  display: flex;
+  flex-direction: row;
+  min-width: 0;
+  min-height: 0;
+  align-items: stretch;
+  overflow: hidden;
+}
+
+.stageplay-workspace .panel-dock-main {
+  gap: 2px;
+}
+
+.panel-dock-main > .editor-column {
+  flex: 1 1 auto;
+  width: 0;
+  min-width: 0;
+}
+
+.panel-dock-sash {
+  z-index: 3;
+  background: var(--border);
+}
+
+.panel-dock-sash.is-col {
+  cursor: col-resize;
+}
+
+.panel-dock-sash.is-row {
+  cursor: row-resize;
+}
+
+.panel-dock-sash.is-col::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  right: -3px;
+}
+
+.panel-dock-sash.is-row::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -3px;
+  bottom: -3px;
+}
+
+.panel-dock-sash:hover,
+body.is-resizing .panel-dock-sash.is-col,
+body.is-resizing-y .panel-dock-sash.is-row {
+  background: var(--accent);
+}
+
+.panel-dock-zones {
+  inset: 0;
+  z-index: 50;
+  display: none;
+  pointer-events: none;
+}
+
+.panel-dock-zones.is-open {
+  display: block;
+}
+
+.panel-dock-zone {
+  position: absolute;
+  box-sizing: border-box;
+  display: none;
+  border: 1px solid var(--accent);
+  background: var(--accent-dim);
+  box-shadow: inset 0 0 0 2px var(--accent);
+  pointer-events: none;
+}
+
+.panel-dock-zone.is-hot {
+  display: block;
+}
+
+.panel-dock-zone.is-line {
+  border: 0;
+  background: var(--accent);
+  box-shadow: none;
+}
+
+.agent-header.is-draggable,
+.role-panel-header.is-draggable {
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+body.is-panel-dragging .agent-header.is-draggable,
+body.is-panel-dragging .role-panel-header.is-draggable {
+  cursor: grabbing;
+}
+
+.role-panel-header {
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+  flex-shrink: 0;
+}
+
+.role-panel-title {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.panel-dock-redock {
+  appearance: none;
+  flex: none;
+  height: 20px;
+  padding: 0 8px;
+  border: 1px solid var(--border-soft);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.panel-dock-redock:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-bright);
+}
