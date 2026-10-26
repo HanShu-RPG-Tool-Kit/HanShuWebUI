@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { getMenuCheckRevision, subscribeMenuChecks } from '../ui/viewFlags'
 import { mergeMenus } from './menu/mergeMenus'
 import type { MenuContext, MenuCommand, MenuDef } from './menu/types'
 
@@ -8,6 +9,7 @@ export type MenuBarProps = {
 }
 
 export function MenuBar({ ctx, onAction }: MenuBarProps) {
+  const menuChecks = useSyncExternalStore(subscribeMenuChecks, getMenuCheckRevision, getMenuCheckRevision)
   const menus: MenuDef[] = mergeMenus(ctx.workspaceId)
   const [openMenu, setOpenMenu] = useState<string | null>(null)
   const menubarRef = useRef<HTMLElement>(null)
@@ -38,7 +40,7 @@ export function MenuBar({ ctx, onAction }: MenuBarProps) {
   }, [])
 
   return (
-    <nav className="menubar" ref={menubarRef} aria-label="主菜单">
+    <nav className="menubar" ref={menubarRef} aria-label="主菜单" data-menu-checks={menuChecks}>
       {menus.map((menu) => (
         <div
           key={menu.id}

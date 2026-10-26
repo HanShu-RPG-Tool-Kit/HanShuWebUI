@@ -1,0 +1,173 @@
+.hs-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 5000;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(12 14 18 / 46%);
+}
+
+.hs-dialog {
+  width: min(440px, calc(100vw - 32px));
+  max-height: min(640px, calc(100vh - 48px));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 16px 14px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-m);
+  background: var(--bg-dropdown);
+  color: var(--text);
+  box-shadow: 0 18px 48px rgb(0 0 0 / 36%);
+}
+
+.hs-dialog h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-bright);
+}
+
+.hs-dialog-message {
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  line-height: 1.55;
+  color: var(--text);
+}
+
+.hs-dialog-message:empty {
+  display: none;
+}
+
+.hs-dialog input[type='text'] {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-s);
+  padding: 7px 8px;
+  background: var(--bg-sunken);
+  color: var(--text-bright);
+  font: inherit;
+}
+
+.hs-dialog input[type='text']:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--focus-glow);
+}
+
+.hs-dialog-error {
+  margin: -6px 0 0;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.hs-dialog-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+  max-height: 320px;
+  overflow: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.hs-dialog-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 7px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.hs-dialog-choice small {
+  color: var(--text-dim);
+  font-size: 11px;
+}
+
+.hs-dialog-choice.is-active,
+.hs-dialog-choice:hover {
+  background: var(--bg-menu-hover);
+  color: var(--text-bright);
+}
+
+.hs-dialog-choice.is-active {
+  border-color: var(--accent-dim);
+}
+
+.hs-dialog-empty {
+  margin: 0;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+
+.hs-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.hs-dialog-actions button,
+.hs-dialog-choice {
+  font: inherit;
+}
+
+.hs-dialog-actions button {
+  min-width: 72px;
+  padding: 6px 12px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-s);
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.hs-dialog-actions button:hover {
+  background: var(--bg-menu-hover);
+  color: var(--text-bright);
+}
+
+.hs-dialog-actions button.is-primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: #fff;
+}
+
+.hs-dialog-actions button.is-danger {
+  border-color: transparent;
+  background: var(--danger);
+  color: #fff;
+}
+
+.hs-dialog-actions button:focus-visible,
+.hs-dialog-choice:focus-visible,
+.hs-dialog input:focus-visible {
+  outline: var(--focus-ring);
+  outline-offset: 1px;
+}
+
+.hs-dialog.is-choose {
+  width: min(520px, calc(100vw - 32px));
+}
+
+.hs-dialog-choice:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.hs-dialog-choice:disabled:hover {
+  background: transparent;
+  color: var(--text);
+}

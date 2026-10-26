@@ -160,6 +160,10 @@ export type RecordingStudioProps = {
   /** TTS 那一格；null 表示工程还没准备好（没打开文件、没有配音方案等） */
   tts?: StudioTtsPanel | null
   style?: CSSProperties
+  /** Drag the title bar. Presses on buttons and inputs are ignored. */
+  onTitlePointerDown?: (event: ReactPointerEvent<HTMLElement>) => void
+  /** Only while floating. Docks back to the last edge. */
+  onRedock?: () => void
 }
 
 /** 当前候选音频：资产树上选的，或内存里的（拖入 / 刚录的） */
@@ -206,6 +210,60 @@ function sourceIdOf(source: StudioSource | null): string | null {
   return source.kind === 'asset' ? source.path : source.id
 }
 
+
+function StudioHeader({
+  locale,
+  onClose,
+  onTitlePointerDown,
+  onRedock,
+}: {
+  locale?: string
+  onClose(): void
+  onTitlePointerDown?: (event: ReactPointerEvent<HTMLElement>) => void
+  onRedock?: () => void
+}) {
+  return (
+    <header
+      className={`studio-header${onTitlePointerDown ? ' is-draggable' : ''}`}
+      onPointerDown={(event) => {
+        if (
+          event.target instanceof Element &&
+          event.target.closest('button, input, label, a, textarea, select')
+        ) {
+          return
+        }
+        onTitlePointerDown?.(event)
+      }}
+    >
+      <div className="studio-title">
+        <span className="studio-title-name">录音棚</span>
+        {locale ? <span className="studio-sub">{locale}</span> : null}
+      </div>
+      <div className="studio-header-actions">
+        {onRedock ? (
+          <button
+            type="button"
+            className="panel-dock-redock"
+            title="停靠回上次的边缘"
+            onClick={onRedock}
+          >
+            停靠
+          </button>
+        ) : null}
+        <button
+          type="button"
+          className="studio-close"
+          onClick={onClose}
+          title="关闭录音棚"
+          aria-label="关闭录音棚"
+        >
+          ×
+        </button>
+      </div>
+    </header>
+  )
+}
+
 export function RecordingStudio({
   mode,
   sourceMode,
@@ -221,6 +279,8 @@ export function RecordingStudio({
   onReference,
   tts,
   style,
+  onTitlePointerDown,
+  onRedock,
 }: RecordingStudioProps) {
   /** 资产树上选中的资产（单选/固定模式用） */
   const [picked, setPicked] = useState<string | null>(null)
@@ -841,20 +901,11 @@ export function RecordingStudio({
   if (!library) {
     return (
       <section className="studio" style={style} aria-label="录音棚">
-        <header className="studio-header">
-          <div className="studio-title">
-            <span className="studio-title-name">录音棚</span>
-          </div>
-          <button
-            type="button"
-            className="studio-close"
-            onClick={onClose}
-            title="关闭录音棚"
-            aria-label="关闭录音棚"
-          >
-            ×
-          </button>
-        </header>
+        <StudioHeader
+          onClose={onClose}
+          onTitlePointerDown={onTitlePointerDown}
+          onRedock={onRedock}
+        />
         <div className="studio-empty">
           当前文件不支持配音：请打开一个 <code>.hs</code> 剧本或 <code>.char</code> 角色卡。
         </div>
@@ -869,22 +920,12 @@ export function RecordingStudio({
       aria-label="录音棚"
       {...dropPropsIfAny(studioDropProps)}
     >
-      <header className="studio-header">
-        <div className="studio-title">
-          <span className="studio-title-name">录音棚</span>
-          {/* 只留语言：它决定合成用的是哪份台词，而 TTS 那一格会按它拦人 */}
-          <span className="studio-sub">{library.locale}</span>
-        </div>
-        <button
-          type="button"
-          className="studio-close"
-          onClick={onClose}
-          title="关闭录音棚"
-          aria-label="关闭录音棚"
-        >
-          ×
-        </button>
-      </header>
+      <StudioHeader
+        locale={library.locale}
+        onClose={onClose}
+        onTitlePointerDown={onTitlePointerDown}
+        onRedock={onRedock}
+      />
 
       {/* 分段控件，不是两个独立按钮 —— 它们互斥，能一眼看出当前在哪一档 */}
       <div className="studio-modes" role="group" aria-label="配音模式">

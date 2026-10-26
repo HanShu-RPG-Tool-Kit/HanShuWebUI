@@ -23,6 +23,7 @@
  */
 
 import { useMemo, useState, type ReactNode } from 'react'
+import { confirmDialog } from '../ui/dialogs'
 import {
   AUTH_SHAPES,
   PROTOCOLS,
@@ -66,7 +67,7 @@ export type TtsPlanFormProps = {
    */
   projectLocales: readonly string[]
   /** 新建一个服务定义文件，返回新服务的 id；取消或名字不合法时返回 null。**不切换文件** */
-  createService(): string | null
+  createService(): string | null | Promise<string | null>
   /** 打开某个服务定义（切到它的设置页） */
   openService(id: string): void
   onChange(next: string): void
@@ -218,12 +219,14 @@ export function TtsPlanForm({
   }
 
   const removeEntry = (locale: string) => {
-    if (!window.confirm(`删除「${locale}」这条语言方案？`)) return
-    const next = { ...plan.voices }
-    delete next[locale]
-    write(next)
-    setProbeState((current) => (current?.locale === locale ? null : current))
-    setSpeedEdit((current) => (current?.locale === locale ? null : current))
+    void (async () => {
+      if (!(await confirmDialog({ message: `删除「${locale}」这条语言方案？`, danger: true }))) return
+      const next = { ...plan.voices }
+      delete next[locale]
+      write(next)
+      setProbeState((current) => (current?.locale === locale ? null : current))
+      setSpeedEdit((current) => (current?.locale === locale ? null : current))
+    })()
   }
 
   /**
@@ -272,14 +275,15 @@ export function TtsPlanForm({
    * 文件里仍然每条写全，重复由这里一次性消掉。
    */
   const applyToAll = (locale: string) => {
+    void (async () => {
     const source = plan.voices[locale]
     if (!source) return
     const others = locales.filter((tag) => tag !== locale)
     if (others.length === 0) return
     if (
-      !window.confirm(
+      !(await confirmDialog(
         `把「${locale}」的服务、音色与语速应用到另外 ${others.length} 条语言？\n（${others.join('、')} 当前的设置会被覆盖）`,
-      )
+      ))
     ) {
       return
     }
@@ -303,6 +307,7 @@ export function TtsPlanForm({
       next[tag] = merged
     }
     write(next)
+    })()
   }
 
   const voiceKeyOf = (service: ResolvedService) =>
@@ -543,13 +548,15 @@ export function TtsPlanForm({
                       type="button"
                       className="tts-btn is-ghost"
                       onClick={() => {
-                        const id = createService()
+                        void (async () => {
+                        const id = await createService()
                         if (!id) return
                         // 先写进方案再提示去填 —— 这一刻活动文件还是方案，
                         // 顺序反了会把方案内容写进那个新服务里
                         patchEntry(locale, { service: id })
                         setCreatedService(id)
                         setProbeState(null)
+                        })()
                       }}
                     >
                       新建

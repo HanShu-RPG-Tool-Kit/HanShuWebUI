@@ -5,20 +5,51 @@ import { EditTransactionPanel } from './EditTransactionPanel'
 import './collaboration-widget.css'
 
 type Position = { x: number; y: number }
+type Snap = { x: 'left' | 'right' | null; y: 'top' | 'bottom' | null }
 const positionKey = 'hanshu.collaborationPosition.v1'
 const ORB = { w: 87, h: 69 }
+const TITLEBAR_H = 40
+const STATUSBAR_H = 28
 const colors = ['#ac9bda', '#7cbba7', '#d7ac79', '#85afd1', '#c990ac']
 function color(id: string) { let value = 0; for (const ch of id) value = (value * 31 + ch.charCodeAt(0)) >>> 0; return colors[value % colors.length] }
 const fileName = (path: string) => path === '.hanshu/skinmanager/library.json' ? '皮肤库' : path.split('/').at(-1) ?? path
 function loadPosition(): Position {
-  try { const value = JSON.parse(localStorage.getItem(positionKey) ?? 'null'); if (Number.isFinite(value?.x) && Number.isFinite(value?.y)) return fitOrb(value) } catch { /* Optional preference. */ }
-  return fitOrb({ x: window.innerWidth - ORB.w - 24, y: window.innerHeight - ORB.h - 48 })
+  let pos = fitOrb({ x: window.innerWidth - ORB.w - 24, y: window.innerHeight - ORB.h - 48 })
+  try {
+    const value = JSON.parse(localStorage.getItem(positionKey) ?? 'null')
+    if (Number.isFinite(value?.x) && Number.isFinite(value?.y)) pos = fitOrb(value)
+  } catch { /* Optional preference. */ }
+  return applySnap(pos, detectSnap(pos))
+}
+function orbBounds() {
+  return {
+    left: 0,
+    top: TITLEBAR_H,
+    right: Math.max(0, window.innerWidth - ORB.w),
+    bottom: Math.max(TITLEBAR_H, window.innerHeight - ORB.h - STATUSBAR_H),
+  }
 }
 function fitOrb(next: Position): Position {
+  const box = orbBounds()
   return {
-    x: Math.max(12, Math.min(next.x, window.innerWidth - ORB.w - 12)),
-    y: Math.max(48, Math.min(next.y, window.innerHeight - ORB.h - 40)),
+    x: Math.max(box.left, Math.min(next.x, box.right)),
+    y: Math.max(box.top, Math.min(next.y, box.bottom)),
   }
+}
+function detectSnap(pos: Position): Snap {
+  return { x: pos.x + ORB.w / 2 <= window.innerWidth / 2 ? 'left' : 'right', y: null }
+}
+function applySnap(pos: Position, snap: Snap): Position {
+  const box = orbBounds()
+  return {
+    x: snap.x === 'right' ? box.right : box.left,
+    y: Math.max(box.top, Math.min(pos.y, box.bottom)),
+  }
+}
+function readTranslateX(el: HTMLElement): number {
+  const value = getComputedStyle(el).transform
+  if (!value || value === 'none') return 0
+  return new DOMMatrix(value).m41
 }
 function fitPanel(next: Position, width: number, height: number): Position {
   return {
@@ -43,17 +74,27 @@ export function CollaborationWidget({ client, snapshot, projectName, open, onOpe
   const state = useSyncExternalStore(client?.transactions.subscribe ?? subscribeNothing, client?.transactions.getSnapshot ?? (() => emptyState))
   /** 收起时浮球左上角；展开/收起不改写，避免回位漂移 */
   const [orbPos, setOrbPos] = useState(loadPosition)
+  const [dragging, setDragging] = useState(false)
+  const [peeking, setPeeking] = useState(false)
+  const [docked, setDocked] = useState(true)
+  const snapRef = useRef<Snap>(detectSnap(orbPos))
+  const [edge, setEdge] = useState<'left' | 'right' | null>(snapRef.current.x)
+  const dockReady = useRef(true)
+  const hideTimer = useRef<number | null>(null)
   const [panelSize, setPanelSize] = useState({ w: 492, h: 420 })
   const [tab, setTab] = useState<'people' | 'changes' | 'manage'>('people')
   const root = useRef<HTMLDivElement>(null)
   const drag = useRef<{ start: Position; originOrb: Position; originDisplay: Position; moved: boolean } | null>(null)
   const suppressClick = useRef(false)
+  const anchor = fitOrb(orbPos)
   const display = open
-    ? panelFromOrb(orbPos, panelSize.w, panelSize.h)
-    : fitOrb(orbPos)
+    ? panelFromOrb(anchor, panelSize.w, panelSize.h)
+    : dragging
+      ? orbPos
+      : anchor
 
   useEffect(() => {
-    const onResize = () => setOrbPos(value => fitOrb(value))
+    const onResize = () => setOrbPos(value => applySnap(value, snapRef.current.x ? snapRef.current : detectSnap(value)))
     window.addEventListener('resize', onResize)
     return () => window.removeEventListener('resize', onResize)
   }, [])
@@ -75,6 +116,40 @@ export function CollaborationWidget({ client, snapshot, projectName, open, onOpe
     try { localStorage.setItem(positionKey, JSON.stringify(orbPos)) } catch { /* Optional preference. */ }
   }, [orbPos])
 
+  useEffect(() => {
+    if (open || dragging || !edge) {
+      setDocked(false)
+      dockReady.current = false
+      return
+    }
+    if (dockReady.current) {
+      setDocked(true)
+      return
+    }
+    const timer = window.setTimeout(() => {
+      dockReady.current = true
+      setDocked(true)
+    }, 200)
+    return () => window.clearTimeout(timer)
+  }, [orbPos, open, dragging, edge])
+
+  useEffect(() => () => {
+    if (hideTimer.current) window.clearTimeout(hideTimer.current)
+  }, [])
+
+  function showOrb() {
+    if (hideTimer.current) window.clearTimeout(hideTimer.current)
+    hideTimer.current = null
+    setPeeking(true)
+  }
+  function scheduleHide() {
+    if (hideTimer.current) window.clearTimeout(hideTimer.current)
+    hideTimer.current = window.setTimeout(() => {
+      hideTimer.current = null
+      setPeeking(false)
+    }, 280)
+  }
+
   function start(event: PointerEvent<HTMLElement>) {
     if (event.button !== 0 || (event.target as HTMLElement).closest('[data-no-drag]')) return
     drag.current = {
@@ -90,12 +165,27 @@ export function CollaborationWidget({ client, snapshot, projectName, open, onOpe
     if (!value) return
     const dx = event.clientX - value.start.x
     const dy = event.clientY - value.start.y
-    if (Math.hypot(dx, dy) > 4) value.moved = true
+    if (Math.hypot(dx, dy) > 4) {
+      if (!value.moved) {
+        setDragging(true)
+        if (!open && root.current) {
+          const shift = readTranslateX(root.current)
+          if (shift) value.originOrb = { x: value.originOrb.x + shift, y: value.originOrb.y }
+        }
+      }
+      value.moved = true
+    }
     if (!value.moved) return
     if (!open) {
-      setOrbPos(fitOrb({ x: value.originOrb.x + dx, y: value.originOrb.y + dy }))
+      const box = orbBounds()
+      setOrbPos({
+        x: value.originOrb.x + dx,
+        y: Math.max(box.top, Math.min(value.originOrb.y + dy, box.bottom)),
+      })
       return
     }
+    snapRef.current = { x: null, y: null }
+    setEdge(null)
     const nextPanel = fitPanel(
       { x: value.originDisplay.x + dx, y: value.originDisplay.y + dy },
       panelSize.w,
@@ -103,7 +193,22 @@ export function CollaborationWidget({ client, snapshot, projectName, open, onOpe
     )
     setOrbPos(orbFromPanel(nextPanel, panelSize.w, panelSize.h))
   }
-  function end() { suppressClick.current = drag.current?.moved ?? false; drag.current = null }
+  function end(event: PointerEvent<HTMLElement>) {
+    const value = drag.current
+    suppressClick.current = value?.moved ?? false
+    drag.current = null
+    setDragging(false)
+    if (!value?.moved || open) return
+    const next = {
+      x: value.originOrb.x + event.clientX - value.start.x,
+      y: value.originOrb.y + event.clientY - value.start.y,
+    }
+    const snap = detectSnap(next)
+    snapRef.current = snap
+    setEdge(snap.x)
+    const snapped = applySnap(next, snap)
+    requestAnimationFrame(() => setOrbPos(snapped))
+  }
 
   const failures = state.transactions.filter(item => ['failed', 'conflict', 'uncertain'].includes(item.phase))
   const attention = !!error || failures.length > 0 || !!state.journalError
@@ -111,8 +216,9 @@ export function CollaborationWidget({ client, snapshot, projectName, open, onOpe
   const members = snapshot?.members.filter(member => snapshot.sessions.some(session => session.subjectId === member.subject.id)) ?? []
   const currentPath = snapshot?.session.filePresence?.path
 
-  return <div ref={root} className={`collab-widget${open ? ' is-open' : ''}${attention ? ' needs-attention' : ''}`} data-project-name={projectName} data-online={!!client?.online} style={{ left: display.x, top: display.y }}>
-    {!open ? <button className="collab-orb" aria-label="打开协作面板" title={`${status} · 拖动可移动`} onPointerDown={start} onPointerMove={move} onPointerUp={end} onPointerCancel={end} onClick={() => { if (!suppressClick.current) onOpenChange(true); suppressClick.current = false }}>
+  const tucked = !open && docked && !dragging && !peeking && !!edge
+  return <div ref={root} className={`collab-widget${open ? ' is-open' : ''}${dragging ? ' is-dragging' : ''}${tucked ? ` is-docked is-docked-${edge}` : ''}${peeking ? ' is-peeking' : ''}${attention ? ' needs-attention' : ''}`} data-project-name={projectName} data-online={!!client?.online} style={{ left: display.x, top: display.y }} onPointerEnter={showOrb} onPointerLeave={scheduleHide}>
+    {!open ? <button className="collab-orb" aria-label="打开协作面板" title={`${status} · 松手贴到左右边缘，平时缩进边缘，鼠标移上去展开`} onPointerDown={start} onPointerMove={move} onPointerUp={end} onPointerCancel={end} onClick={() => { if (!suppressClick.current) onOpenChange(true); suppressClick.current = false }}>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true"><circle cx="9" cy="8" r="3" /><path d="M3 20v-2a6 6 0 0 1 12 0v2M16 5a3 3 0 0 1 0 6m2 3a5 5 0 0 1 3 4v2" /></svg><i className={!client?.online ? 'is-offline' : attention ? 'is-warning' : ''} /><span>{attention ? '!' : members.length || '＋'}</span>
     </button> : <section className="collab-panel" aria-label="协作面板">
       <header className="collab-drag-handle" onPointerDown={start} onPointerMove={move} onPointerUp={end} onPointerCancel={end}>
