@@ -4,7 +4,8 @@ import * as S from './signals'
 import type { SignalBreakpoints } from './signalDebugging'
 type TraceRow = S.Delivery & Partial<Pick<S.SimDelivery,'accepted' | 'reason' | 'emitted' | 'changes' | 'rolledBack' | 'assessment'>>
 
-export function SignalDebugger({ flow, sim, playing, duration, disabled, onInitialize, onStep, onPlay, onReset, onDuration, onFocus, resolveText, breakpoints, stopReason, onClearBreakpoints, viewTools, expanded = true, onToggleExpanded }: {
+export function SignalDebugger({ flow, sim, playing, autoPlay = true, onAutoPlay, duration, disabled, onInitialize, onStep, onPlay, onReset, onDuration, onFocus, resolveText, breakpoints, stopReason, onClearBreakpoints, viewTools, expanded = true, onToggleExpanded }: {
+  autoPlay?: boolean; onAutoPlay?: (value: boolean) => void
   viewTools?: ReactNode; expanded?: boolean; onToggleExpanded?: () => void
   breakpoints: SignalBreakpoints; stopReason: string; onClearBreakpoints: () => void
   flow: M.ProgressFlow; sim: S.FlowSimState; playing: boolean; duration: number; disabled: boolean
@@ -48,6 +49,7 @@ export function SignalDebugger({ flow, sim, playing, duration, disabled, onIniti
       <div className="quest-view-tools" role="group" aria-label="画布视图工具">{viewTools}</div>
       <div className="quest-sim-tools" role="group" aria-label="模拟控制">
       <button type="button" disabled={disabled || sim.initialized || !!sim.fault} title="初始化任务，开始模拟" onClick={onInitialize}>初始化任务</button>
+      {onAutoPlay && <label className="quest-autoplay" title="新产生的信号自动播放；暂停或命中断点后仍需手动继续"><input type="checkbox" checked={autoPlay} disabled={disabled} onChange={event=>onAutoPlay(event.target.checked)} />自动播放</label>}
       <button type="button" className="quest-play" disabled={disabled || !busy} title={playing ? '暂停信号播放' : '播放待投递信号'} onClick={onPlay}><span aria-hidden="true">{playing ? 'Ⅱ' : '▷'}</span>{playing ? '暂停' : '播放'}</button>
       <button type="button" disabled={disabled || !busy} title="处理队首的一条信号" onClick={onStep}>单步</button>
       <button type="button" disabled={disabled} title="清空本地模拟状态，恢复图编辑" onClick={onReset}>重置模拟</button>
@@ -84,7 +86,7 @@ export function SignalDebugger({ flow, sim, playing, duration, disabled, onIniti
           <p>{selected.reason ?? (selected.emitted ? `产生 ${selected.emitted.length} 条新投递` : '仍在 FIFO 队列中')}</p>
           <p className="signal-debugger-event">事件 #{selected.eventId} · {event?.label ?? '事件说明已裁剪'} {event?.nodeId?label(event.nodeId):''}</p>
           {selected.changes?.map((change,index)=><p key={index}>{label(change.id)}：{change.text}</p>)}
-          {selected.assessment&&<div className="signal-debugger-causes"><small>逻辑查询 #{selected.assessment.round} · {selected.assessment.conjunction&&selected.assessment.disjunction?'通过':'未通过'}</small><p>并且{selected.assessment.conjunction?'满足':'不满足'} · 或者{selected.assessment.disjunction?'满足':'不满足'}</p>{selected.assessment.answers.map(answer=>{const link=flow.logic?.links.find(link=>link.id===answer.link);return <button type="button" key={answer.link} disabled={answer.traceId===undefined} onClick={()=>inspectId(answer.traceId!)}>#{answer.traceId??'—'} {S.SIGNAL_LABELS[answer.signal]} · {link?label(link.from):answer.link}</button>})}</div>}
+          {selected.assessment&&<div className="signal-debugger-causes"><small>{selected.assessment.mode==='query'?'递归求值':'逻辑查询'} #{selected.assessment.round} · {selected.assessment.conjunction&&selected.assessment.disjunction?selected.assessment.mode==='query'?'满足':'通过':selected.assessment.mode==='query'?'不满足':'未通过'}</small><p>并且{selected.assessment.conjunction?'满足':'不满足'} · 或者{selected.assessment.disjunction?'满足':'不满足'}</p>{selected.assessment.answers.map(answer=>{const link=flow.logic?.links.find(link=>link.id===answer.link);return <button type="button" key={answer.link} disabled={answer.traceId===undefined} onClick={()=>inspectId(answer.traceId!)}>#{answer.traceId??'—'} {S.SIGNAL_LABELS[answer.signal]} · {link?label(link.from):answer.link}</button>})}</div>}
           <div className="signal-debugger-causes"><small>因果来源{parents.length>1?'（含逻辑的全部应答）':''}</small>
             {!parents.length&&<p>外部事件直接产生</p>}
             {ancestors.map(id=>{const ancestor=index.get(id);return <button type="button" key={id} aria-label={`检查来源 #${id}`} onClick={()=>inspectId(id)}>#{id} {ancestor?`${S.SIGNAL_LABELS[ancestor.signal.kind]} → ${label(ancestor.to)}`:'历史已裁剪'}{parents.includes(id)?' · 直接来源':''}</button>})}

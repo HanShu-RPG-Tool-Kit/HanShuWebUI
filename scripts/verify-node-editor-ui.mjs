@@ -72,6 +72,7 @@ try{
  onChangeFlow:next=>F(next),onMove:p=>F(prev=>C.moveCanvasNodes(prev,p)),onGroup:ids=>{F(prev=>C.groupCanvasNodes(prev,ids).flow);return 'group'},onUngroup:()=>{},onRenameGroup:()=>{},onDelete:id=>F(prev=>C.removeCanvasItems(prev,[id])),onDeleteMany:ids=>F(prev=>C.removeCanvasItems(prev,ids)),onArrange:()=>{},onUpdateNote:(id,patch)=>F(prev=>C.updateCanvasNote(prev,id,patch)),onConnect:(from,to,port,fromPort)=>F(prev=>M.connectNodes(prev,from,to,port,fromPort).flow),onDisconnect:()=>{},onCut:()=>{}})}DOM.createRoot(document.getElementById('root')).render(React.createElement(App));</script>`}))
  await page.goto(base+'/__progress-graph');await page.locator('[data-progress-state]').first().waitFor();await page.waitForTimeout(250)
  const ids=await page.evaluate(()=>window.ids)
+ await page.getByRole('checkbox',{name:'自动播放',exact:true}).uncheck()
  assert.equal(await page.locator(`[data-canvas-node="${ids.t}"] .flow-graph-node-header`).getByText('逻辑',{exact:true}).count(),1,'logic node uses simplified terminology')
  assert.deepEqual(await page.locator(`[data-canvas-node="${ids.t}"] .node-port-label`).allTextContents(),['并且','或者','通过'],'logic ports use plain-language labels')
  const startNode=page.locator(`[data-canvas-node="${ids.start}"]`),before=await startNode.boundingBox()

@@ -439,12 +439,33 @@ export function validateFlow(flow: ProgressFlow): FlowIssue[] {
       grouped.add(node)
     }
   }
+  // Only logic nodes are transparent to this advisory; a progress is a lifecycle boundary.
+  const logicInputs = new Map<string, string[]>()
+  for (const link of flow.logic?.links ?? []) {
+    if (!getTransitionNode(flow, link.to) || !inputPorts(flow, link.to).includes(link.port) || !outputPorts(flow, link.from).includes(linkSourcePort(flow, link.from, link.fromPort))) continue
+    const sources = logicInputs.get(link.to) ?? []
+    sources.push(link.from); logicInputs.set(link.to, sources)
+  }
+  const backgroundDependency = (from: string): boolean => {
+    const queue = [from], seen = new Set<string>()
+    for (let index = 0; index < queue.length; index++) {
+      const id = queue[index]
+      if (seen.has(id)) continue
+      seen.add(id)
+      if (getObjectiveNode(flow, id) || getPredicateNode(flow, id)) return true
+      if (getTransitionNode(flow, id)) queue.push(...(logicInputs.get(id) ?? []))
+    }
+    return false
+  }
   const ids = new Set<string>()
   for (const link of flow.logic?.links ?? []) {
     if (!safeId(link.id) || ids.has(link.id)) error(`logic.links.${link.id}`, '连接 ID 必须有效且在文档内唯一。')
     ids.add(link.id)
     if (!hasContentNode(flow, link.from) || !hasContentNode(flow, link.to)) error(`logic.links.${link.id}`, '连接端点不存在。')
     else if (!canConnectNodes(flow, link.from, link.to, link.port, linkSourcePort(flow, link.from, link.fromPort))) error(`logic.links.${link.id}`, '连接的端口不正确或会成环。')
+    else if (getTransitionNode(flow, link.to) && link.port === 'input' && backgroundDependency(link.from)) {
+      warning(`logic.links.${link.id}`, '目标或条件节点直接或经过嵌套逻辑接入“并且”端口，属于非建议用法，可能导致任务挂起。这类节点不维持任务存活，请检查等待期间是否仍有能够到达结束节点的运行中进度。')
+    }
   }
   const cycle = findCanvasCycle(flow)
   if (cycle) error('graph', `画布连线不能成环：${cycle.join(' → ')}。`)

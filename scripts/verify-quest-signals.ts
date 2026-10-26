@@ -282,4 +282,199 @@ test('background goals count toward shared execution limits',()=>{
  assert(M.validateFlow(flow).some(issue=>issue.severity==='error'&&issue.path==='graph'))
  assert.equal(S.initializeQuest(flow,S.createSimState(flow)).fault?.code,'invalid-graph')
 })
+test('background goals and conditions on AND inputs warn per link without blocking execution',()=>{
+ let {flow,goal,gate,end}=backgroundGoal()
+ const predicate=C.createPredicateNode(flow,{x:0,y:400});flow=predicate.flow
+ flow.predicates![predicate.id].conditions=[{kind:'task',state:'succeeded',target:'other'}]
+ flow=M.connectNodes(flow,predicate.id,gate,'input','output').flow
+ flow=M.connectNodes(flow,predicate.id,gate,'input2','output').flow
+ flow=M.connectNodes(flow,goal,gate,'input','output2').flow
+ flow=M.connectNodes(flow,predicate.id,end,'input','output').flow
+ const risk=()=>M.validateFlow(flow).filter(issue=>issue.message.includes('非建议用法'))
+ const expected=flow.logic!.links.filter(link=>link.to===gate&&link.port==='input'&&[goal,predicate.id].includes(link.from))
+ assert.equal(expected.length,3)
+ assert.deepEqual(risk().map(issue=>issue.path).sort(),expected.map(link=>`logic.links.${link.id}`).sort())
+ assert(risk().every(issue=>issue.severity==='warning'&&issue.message.includes('可能导致任务挂起')))
+ assert.equal(M.validateFlow(flow).some(issue=>issue.severity==='error'),false)
+ assert.equal(S.initializeQuest(flow,S.createSimState(flow)).fault,null,'advisory warnings never block simulation')
+ for(const link of expected) flow=M.disconnectLink(flow,{kind:'logic-link',id:link.id})
+ assert.equal(risk().length,0,'OR inputs, progress AND inputs and direct end connections do not receive this warning')
+ const draftGoal=C.createObjectiveNode(flow,{x:900,y:600}),draftGate=C.createTransitionNode(draftGoal.flow,{x:1200,y:600})
+ flow=M.connectNodes(draftGate.flow,draftGoal.id,draftGate.id,'input','output').flow
+ assert.equal(risk().length,1,'structural authoring warning also covers draft links')
+})
+test('AND advisory follows nested OR/AND logic, deduplicates diamonds and stops at progress boundaries',()=>{
+ for(const family of ['objective','predicate'] as const) {
+  let flow=M.createFlow('nested-advisory')
+  const origin=family==='objective'?C.createObjectiveNode(flow,{x:0,y:200}):C.createPredicateNode(flow,{x:0,y:200});flow=origin.flow
+  const first=C.createTransitionNode(flow,{x:300,y:200});flow=first.flow
+  const second=C.createTransitionNode(flow,{x:600,y:200});flow=second.flow
+  const third=C.createTransitionNode(flow,{x:900,y:200});flow=third.flow
+  flow=M.connectNodes(flow,origin.id,first.id,'input2').flow
+  flow=M.connectNodes(flow,first.id,second.id,'input2').flow
+  flow=M.connectNodes(flow,first.id,third.id,'input').flow
+  flow=M.connectNodes(flow,second.id,third.id,'input').flow
+  const warnings=(f:M.ProgressFlow)=>M.validateFlow(f).filter(issue=>issue.message.includes('非建议用法'))
+  assert.equal(warnings(flow).length,2,'each nested AND link warns once, independent of OR nesting')
+  const final=C.createTransitionNode(flow,{x:1200,y:200});flow=final.flow
+  flow=M.connectNodes(flow,third.id,final.id,'input').flow
+  assert.equal(warnings(flow).length,3,'diamond ancestry does not duplicate warnings')
+  const progress=C.createProgressNode(flow,{x:900,y:400});flow=progress.flow
+  flow=M.connectNodes(flow,first.id,progress.id,'input').flow
+  flow=M.connectNodes(flow,progress.id,final.id,'input').flow
+  assert.equal(warnings(flow).length,3,'ordinary progress cuts off background ancestry')
+  const orOnly=structuredClone(flow);orOnly.logic!.links=orOnly.logic!.links.filter(link=>!M.getTransitionNode(orOnly,link.to)||link.port==='input2')
+  assert.equal(warnings(orOnly).length,0,'pure OR paths do not warn')
+ }
+})
+test('nested logic re-queries upstream after another progress finishes later',()=>{
+ let flow=M.createFlow('nested-delayed')
+ const p=C.createProgressNode(flow,{x:300,y:0});flow=p.flow
+ const a=C.createTransitionNode(flow,{x:300,y:200});flow=a.flow
+ const b=C.createTransitionNode(flow,{x:600,y:0});flow=b.flow
+ const end=C.createEndNode(flow,{x:900,y:0});flow=end.flow
+ for(const [from,to] of [[flow.start,p.id],[flow.start,a.id],[a.id,b.id],[p.id,b.id],[b.id,end.id]])flow=M.connectNodes(flow,from,to,'input','output').flow
+ let sim=S.settleProgress(flow,S.initializeQuest(flow,S.createSimState(flow)),flow.start,'succeeded')
+ assert.equal(sim.outcome,null);assert.equal(S.progressState(sim,p.id),'running')
+ const pending=S.settleProgress(flow,sim,p.id,'succeeded',true),automatic=S.drainSignals(flow,pending)
+ let stepped=pending;while(S.isBusy(stepped))stepped=S.stepSignal(flow,stepped)
+ assert.deepEqual(stepped,automatic)
+ assert.deepEqual(automatic.outcome,{endId:end.id,result:'success'})
+ assert(automatic.log.some(row=>row.to===a.id&&row.signal.kind==='query'&&row.emitted?.some(item=>item.queryId!==undefined&&item.signal.kind==='query')))
+ assert.deepEqual(automatic.queryRounds,{})
+})
+
+function nestedQueryFixture() {
+ let flow=M.createFlow('query-isolation')
+ const end=C.createEndNode(flow,{x:1200,y:0});flow=M.connectNodes(end.flow,flow.start,end.id,'input','output').flow
+ const condition=C.createPredicateNode(flow,{x:0,y:200});flow=condition.flow
+ const blocker=C.createPredicateNode(flow,{x:0,y:400});flow=blocker.flow
+ const a=C.createTransitionNode(flow,{x:300,y:200});flow=a.flow
+ const b=C.createTransitionNode(flow,{x:600,y:200});flow=b.flow
+ const extra=C.createProgressNode(flow,{x:600,y:400});flow=extra.flow
+ flow=M.connectNodes(flow,condition.id,a.id,'input2').flow
+ flow=M.connectNodes(flow,a.id,b.id,'input').flow
+ flow=M.connectNodes(flow,blocker.id,b.id,'input').flow
+ flow=M.connectNodes(flow,b.id,end.id,'input').flow
+ flow=M.connectNodes(flow,a.id,extra.id,'input').flow
+ const wire=flow.logic!.links.find(link=>link.from===a.id&&link.to===b.id)!
+ const leaf=flow.logic!.links.find(link=>link.from===condition.id&&link.to===a.id)!
+ const sim=S.initializeQuest(flow,S.createSimState(flow))
+ return {flow,sim,a:a.id,b:b.id,condition:condition.id,blocker:blocker.id,extra:extra.id,wire,leaf}
+}
+
+test('recursive Q is read-only, replies only to its caller, uses live truth and returns N for empty logic',()=>{
+ const {flow,sim,a,b,condition,extra,wire}=nestedQueryFixture()
+ sim.predicates[condition]=true
+ const query:S.Delivery={signal:{kind:'query'},from:b,to:a,port:'output',link:wire.id,round:91}
+ const result=S.propagateSignals(flow,sim,[query])
+ assert.deepEqual(result.progress,sim.progress);assert.deepEqual(result.rounds,sim.rounds)
+ assert.equal(S.progressState(result,extra),'inactive');assert.equal(result.log.some(row=>row.signal.kind==='cancel'),false)
+ const answers=result.log.flatMap(row=>row.to===a?row.emitted??[]:[]).filter(row=>row.signal.kind==='activate')
+ assert.equal(answers.length,1);assert.equal(answers[0].to,b);assert.equal(answers[0].round,91)
+ const originalQ=result.log.find(row=>row.to===a&&row.signal.kind==='query')!
+ const response=result.log.find(row=>row.to===b&&row.round===91)!
+ assert(S.traceParents(response).includes(originalQ.traceId!),'delayed response retains original Q as a causal parent')
+ const assessment=result.log.find(row=>row.to===a&&row.assessment?.mode==='query')!.assessment!
+ for(const answer of assessment.answers)assert(response.causes!.includes(answer.traceId!),'recursive response retains all input answer evidence')
+ const changed=structuredClone(result);changed.predicates[condition]=false
+ const current=S.propagateSignals(flow,changed,[{...query,round:92}])
+ assert(current.log.some(row=>row.to===b&&row.round===92&&row.signal.kind==='none'))
+ const empty=structuredClone(flow);empty.logic!.links=empty.logic!.links.filter(link=>link.to!==a)
+ const negative=S.propagateSignals(empty,S.syncSimState(sim,empty),[{...query,round:93}])
+ assert(negative.log.some(row=>row.to===b&&row.round===93&&row.signal.kind==='none'))
+ assert.deepEqual(negative.queryRounds,{})
+})
+
+test('concurrent recursive callers retain original rounds; cancellation does not strand their queries',()=>{
+ const {flow,sim,a,b,condition,wire,leaf}=nestedQueryFixture();sim.predicates[condition]=true
+ const request=(round:number):S.Delivery=>({signal:{kind:'query'},from:b,to:a,port:'output',link:wire.id,round})
+ const pending=S.propagateSignals(flow,sim,[request(101),request(102),{signal:{kind:'cancel'},from:b,to:a,port:'output',link:wire.id}],true)
+ const complete=S.drainSignals(flow,pending)
+ const replies=complete.log.filter(row=>row.to===b&&[101,102].includes(row.round??-1)&&row.signal.kind==='activate')
+ assert.deepEqual(replies.map(row=>row.round),[101,102]);assert.deepEqual(complete.queryRounds,{})
+ const firstQ=complete.log.find(row=>row.to===a&&row.signal.kind==='query')!
+ const stale=S.propagateSignals(flow,complete,[{signal:{kind:'activate'},from:condition,to:a,port:'input2',link:leaf.id,round:firstQ.traceId,queryId:firstQ.traceId}])
+ assert.equal(stale.log.at(-1)!.accepted,false);assert.equal(stale.log.at(-1)!.reason,'过期递归查询应答')
+ assert.equal(stale.rounds[a].id,complete.rounds[a].id,'late query A never opens an activation round')
+})
+
+test('recursive queries and activation rounds coexist without cross-delivering answers',()=>{
+ const {flow,sim,a,b,condition,wire,leaf}=nestedQueryFixture();sim.predicates[condition]=true
+ const result=S.propagateSignals(flow,sim,[
+  {signal:{kind:'activate'},from:condition,to:a,port:'input2',link:leaf.id},
+  {signal:{kind:'query'},from:b,to:a,port:'output',link:wire.id,round:201},
+ ])
+ assert.equal(result.fault,null);assert.equal(result.rounds[a].id,1)
+ assert(result.log.some(row=>row.to===b&&row.round===201&&row.signal.kind==='activate'))
+ assert.deepEqual(result.queryRounds,{})
+})
+
+test('recursive query contexts roll back on budget and graph-change faults',()=>{
+ const {flow,sim,a,b,condition,wire}=nestedQueryFixture();sim.predicates[condition]=true
+ let pending=S.propagateSignals(flow,sim,[{signal:{kind:'query'},from:b,to:a,port:'output',link:wire.id,round:301}],true)
+ pending=S.stepSignal(flow,pending);assert(Object.keys(pending.queryRounds[a]).length)
+ const changed=structuredClone(flow);changed.predicates![condition].conditions=[{kind:'expr',state:'true',target:'changed'}]
+ const graphFault=S.drainSignals(changed,pending);assert.equal(graphFault.fault?.code,'graph-changed');assert.deepEqual(graphFault.queryRounds,sim.queryRounds)
+ pending.execution!.budget=pending.execution!.processed
+ const budgetFault=S.drainSignals(flow,pending);assert.equal(budgetFault.fault?.code,'budget-exceeded');assert.deepEqual(budgetFault.queryRounds,sim.queryRounds)
+})
+test('multi-layer mixed AND/OR queries handle diamonds, goal failure ports and link permutations',()=>{
+ let {flow,sim,a,b,condition,blocker}=nestedQueryFixture()
+ const goal=C.createObjectiveNode(flow,{x:0,y:600});flow=goal.flow
+ const top=C.createTransitionNode(flow,{x:900,y:200});flow=top.flow
+ const sink=C.createTransitionNode(flow,{x:1200,y:200});flow=sink.flow
+ flow=M.connectNodes(flow,goal.id,b,'input2','output2').flow
+ flow=M.connectNodes(flow,b,top.id,'input').flow
+ flow=M.connectNodes(flow,a,top.id,'input2').flow
+ flow=M.connectNodes(flow,top.id,sink.id,'input2').flow
+ const wire=flow.logic!.links.find(link=>link.from===top.id&&link.to===sink.id)!
+ sim=S.syncSimState(sim,flow);sim.predicates[condition]=true;sim.predicates[blocker]=true;sim.objectives[goal.id]='failed'
+ const seeds:S.Delivery[]=[{signal:{kind:'query'},from:sink.id,to:top.id,port:'output',link:wire.id,round:401}]
+ const positive=S.propagateSignals(flow,sim,seeds)
+ assert(positive.log.some(row=>row.to===sink.id&&row.round===401&&row.signal.kind==='activate'))
+ assert.deepEqual(positive.queryRounds,{});assert.equal(positive.fault,null)
+ const reordered=structuredClone(flow);reordered.logic!.links.reverse()
+ assert.deepEqual(S.propagateSignals(reordered,sim,seeds),positive)
+ const changed=structuredClone(sim);changed.objectives[goal.id]='succeeded'
+ const negative=S.propagateSignals(flow,changed,seeds)
+ assert(negative.log.some(row=>row.to===sink.id&&row.round===401&&row.signal.kind==='none'))
+ assert.equal(negative.log.some(row=>row.signal.kind==='cancel'),false)
+})
+test('logic release does not cancel producers while a downstream logic is still blocked',()=>{
+ let flow=M.createFlow('no-premature-consumption')
+ const a=C.createProgressNode(flow,{x:300,y:0});flow=a.flow
+ const b=C.createProgressNode(flow,{x:300,y:200});flow=b.flow
+ const choice=C.createTransitionNode(flow,{x:600,y:100});flow=choice.flow
+ const gate=C.createTransitionNode(flow,{x:900,y:100});flow=gate.flow
+ const condition=C.createPredicateNode(flow,{x:600,y:400});flow=condition.flow
+ const next=C.createProgressNode(flow,{x:1200,y:100});flow=next.flow
+ const end=C.createEndNode(flow,{x:1500,y:100});flow=end.flow
+ for(const [from,to,port]of [[flow.start,a.id,'input'],[flow.start,b.id,'input'],[a.id,choice.id,'input2'],[b.id,choice.id,'input2'],[choice.id,gate.id,'input'],[condition.id,gate.id,'input'],[gate.id,next.id,'input'],[next.id,end.id,'input']] as const)flow=M.connectNodes(flow,from,to,port).flow
+ let sim=S.settleProgress(flow,S.initializeQuest(flow,S.createSimState(flow)),flow.start,'succeeded')
+ assert.equal(S.progressState(sim,b.id),'running')
+ const before=sim.log.length
+ sim=S.settleProgress(flow,sim,a.id,'succeeded')
+ assert.equal(S.progressState(sim,b.id),'running','upstream OR must not cancel the other producer before a consumer activates')
+ assert.equal(S.progressState(sim,next.id),'inactive')
+ assert.equal(sim.log.slice(before).some(row=>row.signal.kind==='cancel'),false,'logic-to-logic release creates no C')
+ sim=S.setPredicateTruth(flow,sim,condition.id,true)
+ assert.equal(S.progressState(sim,next.id),'running');assert.equal(S.progressState(sim,b.id),'cancelled')
+ const roots=sim.log.filter(row=>row.signal.kind!=='cancel'&&row.emitted?.some(child=>child.signal.kind==='cancel'))
+ assert(roots.length>0)
+ assert(roots.every(row=>M.getProgressNode(flow,row.to)&&row.signal.kind==='activate'&&row.changes?.some(change=>change.id===row.to&&change.text==='未激活 → 运行中')),'only newly activated progress generates original cancellation')
+ for(const row of sim.log.filter(row=>M.getTransitionNode(flow,row.to)&&row.emitted?.some(child=>child.signal.kind==='cancel')))assert.equal(row.signal.kind,'cancel','logic only relays an incoming C')
+ const count=sim.log.length
+ sim=S.injectSignal(flow,sim,next.id,'input',{kind:'activate'})
+ assert.equal(sim.log.slice(count).some(row=>row.emitted?.some(child=>child.signal.kind==='cancel')),false,'repeated activation of running progress creates no C')
+})
+test('logic ending a quest does not create consumption C either',()=>{
+ let flow=M.createFlow('logic-end-only')
+ const gate=C.createTransitionNode(flow,{x:300,y:0});flow=gate.flow
+ const end=C.createEndNode(flow,{x:600,y:0});flow=end.flow
+ flow=M.connectNodes(flow,flow.start,gate.id,'input').flow;flow=M.connectNodes(flow,gate.id,end.id,'input').flow
+ const sim=S.settleProgress(flow,S.initializeQuest(flow,S.createSimState(flow)),flow.start,'succeeded')
+ assert.equal(sim.outcome?.result,'success')
+ assert.equal(sim.log.some(row=>row.signal.kind==='cancel'||row.emitted?.some(child=>child.signal.kind==='cancel')),false)
+})
 console.log(`${checks} quest signal checks passed`)

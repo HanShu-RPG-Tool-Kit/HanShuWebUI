@@ -55,8 +55,9 @@ export function ProgressNode({ node: view, selected, dragging }: NodeViewProps) 
 
   if (getTransitionNode(flow, id)) {
     const round = S.transitionRound(sim, id)
-    return <NodeFrame selected={selected} dragging={dragging} className={`flow-graph-node is-transition${round.open ? ' is-waiting' : ''}${draftClass}`}>
-      <NodeHeader className="flow-graph-node-header" icon="→" title="逻辑" badge={draftTag ?? (round.open ? <span className="flow-graph-header-tag">查询中</span> : undefined)} />
+    const waiting = round.open || !!Object.keys(sim.queryRounds[id] ?? {}).length
+    return <NodeFrame selected={selected} dragging={dragging} className={`flow-graph-node is-transition${waiting ? ' is-waiting' : ''}${draftClass}`}>
+      <NodeHeader className="flow-graph-node-header" icon="→" title="逻辑" badge={draftTag ?? (waiting ? <span className="flow-graph-header-tag">查询中</span> : undefined)} />
       {ports}
     </NodeFrame>
   }

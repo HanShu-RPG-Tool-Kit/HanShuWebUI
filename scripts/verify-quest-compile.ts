@@ -1,5 +1,5 @@
-import { createFlow } from '../src/workspaces/gameplay/model.ts'
-import { createObjectiveNode } from '../src/workspaces/gameplay/canvas.ts'
+import { createFlow, connectNodes, validateFlow } from '../src/workspaces/gameplay/model.ts'
+import { createObjectiveNode, createPredicateNode, createTransitionNode } from '../src/workspaces/gameplay/canvas.ts'
 /**
  * 单进度（hanshu.progress）→ 多进度外壳（hanshu.progress-tree + extensions.hanshuSimpleQuest）。
  * 覆盖 compileSimpleQuestDocument 与 questCompiler 入口。
@@ -81,3 +81,12 @@ const rejected = await questCompiler.compile(file('invalid.quest',JSON.stringify
 assert.equal(rejected.length,0)
 assert(diagnostics.some(d=>d.code==='quest_graph'))
 console.log('PASS: invalid multi graph is blocked before export')
+
+const gate=createTransitionNode(multi,{x:600,y:0})
+const condition=createPredicateNode(gate.flow,{x:300,y:200})
+let advisory=connectNodes(condition.flow,backgroundId,gate.id,'input','output2').flow
+advisory=connectNodes(advisory,condition.id,gate.id,'input','output').flow
+assert.equal(validateFlow(advisory).filter(issue=>issue.message.includes('非建议用法')&&issue.severity==='warning').length,2)
+const advisoryExport=await questCompiler.compile(file('advisory.quest',JSON.stringify(advisory)),ctx)
+assert.equal(advisoryExport.length,1,'AND-input advisories must not block export')
+console.log('PASS: background goal and condition AND-input warnings do not block export')

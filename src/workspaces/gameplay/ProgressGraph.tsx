@@ -52,6 +52,7 @@ export function ProgressGraph({ flow, selection, onSelect, onCreate, onChangeFlo
   const api = useRef<NodeEditorApi>(null)
   const [sim, setSim] = useState(() => S.createSimState(flow))
   const [playing, setPlaying] = useState(false)
+  const [autoPlay, setAutoPlay] = useState(true)
   const [duration, setDuration] = useState(600)
   const [debugGeneration, setDebugGeneration] = useState(0)
   const [breakpoints, setBreakpoints] = useState<SignalBreakpoints>({nodes:[],links:[]})
@@ -184,7 +185,10 @@ export function ProgressGraph({ flow, selection, onSelect, onCreate, onChangeFlo
 
   const trigger = (update: (previous: S.FlowSimState) => S.FlowSimState) => {
     if (eventDisabled) return
-    setStopReason('');setPausedAt(null);setSkipTrace(null);setSim(update)
+    const next = update(sim)
+    if (next === sim) return
+    setStopReason('');setPausedAt(null);setSkipTrace(null);setSim(next)
+    setPlaying(autoPlay && S.isBusy(next))
   }
   const initialize = () => trigger(previous=>S.initializeQuest(flow,previous,true))
   const settle = (id: string, outcome: 'succeeded' | 'failed') => trigger(previous=>M.getObjectiveNode(flow,id) ? S.settleObjective(flow,previous,id,outcome,true) : S.settleProgress(flow,previous,id,outcome,true))
@@ -280,7 +284,7 @@ export function ProgressGraph({ flow, selection, onSelect, onCreate, onChangeFlo
         if (M.getProgressNode(flow, id) && S.progressState(sim, id) === 'running') settle(id, event.shiftKey ? 'failed' : 'succeeded')
         if (M.getObjectiveNode(flow, id) && S.objectiveState(sim, id) === 'running') settle(id, event.shiftKey ? 'failed' : 'succeeded')
       }} />
-    <SignalDebugger key={`${flow.id}:${debugGeneration}`} viewTools={viewTools} expanded={toolsExpanded} onToggleExpanded={()=>setToolsExpanded(value=>!value)} flow={flow} sim={sim} playing={playing} duration={duration} breakpoints={breakpoints} stopReason={stopReason} onClearBreakpoints={()=>{setBreakpoints({nodes:[],links:[]});setPausedAt(null);setStopReason('')}} disabled={disabled || !active} resolveText={resolveText} onInitialize={initialize} onStep={step} onPlay={play} onReset={()=>{setPlaying(false);flight.current={key:'',elapsed:0};setDebugGeneration(value=>value+1);setSim(S.resetSimState(flow));setRunTo(null);setSkipTrace(null);setPausedAt(null);setStopReason('')}} onDuration={setDuration} onFocus={delivery=>{api.current?.focus(delivery.to);onSelect(delivery.link ? {kind:'logic-link',id:delivery.link} : nodeSelection(flow,delivery.to))}} />
+    <SignalDebugger key={`${flow.id}:${debugGeneration}`} viewTools={viewTools} expanded={toolsExpanded} onToggleExpanded={()=>setToolsExpanded(value=>!value)} flow={flow} sim={sim} playing={playing} autoPlay={autoPlay} onAutoPlay={value=>{setAutoPlay(value);if(!value)setPlaying(false)}} duration={duration} breakpoints={breakpoints} stopReason={stopReason} onClearBreakpoints={()=>{setBreakpoints({nodes:[],links:[]});setPausedAt(null);setStopReason('')}} disabled={disabled || !active} resolveText={resolveText} onInitialize={initialize} onStep={step} onPlay={play} onReset={()=>{setPlaying(false);flight.current={key:'',elapsed:0};setDebugGeneration(value=>value+1);setSim(S.resetSimState(flow));setRunTo(null);setSkipTrace(null);setPausedAt(null);setStopReason('')}} onDuration={setDuration} onFocus={delivery=>{api.current?.focus(delivery.to);onSelect(delivery.link ? {kind:'logic-link',id:delivery.link} : nodeSelection(flow,delivery.to))}} />
     {createMenu && <NodeContextMenu {...createMenu} title="节点画布" label="新建节点" items={createItems(createMenu.position)} onClose={() => setCreateMenu(null)} />}
   </div>
 }

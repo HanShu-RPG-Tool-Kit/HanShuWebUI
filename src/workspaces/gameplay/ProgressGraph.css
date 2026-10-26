@@ -127,6 +127,9 @@
 .flow-graph .quest-tools-bar button:disabled { opacity:.35;cursor:default; }
 .flow-graph .quest-tools-bar .flow-graph-add { color:#c2e2f2;background:#36536755; }
 .flow-graph .quest-tools-bar .quest-play { background:#45695744;color:#b9dfc6; }
+.quest-autoplay { display:inline-flex;align-items:center;gap:5px;padding:4px 6px;white-space:nowrap;color:#b6c2cf;font:12px/1.4 system-ui,sans-serif;cursor:pointer; }
+.quest-autoplay input { margin:0;accent-color:#85b99a; }
+.quest-autoplay:has(input:disabled) { opacity:.4;cursor:default; }
 .quest-tools-bar .flow-graph-zoom { margin:0 3px;gap:0;border:1px solid #454b53;border-radius:5px;background:#212428; }
 .quest-tools-bar .flow-graph-zoom button { min-height:26px;min-width:24px;padding:2px 5px;font-size:15px; }
 .quest-tools-bar .flow-graph-zoom output { width:44px;color:#b6c2cf;font:11px ui-monospace,monospace; }

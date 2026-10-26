@@ -200,7 +200,7 @@ test('并且：两个进度都成功才放行；先到的成功会被新的一�
   assert.equal(transitionRound(sim, t.id).open, false)
 })
 
-test('或者：任一成功即放行，并取消其余运行中的输入', () => {
+test('或者：任一成功即放行，下游进度激活后才取消其余运行中的输入', () => {
   let flow = createFlow('disjunction')
   const start = flow.start
   const a = createProgressNode(flow, { x: 300, y: 0 }); flow = a.flow
