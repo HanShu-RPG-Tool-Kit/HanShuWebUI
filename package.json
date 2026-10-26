@@ -9,6 +9,8 @@
     "test:voice-dialogs": "node scripts/run-verification.mjs scripts/verify-voice-dialogs.ts",
     "test:dialogs": "node scripts/run-verification.mjs scripts/verify-dialogs.ts",
     "test:panel-dock:ui": "node scripts/verify-panel-dock-ui.mjs",
+    "test:shop": "node scripts/run-verification.mjs scripts/verify-shop.ts",
+    "test:shop:ui": "node scripts/verify-shop-ui.mjs",
     "dev": "node scripts/dev-service.mjs",
     "dev:ui": "vite",
     "server": "node scripts/dev-service.mjs --server-only",

@@ -2288,6 +2288,7 @@
 .kit-script-reference input{min-height:32px;background:var(--kit-field,#232323);color:inherit;border:1px solid var(--fl-border,#484848);border-radius:3px;padding:6px 9px;font:inherit}.kit-script-reference button{min-height:28px;background:#353535;color:inherit;border:1px solid #4b4b4b;border-radius:3px;padding:4px 9px;font:inherit;cursor:pointer}.kit-script-reference button:hover:not(:disabled){background:#414141}.kit-script-reference button:disabled{opacity:.4;cursor:default}
 
 .kit-script-reference.is-over{outline:1px solid var(--accent,#8bbadd);outline-offset:4px}
+.kit-panel.kit-script{overflow:visible;position:relative;z-index:2}
 .kit-script-list{display:flex;flex-direction:column;gap:6px}
 .kit-script-row{display:flex;align-items:center;gap:8px;min-height:38px;padding:2px 8px;background:var(--surface-2,#252525);border:1px solid var(--border,#444);border-radius:5px}
 .kit-script-grip{cursor:grab;color:#888}.kit-script-index{font-size:12px;color:#999;font-variant-numeric:tabular-nums}

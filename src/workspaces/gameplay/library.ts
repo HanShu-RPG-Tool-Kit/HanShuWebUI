@@ -26,6 +26,8 @@ export const FLOW_PACKAGE_SECTIONS: Partial<Record<FlowPackageId, FlowSectionDef
 /** @deprecated 使用 packageAllowsQuest */
 export const packageAllowsFlows = (id: FlowPackageId) => id === 'quest'
 export const packageAllowsScripts = (id: FlowPackageId) => id === 'script'
+export const packageAllowsShops = (id: FlowPackageId) => id === 'shop'
+export const isShopDocument = (document: { package: FlowPackageId; name: string }) => document.package === 'shop' || document.name.toLowerCase().endsWith('.shop')
 export const packageAllowsKits = (id: FlowPackageId) => id === 'gift'
 /** @deprecated 使用 packageAllowsQuest */
 export const packageAllowsProgress = (id: FlowPackageId) => id === 'quest'

@@ -49,13 +49,13 @@ import { FeedbackTextEditor } from './FeedbackTextEditor'
 import './KitEditor.css'
 
 const EMPTY_ITEM_CATALOG: ItemCatalog = new Map()
-const ItemCatalogContext = createContext<ItemCatalog>(EMPTY_ITEM_CATALOG)
+export const ItemCatalogContext = createContext<ItemCatalog>(EMPTY_ITEM_CATALOG)
 
 const toCount = (value: string) => Math.max(0, Math.floor(Number(value) || 0))
 const replaceAt = <T,>(list: T[], index: number, value: T) => list.map((item, i) => i === index ? value : item)
 const removeAt = <T,>(list: T[], index: number) => list.filter((_, i) => i !== index)
 
-function Panel({ title, subtitle, count, action, className = '', children }: {
+export function Panel({ title, subtitle, count, action, className = '', children }: {
   title: string
   subtitle?: string
   count?: number
@@ -81,7 +81,7 @@ type KitExprUi = {
   applied?: boolean
 }
 
-const KitExprContext = createContext<KitExprUi | null>(null)
+export const KitExprContext = createContext<KitExprUi | null>(null)
 
 const formatNumber = (value: number) => Number.isInteger(value) ? String(value) : String(Math.round(value * 1000) / 1000)
 
@@ -134,13 +134,13 @@ function ModChip({ raw, mod, rule, label, skip, disabled, onChange }: {
   </span>
 }
 
-function AddButton({ label, disabled, onClick }: { label: string; disabled?: boolean; onClick: () => void }) {
+export function AddButton({ label, disabled, onClick }: { label: string; disabled?: boolean; onClick: () => void }) {
   return <button type="button" className="kit-add" disabled={disabled} onClick={onClick}>
     <span aria-hidden>+</span>{label}
   </button>
 }
 
-function RemoveButton({ label, disabled, onClick }: { label: string; disabled?: boolean; onClick: () => void }) {
+export function RemoveButton({ label, disabled, onClick }: { label: string; disabled?: boolean; onClick: () => void }) {
   return <button type="button" className="kit-remove" disabled={disabled} aria-label={label} title={label} onClick={onClick}>
     <svg viewBox="0 0 16 16" aria-hidden><path d="M4 4l8 8M12 4l-8 8" /></svg>
   </button>
@@ -410,7 +410,7 @@ function ItemRow({ item, index, open, disabled, onToggle, onChange, onRemove, on
   </li>
 }
 
-function ItemList({ items, header, disabled, onChange }: {
+export function ItemList({ items, header, disabled, onChange }: {
   items: KitItem[]
   header?: boolean
   disabled?: boolean
@@ -817,7 +817,7 @@ function KitTagField({ tags, disabled, readOnly, onChange }: {
 }
 
 
-function ParamPanel({ params, preview, disabled, onChange, onPreview }: {
+export function ParamPanel({ params, preview, disabled, onChange, onPreview }: {
   params: KitParam[]
   preview: Record<string, unknown>
   disabled?: boolean
@@ -1001,7 +1001,7 @@ function ModifierPreview({ modifier, env, error, ignored, range, onRange }: {
   </div>
 }
 
-function ModifierPanel({ modifiers, env, disabled, onChange }: {
+export function ModifierPanel({ modifiers, env, disabled, onChange }: {
   modifiers: KitModifier[]
   env: KitModifierEnv
   disabled?: boolean

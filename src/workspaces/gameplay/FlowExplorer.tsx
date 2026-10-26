@@ -58,7 +58,7 @@ import {
 import type { FlowPackageId, FlowWorkspaceState } from './storage'
 
 type Row = { entry: FlowEntry; name: string; depth: number; parent: string | null; pkg: FlowPackageId }
-type Edit = { mode: 'flow' | 'script' | 'kit' | 'progress' | 'navigation' | 'entity' | 'item' | 'folder' | 'rename' | 'move'; entry: FlowEntry; parent: string | null; pkg: FlowPackageId; value: string; error: string; templateName?:string }
+type Edit = { mode: 'flow' | 'script' | 'shop' | 'kit' | 'progress' | 'navigation' | 'entity' | 'item' | 'folder' | 'rename' | 'move'; entry: FlowEntry; parent: string | null; pkg: FlowPackageId; value: string; error: string; templateName?:string }
 
 export function Icon({ kind }: { kind: 'folder' | 'document' | 'python' | 'kit' | 'item' | 'item-table' | 'new' | 'import' | 'collapse' | 'script' | 'progress' | 'quest' | 'story' | 'actor' | 'reputation' | 'region' | 'navigator' | 'shop' | 'entities' | 'items' | 'gift' | 'goal-def' | 'enchantment' }) {
   const paths: Record<typeof kind, string> = {
@@ -174,15 +174,16 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
   const multiCount = selection.documents.length + selection.folders.length
   const allowsQuest = packageAllowsQuest(currentPkg)
   const allowsScripts = packageAllowsScripts(currentPkg)
+  const allowsShops = currentPkg === 'shop'
   const allowsKits = packageAllowsKits(currentPkg)
   const allowsNavigation = packageAllowsNavigation(currentPkg)
   const allowsItems = packageAllowsItems(currentPkg)
-  const allowsDocuments = allowsQuest || allowsScripts || allowsKits || allowsNavigation || allowsItems || packageAllowsEntities(currentPkg)
+  const allowsDocuments = allowsShops || allowsQuest || allowsScripts || allowsKits || allowsNavigation || allowsItems || packageAllowsEntities(currentPkg)
   const questCreateMode = allowsQuest ? createModeForQuestFocus(rawFolder) : null
-  const newDocumentMode: 'flow' | 'script' | 'kit' | 'progress' | 'navigation' | 'entity' | 'item' | null =
+  const newDocumentMode: 'flow' | 'script' | 'shop' | 'kit' | 'progress' | 'navigation' | 'entity' | 'item' | null =
     allowsQuest ? questCreateMode
       : allowsScripts ? 'script'
-        : allowsKits ? 'kit'
+        : allowsShops ? 'shop' : allowsKits ? 'kit'
           : allowsNavigation ? 'navigation'
             : packageAllowsEntities(currentPkg) ? 'entity'
               : allowsItems ? 'item'
@@ -191,14 +192,14 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
     : packageAllowsEntities(currentPkg) ? '新建实体'
       : allowsItems ? '新建物品'
         : allowsNavigation ? '新建导航点'
-          : allowsKits ? '新建礼包'
+          : allowsShops ? '新建商店' : allowsKits ? '新建礼包'
             : allowsScripts ? '新建脚本'
               : '新建流程'
   const importLabel = allowsQuest ? '导入任务'
     : packageAllowsEntities(currentPkg) ? '导入实体'
       : allowsItems ? '导入物品'
         : allowsNavigation ? '导入导航点'
-          : allowsKits ? '导入礼包'
+          : allowsShops ? '导入商店' : allowsKits ? '导入礼包'
             : allowsScripts ? '导入脚本'
               : '导入树图'
 
@@ -403,6 +404,7 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
       onNotice('脚本只能建在「脚本」分类中。')
       return
     }
+    if (mode === 'shop' && pkg !== 'shop') { onNotice('商店只能建在商店分类中。'); return }
     if (mode === 'kit' && !packageAllowsKits(pkg)) {
       onNotice('礼包只能建在「礼包」分类中。')
       return
@@ -419,7 +421,7 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
     const rawParent = mode === 'move' ? entryParentId(entry) : entry.kind === 'package' ? null : entryFolder(state, entry)
     // 在任务视图下新建：folderId 仍为 null，作者态由 mode（progress/flow）记住
     const parent = mode === 'move' ? rawParent : resolveCreateFolder(rawParent)
-    const editEntry = mode === 'flow' || mode === 'script' || mode === 'kit' || mode === 'progress' || mode === 'navigation' || mode === 'entity' || mode === 'item' || mode === 'folder'
+    const editEntry = mode === 'flow' || mode === 'script' || mode === 'shop' || mode === 'kit' || mode === 'progress' || mode === 'navigation' || mode === 'entity' || mode === 'item' || mode === 'folder'
       ? (entry.kind === 'folder' && isQuestViewKey(entry.key) ? entry : containerFor(entry))
       : entry
     setSearch('')
@@ -436,7 +438,7 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
       value: mode === 'rename' ? entryName(state, entry)
         : mode === 'folder' ? '新建文件夹'
           : mode === 'script' ? uniqueDocumentName(state,'新建脚本.py',pkg,parent)
-            : mode === 'kit' ? '新建礼包.kit'
+            : mode === 'shop' ? '新建商店.shop' : mode === 'kit' ? '新建礼包.kit'
               : mode === 'progress' ? `新建单进度任务${QUEST_EXT}`
                 : mode === 'navigation' ? '新建导航点.nav'
                   : mode === 'entity' ? '新建实体.entity'
@@ -451,7 +453,7 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
     if (!edit || disabled || readOnly) return
     try {
       let nextEntry = edit.entry
-      if (edit.mode === 'flow' || edit.mode === 'script' || edit.mode === 'kit' || edit.mode === 'progress' || edit.mode === 'navigation' || edit.mode === 'item' || edit.mode === 'entity') {
+      if (edit.mode === 'flow' || edit.mode === 'script' || edit.mode === 'shop' || edit.mode === 'kit' || edit.mode === 'progress' || edit.mode === 'navigation' || edit.mode === 'item' || edit.mode === 'entity') {
         const key = onNew(edit.value, edit.parent, edit.pkg, edit.templateName ?? (edit.mode === 'progress' || edit.mode === 'flow' ? edit.mode : undefined))
         nextEntry = { kind: 'document', key }
         if (edit.mode === 'progress' || edit.mode === 'flow') {
@@ -650,6 +652,7 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
       const builtin = isBuiltinScriptDocumentKey(entry.key)
       const itemTable = isLibraryTableKey(entry.key)
       const script = document?.package === 'script'
+      const shop = document?.package === 'shop'
       const kit = document?.package === 'gift'
       const quest = document ? isQuestDocument(document) : false
       const simpleQuest = document ? isSimpleQuestDocument(document) : false
@@ -657,8 +660,8 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
       const navigation = document?.package === 'navigator'
       const item = document?.package === 'items' && !itemTable
       const entity = document?.package === 'entities' && !itemTable
-      const openLabel = itemTable ? '打开表视图' : entity ? '打开实体' : item ? '打开物品' : kit ? '打开礼包' : navigation ? '打开导航点' : quest ? (simpleQuest ? '打开单进度任务' : multiQuest ? '打开多进度任务' : '打开任务') : script ? '打开脚本' : '打开流程'
-      const downloadLabel = entity ? '下载实体' : item ? '下载物品' : kit ? '下载礼包' : navigation ? '下载导航点' : quest ? '下载任务' : script ? '下载脚本' : '下载草稿'
+      const openLabel = shop ? '打开商店' : itemTable ? '打开表视图' : entity ? '打开实体' : item ? '打开物品' : kit ? '打开礼包' : navigation ? '打开导航点' : quest ? (simpleQuest ? '打开单进度任务' : multiQuest ? '打开多进度任务' : '打开任务') : script ? '打开脚本' : '打开流程'
+      const downloadLabel = shop ? '下载商店' : entity ? '下载实体' : item ? '下载物品' : kit ? '下载礼包' : navigation ? '下载导航点' : quest ? '下载任务' : script ? '下载脚本' : '下载草稿'
       if (itemTable) {
         return [
           { label: openLabel, action: () => onSelect(entry.key) },
@@ -673,7 +676,7 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
           { label: '只读内置脚本', disabled: true, hint: '不可重命名、移动或删除', action: () => {} },
         ]
       }
-      const removeLabel = entity ? '移除实体…' : item ? '移除物品…' : kit ? '移除礼包…' : navigation ? '移除导航点…' : quest ? '移除任务…' : script ? '移除脚本…' : '移除流程…'
+      const removeLabel = shop ? '移除商店…' : entity ? '移除实体…' : item ? '移除物品…' : kit ? '移除礼包…' : navigation ? '移除导航点…' : quest ? '移除任务…' : script ? '移除脚本…' : '移除流程…'
       return [
         { label: openLabel, action: () => onSelect(entry.key) },
         ...((item && onOpenItemInGame || entity && onOpenEntityInGame)
@@ -688,7 +691,7 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
         { label: '属性…', action: () => onProperties(entry.key) },
         { label: '重命名', disabled: readOnly, hint: readOnly ? '只读工程不可改名' : '只改文件名；食物/自然 等是视图文件夹，磁盘仍在 src/items/', action: () => startEdit('rename', entry) },
         { label: '移动到…', disabled: readOnly, hint: readOnly ? '只读工程不可移动' : '改视图归属文件夹，不改磁盘路径', action: () => startEdit('move', entry) },
-        ...(script || kit || quest || navigation || item || entity ? [] : [{ label: '导出树图', action: () => onExport(entry.key) }]),
+        ...(shop || script || kit || quest || navigation || item || entity ? [] : [{ label: '导出树图', action: () => onExport(entry.key) }]),
         ...(multiQuest ? [{ label: '导出树图', action: () => onExport(entry.key) }] : []),
         { label: downloadLabel, action: () => onDownload(entry.key) },
         { label: removeLabel, action: () => onRemove({ documents: [entry.key], folders: [] }) },
@@ -715,6 +718,10 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
     if (packageAllowsKits(pkg)) {
       items.unshift({ label: '新建礼包', action: () => startEdit('kit', entry) })
       items.push({ label: '导入礼包…', action: () => onImport(folder, pkg) })
+    }
+    if (pkg === 'shop') {
+      items.unshift({ label: '新建商店', action: () => startEdit('shop', entry) })
+      items.push({ label: '导入商店…', action: () => onImport(folder, pkg) })
     }
     if (packageAllowsNavigation(pkg)) {
       items.unshift({ label: '新建导航点', action: () => startEdit('navigation', entry) })
@@ -774,6 +781,7 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
         const docKey = row.entry.kind === 'document' ? row.entry.key : undefined
         const document = docKey ? state.documents.find((d) => d.key === docKey) : undefined
         const pythonDoc = !!document && (document.package === 'script' || row.name.toLowerCase().endsWith('.py'))
+        const shopDoc = document?.package === 'shop'
         const kitDoc = !!document && (document.package === 'gift' || row.name.toLowerCase().endsWith('.kit'))
         const simpleQuestDoc = !!document && isSimpleQuestDocument(document)
         const multiQuestDoc = !!document && isMultiQuestDocument(document)
@@ -782,7 +790,7 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
         const entityDoc = !!document && document.package === 'entities'
         const itemDoc = !!document && !itemTableDoc && (document.package === 'items' || row.name.toLowerCase().endsWith('.item'))
         const questViewIcon = questView && row.entry.kind === 'folder' ? (questViewKind(row.entry.key) === 'simple' ? 'progress' : 'quest') : null
-        const iconKind = row.entry.kind === 'package' ? row.entry.package : section ? sectionIconKind(row.entry.key) : questViewIcon ? questViewIcon : itemTableDoc ? 'item-table' : entityDoc ? 'entities' : itemDoc ? 'item' : kitDoc ? 'kit' : navigationDoc ? 'navigator' : simpleQuestDoc ? 'progress' : multiQuestDoc ? 'quest' : pythonDoc ? 'python' : folder ? 'folder' : 'document'
+        const iconKind = row.entry.kind === 'package' ? row.entry.package : section ? sectionIconKind(row.entry.key) : questViewIcon ? questViewIcon : itemTableDoc ? 'item-table' : entityDoc ? 'entities' : itemDoc ? 'item' : shopDoc ? 'shop' : kitDoc ? 'kit' : navigationDoc ? 'navigator' : simpleQuestDoc ? 'progress' : multiQuestDoc ? 'quest' : pythonDoc ? 'python' : folder ? 'folder' : 'document'
         return <div key={id} role="none">
           <div ref={(element) => { if (element) elements.current.set(id, element); else elements.current.delete(id) }} className={`flow-resource-row${isSelected ? ' selected' : ''}${row.entry.kind === 'document' && row.entry.key === state.activeKey ? ' is-open' : ''}${dropTarget === id ? ' drop-target' : ''}${builtinFolder || builtinDoc || itemTableDoc || questView ? ' is-builtin' : ''}`} role="treeitem" aria-level={row.depth + 1} aria-selected={isSelected} aria-expanded={folder ? !!search || expanded.has(id) : undefined} aria-disabled={disabled} tabIndex={isFocused || (!rows.some((r) => entryId(r.entry) === entryId(focus)) && index === 0) ? 0 : -1} style={{ paddingLeft: 6 + row.depth * TREE_INDENT }} title={builtinDoc || builtinFolder || itemTableDoc || questView ? `${row.name}（只读）` : row.name}
             onClick={(event) => clickRow(event, row.entry)}
@@ -806,11 +814,11 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
             <span className="flow-resource-twist" aria-hidden>{folder ? !!search || expanded.has(id) ? '▾' : '▸' : ''}</span><Icon kind={iconKind} />
             {isEditing && edit.mode === 'rename' ? <form className="flow-resource-edit" onSubmit={(event) => { event.preventDefault(); submitEdit() }} onClick={(event) => event.stopPropagation()}><input ref={editInput} aria-label="资源名称" value={edit.value} onChange={(event) => setEdit({ ...edit, value: event.target.value, error: '' })} onKeyDown={(event) => { event.stopPropagation(); if (event.key === 'Escape') cancelEdit() }} /></form> : <span className="flow-resource-name">{row.name}</span>}
           </div>
-          {isEditing && (edit.mode === 'flow' || edit.mode === 'script' || edit.mode === 'kit' || edit.mode === 'progress' || edit.mode === 'navigation' || edit.mode === 'entity' || edit.mode === 'item' || edit.mode === 'folder') && <form className="flow-resource-new" style={{ paddingLeft: 6 + (row.depth + 1) * TREE_INDENT }} onSubmit={(event) => { event.preventDefault(); submitEdit() }}><span className="flow-resource-twist" /><Icon kind={edit.mode === 'folder' ? 'folder' : edit.mode === 'script' ? 'python' : edit.mode === 'kit' ? 'kit' : edit.mode === 'progress' ? 'progress' : edit.mode === 'flow' ? 'quest' : edit.mode === 'navigation' ? 'navigator' : edit.mode === 'entity' ? 'entities' : edit.mode === 'item' ? 'item' : 'document'} /><input ref={editInput} aria-label={edit.mode === 'folder' ? '新文件夹名称' : edit.mode === 'script' ? '新脚本名称' : edit.mode === 'kit' ? '新礼包名称' : edit.mode === 'progress' ? '新单进度任务名称' : edit.mode === 'flow' ? '新多进度任务名称' : edit.mode === 'navigation' ? '新导航点名称' : edit.mode === 'entity' ? '新实体名称' : edit.mode === 'item' ? '新物品名称' : '新流程名称'} value={edit.value} onChange={(event) => setEdit({ ...edit, value: event.target.value, error: '' })} onKeyDown={(event) => { if (event.key === 'Escape') cancelEdit() }} /></form>}
+          {isEditing && (edit.mode === 'flow' || edit.mode === 'script' || edit.mode === 'shop' || edit.mode === 'kit' || edit.mode === 'progress' || edit.mode === 'navigation' || edit.mode === 'entity' || edit.mode === 'item' || edit.mode === 'folder') && <form className="flow-resource-new" style={{ paddingLeft: 6 + (row.depth + 1) * TREE_INDENT }} onSubmit={(event) => { event.preventDefault(); submitEdit() }}><span className="flow-resource-twist" /><Icon kind={edit.mode === 'folder' ? 'folder' : edit.mode === 'script' ? 'python' : edit.mode === 'shop' ? 'shop' : edit.mode === 'kit' ? 'kit' : edit.mode === 'progress' ? 'progress' : edit.mode === 'flow' ? 'quest' : edit.mode === 'navigation' ? 'navigator' : edit.mode === 'entity' ? 'entities' : edit.mode === 'item' ? 'item' : 'document'} /><input ref={editInput} aria-label={edit.mode === 'folder' ? '新文件夹名称' : edit.mode === 'script' ? '新脚本名称' : edit.mode === 'shop' ? '新商店名称' : edit.mode === 'kit' ? '新礼包名称' : edit.mode === 'progress' ? '新单进度任务名称' : edit.mode === 'flow' ? '新多进度任务名称' : edit.mode === 'navigation' ? '新导航点名称' : edit.mode === 'entity' ? '新实体名称' : edit.mode === 'item' ? '新物品名称' : '新流程名称'} value={edit.value} onChange={(event) => setEdit({ ...edit, value: event.target.value, error: '' })} onKeyDown={(event) => { if (event.key === 'Escape') cancelEdit() }} /></form>}
         </div>
       })}
       {search && rows.length === FLOW_PACKAGE_ORDER.length && <p className="flow-explorer-empty">没有匹配的资源</p>}
-      {!search && !hasAnyResource && !edit && <p className="flow-explorer-empty">在「任务」下新建或拖入 .quest（单进度 / 多进度）；「脚本」下新建或拖入 .py；「导航器」下新建或拖入 .nav；「物品库」下新建 .item 或拖入 .item / .itemstack；「礼包」下新建或拖入 .kit；其他分类可先建文件夹占位。</p>}
+      {!search && !hasAnyResource && !edit && <p className="flow-explorer-empty">在「任务」下新建或拖入 .quest（单进度 / 多进度）；「脚本」下新建或拖入 .py；「导航器」下新建或拖入 .nav；「物品库」下新建 .item 或拖入 .item / .itemstack；「商店」下新建或拖入 .shop；「礼包」下新建或拖入 .kit；其他分类可先建文件夹占位。</p>}
     </div>
     {edit && <div className="flow-explorer-edit-panel" onKeyDown={(event) => { if (event.key === 'Escape') cancelEdit() }}>
       {edit.mode==='script'&&<label>脚本模板<select aria-label="脚本模板" value={edit.templateName??'default.py'} onChange={e=>setEdit({...edit,templateName:e.target.value})}>{SCRIPT_TEMPLATES.filter(t=>t.type===scriptTypeInFolder(state,edit.parent)).map(t=><option key={t.name} value={t.name}>{t.name.replace(/\.py$/i,'')}</option>)}</select></label>}

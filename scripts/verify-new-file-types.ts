@@ -179,6 +179,7 @@ assert.deepEqual(
     'script',
     'quest',
     'navigator',
+    'shop',
     'gift',
     'items',
     'entities',

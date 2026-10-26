@@ -42,6 +42,8 @@ import {
   stripBuiltinScripts,
   withBuiltinScripts,
 } from './gameplay/goalDefinitions'
+import { ShopEditor } from './gameplay/ShopEditor'
+import { createShop, parseShop, stringifyShop } from './gameplay/shop'
 import { KitEditor } from './gameplay/KitEditor'
 import { ProgressCollaborativeEditor } from './gameplay/ProgressCollaborativeEditor'
 import { progressEditorSession } from './gameplay/progressEditRegistry'
@@ -349,6 +351,7 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
   const focusedKey = readGroup(state, focusedGroup).activeKey
   const doc = state.documents.find((item) => item.key === focusedKey)
   const scriptDoc = doc ? isScriptDocument(doc) : false
+  const shopDoc = doc?.package === 'shop'
   const kitDoc = doc ? isKitDocument(doc) : false
   const progressDoc = doc ? isSimpleQuestDocument(doc) : false
   const multiQuestDoc = doc ? isMultiQuestDocument(doc) : false
@@ -393,10 +396,10 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
     return map
   }, [state.documents])
   const parsed = useMemo(() => {
-    if (!doc || scriptDoc || kitDoc || progressDoc || navigationDoc || itemDoc || entityDoc || itemTableDoc) return { flow: null, error: '' }
+    if (!doc || shopDoc || scriptDoc || kitDoc || progressDoc || navigationDoc || itemDoc || entityDoc || itemTableDoc) return { flow: null, error: '' }
     try { return { flow: parseFlow(doc.source), error: '' } }
     catch (error) { return { flow: null, error: error instanceof Error ? error.message : String(error) } }
-  }, [doc, scriptDoc, kitDoc, progressDoc, navigationDoc, itemDoc, entityDoc, itemTableDoc])
+  }, [doc, shopDoc, scriptDoc, kitDoc, progressDoc, navigationDoc, itemDoc, entityDoc, itemTableDoc])
   const docByKey = useMemo(() => new Map(state.documents.map((item) => [item.key, item])), [state.documents])
   const explorerState = useMemo(() => ({ ...state, activeKey: focusedKey }), [state, focusedKey])
   const issues = useMemo(() => parsed.flow ? validateFlow(parsed.flow) : [], [parsed.flow])
@@ -404,8 +407,8 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
   const readOnly = !client?.writable
   const locked = !projectBound || propertiesKey !== null
   const propertiesDoc = propertiesKey ? state.documents.find((item) => item.key === propertiesKey) ?? null : null
-  const flowLocalizable = Boolean(doc && !scriptDoc && !kitDoc && !progressDoc && !navigationDoc && !itemDoc && !entityDoc && !itemTableDoc)
-  const localeDoc = Boolean(doc && (flowLocalizable || kitDoc || navigationDoc))
+  const flowLocalizable = Boolean(doc && !shopDoc && !scriptDoc && !kitDoc && !progressDoc && !navigationDoc && !itemDoc && !entityDoc && !itemTableDoc)
+  const localeDoc = Boolean(doc && (shopDoc || flowLocalizable || kitDoc || navigationDoc))
 
   // 当前焦点文档的语义键 TextMap（literal）
   useEffect(() => {
@@ -788,6 +791,7 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
         package: packageId,
         folderId,
       })
+      : ext === '.shop' ? stampDocument({ key: randomId(), name, source: stringifyShop(createShop()), package: packageId, folderId })
       : ext === '.kit'
         ? stampDocument({
           key: randomId(),
@@ -826,6 +830,7 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
     else if (questKind === 'multi') queueLocaleSeeds(next.key, defaultFlowLocaleSeeds(title))
     else if (ext === '.nav') queueLocaleSeeds(next.key, defaultNavLocaleSeeds(title))
     else if (ext === '.kit') queueLocaleSeeds(next.key, defaultKitLocaleSeeds(title))
+    else if (ext === '.shop') queueLocaleSeeds(next.key, { name: title })
     setState((previous) => openInGroup({ ...previous, documents: [...previous.documents, next] }, focusedGroupId(previous), next.key))
     setSelection({ kind: 'flow' }); setNotice('')
     return next.key
@@ -873,9 +878,10 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
           }))
           continue
         }
-        if (pkg === 'gift') {
+        if (pkg === 'gift' || pkg === 'shop') {
           const source = await file.text()
-          parseKit(source)
+          if (pkg === 'shop') parseShop(source)
+          else parseKit(source)
           const name = uniqueDocumentName({ ...state, documents: [...state.documents, ...documents] }, file.name, pkg, folderId)
           documents.push(stampDocument({
             key: randomId(),
@@ -960,7 +966,7 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
     if (locked || busy) return
     const item = state.documents.find((d) => d.key === key)
     if (!item) return
-    if (isEntityDocument(item) || isScriptDocument(item) || isKitDocument(item) || isSimpleQuestDocument(item) || isNavigationDocument(item) || isItemDocument(item)) {
+    if (item.package === 'shop' || isEntityDocument(item) || isScriptDocument(item) || isKitDocument(item) || isSimpleQuestDocument(item) || isNavigationDocument(item) || isItemDocument(item)) {
       const progress = isSimpleQuestDocument(item) ? progressEditorSession(client, sourcePathOf({ name: item.name })) : undefined
       downloadFlowFile(item.name, progress?.getSnapshot().view.source ?? item.source)
       setNotice(isItemDocument(item) ? '已下载物品。' : isKitDocument(item) ? '已下载礼包。' : isSimpleQuestDocument(item) ? '已下载任务。' : isNavigationDocument(item) ? '已下载导航点。' : '已下载脚本。')
@@ -1142,6 +1148,7 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
       return <div className="flow-empty is-pane"><span className="flow-empty-icon">◇</span><p>此组未打开文档</p></div>
     }
     const paneScript = isScriptDocument(paneDoc)
+    const paneShop = paneDoc.package === 'shop'
     const paneKit = isKitDocument(paneDoc)
     const paneProgress = isSimpleQuestDocument(paneDoc)
     const paneNavigation = isNavigationDocument(paneDoc)
@@ -1159,7 +1166,7 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
     if (selfRef) paneCatalog.delete(selfRef)
     let paneFlow: ProgressFlow | null = null
     let paneError = ''
-    if (!paneScript && !paneKit && !paneProgress && !paneNavigation && !paneItem && !paneEntity && !paneItemTable && !paneEntityTable) {
+    if (!paneShop && !paneScript && !paneKit && !paneProgress && !paneNavigation && !paneItem && !paneEntity && !paneItemTable && !paneEntityTable) {
       // 焦点文档复用 memo 过的 parse，避免父级重渲染换掉 flow 引用打断拖拽
       if (paneDoc.key === focusedKey && parsed.flow) paneFlow = parsed.flow
       else {
@@ -1176,6 +1183,9 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
     const graphLive = group === focusedGroup
     const disabledPane = Boolean(paneDoc.detached) || locked || busy || readOnly || (paneProgress && !graphLive)
 
+    if (paneShop) return <ShopEditor key={paneDoc.key} source={paneDoc.source} disabled={disabledPane} onChange={source => changeSource(source, false, paneDoc.key)} itemCatalog={itemCatalog} resolveText={paneDoc.key === focusedKey ? resolveLocaleText : undefined} setText={paneDoc.key === focusedKey ? setLocaleText : undefined}
+      scriptOptions={state.documents.filter(d => d.package === 'script').map(d => ({ ref: sourcePathOf({ name: d.name, srcKind: scriptTypeInFolder(state, d.folderId ?? null) }), label: `${d.name} · ${scriptTypeInFolder(state, d.folderId ?? null)}`, key: d.key }))}
+      onOpenScript={key => selectDocument(key)} />
     if (paneProgress && paneProgressParsed) {
       if (!paneProgressParsed.doc) return <ProgressSourceRepair key={paneDoc.key} source={paneDoc.source} error={paneProgressParsed.error} disabled={disabledPane}
         onApply={source => { if (!disabledPane) changeSource(source, false, paneDoc.key) }} />
@@ -1460,13 +1470,13 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
       }
       right={
         <>
-          {(progressDoc || flowLocalizable || kitDoc || navigationDoc || itemDoc || entityDoc) && (
+          {(progressDoc || shopDoc || flowLocalizable || kitDoc || navigationDoc || itemDoc || entityDoc) && (
             <LocaleSelect
               value={locale}
               onChange={(tag) => { setLocale(tag); saveLocale(tag) }}
             />
           )}
-          <span className="flow-statusbar-type">{itemTableDoc ? (doc&&isEntityLibraryTableKey(doc.key)?'实体库 · 网格表视图':'物品库 · 表视图') : entityDoc ? '实体 · .entity' : itemDoc ? '物品 · .item' : navigationDoc ? '导航点 · .nav' : progressDoc ? '单进度任务 · .quest' : multiQuestDoc ? '多进度任务 · .quest' : kitDoc ? '礼包 · .kit' : scriptDoc ? '脚本 · Python' : doc && isQuestDocument(doc) ? '任务 · .quest' : '任务'}</span>
+          <span className="flow-statusbar-type">{itemTableDoc ? (doc&&isEntityLibraryTableKey(doc.key)?'实体库 · 网格表视图':'物品库 · 表视图') : entityDoc ? '实体 · .entity' : itemDoc ? '物品 · .item' : navigationDoc ? '导航点 · .nav' : progressDoc ? '单进度任务 · .quest' : multiQuestDoc ? '多进度任务 · .quest' : shopDoc ? '商店 · .shop' : kitDoc ? '礼包 · .kit' : scriptDoc ? '脚本 · Python' : doc && isQuestDocument(doc) ? '任务 · .quest' : '任务'}</span>
         </>
       }
     />

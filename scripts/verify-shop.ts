@@ -1,0 +1,33 @@
+import assert from 'node:assert/strict'
+import { createShop, createShopEntry, parseShop, stringifyShop } from '../src/workspaces/gameplay/shop'
+import { newFileTypesByGroup } from '../src/newFileTypes'
+import { packageAcceptsImportFile, packageDocumentExt } from '../src/workspaces/gameplay/library'
+import { createSourceFile, sourcePathOf, defaultPlaneForFile } from '../src/workspace'
+import { sourcesToProgressDocuments, applyProgressDocumentsToWorkspace } from '../src/project/projectSession'
+import { shopCompiler } from '../src/export/compile/compilers/shop'
+
+const doc = createShop()
+doc.entries.push({ ...createShopEntry(), payment: [{ item: '货币', id: '', components: {}, count: 2 }], goods: [{ id: 'minecraft:bread', components: {}, count: 3 }] })
+assert.deepEqual(parseShop(stringifyShop(doc)), doc)
+const draft = { ...doc, entries: [{ ...doc.entries[0], payment: [{ id: '', count: 1, components: {} }] }] }
+assert.doesNotThrow(() => parseShop(stringifyShop(draft), true))
+assert.throws(() => parseShop(stringifyShop(draft)), /item|ItemStack/)
+assert.equal(packageDocumentExt('shop'), '.shop')
+assert.equal(packageAcceptsImportFile('shop', '交易.shop'), true)
+assert.equal(packageAcceptsImportFile('shop', '交易.kit'), false)
+assert.ok(newFileTypesByGroup().find(g => g.group.id === 'gameplay')?.items.some(t => t.id === 'shop'))
+assert.equal(sourcePathOf({ name: '交易.shop' }), 'src/shop/交易.shop')
+assert.equal(defaultPlaneForFile('交易.shop'), 'server')
+const file = createSourceFile('交易.shop', stringifyShop(doc))
+const documents = sourcesToProgressDocuments([file])
+assert.equal(documents[0].package, 'shop')
+const changed = { ...doc, stockSubject: 'game' as const }
+const result = applyProgressDocumentsToWorkspace({ packages: [{ id: 'p', name: 'test', scripts: [file] }] } as Parameters<typeof applyProgressDocumentsToWorkspace>[0], [{ ...documents[0], source: stringifyShop(changed) }])
+assert.ok(JSON.stringify(result).includes('game'))
+for (const patch of [{ extends: 'parent' }, { includes: [] }, { entries: [...doc.entries, doc.entries[0]] }, { entries: [{ ...doc.entries[0], payment: [{ count: 1 }] }] }, { stockSubject: 'entity-id' }]) {
+  assert.throws(() => parseShop(JSON.stringify({ ...doc, ...patch })))
+}
+const reports: unknown[] = []
+await shopCompiler.compile(file, { index: { package: { name: 'test', scripts: [file] } }, report: r => reports.push(r) } as Parameters<typeof shopCompiler.compile>[1])
+assert.ok(reports.length > 0, 'missing item references must block export')
+console.log('shop: template roundtrip, instance boundary, resource pipeline and export validation passed')

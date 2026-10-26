@@ -50,6 +50,7 @@ fn source_directory(kind: &str) -> Option<&'static str> {
         "quest" => "quest",
         "nav" => "navigator",
         "kit" => "gift",
+        "shop" => "shop",
         "item" => "items",
         "entity" => "entities",
         _ => return None,

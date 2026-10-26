@@ -16,6 +16,7 @@ import charSyntax from './docs/char-syntax.md?raw'
 import hscMachine from './docs/hsc-machine.md?raw'
 import hscMachineFramework from './docs/hsc-machine-framework.md?raw'
 import kitGuide from './docs/kit-guide.md?raw'
+import shopGuide from './docs/shop-guide.md?raw'
 import kitExpr from './docs/kit-expr.md?raw'
 import kitRuntime from './docs/kit-runtime.md?raw'
 import tnbtJson from './docs/tnbt-json.md?raw'
@@ -50,6 +51,7 @@ export type HelpTopicId =
   | 'hsc-machine'
   | 'hsc-machine-framework'
   | 'kit-guide'
+  | 'shop-guide'
   | 'kit-expr'
   | 'kit-runtime'
   | 'entity-guide'
@@ -124,6 +126,9 @@ export const HELP_TOPICS: HelpTopic[] = [
     audience: 'dev',
     inDocs: true,
     body: hscMachineFramework,
+  },
+  {
+    id: 'shop-guide', title: '商店模板（.shop）', group: '游戏性', audience: 'user', inDocs: true, body: shopGuide,
   },
   {
     id: 'kit-guide',

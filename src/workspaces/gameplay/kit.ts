@@ -571,7 +571,7 @@ function withMods<T extends { mods?: KitMods<string> }>(value: T): Omit<T, 'mods
   return cleaned ? { ...rest, mods: cleaned } : rest
 }
 
-function writeItem(item: KitItem): Record<string, unknown> {
+export function writeKitItem(item: KitItem): Record<string, unknown> {
   const mods = cleanMods(item.mods)
   const ref = item.item ? normalizeItemRef(item.item) : ''
   if (ref) {
@@ -609,7 +609,7 @@ export function stringifyKit(kit: KitDocument): string {
       expr: modifier.expr,
     }))
   }
-  out.items = kit.items.map(writeItem)
+  out.items = kit.items.map(writeKitItem)
   if (kit.pools.length > 0) {
     out.pools = kit.pools.map((pool) => {
       const mods = cleanMods(pool.mods)
@@ -618,7 +618,7 @@ export function stringifyKit(kit: KitDocument): string {
         ...(mods ? { mods } : {}),
         entries: pool.entries.map((entry) => {
           const entryMods = cleanMods(entry.mods)
-          return { weight: entry.weight, ...(entryMods ? { mods: entryMods } : {}), items: entry.items.map(writeItem) }
+          return { weight: entry.weight, ...(entryMods ? { mods: entryMods } : {}), items: entry.items.map(writeKitItem) }
         }),
       }
     })

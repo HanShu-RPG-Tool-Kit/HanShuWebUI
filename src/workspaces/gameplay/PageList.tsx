@@ -6,9 +6,10 @@ import type { FlowDocument } from './storage'
 
 export const PAGE_DRAG_TYPE = 'application/x-hanshu-page'
 
-function pageIcon(doc: FlowDocument): 'kit' | 'item' | 'item-table' | 'python' | 'progress' | 'quest' | 'navigator' | 'document' {
+function pageIcon(doc: FlowDocument): 'shop' | 'kit' | 'item' | 'item-table' | 'python' | 'progress' | 'quest' | 'navigator' | 'document' {
   if (isItemLibraryTableKey(doc.key)) return 'item-table'
   if (isItemDocument(doc)) return 'item'
+  if (doc.package === 'shop') return 'shop'
   if (isKitDocument(doc)) return 'kit'
   if (isScriptDocument(doc)) return 'python'
   if (isSimpleQuestDocument(doc)) return 'progress'

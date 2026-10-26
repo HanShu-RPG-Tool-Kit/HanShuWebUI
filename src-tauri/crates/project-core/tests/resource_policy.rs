@@ -73,7 +73,7 @@ fn commit(
 
 #[test]
 fn display_text_languages_follow_item_and_entity_source_transactions() {
-    for (kind, directory) in [("item", "items"), ("entity", "entities")] {
+    for (kind, directory) in [("item", "items"), ("entity", "entities"), ("shop", "shop")] {
         let dir = tempfile::tempdir().unwrap();
         let source = format!("src/{directory}/a.{kind}");
         let destination = format!("src/{directory}/renamed.{kind}");

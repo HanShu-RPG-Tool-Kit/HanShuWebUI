@@ -31,6 +31,7 @@ import type { ExplorerIconKind } from './explorerIcons'
 import { createFlow } from './workspaces/gameplay/model'
 import { createFlowDocument } from './workspaces/gameplay/storage'
 import { createKit, stringifyKit } from './workspaces/gameplay/kit'
+import { createShop, stringifyShop } from './workspaces/gameplay/shop'
 import {
   createNavigationPoint,
   stringifyNavigationPoint,
@@ -69,6 +70,7 @@ export type NewFileTypeId =
   | 'item'
   | 'entity'
   | 'kit'
+  | 'shop'
   | 'md'
   | 'tts'
   | 'ttsservice'
@@ -195,6 +197,9 @@ export const NEW_FILE_TYPES: readonly NewFileType[] = [
     group:'source' as const,defaultBase:type==='goal'?'新目标':'新脚本',srcKind:type,
     seed:(base:string)=>scriptTemplate(type,'default.py',base.trim()),
   })),
+  {
+    id: 'shop', ext: '.shop', label: '商店', hint: '库存主体类型、条件与交易条目（src/shop）', icon: 'shop', group: 'gameplay', defaultBase: '新商店', seed: () => stringifyShop(createShop()),
+  },
   {
     id: 'progress',
     ext: '.quest',

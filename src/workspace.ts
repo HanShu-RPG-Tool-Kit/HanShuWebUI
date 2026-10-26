@@ -33,6 +33,7 @@ export const SOURCE_KIND_ORDER = [
   'script',
   'quest',
   'navigator',
+  'shop',
   'gift',
   'items',
   'entities',
@@ -54,6 +55,7 @@ export const FILE_PLANE: Record<string, FilePlane> = {
   '.item': 'server',
   '.entity': 'server',
   '.kit': 'server',
+  '.shop': 'server',
 }
 
 /** 后缀默认平面；未列出则 `shared`（保守：两端都带上） */
@@ -249,7 +251,7 @@ export function editorLanguageForFile(name: string): string {
   if (ext === '.py') return 'python'
   if (
     ext === '.lang' || ext === '.voice' || ext === '.tts' || ext === '.ttsservice'
-    || ext === '.quest' || ext === '.nav' || ext === '.item' || ext === '.entity' || ext === '.kit'
+    || ext === '.quest' || ext === '.nav' || ext === '.item' || ext === '.entity' || ext === '.kit' || ext === '.shop'
   ) {
     return 'json'
   }
