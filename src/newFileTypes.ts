@@ -60,6 +60,7 @@ export type NewFileTypeId =
   | 'py'
   | 'py-goal'
   | 'py-kit'
+  | 'py-shop'
   | 'py-item'
   | 'py-entity'
   | 'py-enchantment'

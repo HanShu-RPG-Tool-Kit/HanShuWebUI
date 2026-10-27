@@ -18,6 +18,7 @@ pub enum ResourceRelationRole {
     Voice,
     RewardKit,
     KitScript,
+    ShopScript,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, TS)]
@@ -135,7 +136,7 @@ pub(crate) fn resolve(tree: &Tree) -> Vec<ResourceRelation> {
                 });
             }
         }
-        if source(path).is_some_and(|s| s.kind == "kit") {
+        if let Some(script_kind) = source(path).map(|s| s.kind).filter(|kind| kind == "kit" || kind == "shop") {
             if let Some(document) = bytes
                 .as_ref()
                 .and_then(|b| serde_json::from_slice::<serde_json::Value>(b).ok())
@@ -151,7 +152,7 @@ pub(crate) fn resolve(tree: &Tree) -> Vec<ResourceRelation> {
                         continue;
                     };
                     let id = reference.trim();
-                    let target = format!("src/script/kit/{id}.py");
+                    let target = format!("src/script/{script_kind}/{id}.py");
                     if !id.is_empty()
                         && id != "."
                         && id != ".."
@@ -162,7 +163,7 @@ pub(crate) fn resolve(tree: &Tree) -> Vec<ResourceRelation> {
                     {
                         relations.insert(ResourceRelation {
                             kind: ResourceRelationKind::Reference,
-                            role: ResourceRelationRole::KitScript,
+                            role: if script_kind == "shop" { ResourceRelationRole::ShopScript } else { ResourceRelationRole::KitScript },
                             from: path.clone(),
                             to: target,
                         });
@@ -229,6 +230,6 @@ pub(crate) fn relocated_owned(relation: &ResourceRelation, next_source: &Source)
             "assets/{locale}/voice_{}/{}",
             next_source.kind, next_source.stem
         ),
-        ResourceRelationRole::RewardKit | ResourceRelationRole::KitScript => return None,
+        ResourceRelationRole::RewardKit | ResourceRelationRole::KitScript | ResourceRelationRole::ShopScript => return None,
     })
 }

@@ -66,8 +66,8 @@ try{
  await page.route('**/__progress-graph',route=>route.fulfill({contentType:'text/html',body:`<meta charset="utf-8"><style>body{margin:0}</style><script type="module">import R from '/@react-refresh';R.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>t=>t;window.__vite_plugin_react_preamble_installed__=true;</script><div id="root" class="flow-workspace" style="height:100vh"></div><script type="module">
  import React from '${react}';import DOM from '${dom}';import {ProgressGraph} from '/src/workspaces/gameplay/ProgressGraph.tsx';import * as M from '/src/workspaces/gameplay/model.ts';import * as C from '/src/workspaces/gameplay/canvas.ts';import '/src/index.css';import '/src/App.css';import '/src/workspaces/GameplayWorkspace.css';
  let f=M.createFlow('migration-test');const t=C.createTransitionNode(f,{x:300,y:80});f=t.flow;const p1=C.createProgressNode(f,{x:600,y:80});f=p1.flow;const end=C.createEndNode(f,{x:900,y:80});f=end.flow;f=M.connectNodes(f,f.start,t.id,'input','output').flow;f=M.connectNodes(f,t.id,p1.id,'input','output').flow;f.layout.positions[f.start]={x:64,y:80};window.ids={start:f.start,t:t.id,p1:p1.id,end:end.id};window.edits=[];
- const definitions=[{kind:'collect',label:'收集物品',sourceKey:null,sourceName:'collect.py',fields:[{key:'item',type:'string',label:'物品',required:true},{key:'count',type:'int',label:'数量',required:true,default:3},{key:'consume',type:'bool',label:'消耗物品',required:false,default:false}]}];
- function App(){const [flow,F]=React.useState(f),[selection,S]=React.useState({kind:'flow'});window.flow=flow;return React.createElement(ProgressGraph,{flow,selection,onSelect:S,active:true,definitions,kitOptions:[],
+ const definitions=[{kind:'collect',label:'收集物品',requiresDelivery:true,sourceKey:null,sourceName:'collect.py',fields:[{key:'item',type:'string',label:'物品',required:true},{key:'count',type:'int',label:'数量',required:true,default:3},{key:'consume',type:'bool',label:'消耗物品',required:false,default:false}]}];
+ function App(){const [flow,F]=React.useState(f),[selection,S]=React.useState({kind:'flow'}),[localized,L]=React.useState(false),[texts,T]=React.useState({});window.flow=flow;window.enableLocale=()=>L(true);window.texts=texts;return React.createElement(ProgressGraph,{flow,selection,onSelect:S,active:true,definitions,kitOptions:[],resolveText:localized?(key=>texts[key]??null):undefined,setText:localized?((key,value)=>T(previous=>({...previous,[key]:value}))):undefined,
  onCreate:(position,type)=>F(prev=>{const r=type==='objective'?C.createObjectiveNode(prev,position):type==='note'?C.createCanvasNote(prev,position):type==='predicate'?C.createPredicateNode(prev,position):type==='transition'?C.createTransitionNode(prev,position):type==='end'?C.createEndNode(prev,position):C.createProgressNode(prev,position);return r.flow}),
  onChangeFlow:next=>F(next),onMove:p=>F(prev=>C.moveCanvasNodes(prev,p)),onGroup:ids=>{F(prev=>C.groupCanvasNodes(prev,ids).flow);return 'group'},onUngroup:()=>{},onRenameGroup:()=>{},onDelete:id=>F(prev=>C.removeCanvasItems(prev,[id])),onDeleteMany:ids=>F(prev=>C.removeCanvasItems(prev,ids)),onArrange:()=>{},onUpdateNote:(id,patch)=>F(prev=>C.updateCanvasNote(prev,id,patch)),onConnect:(from,to,port,fromPort)=>F(prev=>M.connectNodes(prev,from,to,port,fromPort).flow),onDisconnect:()=>{},onCut:()=>{}})}DOM.createRoot(document.getElementById('root')).render(React.createElement(App));</script>`}))
  await page.goto(base+'/__progress-graph');await page.locator('[data-progress-state]').first().waitFor();await page.waitForTimeout(250)
@@ -247,6 +247,8 @@ try{
  await page.getByRole('textbox',{name:'条件 1 对象',exact:true}).fill('prologue')
  assert.equal(await page.evaluate(id=>window.flow.predicates[id].conditions[0].target,predicateId),'prologue')
  assert.equal(await page.locator('.node-form-view .progress-visibility-row').count(),1,'predicate uses single-progress condition row styling')
+ await page.locator('.node-form-view').getByRole('textbox',{name:'标识符（可选，留空为匿名）',exact:true}).fill('ready_condition')
+ assert.equal(await page.evaluate(id=>window.flow.predicates[id].identifier,predicateId),'ready_condition')
  await page.screenshot({path:'node_modules/.cache/node-editor-ui/predicate-form.png'})
  await page.getByRole('button',{name:'关闭表单',exact:true}).click()
  console.log('PASS progress v2: native schema, drag, socket connect, start→transition→progress, inline form view, undeletable start')
@@ -264,6 +266,17 @@ try{
  await objectiveForm.getByRole('spinbutton',{name:'数量',exact:true}).press('Enter')
  assert.deepEqual(await page.evaluate(id=>window.flow.objectives[id].goal,objectiveId),{kind:'collect',params:{item:'minecraft:apple',count:5}})
  assert.equal(await objectiveForm.getByText('目标完成规则',{exact:true}).count(),0,'one background goal has no progress completion policy')
+ await objectiveForm.getByRole('textbox',{name:'标识符（可选，留空为匿名）',exact:true}).fill('collect_supplies')
+ assert.equal(await page.evaluate(id=>window.flow.objectives[id].identifier,objectiveId),'collect_supplies')
+ await objectiveForm.getByRole('alert').filter({hasText:'必须配置提交表单'}).waitFor()
+ await page.evaluate(()=>window.enableLocale())
+ await objectiveForm.getByRole('button',{name:'配置提交表单',exact:true}).click()
+ await objectiveForm.getByRole('textbox',{name:'提交标题',exact:true}).fill('交付补给')
+ await objectiveForm.getByRole('textbox',{name:'提交说明',exact:true}).fill('请确认提交数量')
+ await objectiveForm.getByRole('textbox',{name:'提交按钮文案',exact:true}).fill('确认交付')
+ const titleKey=`objectives.${objectiveId}.submission.title`
+ assert.equal(await page.evaluate(id=>window.flow.objectives[id].submission.title.text,objectiveId),titleKey)
+ assert.equal(await page.evaluate(key=>window.texts[key],titleKey),'交付补给','submission stores canonical keys and edits translation separately')
  await page.screenshot({path:'node_modules/.cache/node-editor-ui/objective-form.png'})
  await objectiveForm.getByRole('button',{name:'关闭表单',exact:true}).click()
  await page.getByRole('button',{name:'显示全部',exact:true}).click();await page.waitForTimeout(350)
@@ -273,6 +286,9 @@ try{
  await page.waitForFunction(id=>window.flow.logic.links.some(link=>link.from===id&&link.fromPort==='output2'),objectiveId)
  await page.getByRole('button',{name:'初始化任务',exact:true}).click()
  await page.waitForFunction(id=>document.querySelector(`[data-canvas-node="${id}"] [data-objective-state]`)?.getAttribute('data-objective-state')==='running',objectiveId)
+ await objectiveNode.click({button:'right',position:{x:80,y:12}})
+ await page.getByRole('menuitem',{name:'模拟提交未成功（可重试）',exact:true}).click()
+ assert.equal(await objectiveNode.locator('[data-objective-state]').getAttribute('data-objective-state'),'running')
  await objectiveNode.click({modifiers:['Control','Shift'],position:{x:80,y:12}})
  await page.waitForFunction(id=>document.querySelector(`[data-canvas-node="${id}"] [data-objective-state]`)?.getAttribute('data-objective-state')==='failed',objectiveId)
  const sourceDuringSimulation=await page.evaluate(()=>JSON.stringify(window.flow))
@@ -281,6 +297,10 @@ try{
  assert.equal(await page.evaluate(()=>JSON.stringify(window.flow)),sourceDuringSimulation,'instance reports never mutate quest source')
  await page.getByRole('button',{name:'重置模拟',exact:true}).click()
  await page.waitForFunction(id=>document.querySelector(`[data-canvas-node="${id}"] [data-objective-state]`)?.getAttribute('data-objective-state')==='inactive',objectiveId)
+ await page.getByRole('button',{name:'初始化任务',exact:true}).click()
+ await objectiveNode.click({modifiers:['Control'],position:{x:80,y:12}})
+ await page.waitForFunction(id=>document.querySelector(`[data-canvas-node="${id}"] [data-objective-state]`)?.getAttribute('data-objective-state')==='succeeded',objectiveId)
+ await page.getByRole('button',{name:'重置模拟',exact:true}).click()
  await objectiveNode.click({position:{x:80,y:12}});await page.keyboard.press('Delete')
  assert.equal(await page.evaluate(id=>Object.hasOwn(window.flow.objectives,id),objectiveId),false)
  assert.equal(await page.evaluate(id=>window.flow.logic.links.some(link=>link.from===id),objectiveId),false)

@@ -69,11 +69,14 @@ export type FlowProgressNode = {
 }
 /** 条件节点：无左端口，条件全部成立时发 A；对 Q 回报真 / N。空条件恒假。 */
 export type FlowPredicateNode = {
+  identifier?: string
   conditions: ProgressConditionRule[]
   extensions?: Data
 }
-/** Quest 级后台目标：随任务启动，结算锁存，不跟踪 UI，不响应取消或维持存活。 */
-export type FlowObjectiveNode = { goal: Omit<FlowProgressGoal, 'id'>; extensions?: Data }
+/** Player-facing submission entry; absent means no submission, not an empty form. */
+export type FlowSubmission = { title: FlowText; description: FlowText; buttonText: FlowText }
+/** Quest 级后台目标：随任务启动，不维持存活；C 关闭整个节点。 */
+export type FlowObjectiveNode = { identifier?: string; goal: Omit<FlowProgressGoal, 'id'>; submission?: FlowSubmission; extensions?: Data }
 /** 逻辑节点：左端口 并且 / 或者 收 A，右端口发 A；无内容。 */
 export type FlowTransitionNode = { extensions?: Data }
 /** 结束节点：成功入 / 失败入，决定任务终局；携带结局标题与奖励礼包。 */
@@ -239,7 +242,7 @@ export function setFlowId(flow: ProgressFlow, id: string): ProgressFlow {
 const LEGACY_KEYS = ['name', 'description', 'nodes', 'goals', 'conditionals', 'diffs', 'merges', 'swaps', 'entry', 'root', 'title', 'kind', 'hubs', 'gateways'] as const
 
 export function nextProgressIdentifier(flow: ProgressFlow): string {
-  const used = new Set(Object.values(flow.progress).map(node => node.identifier))
+  const used = new Set([...Object.values(flow.progress), ...Object.values(flow.predicates ?? {}), ...Object.values(flow.objectives ?? {})].map(node => node.identifier))
   let index = 1
   while (used.has(`progress_${index}`)) index++
   return `progress_${index}`
@@ -247,8 +250,12 @@ export function nextProgressIdentifier(flow: ProgressFlow): string {
 
 export function progressIdentifierIssue(flow: ProgressFlow, id: string, value: string): string | null {
   if (!value.trim()) return '进度标识符不能为空。'
-  if (value !== value.trim() || /[\r\n\t]/.test(value) || value.length > 200) return '进度标识符不能含首尾空白或换行，且长度不超过 200。'
-  if (Object.entries(flow.progress).some(([otherId, node]) => otherId !== id && node.identifier === value)) return '进度标识符在当前 Quest 内必须唯一。'
+  return nodeIdentifierIssue(flow, id, value)
+}
+export function nodeIdentifierIssue(flow: ProgressFlow, id: string, value: string): string | null {
+  if (!value) return null
+  if (value !== value.trim() || /[\r\n\t]/.test(value) || value.length > 200) return '标识符不能含首尾空白或换行，且长度不超过 200。'
+  if ([...Object.entries(flow.progress), ...Object.entries(flow.predicates ?? {}), ...Object.entries(flow.objectives ?? {})].some(([otherId, node]) => otherId !== id && node.identifier === value)) return '非空标识符在当前 Quest 内必须唯一。'
   return null
 }
 
@@ -257,9 +264,9 @@ export function flowNodeLabel(flow: ProgressFlow, id: string, resolveText?: (key
   const progress = getProgressNode(flow, id)
   if (progress) return progress.identifier || '未填写进度标识符'
   const predicate = getPredicateNode(flow, id)
-  if (predicate) return `条件 · ${predicate.conditions.length} 个条件`
+  if (predicate) return predicate.identifier || `条件 · ${predicate.conditions.length} 个条件`
   const objective = getObjectiveNode(flow, id)
-  if (objective) return objective.goal.kind || '未选择目标'
+  if (objective) return objective.identifier || objective.goal.kind || '未选择目标'
   const end = getEndNode(flow, id)
   if (end) return displayText(end.title, resolveText) || '未命名结局'
   return getTransitionNode(flow, id) ? '逻辑' : id
@@ -283,7 +290,7 @@ export function parseFlow(source: string): ProgressFlow {
   const progressFamily = f.progress as Record<string, unknown>
   require(isObject(progressFamily), 'progress')
   require(Object.hasOwn(progressFamily, f.start as string), 'start（开始进度节点不存在）')
-  const usedIdentifiers = new Set(Object.values(progressFamily).filter(isObject).map(node => node.identifier).filter(value => typeof value === 'string'))
+  const usedIdentifiers = new Set([progressFamily, f.predicates, f.objectives].filter(isObject).flatMap(family => Object.values(family)).filter(isObject).map(node => node.identifier).filter(value => typeof value === 'string'))
   for (const [id, value] of Object.entries(progressFamily)) {
     require(safeId(id), `progress.${id}`)
     require(isObject(value), `progress.${id}`)
@@ -329,7 +336,12 @@ export function parseFlow(source: string): ProgressFlow {
       require(safeId(id) && !seenNodeIds.has(id) && isObject(value), `objectives.${id}`)
       seenNodeIds.add(id)
       const raw = value as Record<string, unknown>
-      require(Object.keys(raw).every(key => ['goal', 'extensions'].includes(key)), `objectives.${id}`)
+      require(Object.keys(raw).every(key => ['identifier', 'goal', 'submission', 'extensions'].includes(key)), `objectives.${id}`)
+      require(raw.identifier === undefined || typeof raw.identifier === 'string', `objectives.${id}.identifier`)
+      if (raw.submission !== undefined) {
+        require(isObject(raw.submission) && Object.keys(raw.submission).every(key => ['title', 'description', 'buttonText'].includes(key)), `objectives.${id}.submission`)
+        for (const key of ['title', 'description', 'buttonText']) checkText((raw.submission as Record<string, unknown>)[key], `objectives.${id}.submission.${key}`)
+      }
       checkExtensions(raw, `objectives.${id}`)
       const goal = raw.goal
       require(isObject(goal) && Object.keys(goal).every(key => ['kind', 'params'].includes(key)) && typeof goal.kind === 'string' && isObject(goal.params), `objectives.${id}.goal`)
@@ -345,7 +357,8 @@ export function parseFlow(source: string): ProgressFlow {
       seenNodeIds.add(id)
       const node = value as FlowPredicateNode
       const raw = value as Record<string, unknown>
-      require(Object.keys(raw).every(key => ['title', 'conditions', 'extensions'].includes(key)), `predicates.${id}（不支持旧草稿字段）`)
+      require(Object.keys(raw).every(key => ['identifier', 'title', 'conditions', 'extensions'].includes(key)), `predicates.${id}（不支持旧草稿字段）`)
+      require(raw.identifier === undefined || typeof raw.identifier === 'string', `predicates.${id}.identifier`)
       checkExtensions(raw, `predicates.${id}`)
       if (Object.hasOwn(raw, 'title')) { checkText(raw.title, `predicates.${id}.title`); delete raw.title }
       node.conditions = parseConditionRules(raw.conditions, '条件节点', true)
@@ -406,7 +419,7 @@ export function parseFlow(source: string): ProgressFlow {
   return normalizeLinkOrder(v as ProgressFlow)
 }
 
-export function validateFlow(flow: ProgressFlow): FlowIssue[] {
+export function validateFlow(flow: ProgressFlow, definitions: readonly { kind: string; requiresDelivery?: boolean; error?: string }[] = []): FlowIssue[] {
   const issues: FlowIssue[] = []
   const error = (path: string, message: string) => issues.push({ severity: 'error', path, message })
   const warning = (path: string, message: string) => issues.push({ severity: 'warning', path, message })
@@ -474,18 +487,30 @@ export function validateFlow(flow: ProgressFlow): FlowIssue[] {
     if (identifierIssue) error(`progress.${id}.identifier`, identifierIssue)
     const seen = new Set<string>()
     node.goals.forEach((goal, index) => {
+      const definition = definitions.find(item => item.kind === goal.kind)
+      if (definition?.error) error(`progress.${id}.goals.${goal.id}`, definition.error)
       if (!goal.id.trim() || seen.has(goal.id)) error(`progress.${id}`, `第 ${index + 1} 个目标缺少有效 ID 或与其他目标重复。`)
       seen.add(goal.id)
       if (!goal.kind.trim() && !drafts.has(id)) warning(`progress.${id}`, `第 ${index + 1} 个目标还没有选择类型。`)
     })
   }
   for (const [id, node] of Object.entries(flow.predicates ?? {})) {
+    const issue = nodeIdentifierIssue(flow, id, node.identifier ?? '')
+    if (issue) error(`predicates.${id}.identifier`, issue)
     if (!node.conditions.length && !drafts.has(id)) warning(`predicates.${id}`, '没有配置条件（恒假）。')
     node.conditions.forEach((rule, index) => {
       if (rule.kind !== 'repeat' && !rule.target.trim() && !drafts.has(id)) warning(`predicates.${id}`, `第 ${index + 1} 个条件还没有填写对象。`)
     })
   }
   for (const [id, node] of Object.entries(flow.objectives ?? {})) {
+    const issue = nodeIdentifierIssue(flow, id, node.identifier ?? '')
+    if (issue) error(`objectives.${id}.identifier`, issue)
+    const definition = definitions.find(item => item.kind === node.goal.kind)
+    if (definition?.error) error(`objectives.${id}.goal`, definition.error)
+    if (definition?.requiresDelivery && !node.submission) error(`objectives.${id}.submission`, '此目标定义需要交付，请显式配置提交表单。')
+    if (node.submission) for (const key of ['title', 'buttonText'] as const) {
+      if (!node.submission[key].text.trim()) error(`objectives.${id}.submission.${key}`, '提交标题和按钮文案不能为空。')
+    }
     if (!node.goal.kind.trim() && !drafts.has(id)) warning(`objectives.${id}.goal`, '目标还没有选择类型。')
   }
   if (!Object.keys(flow.ends ?? {}).some(id => connected.has(id))) warning('ends', '没有任何与开始联通的结束节点，任务开始并完成首轮信号结算后将自动失败。')

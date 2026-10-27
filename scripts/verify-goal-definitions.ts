@@ -91,4 +91,19 @@ class SecondGoal(BaseGoalPy):
   assert.equal(defs[1]!.fields[0]!.default, 3)
 })
 
+test('delivery is explicitly declared on the goal class, never inferred from kind or presentation JSON', () => {
+  const parse = (body: string) => parseGoalDefinitionsFromSource(`@goal("test:delivery")\nclass Delivery(BaseGoalPy):\n${body}`, {sourceKey:'delivery',sourceName:'delivery.py'})[0]!
+  assert.equal(parse('    pass\n').requiresDelivery, false)
+  assert.equal(parse('    requires_delivery = True\n    def deliver(self, instance, context):\n        return True\n').requiresDelivery, true)
+  assert.match(parse('    def deliver(self, instance, context):\n        return True\n').error!, /显式声明/)
+  assert.match(parse('    requires_delivery = "True"\n').error!, /字面量/)
+  assert.match(parse('    requires_delivery = True\n    requires_delivery = False\n').error!, /唯一/)
+  assert.equal(parse('    # requires_delivery = True\n    def update(self):\n        requires_delivery = True\n').requiresDelivery, false)
+  assert.equal(parse('    """requires_delivery = True"""\n    pass\n').requiresDelivery, false)
+  const inline=parseGoalDefinitionsFromSource('@goal("inline")\nclass Inline(BaseGoalPy): requires_delivery = True', {sourceKey:null,sourceName:'inline.py'})[0]!
+  assert.equal(inline.requiresDelivery,true)
+  const catalog = buildGoalDefinitionCatalog(ensurePackageSections({documents:[],folders:[],activeKey:null}))
+  assert.deepEqual(catalog.errors, [])
+  for (const suffix of ['mc_type_submit','mc_type_hold','rpgtk_type_submit','rpgtk_type_hold']) assert.equal(catalog.byKind.get(`core:item_${suffix}`)?.requiresDelivery, true)
+})
 console.log(`\n${passed} goal-definition checks passed.`)

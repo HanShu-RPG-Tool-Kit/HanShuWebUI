@@ -44,6 +44,7 @@ import { parseProgress, stringifyProgress } from '../src/workspaces/gameplay/pro
 import { parseItem, stringifyItem } from '../src/workspaces/gameplay/itemDoc.ts'
 import { parseEntity, stringifyEntity } from '../src/workspaces/gameplay/entityDoc.ts'
 import { parseKit } from '../src/workspaces/gameplay/kit.ts'
+import { parseShop } from '../src/workspaces/gameplay/shop.ts'
 import { parseNavigationPoint, validateNavigationPoint } from '../src/workspaces/gameplay/navigationPoint.ts'
 import { parseFlow } from '../src/workspaces/gameplay/model.ts'
 import { readVoicePlan } from '../src/tts/plan.ts'
@@ -95,7 +96,7 @@ for (const ext of MANUAL_FILE_EXTENSIONS) {
   )
 }
 // `.py` 恰恰两条：普通脚本与目标定义（磁盘上是两个目录）
-assert.equal(NEW_FILE_TYPES.filter((item) => item.ext === '.py').length, 7)
+assert.equal(NEW_FILE_TYPES.filter((item) => item.ext === '.py').length, 8)
 assert.equal(type('py').srcKind, 'common', '通用脚本使用 common 类型')
 assert.equal(type('py-goal').srcKind, 'goal')
 assert.notEqual(type('py').icon, type('py-goal').icon, '两种 .py 的图标必须能区分')
@@ -395,6 +396,7 @@ assert.equal(newFileName(type('progress'), '示例'), '示例.quest')
 // `.kit`
 const kitSeed = seedOf('kit')
 assert.equal(parseKit(kitSeed).name, 'name', '礼包名是语义键，种子不该写死展示名')
+assert.equal(parseShop(seedOf('shop')).format, 'hanshu.shop')
 /*
  * `.item`（上游的物品库文档）：往返一致。
  * 物品 id 是**数据**（`minecraft:` 命名空间），不该由文件名猜出来 —— 种子里是
@@ -419,7 +421,7 @@ assert.deepEqual(validateNavigationPoint(navPoint), [], '.nav 种子应是一份
 const flowSeed = seedOf('hflow', '序章流程')
 const flow = parseFlow(flowSeed)
 assert.equal(flow.format, 'hanshu.progress-tree')
-assert.equal(flow.entry.title.text, 'entry.title', '标题是语义键，种子不该写死展示名')
+assert.equal(flow.progress[flow.start]?.questTitle?.text, '序章流程', '多进度种子标题由唯一开始进度承载')
 assert.equal(newFileName(type('hflow'), '示例'), '示例.quest')
 
 // `.ttsservice`：必须**通过结构校验**（否则它连方案的服务下拉都进不去）

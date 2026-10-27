@@ -58,6 +58,8 @@
 .flow-graph-node.is-objective .flow-graph-node-header { background:#46666c;color:#e1eff1; }
 .flow-graph-node.is-objective[data-objective-state="succeeded"] .flow-graph-node-header { background:#3f6a52; }
 .flow-graph-node.is-objective[data-objective-state="failed"] .flow-graph-node-header { background:#7a4646; }
+.flow-graph-node[data-objective-state="closed"], .flow-graph-node[data-condition-state="closed"] { opacity:.58; }
+.flow-graph-node[data-objective-state="closed"] .flow-graph-node-header, .flow-graph-node[data-condition-state="closed"] .flow-graph-node-header { background:#4b5057;color:#c3c8cd; }
 
 
 .signal-debugger { flex-shrink:0; border-top:1px solid #151719; background:#292b2e; font:12px/1.5 system-ui,sans-serif; }

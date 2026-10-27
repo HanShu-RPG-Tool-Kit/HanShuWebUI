@@ -5,10 +5,21 @@ import { packageAcceptsImportFile, packageDocumentExt } from '../src/workspaces/
 import { createSourceFile, sourcePathOf, defaultPlaneForFile } from '../src/workspace'
 import { sourcesToProgressDocuments, applyProgressDocumentsToWorkspace } from '../src/project/projectSession'
 import { shopCompiler } from '../src/export/compile/compilers/shop'
+import { readFileSync } from 'node:fs'
+import { buildKitModifierEnv } from '../src/workspaces/gameplay/kitExpr'
+import { compileShopCondition, evalShopCondition } from '../src/workspaces/gameplay/shopExpr'
+const fixtures = JSON.parse(readFileSync(new URL('./fixtures/shop-expr-v1.json', import.meta.url), 'utf8'))
+const env = buildKitModifierEnv(fixtures.params, fixtures.modifiers)
+for (const c of fixtures.cases) assert.equal(evalShopCondition(c.source, env), c.expected, c.source)
+for (const source of fixtures.invalid) assert.throws(() => compileShopCondition(source, env), source)
 
 const doc = createShop()
 doc.entries.push({ ...createShopEntry(), payment: [{ item: '货币', id: '', components: {}, count: 2 }], goods: [{ id: 'minecraft:bread', components: {}, count: 3 }] })
 assert.deepEqual(parseShop(stringifyShop(doc)), doc)
+doc.tags = ['village']; doc.entries[0].tags = ['apple/sell']; doc.entries[0].initialCapacity = 4; doc.entries[0].maxCapacity = 10
+assert.deepEqual(parseShop(stringifyShop(doc)), doc)
+assert.throws(() => parseShop(JSON.stringify({ ...doc, entries: [{ ...doc.entries[0], initialCapacity: 11 }] })))
+assert.throws(() => parseShop(JSON.stringify({ ...doc, script: [{ ref: 'src/script/shop/trade.py' }] })))
 const draft = { ...doc, entries: [{ ...doc.entries[0], payment: [{ id: '', count: 1, components: {} }] }] }
 assert.doesNotThrow(() => parseShop(stringifyShop(draft), true))
 assert.throws(() => parseShop(stringifyShop(draft)), /item|ItemStack/)

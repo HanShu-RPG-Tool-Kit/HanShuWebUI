@@ -2,11 +2,14 @@ import { randomId } from '../../project/crypto'
 import { parseJsonValue } from '../../utils/strictJson'
 import { isObject } from './model'
 import { parseConditionRules, type ProgressConditionRule } from './conditions'
-import { parseKit, writeKitItem, type KitItem, type KitParam, type KitModifier } from './kit'
+import { parseKit, unionKitTags, writeKitItem, type KitItem, type KitParam, type KitModifier } from './kit'
 
 export const STOCK_SUBJECTS = { infinite: '无限库存', player: '玩家', world: '世界', server: '服务器', game: '游戏', npc: '商人 NPC' } as const
 export type ShopEntry = {
   id: string
+  tags: string[]
+  initialCapacity: number
+  maxCapacity: number
   payment: KitItem[]
   goods: KitItem[]
   visibility: string
@@ -17,6 +20,7 @@ export type ShopDocument = {
   version: 1
   id: string
   name: string
+  tags: string[]
   stockSubject: keyof typeof STOCK_SUBJECTS
   visibility: ProgressConditionRule[]
   availability: ProgressConditionRule[]
@@ -25,8 +29,13 @@ export type ShopDocument = {
   script: { ref: string }[]
   entries: ShopEntry[]
 }
-export const createShopEntry = (): ShopEntry => ({ id: randomId(), payment: [], goods: [], visibility: '', availability: '' })
-export const createShop = (): ShopDocument => ({ format: 'hanshu.shop', version: 1, id: randomId(), name: 'name', stockSubject: 'infinite', visibility: [], availability: [], params: [], modifiers: [], script: [], entries: [] })
+export const createShopEntry = (): ShopEntry => ({ id: randomId(), tags: [], initialCapacity: 0, maxCapacity: 1, payment: [], goods: [], visibility: '', availability: '' })
+export const createShop = (): ShopDocument => ({ format: 'hanshu.shop', version: 1, id: randomId(), name: 'name', tags: [], stockSubject: 'infinite', visibility: [], availability: [], params: [], modifiers: [], script: [], entries: [] })
+export function shopTags(value: unknown): string[] {
+  if (value === undefined) return []
+  if (!Array.isArray(value) || value.some(t => typeof t !== 'string' || !t.trim())) throw new Error('标签必须是非空字符串列表')
+  return unionKitTags(value as string[])
+}
 export const stringifyShop = (doc: ShopDocument) => {
   const items = (values: KitItem[]) => values.map(writeKitItem)
   return JSON.stringify({ ...doc, entries: doc.entries.map(e => ({ ...e, payment: items(e.payment), goods: items(e.goods) })) }, null, 2)
@@ -55,12 +64,15 @@ export function parseShop(source: string, draft = false): ShopDocument {
       }
       return parseKit(JSON.stringify({ items: list })).items
     }
-    return { id: value.id, payment: items(value.payment), goods: items(value.goods), visibility: value.visibility, availability: value.availability }
+    const initialCapacity = value.initialCapacity ?? 0, maxCapacity = value.maxCapacity ?? 1
+    if (typeof initialCapacity !== 'number' || typeof maxCapacity !== 'number' || !Number.isSafeInteger(initialCapacity) || !Number.isSafeInteger(maxCapacity) || initialCapacity < 0 || maxCapacity < 0 || (!draft && initialCapacity > maxCapacity)) throw new Error('交易额度须为非负安全整数，初始额度不能超过最大额度')
+    return { id: value.id, tags: shopTags(value.tags), initialCapacity, maxCapacity, payment: items(value.payment), goods: items(value.goods), visibility: value.visibility, availability: value.availability }
   })
   const script = raw.script.map(value => {
     if (!isObject(value) || typeof value.ref !== 'string' || (!draft && !value.ref.trim())) throw new Error('脚本需要非空引用')
-    return { ref: value.ref }
+    if (value.ref === '.' || value.ref === '..' || /[/\\:]/.test(value.ref) || [...value.ref].some(c => c.charCodeAt(0) < 32 || c.charCodeAt(0) === 127)) throw new Error('商店脚本引用必须是 shop 类型的脚本 ID，不能使用路径')
+    return { ref: value.ref.trim() }
   })
   if (!draft && new Set(script.map(s => s.ref)).size !== script.length) throw new Error('脚本不能重复绑定')
-  return { format: 'hanshu.shop', version: 1, id: raw.id, name: raw.name, stockSubject: raw.stockSubject as ShopDocument['stockSubject'], visibility: parseConditionRules(raw.visibility, '商店可见性条件', false), availability: parseConditionRules(raw.availability, '商店可用性条件', false), params: kit.params, modifiers: kit.modifiers, script, entries }
+  return { format: 'hanshu.shop', version: 1, id: raw.id, name: raw.name, tags: shopTags(raw.tags), stockSubject: raw.stockSubject as ShopDocument['stockSubject'], visibility: parseConditionRules(raw.visibility, '商店可见性条件', false), availability: parseConditionRules(raw.availability, '商店可用性条件', false), params: kit.params, modifiers: kit.modifiers, script, entries }
 }

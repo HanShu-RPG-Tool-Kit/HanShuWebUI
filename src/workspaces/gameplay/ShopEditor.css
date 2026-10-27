@@ -1,4 +1,8 @@
 .shop-page { width:100%; gap:12px; container-type:inline-size; }
+.shop-meta .kit-tags-row { flex:1; min-width:220px; }
+.shop-entry > .shop-expression-fields > .kit-tags-row { grid-column:1/-1; }
+.shop-sheet-capacity { width:100px; }
+.shop-sheet .kit-tag-picker { min-width:100px; }
 .shop-template-badge { color:var(--text-dim); font-size:12px; white-space:nowrap; }
 .shop-meta { display:flex; align-items:center; flex-wrap:wrap; gap:12px; min-height:34px; font-size:12px; color:var(--text-dim); }
 .shop-meta > label { display:flex; align-items:center; gap:10px; }
@@ -12,7 +16,9 @@
 .shop-toolbar > .kit-segment { margin-left:auto; }
 .shop-settings { padding-top:16px; border-top:1px solid var(--border); }
 .shop-sheet-scroll { overflow:auto; max-height:600px; border:1px solid var(--border); }
-.shop-sheet { width:100%; min-width:800px; border-collapse:separate; border-spacing:0; table-layout:fixed; font-size:12px; }
+.shop-sheet { width:100%; min-width:1250px; border-collapse:separate; border-spacing:0; table-layout:fixed; font-size:12px; }
+.shop-sheet .kit-tags-label { display:none; }
+.shop-sheet .kit-tags-row { margin:8px; }
 .shop-sheet-number { width:48px; }
 .shop-sheet-actions { width:90px; }
 .shop-sheet th, .shop-sheet td { border-right:1px solid var(--border); border-bottom:1px solid var(--border); padding:0; text-align:left; vertical-align:top; }

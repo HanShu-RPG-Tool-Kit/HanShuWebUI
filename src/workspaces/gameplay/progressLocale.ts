@@ -32,7 +32,7 @@ export function isProgressLocaleKey(value: string): boolean {
 }
 
 export function flowNodeFieldKey(
-  collection: 'progress' | 'predicates' | 'ends',
+  collection: 'progress' | 'predicates' | 'objectives' | 'ends',
   id: string,
   field: string,
 ): string {
@@ -120,6 +120,10 @@ export function ensureFlowLocaleKeys(flow: ProgressFlow): {
       title: migrateFlowText(node.title, flowNodeFieldKey('ends', id, 'title'), seeds),
     }]))
   }
+  if (flow.objectives) next.objectives = Object.fromEntries(Object.entries(flow.objectives).map(([id, node]) => [id, {
+    ...node,
+    ...(node.submission ? { submission: Object.fromEntries(Object.entries(node.submission).map(([field, value]) => [field, migrateFlowText(value, flowNodeFieldKey('objectives', id, `submission.${field}`), seeds)])) as typeof node.submission } : {}),
+  }]))
 
   return { flow: next, seeds }
 }
@@ -157,13 +161,14 @@ export function flowNodeLocaleKeyMoves(
   oldId: string,
   newId: string,
 ): Array<[string, string]> {
-  const fields: Record<'progress' | 'predicates' | 'ends', readonly string[]> = {
+  const fields: Record<'progress' | 'predicates' | 'objectives' | 'ends', readonly string[]> = {
     progress: ['runningLog', 'completedLog', 'questTitle', 'description'],
     predicates: [],
+    objectives: ['submission.title', 'submission.description', 'submission.buttonText'],
     ends: ['title'],
   }
   const moves: Array<[string, string]> = []
-  for (const [collection, keys] of Object.entries(fields) as Array<['progress' | 'predicates' | 'ends', readonly string[]]>) {
+  for (const [collection, keys] of Object.entries(fields) as Array<['progress' | 'predicates' | 'objectives' | 'ends', readonly string[]]>) {
     for (const field of keys) {
       moves.push([
         flowNodeFieldKey(collection, oldId, field),

@@ -191,7 +191,7 @@ async function readPackageFromDirectory(
   const seen = new Set<string>()
   const addScript = async (name: string, path: string) => {
     assertCanonicalSourcePath(path)
-    if(name.toLowerCase().endsWith('.py')&&!/^src\/script\/(common|goal|kit|item|entity|enchantment|player)\/[^/]+\.py$/i.test(path))throw new Error(`脚本目录需要调整：${path}。请放入 src/script/<common|goal|kit|item|entity|enchantment|player>/。`)
+    if(name.toLowerCase().endsWith('.py')&&!/^src\/script\/(common|goal|kit|shop|item|entity|enchantment|player)\/[^/]+\.py$/i.test(path))throw new Error(`脚本目录需要调整：${path}。请放入 src/script/<common|goal|kit|shop|item|entity|enchantment|player>/。`)
     if (seen.has(resourceNameKey(path))) throw new Error(`存在重名资源路径：${path}`)
     const file = await readFileAtPath(root, path)
     if (!file) return

@@ -185,13 +185,15 @@ export function ProgressGraph({ flow, selection, onSelect, onCreate, onChangeFlo
 
   const trigger = (update: (previous: S.FlowSimState) => S.FlowSimState) => {
     if (eventDisabled) return
+    const invalid = M.validateFlow(flow, definitions).find(issue => issue.severity === 'error')
+    if (invalid) { setStopReason(`配置错误：${invalid.message}`); return }
     const next = update(sim)
     if (next === sim) return
     setStopReason('');setPausedAt(null);setSkipTrace(null);setSim(next)
     setPlaying(autoPlay && S.isBusy(next))
   }
   const initialize = () => trigger(previous=>S.initializeQuest(flow,previous,true))
-  const settle = (id: string, outcome: 'succeeded' | 'failed') => trigger(previous=>M.getObjectiveNode(flow,id) ? S.settleObjective(flow,previous,id,outcome,true) : S.settleProgress(flow,previous,id,outcome,true))
+  const settle = (id: string, outcome: 'succeeded' | 'failed') => trigger(previous=>M.getObjectiveNode(flow,id)?.submission && outcome === 'succeeded' ? S.submitObjective(flow,previous,id,true,true) : M.getObjectiveNode(flow,id) ? S.settleObjective(flow,previous,id,outcome,true) : S.settleProgress(flow,previous,id,outcome,true))
   const togglePredicate = (id: string) => trigger(previous=>S.setPredicateTruth(flow,previous,id,!S.predicateTruth(previous,id),true))
 
   const createItems = (position: FlowPosition): MenuItem[] => [
@@ -229,7 +231,7 @@ export function ProgressGraph({ flow, selection, onSelect, onCreate, onChangeFlo
       const truth = S.predicateTruth(sim, id)
       return [
         { label: '编辑…', disabled: locked, action: () => openForm(id) },
-        { label: truth ? '置为假' : sim.initialized ? '置为真（发 A）' : '预置为真（初始化时广播）', disabled: eventDisabled, action: () => togglePredicate(id) },
+        { label: truth ? '置为假' : sim.initialized ? '置为真（发 A）' : '预置为真（初始化时广播）', disabled: eventDisabled || S.conditionState(sim,id) === 'closed', action: () => togglePredicate(id) },
         { label: '删除条件', disabled: locked, action: () => onDelete(id) },
       ]
     }
@@ -237,7 +239,8 @@ export function ProgressGraph({ flow, selection, onSelect, onCreate, onChangeFlo
       const running = S.objectiveState(sim,id) === 'running'
       return [
         { label: '编辑…', disabled: locked, action: () => openForm(id) },
-        { label: '结算为成功（发 A）', disabled: eventDisabled || !running, action: () => settle(id,'succeeded') },
+        { label: M.getObjectiveNode(flow,id)?.submission ? '模拟提交成功（发 A）' : '结算为成功（发 A）', disabled: eventDisabled || !running, action: () => settle(id,'succeeded') },
+        ...(M.getObjectiveNode(flow,id)?.submission ? [{ label: '模拟提交未成功（可重试）', disabled: eventDisabled || !running, action: () => trigger(previous => S.submitObjective(flow,previous,id,false,true)) }] : []),
         { label: '结算为失败（发 A）', disabled: eventDisabled || !running, action: () => settle(id,'failed') },
         { label: '删除目标', disabled: locked, action: () => onDelete(id) },
       ]

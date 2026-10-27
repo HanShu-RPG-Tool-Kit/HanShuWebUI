@@ -1,5 +1,5 @@
 import type {ScriptType} from '../../scriptResources/types'
-import {KIT_CONTEXT,PLAYER_CLASS,javaModule} from './stubs'
+import {KIT_CONTEXT,SHOP_CONTEXT,PLAYER_CLASS,javaModule} from './stubs'
 const GOAL_CONTEXT=`from typing import Any, Callable
 class BaseGoalPy:
     def update_satisfied_state(self, instance: Any, satisfied: bool) -> None: ...
@@ -21,7 +21,8 @@ cfg: Any
 export function pythonProfile(type:ScriptType){
  const files:Record<string,string>={'__builtins__.pyi':'from builtins import *\n'}
  if(type==='kit'){files['__kit_context.pyi']=KIT_CONTEXT;files['__builtins__.pyi']+='from __kit_context import kit as kit, player as player, players as players, random as random\n';files[`${javaModule(PLAYER_CLASS)}.pyi`]='class ServerPlayer: ...\n'}
+ if(type==='shop'){files['__shop_context.pyi']=SHOP_CONTEXT;files['__builtins__.pyi']+='from __shop_context import shop as shop, player as player\n';files[`${javaModule(PLAYER_CLASS)}.pyi`]='class ServerPlayer: ...\n'}
  if(type==='goal'){files['__goal_context.pyi']=GOAL_CONTEXT;files['__builtins__.pyi']+='from __goal_context import BaseGoalPy as BaseGoalPy, goal as goal, config as config, state as state, subscribe as subscribe, field as field, st as st, cfg as cfg, pick_locale as pick_locale, java_type as java_type, instanceof as instanceof\n'}
  // item/entity hosts are not implemented yet: never invent hooks or injected globals.
- return {type,files,requiredClasses:type==='kit'?[PLAYER_CLASS]:[]}
+ return {type,files,requiredClasses:type==='kit'||type==='shop'?[PLAYER_CLASS]:[]}
 }

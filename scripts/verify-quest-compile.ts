@@ -90,3 +90,18 @@ assert.equal(validateFlow(advisory).filter(issue=>issue.message.includes('非建
 const advisoryExport=await questCompiler.compile(file('advisory.quest',JSON.stringify(advisory)),ctx)
 assert.equal(advisoryExport.length,1,'AND-input advisories must not block export')
 console.log('PASS: background goal and condition AND-input warnings do not block export')
+
+multi.objectives![backgroundId].goal.kind='core:item_mc_type_submit'
+assert.equal((await questCompiler.compile(file('submit.quest',JSON.stringify(multi)),ctx)).length,0,'builtin delivery goal requires explicit submission')
+multi.objectives![backgroundId].identifier='collect_apples'
+multi.objectives![backgroundId].submission={title:{text:'objectives.collect.submission.title'},description:{text:''},buttonText:{text:'objectives.collect.submission.buttonText'}}
+const submissionExport=await questCompiler.compile(file('submit.quest',JSON.stringify(multi)),ctx)
+assert.equal(submissionExport.length,1)
+assert.deepEqual(JSON.parse(String(submissionExport[0].bytes)).objectives,multi.objectives)
+const override={...file('core_item_mc_type_submit.py','@goal("core:item_mc_type_submit")\nclass Replacement(BaseGoalPy):\n    requires_delivery = False\n'),srcKind:'goal' as const}
+pkg.scripts.push(override)
+delete multi.objectives![backgroundId].submission
+assert.equal((await questCompiler.compile(file('override.quest',JSON.stringify(multi)),ctx)).length,1,'effective project file overrides builtin capability too')
+override.content='@goal("core:item_mc_type_submit")\nclass Replacement(BaseGoalPy):\n    def deliver(self, instance, context):\n        return True\n'
+assert.equal((await questCompiler.compile(file('undeclared.quest',JSON.stringify(multi)),ctx)).length,0,'undeclared delivery hook is a configuration error')
+console.log('PASS: delivery declarations, submission requirements, effective overrides and descriptor roundtrip')
