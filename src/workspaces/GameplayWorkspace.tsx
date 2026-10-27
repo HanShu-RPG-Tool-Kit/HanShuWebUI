@@ -25,11 +25,11 @@ import { createProgress, createProgressLocaleSeeds, readProgressSource, stringif
 import { createNavigationPoint, readNavigationSource, stringifyNavigationPoint, parseNavigationPoint } from './gameplay/navigationPoint'
 import { createItem, itemFromItemStackSource, parseItem, readItemSource, stringifyItem } from './gameplay/itemDoc'
 import {
-  forceRequestItemSnapshots,
   isAutoItemSnapshotRefreshEnabled,
   isItemSnapshotRefreshOnline,
   setAutoItemSnapshotRefreshEnabled,
 } from './gameplay/itemSnapshotCache'
+import { refreshDocumentsItemSnapshots } from './gameplay/itemSnapshotActions'
 import { isItemStackFileName } from './gameplay/itemstack'
 import {
   ensureItemEditNotifyStarted,
@@ -1096,16 +1096,19 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
     }
     if (item === 'refresh-item-snapshot') {
       const focused = state.documents.find((document) => document.key === focusedKey)
-      if (!focused || !isItemDocument(focused)) {
-        setNotice('请先打开一个 .item，再刷新当前物品快照。')
+      if (!focused) {
+        setNotice('请先打开一个物品、礼包或商店文档，再刷新物品快照。')
         return
       }
-      const parsed = readItemSource(focused.source)
-      if (parsed.error || !parsed.doc.item.id.trim()) {
-        setNotice(parsed.error || '当前物品缺少 id，无法刷新快照。')
+      // 物品库表视图是虚拟文档，刷新它等于刷新整个物品库
+      const targets = isItemLibraryTableKey(focused.key)
+        ? state.documents.filter((document) => isItemDocument(document))
+        : [focused]
+      const count = refreshDocumentsItemSnapshots(targets, { itemCatalog })
+      if (count === 0) {
+        setNotice('当前文档没有可刷新的物品。')
         return
       }
-      forceRequestItemSnapshots([parsed.doc.item])
       // 进度与结果由活动列表「刷新物品快照」任务更新；离线排队文案也在那里
       if (!isItemSnapshotRefreshOnline()) {
         setNotice('未连接游戏开发服务器，快照已排队')
@@ -1113,18 +1116,11 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
       return
     }
     if (item === 'refresh-all-item-snapshots') {
-      const items = []
-      for (const document of state.documents) {
-        if (!isItemDocument(document)) continue
-        const parsed = readItemSource(document.source)
-        if (parsed.error || !parsed.doc.item.id.trim()) continue
-        items.push(parsed.doc.item)
-      }
-      if (items.length === 0) {
-        setNotice('物品库还没有可刷新的 .item。')
+      const count = refreshDocumentsItemSnapshots(state.documents, { itemCatalog })
+      if (count === 0) {
+        setNotice('工程里还没有可刷新的物品。')
         return
       }
-      forceRequestItemSnapshots(items)
       if (!isItemSnapshotRefreshOnline()) {
         setNotice('未连接游戏开发服务器，快照已排队')
       }

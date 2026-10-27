@@ -43,6 +43,7 @@ import {
 import { getCachedDisplaySync } from './itemSnapshotCache'
 import { isItemFileName, parseItem } from './itemDoc'
 import { useItemPresentation } from './itemPresentation'
+import { ItemSnapshotPanelStatus } from './ItemSnapshotPanelStatus'
 import { type ItemPresentation } from './itemTooltip'
 import { ItemHoverTipTarget, ItemTipSegments } from './itemHoverTip'
 import { FeedbackTextEditor } from './FeedbackTextEditor'
@@ -1063,8 +1064,13 @@ function KitBody({ kit, disabled, readOnly, scriptOptions, onOpenScript, onCreat
   setText?: (key: string, value: string) => void
 }) {
   const ui = useContext(KitExprContext)
+  const itemCatalog = useContext(ItemCatalogContext)
   const locked = disabled || readOnly
   const add = (label: string, onClick: () => void) => readOnly ? undefined : <AddButton label={label} disabled={disabled} onClick={onClick} />
+  const poolItems = useMemo(
+    () => kit.pools.flatMap((pool) => pool.entries.flatMap((entry) => entry.items)),
+    [kit.pools],
+  )
   const readName = () => resolveText?.(kit.name) ?? kit.name
   const writeName = (value: string) => {
     if (locked) return
@@ -1087,11 +1093,17 @@ function KitBody({ kit, disabled, readOnly, scriptOptions, onOpenScript, onCreat
 
     <div className="kit-columns">
       <div className="kit-stack">
-        <Panel title="物品" count={kit.items.length} action={add('添加', () => update({ items: [...kit.items, createKitItem()] }))}>
+        <Panel title="物品" count={kit.items.length} action={<>
+          <ItemSnapshotPanelStatus items={kit.items} catalog={itemCatalog} disabled={locked} />
+          {add('添加', () => update({ items: [...kit.items, createKitItem()] }))}
+        </>}>
           <ItemList items={kit.items} header disabled={locked} onChange={(items) => update({ items })} />
         </Panel>
 
-        <Panel title="随机池" count={kit.pools.length} action={add('添加', () => update({ pools: [...kit.pools, createKitPool()] }))}>
+        <Panel title="随机池" count={kit.pools.length} action={<>
+          <ItemSnapshotPanelStatus items={poolItems} catalog={itemCatalog} disabled={locked} />
+          {add('添加', () => update({ pools: [...kit.pools, createKitPool()] }))}
+        </>}>
           {!readOnly && <p className="kit-hint">
             每个池独立抽取：每抽一次按权重选中<b>一个分组</b>，发放该组的全部物品；同一分组可被重复抽中。
           </p>}

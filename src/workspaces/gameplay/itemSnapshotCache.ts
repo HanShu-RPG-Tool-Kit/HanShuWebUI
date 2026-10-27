@@ -478,10 +478,14 @@ export function forceRequestItemSnapshots(
   items: Iterable<{ id: string; components: Record<string, unknown> }>,
 ): number {
   let count = 0
+  const seen = new Set<string>()
   for (const item of items) {
     const id = item.id.trim()
     if (!id) continue
     const fingerprint = itemFingerprint(item)
+    // 同一物品可能同时出现在 .item / .kit / .shop；只排一次，避免进度数虚高
+    if (seen.has(fingerprint)) continue
+    seen.add(fingerprint)
     neededMeta.set(fingerprint, {
       fingerprint,
       id,

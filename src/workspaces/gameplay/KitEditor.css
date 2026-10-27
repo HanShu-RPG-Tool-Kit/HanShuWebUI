@@ -1,4 +1,4 @@
-﻿/* ---------- 页面 ---------- */
+/* ---------- 页面 ---------- */
 
 .flow-kit-pane {
   --kit-mono: 'Cascadia Mono', 'JetBrains Mono', Consolas, monospace;
@@ -357,7 +357,36 @@
 .kit-panel-actions {
   display: flex;
   align-items: center;
+  gap: 8px;
   margin-left: auto;
+}
+
+/* 物品快照面板汇总：与 .item 编辑器、表视图共用同一状态口径 */
+.item-snapshot-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-size: calc(11px * var(--fl-s, 1.25) / 1.1);
+}
+
+.item-snapshot-summary.is-ok {
+  color: #b7d7b0;
+}
+
+.item-snapshot-summary.is-warn {
+  color: #e0c48a;
+}
+
+.item-snapshot-summary.is-pending {
+  color: #9fc4e8;
+}
+
+.item-snapshot-summary .item-snapshot-refresh {
+  height: 22px;
+  padding: 0 8px;
+  font-size: calc(11px * var(--fl-s, 1.25) / 1.1);
 }
 
 .flow-kit-pane .kit-add {

@@ -81,7 +81,7 @@ WebUI 在 Control `phase===open` 时主动发 `{ type: request, id, method, para
 | **result** | `{ componentFormat: "tnbt-json-v1", componentMode: "complete", snapshots: [{ key, ok, error?, display? }] }` |
 | **display** | 可无 `icon`；可有 `iconPending: true`（文本先可用，WebUI 会再请求图标） |
 | **iconPending 重试** | 同一指纹最多 **3** 次仍 `iconPending` 则接受纯文本快照并出队（避免 mod 图标永远不就绪时干烧）；强制刷新会重置计数 |
-| **自动刷新** | 默认开；**编辑 → 自动刷新物品快照** 可关。关闭后 UI 不再因 miss/过期自动入队（手动刷新仍可用） |
+| **自动刷新** | 默认开；**编辑 → 自动刷新物品快照** 可关。关闭后 UI 不再因 miss/过期自动入队；手动“刷新当前文档 / 刷新全部”仍可用，覆盖 `.item`、`.itemstack`、`.kit`、`.shop`，并按指纹去重 |
 | **其它错误** | 如 `no_level`：整包失败，WebUI 短暂退避 |
 
 模组返回的 `display` 可不带 `snapshotOf`；WebUI **写入缓存时**用请求的 `key` 覆盖/写入 `snapshotOf`。刷新过程用活动列表稳定 id `items.snapshot-refresh` 更新进度条，队列清空后标成功。
