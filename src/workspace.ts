@@ -360,9 +360,11 @@ export function loadWorkspace(): Workspace {
               ? (pkg as ScriptPackage).assetFolders
               : [],
           })),
-          activeScriptId: data.packages.some((pkg) => pkg.scripts?.some((script) => script.id === data.activeScriptId))
-            ? data.activeScriptId ?? null
-            : data.packages[0]?.scripts[0]?.id ?? null,
+          activeScriptId: data.activeScriptId === null
+            ? null
+            : data.packages.some((pkg) => pkg.scripts?.some((script) => script.id === data.activeScriptId))
+              ? data.activeScriptId ?? null
+              : data.packages[0]?.scripts[0]?.id ?? null,
           activeAssetId: (data as Workspace).activeAssetId ?? null,
         }
       }

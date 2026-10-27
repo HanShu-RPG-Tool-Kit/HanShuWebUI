@@ -303,9 +303,10 @@
 
 .kit-columns {
   display: grid;
-  flex: 1;
+  flex: 0 0 auto;
   grid-template-columns: minmax(380px, 1fr) minmax(360px, 1fr);
-  align-items: start;
+  align-items: stretch;
+  align-content: start;
   gap: 12px;
 }
 
@@ -1393,15 +1394,15 @@
 /* ---------- 右栏 / 脚本 ---------- */
 
 .kit-aside {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  align-self: stretch;
   gap: 12px;
-  position: sticky;
-  top: 0;
+  width: 100%;
   min-width: 0;
 }
 
-.kit-script{display:flex;flex-direction:column;min-height:0;height:auto}
+.kit-script{display:flex;flex-direction:column;align-self:stretch;width:100%;min-width:0;min-height:0;height:100%}
 
 /* ---------- 面板副标题 / 通用提示 ---------- */
 
@@ -2264,10 +2265,12 @@
   }
 
   .kit-aside {
-    position: static;
+    grid-template-rows: auto auto;
   }
 
-
+  .kit-script {
+    height: auto;
+  }
 }
 
 .kit-row-head.kit-item span:nth-child(4),

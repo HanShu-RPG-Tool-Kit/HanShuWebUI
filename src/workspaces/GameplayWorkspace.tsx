@@ -14,9 +14,11 @@ import { smartArrangeCanvas } from './gameplay/arrange'
 import { ProgressGraph } from './gameplay/ProgressGraph'
 import { FlowDocumentProperties } from './gameplay/FlowDocumentProperties'
 import { FlowExplorer } from './gameplay/FlowExplorer'
+import { PanelDock, resetPanelDock, type DockPanelSpec } from '../ui/PanelDock'
+import { confirmDialog } from '../ui/dialogs'
 import { PageList } from './gameplay/PageList'
 import { EditorSplit } from './gameplay/EditorSplit'
-import { closeAllInGroup, closeInGroup, closeOthersInGroup, closeRightInGroup, focusedGroupId, focusGroup, joinGroups, moveTab, normalizeGroups, openAsRightSplit, openInGroup, openOppositeToKey, readGroup, setSplitRatio, splitTab, togglePinInGroup, type GroupId, type SplitZone } from './gameplay/editorGroups'
+import { closeAllInGroup, closeInGroup, closeOthersInGroup, closeRightInGroup, focusedGroupId, focusGroup, joinGroups, moveTab, normalizeGroups, openInGroup, openOppositeToKey, readGroup, setSplitRatio, splitTab, togglePinInGroup, type GroupId, type SplitZone } from './gameplay/editorGroups'
 import { ensurePackageSections, folderPath, isBuiltinScriptFolder, isEntityDocument, isItemDocument, isItemLibraryTableKey, isLibraryTableKey, isEntityLibraryTableKey, ENTITY_LIBRARY_TABLE_KEY, ITEM_LIBRARY_TABLE_KEY, isKitDocument, isMultiQuestDocument, isNavigationDocument, isQuestDocument, isScriptDocument, isSectionFolder, isSimpleQuestDocument, packageAcceptsImportFile, packageAllowsDocuments, packageDocumentExt, renameFlowEntry, stripLibraryTables, uniqueDocumentName, withLibraryTables } from './gameplay/library'
 import { normalizeQuestFileName, questAuthorKindFromSource } from './gameplay/questKind'
 import { createFlowDocument, downloadFlowFile, importFlowDocument, stampDocument, type FlowDocument, type FlowPackageId, type FlowWorkspaceState } from './gameplay/storage'
@@ -88,6 +90,8 @@ import { LocaleSelect } from '../LocaleSelect'
 import Editor from '@monaco-editor/react'
 import { HANSHU_THEME_ID, registerHanshuLanguage } from '../monaco/hanshuLanguage'
 import './GameplayWorkspace.css'
+
+const GAMEPLAY_DOCK_KEY = 'hanshu.panelDock.gameplay'
 
 export type GameplayWorkspaceHandle = { handleMenuAction: (item: string) => void }
 
@@ -745,12 +749,6 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
     updateGroups((previous) => focusGroup(previous, id))
   }
   function selectDocument(key: string, group: GroupId = focusedGroup) {
-    if (isLibraryTableKey(key)) {
-      updateGroups((previous) => openAsRightSplit(previous, key))
-      setProgressSourceKey(null)
-      setNotice('')
-      return
-    }
     updateGroups((previous) => openInGroup(previous, group, key))
     setProgressSourceKey(null)
     setNotice('')
@@ -1076,6 +1074,16 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
     }
   }
   useImperativeHandle(workspaceRef, () => ({ handleMenuAction(item) {
+    if (item === 'editor-layout') {
+      void confirmDialog({
+        title: '编辑器布局',
+        message: '恢复默认停靠布局？当前拖过的栏目位置会丢掉。',
+        confirmLabel: '恢复',
+      }).then((ok) => {
+        if (ok) resetPanelDock(GAMEPLAY_DOCK_KEY)
+      })
+      return
+    }
     if (item === 'save') {
       void saveDraft()
       return
@@ -1443,10 +1451,22 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
     </div>
   }
 
+  const dockPanels: DockPanelSpec[] = [
+    {
+      id: 'explorer',
+      title: '资源管理器',
+      defaultPlacement: 'left',
+      defaultSize: 280,
+      minSize: 180,
+      render: (dock) => (
+        <FlowExplorer onOverrideBuiltinScript={key=>{const d=state.documents.find(d=>d.key===key);if(!d)return;const type=scriptTypeInFolder(state,d.folderId??null);newFlow(d.name,sectionFolderKey('script',scriptSection(type)),'script','default.py',d.source)}} readOnly={readOnly} state={explorerState} active={active} disabled={locked || busy} onChange={(next) => setState((previous) => normalizeGroups({ ...previous, documents: next.documents, folders: next.folders }))} onSelect={(key) => selectDocument(key)} onNew={newFlow} onImport={requestImport} onImportFiles={(files, folderId, packageId) => { void importFiles(files, { folderId, package: packageId }) }} onExport={exportFlow} onDownload={downloadDraft} onRemove={removeResources} onProperties={setPropertiesKey} onViewSource={viewProgressSource} onOpenEntityInGame={key=>{void openEntityInGame(key)}} onOpenItemInGame={(key) => { void openItemInGame(key) }} onNotice={setNotice} placement={dock.placement} onTitlePointerDown={dock.onTitlePointerDown} onRedock={dock.onRedock} />
+      ),
+    },
+  ]
+
   return <section className="gameplay-workspace" aria-label="游戏性工作区">
     <input ref={fileInput} type="file" multiple hidden onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ''; void importFiles(files) }} />
-    <div className="flow-layout">
-      <FlowExplorer onOverrideBuiltinScript={key=>{const d=state.documents.find(d=>d.key===key);if(!d)return;const type=scriptTypeInFolder(state,d.folderId??null);newFlow(d.name,sectionFolderKey('script',scriptSection(type)),'script','default.py',d.source)}} readOnly={readOnly} state={explorerState} active={active} disabled={locked || busy} onChange={(next) => setState((previous) => normalizeGroups({ ...previous, documents: next.documents, folders: next.folders }))} onSelect={(key) => selectDocument(key)} onNew={newFlow} onImport={requestImport} onImportFiles={(files, folderId, packageId) => { void importFiles(files, { folderId, package: packageId }) }} onExport={exportFlow} onDownload={downloadDraft} onRemove={removeResources} onProperties={setPropertiesKey} onViewSource={viewProgressSource} onOpenEntityInGame={key=>{void openEntityInGame(key)}} onOpenItemInGame={(key) => { void openItemInGame(key) }} onNotice={setNotice} />
+    <PanelDock storageKey={GAMEPLAY_DOCK_KEY} panels={dockPanels}>
       <main className="flow-main">
         {active && client && presencePath && <FilePresenceBar key={`${client.snapshot.session.id}:${presencePath}`} client={client} path={presencePath} mode="optimistic" label={doc?.name} />}
         {state.split ? (
@@ -1462,7 +1482,7 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
           <div className="flow-empty"><span className="flow-empty-icon">◇</span><h2>设计一个任务</h2><p>在左侧「任务」分类中新建或导入 .quest（单进度表单或多进度树图）；「脚本」可新建 .py；「导航器」可新建 .nav 导航点；「物品库」可新建 .item 或拖入 .itemstack；「礼包」可新建 .kit。打开的文档会出现在上方页条；把页拖到编辑区的左右上下边缘即可拆分对照。</p></div>
         )}
       </main>
-    </div>
+    </PanelDock>
     <StatusBarSlots
       active={active}
       left={

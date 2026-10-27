@@ -387,7 +387,9 @@ export async function refreshServiceProject(binding: BoundProject, current: Work
   const result = merged.filter(s => kept.some(k => k.id === s.id) || !pkg.scripts.some(p => p.id === s.id && p.content === s.content))
   if (staged.length || assetChanges || result.length !== pkg.scripts.length) client.remoteEpoch++
   const packages = latest.packages.map(p => p.id === pkg.id ? { ...p, explorer:mergedExplorer, scripts: result, assets: latestPkg.assets === pkg.assets ? assets : latestPkg.assets } : p)
-  const activeScriptId = result.some(s => s.id === latest.activeScriptId) ? latest.activeScriptId : result[0]?.id ?? null
+  const activeScriptId = latest.activeScriptId === null
+    ? null
+    : result.some(s => s.id === latest.activeScriptId) ? latest.activeScriptId : result[0]?.id ?? null
   return { ...latest, packages, activeScriptId }
 }
 export async function openProjectFromPicker(): Promise<LoadProjectResult> { return loadServiceProject(await pickProjectDirectory()) }

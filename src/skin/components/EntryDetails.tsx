@@ -3,7 +3,7 @@
  * 字段变更即保存，不再另开「编辑资料」对话框。
  */
 
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react'
 import type {
   CollectedTag,
   FolderWithStats,
@@ -17,6 +17,31 @@ import { discardEntrySubmission, entrySubmissionState } from '../local/entrySubm
 import { SkinPreview3D } from './SkinPreview3D.tsx'
 import { TagPicker } from './TagPicker.tsx'
 import styles from '../styles/workspace.module.css'
+
+const PREVIEW_HEIGHT_KEY = 'hanshu.skinPreviewHeight'
+const PREVIEW_DEFAULT = 360
+const PREVIEW_MIN = 96
+const PREVIEW_MAX = 720
+const FORM_RESERVE = 168
+
+function readPreviewHeight() {
+  try {
+    const saved = Number(localStorage.getItem(PREVIEW_HEIGHT_KEY))
+    if (Number.isFinite(saved) && saved >= PREVIEW_MIN && saved <= PREVIEW_MAX) return saved
+  } catch {
+    /* keep the built-in preview height */
+  }
+  return PREVIEW_DEFAULT
+}
+
+function writePreviewHeight(value: number | null) {
+  try {
+    if (value == null) localStorage.removeItem(PREVIEW_HEIGHT_KEY)
+    else localStorage.setItem(PREVIEW_HEIGHT_KEY, String(Math.round(value)))
+  } catch {
+    /* private mode keeps the in-memory height */
+  }
+}
 
 export interface EntryDetailsProps {
   client: ProjectClient
@@ -96,6 +121,59 @@ export function EntryDetails({
   const busy = saving || transaction?.phase === 'preparing' || transaction?.phase === 'submitting'
   const unresolved = transaction && ['failed', 'conflict', 'uncertain'].includes(transaction.phase)
   const nameInputRef = useRef<HTMLInputElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const stageRef = useRef<HTMLDivElement>(null)
+  const [previewHeight, setPreviewHeight] = useState(readPreviewHeight)
+  const [panelHeight, setPanelHeight] = useState(0)
+  const previewHeightRef = useRef(previewHeight)
+  previewHeightRef.current = previewHeight
+  const splitDrag = useRef<{ pointerId: number; startY: number; startH: number } | null>(null)
+
+  useEffect(() => {
+    const node = panelRef.current
+    if (!node) return
+    const measure = () => setPanelHeight(node.clientHeight)
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [previewUrl])
+  const previewMax = panelHeight > 0
+    ? Math.max(PREVIEW_MIN, Math.min(PREVIEW_MAX, panelHeight - FORM_RESERVE))
+    : PREVIEW_MAX
+  const previewShown = Math.min(previewHeight, previewMax)
+  const onPreviewSplitDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    event.currentTarget.setPointerCapture(event.pointerId)
+    splitDrag.current = {
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      startH: stageRef.current?.getBoundingClientRect().height || previewHeightRef.current,
+    }
+    document.body.classList.add('is-resizing-y')
+  }
+  const onPreviewSplitMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = splitDrag.current
+    if (!drag || event.pointerId !== drag.pointerId) return
+    const panelH = panelRef.current?.clientHeight ?? 0
+    const max = Math.max(PREVIEW_MIN, Math.min(PREVIEW_MAX, (panelH || PREVIEW_MAX + FORM_RESERVE) - FORM_RESERVE))
+    const next = Math.round(Math.min(max, Math.max(PREVIEW_MIN, drag.startH + event.clientY - drag.startY)))
+    previewHeightRef.current = next
+    setPreviewHeight(next)
+  }
+  const onPreviewSplitUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!splitDrag.current || event.pointerId !== splitDrag.current.pointerId) return
+    splitDrag.current = null
+    document.body.classList.remove('is-resizing-y')
+    writePreviewHeight(previewHeightRef.current)
+  }
+  const resetPreviewHeight = () => {
+    previewHeightRef.current = PREVIEW_DEFAULT
+    setPreviewHeight(PREVIEW_DEFAULT)
+    writePreviewHeight(null)
+  }
   const dirty = entryDraftDirty(state)
 
   useEffect(() => { onDirtyChange?.(entry.entryId, dirty) }, [entry.entryId, dirty, onDirtyChange])
@@ -192,8 +270,8 @@ export function EntryDetails({
   }
 
   return (
-    <div className={styles.detailsPanel} onFocusCapture={onInteract} onPointerDownCapture={onInteract}>
-      <div className={styles.detailsTop}>
+    <div ref={panelRef} className={styles.detailsPanel} onFocusCapture={onInteract} onPointerDownCapture={onInteract}>
+      <div className={`${styles.detailsTop}${previewUrl ? ` ${styles.detailsTopPreview}` : ''}`}>
         <header className={styles.detailsHead}>
           {editingName ? (
             <input
@@ -253,7 +331,7 @@ export function EntryDetails({
         {previewError && <p className={styles.notice}>预览暂时不可用：{previewError}</p>}
 
         {previewUrl && (
-          <div className={styles.previewStage}>
+          <div ref={stageRef} className={`${styles.previewStage} ${styles.previewSized}`} style={{ '--skin-preview-h': `${previewShown}px` } as CSSProperties}>
             <div
               className={styles.previewLayer}
               hidden={viewMode !== 'model'}
@@ -320,6 +398,23 @@ export function EntryDetails({
         )}
       </div>
 
+      {previewUrl && (
+        <div
+          className={styles.detailsSplit}
+          role="separator"
+          aria-orientation="horizontal"
+          aria-valuemin={PREVIEW_MIN}
+          aria-valuemax={PREVIEW_MAX}
+          aria-valuenow={Math.round(previewShown)}
+          aria-label="调整预览高度"
+          title="拖拽调整预览高度，双击恢复默认"
+          onPointerDown={onPreviewSplitDown}
+          onPointerMove={onPreviewSplitMove}
+          onPointerUp={onPreviewSplitUp}
+          onPointerCancel={onPreviewSplitUp}
+          onDoubleClick={resetPreviewHeight}
+        />
+      )}
       <div className={styles.detailsScroll}>
         {(state.remote || state.pending || entryDraftDirty(state) || state.storageError) && (
           <div className={styles.draftStatus} role="status">

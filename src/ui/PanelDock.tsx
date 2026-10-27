@@ -191,6 +191,15 @@ function clampSize(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value))
 }
 
+function dockOrphans(layout: DockLayout) {
+  let changed = false
+  for (const [id, panel] of Object.entries(layout.panels)) {
+    if (panel.placement === "float" || findCell(layout, id)) continue
+    dockToEdge(layout, id, panel.placement, panel.size, "inner")
+    changed = true
+  }
+  return changed
+}
 function readLegacyLayout(specs: readonly DockPanelSpec[]): DockLayout {
   const dock = readEnum("hanshu.explorerDock", ["left", "right", "top", "bottom", "float"] as const, "left")
   const lastEdge = readEnum("hanshu.explorerLastEdge", DOCK_EDGES, dock === "float" ? "left" : dock)
@@ -206,10 +215,9 @@ function readLegacyLayout(specs: readonly DockPanelSpec[]): DockLayout {
     explorer.floatRect = readLegacyFloat()
     if (dock !== "float") dockToEdge(layout, "explorer", dock, explorer.size, "outer")
   }
-  for (const id of ["agent", "roles", "studio"] as const) {
-    const panel = layout.panels[id]
-    if (panel && panel.placement !== "float") dockToEdge(layout, id, panel.placement, panel.size, "inner")
-  }
+  // Explorer is special-cased above. Every other non-float panel, including skin library/details,
+  // still has to enter a lane or its band stays hidden.
+  dockOrphans(layout)
   return layout
 }
 
@@ -840,10 +848,13 @@ export function PanelDock({
 
   useLayoutEffect(() => {
     const merged = mergeSpecs(layoutRef.current, panels)
-    if (merged !== layoutRef.current) {
-      layoutRef.current = merged
-      setLayout(copyLayout(merged))
-      writeLayout(storageKey, merged)
+    const base = merged === layoutRef.current ? layoutRef.current : merged
+    const healed = !sessionRef.current && dockOrphans(base)
+    if (healed || base !== layoutRef.current) {
+      const stored = copyLayout(base)
+      layoutRef.current = stored
+      setLayout(stored)
+      writeLayout(storageKey, stored)
     }
     const session = sessionRef.current
     if (session?.kind === "title" && session.moved) {

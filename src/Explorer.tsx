@@ -5,6 +5,8 @@ import { createPortal } from 'react-dom'
 import type { AssetFile, ScriptPackage, Workspace } from './workspace'
 import { isVoiceMapFile } from './workspace'
 import { packageLocationLabel, packageLocationTitle } from './project/projectLabel'
+import { openProjectUi } from './project/projectUi'
+import { chooseDialog } from './ui/dialogs'
 import {
   currentDrag,
   droppedFiles,
@@ -25,6 +27,7 @@ import {
 import { ExplorerIcon, fileIconKind, sourceIconKind } from './explorerIcons'
 import {
   findNewFileType,
+  NEW_FILE_TYPES,
   newFileName,
   newFileTypesByGroup,
   type NewFileType,
@@ -34,6 +37,7 @@ import { shouldHoldWheel } from './newFileMenuWheel'
 import {
   WORKSPACE_GROUP_ORDER,
   groupDirPrefix,
+  isManualFileName,
   sourceKindOf,
 } from './workspace'
 import './explorer-newfile.css'
@@ -135,6 +139,10 @@ type NewFileWiring = {
    * 包行的 `+` 与头部的 `+剧` 走同一条，两处行为不会两样。
    */
   toggleMenu: (packageId: string, anchor: HTMLElement | null) => void
+  /** 右键「新建某某」：跳过类型菜单，直接进入命名行 */
+  startDraft: (packageId: string, typeId: NewFileTypeId) => void
+  /** 右键「新建文件…」：在点击处打开类型选择器 */
+  openTypeMenu: (packageId: string, x: number, y: number) => void
   changeBase: (base: string) => void
   submit: () => void
   cancel: () => void
@@ -233,8 +241,16 @@ export function Explorer({
      * 点 B 包的 `+` 会被当成"收起 A 包的菜单"，那一下就没反应。
      */
     anchor: HTMLElement | null
+    /** `beside`：和「+剧」并排、顶边对齐。`below`：包行 `+` / 右键，从锚点下方展开。 */
+    place: 'below' | 'beside'
+    anchorBox: { left: number; top: number; right: number; bottom: number } | null
   } | null>(null)
   const [draft, setDraft] = useState<NewFileDraft | null>(null)
+  const [contextMenu, setContextMenu] = useState<{
+    x: number
+    y: number
+    items: ExplorerContextItem[]
+  } | null>(null)
   const headerButtonRef = useRef<HTMLButtonElement>(null)
   /** 已处理过的请求号。挂载时那一次（0）不算请求，否则一进工作区菜单就自己弹出来 */
   const handledRequestRef = useRef(newFileMenuRequest)
@@ -250,17 +266,48 @@ export function Explorer({
     return target?.id ?? null
   }
 
+  const promptingProjectRef = useRef(false)
+  /** 没有工程时不能新建文件：提示去创建或导入，而不是把点击吃掉。 */
+  const promptCreateOrImport = () => {
+    if (promptingProjectRef.current) return
+    promptingProjectRef.current = true
+    void chooseDialog({
+      title: '提示',
+      message: '工程为空，请先创建或导入工程。',
+      cancelLabel: '取消',
+      options: [
+        { id: 'create', label: '创建工程' },
+        { id: 'import', label: '导入工程' },
+      ],
+    }).then((choice) => {
+      if (choice === 'create') openProjectUi('create')
+      else if (choice === 'import') openProjectUi('open')
+    }).finally(() => {
+      promptingProjectRef.current = false
+    })
+  }
+
   /**
    * 打开类型选择器。坐标用视口坐标：菜单会挂到 `document.body`，盖过相邻栏目。
    * 挂在资源管理器里会被栏目的 `overflow` 裁掉，即使写了 `position: fixed`。
    */
-  const openMenu = (packageId: string, anchor: HTMLElement | null) => {
+  const openMenu = (
+    packageId: string,
+    anchor: HTMLElement | null,
+    place: 'below' | 'beside' = 'below',
+  ) => {
     const rect = anchor?.getBoundingClientRect()
+    const gap = 4
     setMenu({
       packageId,
-      x: rect ? rect.left : 8,
-      y: rect ? rect.bottom + 2 : 8,
+      // 「+剧」从按钮右侧并排打开，顶边与按钮对齐；其余入口仍从锚点下方展开。
+      x: rect ? (place === 'beside' ? rect.right + gap : rect.left) : 8,
+      y: rect ? (place === 'beside' ? rect.top : rect.bottom + 2) : 8,
       anchor,
+      place,
+      anchorBox: rect
+        ? { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom }
+        : null,
     })
   }
 
@@ -270,12 +317,37 @@ export function Explorer({
    * 菜单自己的"点外部关闭"会跳过 `[data-newfile-trigger]`（见 NewFileTypeMenu），
    * 所以开关只能由触发器自己管 —— 两边都管就会各关一次又各开一次，表现为"点一下没反应"。
    */
-  const toggleMenu = (packageId: string, anchor: HTMLElement | null) => {
+  const toggleMenu = (
+    packageId: string,
+    anchor: HTMLElement | null,
+    place: 'below' | 'beside' = 'below',
+  ) => {
     if (menu && menu.anchor === anchor) {
       setMenu(null)
       return
     }
-    openMenu(packageId, anchor)
+    setContextMenu(null)
+    openMenu(packageId, anchor, place)
+  }
+
+  const showContext = (event: React.MouseEvent, items: ExplorerContextItem[]) => {
+    event.preventDefault()
+    event.stopPropagation()
+    setMenu(null)
+    setContextMenu({ x: event.clientX, y: event.clientY, items })
+  }
+
+  const startDraft = (packageId: string, typeId: NewFileTypeId) => {
+    const type = findNewFileType(typeId)
+    if (!type) return
+    setMenu(null)
+    setContextMenu(null)
+    setDraft({ packageId, typeId, base: type.defaultBase, error: '' })
+  }
+
+  const openTypeMenuAt = (packageId: string, x: number, y: number) => {
+    setContextMenu(null)
+    setMenu({ packageId, x, y, anchor: null, place: 'below', anchorBox: null })
   }
 
   useEffect(() => {
@@ -286,7 +358,8 @@ export function Explorer({
     // 这一下 setState 是"响应外部请求"（应用菜单），不是从 props 派生渲染值 ——
     // 与 `FlowExplorer` 里那几处同一性质，所以同样按既定写法放行
     // eslint-disable-next-line react/set-state-in-effect
-    if (packageId) openMenu(packageId, headerButtonRef.current)
+    if (packageId) openMenu(packageId, headerButtonRef.current, 'beside')
+    else promptCreateOrImport()
     // 目标包只在这一刻取一次：之后活动文件变了也不该把已经打开的菜单挪走
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [newFileMenuRequest])
@@ -344,7 +417,11 @@ export function Explorer({
               // 菜单的"点外部关闭"会跳过触发器（见 NewFileTypeMenu），
               // 所以开关只能由触发器自己管，否则两个处理器会各关一次又各开一次
               const packageId = activePackageId()
-              if (packageId) toggleMenu(packageId, event.currentTarget)
+              if (!packageId) {
+                promptCreateOrImport()
+                return
+              }
+              toggleMenu(packageId, event.currentTarget, 'beside')
             }}
           >
             +剧
@@ -355,7 +432,32 @@ export function Explorer({
         </div>
       </div>
 
-      <div className="explorer-tree">
+      <div
+        className="explorer-tree"
+        onContextMenu={(event) => {
+          if (event.defaultPrevented) return
+          const x = event.clientX
+          const y = event.clientY
+          const packageId = activePackageId()
+          showContext(event, [
+            {
+              id: 'new-file',
+              label: '新建文件…',
+              disabled: !packageId,
+              hint: packageId ? '先选类型，再填名字' : '请先新建包',
+              onSelect: () => {
+                if (packageId) openTypeMenuAt(packageId, x, y)
+              },
+            },
+            {
+              id: 'new-package',
+              label: '新建包',
+              separatorBefore: true,
+              onSelect: onNewPackage,
+            },
+          ])
+        }}
+      >
         {workspace.packages.map((pkg) => (
           <PackageNode
             key={pkg.id}
@@ -374,6 +476,8 @@ export function Explorer({
             newFile={{
               draft: draft?.packageId === pkg.id ? draft : null,
               toggleMenu,
+              startDraft,
+              openTypeMenu: openTypeMenuAt,
               changeBase,
               submit: submitDraft,
               cancel: () => setDraft(null),
@@ -392,11 +496,12 @@ export function Explorer({
             onImportAssets={onImportAssets}
             onGeneratePlaceholderVoice={onGeneratePlaceholderVoice}
             onDropIntoFolder={onDropIntoFolder}
+            showContext={showContext}
           />
         ))}
         {workspace.packages.length === 0 && (
-          <div className="explorer-empty" title="暂无资源，点击 +包 开始">
-            暂无资源，点击 +包 开始
+          <div className="explorer-empty" title="暂无资源，右键或点 +包 开始">
+            暂无资源，右键或点 +包 开始
           </div>
         )}
       </div>
@@ -405,6 +510,8 @@ export function Explorer({
         <NewFileTypeMenu
           x={menu.x}
           y={menu.y}
+          place={menu.place}
+          anchorBox={menu.anchorBox}
           onClose={() => setMenu(null)}
           onPick={(type) => {
             setMenu(null)
@@ -415,6 +522,14 @@ export function Explorer({
               error: '',
             })
           }}
+        />
+      )}
+      {contextMenu && (
+        <ExplorerContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={contextMenu.items}
+          onClose={() => setContextMenu(null)}
         />
       )}
     </aside>
@@ -432,11 +547,16 @@ export function Explorer({
 function NewFileTypeMenu({
   x,
   y,
+  place = 'below',
+  anchorBox = null,
   onPick,
   onClose,
 }: {
   x: number
   y: number
+  /** `beside` 与触发按钮并排；`below` 从锚点下方展开。 */
+  place?: 'below' | 'beside'
+  anchorBox?: { left: number; top: number; right: number; bottom: number } | null
   onPick: (type: NewFileType) => void
   onClose: () => void
 }) {
@@ -454,16 +574,28 @@ function NewFileTypeMenu({
     [],
   )
 
-  // 贴到视口边缘时翻回另一侧（与资源树右键菜单同一套规则）
+  // 「+剧」并排：顶边对齐按钮，右侧放得下就贴在右边，否则翻到左边。
+  // 其余入口从锚点下方展开。高度约 600 时不再把整张菜单抬到视口顶上。
   useLayoutEffect(() => {
     const el = ref.current
     if (!el) return
     const rect = el.getBoundingClientRect()
+    const margin = 8
+    const gap = 4
+    let nextX = x
+    let nextY = y
+    if (place === 'beside' && anchorBox) {
+      const rightX = anchorBox.right + gap
+      const leftX = anchorBox.left - rect.width - gap
+      const fitsRight = rightX + rect.width <= window.innerWidth - margin
+      nextX = fitsRight || leftX < margin ? rightX : leftX
+      nextY = anchorBox.top
+    }
     setPos({
-      x: Math.max(8, Math.min(x, window.innerWidth - rect.width - 8)),
-      y: Math.max(8, Math.min(y, window.innerHeight - rect.height - 8)),
+      x: Math.max(margin, Math.min(nextX, window.innerWidth - rect.width - margin)),
+      y: Math.max(margin, Math.min(nextY, window.innerHeight - rect.height - margin)),
     })
-  }, [x, y])
+  }, [x, y, place, anchorBox])
 
   // 打开就把焦点交给当前项：键盘用户不必先 Tab 一遍，↑/↓ 才有落点
   useEffect(() => {
@@ -694,6 +826,155 @@ function NewFileRow({
   )
 }
 
+
+export type ExplorerContextItem = {
+  id: string
+  label: string
+  hint?: string
+  danger?: boolean
+  disabled?: boolean
+  separatorBefore?: boolean
+  onSelect: () => void
+}
+
+function typesInDirectory(directory: string): NewFileType[] {
+  return NEW_FILE_TYPES.filter((type) => {
+    const path = sourceRelativePath(newFileName(type, 'pending'), type.srcKind)
+    const slash = path.lastIndexOf('/')
+    return slash >= 0 && path.slice(0, slash) === directory
+  })
+}
+
+function typesInKind(kind: string): NewFileType[] {
+  return NEW_FILE_TYPES.filter(
+    (type) => sourceKindOf(newFileName(type, 'pending'), type.srcKind) === kind,
+  )
+}
+
+function newTypeItems(
+  types: NewFileType[],
+  start: (type: NewFileType) => void,
+): ExplorerContextItem[] {
+  if (types.length === 0) {
+    return [
+      {
+        id: 'new-none',
+        label: '此位置不能新建',
+        disabled: true,
+        onSelect: () => {},
+      },
+    ]
+  }
+  return types.map((type) => ({
+    id: `new-${type.id}`,
+    label: `新建${type.label}`,
+    hint: type.hint,
+    onSelect: () => start(type),
+  }))
+}
+
+function withAnyType(
+  items: ExplorerContextItem[],
+  openAll: () => void,
+): ExplorerContextItem[] {
+  return [
+    ...items,
+    {
+      id: 'new-any',
+      label: '新建文件…',
+      hint: '全部类型',
+      separatorBefore: items.length > 0,
+      onSelect: openAll,
+    },
+  ]
+}
+
+/**
+ * 剧本资源树的右键菜单。
+ *
+ * 游戏性 / 皮肤库都是按落点给「新建、打开、展开、删除」。
+ * 这里只接已有回调，不另造一套写入。菜单挂到 document.body，
+ * 避开栏目的 overflow 裁切。
+ */
+export function ExplorerContextMenu({
+  x,
+  y,
+  items,
+  onClose,
+}: {
+  x: number
+  y: number
+  items: ExplorerContextItem[]
+  onClose: () => void
+}) {
+  const ref = useRef<HTMLUListElement>(null)
+
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    const gap = 8
+    el.style.left = `${Math.max(gap, Math.min(x, window.innerWidth - rect.width - gap))}px`
+    el.style.top = `${Math.max(gap, Math.min(y, window.innerHeight - rect.height - gap))}px`
+  }, [x, y, items])
+
+  useEffect(() => {
+    const close = () => onClose()
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') close()
+    }
+    const onContextScroll = (event: Event) => {
+      const el = ref.current
+      if (el && event.target instanceof Node && el.contains(event.target)) return
+      close()
+    }
+    window.addEventListener('mousedown', close)
+    window.addEventListener('scroll', onContextScroll, true)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('mousedown', close)
+      window.removeEventListener('scroll', onContextScroll, true)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [onClose])
+
+  return createPortal(
+    <ul
+      ref={ref}
+      className="explorer-context-menu"
+      style={{ left: x, top: y }}
+      role="menu"
+      aria-label="资源操作"
+      onMouseDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+      onContextMenu={(event) => event.preventDefault()}
+    >
+      {items.map((item) => (
+        <li key={item.id}>
+          {item.separatorBefore && (
+            <div className="explorer-context-sep" role="separator" />
+          )}
+          <button
+            type="button"
+            role="menuitem"
+            disabled={item.disabled}
+            title={item.hint}
+            className={item.danger ? 'is-danger' : undefined}
+            onClick={() => {
+              if (item.disabled) return
+              onClose()
+              item.onSelect()
+            }}
+          >
+            {item.label}
+          </button>
+        </li>
+      ))}
+    </ul>,
+    document.body,
+  )
+}
+
 function PackageNode({
   pkg,
   activeScriptId,
@@ -715,6 +996,7 @@ function PackageNode({
   onImportAssets,
   onGeneratePlaceholderVoice,
   onDropIntoFolder,
+  showContext,
 }: {
   pkg: ScriptPackage
   activeScriptId: string | null
@@ -747,31 +1029,20 @@ function PackageNode({
     targetDir: string,
     source: DragSource,
   ) => void
+  showContext: (event: React.MouseEvent, items: ExplorerContextItem[]) => void
 }) {
   const [collapsedDirs, setCollapsedDirs] = useState<Record<string, boolean>>(
     {},
   )
-  const [ctxMenu, setCtxMenu] = useState<{
-    x: number
-    y: number
-    scriptId: string
-  } | null>(null)
-
-  useEffect(() => {
-    if (!ctxMenu) return
-    const close = () => setCtxMenu(null)
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close()
-    }
-    window.addEventListener('click', close)
-    window.addEventListener('scroll', close, true)
-    window.addEventListener('keydown', onKey)
-    return () => {
-      window.removeEventListener('click', close)
-      window.removeEventListener('scroll', close, true)
-      window.removeEventListener('keydown', onKey)
-    }
-  }, [ctxMenu])
+  const importInputRef = useRef<HTMLInputElement>(null)
+  const importDirRef = useRef('assets')
+  const requestImport = (dir: string) => {
+    importDirRef.current = dir
+    const input = importInputRef.current
+    if (!input) return
+    input.value = ''
+    input.click()
+  }
 
   const tree = useMemo(
     () => buildAssetTree(pkg.assets, pkg.assetFolders ?? []),
@@ -833,6 +1104,66 @@ function PackageNode({
     return { byKind, root, unknownByKind }
   }, [pkg.scripts])
 
+
+  const openPackageMenu = (event: React.MouseEvent) => {
+    const x = event.clientX
+    const y = event.clientY
+    showContext(event, [
+      {
+        id: 'new-file',
+        label: '新建文件…',
+        hint: '先选类型，再填名字',
+        onSelect: () => newFile.openTypeMenu(pkg.id, x, y),
+      },
+      {
+        id: 'import',
+        label: '导入资源…',
+        hint: '导入到 assets',
+        onSelect: () => requestImport('assets'),
+      },
+      {
+        id: 'toggle',
+        label: pkg.collapsed ? '展开' : '折叠',
+        onSelect: () => onTogglePackage(pkg.id),
+      },
+      {
+        id: 'rename',
+        label: '重命名',
+        separatorBefore: true,
+        onSelect: () => onRenamePackage(pkg.id),
+      },
+      {
+        id: 'delete',
+        label: '删除',
+        danger: true,
+        onSelect: () => onDeletePackage(pkg.id),
+      },
+    ])
+  }
+
+  const openKindMenu = (event: React.MouseEvent, kind: string) => {
+    const x = event.clientX
+    const y = event.clientY
+    showContext(
+      event,
+      withAnyType(newTypeItems(typesInKind(kind), (type) => newFile.startDraft(pkg.id, type.id)), () =>
+        newFile.openTypeMenu(pkg.id, x, y),
+      ),
+    )
+  }
+
+  const openDirectoryMenu = (event: React.MouseEvent, directory: string) => {
+    const x = event.clientX
+    const y = event.clientY
+    showContext(
+      event,
+      withAnyType(
+        newTypeItems(typesInDirectory(directory), (type) => newFile.startDraft(pkg.id, type.id)),
+        () => newFile.openTypeMenu(pkg.id, x, y),
+      ),
+    )
+  }
+
   const renderScriptRow = (script: (typeof pkg.scripts)[number]) => (
     <li key={script.id}>
       <div
@@ -849,19 +1180,41 @@ function PackageNode({
           })
         }}
         onDragEnd={() => endDrag()}
-        onContextMenu={
-          isVoiceMapFile(script.name)
-            ? (e) => {
-                e.preventDefault()
-                e.stopPropagation()
-                setCtxMenu({
-                  x: e.clientX,
-                  y: e.clientY,
-                  scriptId: script.id,
-                })
-              }
-            : undefined
-        }
+        onContextMenu={(event) => {
+          const manual = isManualFileName(script.name)
+          const voice = isVoiceMapFile(script.name)
+          showContext(event, [
+            {
+              id: 'open',
+              label: '打开',
+              hint: '在编辑器中显示',
+              onSelect: () => onOpenScript(script.id),
+            },
+            {
+              id: 'rename',
+              label: '重命名',
+              disabled: !manual,
+              hint: manual ? '双击也可以重命名' : '语言表和配音映射跟着剧本名走，不能单独改名',
+              onSelect: () => onRenameScript(script.id),
+            },
+            ...(voice
+              ? [
+                  {
+                    id: 'ogg',
+                    label: '生成空白 ogg',
+                    onSelect: () => onGeneratePlaceholderVoice(script.id),
+                  },
+                ]
+              : []),
+            {
+              id: 'delete',
+              label: '删除',
+              danger: true,
+              separatorBefore: true,
+              onSelect: () => onDeleteScript(script.id),
+            },
+          ])
+        }}
       >
         <button
           type="button"
@@ -869,7 +1222,7 @@ function PackageNode({
           onClick={() => onOpenScript(script.id)}
           onDoubleClick={() => onRenameScript(script.id)}
           title={
-            `${sourcePathOf(script)}\n${isVoiceMapFile(script.name) ? '右键：生成空白 ogg' : '双击重命名'}`
+            `${sourcePathOf(script)}\n${isVoiceMapFile(script.name) ? '右键：打开、生成空白 ogg 或删除' : '右键：打开、重命名或删除'}`
           }
         >
           <ExplorerIcon kind={sourceIconKind(script)} />
@@ -930,27 +1283,66 @@ function PackageNode({
     items: Array<(typeof pkg.scripts)[number]>,
     pendingRow: ReactNode,
   ) => (
-    <li key={`kind-${kind}`} className="explorer-kind">
-      <div className="explorer-kind-row">
+    <li
+      key={`kind-${kind}`}
+      className="explorer-kind"
+      onContextMenu={(event) => openKindMenu(event, kind)}
+    >
+      <div className="explorer-kind-row" title={`${groupDirPrefix(kind)}\n右键可新建`}>
         <ExplorerIcon kind="group" />
-        <span className="explorer-name" title={groupDirPrefix(kind)}>
+        <span className="explorer-name">
           {groupDirPrefix(kind)}
         </span>
       </div>
       <ul className="explorer-files nested">
         {(() => {
-          const prefix=groupDirPrefix(kind)
-          const pendingDirectory=pendingType?sourceRelativePath(newFileName(pendingType,'pending'),pendingType.srcKind).split('/').slice(0,-1).join('/'):null
-          const directories=[...new Set([...items.map(file=>sourcePathOf(file).split('/').slice(0,-1).join('/')), ...(pendingRow&&pendingDirectory?[pendingDirectory]:[])])]
-          return directories.map(directory=>{
-            const children=items.filter(file=>sourcePathOf(file).startsWith(`${directory}/`)&&sourcePathOf(file).split('/').slice(0,-1).join('/')===directory)
-            const pending=directory===pendingDirectory?pendingRow:null
-            if(directory===prefix)return <li key={directory}><ul className="explorer-files">{children.map(renderScriptRow)}{pending}</ul></li>
-            const label=kind==='script'?SCRIPT_TYPE_NAMES[scriptType(directory.split('/').at(-1))]:directory.slice(prefix.length+1)
-            return <li key={directory} className="explorer-kind">
-              <div className="explorer-kind-row" title={directory}><ExplorerIcon kind="group"/><span className="explorer-name">{label}</span></div>
-              <ul className="explorer-files nested">{children.map(renderScriptRow)}{pending}</ul>
-            </li>
+          const prefix = groupDirPrefix(kind)
+          const pendingDirectory = pendingType
+            ? sourceRelativePath(newFileName(pendingType, 'pending'), pendingType.srcKind)
+                .split('/')
+                .slice(0, -1)
+                .join('/')
+            : null
+          const directories = [
+            ...new Set([
+              ...items.map((file) => sourcePathOf(file).split('/').slice(0, -1).join('/')),
+              ...(pendingRow && pendingDirectory ? [pendingDirectory] : []),
+            ]),
+          ]
+          return directories.map((directory) => {
+            const children = items.filter(
+              (file) =>
+                sourcePathOf(file).startsWith(`${directory}/`) &&
+                sourcePathOf(file).split('/').slice(0, -1).join('/') === directory,
+            )
+            const pending = directory === pendingDirectory ? pendingRow : null
+            const openHere = (event: React.MouseEvent) => openDirectoryMenu(event, directory)
+            if (directory === prefix) {
+              return (
+                <li key={directory} onContextMenu={openHere}>
+                  <ul className="explorer-files">
+                    {children.map(renderScriptRow)}
+                    {pending}
+                  </ul>
+                </li>
+              )
+            }
+            const label =
+              kind === 'script'
+                ? SCRIPT_TYPE_NAMES[scriptType(directory.split('/').at(-1))]
+                : directory.slice(prefix.length + 1)
+            return (
+              <li key={directory} className="explorer-kind" onContextMenu={openHere}>
+                <div className="explorer-kind-row" title={`${directory}\n右键可新建`}>
+                  <ExplorerIcon kind="group" />
+                  <span className="explorer-name">{label}</span>
+                </div>
+                <ul className="explorer-files nested">
+                  {children.map(renderScriptRow)}
+                  {pending}
+                </ul>
+              </li>
+            )
           })
         })()}
       </ul>
@@ -982,8 +1374,9 @@ function PackageNode({
     <div
       className={`explorer-pkg${pkgDrop.active ? ' is-drop-target' : ''}`}
       {...pkgDrop.handlers}
+      onContextMenu={openPackageMenu}
     >
-      <div className="explorer-row explorer-pkg-row">
+      <div className="explorer-row explorer-pkg-row" onContextMenu={openPackageMenu}>
         <button
           type="button"
           className="explorer-twist"
@@ -1036,37 +1429,11 @@ function PackageNode({
             })}
             {grouped.root.map(renderScriptRow)}
             {pkg.scripts.length === 0 && !pendingType && (
-              <li className="explorer-empty nested" title="空包">
-                空包
+              <li className="explorer-empty nested" title="空包，右键可新建">
+                空包，右键可新建
               </li>
             )}
           </ul>
-
-          {ctxMenu &&
-            createPortal(
-              <ul
-                className="explorer-context-menu"
-                style={{ left: ctxMenu.x, top: ctxMenu.y }}
-                role="menu"
-                onClick={(e) => e.stopPropagation()}
-                onContextMenu={(e) => e.preventDefault()}
-              >
-                <li>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    onClick={() => {
-                      const id = ctxMenu.scriptId
-                      setCtxMenu(null)
-                      onGeneratePlaceholderVoice(id)
-                    }}
-                  >
-                    生成空白 ogg
-                  </button>
-                </li>
-              </ul>,
-              document.body,
-            )}
 
           <AssetFolderBlock
             pkgId={pkg.id}
@@ -1083,6 +1450,8 @@ function PackageNode({
             onDeleteAssetFolder={onDeleteAssetFolder}
             onImportAssets={onImportAssets}
             onDropIntoFolder={onDropIntoFolder}
+            onRequestImport={requestImport}
+            showContext={showContext}
           />
         </>
       )}
@@ -1098,6 +1467,17 @@ function PackageNode({
           {renderKindGroup(pendingKind, [], newFileRow)}
         </ul>
       )}
+      <input
+        ref={importInputRef}
+        type="file"
+        multiple
+        hidden
+        onChange={(event) => {
+          const files = event.target.files
+          if (files?.length) onImportAssets(pkg.id, files, importDirRef.current)
+          event.target.value = ''
+        }}
+      />
     </div>
   )
 }
@@ -1117,6 +1497,8 @@ function AssetFolderBlock({
   onDeleteAssetFolder,
   onImportAssets,
   onDropIntoFolder,
+  onRequestImport,
+  showContext,
 }: {
   pkgId: string
   dir: AssetTreeDir
@@ -1140,6 +1522,8 @@ function AssetFolderBlock({
     targetDir: string,
     source: DragSource,
   ) => void
+  onRequestImport: (dir: string) => void
+  showContext: (event: React.MouseEvent, items: ExplorerContextItem[]) => void
 }) {
   const isRoot = dir.path === 'assets'
   const collapsed = isRoot ? rootCollapsed : isDirCollapsed(dir.path)
@@ -1149,11 +1533,45 @@ function AssetFolderBlock({
     onPayload: (source) => onDropIntoFolder(pkgId, dir.path, source),
   })
 
+  const openFolderMenu = (event: React.MouseEvent) => {
+    showContext(event, [
+      {
+        id: 'toggle',
+        label: collapsed ? '展开' : '折叠',
+        onSelect: () => (isRoot ? onToggleRoot() : onToggleDir(dir.path)),
+      },
+      {
+        id: 'new-folder',
+        label: '新建子文件夹',
+        separatorBefore: true,
+        onSelect: () => onNewAssetFolder(pkgId, dir.path),
+      },
+      {
+        id: 'import',
+        label: '导入到这里',
+        hint: '选择文件导入到此文件夹',
+        onSelect: () => onRequestImport(dir.path),
+      },
+      ...(isRoot
+        ? []
+        : [
+            {
+              id: 'delete',
+              label: '删除',
+              danger: true,
+              separatorBefore: true,
+              onSelect: () => onDeleteAssetFolder(pkgId, dir.path),
+            },
+          ]),
+    ])
+  }
+
   return (
     <div
       className={`explorer-assets${dirDrop.active ? ' is-drop-target' : ''}`}
       style={{ paddingLeft: depth === 0 ? undefined : 8 }}
       {...dirDrop.handlers}
+      onContextMenu={openFolderMenu}
     >
       <div
         className={`explorer-row explorer-assets-row${
@@ -1172,7 +1590,7 @@ function AssetFolderBlock({
           type="button"
           className="explorer-label"
           onClick={() => (isRoot ? onToggleRoot() : onToggleDir(dir.path))}
-          title={`${dir.path} — 拖入文件到此文件夹`}
+          title={`${dir.path} — 右键可展开、新建、导入${isRoot ? '' : '或删除'}`}
         >
           <ExplorerIcon kind="folder" />
           <span className="explorer-name">{dir.name}</span>
@@ -1236,6 +1654,8 @@ function AssetFolderBlock({
                   onDeleteAssetFolder={onDeleteAssetFolder}
                   onImportAssets={onImportAssets}
                   onDropIntoFolder={onDropIntoFolder}
+                  onRequestImport={onRequestImport}
+                  showContext={showContext}
                 />
               </li>
             ) : (
@@ -1246,12 +1666,13 @@ function AssetFolderBlock({
                 active={node.asset.id === activeAssetId}
                 onOpen={() => onOpenAsset(node.asset.id)}
                 onDelete={() => onDeleteAsset(node.asset.id)}
+                showContext={showContext}
               />
             ),
           )}
           {dir.children.length === 0 && (
-            <li className="explorer-empty nested" title="空文件夹 · 拖入或 +夹">
-              空文件夹 · 拖入或 +夹
+            <li className="explorer-empty nested" title="空文件夹，右键可新建">
+              空文件夹，右键可新建
             </li>
           )}
         </ul>
@@ -1271,12 +1692,14 @@ function AssetRow({
   active,
   onOpen,
   onDelete,
+  showContext,
 }: {
   packageId: string
   asset: AssetFile
   active: boolean
   onOpen: () => void
   onDelete: () => void
+  showContext: (event: React.MouseEvent, items: ExplorerContextItem[]) => void
 }) {
   return (
     <li>
@@ -1285,6 +1708,23 @@ function AssetRow({
           active ? ' active' : ''
         }`}
         draggable
+        onContextMenu={(event) => {
+          showContext(event, [
+            {
+              id: 'open',
+              label: '打开',
+              hint: '在编辑器中显示',
+              onSelect: onOpen,
+            },
+            {
+              id: 'delete',
+              label: '删除',
+              danger: true,
+              separatorBefore: true,
+              onSelect: onDelete,
+            },
+          ])
+        }}
         onDragStart={(e) => {
           writeDragPayload(e.dataTransfer, {
             kind: 'asset',
@@ -1299,7 +1739,7 @@ function AssetRow({
           type="button"
           className="explorer-label"
           onClick={onOpen}
-          title={asset.path}
+          title={`${asset.path}\n右键：打开或删除`}
         >
           <ExplorerIcon kind={fileIconKind(asset.path)} />
           <span className="explorer-name">{assetFileName(asset.path)}</span>

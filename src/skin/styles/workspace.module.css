@@ -1585,6 +1585,38 @@
   border-top: 1px solid var(--skin-edge);
   box-shadow: none;
 }
+.detailsTopPreview {
+  padding-bottom: 0;
+}
+.detailsSplit {
+  flex: none;
+  height: 6px;
+  margin: 0;
+  cursor: row-resize;
+  position: relative;
+  z-index: 2;
+  touch-action: none;
+}
+.detailsSplit::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 2px;
+  height: 1px;
+  background: var(--skin-edge);
+}
+.detailsSplit:hover::before,
+body.is-resizing-y .detailsSplit::before {
+  top: 1px;
+  height: 2px;
+  background: var(--skin-accent);
+}
+.detailsPanel:has(.detailsSplit) .detailsScroll {
+  border-top: 0;
+  margin-top: 0;
+}
+
 .detailsField {
   display: grid;
   grid-template-columns: var(--skin-prop-label) minmax(0, 1fr);
@@ -2224,6 +2256,13 @@
   background: var(--skin-panel-2);
   flex: none;
 }
+.previewSized {
+  aspect-ratio: auto;
+  max-height: none;
+  height: var(--skin-preview-h, 360px);
+  flex: none;
+}
+
 .previewLayer {
   position: absolute;
   inset: 0;
