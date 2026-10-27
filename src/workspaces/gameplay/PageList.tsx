@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent } from 'react'
+import { useMemo, useState, type DragEvent, type MouseEvent } from 'react'
 import { Icon } from './FlowExplorer'
 import { isItemDocument, isItemLibraryTableKey, isKitDocument, isMultiQuestDocument, isNavigationDocument, isScriptDocument, isSimpleQuestDocument } from './library'
 import { NodeContextMenu, type NodeMenuItem } from '../../nodeEditor/ContextMenu'
 import type { FlowDocument } from './storage'
+import { PageTabScroller } from '../../ui/PageTabScroller'
 
 export const PAGE_DRAG_TYPE = 'application/x-hanshu-page'
 
@@ -70,74 +71,8 @@ export function PageList({
   onJoin: () => void
 }) {
   const pinned = useMemo(() => new Set(pinnedKeys), [pinnedKeys])
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const hoverRef = useRef(false)
-  const dragBarRef = useRef(false)
-  const hideTimer = useRef(0)
   const [menu, setMenu] = useState<{ key: string; x: number; y: number } | null>(null)
   const [dropKey, setDropKey] = useState<string | null>(null)
-  const [thumb, setThumb] = useState<{ left: number; width: number } | null>(null)
-  const [barVisible, setBarVisible] = useState(false)
-
-  function syncThumb() {
-    const el = scrollRef.current
-    if (!el) return
-    const { scrollLeft, scrollWidth, clientWidth } = el
-    if (scrollWidth <= clientWidth + 1) {
-      setThumb(null)
-      return
-    }
-    const width = Math.max(24, (clientWidth / scrollWidth) * clientWidth)
-    const max = Math.max(0, clientWidth - width)
-    const left = max === 0 ? 0 : (scrollLeft / (scrollWidth - clientWidth)) * max
-    setThumb({ left, width })
-  }
-
-  function showBar(sticky = false) {
-    syncThumb()
-    setBarVisible(true)
-    window.clearTimeout(hideTimer.current)
-    if (!sticky && !hoverRef.current && !dragBarRef.current) {
-      hideTimer.current = window.setTimeout(() => setBarVisible(false), 900)
-    }
-  }
-
-  useEffect(() => {
-    const el = scrollRef.current
-    if (!el) return
-    syncThumb()
-    const onScroll = () => showBar()
-    // 竖直滚轮也用来横滑页条（和 VS Code 一样），需非 passive 才能 preventDefault
-    const onWheel = (event: WheelEvent) => {
-      const max = el.scrollWidth - el.clientWidth
-      if (max <= 0) return
-      const dominant = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY
-      if (dominant === 0) return
-      const next = Math.min(max, Math.max(0, el.scrollLeft + dominant))
-      if (next === el.scrollLeft) return
-      event.preventDefault()
-      el.scrollLeft = next
-      showBar()
-    }
-    el.addEventListener('scroll', onScroll, { passive: true })
-    el.addEventListener('wheel', onWheel, { passive: false })
-    const observer = new ResizeObserver(() => syncThumb())
-    observer.observe(el)
-    return () => {
-      el.removeEventListener('scroll', onScroll)
-      el.removeEventListener('wheel', onWheel)
-      observer.disconnect()
-      window.clearTimeout(hideTimer.current)
-    }
-  }, [docs.length])
-
-  useEffect(() => {
-    if (!activeKey || !scrollRef.current) return
-    const tab = scrollRef.current.querySelector<HTMLElement>(`[data-page-key="${CSS.escape(activeKey)}"]`)
-    tab?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
-    syncThumb()
-  }, [activeKey, docs.length])
-
   const menuDoc = menu ? docs.find((item) => item.key === menu.key) : null
   const menuKey = menu?.key
   const menuPinned = menuKey ? pinned.has(menuKey) : false
@@ -185,112 +120,73 @@ export function PageList({
   }
 
   return <>
-    <div
-      className={`flow-page-list${focused ? ' is-focused' : ''}`}
-      onMouseEnter={() => { hoverRef.current = true; showBar(true) }}
-      onMouseLeave={() => { hoverRef.current = false; showBar(false) }}
+    <PageTabScroller
+      focused={focused}
+      activeKey={activeKey}
+      itemCount={docs.length}
+      label="已打开的文档"
+      scrollProps={{
+        onDragLeave: (event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropKey(null)
+        },
+      }}
     >
-      <div
-        ref={scrollRef}
-        className="flow-page-list-scroll"
-        role="tablist"
-        aria-label="已打开的文档"
-        onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropKey(null) }}
-      >
-        {docs.map((item) => {
-          const isPinned = pinned.has(item.key)
-          const isActive = item.key === activeKey
-          return <div
-            key={item.key}
-            data-page-key={item.key}
-            className={[
-              'flow-page-tab',
-              isActive ? 'is-active' : '',
-              isPinned ? 'is-pinned' : '',
-              dragKey === item.key ? 'is-dragging' : '',
-              dropKey === item.key && dragKey !== item.key ? 'is-drop' : '',
-            ].filter(Boolean).join(' ')}
-            role="tab"
-            aria-selected={isActive}
-            draggable={!disabled}
-            onPointerDown={(event) => {
-              // 按下即选中，避免拖拽手势吞掉 click
-              if (disabled || event.button !== 0) return
-              if ((event.target as HTMLElement).closest('.flow-page-tab-close')) return
-              onSelect(item.key)
-            }}
-            onDragStart={(event) => {
-              if (disabled) { event.preventDefault(); return }
-              event.dataTransfer.effectAllowed = 'move'
-              event.dataTransfer.setData(PAGE_DRAG_TYPE, item.key)
-              onDragStart(item.key)
-            }}
-            onDragEnd={() => { setDropKey(null); onDragEnd() }}
-            onDragOver={(event) => over(event, item.key)}
-            onDrop={(event) => drop(event, item.key)}
-            onAuxClick={(event) => {
-              if (event.button === 1 && !disabled && !isPinned) {
-                event.preventDefault()
-                onClose(item.key)
-              }
-            }}
-            onContextMenu={(event) => openMenu(event, item.key)}
-          >
-            <button type="button" className="flow-page-tab-name" disabled={disabled} title={item.name} onClick={() => onSelect(item.key)}>
-              <Icon kind={pageIcon(item)} />
-              {isPinned && <PinMark />}
-              <span>{item.name}</span>
-            </button>
-            {!isPinned && (
-              <button type="button" className="flow-page-tab-close" disabled={disabled} aria-label={`关闭 ${item.name}`} onClick={() => onClose(item.key)}>×</button>
-            )}
-          </div>
-        })}
-        <div
-          className={`flow-page-list-rest${dropKey === '' ? ' is-drop' : ''}`}
-          onDragOver={(event) => over(event, null)}
-          onDrop={(event) => drop(event, null)}
-        />
-      </div>
-      {thumb && (
-        <div className={`flow-page-scroll${barVisible ? ' is-visible' : ''}`} aria-hidden="true">
-          <div
-            className="flow-page-scroll-thumb"
-            style={{ left: thumb.left, width: thumb.width }}
-            onPointerDown={(event) => {
-              if (event.button !== 0 || !scrollRef.current) return
+      {docs.map((item) => {
+        const isPinned = pinned.has(item.key)
+        const isActive = item.key === activeKey
+        return <div
+          key={item.key}
+          data-page-key={item.key}
+          className={[
+            'flow-page-tab',
+            isActive ? 'is-active' : '',
+            isPinned ? 'is-pinned' : '',
+            dragKey === item.key ? 'is-dragging' : '',
+            dropKey === item.key && dragKey !== item.key ? 'is-drop' : '',
+          ].filter(Boolean).join(' ')}
+          role="tab"
+          aria-selected={isActive}
+          draggable={!disabled}
+          onPointerDown={(event) => {
+            // 按下即选中，避免拖拽手势吞掉 click
+            if (disabled || event.button !== 0) return
+            if ((event.target as HTMLElement).closest('.flow-page-tab-close')) return
+            onSelect(item.key)
+          }}
+          onDragStart={(event) => {
+            if (disabled) { event.preventDefault(); return }
+            event.dataTransfer.effectAllowed = 'move'
+            event.dataTransfer.setData(PAGE_DRAG_TYPE, item.key)
+            onDragStart(item.key)
+          }}
+          onDragEnd={() => { setDropKey(null); onDragEnd() }}
+          onDragOver={(event) => over(event, item.key)}
+          onDrop={(event) => drop(event, item.key)}
+          onAuxClick={(event) => {
+            if (event.button === 1 && !disabled && !isPinned) {
               event.preventDefault()
-              event.stopPropagation()
-              const el = scrollRef.current
-              const startX = event.clientX
-              const startScroll = el.scrollLeft
-              const range = el.scrollWidth - el.clientWidth
-              const track = el.clientWidth - thumb.width
-              const target = event.currentTarget
-              target.setPointerCapture(event.pointerId)
-              dragBarRef.current = true
-              hoverRef.current = true
-              showBar(true)
-              function onMove(move: PointerEvent) {
-                if (track <= 0) return
-                el.scrollLeft = startScroll + ((move.clientX - startX) / track) * range
-              }
-              function onUp(up: PointerEvent) {
-                dragBarRef.current = false
-                target.releasePointerCapture(up.pointerId)
-                target.removeEventListener('pointermove', onMove)
-                target.removeEventListener('pointerup', onUp)
-                target.removeEventListener('pointercancel', onUp)
-                if (!hoverRef.current) showBar(false)
-              }
-              target.addEventListener('pointermove', onMove)
-              target.addEventListener('pointerup', onUp)
-              target.addEventListener('pointercancel', onUp)
-            }}
-          />
+              onClose(item.key)
+            }
+          }}
+          onContextMenu={(event) => openMenu(event, item.key)}
+        >
+          <button type="button" className="flow-page-tab-name" disabled={disabled} title={item.name} onClick={() => onSelect(item.key)}>
+            <Icon kind={pageIcon(item)} />
+            {isPinned && <PinMark />}
+            <span>{item.name}</span>
+          </button>
+          {!isPinned && (
+            <button type="button" className="flow-page-tab-close" disabled={disabled} aria-label={`关闭 ${item.name}`} onClick={() => onClose(item.key)}>×</button>
+          )}
         </div>
-      )}
-    </div>
+      })}
+      <div
+        className={`flow-page-list-rest${dropKey === '' ? ' is-drop' : ''}`}
+        onDragOver={(event) => over(event, null)}
+        onDrop={(event) => drop(event, null)}
+      />
+    </PageTabScroller>
+
     {menu && menuDoc && !disabled && (
       <NodeContextMenu
         x={menu.x}

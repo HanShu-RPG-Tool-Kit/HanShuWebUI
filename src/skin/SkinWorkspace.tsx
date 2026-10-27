@@ -13,6 +13,8 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { PanelDock, type DockPanelSpec } from '../ui/PanelDock'
+import { DockPanelTitle } from '../ui/DockPanelTitle'
 import {
   getBoundProject,
   subscribeProjectBinding,
@@ -58,6 +60,8 @@ type ThumbType = 'avatar' | 'bust' | 'full' | 'flat'
 
 const HOVER_ENTER_DELAY = 200
 const HOVER_LEAVE_DELAY = 200
+
+const SKIN_DOCK_KEY = 'hanshu.panelDock.skin'
 
 export interface SkinWorkspaceProps {
   /** Workspace visibility: hidden → 3D canvas unmounted, animations paused. */
@@ -1069,11 +1073,21 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
   }
 
   /* ---------- 主界面 ---------- */
-  return (
-    <div className={`skinWorkspace ${styles.workspace}`}>
-      {active && <FilePresenceBar client={project.handle.client} path={SKIN_INDEX_PATH} mode="optimistic" entryId={pinned?.entryId} dirty={pinned ? detailDirty[pinned.entryId] ?? false : false} label={pinned?.name ?? '皮肤库'} />}
-      <main className={`skinWorkspaceLayout ${styles.layout}`}>
+  const dockPanels: DockPanelSpec[] = [
+    {
+      id: 'library',
+      title: '皮肤库',
+      defaultPlacement: 'left',
+      defaultSize: 260,
+      minSize: 180,
+      render: (dock) => (
         <aside className={`skinWorkspaceLeft ${styles.left}`}>
+          <DockPanelTitle
+            title="皮肤库"
+            placement={dock.placement}
+            onTitlePointerDown={dock.onTitlePointerDown}
+            onRedock={dock.onRedock}
+          />
           <div className={styles.leftTop}>
             <input
               type="search"
@@ -1223,7 +1237,77 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
             </div>
           </div>
         </aside>
+      ),
+    },
+    {
+      id: 'details',
+      title: '详情',
+      defaultPlacement: 'right',
+      defaultSize: 380,
+      minSize: 260,
+      maxSize: 840,
+      render: (dock) => (
+        <aside className={`skinWorkspaceRight ${styles.right}`} onMouseEnter={onRightEnter} onMouseLeave={onRightLeave}>
+          <DockPanelTitle
+            title="详情"
+            placement={dock.placement}
+            onTitlePointerDown={dock.onTitlePointerDown}
+            onRedock={dock.onRedock}
+          />
+          {displayed ? (
+            <EntryDetails
+              key={`${project!.handle.client.connection.url}:${project!.handle.client.snapshot.projectId}:${project!.handle.client.snapshot.session.subjectId}:${displayed.entryId}`}
+              client={project!.handle.client}
+              entry={displayed}
+              folders={folders}
+              tags={tags}
+              showOuter={showOuter}
+              walking={walking}
+              autoRotate={autoRotate}
+              active={active}
+              onToggleOuter={setShowOuter}
+              onToggleWalking={setWalking}
+              onToggleAutoRotate={setAutoRotate}
+              onToggleActive={() => void toggleEntryActive(displayed)}
+              onToggleFavorite={() => void toggleEntryFavorite(displayed)}
+              onCopyId={() => void copyContentId(displayed.skinId)}
+              onCopyCode={() => void copySkinCode(displayed.skinId)}
+              onExportPng={() => void api.saveExportFile(displayed.skinId, 'png')}
+              onExportHskin={() => void api.saveExportFile(displayed.skinId, 'skin')}
+              onExportPortable={() => void exportPortable(displayed)}
+              onViewTexture={() => setTextureViewerFor(displayed)}
+              onDelete={() => void deleteEntry(displayed)}
+              getPreviewUrl={getPreviewUrl}
+              onPatch={(entryId, body) => api.patchEntry(entryId, body)}
+              onDirtyChange={reportDetailDirty}
+              onInteract={() => {
+                // A hover only previews. Actual interaction selects the entry for presence.
+                if (pinned?.entryId !== displayed.entryId) setPinned(displayed)
+                if (hovered) setHovered(null)
+              }}
+              onUpdated={(updated) => {
+                if (pinned?.entryId === updated.entryId) setPinned(updated)
+                if (hovered?.entryId === updated.entryId) setHovered(updated)
+                setEntries((prev) =>
+                  prev.map((e) => (e.entryId === updated.entryId ? updated : e)),
+                )
+                void refreshTags()
+                void refreshFolders()
+              }}
+            />
+          ) : (
+            <p className={styles.empty}>悬浮查看皮肤,点击后可保留选中。</p>
+          )}
+          {notice && <p className={styles.notice}>{notice}</p>}
+        </aside>
+      ),
+    },
+  ]
 
+  return (
+    <div className={`skinWorkspace ${styles.workspace}`}>
+      {active && <FilePresenceBar client={project.handle.client} path={SKIN_INDEX_PATH} mode="optimistic" entryId={pinned?.entryId} dirty={pinned ? detailDirty[pinned.entryId] ?? false : false} label={pinned?.name ?? '皮肤库'} />}
+      <PanelDock storageKey={SKIN_DOCK_KEY} panels={dockPanels}>
         <section className={`skinWorkspaceCenter ${styles.grid}`} aria-label="皮肤列表">
           <div className={styles.gridToolbar}>
             <nav className={styles.breadcrumb} aria-label="当前位置">
@@ -1423,54 +1507,7 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
           )}
           </div>
         </section>
-
-        <aside className={`skinWorkspaceRight ${styles.right}`} onMouseEnter={onRightEnter} onMouseLeave={onRightLeave}>
-          {displayed ? (
-            <EntryDetails
-              key={`${project!.handle.client.connection.url}:${project!.handle.client.snapshot.projectId}:${project!.handle.client.snapshot.session.subjectId}:${displayed.entryId}`}
-              client={project!.handle.client}
-              entry={displayed}
-              folders={folders}
-              tags={tags}
-              showOuter={showOuter}
-              walking={walking}
-              autoRotate={autoRotate}
-              active={active}
-              onToggleOuter={setShowOuter}
-              onToggleWalking={setWalking}
-              onToggleAutoRotate={setAutoRotate}
-              onToggleActive={() => void toggleEntryActive(displayed)}
-              onToggleFavorite={() => void toggleEntryFavorite(displayed)}
-              onCopyId={() => void copyContentId(displayed.skinId)}
-              onCopyCode={() => void copySkinCode(displayed.skinId)}
-              onExportPng={() => void api.saveExportFile(displayed.skinId, 'png')}
-              onExportHskin={() => void api.saveExportFile(displayed.skinId, 'skin')}
-              onExportPortable={() => void exportPortable(displayed)}
-              onViewTexture={() => setTextureViewerFor(displayed)}
-              onDelete={() => void deleteEntry(displayed)}
-              getPreviewUrl={getPreviewUrl}
-              onPatch={(entryId, body) => api.patchEntry(entryId, body)}
-              onDirtyChange={reportDetailDirty}
-              onInteract={() => {
-                // A hover only previews. Actual interaction selects the entry for presence.
-                if (pinned?.entryId !== displayed.entryId) setPinned(displayed)
-                if (hovered) setHovered(null)
-              }}
-              onUpdated={(updated) => {
-                if (pinned?.entryId === updated.entryId) setPinned(updated)
-                if (hovered?.entryId === updated.entryId) setHovered(updated)
-                setEntries((prev) =>
-                  prev.map((e) => (e.entryId === updated.entryId ? updated : e)),
-                )
-                void refreshTags()
-                void refreshFolders()
-              }}
-            />
-          ) : (
-            <p className={styles.empty}>悬浮查看皮肤,点击后可保留选中。</p>
-          )}
-          {notice && <p className={styles.notice}>{notice}</p>}
-        </aside>
+      </PanelDock>
 
         {showImport && (
           <ImportQueuePanel
@@ -1666,7 +1703,6 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
             onClose={closeContextMenu}
           />
         )}
-      </main>
     </div>
   )
 }
@@ -2191,3 +2227,4 @@ function NewFolderDialog({
     </div>
   )
 }
+

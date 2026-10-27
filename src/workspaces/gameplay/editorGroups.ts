@@ -81,23 +81,6 @@ export function groupHoldingKey(state: FlowWorkspaceState, key: string): GroupId
   return null
 }
 
-/**
- * 召唤到右侧：已开则聚焦；已二分则开到第 1 组；
- * 主组另有页面时 open + 向右 move 拆分；否则普通打开。
- */
-export function openAsRightSplit(state: FlowWorkspaceState, key: string): FlowWorkspaceState {
-  const holding = groupHoldingKey(state, key)
-  if (holding !== null) {
-    const group = readGroup(state, holding)
-    return focusGroup(writeGroup(state, holding, { ...group, activeKey: key }), holding)
-  }
-  if (state.split) return openInGroup(state, 1, key)
-  const primary = readGroup(state, 0)
-  if (primary.openKeys.length === 0) return openInGroup(state, 0, key)
-  const opened = openInGroup(state, 0, key)
-  return splitTab(opened, key, 'right', 'move')
-}
-
 /** 从表视图打开文档：表在某一侧时开到对侧，否则开到指定组。 */
 export function openOppositeToKey(
   state: FlowWorkspaceState,

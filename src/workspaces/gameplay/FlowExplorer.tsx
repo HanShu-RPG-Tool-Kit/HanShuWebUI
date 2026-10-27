@@ -1,5 +1,5 @@
 import {SCRIPT_TEMPLATES} from '../../scriptResources'
-import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type MouseEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type MouseEvent, type PointerEvent } from 'react'
 import { NodeContextMenu, type NodeMenuItem } from '../../nodeEditor/ContextMenu'
 import { droppedFiles, shouldAcceptDrop } from '../../drag/dragPayload'
 import {
@@ -134,7 +134,7 @@ const parseSelection = (ids: Set<string>) => {
 
 const isPackageId = (value: string): value is FlowPackageId => (FLOW_PACKAGE_ORDER as string[]).includes(value)
 
-export function FlowExplorer({ state, active, disabled, readOnly = false, onChange, onSelect, onNew, onImport, onImportFiles, onExport, onDownload, onRemove, onProperties, onViewSource, onOpenItemInGame, onOpenEntityInGame, onOverrideBuiltinScript, onNotice }: {
+export function FlowExplorer({ state, active, disabled, readOnly = false, onChange, onSelect, onNew, onImport, onImportFiles, onExport, onDownload, onRemove, onProperties, onViewSource, onOpenItemInGame, onOpenEntityInGame, onOverrideBuiltinScript, onNotice, placement = 'left', onTitlePointerDown, onRedock }: {
   state: FlowWorkspaceState; active: boolean; disabled: boolean; readOnly?: boolean
   onChange: (state: FlowWorkspaceState) => void; onSelect: (key: string) => void
   onNew: (name: string, folder: string | null, pkg: FlowPackageId, templateName?:string) => string
@@ -150,6 +150,9 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
   onOpenEntityInGame?: (key: string) => void
   onOverrideBuiltinScript?: (key:string)=>void
   onNotice: (message: string) => void
+  placement?: 'left' | 'right' | 'top' | 'bottom' | 'float'
+  onTitlePointerDown?: (event: PointerEvent<HTMLElement>) => void
+  onRedock?: () => void
 }) {
   const [focus, setFocus] = useState<FlowEntry>(state.activeKey ? { kind: 'document', key: state.activeKey } : defaultFocus)
   const [selectedIds, setSelectedIds] = useState(() => new Set(state.activeKey ? [`document:${state.activeKey}`] : [entryId(defaultFocus)]))
@@ -757,7 +760,17 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
   const newButtonDisabled = disabled || readOnly || !!edit || !allowsDocuments || focusReadonly || (!allowsQuest && !newDocumentMode)
 
   return <aside className="flow-library" aria-label="故事流程资源管理器">
-    <div className="flow-explorer-heading"><strong>资源管理器</strong><div className="flow-explorer-actions">
+    <div
+      className={`flow-explorer-heading${onTitlePointerDown ? ' is-draggable' : ''}`}
+      onPointerDown={(event) => {
+        if (event.target instanceof Element && event.target.closest('button, input, label, a, textarea, select')) return
+        onTitlePointerDown?.(event)
+      }}
+    >
+      <strong title={onTitlePointerDown ? (placement === 'float' ? '拖动标题可停靠到边缘；松手在中间则保持弹层' : '拖动标题可停靠到左、右、上、下，拖到中间变成弹层') : '资源管理器'}>资源管理器</strong>
+      <div className="flow-explorer-tools">
+        {onRedock && <button type="button" className="panel-dock-redock" title="停靠回上次的边缘" onClick={onRedock}>停靠</button>}
+        <div className="flow-explorer-actions">
       <button type="button" title={newLabel} aria-label={newLabel} disabled={newButtonDisabled} onClick={(event) => {
         if (allowsQuest && !questCreateMode) {
           const rect = event.currentTarget.getBoundingClientRect()
@@ -769,7 +782,9 @@ export function FlowExplorer({ state, active, disabled, readOnly = false, onChan
       <button type="button" title="新建文件夹" aria-label="新建文件夹" disabled={disabled || readOnly || !!edit || focusReadonly} onClick={() => startEdit('folder')}><Icon kind="folder" /></button>
       <button type="button" title={importLabel} aria-label={importLabel} disabled={disabled || readOnly || !!edit || !allowsDocuments || (rawFolder != null && isBuiltinScriptFolder(rawFolder))} onClick={() => onImport(currentFolder, currentPkg)}><Icon kind="import" /></button>
       <button type="button" title="折叠文件夹" aria-label="折叠文件夹" disabled={!!edit} onClick={() => { setExpanded(new Set([...FLOW_PACKAGE_ORDER.map((pkg) => entryId(packageEntry(pkg))), ...allSectionEntryIds(), ...allQuestViewEntryIds()])); selectOnly(defaultFocus); setSearch('') }}><Icon kind="collapse" /></button>
-    </div></div>
+        </div>
+      </div>
+    </div>
     <input className="flow-search" placeholder="筛选资源…" aria-label="筛选资源" value={search} disabled={!!edit} onChange={(event) => setSearch(event.target.value)} />
     <div className="flow-resource-tree" role="tree" aria-label="故事流程文件树" aria-multiselectable="true" onContextMenu={(event) => showMenu(event, defaultFocus)} onPaste={onTreePaste}>
       {rows.map((row, index) => {

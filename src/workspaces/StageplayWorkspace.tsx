@@ -13,6 +13,18 @@ import {
 import Editor, { type OnMount } from '@monaco-editor/react'
 import { Explorer } from '../Explorer'
 import { PanelDock, resetPanelDock, type DockPanelSpec } from '../ui/PanelDock'
+import { EditorDock, resetEditorDock } from '../ui/EditorDock'
+import {
+  editorPageKey,
+  loadOpenPages,
+  parseEditorPageKey,
+  sameOpenPages,
+  saveOpenPages,
+  type EditorPage,
+} from './stageplay/EditorTabs'
+import { SecondaryDockPage } from './stageplay/SecondaryDockPage'
+
+const STAGEPLAY_EDITOR_DOCK_KEY = 'hanshu.stageplayEditorDock.v1'
 import {
   alertDialog,
   chooseDialog as showChooseDialog,
@@ -265,6 +277,10 @@ export const StageplayWorkspace = forwardRef<
 >(function StageplayWorkspace({ onChromeInfo, isActive = true }, ref) {
   const serviceSession = useProjectSession()
   const [workspace, setWorkspace] = useState<Workspace>(() => emptyWorkspace())
+  const [openPages, setOpenPages] = useState<EditorPage[]>(loadOpenPages)
+  const openPagesRef = useRef(openPages)
+  openPagesRef.current = openPages
+  const tabsHydratedRef = useRef(false)
   const [project, setProject] = useState<BoundProject | null>(null)
   const [projectBusy, setProjectBusy] = useState(false)
   const active = useMemo(
@@ -347,12 +363,14 @@ export const StageplayWorkspace = forwardRef<
   const presencePath = activeAssetHit?.asset.path ?? (active&&!active.script.detached ? sourcePathOf(active.script) : null)
   // The editor buffer precedes its debounced workspace mirror by 400 ms.
   const presenceDirty = !viewingAsset && !!active && bufferOwnerRef.current === active.script.id && value !== active.script.content
+  /** 没有活动文件时不要再冒出「未命名剧本.hs」这种假标签。 */
+  const pageOpen = Boolean(active || viewingAsset)
   const titleName = viewingAsset
     ? activeAssetHit!.asset.path
-    : (active?.script.name ?? '未命名剧本.hs')
+    : (active?.script.name ?? '')
   const packageName = viewingAsset
     ? activeAssetHit!.pkg.name
-    : (active?.pkg.name ?? '汉书')
+    : (active?.pkg.name ?? '')
   const SourceEditor=editorLanguageForFile(titleName)==='python'?PythonEditor:Editor
   const editingMarkdown = !viewingAsset && isMarkdownFile(titleName)
   const editingHanshu = !viewingAsset && isHanshuFile(titleName)
@@ -1839,6 +1857,69 @@ export const StageplayWorkspace = forwardRef<
     })
   }
 
+  const visibleEditorPage = (ws: Workspace): EditorPage | null => {
+    if (ws.activeAssetId && findAsset(ws, ws.activeAssetId)) return { kind: 'asset', id: ws.activeAssetId }
+    if (ws.activeScriptId && findScript(ws, ws.activeScriptId)) return { kind: 'script', id: ws.activeScriptId }
+    return null
+  }
+  const editorPageExists = (ws: Workspace, page: EditorPage) =>
+    page.kind === 'script' ? Boolean(findScript(ws, page.id)) : Boolean(findAsset(ws, page.id))
+  const editorPageLabel = (page: EditorPage) =>
+    page.kind === 'script'
+      ? (findScript(workspace, page.id)?.script.name ?? '已关闭')
+      : (findAsset(workspace, page.id)?.asset.path ?? '已关闭')
+
+  /** 删掉当前文件后，优先回到已经打开的另一张书签，不要偷偷打开一份没打开过的文件。 */
+  const retainOpenScript = (ws: Workspace, removedScriptIds: Set<string>): string | null => {
+    if (ws.activeScriptId && !removedScriptIds.has(ws.activeScriptId) && findScript(ws, ws.activeScriptId)) {
+      return ws.activeScriptId
+    }
+    return openPagesRef.current.find(
+      (page) => page.kind === 'script' && !removedScriptIds.has(page.id) && findScript(ws, page.id),
+    )?.id ?? null
+  }
+
+  const selectEditorPage = (page: EditorPage) => {
+    if (page.kind === 'script') openScript(page.id)
+    else openAsset(page.id)
+  }
+
+  /**
+   * 关掉一张书签：只卸下这一页，不删除文件，也不确认。
+   * 关掉的是当前页时，切到右侧相邻书签，没有则向左，再没有就回到未打开。
+   */
+  const closeEditorPage = (page: EditorPage) => {
+    const ws = workspaceRef.current
+    const pages = openPagesRef.current
+    const index = pages.findIndex((item) => editorPageKey(item) === editorPageKey(page))
+    if (index < 0) return
+    const rest = pages.filter((item) => editorPageKey(item) !== editorPageKey(page))
+    openPagesRef.current = rest
+    setOpenPages(rest)
+
+    const visible = visibleEditorPage(ws)
+    const closingVisible = Boolean(visible && editorPageKey(visible) === editorPageKey(page))
+    if (!closingVisible) {
+      if (page.kind === 'script' && ws.activeScriptId === page.id) {
+        commitWorkspace({ ...ws, activeScriptId: null })
+      }
+      return
+    }
+
+    const neighbor = rest[index] ?? rest[index - 1] ?? null
+    if (!neighbor) {
+      const current = page.kind === 'script' ? findScript(ws, page.id) : null
+      const dirty = Boolean(current && bufferOwnerRef.current === page.id && valueRef.current !== current.script.content)
+      const flushed = dirty ? flushEditorInto(ws) : ws
+      loadEditorContent(null, '')
+      commitWorkspace({ ...flushed, activeScriptId: null, activeAssetId: null })
+      setLangEdit(null)
+      setUnitMenu(null)
+      return
+    }
+    selectEditorPage(neighbor)
+  }
+
   const handleNewPackage = () => {
     openProjectUi('open')
   }
@@ -2079,15 +2160,29 @@ export const StageplayWorkspace = forwardRef<
       const remaining = workspaceRef.current.packages.filter((item) => item.id !== packageId)
       const next: Workspace = {
         packages: remaining,
-        activeScriptId: wasActiveScript ? (remaining[0]?.scripts[0]?.id ?? null) : workspaceRef.current.activeScriptId,
+        activeScriptId: wasActiveScript
+          ? retainOpenScript(
+              { packages: remaining, activeScriptId: null, activeAssetId: null },
+              new Set(current.scripts.map((script) => script.id)),
+            )
+          : workspaceRef.current.activeScriptId,
         activeAssetId: wasActiveAsset ? null : workspaceRef.current.activeAssetId,
       }
       commitWorkspace(next)
       void deletePackageAssetBlobs(packageId)
       if (wasActiveScript || wasActiveAsset) {
         const opened = findScript(next, next.activeScriptId)
-        loadEditorContent(opened?.script.id ?? null, opened?.script.content ?? '', opened?.script.updatedAt ?? null)
-        setRoles(createDefaultRoles())
+        if (opened && !next.activeAssetId) {
+          loadEditorContent(opened.script.id, opened.script.content, opened.script.updatedAt)
+          setRoles(createDefaultRoles())
+        } else if (!next.activeAssetId) {
+          const fallback = openPagesRef.current.find((page) => editorPageExists(next, page))
+          if (fallback) selectEditorPage(fallback)
+          else {
+            loadEditorContent(null, '')
+            setRoles(createDefaultRoles())
+          }
+        }
       }
     })
   }
@@ -2125,9 +2220,10 @@ export const StageplayWorkspace = forwardRef<
     }))
     let activeScriptId = cleaned.workspace.activeScriptId
     if (activeScriptId === scriptId) {
-      const fallback =
-        nextPackages.flatMap((pkg) => pkg.scripts).find(Boolean) ?? null
-      activeScriptId = fallback?.id ?? null
+      activeScriptId = retainOpenScript(
+        { ...cleaned.workspace, packages: nextPackages, activeScriptId: null },
+        new Set([scriptId]),
+      )
     }
     const next: Workspace = {
       packages: nextPackages,
@@ -2399,10 +2495,13 @@ export const StageplayWorkspace = forwardRef<
       case 'editor-layout':
         void confirmDialog({
           title: '编辑器布局',
-          message: '恢复默认停靠布局？当前拖过的栏目位置会丢掉。',
+          message: '恢复默认停靠布局？当前拖过的栏目和文件标签布局会丢掉。',
           confirmLabel: '恢复',
         }).then((ok) => {
-          if (ok) resetPanelDock()
+          if (ok) {
+            resetPanelDock()
+            resetEditorDock(STAGEPLAY_EDITOR_DOCK_KEY)
+          }
         })
         return
       case 'go-to-file':
@@ -2469,9 +2568,10 @@ export const StageplayWorkspace = forwardRef<
     }))
     let activeScriptId = workspaceRef.current.activeScriptId
     if (activeScriptId === scriptId) {
-      const fallback =
-        nextPackages.flatMap((pkg) => pkg.scripts).find(Boolean) ?? null
-      activeScriptId = fallback?.id ?? null
+      activeScriptId = retainOpenScript(
+        { packages: nextPackages, activeScriptId: null, activeAssetId: workspaceRef.current.activeAssetId },
+        new Set([scriptId]),
+      )
     }
     const next: Workspace = {
       packages: nextPackages,
@@ -3153,6 +3253,25 @@ export const StageplayWorkspace = forwardRef<
   }))
 
   useEffect(() => {
+    const hydrated = workspace.packages.length > 0
+    if (!hydrated && !tabsHydratedRef.current) return
+    if (hydrated) tabsHydratedRef.current = true
+    setOpenPages((prev) => {
+      const live = prev.filter((page) => editorPageExists(workspace, page))
+      const visible = visibleEditorPage(workspace)
+      const next = visible && !live.some((page) => editorPageKey(page) === editorPageKey(visible))
+        ? [...live, visible]
+        : live
+      return sameOpenPages(prev, next) ? prev : next
+    })
+  }, [workspace])
+
+  useEffect(() => {
+    if (!tabsHydratedRef.current) return
+    saveOpenPages(openPages)
+  }, [openPages])
+
+  useEffect(() => {
     onChromeInfo?.({
       titleName,
       packageName,
@@ -3351,218 +3470,245 @@ export const StageplayWorkspace = forwardRef<
   return (
     <div className="stageplay-workspace">
       <PanelDock panels={dockPanels}>
-          <div className="editor-column">
-          <div className="tabbar">
-            <div className="tab active">
-              <span>{titleName}</span>
-              <span className="tab-close" aria-hidden>
-                ×
-              </span>
-            </div>
-            {editingMarkdown && (
-              <button
-                type="button"
-                className={`tab-action${mdPreviewOn ? ' on' : ''}`}
-                onClick={() => setMdPreviewOn((on) => !on)}
-                title="切换 Markdown 预览"
-              >
-                Preview
-              </button>
-            )}
-            {editingHanshu && (
-              <button
-                type="button"
-                className={`tab-action${hscPreviewOn ? ' on' : ''}`}
-                onClick={() => setHscPreviewOn((on) => !on)}
-                title="切换编译后 .hsc 视角"
-              >
-                编译
-              </button>
-            )}
-          </div>
-          {isActive && presenceClient && presencePath && <FilePresenceBar
-            key={`${presenceClient.snapshot.session.id}:${presencePath}`}
-            client={presenceClient}
-            path={presencePath}
-            mode="optimistic"
-            dirty={presenceDirty}
-            label={titleName}
-          />}
-          {active?.script.detached&&<p role="status">此资源已从工程移除，当前内容保留为本机草稿；普通保存不会重新创建它。可复制或导出内容后另存。</p>}
-          <main
-            className={`editor-shell${
-              editingMarkdown && mdPreviewOn ? ' split-md' : ''
-            }${editingHanshu && hscPreviewOn ? ' split-hsc' : ''}${
-              viewingAsset ? ' asset-mode' : ''
-            }${ttsFileKind ? ' tts-file' : ''}`}
-          >
-            {viewingAsset && activeAssetHit ? (
-              <AssetPreview
-                packageId={activeAssetHit.pkg.id}
-                asset={activeAssetHit.asset}
-                onSaveText={handleSaveTextAsset}
-              />
-            ) : ttsUseForm ? (
-              ttsFileKind === 'service' ? (
-                <TtsServiceForm
-                  /* key = 文件名：换一个文件就重挂，表单里的临时状态
-                     （正在敲的语速草稿、拉回来的音色列表、上次的验证结论、
-                     刚新建的服务名）全都不该跨文件留着 */
-                  key={titleName}
-                  fileName={titleName}
-                  text={value}
-                  onChange={handleTtsRewrite}
-                  onSwitchToRaw={() => setTtsRawEditFor(titleName)}
-                  onOpenCredentials={() => setShowTtsCredentials(true)}
-                />
-              ) : (
-                <TtsPlanForm
-                  key={titleName}
-                  fileName={titleName}
-                  text={value}
-                  services={ttsServices}
-                  projectLocales={ttsProjectLocales}
-                  createService={createTtsService}
-                  openService={openTtsService}
-                  onChange={handleTtsRewrite}
-                  onSwitchToRaw={() => setTtsRawEditFor(titleName)}
-                  onOpenCredentials={() => setShowTtsCredentials(true)}
-                />
-              )
-            ) : (
+          <EditorDock
+            storageKey={STAGEPLAY_EDITOR_DOCK_KEY}
+            pages={openPages.map((page) => ({ id: editorPageKey(page), title: editorPageLabel(page) }))}
+            activeId={visibleEditorPage(workspace) ? editorPageKey(visibleEditorPage(workspace)!) : null}
+            onActivate={(id) => {
+              const page = parseEditorPageKey(id)
+              if (page) selectEditorPage(page)
+            }}
+            onClose={(id) => {
+              const page = parseEditorPageKey(id)
+              if (page) closeEditorPage(page)
+            }}
+            tabExtra={
               <>
-                {ttsFileKind && (
-                  <div className="tts-raw-bar">
-                    <span>按原始 JSON 编辑</span>
-                    <button
-                      type="button"
-                      className="tts-form-link"
-                      onClick={() => setTtsRawEditFor(null)}
-                    >
-                      用表单编辑
-                    </button>
-                  </div>
-                )}
-                <div className="editor-pane">
-                  <SourceEditor
-                    scriptType={scriptType(active?.script.srcKind)}
-                    path={editorLanguageForFile(titleName)==='python'?`python-source://${presenceClient?.snapshot.projectId??'unbound'}/${active?.script.id??'scratch'}/${titleName}`:undefined}
-                    key={`${presenceClient?.snapshot.projectId ?? 'unbound'}:${presenceClient?.discardVersions.get(presencePath ?? '') ?? 0}:${active?.script.id ?? 'empty'}:${titleName}`}
-                    height="100%"
-                    language={editorLanguageForFile(titleName)}
-                    theme={
-                      editingChar ? CHAR_THEME_ID : HANSHU_THEME_ID
-                    }
-                    value={value}
-                    beforeMount={(monaco) => {
-                      registerHanshuLanguage(monaco)
-                      registerCharLanguage(monaco)
-                    }}
-                    onMount={(editor, monaco) => {
-                      editorRef.current = editor
-                      editor.updateOptions(scriptEditorAppearance(scriptViewFlags.get()))
-                      bindTaggedCommentHotkeys(editor, monaco)
-                      if (isHanshuFile(titleName)) {
-                        bindChoiceInsertHotkeys(editor, monaco)
-                        bindSpeakerHotkeys(
-                          editor,
-                          monaco,
-                          () => rolesRef.current,
-                        )
-                        bindCopyDialogueHotkey(editor, monaco)
-                      }
-                      textBindingRef.current?.dispose()
-                      // 换文件 = 换绑定：旧绑定的编辑请求已经作废，覆盖编辑框不能留在新文件上
-                      setLangEdit(null)
-                      textBindingRef.current = bindText(editor, monaco, {
-                        getMap: () => textMapRef.current,
-                        parseSpans: isCharFile(titleName)
-                          ? parseCharTextSpans
-                          : undefined,
-                        analyzeDiagnostics: isCharFile(titleName)
-                          ? analyzeCharDiagnostics
-                          : isHanshuFile(titleName)
-                            ? (source) =>
-                                analyzeHsDiagnostics(source, {
-                                  foreignInjects: indexForeignHsInjects(
-                                    workspaceRef.current,
-                                    titleName,
-                                  ),
-                                })
-                            : undefined,
-                        getVoice: () => voiceLibraryRef.current,
-                        onEditRequest: (request) => {
-                          langEditSeqRef.current += 1
-                          setLangEdit({
-                            id: langEditSeqRef.current,
-                            request,
-                          })
-                        },
-                        onUnitMenu: (request) => setUnitMenu(request),
-                        onUnitDrop: (request) => handleUnitDrop(request),
-                        // 缺失 / 无效态点按钮 = 去录音棚配一条
-                        onEditVoice: (key) => editVoiceInStudio(key),
-                        // 录音棚：左键点键名 / 划框都会走到这里
-                        onUnitSelect: (request) => handleUnitSelect(request),
-                        onMarquee: (request) => handleMarquee(request),
-                      })
-                      // 绑定重建后，把录音棚的模式与选中态重新灌回去
-                      setTextBindingSeq((seq) => seq + 1)
-                    }}
-                    onChange={(next) => {
-                      const text = next ?? ''
-                      /*
-                       * ref 也要跟上：写回、导出、Ctrl+S 读的都是它。只 `setValue` 的话，
-                       * ref 会慢一拍（渲染时才同步），那期间的动作会拿到上一版正文。
-                       */
-                      valueRef.current = text
-                      setValue(text)
-                      if (bufferOwnerRef.current) writeScriptContent(bufferOwnerRef.current,text)
-                    }}
-                    options={{
-                      ...scriptEditorAppearance(view),
-                      fontFamily:
-                        'Consolas, "Courier New", "Sarasa Mono SC", monospace',
-                      /**
-                       * 录音棚打开时编辑器是**只读**的：那会儿左键点键名是"选中"、
-                       * 空白处按下是"划框"，不允许再改正文（正常交互整体让位）。
-                       */
-                      readOnly: projectBusy || studioOpen || serviceSession.binding?.handle.client.snapshot.role === 'viewer',
-                      domReadOnly: studioOpen,
-                      scrollBeyondLastLine: false,
-                      automaticLayout: true,
-                      padding: { top: 14, bottom: 14 },
-                      renderLineHighlight: 'all',
-                      cursorBlinking: 'smooth',
-                      overviewRulerBorder: false,
-                      stickyScroll: { enabled: false },
-                      /**
-                       * 拖放由覆盖层自己处理（键名容器 / 文本区），所以关掉 Monaco 这一套。
-                       * 否则它在编辑器根节点上监听 dragover/drop，画一个 `dnd-target` 装饰当
-                       * 落点指示器（那个"虚线光标"），而清除只发生在她自己的
-                       * drop / dragleave / dragend 里 —— 我们在容器上 stopPropagation 之后
-                       * 根节点收不到 drop，外部文件（没有页面内 dragend）拖完就会一直挂着。
-                       */
-                      dropIntoEditor: { enabled: false },
-                      scrollbar: {
-                        verticalScrollbarSize: 14,
-                        horizontalScrollbarSize: 14,
-                      },
-                    }}
-                  />
-                </div>
-                {editingMarkdown && mdPreviewOn && (
-                  <MarkdownPreview source={value} />
-                )}
-                {editingHanshu && hscPreviewOn && (
-                  <HscPreview source={value} />
-                )}
+  {editingMarkdown && (
+                <button
+                  type="button"
+                  className={`tab-action${mdPreviewOn ? ' on' : ''}`}
+                  onClick={() => setMdPreviewOn((on) => !on)}
+                  title="切换 Markdown 预览"
+                >
+                  Preview
+                </button>
+              )}
+              {editingHanshu && (
+                <button
+                  type="button"
+                  className={`tab-action${hscPreviewOn ? ' on' : ''}`}
+                  onClick={() => setHscPreviewOn((on) => !on)}
+                  title="切换编译后 .hsc 视角"
+                >
+                  编译
+                </button>
+              )}
               </>
-            )}
-          </main>
-          </div>
-
-
+            }
+            renderPage={(pageId) => {
+              const page = parseEditorPageKey(pageId)
+              const visible = visibleEditorPage(workspace)
+              const activeKey = visible ? editorPageKey(visible) : null
+              if (!page || !editorPageExists(workspace, page)) return null
+              if (pageId !== activeKey) {
+                return (
+                  <SecondaryDockPage
+                    page={page}
+                    workspace={workspace}
+                    readOnly={projectBusy || serviceSession.binding?.handle.client.snapshot.role === 'viewer'}
+                    onChangeScript={writeScriptContent}
+                  />
+                )
+              }
+              return (
+                <>
+    {isActive && presenceClient && presencePath && <FilePresenceBar
+                key={`${presenceClient.snapshot.session.id}:${presencePath}`}
+                client={presenceClient}
+                path={presencePath}
+                mode="optimistic"
+                dirty={presenceDirty}
+                label={titleName}
+              />}
+              {active?.script.detached&&<p role="status">此资源已从工程移除，当前内容保留为本机草稿；普通保存不会重新创建它。可复制或导出内容后另存。</p>}
+              <main
+                className={`editor-shell${
+                  editingMarkdown && mdPreviewOn ? ' split-md' : ''
+                }${editingHanshu && hscPreviewOn ? ' split-hsc' : ''}${
+                  viewingAsset ? ' asset-mode' : ''
+                }${ttsFileKind ? ' tts-file' : ''}`}
+              >
+                {!pageOpen ? (
+                  <div className="editor-closed" role="status">未打开文件</div>
+                ) : viewingAsset && activeAssetHit ? (
+                  <AssetPreview
+                    packageId={activeAssetHit.pkg.id}
+                    asset={activeAssetHit.asset}
+                    onSaveText={handleSaveTextAsset}
+                  />
+                ) : ttsUseForm ? (
+                  ttsFileKind === 'service' ? (
+                    <TtsServiceForm
+                      /* key = 文件名：换一个文件就重挂，表单里的临时状态
+                         （正在敲的语速草稿、拉回来的音色列表、上次的验证结论、
+                         刚新建的服务名）全都不该跨文件留着 */
+                      key={titleName}
+                      fileName={titleName}
+                      text={value}
+                      onChange={handleTtsRewrite}
+                      onSwitchToRaw={() => setTtsRawEditFor(titleName)}
+                      onOpenCredentials={() => setShowTtsCredentials(true)}
+                    />
+                  ) : (
+                    <TtsPlanForm
+                      key={titleName}
+                      fileName={titleName}
+                      text={value}
+                      services={ttsServices}
+                      projectLocales={ttsProjectLocales}
+                      createService={createTtsService}
+                      openService={openTtsService}
+                      onChange={handleTtsRewrite}
+                      onSwitchToRaw={() => setTtsRawEditFor(titleName)}
+                      onOpenCredentials={() => setShowTtsCredentials(true)}
+                    />
+                  )
+                ) : (
+                  <>
+                    {ttsFileKind && (
+                      <div className="tts-raw-bar">
+                        <span>按原始 JSON 编辑</span>
+                        <button
+                          type="button"
+                          className="tts-form-link"
+                          onClick={() => setTtsRawEditFor(null)}
+                        >
+                          用表单编辑
+                        </button>
+                      </div>
+                    )}
+                    <div className="editor-pane">
+                      <SourceEditor
+                        scriptType={scriptType(active?.script.srcKind)}
+                        path={editorLanguageForFile(titleName)==='python'?`python-source://${presenceClient?.snapshot.projectId??'unbound'}/${active?.script.id??'scratch'}/${titleName}`:undefined}
+                        key={`${presenceClient?.snapshot.projectId ?? 'unbound'}:${presenceClient?.discardVersions.get(presencePath ?? '') ?? 0}:${active?.script.id ?? 'empty'}:${titleName}`}
+                        height="100%"
+                        language={editorLanguageForFile(titleName)}
+                        theme={
+                          editingChar ? CHAR_THEME_ID : HANSHU_THEME_ID
+                        }
+                        value={value}
+                        beforeMount={(monaco) => {
+                          registerHanshuLanguage(monaco)
+                          registerCharLanguage(monaco)
+                        }}
+                        onMount={(editor, monaco) => {
+                          editorRef.current = editor
+                          editor.updateOptions(scriptEditorAppearance(scriptViewFlags.get()))
+                          bindTaggedCommentHotkeys(editor, monaco)
+                          if (isHanshuFile(titleName)) {
+                            bindChoiceInsertHotkeys(editor, monaco)
+                            bindSpeakerHotkeys(
+                              editor,
+                              monaco,
+                              () => rolesRef.current,
+                            )
+                            bindCopyDialogueHotkey(editor, monaco)
+                          }
+                          textBindingRef.current?.dispose()
+                          // 换文件 = 换绑定：旧绑定的编辑请求已经作废，覆盖编辑框不能留在新文件上
+                          setLangEdit(null)
+                          textBindingRef.current = bindText(editor, monaco, {
+                            getMap: () => textMapRef.current,
+                            parseSpans: isCharFile(titleName)
+                              ? parseCharTextSpans
+                              : undefined,
+                            analyzeDiagnostics: isCharFile(titleName)
+                              ? analyzeCharDiagnostics
+                              : isHanshuFile(titleName)
+                                ? (source) =>
+                                    analyzeHsDiagnostics(source, {
+                                      foreignInjects: indexForeignHsInjects(
+                                        workspaceRef.current,
+                                        titleName,
+                                      ),
+                                    })
+                                : undefined,
+                            getVoice: () => voiceLibraryRef.current,
+                            onEditRequest: (request) => {
+                              langEditSeqRef.current += 1
+                              setLangEdit({
+                                id: langEditSeqRef.current,
+                                request,
+                              })
+                            },
+                            onUnitMenu: (request) => setUnitMenu(request),
+                            onUnitDrop: (request) => handleUnitDrop(request),
+                            // 缺失 / 无效态点按钮 = 去录音棚配一条
+                            onEditVoice: (key) => editVoiceInStudio(key),
+                            // 录音棚：左键点键名 / 划框都会走到这里
+                            onUnitSelect: (request) => handleUnitSelect(request),
+                            onMarquee: (request) => handleMarquee(request),
+                          })
+                          // 绑定重建后，把录音棚的模式与选中态重新灌回去
+                          setTextBindingSeq((seq) => seq + 1)
+                        }}
+                        onChange={(next) => {
+                          const text = next ?? ''
+                          /*
+                           * ref 也要跟上：写回、导出、Ctrl+S 读的都是它。只 `setValue` 的话，
+                           * ref 会慢一拍（渲染时才同步），那期间的动作会拿到上一版正文。
+                           */
+                          valueRef.current = text
+                          setValue(text)
+                          if (bufferOwnerRef.current) writeScriptContent(bufferOwnerRef.current,text)
+                        }}
+                        options={{
+                          ...scriptEditorAppearance(view),
+                          fontFamily:
+                            'Consolas, "Courier New", "Sarasa Mono SC", monospace',
+                          /**
+                           * 录音棚打开时编辑器是**只读**的：那会儿左键点键名是"选中"、
+                           * 空白处按下是"划框"，不允许再改正文（正常交互整体让位）。
+                           */
+                          readOnly: projectBusy || studioOpen || serviceSession.binding?.handle.client.snapshot.role === 'viewer',
+                          domReadOnly: studioOpen,
+                          scrollBeyondLastLine: false,
+                          automaticLayout: true,
+                          padding: { top: 14, bottom: 14 },
+                          renderLineHighlight: 'all',
+                          cursorBlinking: 'smooth',
+                          overviewRulerBorder: false,
+                          stickyScroll: { enabled: false },
+                          /**
+                           * 拖放由覆盖层自己处理（键名容器 / 文本区），所以关掉 Monaco 这一套。
+                           * 否则它在编辑器根节点上监听 dragover/drop，画一个 `dnd-target` 装饰当
+                           * 落点指示器（那个"虚线光标"），而清除只发生在她自己的
+                           * drop / dragleave / dragend 里 —— 我们在容器上 stopPropagation 之后
+                           * 根节点收不到 drop，外部文件（没有页面内 dragend）拖完就会一直挂着。
+                           */
+                          dropIntoEditor: { enabled: false },
+                          scrollbar: {
+                            verticalScrollbarSize: 14,
+                            horizontalScrollbarSize: 14,
+                          },
+                        }}
+                      />
+                    </div>
+                    {editingMarkdown && mdPreviewOn && (
+                      <MarkdownPreview source={value} />
+                    )}
+                    {editingHanshu && hscPreviewOn && (
+                      <HscPreview source={value} />
+                    )}
+                  </>
+                )}
+              </main>
+                </>
+              )
+            }}
+          />
       </PanelDock>
 
       {/*
@@ -3596,10 +3742,14 @@ export const StageplayWorkspace = forwardRef<
             <span title={project ? project.folderName : '未绑定文件夹工程'}>
               {project ? `工程 · ${project.folderName}` : '仅浏览器缓存'}
             </span>
-            <span>{packageName}</span>
-            <span>{charCount} 字符</span>
-            <span>行 {lineCount}</span>
-            <span>{formatSavedAt(savedAt)}</span>
+            {pageOpen && (
+              <>
+                <span>{packageName}</span>
+                <span>{charCount} 字符</span>
+                <span>行 {lineCount}</span>
+                <span>{formatSavedAt(savedAt)}</span>
+              </>
+            )}
             {project && (
               <span title="最近写入工程文件夹">
                 {diskSavedAt

@@ -41,5 +41,12 @@ export const gameplayMenuContribution: MenuContribution = {
         cmd('refresh-all-item-snapshots', '刷新全部物品快照'),
       ],
     },
+    {
+      id: 'view',
+      label: '查看',
+      items: [
+        cmd('editor-layout', '编辑器布局'),
+      ],
+    },
   ],
 }

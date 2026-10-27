@@ -52,7 +52,15 @@
 .gameplay-workspace ::-webkit-scrollbar-thumb:hover, .flow-editor-dialog ::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, .2); border: 2px solid transparent; background-clip: content-box; }
 .gameplay-workspace ::-webkit-scrollbar-track, .flow-editor-dialog ::-webkit-scrollbar-track { background: transparent; }
 
-.flow-layout { display: flex; flex: 1; gap: 2px; padding: 2px; min-height: 0; min-width: 0; overflow: auto; background: var(--border); }
+
+.gameplay-workspace > .panel-dock { flex: 1 1 auto; min-width: 0; min-height: 0; background: var(--border); }
+.panel-dock-band > .flow-library { flex: 1 1 auto; width: auto; max-width: none; max-height: none; height: auto; min-width: 0; min-height: 0; align-self: stretch; border: 0; }
+.panel-dock-main > .flow-main { flex: 1 1 auto; width: 0; min-width: 0; height: 100%; }
+.flow-explorer-heading.is-draggable { cursor: grab; touch-action: none; user-select: none; }
+body.is-panel-dragging .flow-explorer-heading.is-draggable { cursor: grabbing; }
+.flow-explorer-tools { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.gameplay-workspace .flow-explorer-heading .panel-dock-redock { width: auto; height: calc(20px * var(--fl-s)); padding: 0 6px; font-size: var(--fl-font-xs); }
+.flow-explorer-heading strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .flow-library { flex: 0 0 280px; width: 280px; display: flex; flex-direction: column; min-height: 0; overflow: hidden; background: var(--fl-panel); }
 .flow-main { flex: 1; display: flex; flex-direction: column; min-width: 260px; min-height: 0; overflow: hidden; background: var(--fl-panel); }
 .flow-split {
@@ -190,11 +198,11 @@
 }
 .flow-page-tab.is-dragging { opacity: 0.45; }
 .flow-page-tab.is-drop { box-shadow: inset 2px 0 0 var(--accent); }
-.gameplay-workspace .flow-page-tab button {
+:is(.gameplay-workspace, .stageplay-workspace) .flow-page-tab button {
   appearance: none; height: 100%; margin: 0; border: 0; border-radius: 0;
   background: transparent; color: inherit; font: inherit; cursor: pointer;
 }
-.gameplay-workspace .flow-page-tab button:hover:not(:disabled) { background: transparent; }
+:is(.gameplay-workspace, .stageplay-workspace) .flow-page-tab button:hover:not(:disabled) { background: transparent; }
 .gameplay-workspace .flow-page-tab-name {
   display: flex; align-items: center; gap: 6px; min-width: 0; padding: 0 2px 0 10px;
 }
@@ -220,14 +228,14 @@
   transform: rotate(45deg);
 }
 .flow-page-tab.is-active .flow-page-pin { color: var(--accent); }
-.gameplay-workspace .flow-page-tab-close {
+:is(.gameplay-workspace, .stageplay-workspace) .flow-page-tab-close {
   display: grid; place-items: center;
   width: calc(20px * var(--fl-s, 1.25));
   margin-right: 4px; padding: 0; line-height: 1; opacity: 0;
 }
 .flow-page-tab:hover .flow-page-tab-close,
 .flow-page-tab.is-active .flow-page-tab-close { opacity: 0.55; }
-.gameplay-workspace .flow-page-tab .flow-page-tab-close:hover:not(:disabled) {
+:is(.gameplay-workspace, .stageplay-workspace) .flow-page-tab .flow-page-tab-close:hover:not(:disabled) {
   opacity: 1; color: var(--text-bright); background: rgba(255, 255, 255, 0.08);
 }
 
@@ -426,10 +434,6 @@
 .flow-child small { color: var(--text-dim); margin-top: 4px; }
 .flow-node-refs { max-height: 240px; overflow: auto; }
 
-@media (max-width: 1100px) { .flow-library { flex-basis: 230px; width: 230px; } }
 @media (max-width: 760px) {
-  .flow-layout { flex-wrap: wrap; overflow-y: auto; }
-  .flow-library { flex-basis: 100%; width: 100%; max-height: 45%; }
-  .flow-main { min-height: 450px; }
   .flow-statusbar-type { display: none; }
 }
