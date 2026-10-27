@@ -220,6 +220,26 @@ test('background goal roundtrip, two distinct outputs, no inputs; delete cleans 
  }
  const duplicate=structuredClone(flow) as any;duplicate.predicates={[goal]:{conditions:[]}};assert.throws(()=>M.parseFlow(JSON.stringify(duplicate)))
 })
+test('optional identifiers share a quest namespace; submission structure and required capability are validated',()=>{
+ let {flow,goal}=backgroundGoal()
+ const condition=C.createPredicateNode(flow,{x:0,y:400});flow=condition.flow
+ flow.objectives![goal].identifier='collect_apples';flow.predicates![condition.id].identifier='has_apples'
+ assert.deepEqual(M.parseFlow(JSON.stringify(flow)),flow)
+ flow.objectives![goal].identifier=flow.progress[flow.start].identifier
+ assert(M.validateFlow(flow).some(issue=>issue.severity==='error'&&issue.path===`objectives.${goal}.identifier`))
+ flow.objectives![goal].identifier='collect_apples'
+ flow.predicates![condition.id].identifier='progress_1'
+ const next=C.createProgressNode(flow,{x:300,y:400});assert.equal(next.flow.progress[next.id].identifier,'progress_2')
+ const definitions=[{kind:'collect',requiresDelivery:true}]
+ assert(M.validateFlow(flow,definitions).some(issue=>issue.severity==='error'&&issue.path===`objectives.${goal}.submission`))
+ flow.objectives![goal].submission={title:{text:'提交'},description:{text:''},buttonText:{text:'确认'}}
+ assert.equal(M.validateFlow(flow,definitions).some(issue=>issue.severity==='error'),false)
+ for(const submission of [null,{}, {title:{text:'标题'},description:{text:''},buttonText:'提交'}]){
+  const bad=structuredClone(flow) as any;bad.objectives[goal].submission=submission;assert.throws(()=>M.parseFlow(JSON.stringify(bad)))
+ }
+ flow.objectives![goal].submission!.buttonText.text=''
+ assert(M.validateFlow(flow,definitions).some(issue=>issue.severity==='error'&&issue.path.endsWith('buttonText')))
+})
 test('effective goals start atomically; drafts stay inactive and cannot settle; reset returns all inactive',()=>{
  let {flow,goal}=backgroundGoal();const draft=C.createObjectiveNode(flow,{x:0,y:400});flow=draft.flow
  const empty=S.createSimState(flow);assert.equal(S.objectiveState(empty,goal),'inactive');assert.equal(S.settleObjective(flow,empty,goal,'succeeded'),empty)
@@ -227,17 +247,54 @@ test('effective goals start atomically; drafts stay inactive and cannot settle; 
  assert.equal(S.settleObjective(flow,sim,draft.id,'succeeded'),sim)
  assert.equal(S.objectiveState(S.resetSimState(flow),goal),'inactive')
 })
-test('goal ignores C, rejects external A, answers Q by settled port, and never settles twice',()=>{
+test('goal rejects external A, answers Q by lifecycle result, never settles twice; C closes either output',()=>{
  const {flow,goal}=backgroundGoal();let sim=S.initializeQuest(flow,S.createSimState(flow))
- sim=S.injectSignal(flow,sim,goal,'output',{kind:'cancel'});assert.equal(S.objectiveState(sim,goal),'running')
  sim=S.injectSignal(flow,sim,goal,'output',{kind:'activate'});assert.equal(sim.log.at(-1)!.accepted,false)
  for (const outcome of ['succeeded','failed'] as const) {
   const settled=S.settleObjective(flow,sim,goal,outcome);assert.equal(S.objectiveState(settled,goal),outcome)
   assert.equal(S.settleObjective(flow,settled,goal,outcome==='succeeded'?'failed':'succeeded'),settled)
   assert(settled.log.some(row=>row.to===goal&&row.signal.kind==='query'&&row.emitted?.[0]?.signal.kind==='activate'))
   assert(settled.log.some(row=>row.to===goal&&row.signal.kind==='query'&&row.emitted?.[0]?.signal.kind==='none'))
-  assert.equal(S.objectiveState(S.injectSignal(flow,settled,goal,'output',{kind:'cancel'}),goal),outcome)
+  const closed=S.injectSignal(flow,settled,goal,'output',{kind:'cancel'})
+  assert.equal(S.objectiveState(closed,goal),'closed')
+  assert.equal(S.settleObjective(flow,closed,goal,outcome),closed)
+  const wire=flow.logic!.links.find(link=>link.from===goal)!
+  const queried=S.propagateSignals(flow,closed,[{signal:{kind:'query'},to:goal,port:'output',from:wire.to,link:wire.id,round:999}])
+  assert(queried.log.some(row=>row.to===goal&&row.round===999&&row.emitted?.[0]?.signal.kind==='none'))
  }
+})
+test('condition lifecycle gates broadcasts and queries; closure is node-wide and permanent',()=>{
+ let {flow,predicate}=waitingGate()
+ let sim=S.setPredicateTruth(flow,S.createSimState(flow),predicate,true)
+ assert.equal(S.conditionState(sim,predicate),'inactive')
+ sim=S.initializeQuest(flow,sim)
+ assert.equal(S.conditionState(sim,predicate),'running')
+ const closed=S.injectSignal(flow,sim,predicate,'output',{kind:'cancel'})
+ assert.equal(S.conditionState(closed,predicate),'closed')
+ assert.equal(S.setPredicateTruth(flow,closed,predicate,false),closed)
+ const wire=flow.logic!.links.find(link=>link.from===predicate)!
+ const queried=S.propagateSignals(flow,closed,[{signal:{kind:'query'},to:predicate,port:'output',from:wire.to,link:wire.id,round:555}])
+ assert(queried.log.some(row=>row.to===predicate&&row.round===555&&row.emitted?.[0]?.signal.kind==='none'))
+ assert.equal(S.conditionState(S.resetSimState(flow),predicate),'inactive')
+ const beforeStart=S.injectSignal(flow,S.createSimState(flow),predicate,'output',{kind:'cancel'})
+ assert.equal(S.conditionState(S.initializeQuest(flow,beforeStart),predicate),'closed','initialization never reopens closed nodes')
+})
+test('submission is an explicit instance outcome: satisfaction alone cannot succeed; failed attempts retry',()=>{
+ const {flow,goal}=backgroundGoal()
+ flow.objectives![goal].submission={title:{text:'交付'},description:{text:''},buttonText:{text:'提交'}}
+ const sim=S.initializeQuest(flow,S.createSimState(flow))
+ assert.equal(S.settleObjective(flow,sim,goal,'succeeded'),sim)
+ const rejected=S.submitObjective(flow,sim,goal,false)
+ assert.equal(S.objectiveState(rejected,goal),'running');assert.equal(rejected.queue.length,0)
+ assert.equal(rejected.log.length,sim.log.length)
+ const accepted=S.submitObjective(flow,rejected,goal,true,true)
+ assert.equal(S.objectiveState(accepted,goal),'succeeded');assert(accepted.queue.every(row=>row.port==='input'))
+ assert.equal(S.submitObjective(flow,S.drainSignals(flow,accepted),goal,true).pulse,accepted.pulse)
+ const failed=S.settleObjective(flow,sim,goal,'failed');assert.equal(S.objectiveState(failed,goal),'failed')
+ const closed=S.injectSignal(flow,sim,goal,'output2',{kind:'cancel'})
+ assert.equal(S.submitObjective(flow,closed,goal,true),closed)
+ const changed=structuredClone(flow);changed.objectives![goal].identifier='changed'
+ const rollback=S.drainSignals(changed,accepted);assert.equal(rollback.fault?.code,'graph-changed');assert.equal(S.objectiveState(rollback,goal),'running')
 })
 test('goal success and failure broadcast only their own outputs; quest terminal blocks late instance reports',()=>{
  for (const outcome of ['succeeded','failed'] as const) {

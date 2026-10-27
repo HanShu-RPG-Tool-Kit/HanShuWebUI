@@ -35,6 +35,8 @@ export type GoalDefinition = {
   /** WebUI 预览模板；非运行时权威 */
   localize?: Record<string, string>
   fields: GoalConfigField[]
+  /** Class-level Python declaration, not presentation metadata. */
+  requiresDelivery?: boolean
   /** 来源脚本文档 key；内置种子可为 null */
   sourceKey: string | null
   sourceName: string
@@ -80,11 +82,34 @@ export function parseGoalDefinitionsFromSource(source: string, meta: { sourceKey
       kind,
       label,
       fields,
+      ...parseDeliveryDeclaration(after),
       sourceKey: meta.sourceKey,
       sourceName: meta.sourceName,
     }, parseGoalHeaderMeta(text)))
   }
   return defs
+}
+
+/** Literal class-level capability. Do not infer delivery from goal kind or JSON labels. */
+function parseDeliveryDeclaration(source: string): { requiresDelivery: boolean; error?: string } {
+  const masked = source.replace(/("""|''')[\s\S]*?\1|#[^\n]*/g, match => match.replace(/[^\n]/g, ' '))
+  const header = /^([ \t]*)class\s+\w+[^\n]*?:[ \t]*([^\n]*)$/m.exec(masked)
+  if (!header) return { requiresDelivery: false }
+  const lines: string[] = []
+  if (header[2].trim()) lines.push(...header[2].split(';').map(member => `${header[1]}    ${member.trim()}`))
+  for (const line of masked.slice(header.index + header[0].length).split('\n')) {
+    if (line.trim() && line.search(/\S/) <= header[1].length) break
+    lines.push(line)
+  }
+  const indent = Math.min(...lines.filter(line => line.trim()).map(line => line.search(/\S/)))
+  const members = lines.filter(line => line.trim() && line.search(/\S/) === indent)
+  const declarations = members.filter(line => /^\s*requires_delivery\b/.test(line))
+  const literal = declarations.length === 1 ? /^\s*requires_delivery\s*=\s*(True|False)\s*$/.exec(declarations[0]) : null
+  const delivers = members.some(line => /^\s*def\s+deliver\s*\(/.test(line))
+  const requiresDelivery = literal?.[1] === 'True'
+  if (declarations.length && !literal) return { requiresDelivery, error: 'requires_delivery 必须是唯一的类级 True / False 字面量声明。' }
+  if (delivers && !requiresDelivery) return { requiresDelivery, error: '实现 deliver 的目标定义必须显式声明 requires_delivery = True。' }
+  return { requiresDelivery }
 }
 
 /** 把文件头 labels / widget / localize 叠到 @config 字段上；头与装饰器不一致时仍保留运行时字段。 */
@@ -228,7 +253,9 @@ export function buildGoalDefinitionCatalog(state: FlowWorkspaceState): GoalDefin
         return
       }
       for (const def of parsed) {
+        if (def.error) errors.push({ sourceKey: document.key, sourceName: document.name, message: `${def.kind}：${def.error}` })
         if (byKind.has(def.kind) && !isBuiltinScriptDocumentKey(document.key)) {
+          def.error = `goal 类型「${def.kind}」在不同有效脚本中重复，请修改定义 ID`
           errors.push({
             sourceKey: document.key,
             sourceName: document.name,

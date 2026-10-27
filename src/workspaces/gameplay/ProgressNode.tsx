@@ -36,19 +36,20 @@ export function ProgressNode({ node: view, selected, dragging }: NodeViewProps) 
     const state = S.objectiveState(sim, id)
     const label = goalLabels && Object.hasOwn(goalLabels,objective.goal.kind) ? goalLabels[objective.goal.kind] : objective.goal.kind
     return <NodeFrame selected={selected} dragging={dragging} data-objective-state={state} className={`flow-graph-node is-objective${draftClass}`}>
-      <NodeHeader className="flow-graph-node-header" icon="◎" title="目标" badge={draftTag ?? <span className="flow-graph-header-tag">{S.PROGRESS_STATES[state]}</span>} />
-      <span className="flow-graph-node-title" title={objective.goal.kind}>{label || '未选择目标'}</span>
-      <span className="flow-graph-node-description">Quest 级后台目标</span>
+      <NodeHeader className="flow-graph-node-header" icon="◎" title="目标" badge={draftTag ?? <span className="flow-graph-header-tag">{S.OBJECTIVE_STATES[state]}</span>} />
+      <span className="flow-graph-node-title" title={objective.identifier || objective.goal.kind}>{objective.identifier || label || '未选择目标'}</span>
+      <span className="flow-graph-node-description" title={label}>{objective.submission ? '需提交 · ' : ''}{objective.identifier ? label || '未选择目标' : 'Quest 级后台目标'}</span>
       <div className="flow-graph-node-port-band" />
       {ports}
     </NodeFrame>
   }
   if (predicate) {
     const truth = S.predicateTruth(sim, id)
+    const state = S.conditionState(sim, id)
     const summary = predicate.conditions.length ? `${predicate.conditions.length} 项判断规则` : '未配置（恒假）'
-    return <NodeFrame selected={selected} dragging={dragging} data-predicate-truth={truth ? 'true' : 'false'} className={`flow-graph-node is-predicate${truth ? ' is-true' : ''}${draftClass}`}>
-      <NodeHeader className="flow-graph-node-header" icon="⊢" title="条件" badge={draftTag ?? <span className="flow-graph-header-tag">{truth ? '真' : '假'}</span>} />
-      <span className="flow-graph-node-title">{summary}</span>
+    return <NodeFrame selected={selected} dragging={dragging} data-condition-state={state} data-predicate-truth={truth ? 'true' : 'false'} className={`flow-graph-node is-predicate${truth && state === 'running' ? ' is-true' : ''}${draftClass}`}>
+      <NodeHeader className="flow-graph-node-header" icon="⊢" title="条件" badge={draftTag ?? <span className="flow-graph-header-tag">{state === 'running' ? `运行中 · ${truth ? '真' : '假'}` : S.CONDITION_STATES[state]}</span>} />
+      <span className="flow-graph-node-title" title={summary}>{predicate.identifier || summary}</span>
       {ports}
     </NodeFrame>
   }

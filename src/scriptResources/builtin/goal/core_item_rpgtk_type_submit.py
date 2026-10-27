@@ -2,7 +2,7 @@
 {
   "id": "core:item_rpgtk_type_submit",
   "labels": {
-    "zh_cn": { "name": "持有并提交（RTK 物品）", "description": "数量足够为已满足；扣除仅在进度交付时发生" },
+    "zh_cn": { "name": "持有并提交（RTK 物品）", "description": "数量足够为已满足；扣除仅在进度交付或目标节点提交时发生" },
     "en_us": { "name": "Hold and submit (RTK item)", "description": "Enough → SATISFIED; take only on progress deliver" }
   },
   "params": {
@@ -51,6 +51,8 @@ GoalLabels = java_type("mchhui.rpgtoolkit.feature.goal.GoalLabels")
     field("delivered", "int", default=0),
 )
 class ItemRpgtkTypeSubmit(BaseGoalPy):
+    requires_delivery = True
+
     @subscribe(PlayerTickPost)
     def on_tick(self, instance, event):
         p = event.getEntity()

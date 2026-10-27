@@ -402,7 +402,7 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
   }, [doc, shopDoc, scriptDoc, kitDoc, progressDoc, navigationDoc, itemDoc, entityDoc, itemTableDoc])
   const docByKey = useMemo(() => new Map(state.documents.map((item) => [item.key, item])), [state.documents])
   const explorerState = useMemo(() => ({ ...state, activeKey: focusedKey }), [state, focusedKey])
-  const issues = useMemo(() => parsed.flow ? validateFlow(parsed.flow) : [], [parsed.flow])
+  const issues = useMemo(() => parsed.flow ? validateFlow(parsed.flow, goalCatalog.definitions) : [], [parsed.flow, goalCatalog.definitions])
   const cycleWarning = issues.find(issue => issue.path === 'graph' && issue.message.includes('环'))
   const readOnly = !client?.writable
   const locked = !projectBound || propertiesKey !== null
@@ -974,7 +974,7 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
     }
     try {
       const flow = parseFlow(item.source)
-      if (validateFlow(flow).some((issue) => issue.severity === 'error')) throw new Error('请先修复流程的结构错误。')
+      if (validateFlow(flow, goalCatalog.definitions).some((issue) => issue.severity === 'error')) throw new Error('请先修复流程的配置错误。')
       downloadFlowFile(item.name, JSON.stringify(flow, null, 2) + '\n')
       setNotice('已导出 HanShu 树图文档。')
     } catch (error) { setNotice(`导出失败：${String(error)}`) }
@@ -1175,7 +1175,7 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
       }
       if (paneDoc.key === focusedKey && parsed.error) paneError = parsed.error
     }
-    const paneIssues = paneFlow ? validateFlow(paneFlow) : []
+    const paneIssues = paneFlow ? validateFlow(paneFlow, goalCatalog.definitions) : []
     const paneErrors = paneIssues.filter((issue) => issue.severity === 'error').length + (paneError ? 1 : 0)
     const paneWarnings = paneIssues.filter((issue) => issue.severity === 'warning').length
     const paneCycle = paneIssues.find((issue) => issue.path === 'graph' && issue.message.includes('环'))

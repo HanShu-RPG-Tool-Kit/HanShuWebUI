@@ -1,4 +1,6 @@
 import { parseFlow, validateFlow } from '../../../workspaces/gameplay/model'
+import { parseGoalDefinitionsFromSource } from '../../../workspaces/gameplay/goalDefinitions'
+import { effectiveBuiltinScripts } from '../../../scriptResources'
 import { getExtension } from '../../../workspace'
 import { parseProgress, PROGRESS_FORMAT, type ProgressDocument } from '../../../workspaces/gameplay/progressDoc'
 import { MULTI_QUEST_FORMAT, questAuthorKindFromSource, QUEST_EXT } from '../../../workspaces/gameplay/questKind'
@@ -55,7 +57,16 @@ export const questCompiler: FileCompiler = {
     if (kind === 'multi') {
       try {
         const flow = parseFlow(file.content)
-        const errors = validateFlow(flow).filter(issue => issue.severity === 'error')
+        const scripts = ctx.index.workspace.packages.flatMap(pkg => pkg.scripts).filter(script => !script.id.startsWith('builtin:'))
+        const sources = [...effectiveBuiltinScripts(scripts).filter(script => script.type === 'goal').map(script => ({ name: script.name, content: script.source })), ...scripts.filter(script => script.srcKind === 'goal' && script.name.endsWith('.py'))]
+        const definitions = sources.flatMap(script => parseGoalDefinitionsFromSource(script.content, { sourceName: script.name, sourceKey: null }))
+        const seen = new Map<string, typeof definitions[number]>()
+        for (const definition of definitions) {
+          const duplicate = seen.get(definition.kind)
+          if (duplicate) duplicate.error = definition.error = `goal 类型「${definition.kind}」在不同有效声明中重复。`
+          seen.set(definition.kind, definition)
+        }
+        const errors = validateFlow(flow, definitions).filter(issue => issue.severity === 'error')
         if (errors.length) throw new Error(errors.map(issue => issue.message).join('；'))
         return [{ path, bytes: `${JSON.stringify(flow, null, 2)}\n`, plane, packageName: ctx.index.package.name, sourcePath: file.name }]
       } catch (error) {

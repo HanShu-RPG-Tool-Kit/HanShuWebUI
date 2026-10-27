@@ -210,7 +210,9 @@ try{
  await page.waitForFunction(()=>document.querySelector('.signal-debugger-status').textContent==='等待事件')
 
  await page.getByRole('button',{name:'重置模拟',exact:true}).click()
- await node(autoIds.b).click({button:'right'});await page.getByRole('menuitem',{name:'添加节点断点',exact:true}).click()
+ await page.waitForFunction(id=>document.querySelector(`[data-canvas-node="${id}"] [data-progress-state]`)?.getAttribute('data-progress-state')==='inactive',autoIds.b)
+ // Anchor the menu to the visible header, not the node center near the debugger boundary.
+ await node(autoIds.b).click({button:'right',position:{x:80,y:12}});await page.getByRole('menuitem',{name:'添加节点断点',exact:true}).click()
  await page.getByRole('button',{name:'初始化任务',exact:true}).click();await node(autoIds.start).click({modifiers:['Control']})
  await page.getByText('命中节点断点，尚未处理该信号',{exact:false}).waitFor()
  await autoPlay.uncheck();await autoPlay.check();await page.waitForTimeout(120)
