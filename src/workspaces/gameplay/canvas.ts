@@ -1,5 +1,5 @@
 import { randomId } from '../../project/crypto'
-import { normalizeLinkOrder, nextProgressIdentifier, clone, getCanvasNote, getEndNode, getPredicateNode, getObjectiveNode, getProgressNode, getTransitionNode, hasCanvasItem, hasContentNode, NOTE_COLORS, text, removeNode, type FlowCanvasNote, type FlowPort, type FlowPosition, type ProgressFlow } from './model'
+import { normalizeLinkOrder, nextProgressIdentifier, nextObjectiveIdentifier, clone, getCanvasNote, getEndNode, getPredicateNode, getObjectiveNode, getProgressNode, getTransitionNode, hasCanvasItem, hasContentNode, NOTE_COLORS, text, removeNode, type FlowCanvasNote, type FlowPort, type FlowPosition, type ProgressFlow } from './model'
 
 export const NODE_WIDTH = 216
 export const NODE_HEIGHT = 118
@@ -135,7 +135,7 @@ export function createObjectiveNode(flow: ProgressFlow, position: FlowPosition) 
   let id: string
   do { id = `objective_${randomId()}` } while (hasCanvasItem(next, id))
   next.objectives ??= {}
-  next.objectives[id] = { goal: { kind: '', params: {} } }
+  next.objectives[id] = { identifier: nextObjectiveIdentifier(next), goal: { kind: '', params: {} } }
   next.layout!.positions[id] = { ...position }
   return { flow: next, id }
 }

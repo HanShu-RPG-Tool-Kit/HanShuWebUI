@@ -220,7 +220,27 @@ test('background goal roundtrip, two distinct outputs, no inputs; delete cleans 
  }
  const duplicate=structuredClone(flow) as any;duplicate.predicates={[goal]:{conditions:[]}};assert.throws(()=>M.parseFlow(JSON.stringify(duplicate)))
 })
-test('optional identifiers share a quest namespace; submission structure and required capability are validated',()=>{
+test('objective names are mandatory, remain editable when missing, and default names avoid every named family',()=>{
+ const {flow,goal}=backgroundGoal()
+ assert.equal(flow.objectives![goal].identifier,'objective_1')
+ for(const identifier of [undefined,'','   ']) {
+  const old=structuredClone(flow) as any
+  if(identifier===undefined) delete old.objectives[goal].identifier
+  else old.objectives[goal].identifier=identifier
+  const editable=M.parseFlow(JSON.stringify(old))
+  assert.equal(editable.objectives![goal].identifier,identifier??'')
+  assert(M.validateFlow(editable).some(issue=>issue.path===`objectives.${goal}.identifier`&&issue.severity==='error'))
+  assert.equal(S.initializeQuest(editable,S.createSimState(editable)).fault?.code,'invalid-graph')
+ }
+ const condition=C.createPredicateNode(flow,{x:0,y:400})
+ condition.flow.predicates![condition.id].identifier='objective_2'
+ condition.flow.progress[flow.start].identifier='objective_3'
+ const created=C.createObjectiveNode(condition.flow,{x:0,y:600})
+ assert.equal(created.flow.objectives![created.id].identifier,'objective_4')
+ delete created.flow.predicates![condition.id].identifier
+ assert.equal(M.validateFlow(created.flow).some(issue=>issue.severity==='error'),false,'conditions remain anonymous if desired')
+})
+test('required objective identifiers and optional condition identifiers share a quest namespace; submission is validated',()=>{
  let {flow,goal}=backgroundGoal()
  const condition=C.createPredicateNode(flow,{x:0,y:400});flow=condition.flow
  flow.objectives![goal].identifier='collect_apples';flow.predicates![condition.id].identifier='has_apples'
@@ -232,13 +252,59 @@ test('optional identifiers share a quest namespace; submission structure and req
  const next=C.createProgressNode(flow,{x:300,y:400});assert.equal(next.flow.progress[next.id].identifier,'progress_2')
  const definitions=[{kind:'collect',requiresDelivery:true}]
  assert(M.validateFlow(flow,definitions).some(issue=>issue.severity==='error'&&issue.path===`objectives.${goal}.submission`))
- flow.objectives![goal].submission={title:{text:'提交'},description:{text:''},buttonText:{text:'确认'}}
+ flow.objectives![goal].submission={submit_type:'ui',param:null}
  assert.equal(M.validateFlow(flow,definitions).some(issue=>issue.severity==='error'),false)
- for(const submission of [null,{}, {title:{text:'标题'},description:{text:''},buttonText:'提交'}]){
+ for(const submission of [null,{}, {title:{text:'标题'},description:{text:''},buttonText:'提交'}, {submit_type:'ui'}, {submit_type:'ui',param:'unused'}, {submit_type:'dialogue_injection',param:null}, {submit_type:'unknown',param:null}, {submit_type:'ui',param:null,extra:true}]){
   const bad=structuredClone(flow) as any;bad.objectives[goal].submission=submission;assert.throws(()=>M.parseFlow(JSON.stringify(bad)))
  }
- flow.objectives![goal].submission!.buttonText.text=''
- assert(M.validateFlow(flow,definitions).some(issue=>issue.severity==='error'&&issue.path.endsWith('buttonText')))
+ flow.objectives![goal].submission={submit_type:'dialogue_injection',param:''}
+ assert(M.validateFlow(flow,definitions).some(issue=>issue.severity==='error'&&issue.path.endsWith('submission')))
+})
+test('progress and objective share the two-field submission shape; embedded goals cannot configure entries',()=>{
+ const {flow,goal}=backgroundGoal()
+ const start=flow.progress[flow.start]
+ start.goals=[{id:'first',kind:'delivery',params:{}},{id:'second',kind:'delivery',params:{}}]
+ const definitions=[{kind:'delivery',requiresDelivery:true}]
+ assert.equal(M.validateFlow(flow,definitions).filter(issue=>issue.severity==='error'&&issue.path===`progress.${flow.start}.submission`).length,1,'one missing submission issue per progress, never per goal')
+ for(const submission of [{submit_type:'ui',param:null},{submit_type:'dialogue_injection',param:'提交_1'}] as const) {
+  start.submission=submission;flow.objectives![goal].submission=submission
+  assert.deepEqual(M.parseFlow(JSON.stringify(flow)),flow)
+  assert.equal(M.validateFlow(flow,definitions).some(issue=>issue.severity==='error'),false)
+ }
+ for(const param of ['', '  ', '@point', 'point with space',' point','point\n']) {
+  start.submission={submit_type:'dialogue_injection',param}
+  assert(M.validateFlow(flow).some(issue=>issue.path===`progress.${flow.start}.submission`&&issue.severity==='error'))
+ }
+ start.submission={submit_type:'ui',param:null}
+ const misplaced=structuredClone(flow) as any
+ misplaced.progress[flow.start].goals[0].submission={submit_type:'ui',param:null}
+ assert.throws(()=>M.parseFlow(JSON.stringify(misplaced)),/goal 不描述提交/)
+ for(const submission of [{submit_type:'ui',param:''},{submit_type:'dialogue_injection',param:7},{title:{text:'legacy'},description:{text:''},buttonText:{text:'submit'}}]) {
+  const invalid=structuredClone(flow) as any;invalid.progress[flow.start].submission=submission
+  assert.throws(()=>M.parseFlow(JSON.stringify(invalid)),/submit_type/)
+ }
+})
+test('progress submission reports delivery of all goals once; retry, cancellation, failure and rollback remain safe',()=>{
+ const {flow,a}=fork()
+ flow.progress[flow.start].submission={submit_type:'dialogue_injection',param:'deliver_all'}
+ flow.progress[flow.start].goals=[{id:'first',kind:'delivery',params:{}},{id:'second',kind:'delivery',params:{}}]
+ const before=JSON.stringify(flow),initial=S.initializeQuest(flow,S.createSimState(flow))
+ assert.equal(S.settleProgress(flow,initial,flow.start,'succeeded'),initial,'normal success cannot bypass submission')
+ const retry=S.submitProgress(flow,initial,flow.start,false)
+ assert.equal(S.progressState(retry,flow.start),'running');assert.equal(retry.log.length,initial.log.length)
+ const pending=S.submitProgress(flow,retry,flow.start,true,true)
+ assert.equal(S.progressState(pending,flow.start),'succeeded')
+ assert.equal(pending.queue.length,2,'one broadcast per outgoing wire, not per goal')
+ assert.equal(S.submitProgress(flow,pending,flow.start,true),pending,'events cannot interleave the pulse')
+ const done=S.drainSignals(flow,pending)
+ assert.equal(S.progressState(done,a),'running');assert.equal(S.submitProgress(flow,done,flow.start,true),done)
+ const cancelled=S.injectSignal(flow,initial,flow.start,'output',{kind:'cancel'})
+ assert.equal(S.submitProgress(flow,cancelled,flow.start,true),cancelled)
+ assert.equal(S.progressState(S.settleProgress(flow,initial,flow.start,'failed'),flow.start),'failed','submission never blocks true goal failure')
+ const changed=structuredClone(flow);changed.progress[flow.start].submission={submit_type:'ui',param:null}
+ const rollback=S.drainSignals(changed,pending)
+ assert.equal(rollback.fault?.code,'graph-changed');assert.equal(S.progressState(rollback,flow.start),'running')
+ assert.equal(JSON.stringify(flow),before,'simulation never writes runtime state or per-goal entries into source')
 })
 test('effective goals start atomically; drafts stay inactive and cannot settle; reset returns all inactive',()=>{
  let {flow,goal}=backgroundGoal();const draft=C.createObjectiveNode(flow,{x:0,y:400});flow=draft.flow
@@ -281,7 +347,7 @@ test('condition lifecycle gates broadcasts and queries; closure is node-wide and
 })
 test('submission is an explicit instance outcome: satisfaction alone cannot succeed; failed attempts retry',()=>{
  const {flow,goal}=backgroundGoal()
- flow.objectives![goal].submission={title:{text:'交付'},description:{text:''},buttonText:{text:'提交'}}
+ flow.objectives![goal].submission={submit_type:'ui',param:null}
  const sim=S.initializeQuest(flow,S.createSimState(flow))
  assert.equal(S.settleObjective(flow,sim,goal,'succeeded'),sim)
  const rejected=S.submitObjective(flow,sim,goal,false)
@@ -335,7 +401,7 @@ test('background goal with end reachability cannot rescue a stranded running pro
 })
 test('background goals count toward shared execution limits',()=>{
  const {flow}=backgroundGoal()
- flow.objectives=Object.fromEntries(Array.from({length:M.FLOW_LIMITS.nodes},(_,index)=>[`goal_${index}`,{goal:{kind:'collect',params:{}}}]))
+ flow.objectives=Object.fromEntries(Array.from({length:M.FLOW_LIMITS.nodes},(_,index)=>[`goal_${index}`,{identifier:`goal_${index}`,goal:{kind:'collect',params:{}}}]))
  assert(M.validateFlow(flow).some(issue=>issue.severity==='error'&&issue.path==='graph'))
  assert.equal(S.initializeQuest(flow,S.createSimState(flow)).fault?.code,'invalid-graph')
 })

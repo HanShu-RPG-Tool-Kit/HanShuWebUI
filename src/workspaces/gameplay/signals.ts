@@ -451,10 +451,21 @@ export function initializeQuest(flow: ProgressFlow, sim: FlowSimState, deferred 
   return deferred ? next : drainSignals(flow, next)
 }
 export function settleProgress(flow: ProgressFlow, sim: FlowSimState, id: string, outcome: 'succeeded' | 'failed', deferred = false): FlowSimState {
+  if (outcome === 'succeeded' && getProgressNode(flow, id)?.submission) return sim
+  return reportProgressOutcome(flow, sim, id, outcome, deferred)
+}
+/** One instance report for delivery of ALL goals. No per-goal simulation or Python execution. */
+export function submitProgress(flow: ProgressFlow, sim: FlowSimState, id: string, accepted: boolean, deferred = false): FlowSimState {
+  if (!getProgressNode(flow, id)?.submission || progressState(sim, id) !== 'running' || !sim.initialized || !connectedToStart(flow).has(id) || !canTrigger(sim)) return sim
+  if (accepted) return reportProgressOutcome(flow, sim, id, 'succeeded', deferred)
+  const next = begin(flow, sim, sim, [], { label: '进度统一提交未成功（可重试，不发信号）', nodeId: id })
+  return deferred ? next : drainSignals(flow, next)
+}
+function reportProgressOutcome(flow: ProgressFlow, sim: FlowSimState, id: string, outcome: 'succeeded' | 'failed', deferred: boolean): FlowSimState {
   if (!canTrigger(sim) || !sim.initialized || !connectedToStart(flow).has(id) || !getProgressNode(flow, id) || progressState(sim, id) !== 'running') return sim
   const port: FlowPort = outcome === 'succeeded' ? 'output' : 'output2'
   const base = { ...sim, progress: { ...sim.progress, [id]: outcome } }
-  const next = begin(flow, sim, base, forward(flow, id, port, A), { label: outcome === 'succeeded' ? '结算成功' : '结算失败', nodeId: id })
+  const next = begin(flow, sim, base, forward(flow, id, port, A), { label: outcome === 'succeeded' ? getProgressNode(flow, id)?.submission ? '进度统一提交成功（全部 goal）' : '结算成功' : '结算失败', nodeId: id })
   return deferred ? next : drainSignals(flow, next)
 }
 export function setPredicateTruth(flow: ProgressFlow, sim: FlowSimState, id: string, truth: boolean, deferred = false): FlowSimState {

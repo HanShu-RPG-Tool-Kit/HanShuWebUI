@@ -2,6 +2,7 @@ import { randomId } from '../../project/crypto'
 import { parseJsonValue } from '../../utils/strictJson'
 import { parseCompletionGraph, type CompletionGraph } from './completionGraph'
 import { parseConditionRules, type ProgressConditionRule } from './conditions'
+import { matchInjectLine } from '../../hanshu/hsSyntaxRules'
 
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json }
 export type Data = { [key: string]: Json }
@@ -61,6 +62,8 @@ export type FlowProgressNode = {
   goals: FlowProgressGoal[]
   completion: 'all' | 'any' | 'custom'
   completionGraph?: CompletionGraph
+  /** One submission entry for the whole progress, never per embedded goal. */
+  submission?: FlowSubmission
   /** 仅开始进度节点：任务标题 */
   questTitle?: FlowText
   /** 仅开始进度节点：任务说明 */
@@ -73,10 +76,22 @@ export type FlowPredicateNode = {
   conditions: ProgressConditionRule[]
   extensions?: Data
 }
-/** Player-facing submission entry; absent means no submission, not an empty form. */
-export type FlowSubmission = { title: FlowText; description: FlowText; buttonText: FlowText }
+/** Node-level entry. Neither the type nor its parameter is localized. */
+export type FlowSubmission = { submit_type: 'ui'; param: null } | { submit_type: 'dialogue_injection'; param: string }
+export function parseFlowSubmission(value: unknown, path = 'submission'): FlowSubmission {
+  if (!isObject(value) || Object.keys(value).length !== 2 || !Object.hasOwn(value, 'submit_type') || !Object.hasOwn(value, 'param')
+    || !(value.submit_type === 'ui' && value.param === null || value.submit_type === 'dialogue_injection' && typeof value.param === 'string')) {
+    throw new Error(`${path}：提交只支持 submit_type 与 param；ui 的 param 为 null，dialogue_injection 的 param 为注入点名文本。`)
+  }
+  return value as FlowSubmission
+}
+export function flowSubmissionIssue(submission: FlowSubmission): string | null {
+  try { parseFlowSubmission(submission) } catch (error) { return error instanceof Error ? error.message : String(error) }
+  if (submission.submit_type === 'dialogue_injection' && (!submission.param.trim() || submission.param !== submission.param.trim() || !matchInjectLine(`@${submission.param}`))) return '请填写有效的对话注入点名（不带 @，不含空白）。'
+  return null
+}
 /** Quest 级后台目标：随任务启动，不维持存活；C 关闭整个节点。 */
-export type FlowObjectiveNode = { identifier?: string; goal: Omit<FlowProgressGoal, 'id'>; submission?: FlowSubmission; extensions?: Data }
+export type FlowObjectiveNode = { identifier: string; goal: Omit<FlowProgressGoal, 'id'>; submission?: FlowSubmission; extensions?: Data }
 /** 逻辑节点：左端口 并且 / 或者 收 A，右端口发 A；无内容。 */
 export type FlowTransitionNode = { extensions?: Data }
 /** 结束节点：成功入 / 失败入，决定任务终局；携带结局标题与奖励礼包。 */
@@ -242,10 +257,16 @@ export function setFlowId(flow: ProgressFlow, id: string): ProgressFlow {
 const LEGACY_KEYS = ['name', 'description', 'nodes', 'goals', 'conditionals', 'diffs', 'merges', 'swaps', 'entry', 'root', 'title', 'kind', 'hubs', 'gateways'] as const
 
 export function nextProgressIdentifier(flow: ProgressFlow): string {
+  return nextNodeIdentifier(flow, 'progress')
+}
+export function nextObjectiveIdentifier(flow: ProgressFlow): string {
+  return nextNodeIdentifier(flow, 'objective')
+}
+function nextNodeIdentifier(flow: ProgressFlow, prefix: string): string {
   const used = new Set([...Object.values(flow.progress), ...Object.values(flow.predicates ?? {}), ...Object.values(flow.objectives ?? {})].map(node => node.identifier))
   let index = 1
-  while (used.has(`progress_${index}`)) index++
-  return `progress_${index}`
+  while (used.has(`${prefix}_${index}`)) index++
+  return `${prefix}_${index}`
 }
 
 export function progressIdentifierIssue(flow: ProgressFlow, id: string, value: string): string | null {
@@ -258,6 +279,10 @@ export function nodeIdentifierIssue(flow: ProgressFlow, id: string, value: strin
   if ([...Object.entries(flow.progress), ...Object.entries(flow.predicates ?? {}), ...Object.entries(flow.objectives ?? {})].some(([otherId, node]) => otherId !== id && node.identifier === value)) return '非空标识符在当前 Quest 内必须唯一。'
   return null
 }
+export function objectiveIdentifierIssue(flow: ProgressFlow, id: string, value: string): string | null {
+  if (!value.trim()) return '目标标识符不能为空。'
+  return nodeIdentifierIssue(flow, id, value)
+}
 
 /** All authoring and debugger labels share the same nonlocalized progress name. */
 export function flowNodeLabel(flow: ProgressFlow, id: string, resolveText?: (key: string) => string | null): string {
@@ -266,7 +291,7 @@ export function flowNodeLabel(flow: ProgressFlow, id: string, resolveText?: (key
   const predicate = getPredicateNode(flow, id)
   if (predicate) return predicate.identifier || `条件 · ${predicate.conditions.length} 个条件`
   const objective = getObjectiveNode(flow, id)
-  if (objective) return objective.identifier || objective.goal.kind || '未选择目标'
+  if (objective) return objective.identifier || '未填写目标标识符'
   const end = getEndNode(flow, id)
   if (end) return displayText(end.title, resolveText) || '未命名结局'
   return getTransitionNode(flow, id) ? '逻辑' : id
@@ -298,6 +323,7 @@ export function parseFlow(source: string): ProgressFlow {
     const raw = value as Record<string, unknown>
     const start = id === f.start
     checkExtensions(raw, `progress.${id}`)
+    if (raw.submission !== undefined) parseFlowSubmission(raw.submission, `progress.${id}.submission`)
     if (!Object.hasOwn(raw, 'identifier')) {
       // Read previous v1 authoring documents without rewriting stable node IDs.
       checkText(raw.title, `progress.${id}.title`)
@@ -323,6 +349,7 @@ export function parseFlow(source: string): ProgressFlow {
     require(Array.isArray(node.goals), `progress.${id}.goals`)
     for (const item of node.goals as unknown[]) {
       require(isObject(item) && typeof item.id === 'string' && safeId(item.id) && typeof item.kind === 'string' && isObject(item.params), `progress.${id}.goals`)
+      require(Object.keys(item as Record<string, unknown>).every(key => ['id', 'kind', 'params'].includes(key)), `progress.${id}.goals（goal 不描述提交；请在进度节点上配置 submission）`)
       const goal = item as FlowProgressGoal
       for (const [key, data] of Object.entries(goal.params)) {
         require(typeof data === 'string' || typeof data === 'boolean' || (typeof data === 'number' && Number.isFinite(data)), `progress.${id}.goals.${goal.id}.params.${key}`)
@@ -338,9 +365,10 @@ export function parseFlow(source: string): ProgressFlow {
       const raw = value as Record<string, unknown>
       require(Object.keys(raw).every(key => ['identifier', 'goal', 'submission', 'extensions'].includes(key)), `objectives.${id}`)
       require(raw.identifier === undefined || typeof raw.identifier === 'string', `objectives.${id}.identifier`)
+      // Keep old anonymous nodes editable, but invalid until the author names them.
+      raw.identifier ??= ''
       if (raw.submission !== undefined) {
-        require(isObject(raw.submission) && Object.keys(raw.submission).every(key => ['title', 'description', 'buttonText'].includes(key)), `objectives.${id}.submission`)
-        for (const key of ['title', 'description', 'buttonText']) checkText((raw.submission as Record<string, unknown>)[key], `objectives.${id}.submission.${key}`)
+        parseFlowSubmission(raw.submission, `objectives.${id}.submission`)
       }
       checkExtensions(raw, `objectives.${id}`)
       const goal = raw.goal
@@ -485,6 +513,11 @@ export function validateFlow(flow: ProgressFlow, definitions: readonly { kind: s
   for (const [id, node] of Object.entries(flow.progress ?? {})) {
     const identifierIssue = progressIdentifierIssue(flow, id, node.identifier)
     if (identifierIssue) error(`progress.${id}.identifier`, identifierIssue)
+    if (node.submission) {
+      const issue = flowSubmissionIssue(node.submission)
+      if (issue) error(`progress.${id}.submission`, issue)
+    }
+    if (!node.submission && node.goals.some(goal => definitions.find(definition => definition.kind === goal.kind)?.requiresDelivery)) error(`progress.${id}.submission`, '进度含需要交付的 goal，请在进度节点上配置统一提交方式。')
     const seen = new Set<string>()
     node.goals.forEach((goal, index) => {
       const definition = definitions.find(item => item.kind === goal.kind)
@@ -503,13 +536,14 @@ export function validateFlow(flow: ProgressFlow, definitions: readonly { kind: s
     })
   }
   for (const [id, node] of Object.entries(flow.objectives ?? {})) {
-    const issue = nodeIdentifierIssue(flow, id, node.identifier ?? '')
+    const issue = objectiveIdentifierIssue(flow, id, node.identifier ?? '')
     if (issue) error(`objectives.${id}.identifier`, issue)
     const definition = definitions.find(item => item.kind === node.goal.kind)
     if (definition?.error) error(`objectives.${id}.goal`, definition.error)
-    if (definition?.requiresDelivery && !node.submission) error(`objectives.${id}.submission`, '此目标定义需要交付，请显式配置提交表单。')
-    if (node.submission) for (const key of ['title', 'buttonText'] as const) {
-      if (!node.submission[key].text.trim()) error(`objectives.${id}.submission.${key}`, '提交标题和按钮文案不能为空。')
+    if (definition?.requiresDelivery && !node.submission) error(`objectives.${id}.submission`, '此目标定义需要交付，请显式配置提交方式。')
+    if (node.submission) {
+      const issue = flowSubmissionIssue(node.submission)
+      if (issue) error(`objectives.${id}.submission`, issue)
     }
     if (!node.goal.kind.trim() && !drafts.has(id)) warning(`objectives.${id}.goal`, '目标还没有选择类型。')
   }

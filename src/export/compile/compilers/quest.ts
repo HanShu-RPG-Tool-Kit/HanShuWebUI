@@ -68,7 +68,9 @@ export const questCompiler: FileCompiler = {
         }
         const errors = validateFlow(flow, definitions).filter(issue => issue.severity === 'error')
         if (errors.length) throw new Error(errors.map(issue => issue.message).join('；'))
-        return [{ path, bytes: `${JSON.stringify(flow, null, 2)}\n`, plane, packageName: ctx.index.package.name, sourcePath: file.name }]
+        const injections = [...Object.values(flow.progress), ...Object.values(flow.objectives ?? {})].flatMap(node => node.submission?.submit_type === 'dialogue_injection' ? [node.submission.param] : [])
+        const requires = [...new Map(injections.map(id => [id.toLowerCase(), { kind: 'hsInject', id }])).values()]
+        return [{ path, bytes: `${JSON.stringify(flow, null, 2)}\n`, plane, packageName: ctx.index.package.name, sourcePath: file.name, ...(requires.length ? { requires } : {}) }]
       } catch (error) {
         ctx.report({severity:'error',code:'quest_graph',message:`任务图无法导出：${error instanceof Error ? error.message : String(error)}`,sourcePath:file.name})
         return []

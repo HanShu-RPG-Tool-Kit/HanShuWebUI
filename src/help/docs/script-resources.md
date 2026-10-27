@@ -37,7 +37,7 @@ WebUI 已统一资源模型、编辑器与 PAK 导出。Mod 已接入 script/kit
 
 目标类使用类级布尔字面量 `requires_delivery = True` 声明“满足条件后仍需交付”；未声明默认 False，也可显式写 False。实现 `deliver(self, instance, context)` 的类型必须声明 True，不能通过 goal 类型名、`consume` 参数或文件头展示 JSON 猜测。声明不能是计算表达式，也不能藏在方法体内。内置四种物品持有/提交目标均实现交付钩子，因此声明 True。
 
-目标节点引用该类型时必须显式配置 `submission`；缺失时编辑器、模拟入口和 PAK 导出报错。目标可主动配置人工确认提交，不以具名为前提。goal 满足仅代表可提交；宿主提交时重新验证条件，执行交付，成功后才令节点进入已成功并发 A。交付拒绝应保留运行中，不能当成目标已失败。详细生命周期和提交字段见[多进度节点图](#progress-node-graph)。
+目标节点引用该类型，或进度的任意 goal 引用该类型时，所属节点必须显式配置 `submission: {submit_type, param}`；缺失时编辑器、模拟入口和 PAK 导出报错。UI 类型为 `ui`、param 为 null；对话类型为 `dialogue_injection`、param 为不带 `@` 的注入点名，均不本地化。进度只在节点自身配置一次提交，提交全部 goal；目标也只在节点自身配置，不在 goal 中配置入口。所有目标节点均须具名，与是否提交无关。满足条件仅代表可提交；宿主实际交付成功后才令节点进入已成功并发 A。交付拒绝应保留运行中，不能当成目标已失败。详细生命周期和提交字段见[多进度节点图](#progress-node-graph)。
 
 WebUI 只静态读取声明并保存/导出配置，不执行 Python。`requires_delivery` 是后续 Mod goal 加载与提交接入必须读取的契约；本次并未修改 Mod 加载器或提供实际游戏内提交界面。
 

@@ -120,10 +120,6 @@ export function ensureFlowLocaleKeys(flow: ProgressFlow): {
       title: migrateFlowText(node.title, flowNodeFieldKey('ends', id, 'title'), seeds),
     }]))
   }
-  if (flow.objectives) next.objectives = Object.fromEntries(Object.entries(flow.objectives).map(([id, node]) => [id, {
-    ...node,
-    ...(node.submission ? { submission: Object.fromEntries(Object.entries(node.submission).map(([field, value]) => [field, migrateFlowText(value, flowNodeFieldKey('objectives', id, `submission.${field}`), seeds)])) as typeof node.submission } : {}),
-  }]))
 
   return { flow: next, seeds }
 }
@@ -164,7 +160,7 @@ export function flowNodeLocaleKeyMoves(
   const fields: Record<'progress' | 'predicates' | 'objectives' | 'ends', readonly string[]> = {
     progress: ['runningLog', 'completedLog', 'questTitle', 'description'],
     predicates: [],
-    objectives: ['submission.title', 'submission.description', 'submission.buttonText'],
+    objectives: [],
     ends: ['title'],
   }
   const moves: Array<[string, string]> = []

@@ -20,7 +20,7 @@ export function ProgressNode({ node: view, selected, dragging }: NodeViewProps) 
     const start = M.isStartNode(flow, id)
     const subtitle = start
       ? displayText(progress.questTitle ?? { text: '' }, resolveText)
-      : `${progress.goals.length} 个目标 · ${{all:'完成全部',any:'完成任一',custom:'自定义完成'}[progress.completion]}`
+      : `${progress.submission ? '需提交 · ' : ''}${progress.goals.length} 个目标 · ${{all:'完成全部',any:'完成任一',custom:'自定义完成'}[progress.completion]}`
     return <NodeFrame selected={selected} dragging={dragging} data-progress-state={state} data-start={start ? 'true' : undefined} className={`flow-graph-node is-progress is-progress-${state}${start ? ' is-start' : ''}${draftClass}`}>
       <NodeHeader className="flow-graph-node-header" icon={start ? '▸' : '▣'} title={start ? '开始进度' : '进度'} badge={draftTag ?? <span className="flow-graph-header-tag">{S.PROGRESS_STATES[state]}</span>} />
       <span className="flow-graph-node-title" title={progress.identifier}>{progress.identifier || '未填写进度标识符'}</span>
@@ -37,7 +37,7 @@ export function ProgressNode({ node: view, selected, dragging }: NodeViewProps) 
     const label = goalLabels && Object.hasOwn(goalLabels,objective.goal.kind) ? goalLabels[objective.goal.kind] : objective.goal.kind
     return <NodeFrame selected={selected} dragging={dragging} data-objective-state={state} className={`flow-graph-node is-objective${draftClass}`}>
       <NodeHeader className="flow-graph-node-header" icon="◎" title="目标" badge={draftTag ?? <span className="flow-graph-header-tag">{S.OBJECTIVE_STATES[state]}</span>} />
-      <span className="flow-graph-node-title" title={objective.identifier || objective.goal.kind}>{objective.identifier || label || '未选择目标'}</span>
+      <span className="flow-graph-node-title" title={objective.identifier}>{objective.identifier || '未填写目标标识符'}</span>
       <span className="flow-graph-node-description" title={label}>{objective.submission ? '需提交 · ' : ''}{objective.identifier ? label || '未选择目标' : 'Quest 级后台目标'}</span>
       <div className="flow-graph-node-port-band" />
       {ports}

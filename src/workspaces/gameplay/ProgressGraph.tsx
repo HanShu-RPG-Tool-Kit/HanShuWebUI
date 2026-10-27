@@ -193,7 +193,11 @@ export function ProgressGraph({ flow, selection, onSelect, onCreate, onChangeFlo
     setPlaying(autoPlay && S.isBusy(next))
   }
   const initialize = () => trigger(previous=>S.initializeQuest(flow,previous,true))
-  const settle = (id: string, outcome: 'succeeded' | 'failed') => trigger(previous=>M.getObjectiveNode(flow,id)?.submission && outcome === 'succeeded' ? S.submitObjective(flow,previous,id,true,true) : M.getObjectiveNode(flow,id) ? S.settleObjective(flow,previous,id,outcome,true) : S.settleProgress(flow,previous,id,outcome,true))
+  const settle = (id: string, outcome: 'succeeded' | 'failed') => trigger(previous => {
+    const objective = M.getObjectiveNode(flow,id)
+    if (objective) return objective.submission && outcome === 'succeeded' ? S.submitObjective(flow,previous,id,true,true) : S.settleObjective(flow,previous,id,outcome,true)
+    return M.getProgressNode(flow,id)?.submission && outcome === 'succeeded' ? S.submitProgress(flow,previous,id,true,true) : S.settleProgress(flow,previous,id,outcome,true)
+  })
   const togglePredicate = (id: string) => trigger(previous=>S.setPredicateTruth(flow,previous,id,!S.predicateTruth(previous,id),true))
 
   const createItems = (position: FlowPosition): MenuItem[] => [
@@ -222,7 +226,8 @@ export function ProgressGraph({ flow, selection, onSelect, onCreate, onChangeFlo
       return [
         { label: '编辑…', disabled: locked, action: () => openForm(id) },
         ...(start ? [{ label: '初始化任务', disabled: eventDisabled || sim.initialized, action: initialize }] : []),
-        { label: '结算为成功（发 A）', disabled: eventDisabled || !running, action: () => settle(id, 'succeeded') },
+        { label: progress.submission ? '模拟提交成功（全部 goal，发 A）' : '结算为成功（发 A）', disabled: eventDisabled || !running, action: () => settle(id, 'succeeded') },
+        ...(progress.submission ? [{ label: '模拟提交未成功（可重试）', disabled: eventDisabled || !running, action: () => trigger(previous => S.submitProgress(flow,previous,id,false,true)) }] : []),
         { label: '结算为失败（发 A）', disabled: eventDisabled || !running, action: () => settle(id, 'failed') },
         { label: start ? '删除开始进度（不可用）' : '删除进度', disabled: start || locked, action: () => onDelete(id) },
       ]

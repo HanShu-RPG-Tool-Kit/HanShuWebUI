@@ -90,16 +90,15 @@ background.flow.objectives![background.id].goal={kind:'collect',params:{item:'mi
 assert.deepEqual(ensureFlowLocaleKeys(background.flow).flow.objectives,background.flow.objectives)
 assert.equal(Object.keys(ensureFlowLocaleKeys(background.flow).seeds).some(key=>key.startsWith('objectives.')),false,'background goals have no player-facing localization fields')
 background.flow.objectives![background.id].identifier='background.apples'
-background.flow.objectives![background.id].submission={title:{text:'交付苹果'},description:{text:'交给村长'},buttonText:{text:'确认提交'}}
+background.flow.objectives![background.id].submission={submit_type:'dialogue_injection',param:'quest.submit'}
+background.flow.progress[background.flow.start].submission={submit_type:'ui',param:null}
 const submitted=ensureFlowLocaleKeys(background.flow)
 assert.equal(submitted.flow.objectives![background.id].identifier,'background.apples')
-for (const field of ['title','description','buttonText'] as const) {
-  const key=`objectives.${background.id}.submission.${field}`
-  assert.equal(submitted.flow.objectives![background.id].submission![field].text,key)
-  assert.equal(submitted.seeds[key],background.flow.objectives![background.id].submission![field].text)
-}
+assert.deepEqual(submitted.flow.objectives![background.id].submission,background.flow.objectives![background.id].submission)
+assert.deepEqual(submitted.flow.progress[background.flow.start].submission,{submit_type:'ui',param:null})
+assert.equal(Object.keys(submitted.seeds).some(key=>key.includes('.submission.')),false,'submission type and dialogue point never become translation keys')
 assert.equal(Object.keys(submitted.seeds).some(key=>key.endsWith('.identifier')),false)
-assert.deepEqual(ensureFlowLocaleKeys(submitted.flow).seeds,{},'localized submission roundtrips without reseeding')
+assert.deepEqual(ensureFlowLocaleKeys(submitted.flow).seeds,{},'submission roundtrips without locale seeds')
 assert.equal(Object.hasOwn(predicate.flow.predicates![predicate.id]!, 'title'), false)
 const migratedPredicate = ensureFlowLocaleKeys(parseFlow(JSON.stringify({
   ...predicate.flow,

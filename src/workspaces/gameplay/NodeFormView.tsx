@@ -8,7 +8,8 @@ import { localizedGoalDefinitionLabel, type GoalDefinition } from './goalDefinit
 import { GoalParameterField } from './goalWidgets'
 import { GoalPicker } from './ProgressEditor'
 import { ProgressCompletionEditor } from './ProgressCompletionEditor'
-import { flowNodeLabel, progressIdentifierIssue, nodeIdentifierIssue, getEndNode, getPredicateNode, getObjectiveNode, getProgressNode, isStartNode, type FlowText, type ProgressFlow } from './model'
+import { SubmissionField } from './SubmissionField'
+import { flowNodeLabel, progressIdentifierIssue, nodeIdentifierIssue, objectiveIdentifierIssue, getEndNode, getPredicateNode, getObjectiveNode, getProgressNode, isStartNode, type FlowText, type ProgressFlow } from './model'
 
 export type NodeFormKind = 'progress' | 'predicate' | 'objective' | 'end'
 
@@ -49,7 +50,7 @@ export function NodeFormView({ flow, nodeId, kind, active = false, disabled = fa
       {!expanded && <button type="button" className="node-form-field-expand" aria-label={`放大${label}`} onClick={expand}>放大 ↗</button>}{field}
     </div>}</EditorExpansion> : field
   }
-  const optionalIdentifier = (collection: 'predicates' | 'objectives', identifier = '') => <>
+  const optionalIdentifier = (collection: 'predicates', identifier = '') => <>
     <TextField label="标识符（可选，留空为匿名）" value={identifier} disabled={disabled} onChange={value => update(next => {
       const node = next[collection]![nodeId]
       if (value) node.identifier = value
@@ -75,6 +76,10 @@ export function NodeFormView({ flow, nodeId, kind, active = false, disabled = fa
       {progressIdentifierIssue(flow, nodeId, node.identifier) && <p className="progress-inline-warning" role="alert">{progressIdentifierIssue(flow, nodeId, node.identifier)}</p>}
       {authorText('进行时日志', node.runningLog, (next, field) => { next.progress[nodeId].runningLog = field }, true)}
       {authorText('完成时日志', node.completedLog, (next, field) => { next.progress[nodeId].completedLog = field }, true)}
+      <SubmissionField value={node.submission} progress required={node.goals.some(goal => definitions.find(item => item.kind === goal.kind)?.requiresDelivery)} disabled={disabled} onChange={submission => update(next => {
+        if (submission) next.progress[nodeId].submission = submission
+        else delete next.progress[nodeId].submission
+      })} />
       </section>
       <section className="node-form-goals-section">
         <header className="progress-section-head progress-card-head"><h2>目标 <span>{node.goals.length}</span></h2></header>
@@ -133,7 +138,8 @@ export function NodeFormView({ flow, nodeId, kind, active = false, disabled = fa
     title = '目标'
     const definition = definitions.find(item=>item.kind === node.goal.kind)
     body = <section className="node-form-section">
-      {optionalIdentifier('objectives', node.identifier)}
+      <TextField label="目标标识符" value={node.identifier} disabled={disabled} onChange={identifier => update(next => { next.objectives![nodeId].identifier = identifier })} />
+      {objectiveIdentifierIssue(flow, nodeId, node.identifier) && <p className="progress-inline-warning" role="alert">{objectiveIdentifierIssue(flow, nodeId, node.identifier)}</p>}
       <header className="progress-section-head"><h2>{definition ? localizedGoalDefinitionLabel(definition,'zh_cn') : node.goal.kind || '未选择目标'}</h2>
         <button type="button" disabled={disabled} onClick={()=>setPicker({})}>{node.goal.kind ? '更换类型' : '选择目标类型'}</button>
       </header>
@@ -146,28 +152,10 @@ export function NodeFormView({ flow, nodeId, kind, active = false, disabled = fa
       })} />)}</div>
       {definition && !definition.fields.length && <p className="progress-node-empty">此目标无需配置参数</p>}
       {definition?.error && <p className="progress-inline-warning" role="alert">{definition.error}</p>}
-      {definition?.requiresDelivery && !node.submission && <p className="progress-inline-warning" role="alert">此目标需要交付，必须配置提交表单；满足条件仅代表可以提交。</p>}
-      <section className="node-form-section">
-        <header className="progress-section-head"><h2>提交表单</h2><button type="button" disabled={disabled} onClick={() => update(next => {
-          const target = next.objectives![nodeId]
-          if (target.submission) delete target.submission
-          else {
-            const values = { title: '提交目标', description: '', buttonText: '提交' }
-            target.submission = { title: { text: '' }, description: { text: '' }, buttonText: { text: '' } }
-            for (const field of ['title', 'description', 'buttonText'] as const) {
-              const key = `objectives.${nodeId}.submission.${field}`
-              target.submission[field] = { text: setText ? key : values[field] }
-              if (setText) setText(key, values[field])
-            }
-          }
-        })}>{node.submission ? '移除提交表单' : '配置提交表单'}</button></header>
-        <p className="flow-hint">{node.submission ? '满足条件后可提交。仅提交成功才完成目标并发出成功 A；提交未成功可以重试。' : '无提交入口；不需要交付的目标满足后直接完成。'}</p>
-        {node.submission && <>
-          {authorText('提交标题', node.submission.title, (next, field) => { next.objectives![nodeId].submission!.title = field })}
-          {authorText('提交说明', node.submission.description, (next, field) => { next.objectives![nodeId].submission!.description = field }, true)}
-          {authorText('提交按钮文案', node.submission.buttonText, (next, field) => { next.objectives![nodeId].submission!.buttonText = field })}
-        </>}
-      </section>
+      <SubmissionField value={node.submission} required={definition?.requiresDelivery} disabled={disabled} onChange={submission => update(next => {
+        if (submission) next.objectives![nodeId].submission = submission
+        else delete next.objectives![nodeId].submission
+      })} />
       {picker && <GoalPicker definitions={definitions} current={node.goal.kind} locale="zh_cn" onClose={()=>setPicker(null)} onChoose={kind=>{
         if (disabled) return
         update(next=>{

@@ -8,6 +8,7 @@ import assert from 'node:assert/strict'
 import { createProgress, stringifyProgress } from '../src/workspaces/gameplay/progressDoc.ts'
 import { MULTI_QUEST_FORMAT, SIMPLE_QUEST_FORMAT } from '../src/workspaces/gameplay/questKind.ts'
 import { compileSimpleQuestDocument, questCompiler } from '../src/export/compile/compilers/quest.ts'
+import { linkArtifacts } from '../src/export/compile/link.ts'
 import type { CompileContext, CompileIndex } from '../src/export/compile/types.ts'
 import { createProject, type SourceFile } from '../src/workspace.ts'
 
@@ -82,6 +83,14 @@ assert.equal(rejected.length,0)
 assert(diagnostics.some(d=>d.code==='quest_graph'))
 console.log('PASS: invalid multi graph is blocked before export')
 
+for(const identifier of [undefined,'','   ']) {
+ const unnamed=structuredClone(multi) as any
+ if(identifier===undefined) delete unnamed.objectives[backgroundId].identifier
+ else unnamed.objectives[backgroundId].identifier=identifier
+ assert.equal((await questCompiler.compile(file('unnamed.quest',JSON.stringify(unnamed)),ctx)).length,0,'unnamed objectives cannot be exported, even when drafts')
+}
+console.log('PASS: absent, blank and whitespace-only objective identifiers block export')
+
 const gate=createTransitionNode(multi,{x:600,y:0})
 const condition=createPredicateNode(gate.flow,{x:300,y:200})
 let advisory=connectNodes(condition.flow,backgroundId,gate.id,'input','output2').flow
@@ -94,7 +103,7 @@ console.log('PASS: background goal and condition AND-input warnings do not block
 multi.objectives![backgroundId].goal.kind='core:item_mc_type_submit'
 assert.equal((await questCompiler.compile(file('submit.quest',JSON.stringify(multi)),ctx)).length,0,'builtin delivery goal requires explicit submission')
 multi.objectives![backgroundId].identifier='collect_apples'
-multi.objectives![backgroundId].submission={title:{text:'objectives.collect.submission.title'},description:{text:''},buttonText:{text:'objectives.collect.submission.buttonText'}}
+multi.objectives![backgroundId].submission={submit_type:'ui',param:null}
 const submissionExport=await questCompiler.compile(file('submit.quest',JSON.stringify(multi)),ctx)
 assert.equal(submissionExport.length,1)
 assert.deepEqual(JSON.parse(String(submissionExport[0].bytes)).objectives,multi.objectives)
@@ -105,3 +114,19 @@ assert.equal((await questCompiler.compile(file('override.quest',JSON.stringify(m
 override.content='@goal("core:item_mc_type_submit")\nclass Replacement(BaseGoalPy):\n    def deliver(self, instance, context):\n        return True\n'
 assert.equal((await questCompiler.compile(file('undeclared.quest',JSON.stringify(multi)),ctx)).length,0,'undeclared delivery hook is a configuration error')
 console.log('PASS: delivery declarations, submission requirements, effective overrides and descriptor roundtrip')
+
+override.content='@goal("core:item_mc_type_submit")\nclass Replacement(BaseGoalPy):\n    requires_delivery = True\n'
+multi.objectives![backgroundId].submission={submit_type:'dialogue_injection',param:'submit_goal'}
+multi.progress[multi.start].goals=[{id:'one',kind:'core:item_mc_type_submit',params:{}},{id:'two',kind:'core:item_mc_type_submit',params:{}}]
+assert.equal((await questCompiler.compile(file('missing-progress-submit.quest',JSON.stringify(multi)),ctx)).length,0)
+multi.progress[multi.start].submission={submit_type:'dialogue_injection',param:'submit_progress'}
+const entries=await questCompiler.compile(file('entries.quest',JSON.stringify(multi)),ctx)
+assert.equal(entries.length,1)
+const exported=JSON.parse(String(entries[0].bytes))
+assert.deepEqual(exported.progress[multi.start].submission,{submit_type:'dialogue_injection',param:'submit_progress'})
+assert(exported.progress[multi.start].goals.every((goal:object)=>!Object.hasOwn(goal,'submission')))
+assert.deepEqual(entries[0].requires,[{kind:'hsInject',id:'submit_progress'},{kind:'hsInject',id:'submit_goal'}])
+assert.equal(linkArtifacts(entries).filter(issue=>issue.severity==='error'&&issue.code==='missing_require').length,2)
+const linked=linkArtifacts([...entries,{path:'hanshu/submit.hsc',bytes:'',plane:'client',packageName:pkg.name,provides:[{kind:'hsInject',id:'SUBMIT_PROGRESS'},{kind:'hsInject',id:'submit_goal'}]}])
+assert.equal(linked.some(issue=>issue.severity==='error'),false,'submission points resolve using the existing case-insensitive hsInject linker')
+console.log('PASS: shared progress/objective submission schema and real dialogue-injection dependencies')
