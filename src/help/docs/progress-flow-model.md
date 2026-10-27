@@ -78,15 +78,66 @@
 - **旧模型的差分逻辑、合并逻辑、交换逻辑不再需要**：差分被进度的双出口取代，合并被并且 / 或者端口取代，交换被「下游进度激活后消费上游」取代。
 - **条件事实与生命周期分开**：运行中才监听真值，在初始化时广播一次已为真者，之后只在假→真的上升沿增量广播；C 关闭整个节点，停止监听和广播，后续 Q 回 N。共享节点一旦被任一消费者关闭，其他消费者也不能继续查询真值，需显式考虑共享分支的消费关系。
 - **跨任务依赖**：条件节点的判断规则可以引用别的任务状态，引擎必须在所有实例状态加载完之后再统一初始化并广播。
-- **传播是 FIFO 队列**：每个投递立刻完成自己的状态变化，产生的信号追加到队尾；端口的持久 `order` / `reverseOrder` 与外部结算顺序参与结果；数组重排不影响运行。具体规则见[多进度节点图](#progress-node-graph)的「信号处理顺序」。
+- **传播是 FIFO 队列**：每个投递立刻完成自己的状态变化，产生的信号追加到队尾；端口顺序实时从布局推导，与外部结算先后共同影响结果；重排源 `logic.links` 数组不影响结果，移动节点则可能改变结果。源文件不存派生排序字段，编译态通过端口指针数组固定顺序。具体规则见[多进度节点图](#progress-node-graph)。
 
 ## 5. 表达能力的当前边界
 
 已具备：链式推进、成败分叉、并且门（全部满足）、或者门（任一满足）、条件门、汇合后再放行、互斥（先到者取消其余）、任务成功 / 失败终局。
 
-尚未接入：进度内的 goal 自动判定与 `completion` 策略、条件表达式、外部激活（对话 / 事件 key）、竞速裁决、多令牌实例身份、导出时剥离 `layout`。
+尚未接入：进度内的 goal 自动执行、条件表达式求值、外部激活（对话 / 事件 key）、竞速裁决、多令牌实例身份。WebUI 已实现以下 `.questc` 编译和格式校验，Mod 游戏侧执行器尚未接入新格式。
 
-## 6. 扩展设想：进度弃用（暂无计划实现）
+## 6. 编译格式 `.questc`
+
+工程源文件仍为 `src/quest/<名>.quest`；单进度与多进度统一编译为 PAK 的 `quest/<名>.questc`，平面为 shared。资源身份就是文件名去掉后缀，编译正文**没有根级任务 id**；作者文档 `id` 只用于编辑会话。节点、内嵌 goal 的稳定 ID 与非本地化标识符保留。
+
+最小完整示例：
+
+```json
+{
+  "format": "hanshu.questc",
+  "version": 1,
+  "metadata": { "title": "name", "description": "description" },
+  "start": "progress_start",
+  "nodes": {
+    "progress_start": {
+      "type": "progress",
+      "identifier": "start",
+      "runningLog": "",
+      "completedLog": "",
+      "goals": [],
+      "completion": "all",
+      "inputs": {},
+      "outputs": {
+        "output": [{ "node": "end_success", "port": "input" }],
+        "output2": []
+      }
+    },
+    "end_success": {
+      "type": "end",
+      "title": "",
+      "rewardKits": [],
+      "inputs": {
+        "input": [{ "node": "progress_start", "port": "output" }],
+        "input2": []
+      },
+      "outputs": {}
+    }
+  }
+}
+```
+
+- 根级只有 `format`、`version`、`metadata`、`start`、`nodes`。节点类型为 `progress`、`condition`、`objective`、`logic`、`end`；开始进度由 `start` 指定，不是第六种类型。
+- **节点自己持有指针**：`inputs` / `outputs` 按端口名分组，每项为 `{node, port}`，指向对端节点及对端端口。合法端口均显式输出数组（可以为空），不存在的端口不输出。没有独立 `edges` / `links` 表，没有连线 ID 或排序数字。指针数组的下标即本端口的执行顺序，不从 JSON 对象键顺序推测端口优先级。
+- 正向 A 按输出列表投递，逆向 Q/C 按输入列表投递；多输入端口仍先 `input`、后 `input2`。同一连接在两端各描述一次，编译器自动生成；加载校验拒绝悬空、单端缺失、重复、方向错误、非法端口和成环。Q 的应答通道可用发起方的输入端口及列表下标标识，配合轮次隔离迟到应答。节点初始化仍按稳定节点 ID 的 UTF-16 顺序，而不是对象枚举顺序。
+- 编译只保留与开始节点**无向联通**的生效节点，因此不会误删仅有出边的条件、目标；其余草稿、注释、Group、坐标和表单状态全部剥离。未知编辑扩展不进入运行模板。不对节点做语义合并或重编号。
+- `metadata.title / description` 来自开始进度的任务元信息；日志、结局标题等 `FlowText` 编译为其文本键字符串，仍使用原 `.quest` 归属的 `assets/<locale>/lang_quest/<名>.lang`，不烘焙某种语言。无需跟随运行后缀改成 `lang_questc`。提交配置原样保留在所属节点，goal 不描述提交。
+- 生效进度的自定义完成图必须完整；从输出根编译为 `completionExpression`，叶子为 `{type:"goal", goalId}`，逻辑为 `{type:"logic", op, inputs:[表达式...]}`。去掉完成图的节点/边表和断开的草稿；`completion` 为 all/any 时不导出闲置完成图。
+- 单进度同样生成普通开始进度，成功口接成功结束节点（承载奖励礼包），失败口接无奖励的失败结束节点；可见性、承接条件、标签、可放弃、自动承接、重复策略进入 metadata。作者备注不导出。不再使用 `extensions.hanshuSimpleQuest`。多进度不擅自补结束节点：没有结束仍是合法但不能完成的任务。
+- `.questc` 只保存模板，不保存实例状态、goal 累计值、队列、查询轮次、终局或挂起原因。当前改造没有替游戏引擎实现加载执行、真实交付或已有实例迁移。
+
+验证：`npm run test:quest-compile` 同时覆盖 `verify-quest-runtime.ts` 的指针一致性、正逆顺序、草稿剥离、自定义表达式、单进度降级及语言资产归属。
+
+## 7. 扩展设想：进度弃用（暂无计划实现）
 
 **状态：仅记录讨论，暂无计划实现；不是当前运行契约，也不是已排期功能。** 当前文档格式、编辑器与模拟器均未提供进度弃用能力。
 
@@ -100,11 +151,12 @@
 
 暂不推进的原因是它会增加作者理解激活、取消、任务存活及模板更新之间关系的负担，而且单独的弃用标记不能保证旧实例迁移安全。若将来重新评估，仍需明确开始进度能否弃用、结构可达性是否穿过未激活的弃用节点，以及旧实例所需 goal 与连线如何保留；这些边界**尚未定案**，不能视为已确认规则。
 
-## 7. 相关代码
+## 8. 相关代码
 
 - 结构与校验：`src/workspaces/gameplay/model.ts`
 - 信号与模拟器：`src/workspaces/gameplay/signals.ts`
 - 画布创建与布局：`src/workspaces/gameplay/canvas.ts`
+- 编译格式与指针校验：`src/workspaces/gameplay/questCompiled.ts`
 - 回归：`npm run test:progress`（`scripts/verify-progress-model.ts`）
 
 多进度画布使用 React Flow 上的 HanShu 通用节点编辑器；适配器位于 `quest/graphAdapter.ts`，框选、连线、小刀、Group、注释及排版共用 `src/nodeEditor/`。新增编辑器遵循[通用节点编辑器接入规范](#node-editor)，不得复制原来的手写画布。

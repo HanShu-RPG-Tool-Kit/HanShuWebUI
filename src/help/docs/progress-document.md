@@ -24,7 +24,7 @@
 
 ## 开发试用与验证
 
-`/progress-preview.html` 使用正式组件与同源目标定义脚本。模型验证：`npx tsx scripts/verify-progress-document.ts`。单→多导出编译：`npm run test:quest-compile`。
+`/progress-preview.html` 使用正式组件与同源目标定义脚本。模型验证：`npx tsx scripts/verify-progress-document.ts`。单/多进度统一导出 `.questc`：`npm run test:quest-compile`，格式见[流程模型](#progress-flow-model)。
 
 
 ## 目标显示别名

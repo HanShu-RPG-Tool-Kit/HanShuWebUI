@@ -3,45 +3,18 @@ import { parseGoalDefinitionsFromSource } from '../../../workspaces/gameplay/goa
 import { effectiveBuiltinScripts } from '../../../scriptResources'
 import { getExtension } from '../../../workspace'
 import { parseProgress, PROGRESS_FORMAT, type ProgressDocument } from '../../../workspaces/gameplay/progressDoc'
-import { MULTI_QUEST_FORMAT, questAuthorKindFromSource, QUEST_EXT } from '../../../workspaces/gameplay/questKind'
+import { questAuthorKindFromSource, QUEST_EXT } from '../../../workspaces/gameplay/questKind'
+import { compileQuestFlow, compileSimpleQuest, QUEST_COMPILED_EXT } from '../../../workspaces/gameplay/questCompiled'
 import type { FileCompiler } from '../types'
 
 function pakQuestPath(fileName: string): string {
   const base = fileName.replace(/^.*[\\/]/, '').replace(/\.quest$/i, '')
-  return `quest/${base || 'unnamed'}${QUEST_EXT}`
+  return `quest/${base || 'unnamed'}${QUEST_COMPILED_EXT}`
 }
 
-/**
- * 单进度（hanshu.progress）→ 多进度树图外壳。
- * 完整表单语义暂放入 `extensions.hanshuSimpleQuest`，供引擎在原生图编译就绪前读取；
- * 多进度 `.quest` 校验后进包，并补齐缺失的局部分支顺序。
- */
+/** Both authoring formats lower to the same node-owned pointer graph. */
 export function compileSimpleQuestDocument(doc: ProgressDocument): string {
-  const start = 'progress_start'
-  const title = typeof doc.name === 'string' ? doc.name : 'name'
-  const description = typeof doc.description === 'string' ? doc.description : 'description'
-  const tree = {
-    format: MULTI_QUEST_FORMAT,
-    version: 1 as const,
-    id: doc.id,
-    start,
-    progress: {
-      [start]: {
-        identifier: 'start',
-        questTitle: { text: title },
-        description: { text: description },
-        runningLog: { text: '' },
-        completedLog: { text: '' },
-        goals: doc.goals.map(goal => ({ id: goal.id, kind: goal.kind, params: goal.config })),
-        completion: doc.completion === 'custom' ? 'custom' : doc.completion === 'any' ? 'any' : 'all',
-        ...(doc.completion === 'custom' && doc.completionGraph ? { completionGraph: doc.completionGraph } : {}),
-      },
-    },
-    extensions: {
-      hanshuSimpleQuest: doc,
-    },
-  }
-  return `${JSON.stringify(tree, null, 2)}\n`
+  return `${JSON.stringify(compileSimpleQuest(doc), null, 2)}\n`
 }
 
 export const questCompiler: FileCompiler = {
@@ -68,9 +41,10 @@ export const questCompiler: FileCompiler = {
         }
         const errors = validateFlow(flow, definitions).filter(issue => issue.severity === 'error')
         if (errors.length) throw new Error(errors.map(issue => issue.message).join('；'))
-        const injections = [...Object.values(flow.progress), ...Object.values(flow.objectives ?? {})].flatMap(node => node.submission?.submit_type === 'dialogue_injection' ? [node.submission.param] : [])
+        const compiled = compileQuestFlow(flow)
+        const injections = Object.values(compiled.nodes).flatMap(node => 'submission' in node && node.submission?.submit_type === 'dialogue_injection' ? [node.submission.param] : [])
         const requires = [...new Map(injections.map(id => [id.toLowerCase(), { kind: 'hsInject', id }])).values()]
-        return [{ path, bytes: `${JSON.stringify(flow, null, 2)}\n`, plane, packageName: ctx.index.package.name, sourcePath: file.name, ...(requires.length ? { requires } : {}) }]
+        return [{ path, bytes: `${JSON.stringify(compiled, null, 2)}\n`, plane, packageName: ctx.index.package.name, sourcePath: file.name, ...(requires.length ? { requires } : {}) }]
       } catch (error) {
         ctx.report({severity:'error',code:'quest_graph',message:`任务图无法导出：${error instanceof Error ? error.message : String(error)}`,sourcePath:file.name})
         return []

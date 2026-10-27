@@ -78,6 +78,7 @@ try{
  const startNode=page.locator(`[data-canvas-node="${ids.start}"]`),before=await startNode.boundingBox()
  await page.mouse.move(before.x+80,before.y+12);await page.mouse.down();await page.mouse.move(before.x+120,before.y+42,{steps:6});await page.mouse.up()
  await page.waitForFunction(id=>window.flow.layout.positions[id].x>90,ids.start)
+ assert.equal(await page.evaluate(()=>window.flow.logic.links.some(link=>Object.hasOwn(link,'order')||Object.hasOwn(link,'reverseOrder'))),false,'node movement saves layout, never derived execution order fields')
  const out=await socket(ids.p1,'output').boundingBox(),into=await socket(ids.end,'input').boundingBox()
  await page.mouse.move(out.x+out.width/2,out.y+out.height/2);await page.mouse.down();await page.mouse.move(into.x+into.width/2,into.y+into.height/2,{steps:10});await page.mouse.up()
  await page.waitForFunction(id=>window.flow.logic.links.some(link=>link.to===id&&link.port==='input'),ids.end)

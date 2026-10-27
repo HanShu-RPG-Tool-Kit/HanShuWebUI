@@ -13,32 +13,13 @@ export type FlowInputPort = 'input' | 'input2'
 export type FlowOutputPort = 'output' | 'output2'
 export type FlowPort = FlowInputPort | FlowOutputPort
 /** fromPort distinguishes progress/objective outputs (成功 / 失败); otherwise inferred as `output`. */
-export type FlowLogicLink = { id: string; from: string; to: string; port: FlowInputPort; fromPort?: FlowOutputPort; order?: number; reverseOrder?: number }
-/** Wire order is executable data; coordinates only author it. UTF-16 comparison is locale independent. */
+export type FlowLogicLink = { id: string; from: string; to: string; port: FlowInputPort; fromPort?: FlowOutputPort }
+/** Layout derives execution order on demand; only questc freezes ordered port pointers. */
 export const compareIds = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0
 export const FLOW_LIMITS = { nodes: 512, links: 4096, fanout: 128, deliveries: 250000 } as const
-export function normalizeLinkOrder(flow: ProgressFlow, reposition = false): ProgressFlow {
-  if (!flow.logic?.links.length) return flow
-  const links = flow.logic.links.map(link => ({ ...link }))
-  for (const reverse of [false, true]) {
-    const groups = new Map<string, FlowLogicLink[]>()
-    for (const link of links) {
-      const key = reverse ? `${link.to}\0${link.port}` : `${link.from}\0${linkSourcePort(flow, link.from, link.fromPort)}`
-      const group = groups.get(key) ?? []; group.push(link); groups.set(key, group)
-    }
-    const field = reverse ? 'reverseOrder' : 'order'
-    for (const group of groups.values()) {
-      if (!reposition && group.every(link => Number.isSafeInteger(link[field]) && link[field]! >= 0)) continue
-      const point = (link: FlowLogicLink) => flow.layout?.positions[reverse ? link.from : link.to] ?? { x: 0, y: 0 }
-      group.sort((a, b) => point(a).y - point(b).y || point(a).x - point(b).x || compareIds(a.id, b.id))
-      group.forEach((link, index) => { link[field] = index })
-    }
-  }
-  return { ...flow, logic: { ...flow.logic, links } }
-}
 export function orderedLinks(flow: ProgressFlow, reverse = false): FlowLogicLink[] {
-  const field = reverse ? 'reverseOrder' : 'order'
-  return [...(normalizeLinkOrder(flow).logic?.links ?? [])].sort((a, b) => (a[field]! - b[field]!) || compareIds(a.id, b.id))
+  const point = (link: FlowLogicLink) => flow.layout?.positions[reverse ? link.from : link.to] ?? { x: 0, y: 0 }
+  return [...(flow.logic?.links ?? [])].sort((a, b) => point(a).y - point(b).y || point(a).x - point(b).x || compareIds(a.id, b.id))
 }
 
 /** 进度节点内的 goal 元素。 */
@@ -420,8 +401,10 @@ export function parseFlow(source: string): ProgressFlow {
     for (const link of (f.logic as { links: unknown[] }).links) {
       require(isObject(link) && typeof link.id === 'string' && typeof link.from === 'string' && typeof link.to === 'string'
         && (link.port === 'input' || link.port === 'input2')
-        && (link.fromPort === undefined || link.fromPort === 'output' || link.fromPort === 'output2')
-        && [link.order, link.reverseOrder].every(value => value === undefined || (Number.isSafeInteger(value) && (value as number) >= 0)), 'logic.links')
+        && (link.fromPort === undefined || link.fromPort === 'output' || link.fromPort === 'output2'), 'logic.links')
+      // Old derived fields are no longer authoring data or execution authority.
+      delete (link as Record<string, unknown>).order
+      delete (link as Record<string, unknown>).reverseOrder
     }
   }
   if (f.layout !== undefined) {
@@ -444,7 +427,7 @@ export function parseFlow(source: string): ProgressFlow {
       }
     }
   }
-  return normalizeLinkOrder(v as ProgressFlow)
+  return v as ProgressFlow
 }
 
 export function validateFlow(flow: ProgressFlow, definitions: readonly { kind: string; requiresDelivery?: boolean; error?: string }[] = []): FlowIssue[] {
@@ -615,7 +598,7 @@ export function connectNodes(flow: ProgressFlow, from: string, to: string, port:
   const record: FlowLogicLink = { id: `link_${n}`, from, to, port }
   if (getProgressNode(flow, from) || getObjectiveNode(flow, from)) record.fromPort = source
   next.logic.links.push(record)
-  return { flow: normalizeLinkOrder(next, true), selection: { kind: 'logic-link', id: record.id } }
+  return { flow: next, selection: { kind: 'logic-link', id: record.id } }
 }
 
 export function disconnectLink(flow: ProgressFlow, selection: FlowSelection): ProgressFlow {

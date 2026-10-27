@@ -1,4 +1,4 @@
-/** 任务（.quest）作者态：单进度表单 vs 多进度树图；引擎导出时归一为多进度。 */
+/** 任务（.quest）作者态：单进度表单 vs 多进度树图；引擎导出时归一为 .questc。 */
 
 export const QUEST_EXT = '.quest' as const
 

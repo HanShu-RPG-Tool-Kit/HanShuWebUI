@@ -44,7 +44,17 @@ function portLabel(flow: M.ProgressFlow, id: string, port: M.FlowPort): string {
 }
 
 export function progressEdges(flow: M.ProgressFlow, activity?: { delivery: import('./signals').Delivery; key: string; durationMs: number; running: boolean }): EditorEdge[] {
-  const links = M.normalizeLinkOrder(flow).logic?.links ?? []
+  const links = flow.logic?.links ?? []
+  const ranks = (reverse: boolean) => {
+    const counts = new Map<string, number>(), result = new Map<string, number>()
+    for (const link of M.orderedLinks(flow, reverse)) {
+      const key = JSON.stringify(reverse ? [link.to, link.port] : [link.from, M.linkSourcePort(flow, link.from, link.fromPort)])
+      const index = counts.get(key) ?? 0
+      counts.set(key, index + 1); result.set(link.id, index)
+    }
+    return result
+  }
+  const forwardRanks = ranks(false), reverseRanks = ranks(true)
   return links.map(link => {
     const sourcePort = M.linkSourcePort(flow, link.from, link.fromPort)
     return {
@@ -53,8 +63,8 @@ export function progressEdges(flow: M.ProgressFlow, activity?: { delivery: impor
       target: link.to,
       sourcePort,
       targetPort: link.port,
-      sourceBadge: links.filter(item => item.from === link.from && M.linkSourcePort(flow, item.from, item.fromPort) === sourcePort).length > 1 ? link.order : undefined,
-      targetBadge: links.filter(item => item.to === link.to && item.port === link.port).length > 1 ? link.reverseOrder : undefined,
+      sourceBadge: links.filter(item => item.from === link.from && M.linkSourcePort(flow, item.from, item.fromPort) === sourcePort).length > 1 ? forwardRanks.get(link.id) : undefined,
+      targetBadge: links.filter(item => item.to === link.to && item.port === link.port).length > 1 ? reverseRanks.get(link.id) : undefined,
       activity: activity?.delivery.link === link.id ? { key: activity.key, durationMs: activity.durationMs, running: activity.running, label: ({activate:'A',query:'Q',cancel:'C',none:'N'})[activity.delivery.signal.kind], color: ({activate:'#81d3a6',query:'#7dbbfa',cancel:'#ed9c82',none:'#b8a0dd'})[activity.delivery.signal.kind], reverse: activity.delivery.to === link.from } : undefined,
       color: portColor(flow, link.from, sourcePort),
       label: `${portLabel(flow, link.from, sourcePort)} → ${portLabel(flow, link.to, link.port)}`,

@@ -339,7 +339,7 @@ function deliverOne(flow: ProgressFlow, sim: FlowSimState, delivery: Delivery): 
 function snapshot(sim: FlowSimState): RuntimeSnapshot {
   return structuredClone({ progress: sim.progress, objectives: sim.objectives, predicates: sim.predicates, conditionStates: sim.conditionStates, rounds: sim.rounds, queryRounds: sim.queryRounds, ends: sim.ends, outcome: sim.outcome, initialized: sim.initialized })
 }
-const signature = (flow: ProgressFlow) => JSON.stringify([flow.start, flow.progress, flow.objectives, flow.predicates, flow.transitions, flow.ends, orderedLinks(flow)])
+const signature = (flow: ProgressFlow) => JSON.stringify([flow.start, flow.progress, flow.objectives, flow.predicates, flow.transitions, flow.ends, orderedLinks(flow), orderedLinks(flow, true)])
 export const isBusy = (sim: FlowSimState) => sim.queue.length > 0
 export const canTrigger = (sim: FlowSimState) => !isBusy(sim) && !sim.outcome && !sim.fault
 export const AUTO_FAILURE_REASONS = {

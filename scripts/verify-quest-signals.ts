@@ -47,18 +47,26 @@ test('links array permutation does not change order or full runtime result',()=>
  const run=(f:M.ProgressFlow)=>S.settleProgress(f,S.initializeQuest(f,S.createSimState(f)),f.start,'succeeded')
  assert.deepEqual(run(flow),run(reordered))
 })
-test('movement persists local fanout order; ties use fixed ID comparison; reverse order is independent',()=>{
+test('fanout order is derived live from layout and never written into source',()=>{
  const {flow,a,b}=fork();const moved=C.moveCanvasNodes(flow,{[b]:{x:400,y:-100}})
  assert.equal(M.orderedLinks(moved)[0].to,b)
  assert.equal(M.orderedLinks(flow)[0].to,a)
- const roundtrip=M.parseFlow(JSON.stringify(moved));delete roundtrip.layout
- assert.equal(M.orderedLinks(roundtrip)[0].to,b,'engine needs no layout')
+ const roundtrip=M.parseFlow(JSON.stringify(moved))
+ assert.equal(M.orderedLinks(roundtrip)[0].to,b)
+ assert(roundtrip.logic!.links.every(link=>!Object.hasOwn(link,'order')&&!Object.hasOwn(link,'reverseOrder')))
+ const before=JSON.stringify(roundtrip)
+ M.orderedLinks(roundtrip);M.orderedLinks(roundtrip,true)
+ assert.equal(JSON.stringify(roundtrip),before,'derivation never mutates the document')
+ roundtrip.layout!.positions[a].y=-200
+ assert.equal(M.orderedLinks(roundtrip)[0].to,a,'plain layout edit changes order without normalization or reconnection')
 })
-test('old missing-order graph normalizes deterministically rather than using array order',()=>{
- const {flow}=fork();for(const link of flow.logic!.links){delete link.order;delete link.reverseOrder}
+test('legacy order fields are ignored and removed; missing layout ties use fixed link IDs',()=>{
+ const {flow}=fork();for(const link of flow.logic!.links)Object.assign(link,{order:999,reverseOrder:999})
  const reversed=structuredClone(flow);reversed.logic!.links.reverse()
  assert.deepEqual(M.orderedLinks(flow).map(l=>l.id),M.orderedLinks(reversed).map(l=>l.id))
- assert(M.parseFlow(JSON.stringify(flow)).logic!.links.every(l=>l.order!==undefined&&l.reverseOrder!==undefined))
+ assert(M.parseFlow(JSON.stringify(flow)).logic!.links.every(link=>!Object.hasOwn(link,'order')&&!Object.hasOwn(link,'reverseOrder')))
+ delete flow.layout
+ assert.deepEqual(M.orderedLinks(flow).map(link=>link.id),flow.logic!.links.map(link=>link.id).sort(M.compareIds))
 })
 test('stepped, automatic and resumed execution produce identical states and trace',()=>{
  const {flow}=fork(),base=S.initializeQuest(flow,S.createSimState(flow))

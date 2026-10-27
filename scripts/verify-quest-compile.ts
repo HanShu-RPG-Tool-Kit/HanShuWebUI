@@ -1,12 +1,13 @@
 import { createFlow, connectNodes, validateFlow } from '../src/workspaces/gameplay/model.ts'
-import { createObjectiveNode, createPredicateNode, createTransitionNode } from '../src/workspaces/gameplay/canvas.ts'
+import { createObjectiveNode, createPredicateNode, createTransitionNode, createEndNode } from '../src/workspaces/gameplay/canvas.ts'
 /**
- * 单进度（hanshu.progress）→ 多进度外壳（hanshu.progress-tree + extensions.hanshuSimpleQuest）。
+ * 单进度、多进度均编译为节点自带有序连接指针的 questc。
  * 覆盖 compileSimpleQuestDocument 与 questCompiler 入口。
  */
 import assert from 'node:assert/strict'
 import { createProgress, stringifyProgress } from '../src/workspaces/gameplay/progressDoc.ts'
-import { MULTI_QUEST_FORMAT, SIMPLE_QUEST_FORMAT } from '../src/workspaces/gameplay/questKind.ts'
+import { SIMPLE_QUEST_FORMAT } from '../src/workspaces/gameplay/questKind.ts'
+import { parseQuestCompiled, QUEST_COMPILED_FORMAT } from '../src/workspaces/gameplay/questCompiled.ts'
 import { compileSimpleQuestDocument, questCompiler } from '../src/export/compile/compilers/quest.ts'
 import { linkArtifacts } from '../src/export/compile/link.ts'
 import type { CompileContext, CompileIndex } from '../src/export/compile/types.ts'
@@ -20,18 +21,13 @@ const doc = createProgress('驿站委托')
 assert.equal(doc.format, SIMPLE_QUEST_FORMAT)
 
 const compiled = compileSimpleQuestDocument(doc)
-const tree = JSON.parse(compiled) as {
-  format: string
-  version: number
-  id: string
-  extensions?: { hanshuSimpleQuest?: typeof doc }
-}
-assert.equal(tree.format, MULTI_QUEST_FORMAT)
+const tree = parseQuestCompiled(compiled)
+assert.equal(tree.format, QUEST_COMPILED_FORMAT)
 assert.equal(tree.version, 1)
-assert.equal(tree.id, doc.id)
-assert.ok(tree.extensions?.hanshuSimpleQuest, '须携带 extensions.hanshuSimpleQuest')
-assert.equal(tree.extensions!.hanshuSimpleQuest!.format, SIMPLE_QUEST_FORMAT)
-assert.deepEqual(tree.extensions!.hanshuSimpleQuest, doc)
+assert.equal(Object.hasOwn(tree,'id'),false)
+assert.equal(Object.hasOwn(tree,'extensions'),false)
+assert.deepEqual(tree.nodes[tree.start].outputs.output,[{node:'end_success',port:'input'}])
+assert.deepEqual(tree.nodes[tree.start].outputs.output2,[{node:'end_failure',port:'input2'}])
 
 const pkg = createProject('quest-compile')
 const index: CompileIndex = {
@@ -55,26 +51,29 @@ assert.equal(questCompiler.match(file('legacy.progress', source), index), false)
 const arts = await questCompiler.compile(file('a.quest', source), ctx)
 assert.equal(diagnostics.filter((d) => d.severity === 'error').length, 0)
 assert.equal(arts.length, 1)
-assert.equal(arts[0]!.path, 'quest/a.quest')
+assert.equal(arts[0]!.path, 'quest/a.questc')
 assert.equal(arts[0]!.plane, 'shared')
 const fromCompiler = JSON.parse(String(arts[0]!.bytes)) as typeof tree
-assert.equal(fromCompiler.format, MULTI_QUEST_FORMAT)
-assert.ok(fromCompiler.extensions?.hanshuSimpleQuest)
+assert.equal(fromCompiler.format, QUEST_COMPILED_FORMAT)
+assert.deepEqual(fromCompiler,tree)
 
-const multi = createObjectiveNode(createFlow('tree-1'),{x:300,y:0}).flow
+let multi = createObjectiveNode(createFlow('tree-1'),{x:300,y:0}).flow
 const backgroundId=Object.keys(multi.objectives!)[0]
 multi.objectives![backgroundId].goal={kind:'collect',params:{item:'minecraft:apple',count:3}}
+const terminal=createEndNode(multi,{x:900,y:0});multi=terminal.flow
+multi=connectNodes(multi,multi.start,terminal.id,'input').flow
+multi=connectNodes(multi,backgroundId,terminal.id,'input').flow
 const passthrough = await questCompiler.compile(
   file('b.quest', `${JSON.stringify(multi)}\n`),
   ctx,
 )
 assert.equal(passthrough.length, 1)
-assert.equal(passthrough[0]!.path, 'quest/b.quest')
-assert.equal(JSON.parse(String(passthrough[0]!.bytes)).format, MULTI_QUEST_FORMAT)
+assert.equal(passthrough[0]!.path, 'quest/b.questc')
+assert.equal(JSON.parse(String(passthrough[0]!.bytes)).format, QUEST_COMPILED_FORMAT)
 assert.equal(JSON.parse(String(passthrough[0]!.bytes)).extensions, undefined)
-assert.deepEqual(JSON.parse(String(passthrough[0]!.bytes)).objectives,multi.objectives,'background goal type and parameters survive export without runtime state')
+assert.deepEqual(JSON.parse(String(passthrough[0]!.bytes)).nodes[backgroundId].goal,multi.objectives![backgroundId].goal,'background goal type and parameters survive export without runtime state')
 
-console.log('PASS: quest compile simple→multi with hanshuSimpleQuest; multi passthrough')
+console.log('PASS: both quest authoring formats compile to the same questc pointer graph')
 
 const invalid = structuredClone(multi)
 invalid.logic = {links:[{id:'bad',from:multi.start,to:multi.start,port:'input',fromPort:'output'}]}
@@ -106,7 +105,7 @@ multi.objectives![backgroundId].identifier='collect_apples'
 multi.objectives![backgroundId].submission={submit_type:'ui',param:null}
 const submissionExport=await questCompiler.compile(file('submit.quest',JSON.stringify(multi)),ctx)
 assert.equal(submissionExport.length,1)
-assert.deepEqual(JSON.parse(String(submissionExport[0].bytes)).objectives,multi.objectives)
+assert.deepEqual(JSON.parse(String(submissionExport[0].bytes)).nodes[backgroundId].submission,multi.objectives![backgroundId].submission)
 const override={...file('core_item_mc_type_submit.py','@goal("core:item_mc_type_submit")\nclass Replacement(BaseGoalPy):\n    requires_delivery = False\n'),srcKind:'goal' as const}
 pkg.scripts.push(override)
 delete multi.objectives![backgroundId].submission
@@ -123,10 +122,12 @@ multi.progress[multi.start].submission={submit_type:'dialogue_injection',param:'
 const entries=await questCompiler.compile(file('entries.quest',JSON.stringify(multi)),ctx)
 assert.equal(entries.length,1)
 const exported=JSON.parse(String(entries[0].bytes))
-assert.deepEqual(exported.progress[multi.start].submission,{submit_type:'dialogue_injection',param:'submit_progress'})
-assert(exported.progress[multi.start].goals.every((goal:object)=>!Object.hasOwn(goal,'submission')))
-assert.deepEqual(entries[0].requires,[{kind:'hsInject',id:'submit_progress'},{kind:'hsInject',id:'submit_goal'}])
+assert.deepEqual(exported.nodes[multi.start].submission,{submit_type:'dialogue_injection',param:'submit_progress'})
+assert(exported.nodes[multi.start].goals.every((goal:object)=>!Object.hasOwn(goal,'submission')))
+assert.deepEqual(entries[0].requires?.map(ref=>ref.id).sort(),['submit_goal','submit_progress'])
 assert.equal(linkArtifacts(entries).filter(issue=>issue.severity==='error'&&issue.code==='missing_require').length,2)
 const linked=linkArtifacts([...entries,{path:'hanshu/submit.hsc',bytes:'',plane:'client',packageName:pkg.name,provides:[{kind:'hsInject',id:'SUBMIT_PROGRESS'},{kind:'hsInject',id:'submit_goal'}]}])
 assert.equal(linked.some(issue=>issue.severity==='error'),false,'submission points resolve using the existing case-insensitive hsInject linker')
 console.log('PASS: shared progress/objective submission schema and real dialogue-injection dependencies')
+
+await import('./verify-quest-runtime.ts')
