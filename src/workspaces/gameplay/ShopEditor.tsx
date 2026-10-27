@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { TextField } from './Fields'
 import { conditionStatesFor, createConditionRule, type ProgressConditionRule } from './conditions'
-import { AddButton, ItemCatalogContext, ItemList, KitExprContext, ModifierPanel, Panel, ParamPanel, RemoveButton } from './KitEditor'
+import { AddButton, ItemCatalogContext, ItemList, KitExprContext, KitTagField, ModifierPanel, Panel, ParamPanel, RemoveButton } from './KitEditor'
 import { KitScriptField, type KitScriptOptions } from './KitScriptField'
 import { activeKitModifiers, activeKitParams, createKitItem, createKitModifier, createKitParam, kitScriptRefs, type ItemCatalog, type KitItem } from './kit'
 import { buildKitModifierEnv } from './kitExpr'
@@ -61,6 +61,7 @@ export function ShopEditor({ source, disabled, onChange, resolveText, setText, i
     <div className="shop-meta">
       <label><span>库存主体</span><select aria-label="库存主体类型" disabled={disabled} value={doc.stockSubject} onChange={e => update({ stockSubject: e.target.value as ShopDocument['stockSubject'] })}>{Object.entries(STOCK_SUBJECTS).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
       <span className="shop-meta-note">主体收款并供货 · 具体实体由实例绑定</span>
+      <KitTagField label="商店标签" disabled={disabled} tags={doc.tags} onChange={tags => update({ tags })} />
       <details className="shop-identity"><summary>模板 ID</summary><label className="kit-field"><span>模板 ID</span><input aria-label="模板 ID" value={doc.id} disabled={disabled} onChange={e => update({ id: e.target.value })} /></label></details>
     </div>
     <div className="shop-toolbar">
@@ -71,10 +72,11 @@ export function ShopEditor({ source, disabled, onChange, resolveText, setText, i
       </div>
       {add('添加商品条目', addEntry)}
     </div>
+    {doc.entries.filter(value => value.initialCapacity > value.maxCapacity).map(value => <p className="kit-banner" role="alert" key={value.id}>交易 {doc.entries.indexOf(value) + 1}：初始额度不能超过最大额度。</p>)}
     <ItemCatalogContext.Provider value={itemCatalog}><KitExprContext.Provider value={{ env, modifiers: activeKitModifiers(doc.modifiers).filter(m => env.declared.has(m.id)).map(m => ({ id: m.id, label: m.label })) }}>
       {view === 'table' ? <div className="shop-sheet-scroll" tabIndex={0} role="region" aria-label="商品表格滚动区域"><table className="shop-sheet" aria-label="商品交易表格">
-        <colgroup><col className="shop-sheet-number" /><col /><col /><col /><col /><col className="shop-sheet-actions" /></colgroup>
-        <thead><tr><th scope="col">序号</th><th scope="col">支付内容</th><th scope="col">获得内容</th><th scope="col">可见性表达式</th><th scope="col">可用性表达式</th><th scope="col">操作</th></tr></thead>
+        <colgroup><col className="shop-sheet-number" /><col /><col /><col /><col /><col /><col className="shop-sheet-capacity" /><col className="shop-sheet-capacity" /><col className="shop-sheet-actions" /></colgroup>
+        <thead><tr><th scope="col">序号</th><th scope="col">支付内容</th><th scope="col">获得内容</th><th scope="col">可见性表达式</th><th scope="col">可用性表达式</th><th scope="col">标签</th><th scope="col">初始额度</th><th scope="col">最大额度</th><th scope="col">操作</th></tr></thead>
         <tbody>{doc.entries.map((value, index) => <tr key={value.id} data-entry-id={value.id} className={selected?.id === value.id ? 'is-selected' : ''} onFocus={() => setSelectedId(value.id)} onClick={() => setSelectedId(value.id)}>
           <th scope="row"><button type="button" className="shop-row-select" aria-label={`选择交易 ${index + 1}`} aria-pressed={selected?.id === value.id} title={value.id} onClick={() => setSelectedId(value.id)}>{index + 1}</button></th>
           {(['payment', 'goods'] as const).map(field => <td key={field}><button type="button" className="shop-cell-items" aria-label={`编辑交易 ${index + 1} ${field === 'payment' ? '支付' : '获得'}物品`} onClick={() => { setSelectedId(value.id); setView('form') }}>
@@ -83,6 +85,8 @@ export function ShopEditor({ source, disabled, onChange, resolveText, setText, i
           </button></td>)}
           <td><input aria-label={`交易 ${index + 1} 可见性表达式`} value={value.visibility} disabled={disabled} placeholder="不限制" onChange={e => entry(value.id, { visibility: e.target.value })} /></td>
           <td><input aria-label={`交易 ${index + 1} 可用性表达式`} value={value.availability} disabled={disabled} placeholder="不限制" onChange={e => entry(value.id, { availability: e.target.value })} /></td>
+          <td><KitTagField label={`交易 ${index + 1} 标签`} tags={value.tags} disabled={disabled} onChange={tags => entry(value.id, { tags })} /></td>
+          {(['initialCapacity', 'maxCapacity'] as const).map(field => <td key={field}><input type="number" min="0" step="1" aria-label={`交易 ${index + 1} ${field === 'initialCapacity' ? '初始额度' : '最大额度'}`} value={value[field]} disabled={disabled} onChange={e => { const n = Number(e.target.value); if (Number.isSafeInteger(n) && n >= 0) entry(value.id, { [field]: n }) }} /></td>)}
           <td><div className="shop-entry-actions"><button className="shop-order" type="button" aria-label={`上移交易 ${index + 1}`} disabled={disabled || index === 0} onClick={() => move(-1, value.id)}>↑</button><button className="shop-order" type="button" aria-label={`下移交易 ${index + 1}`} disabled={disabled || index === doc.entries.length - 1} onClick={() => move(1, value.id)}>↓</button><RemoveButton label={`删除交易 ${index + 1}`} disabled={disabled} onClick={() => update({ entries: doc.entries.filter(e => e.id !== value.id) })} /></div></td>
         </tr>)}</tbody>
       </table>{!doc.entries.length && <p className="kit-empty">暂无商品条目，点击上方“添加商品条目”建立交易。</p>}</div> : <div className="shop-trades" aria-label="商品表单">
@@ -92,6 +96,8 @@ export function ShopEditor({ source, disabled, onChange, resolveText, setText, i
           </button>)}</div> : <p className="kit-empty">添加第一条交易<br />配置支付与获得的物品</p>}
         </Panel>
         {selected ? <section className="shop-entry" aria-label={`交易 ${selectedIndex + 1}`}>
+          <div className="shop-expression-fields"><KitTagField label="商品标签" disabled={disabled} tags={selected.tags} onChange={tags => entry(selected.id, { tags })} />{(['initialCapacity', 'maxCapacity'] as const).map(field => <label className="kit-field" key={field}><span>{field === 'initialCapacity' ? '初始额度' : '最大额度'}</span><input type="number" min="0" step="1" aria-label={field === 'initialCapacity' ? '初始额度' : '最大额度'} value={selected[field]} disabled={disabled} onChange={e => { const n = Number(e.target.value); if (Number.isSafeInteger(n) && n >= 0) entry(selected.id, { [field]: n }) }} /></label>)}</div>
+          <p className="kit-hint">当前额度 = 初始额度 + delta，每交易一次增加 1，与物品数量无关。{doc.stockSubject === 'infinite' ? ` 无限主体：${selected.initialCapacity < selected.maxCapacity ? '∞（无主体、无 delta）' : '额度关闭'}` : ` 默认剩余次数：${Math.max(0, selected.maxCapacity - selected.initialCapacity)}，实例按主体共享 delta。`}</p>
           <header className="shop-entry-head"><strong>交易 {selectedIndex + 1}</strong><span className="shop-entry-id" title={selected.id}>{selected.id}</span><div className="shop-entry-actions"><button className="shop-order" type="button" aria-label="上移条目" disabled={disabled || selectedIndex === 0} onClick={() => move(-1)}>↑</button><button className="shop-order" type="button" aria-label="下移条目" disabled={disabled || selectedIndex === doc.entries.length - 1} onClick={() => move(1)}>↓</button><RemoveButton label="删除条目" disabled={disabled} onClick={() => update({ entries: doc.entries.filter(e => e.id !== selected.id) })} /></div></header>
           <Panel title="支付内容" subtitle="玩家交付 → 库存主体" count={selected.payment.length} action={add('添加支付物品', () => entry(selected.id, { payment: [...selected.payment, createKitItem()] }))}><ItemList header items={selected.payment} disabled={disabled} onChange={payment => entry(selected.id, { payment })} /></Panel>
           <Panel title="获得内容" subtitle="库存主体 → 玩家" count={selected.goods.length} action={add('添加获得物品', () => entry(selected.id, { goods: [...selected.goods, createKitItem()] }))}><ItemList header items={selected.goods} disabled={disabled} onChange={goods => entry(selected.id, { goods })} /></Panel>
@@ -102,7 +108,7 @@ export function ShopEditor({ source, disabled, onChange, resolveText, setText, i
         <div className="shop-condition-columns">{conditions('visibility', '商店可见性条件组')}{conditions('availability', '商店可用性条件组')}</div>
         <Panel title="超参数" subtitle="由实例注入 · 此处为默认值" count={doc.params.length} action={add('添加超参数', () => update({ params: [...doc.params, createKitParam()] }))}><ParamPanel params={doc.params} preview={preview} disabled={disabled} onChange={params => update({ params })} onPreview={(id, value) => setPreview(p => ({ ...p, [id]: value }))} /></Panel>
         <Panel title="修饰器" subtitle="一元函数 f(x) · 仅本模板作用域" count={doc.modifiers.length} action={add('添加修饰器', () => update({ modifiers: [...doc.modifiers, createKitModifier()] }))}><ModifierPanel modifiers={doc.modifiers} env={env} disabled={disabled} onChange={modifiers => update({ modifiers })} />{env.errors.map((error, i) => <p className="kit-banner" role="alert" key={i}>{error}</p>)}</Panel>
-        <Panel title="脚本" subtitle="按列表顺序执行" count={doc.script.length} className="kit-script" action={<span className="kit-lang">Python</span>}><KitScriptField value={doc.script} options={scriptOptions} resourceLabel="工程脚本" disabled={disabled} onOpen={onOpenScript} onChange={script => update({ script: kitScriptRefs(script).map(ref => ({ ref })) })} /></Panel>
+        <Panel title="脚本" subtitle="按列表顺序执行" count={doc.script.length} className="kit-script" action={<span className="kit-lang">Python</span>}><KitScriptField value={doc.script} options={scriptOptions} resourceLabel="商店脚本" disabled={disabled} onOpen={onOpenScript} onChange={script => update({ script: kitScriptRefs(script).map(ref => ({ ref })) })} /></Panel>
         <p className="shop-scope-note">组合与参数注入在商店实例中配置；组合保留各模板边界与独立参数作用域。</p>
       </div>
     </KitExprContext.Provider></ItemCatalogContext.Provider>

@@ -29,4 +29,4 @@ assert(!graph.artifacts.some(a=>a.path.startsWith('goal/')||a.path.includes('tem
 const exported=await exportPaks(workspace,{targets:['server','client']})
 for(const pak of exported.packs){const zip=await JSZip.loadAsync(await pak.blob.arrayBuffer());for(const s of sources)assert.equal(!!zip.file(sourcePathOf(s).slice(4)),pak.target==='server');assert(!Object.keys(zip.files).some(p=>p.includes('templates/')))}
 assert.equal(SCRIPT_TEMPLATES.length,SCRIPT_TYPES.length)
-console.log('PASS script resources: seven types, path/session roundtrip, type-scoped names, whole-file builtin overlay, goal catalog replacement and server/client PAK contents')
+console.log('PASS script resources: eight types, path/session roundtrip, type-scoped names, whole-file builtin overlay, goal catalog replacement and server/client PAK contents')

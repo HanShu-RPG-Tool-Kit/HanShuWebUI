@@ -741,10 +741,11 @@ function CompositionBar({ kit, selfRef, options, disabled, onChange }: {
 }
 
 /** 礼包标签录入：交互对齐皮肤管理器 TagPicker（chip + 回车） */
-function KitTagField({ tags, disabled, readOnly, onChange }: {
+export function KitTagField({ tags, disabled, readOnly, onChange, label = '礼包标签' }: {
   tags: string[]
   disabled?: boolean
   readOnly?: boolean
+  label?: string
   onChange: (tags: string[]) => void
 }) {
   const [draft, setDraft] = useState('')
@@ -767,7 +768,7 @@ function KitTagField({ tags, disabled, readOnly, onChange }: {
   }
 
   return <div className="kit-tags-row">
-    <span className="kit-tags-label" title="游戏标签：引擎可按标签查询发放；继承与父并集，组合不并入">标签</span>
+    <span className="kit-tags-label" title={label}>{label}</span>
     <div
       className={`kit-tag-picker${locked ? ' is-disabled' : ''}${selected.length === 0 && !draft ? ' is-empty' : ''}`}
       onClick={() => { if (!locked) inputRef.current?.focus() }}
@@ -795,7 +796,7 @@ function KitTagField({ tags, disabled, readOnly, onChange }: {
           value={draft}
           disabled={disabled}
           placeholder={selected.length === 0 ? '输入标签后回车，如 daily 或 event/summer' : ''}
-          aria-label="添加礼包标签"
+          aria-label={`添加${label}`}
           onChange={(event) => setDraft(event.target.value.replace(/[\r\n]/g, ''))}
           onKeyDown={(event) => {
             if (event.key === 'Enter' || event.key === ',') {

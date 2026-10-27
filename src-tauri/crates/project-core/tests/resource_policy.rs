@@ -875,3 +875,20 @@ fn kit_script_reference_does_not_grant_lease_or_cascade_deletion() {
         .iter()
         .all(|path| path != "src/script/kit/reward.py.py"));
 }
+
+#[test]
+fn shop_script_reference_is_type_scoped_and_never_owned() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, sid) = setup(dir.path(), &[
+        ("src/shop/trader.shop", r#"{"script":[{"ref":"trade"},{"ref":"../bad"}]}"#),
+        ("src/script/shop/trade.py", "pass"),
+        ("src/script/kit/trade.py", "pass"),
+    ]);
+    let facts = engine.resource_relations(&sid, "src/shop/trader.shop").unwrap();
+    let refs: Vec<_> = facts.relations.iter().filter(|r| r.role == ResourceRelationRole::ShopScript).collect();
+    assert_eq!(refs.len(), 1);
+    assert_eq!(refs[0].to, "src/script/shop/trade.py");
+    let plan = engine.plan_file_operations(&sid, &[request(FileOperationKind::Remove, "src/shop/trader.shop", None)]).unwrap();
+    assert!(plan.operations.iter().all(|op| !op.path.starts_with("src/script/")));
+    assert!(plan.lease_paths.iter().all(|path| !path.starts_with("src/script/")));
+}

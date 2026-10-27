@@ -71,16 +71,20 @@ try {
   console.log(`Python Worker verification passed (${result.initMs} ms cold initialize): builtins, kit, random, Java imports, dynamic stubs, inferred receivers, chained return types, players tuple, java.type.`)
   const profiles=await page.evaluate(async()=>{
     const {PyrightClient}=await import('/src/monaco/python/pyrightClient.ts'),{pythonProfile}=await import('/src/monaco/python/profiles.ts')
-    const common=new PyrightClient(undefined,pythonProfile('common').files),goal=new PyrightClient(undefined,pythonProfile('goal').files)
+    const common=new PyrightClient(undefined,pythonProfile('common').files),goal=new PyrightClient(undefined,pythonProfile('goal').files),shop=new PyrightClient(undefined,pythonProfile('shop').files)
     async function complete(client,uri,text){await client.ready;client.notify('textDocument/didOpen',{textDocument:{uri,languageId:'python',version:1,text}});const lines=text.split('\n');const result=await client.request('textDocument/completion',{textDocument:{uri},position:{line:lines.length-1,character:lines.at(-1).length}});return (Array.isArray(result)?result:result?.items??[]).map(i=>i.label)}
     const plain=await complete(common,'file:///typings/plain.py','ki')
     const goals=await complete(goal,'file:///typings/goal.py','subscr')
     await common.writeStubs({'project/common/helper.py':'def answer() -> int:\n    return 42\n'})
     const imported=await complete(common,'file:///typings/imports.py','from common.helper import answer\nanswer().')
-    common.dispose();goal.dispose();return {plain,goals,imported}
+    const shopMembers=await complete(shop,'file:///typings/shop.py','shop.')
+    const entryMembers=await complete(shop,'file:///typings/entry.py','shop.entry("bread").')
+    common.dispose();goal.dispose();shop.dispose();return {plain,goals,imported,shopMembers,entryMembers}
   })
   assert(!profiles.plain.includes('kit'),'common profile must not inherit kit globals');assert(profiles.goals.includes('subscribe'),'goal SDK decorators');assert(profiles.imported.includes('bit_length'),'project Python sources participate in real import inference')
   console.log('Python profiles passed: common/goal/kit isolation and virtual project library imports.')
+  assert(profiles.shopMembers.includes('condition')&&profiles.shopMembers.includes('entries'),'shop host methods')
+  assert(profiles.entryMembers.includes('adjustDelta')&&profiles.entryMembers.includes('maxCapacity'),'shop quota handle inference')
   const productionWorker = (await readdir('dist/assets').catch(() => [])).find(name => name.startsWith('pyright.worker-') && name.endsWith('.js'))
   if (productionWorker) {
     await page.route('**/assets/*.js', async route => {

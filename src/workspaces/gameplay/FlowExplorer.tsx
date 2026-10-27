@@ -95,7 +95,7 @@ const QUEST_VIEW_KEYS = [QUEST_VIEW_SIMPLE, QUEST_VIEW_MULTI] as const
 const isProtectedFolderKey = (key: string) => isSectionFolder(key) || isQuestViewKey(key)
 const sectionIconKind = (key: string): Parameters<typeof Icon>[0]['kind'] => {
   const parsed = parseSectionFolderKey(key)
-  return ({common:'script','goal-def':'goal-def',kit:'kit',item:'item',entity:'entities',enchantment:'enchantment',player:'actor'} as const)[parsed?.sectionId as 'common'] ?? 'folder'
+  return ({common:'script','goal-def':'goal-def',kit:'kit',shop:'shop',item:'item',entity:'entities',enchantment:'enchantment',player:'actor'} as const)[parsed?.sectionId as 'common'] ?? 'folder'
 }
 const allSectionEntryIds = () => FLOW_PACKAGE_ORDER.flatMap((pkg) => sectionDefs(pkg).map((section) => `folder:${sectionFolderKey(pkg, section.id)}`))
 const allQuestViewEntryIds = () => QUEST_VIEW_KEYS.map((key) => `folder:${key}`)

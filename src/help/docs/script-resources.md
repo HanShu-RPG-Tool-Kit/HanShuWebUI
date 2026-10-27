@@ -2,7 +2,7 @@
 
 ## 目录与身份
 
-脚本有七种类型：common（通用）、goal（目标定义）、kit（礼包）、item（物品）、entity（实体）、enchantment（附魔定义）、player（玩家）。工程统一保存为 `src/script/<类型>/<文件名>.py`；PAK 对应 `script/<类型>/<文件名>.py`，均属于 server 平面。类型是真实分类，类型内的用户文件夹是保存到工程 `meta/explorer.json` 的共享整理视图，不创建磁盘子目录；文件名在同类型内唯一，不同类型可以同名。
+脚本有八种类型：common（通用）、goal（目标定义）、kit（礼包）、shop（商店）、item（物品）、entity（实体）、enchantment（附魔定义）、player（玩家）。工程统一保存为 `src/script/<类型>/<文件名>.py`；PAK 对应 `script/<类型>/<文件名>.py`，均属于 server 平面。类型是真实分类，类型内的用户文件夹是保存到工程 `meta/explorer.json` 的共享整理视图，不创建磁盘子目录；文件名在同类型内唯一，不同类型可以同名。
 
 脚本类型由工程路径决定，不通过执行 Python 猜测类型。拖动到另一类型属于类型转换，会改变源文件路径，经 S 的版本校验与事务执行；代码不会被自动改写成新类型。检查入口后再转换。目录规则集中在 scriptResources/types.ts、workspace.ts，禁止业务页面自己拼另一套路径。
 
@@ -26,6 +26,7 @@
 - common：公共库、全局服务、事件订阅；导入与主动启用的区别需由 Mod 加载契约明确。
 - goal：注册目标类型，沿用 goal 自己的配置与实例状态。
 - kit：一次礼包调用；官方宿主不提供事件订阅装饰器，不承诺安全沙箱。可信程序员主动绕过契约属于其自身责任。
+- shop：商店交易预提交脚本，注入 shop/player，通过条目句柄暂存 delta，契约见[商店模板](#shop-guide)。
 - item / entity：预留模板绑定、内置 hook 和每实例黑板；黑板不能存为共享脚本对象的成员。持久化、物品堆叠/拆分/合并、重载与状态迁移需要在 Mod 实现前另行明确。
 
 WebUI 已统一资源模型、编辑器与 PAK 导出。Mod 已接入 script/kit/ 的引用执行，并按需为礼包提供 script/common/ 库导入；不会在加载 PAK 时自动运行 common 订阅，也尚未接入 goal 的新 PAK 加载器、物品/实体 hook 或黑板。
@@ -37,7 +38,7 @@ WebUI 已统一资源模型、编辑器与 PAK 导出。Mod 已接入 script/kit
 
 原型阶段不维护旧的 src/goal/、src/script/*.py 或 src/scripts/ 布局兼容层。旧工程需先明确将脚本移到 src/script/<类型>/；打开旧路径时给出具体路径错误，不自动迁移、不覆盖文件。既有内置 goal 的代码在本次原样迁移，未顺带改写其运行逻辑。
 
-验证：`npm run test:script-resources` 覆盖七类型路径、会话往返、同名隔离、整文件覆盖和 PAK server/client 内容；`test:goal-definitions` 与 `test:new-file-types` 验证目标解析和创建入口；`test:script-resources:ui` 对真实 S 验证创建、保存、重开与内置覆盖。
+验证：`npm run test:script-resources` 覆盖八类型路径、会话往返、同名隔离、整文件覆盖和 PAK server/client 内容；`test:goal-definitions` 与 `test:new-file-types` 验证目标解析和创建入口；`test:script-resources:ui` 对真实 S 验证创建、保存、重开与内置覆盖。
 
 
 ## 礼包脚本引用

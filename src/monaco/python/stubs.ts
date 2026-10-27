@@ -28,6 +28,29 @@ def random() -> float: ...
 `
 
 // Only the documented injection is available offline. No invented Minecraft API.
+export const SHOP_CONTEXT = `from typing import Any
+from ${javaModule(PLAYER_CLASS)} import ServerPlayer
+class ShopEntryHandle:
+    id: str
+    tags: tuple[str, ...]
+    quantity: int
+    delta: int
+    current: int
+    initialCapacity: int
+    maxCapacity: int
+    def adjustDelta(self, amount: int) -> None: ...
+class ShopHandle:
+    id: str
+    tags: tuple[str, ...]
+    def param(self, name: str) -> Any: ...
+    def mod(self, name: str, x: float) -> float: ...
+    def expr(self, source: str) -> float: ...
+    def condition(self, source: str) -> bool: ...
+    def entry(self, id: str) -> ShopEntryHandle: ...
+    def entries(self, tag: str | None = None) -> tuple[ShopEntryHandle, ...]: ...
+shop: ShopHandle
+player: ServerPlayer
+`
 export const BASE_STUBS:Record<string,string>={'__builtins__.pyi':'from builtins import *\n'}
 
 /** Discover explicit Java imports; all semantic inference remains in Pyright. */

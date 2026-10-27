@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "params": [{"id":"level","kind":"int","default":2},{"id":"enabled","kind":"bool","default":true}],
+  "modifiers": [{"id":"price","expr":"x * level"}],
+  "cases": [
+    {"source":"","expected":true},
+    {"source":"true","expected":true},
+    {"source":"false","expected":false},
+    {"source":"0","expected":false},
+    {"source":"-2","expected":true},
+    {"source":"enabled","expected":true},
+    {"source":"level >= 2 && price(3) == 6","expected":true},
+    {"source":"level > 2 || !enabled","expected":false},
+    {"source":"!(level < 2 || false)","expected":true},
+    {"source":"(level + 1) * 2 <= price(3)","expected":true},
+    {"source":"false && 1 / 0 > 0","expected":false},
+    {"source":"true || 1 / 0","expected":true},
+    {"source":"1 != 2 && 2 < 3 && 3 > 2 && 2 <= 2","expected":true},
+    {"source":"!1 < 2","expected":false}
+  ],
+  "invalid": ["level >", "1 < 2 < 3", "true == false", "unknown > 0", "x > 0", "true || unknown", "true; system.exit(0)", "(true", "()", "level = 2"]
+}

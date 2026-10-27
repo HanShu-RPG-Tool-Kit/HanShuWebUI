@@ -1184,7 +1184,7 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
     const disabledPane = Boolean(paneDoc.detached) || locked || busy || readOnly || (paneProgress && !graphLive)
 
     if (paneShop) return <ShopEditor key={paneDoc.key} source={paneDoc.source} disabled={disabledPane} onChange={source => changeSource(source, false, paneDoc.key)} itemCatalog={itemCatalog} resolveText={paneDoc.key === focusedKey ? resolveLocaleText : undefined} setText={paneDoc.key === focusedKey ? setLocaleText : undefined}
-      scriptOptions={state.documents.filter(d => d.package === 'script').map(d => ({ ref: sourcePathOf({ name: d.name, srcKind: scriptTypeInFolder(state, d.folderId ?? null) }), label: `${d.name} · ${scriptTypeInFolder(state, d.folderId ?? null)}`, key: d.key }))}
+      scriptOptions={state.documents.filter(d => d.package === 'script' && scriptTypeInFolder(state, d.folderId ?? null) === 'shop').map(d => ({ ref: d.name.replace(/\.py$/i, ''), label: d.name, key: d.key }))}
       onOpenScript={key => selectDocument(key)} />
     if (paneProgress && paneProgressParsed) {
       if (!paneProgressParsed.doc) return <ProgressSourceRepair key={paneDoc.key} source={paneDoc.source} error={paneProgressParsed.error} disabled={disabledPane}
