@@ -76,8 +76,6 @@ export function Panel({ title, subtitle, count, action, className = '', children
 type KitExprUi = {
   env: KitModifierEnv
   modifiers: { id: string; label: string }[]
-  /** 编译结果：字段已是最终值，ƒ 只标注用过的修饰器 */
-  applied?: boolean
 }
 
 export const KitExprContext = createContext<KitExprUi | null>(null)
@@ -105,12 +103,6 @@ function ModChip({ raw, mod, rule, label, skip, disabled, onChange }: {
   const ui = useContext(KitExprContext)
   if (!ui) return null
   const bound = (mod ?? '').trim()
-  if (ui.applied) {
-    if (!bound || skip) return null
-    return <span className="kit-mod is-bound is-applied" title={`已应用修饰器 ${bound}`}>
-      <span className="kit-mod-face"><i>ƒ</i><em>{bound}</em></span>
-    </span>
-  }
   const result = bound && !skip ? resolveKitNumber(raw, bound, ui.env, rule) : null
   const known = ui.modifiers.some((item) => item.id === bound)
   const state = !bound ? (ui.modifiers.length ? '' : ' is-idle') : result?.error ? ' is-error' : result?.warning ? ' is-warn' : ' is-bound'
@@ -997,24 +989,22 @@ export function ModifierPanel({ modifiers, env, disabled, onChange }: {
   </div>
 }
 
-/** 礼包表单主体：可编辑表单与只读编译结果共用同一套布局 */
-function KitBody({ kit, disabled, readOnly, scriptOptions, onOpenScript, onCreateScript, simulatorPools, afterHeader, update, resolveText, setText }: {
+/** 礼包的可编辑表单主体 */
+function KitBody({ kit, disabled, scriptOptions, onOpenScript, onCreateScript, simulatorPools, update, resolveText, setText }: {
   kit: KitDocument
   disabled?: boolean
-  readOnly?: boolean
   scriptOptions?:KitScriptOptions
   onOpenScript?:(key:string)=>void
   onCreateScript?:(source?:string)=>void
   simulatorPools: KitPool[]
-  afterHeader?: ReactNode
   update: (patch: Partial<KitDocument>) => void
   resolveText?: (key: string) => string
   setText?: (key: string, value: string) => void
 }) {
   const ui = useContext(KitExprContext)
   const itemCatalog = useContext(ItemCatalogContext)
-  const locked = disabled || readOnly
-  const add = (label: string, onClick: () => void) => readOnly ? undefined : <AddButton label={label} disabled={disabled} onClick={onClick} />
+  const locked = disabled
+  const add = (label: string, onClick: () => void) => <AddButton label={label} disabled={disabled} onClick={onClick} />
   const poolItems = useMemo(
     () => kit.pools.flatMap((pool) => pool.entries.flatMap((entry) => entry.items)),
     [kit.pools],
@@ -1035,9 +1025,7 @@ function KitBody({ kit, disabled, readOnly, scriptOptions, onOpenScript, onCreat
       <ExperienceField experience={kit.experience} disabled={locked} onChange={(experience) => update({ experience })} />
     </header>
 
-    <KitTagField tags={kit.tags} disabled={disabled} readOnly={readOnly} onChange={(tags) => update({ tags })} />
-
-    {afterHeader}
+    <KitTagField tags={kit.tags} disabled={disabled} onChange={(tags) => update({ tags })} />
 
     <div className="kit-columns">
       <div className="kit-stack">
@@ -1052,9 +1040,9 @@ function KitBody({ kit, disabled, readOnly, scriptOptions, onOpenScript, onCreat
           <ItemSnapshotPanelStatus items={poolItems} catalog={itemCatalog} disabled={locked} />
           {add('添加', () => update({ pools: [...kit.pools, createKitPool()] }))}
         </>}>
-          {!readOnly && <p className="kit-hint">
+          <p className="kit-hint">
             每个池独立抽取：每抽一次按权重选中<b>一个分组</b>，发放该组的全部物品；同一分组可被重复抽中。
-          </p>}
+          </p>
           {kit.pools.length === 0 ? <p className="kit-empty">暂无随机池</p> : <>
             <div className="kit-pools">
               {kit.pools.map((pool, index) => (
@@ -1076,7 +1064,7 @@ function KitBody({ kit, disabled, readOnly, scriptOptions, onOpenScript, onCreat
           </>}
         </Panel>
 
-        <Panel title="指令" subtitle={readOnly ? undefined : '${表达式} 插值，可调用修饰器'} count={kit.commands.length} action={add('添加', () => update({ commands: [...kit.commands, ''] }))}>
+        <Panel title="指令" subtitle="${表达式} 插值，可调用修饰器" count={kit.commands.length} action={add('添加', () => update({ commands: [...kit.commands, ''] }))}>
           {kit.commands.length === 0 ? <p className="kit-empty">暂无指令</p> : (
             <ol className="kit-list">
               {kit.commands.map((command, index) => {
@@ -1097,15 +1085,13 @@ function KitBody({ kit, disabled, readOnly, scriptOptions, onOpenScript, onCreat
           <FeedbackForm feedback={kit.feedback} disabled={locked} resolveText={resolveText} setText={setText} onChange={(patch) => update({ feedback: { ...kit.feedback, ...patch } })} />
         </Panel>
 
-        <Panel title="礼包脚本" subtitle={readOnly ? undefined : '选择发放时执行的脚本'} className="kit-script" action={<span className="kit-lang">Python</span>}>
+        <Panel title="礼包脚本" subtitle="选择发放时执行的脚本" className="kit-script" action={<span className="kit-lang">Python</span>}>
           <KitScriptField value={kit.script} options={scriptOptions} disabled={locked} onChange={script=>update({script})} onOpen={onOpenScript} onCreate={onCreateScript}/>
         </Panel>
       </div>
     </div>
   </>
 }
-
-const NOOP = () => {}
 
 export function KitEditor({ kit, error, disabled, scriptOptions, onOpenScript, onCreateScript, itemCatalog = EMPTY_ITEM_CATALOG, onChange, resolveText, setText }: {
   kit: KitDocument
@@ -1123,20 +1109,18 @@ export function KitEditor({ kit, error, disabled, scriptOptions, onOpenScript, o
   disabled = disabled || Boolean(error)
   const update = (patch: Partial<KitDocument>) => { if (!error) onChange(stringifyKit({ ...kit, ...patch })) }
   const [preview, setPreview] = useState<Record<string, unknown>>({})
-  const [compiledOpen, setCompiledOpen] = useState(true)
-  const compiled = useMemo(() => resolveKit(kit, preview, itemCatalog), [kit, preview, itemCatalog])
-  const localPools = compiled.pools
-  const env = compiled.env
+  const evaluated = useMemo(() => resolveKit(kit, preview, itemCatalog), [kit, preview, itemCatalog])
+  const localPools = evaluated.pools
+  const env = evaluated.env
   const exprUi = useMemo<KitExprUi>(() => ({
     env,
     modifiers: activeKitModifiers(kit.modifiers)
       .filter((modifier) => env.declared.has(modifier.id))
       .map((modifier) => ({ id: modifier.id, label: modifier.label })),
   }), [env, kit.modifiers])
-  const appliedUi = useMemo<KitExprUi>(() => ({ ...exprUi, applied: true }), [exprUi])
   const problems = [
     ...env.errors.map((message) => ({ path: '声明', level: 'error' as const, message })),
-    ...compiled.issues,
+    ...evaluated.issues,
   ]
   const setPreviewValue = (id: string, value: unknown) => setPreview((previous) => {
     const next = { ...previous }
@@ -1186,33 +1170,11 @@ export function KitEditor({ kit, error, disabled, scriptOptions, onOpenScript, o
           </Panel>
         </KitExprContext.Provider>
 
-        <div className="kit-compiled-divider">
-          <button type="button" className="kit-fold" aria-expanded={compiledOpen} onClick={() => setCompiledOpen(!compiledOpen)}>
-            <svg viewBox="0 0 16 16" aria-hidden><path d={compiledOpen ? 'M4 6l4 4 4-4' : 'M6 4l4 4-4 4'} /></svg>
-            编译结果
-          </button>
-          <span className="kit-compiled-note">只读 · 按预览值应用修饰器与插值</span>
-          {problems.length > 0 && <span className="kit-compiled-count">{problems.length} 个问题</span>}
-        </div>
-
-        {compiledOpen && <>
-          {problems.length > 0 && (
-            <ul className="kit-issues kit-compiled-issues" role="status">
-              {problems.map((issue, index) => <li key={index} className={`is-${issue.level}`}><code>{issue.path}</code>{issue.message}</li>)}
-            </ul>
-          )}
-          <div className="kit-compiled" aria-label="编译结果（只读）">
-            <KitExprContext.Provider value={appliedUi}>
-              <KitBody kit={compiled} readOnly scriptOptions={scriptOptions} simulatorPools={compiled.pools} update={NOOP} resolveText={resolveText} />
-            </KitExprContext.Provider>
-            <Panel title="超参数" subtitle="预览值可在此直接调整" count={activeKitParams(compiled.params).length}>
-              <ParamPanel params={compiled.params} preview={preview} disabled onChange={NOOP} onPreview={setPreviewValue} />
-            </Panel>
-            <Panel title="修饰器" count={activeKitModifiers(compiled.modifiers).length}>
-              <ModifierPanel modifiers={compiled.modifiers} env={env} disabled onChange={NOOP} />
-            </Panel>
-          </div>
-        </>}
+        {problems.length > 0 && (
+          <ul className="kit-issues" role="status">
+            {problems.map((issue, index) => <li key={index} className={`is-${issue.level}`}><code>{issue.path}</code>{issue.message}</li>)}
+          </ul>
+        )}
       </div>
     </div>
   </ItemCatalogContext.Provider>

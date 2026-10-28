@@ -43,6 +43,17 @@ assert.ok(JSON.stringify(result).includes('game'))
 for (const patch of [{ extends: 'parent' }, { includes: [] }, { entries: [...doc.entries, doc.entries[0]] }, { entries: [{ ...doc.entries[0], payment: [{ count: 1 }] }] }, { stockSubject: 'entity-id' }]) {
   assert.throws(() => parseShop(JSON.stringify({ ...doc, ...patch })))
 }
+for (const field of ['visibility', 'availability']) {
+  const legacy = parseShop(JSON.stringify({ ...doc, [field]: [] }))
+  assert.equal(Object.hasOwn(legacy, field), false)
+  assert.equal(Object.hasOwn(JSON.parse(stringifyShop(legacy)), field), false)
+  assert.throws(() => parseShop(JSON.stringify({ ...doc, [field]: [{ kind: 'expr', state: 'true', target: '0' }] })), /条件组已移除/)
+}
+doc.entries[0].visibility = 'level > 2'
+doc.entries[0].availability = 'price(1) > 0'
+const entryRoundTrip = parseShop(stringifyShop(doc))
+assert.equal(entryRoundTrip.entries[0].visibility, 'level > 2')
+assert.equal(entryRoundTrip.entries[0].availability, 'price(1) > 0')
 const reports: unknown[] = []
 await shopCompiler.compile(file, { index: { package: { name: 'test', scripts: [file] } }, report: r => reports.push(r) } as Parameters<typeof shopCompiler.compile>[1])
 assert.ok(reports.length > 0, 'missing item references must block export')

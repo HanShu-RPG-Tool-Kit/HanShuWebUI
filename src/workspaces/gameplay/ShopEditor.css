@@ -58,7 +58,7 @@
 .shop-entry-head strong { font-weight:500; white-space:nowrap; }
 .shop-entry-id { color:var(--text-dim); font:10px var(--kit-mono); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; opacity:.7; }
 .shop-entry-actions { display:flex; margin-left:auto; flex-shrink:0; }
-.shop-editor .shop-entry-actions .kit-remove, .shop-editor .shop-rule .kit-remove { opacity:.7; }
+.shop-editor .shop-entry-actions .kit-remove { opacity:.7; }
 .shop-editor .shop-order { width:28px; height:28px; padding:0; border:0; background:transparent; color:var(--text-dim); cursor:pointer; }
 .shop-editor .shop-order:hover:not(:disabled) { background:var(--kit-row-hover); color:var(--text); }
 .shop-editor button:disabled { opacity:.45; cursor:default; }
@@ -66,16 +66,10 @@
 .shop-expression-fields { display:grid; gap:12px; grid-template-columns:1fr 1fr; }
 .shop-expression-fields .flow-field { display:flex; flex-direction:column; gap:6px; color:var(--text-dim); }
 .shop-expression-fields input { width:100%; box-sizing:border-box; }
-.shop-condition-columns { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
-.shop-condition-columns .kit-panel-head { flex-wrap:wrap; height:auto; min-height:36px; }
-.shop-condition-columns .kit-panel-sub { display:none; }
-.shop-rule { display:grid; grid-template-columns:16px 65px 86px minmax(60px,1fr) 26px; align-items:center; gap:5px; padding:8px; border-bottom:1px solid var(--border); font-size:12px; }
-.shop-rule:last-child { border-bottom:0; }
-.shop-editor .shop-rule input, .shop-editor .shop-rule select { width:100%; padding:5px 3px; box-sizing:border-box; }
 .shop-scope-note { color:var(--text-dim); font-size:12px; margin:0; padding:4px 0; }
 .shop-blank { min-height:290px; display:flex; flex-direction:column; align-items:center; justify-content:center; color:var(--text-dim); font-size:13px; }
 .shop-blank > span { font-size:36px; margin-bottom:12px; color:var(--accent); }
 .shop-blank strong { color:var(--text); font-weight:400; }
 .shop-blank p { font-size:12px; }
-@container (max-width:850px) { .shop-trades { grid-template-columns:210px minmax(0,1fr); gap:12px; } .shop-entry .kit-panel-sub { display:none; } .shop-condition-columns { grid-template-columns:1fr; } .shop-expression-fields { grid-template-columns:1fr; } }
+@container (max-width:850px) { .shop-trades { grid-template-columns:210px minmax(0,1fr); gap:12px; } .shop-entry .kit-panel-sub { display:none; } .shop-expression-fields { grid-template-columns:1fr; } }
 @container (max-width:620px) { .shop-trades { grid-template-columns:1fr; } .shop-entry-list { max-height:180px; } .shop-meta-note { display:none; } }

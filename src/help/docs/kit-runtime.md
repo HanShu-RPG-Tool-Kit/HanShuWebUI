@@ -197,7 +197,7 @@ if kit.param("difficulty") >= 2:
 
 ## 7. 与编辑器预览的关系
 
-| | WebUI 编译结果 | 引擎 `grant` |
+| | WebUI 字段预览 / 随机池模拟 | 引擎 `grant` |
 | --- | --- | --- |
 | 超参数 | 用「预览值」 | 用调用方 `params` + default + 分配键规则 |
 | 随机池 | 可模拟 | 真实 rng（或 `rngSeed`）；按人独立抽 |

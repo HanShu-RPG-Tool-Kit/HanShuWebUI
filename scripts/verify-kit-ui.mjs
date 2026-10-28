@@ -3,7 +3,13 @@ import { mkdir } from 'node:fs/promises'
 import { chromium } from 'playwright'
 import { createServer } from 'vite'
 
-const server = await createServer({ server: { host: '127.0.0.1', port: 0 }, appType: 'custom' })
+const server = await createServer({
+  server: { host: '127.0.0.1', port: 0 }, appType: 'custom',
+  plugins: [{ name: 'kit-ui-dependencies',
+    resolveId(id) { if (id === '/kit-ui-deps.js') return id },
+    load(id) { if (id === '/kit-ui-deps.js') return "export { default as React } from 'react'; export { createRoot } from 'react-dom/client'" },
+  }],
+})
 server.middlewares.use(async (req, res, next) => {
   if (req.url !== '/kit-editor-check') return next()
   res.setHeader('Content-Type', 'text/html')
@@ -20,10 +26,7 @@ try {
   await page.evaluate(async () => {
     await import('/src/index.css')
     await import('/src/App.css')
-    const reactModule = await import('/node_modules/.vite/deps/react.js')
-    const React = reactModule.default ?? reactModule
-    const domModule = await import('/node_modules/.vite/deps/react-dom_client.js')
-    const { createRoot } = domModule.default ?? domModule
+    const { React, createRoot } = await import('/kit-ui-deps.js')
     const { KitEditor } = await import('/src/workspaces/gameplay/KitEditor.tsx')
     const { createKit, parseKit, readKitSource } = await import('/src/workspaces/gameplay/kit.ts')
     const root = createRoot(document.getElementById('root'))
@@ -41,6 +44,9 @@ try {
   await page.locator('.kit-editor').waitFor()
   assert.equal(await page.locator('.kit-compose-bar, .kit-flatten-chain').count(), 0)
   assert.equal(await page.getByLabel('继承父礼包', { exact: true }).count(), 0)
+  assert.equal(await page.locator('.kit-compiled, .kit-compiled-divider').count(), 0)
+  assert.equal(await page.getByRole('button', { name: '编译结果', exact: true }).count(), 0)
+  assert.equal(await page.getByLabel('超参数标识符 1', { exact: true }).count(), 1)
   await page.getByLabel('添加礼包标签', { exact: true }).fill('daily')
   await page.getByLabel('添加礼包标签', { exact: true }).press('Enter')
   await page.waitForFunction(() => window.changes.length > 0)
@@ -57,7 +63,7 @@ try {
     assert.equal(await page.getByLabel('添加礼包标签', { exact: true }).isDisabled(), true)
   }
   assert.deepEqual(errors, [])
-  console.log('PASS standalone kit editor: tags save, removed controls, compiled preview, invalid legacy source fenced')
+  console.log('PASS standalone kit editor: tags save, removed controls and compiled view, invalid legacy source fenced')
 } finally {
   await browser?.close()
   await server.close()
