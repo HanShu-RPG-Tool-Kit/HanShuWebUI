@@ -49,6 +49,7 @@
     "test:progress-doc": "node scripts/run-verification.mjs scripts/verify-progress-document.ts",
     "test:progress-locale": "tsx scripts/verify-progress-locale.ts",
     "test:quest-compile": "node scripts/run-verification.mjs scripts/verify-quest-compile.ts",
+    "test:level-organization:ui": "node scripts/verify-level-organization-ui.mjs",
     "test:level": "node scripts/run-verification.mjs scripts/verify-level.ts",
     "test:progress-edit-session": "node scripts/run-verification.mjs scripts/verify-progress-edit-session.ts",
     "test:progress-collaboration": "node scripts/verify-progress-collaboration.mjs",

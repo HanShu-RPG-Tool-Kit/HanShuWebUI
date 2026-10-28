@@ -1,6 +1,7 @@
 import { resourceBaseError } from '../resourceNames'
 import { GAMEPLAY_CATEGORIES, resourceNameKey, resourceTypeForExtension } from '../resourceTypes'
-import { SCRIPT_TYPES, scriptSection, type ScriptType } from '../scriptResources/types'
+import { scriptTypeFromSection, type ScriptType } from '../scriptResources/types'
+import { FLOW_PACKAGE_SECTIONS } from '../workspaces/gameplay/sections'
 import { sourcePathOf, assertCanonicalSourcePath, getExtension, type SourceFile } from '../workspace'
 import type { FlowFolder, FlowDocument } from '../workspaces/gameplay/storage'
 
@@ -14,7 +15,12 @@ export type ExplorerOrganization = {
 }
 
 export const emptyOrganization = (): ExplorerOrganization => ({ version: 1, folders: [], placements: {} })
-const sections = new Map(SCRIPT_TYPES.map(type => [`section:script:${scriptSection(type)}`, type]))
+const sections = new Map<string, { category: string; scriptType: ScriptType }>(Object.entries(FLOW_PACKAGE_SECTIONS).flatMap(([category, definitions]) =>
+  definitions.filter(section => !section.virtual).map(section => [
+    `section:${category}:${section.id}`,
+    { category, scriptType: category === 'script' ? scriptTypeFromSection(section.id) : 'common' as ScriptType },
+  ] as const),
+))
 
 /** Validate untrusted project metadata before it can become a tree or a write candidate. */
 export function parseOrganization(raw: string | null): ExplorerOrganization {
@@ -44,8 +50,9 @@ export function parseOrganization(raw: string | null): ExplorerOrganization {
     const visited = new Set<string>()
     while (key !== null) {
       if (sections.has(key)) {
-        if (category !== 'script') throw new Error('文件夹分类不一致')
-        return sections.get(key)!
+        const section = sections.get(key)!
+        if (category !== section.category) throw new Error('文件夹分类不一致')
+        return section.scriptType
       }
       if (visited.has(key)) throw new Error('虚拟文件夹存在循环')
       visited.add(key)
@@ -99,7 +106,7 @@ export function organizationFromDocuments(
     const visited = new Set<string>()
     while (key && !visited.has(key)) {
       visited.add(key)
-      if (sections.has(key)) return sections.get(key)!
+      if (sections.has(key)) return sections.get(key)!.scriptType
       key = byKey.get(key)?.parentId ?? null
     }
     return 'common'

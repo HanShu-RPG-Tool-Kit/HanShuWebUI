@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import {RESOURCE_TYPES,categoryExtensions} from '../src/resourceTypes'
 import {assertCanonicalSourcePath,sourcePathOf,findScriptByName,createProject,createSourceFile} from '../src/workspace'
 import {emptyOrganization,parseOrganization,serializeOrganization,organizationFromDocuments,documentPlacements,relocateOrganization} from '../src/project/explorerOrganization'
-import {canMoveFlowEntry,moveFlowEntry,requireAvailableName,sectionFolderKey,packageAcceptsImportFile,withLibraryTables,isBuiltinScriptDocumentKey,scriptTypeInFolder} from '../src/workspaces/gameplay/library'
+import {canMoveFlowEntry,moveFlowEntry,requireAvailableName,sectionFolderKey,packageAcceptsImportFile,withLibraryTables,isBuiltinScriptDocumentKey,scriptTypeInFolder,ensurePackageSections} from '../src/workspaces/gameplay/library'
 import {withBuiltinScripts} from '../src/workspaces/gameplay/scriptResources'
 import type {FlowWorkspaceState} from '../src/workspaces/gameplay/storage'
 let checks=0
@@ -50,6 +50,26 @@ test('shared placements are canonical paths, not window-local IDs',()=>{
  assert.equal(documentPlacements([{...createSourceFile('apple.item'),id:'another-client'}],org)['another-client'],'f')
  assert.equal(serializeOrganization(parseOrganization(serializeOrganization(org))),serializeOrganization(org))
 })
+test('map sections round-trip without leaking default document placements',()=>{
+ const projected=ensurePackageSections({documents:[
+  {key:'level',name:'hub.level',package:'level',folderId:sectionFolderKey('level','templates'),source:'{}'},
+  {key:'nav',name:'camp.nav',package:'level',folderId:sectionFolderKey('level','dynamic-nav'),source:'{}'},
+ ],folders:[],activeKey:'level'})
+ assert.deepEqual(organizationFromDocuments(projected.documents,projected.folders),emptyOrganization())
+ projected.folders.push(
+  {key:'maps',name:'Maps',package:'level',parentId:sectionFolderKey('level','templates')},
+  {key:'routes',name:'Routes',package:'level',parentId:sectionFolderKey('level','dynamic-nav')},
+  {key:'nested',name:'Nested',package:'level',parentId:'routes'},
+ )
+ projected.documents[0].folderId='maps';projected.documents[1].folderId='nested'
+ const org=organizationFromDocuments(projected.documents,projected.folders)
+ assert.deepEqual(org.placements,{'src/level/hub.level':'maps','src/navigator/camp.nav':'nested'})
+ assert.equal(org.folders.length,3)
+ assert.equal(serializeOrganization(parseOrganization(serializeOrganization(org))),serializeOrganization(org))
+ for(const parentId of ['section:level:static-nav','section:level:missing','section:script:kit'])
+  assert.throws(()=>parseOrganization(JSON.stringify({...org,folders:[{key:'bad',name:'Bad',package:'level',parentId}],placements:{}})))
+})
+
 test('cycles, invalid parents, category/type mismatch and sibling duplicates rejected',()=>{
  const org=organizationFromDocuments(state().documents,state().folders)
  for(const candidate of [
