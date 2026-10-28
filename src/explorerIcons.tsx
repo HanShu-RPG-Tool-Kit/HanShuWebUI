@@ -43,6 +43,7 @@ export const EXPLORER_ICON_KINDS = [
   'progress',
   'quest',
   'hflow',
+  'level',
   'nav',
   'item',
   'entity',
@@ -76,6 +77,8 @@ const PATHS: Record<ExplorerIconKind, string> = {
   quest: 'M4 5h7a3 3 0 013 3v12a3 3 0 00-3-3H4z M20 5h-7a3 3 0 00-3 3v12a3 3 0 013-3h7z',
   // 与 `hanshu` / `quest`（摊开的书）区分：两个节点 + 连线 = 多进度树图（新建菜单）
   hflow: 'M4 3h6v5H4z M14 16h6v5h-6z M7 8v6h10v2',
+  // 地图模板：折叠地图 + 等高线，和任务（书）/ 导航（罗盘）区分开
+  level: 'M3 6l6-3 6 3 6-3v15l-6 3-6-3-6 3z M9 3v15 M15 6v15',
   nav: 'M12 21a9 9 0 100-18 9 9 0 000 18z M14.5 9.5l-2 5-5 2 2-5 5-2z',
   // 与 `kit`（礼物盒）刻意分开：物品是"一块宝石"，盒子留给礼包
   'script-kit':'M4 3h12v9H4z M8 6l-2 2 2 2 M12 6l2 2-2 2 M13 16h9v6h-9z M12 13h11v3H12z M17.5 13v9',
@@ -110,6 +113,7 @@ const BY_EXT: Record<string, ExplorerIconKind> = {
   '.tts': 'tts',
   '.ttsservice': 'ttsservice',
   '.quest': 'quest',
+  '.level': 'level',
   '.nav': 'nav',
   '.item': 'item',
   '.entity': 'entity',

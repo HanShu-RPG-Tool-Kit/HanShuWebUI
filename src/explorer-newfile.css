@@ -56,19 +56,15 @@
   min-width: 260px;
   max-width: 340px;
   /*
-   * 菜单**自己能滚**：类型是会越加越多的（11 条已经比一屏的半截还高，窄窗口 / 小屏
-   * 更明显），没有这条就会长到视口外面去 —— 底部的「创作资料」那几项点不到，
-   * 而且它是 `position: fixed`，资源树再滚也带不动它。
+   * 菜单**自己能滚**，高度大约 600px，不要铺满整窗。
+   * 铺满时贴边钳位会把菜单抬到视口顶上，和「+剧」对不齐；类型再多也在菜单里滚。
+   * 窗口比 600 更矮时退到视口内（上下各留 8px，给贴边钳位留余量）。
+   * 它是 `position: fixed`，资源树再滚也带不动它。
    *
-   * `max-height` 用 vh 而不是写死 px：桌面外壳与网页预览两种窗口高度下都合适。
-   * 减 16px 是给 `NewFileTypeMenu` 的贴边钳位留余量 —— 它按「上下各 8px」夹，
-   * 菜单正好吃掉整个视口高度的话，钳位就永远生效不了。
-   *
-   * `overscroll-behavior: contain`：滚到头的继续滚不会穿透给编辑器（Monaco 会跟着滚），
-   * 这在菜单盖在正文上的时候尤其明显。
+   * `overscroll-behavior: contain`：滚到头的继续滚不会穿透给编辑器（Monaco 会跟着滚）。
    * 滚动条本身不用单独写样式：剧本工作区在 App.css 里统一定过 `::-webkit-scrollbar`。
    */
-  max-height: calc(100vh - 16px);
+  max-height: min(600px, calc(100vh - 16px));
   overflow-y: auto;
   overscroll-behavior: contain;
   margin: 0;

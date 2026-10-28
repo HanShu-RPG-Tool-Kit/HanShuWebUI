@@ -36,6 +36,7 @@ import {
   createNavigationPoint,
   stringifyNavigationPoint,
 } from './workspaces/gameplay/navigationPoint'
+import { createLevelDocument, stringifyLevelDocument } from './workspaces/gameplay/levelDoc'
 import { createProgress, stringifyProgress } from './workspaces/gameplay/progressDoc'
 import { createItem, stringifyItem } from './workspaces/gameplay/itemDoc'
 import { createEntity, stringifyEntity } from './workspaces/gameplay/entityDoc'
@@ -67,6 +68,7 @@ export type NewFileTypeId =
   | 'py-player'
   | 'progress'
   | 'hflow'
+  | 'level'
   | 'nav'
   | 'item'
   | 'entity'
@@ -237,15 +239,26 @@ export const NEW_FILE_TYPES: readonly NewFileType[] = [
     seed: (base) => createFlowDocument(createFlow(undefined, base.trim()), 'quest').source,
   },
   {
+    id: 'level',
+    ext: '.level',
+    label: '地图模板',
+    hint: '一个模板文件包含区域与静态导航器（src/level）',
+    icon: 'level',
+    group: 'gameplay',
+    defaultBase: '新地图',
+    validateBase: (base) => base.includes('$') ? '地图模板名不能包含 $（导出 ID 用它分隔模板与子项）' : null,
+    seed: () => stringifyLevelDocument(createLevelDocument()),
+  },
+  {
     id: 'nav',
     ext: '.nav',
-    label: '导航点',
-    hint: '固定坐标或绑定实体（src/navigator）',
+    label: '动态导航点',
+    hint: '独立导航点，编译时写入所属地图模板（src/navigator）',
     icon: 'nav',
     group: 'gameplay',
     defaultBase: '新导航点',
-    // `createNavigationPoint` 同样忽略展示名：`label` 是语义键，译文在 lang_nav
-    seed: (base) => stringifyNavigationPoint(createNavigationPoint(base.trim())),
+    // `createNavigationPoint` 同样忽略展示名：`display_name` 是语义键，译文在 lang_nav
+    seed: () => stringifyNavigationPoint(createNavigationPoint()),
   },
   {
     id: 'item',

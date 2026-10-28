@@ -18,7 +18,7 @@ PAK 是给引擎用的运行时包。流水线：**编译图 → 接线校验 �
 | 路径 | 职责 |
 | --- | --- |
 | `src/export/compile/` | 类型、注册表、接线、`buildCompileGraph` |
-| `src/export/compile/compilers/` | 内置 Hanshu / Item / Entity / Kit / Quest / Identity / LocaleAssets / ActiveSkins |
+| `src/export/compile/compilers/` | 内置 Hanshu / Item / Entity / Kit / Quest / Level / Navigation / Identity / LocaleAssets / ActiveSkins |
 | `src/export/pack/exportPaks.ts` | 总入口 `exportPaks` |
 | `src/export/pack/planes.ts` | 平面过滤 |
 | `src/export/pack/encrypt.ts` | AES-256-GCM 整包加密 |
@@ -66,7 +66,7 @@ registerFileCompiler({
 | --- | --- | --- | --- |
 | `.hs` | 按本文件编译产物的 `localeKey` 引用裁剪 | 按同一引用集合裁剪 | client |
 | `.char` | 保留本文件整张语言表 | 保留本文件配音 | client |
-| `.kit`、`.quest`、`.nav` | 保留本文件整张语言表 | 暂未声明 | shared |
+| `.kit`、`.quest`、`.level`、`.nav`、`.shop` | 保留本文件整张语言表 | 暂未声明 | shared |
 
 注册示例（此处 `.card` 是扩展自己的格式，还需配套文件编译器）：
 
@@ -117,6 +117,8 @@ registerLocaleExportRule({
 
 **任务编译（`questCompiler`）**：单/多进度 `.quest` 均编译为 `quest/<名>.questc`，平面 **shared**，正文为 `hanshu.questc` v1。资源身份来自文件名，正文不再携带根级任务 ID；节点各端口保存有序连接指针，不导出独立边表、布局或派生 order 字段。源文件顺序从布局实时计算，编译时固化为数组。单进度生成明确的成败结束节点及运行策略，不再携带 `extensions.hanshuSimpleQuest`。任务语言资产仍属 `.quest` 源文件，继续使用 `lang_quest` 路径。格式与加载校验见[流程模型](#progress-flow-model)的编译格式章节。验证：`npm run test:quest-compile`。
 
+**地图编译（`levelCompiler` / `navigationCompiler`）**：一个 `.level` 拆成 `levels/<模板>.json`、`regions/<模板>$<区域>.json`、`navigation_points/<模板>$<导航点>.json`，平面 **shared**；子对象的 `level` 字段由编译器写入。动态 `.nav` 输出 `navigation_points/<名称>.json`。模板子项与动态导航点共用目录，导出路径重复时 `levelArtifactPass` 报 error。详见[地图模板与导航](#level-guide)。
+
 ### 源目录与 PAK 顶层
 
 工程 `src/<kind>/` 与 PAK 顶层 `<kind>/` 对齐：
@@ -124,7 +126,7 @@ registerLocaleExportRule({
 | kind | 内容 |
 | --- | --- |
 | `script/<类型>` | `common` / `goal` / `kit` / `item` / `entity` / `enchantment` / `player` 脚本；内置脚本先入，工程同类型同名文件覆盖 |
-| `hanshu` / `character` / `quest` / `navigator` / `gift` / `items` / `entities` | 其它源类型（旧工程 `progress` / `story` 目录仍可读） |
+| `hanshu` / `character` / `quest` / `level` / `navigator` / `gift` / `items` / `entities` | 其它源类型（旧工程 `progress` / `story` 目录仍可读） |
 
 脚本资源、内置覆盖与新建模板的完整约定见[脚本资源](#script-resources)。
 

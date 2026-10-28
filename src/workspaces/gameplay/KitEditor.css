@@ -1,4 +1,4 @@
-﻿/* ---------- 页面 ---------- */
+/* ---------- 页面 ---------- */
 
 .flow-kit-pane {
   --kit-mono: 'Cascadia Mono', 'JetBrains Mono', Consolas, monospace;
@@ -303,9 +303,10 @@
 
 .kit-columns {
   display: grid;
-  flex: 1;
+  flex: 0 0 auto;
   grid-template-columns: minmax(380px, 1fr) minmax(360px, 1fr);
-  align-items: start;
+  align-items: stretch;
+  align-content: start;
   gap: 12px;
 }
 
@@ -357,7 +358,36 @@
 .kit-panel-actions {
   display: flex;
   align-items: center;
+  gap: 8px;
   margin-left: auto;
+}
+
+/* 物品快照面板汇总：与 .item 编辑器、表视图共用同一状态口径 */
+.item-snapshot-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-size: calc(11px * var(--fl-s, 1.25) / 1.1);
+}
+
+.item-snapshot-summary.is-ok {
+  color: #b7d7b0;
+}
+
+.item-snapshot-summary.is-warn {
+  color: #e0c48a;
+}
+
+.item-snapshot-summary.is-pending {
+  color: #9fc4e8;
+}
+
+.item-snapshot-summary .item-snapshot-refresh {
+  height: 22px;
+  padding: 0 8px;
+  font-size: calc(11px * var(--fl-s, 1.25) / 1.1);
 }
 
 .flow-kit-pane .kit-add {
@@ -1393,15 +1423,15 @@
 /* ---------- 右栏 / 脚本 ---------- */
 
 .kit-aside {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  align-self: stretch;
   gap: 12px;
-  position: sticky;
-  top: 0;
+  width: 100%;
   min-width: 0;
 }
 
-.kit-script{display:flex;flex-direction:column;min-height:0;height:auto}
+.kit-script{display:flex;flex-direction:column;align-self:stretch;width:100%;min-width:0;min-height:0;height:100%}
 
 /* ---------- 面板副标题 / 通用提示 ---------- */
 
@@ -2264,10 +2294,12 @@
   }
 
   .kit-aside {
-    position: static;
+    grid-template-rows: auto auto;
   }
 
-
+  .kit-script {
+    height: auto;
+  }
 }
 
 .kit-row-head.kit-item span:nth-child(4),

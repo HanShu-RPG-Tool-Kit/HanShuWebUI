@@ -12,11 +12,12 @@ import { text, type FlowText, type ProgressFlow } from './model'
 import type { ProgressDocument } from './progressDoc'
 import type { KitDocument } from './kit'
 import type { NavigationPoint } from './navigationPoint'
+import { NAV_DISPLAY_NAME } from './navigationPoint'
 
 export const PROGRESS_NAME_KEY = 'name'
 export const PROGRESS_DESCRIPTION_KEY = 'description'
 
-export const NAV_LABEL_KEY = 'label'
+export const NAV_LABEL_KEY = 'display_name'
 
 export const KIT_NAME_KEY = 'name'
 export const KIT_FEEDBACK_MESSAGE_KEY = 'feedback.message'
@@ -175,15 +176,17 @@ export function flowNodeLocaleKeyMoves(
   return moves
 }
 
-/** 把 `.nav` 的 label 收成固定语义键 */
+/** 把 `.nav` 的 display_name 收成固定语义键 */
 export function ensureNavLocaleKeys(point: NavigationPoint): {
   point: NavigationPoint
   seeds: Record<string, string>
 } {
   const seeds: Record<string, string> = {}
-  const label = takePlainAsSeed(point.label, NAV_LABEL_KEY, seeds)
-  if (label === point.label) return { point, seeds }
-  return { point: { ...point, label }, seeds }
+  const current = point.custom_data[NAV_DISPLAY_NAME]
+  const value = typeof current === 'string' ? current : ''
+  const next = takePlainAsSeed(value, NAV_LABEL_KEY, seeds)
+  if (next === value && current === next) return { point, seeds }
+  return { point: { ...point, custom_data: { ...point.custom_data, [NAV_DISPLAY_NAME]: next } }, seeds }
 }
 
 export function defaultNavLocaleSeeds(label = '新导航点'): Record<string, string> {

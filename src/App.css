@@ -1890,6 +1890,33 @@ body.is-resizing .monaco-editor {
   color: var(--text-bright);
 }
 
+.explorer-context-menu li button {
+  white-space: nowrap;
+}
+
+.explorer-context-menu li button.is-danger {
+  color: var(--danger, #e8656d);
+}
+
+.explorer-context-menu li button.is-danger:hover:not(:disabled) {
+  background: rgba(206, 78, 74, 0.22);
+  color: var(--danger, #e8656d);
+}
+
+.explorer-context-menu li button:disabled,
+.explorer-context-menu li button:disabled:hover {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background: transparent;
+  color: var(--text-dim);
+}
+
+.explorer-context-sep {
+  height: 1px;
+  margin: 4px 8px;
+  background: var(--border-soft);
+}
+
 .explorer-subdir-row {
   padding-left: 0;
 }
@@ -2610,9 +2637,14 @@ body.is-resizing .stageplay-workspace .split-handle { background: var(--accent);
 
 /* 标签条 */
 .stageplay-workspace .tabbar { height: calc(26px * var(--sw-s)); align-items: stretch; background: var(--sw-panel-2); border-bottom: 1px solid var(--border); box-sizing: content-box; }
-.stageplay-workspace .tab { position: relative; height: auto; gap: 6px; padding: 0 10px; border-top: 0; background: var(--sw-head); color: var(--text-bright); font-size: var(--sw-font-sm); }
-.stageplay-workspace .tab.active::after { content: ''; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px; background: var(--accent); }
-.stageplay-workspace .tab-close { opacity: 0.55; font-size: var(--sw-font); }
+.stageplay-workspace .tabbar .flow-page-list { flex: 1 1 auto; min-width: 0; height: 100%; background: transparent; border-bottom: 0; --fl-s: var(--sw-s); --fl-font-sm: var(--sw-font-sm); --fl-hover: var(--sw-hover); --fl-head: var(--sw-head); }
+.stageplay-workspace .editor-closed {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  color: var(--text-dim);
+  font-size: var(--sw-font-sm);
+}
 .stageplay-workspace .tab-action { align-self: center; height: calc(20px * var(--sw-s)); margin: 0 4px 0 auto; padding: 0 10px; border: 1px solid var(--border-soft); border-radius: 0; background: var(--sw-panel-2); color: var(--text-dim); font-size: var(--sw-font-xs); }
 .stageplay-workspace .tab-action + .tab-action { margin-left: 0; }
 .stageplay-workspace .tab-action:hover { background: var(--sw-hover); border-color: var(--border-soft); color: var(--text-bright); }
@@ -3134,3 +3166,183 @@ body.is-panel-dragging .role-panel-header.is-draggable {
   background: rgba(255, 255, 255, 0.08);
   color: var(--text-bright);
 }
+
+.dock-panel-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  flex: none;
+  min-width: 0;
+  min-height: 28px;
+  padding: 4px 8px;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.dock-panel-title-text {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+body.is-panel-dragging .dock-panel-title.is-draggable {
+  cursor: grabbing;
+}
+
+.editor-dock {
+  position: relative;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.panel-dock-main > .editor-dock {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+}
+
+.editor-dock-split {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.editor-dock-split.is-row { flex-direction: row; }
+.editor-dock-split.is-column { flex-direction: column; }
+
+.editor-dock-pane {
+  display: flex;
+  flex-direction: column;
+  flex-basis: 0;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.editor-dock-sash {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 2px;
+  background: var(--border);
+  touch-action: none;
+}
+
+.editor-dock-sash.is-col { cursor: col-resize; }
+.editor-dock-sash.is-row { cursor: row-resize; }
+
+.editor-dock-sash.is-col::after,
+.editor-dock-sash.is-row::after {
+  content: "";
+  position: absolute;
+}
+
+.editor-dock-sash.is-col::after {
+  top: 0;
+  bottom: 0;
+  left: -3px;
+  right: -3px;
+}
+
+.editor-dock-sash.is-row::after {
+  left: 0;
+  right: 0;
+  top: -3px;
+  bottom: -3px;
+}
+
+.editor-dock-sash:hover,
+.editor-dock-sash.is-active {
+  background: var(--accent);
+}
+
+.editor-dock-leaf {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+.editor-dock-leaf.is-float {
+  position: absolute;
+  z-index: 40;
+  flex: none;
+  border: 1px solid var(--accent);
+  background: var(--bg);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+}
+
+.editor-dock-tabbar {
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+
+.editor-dock-grip {
+  flex: 0 0 10px;
+  align-self: stretch;
+  cursor: grab;
+  touch-action: none;
+  border-right: 1px solid var(--border);
+}
+
+.editor-dock-grip:hover,
+body.is-panel-dragging .editor-dock-grip {
+  background: var(--accent-dim);
+}
+
+.stageplay-workspace .editor-dock-tabbar .flow-page-tab button {
+  cursor: grab;
+}
+
+.editor-dock-tabbar .flow-page-tab,
+.editor-dock-tabbar .flow-page-tab-name,
+.editor-dock-tabbar .flow-page-list-rest {
+  cursor: grab;
+}
+
+body.is-panel-dragging .editor-dock-tabbar,
+body.is-panel-dragging .editor-dock-tabbar .flow-page-tab-name {
+  cursor: grabbing;
+}
+
+.editor-dock-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.editor-dock-body > .editor-shell,
+.editor-dock-body > .editor-closed {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.editor-dock-ghost {
+  position: absolute;
+  z-index: 45;
+  box-sizing: border-box;
+  border: 1px solid var(--accent);
+  background: var(--accent-dim);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+
+.editor-dock .panel-dock-zones {
+  position: absolute;
+  inset: 0;
+  z-index: 50;
+}
+

@@ -14,22 +14,25 @@ import { smartArrangeCanvas } from './gameplay/arrange'
 import { ProgressGraph } from './gameplay/ProgressGraph'
 import { FlowDocumentProperties } from './gameplay/FlowDocumentProperties'
 import { FlowExplorer } from './gameplay/FlowExplorer'
+import { PanelDock, resetPanelDock, type DockPanelSpec } from '../ui/PanelDock'
+import { confirmDialog } from '../ui/dialogs'
 import { PageList } from './gameplay/PageList'
 import { EditorSplit } from './gameplay/EditorSplit'
-import { closeAllInGroup, closeInGroup, closeOthersInGroup, closeRightInGroup, focusedGroupId, focusGroup, joinGroups, moveTab, normalizeGroups, openAsRightSplit, openInGroup, openOppositeToKey, readGroup, setSplitRatio, splitTab, togglePinInGroup, type GroupId, type SplitZone } from './gameplay/editorGroups'
-import { ensurePackageSections, folderPath, isBuiltinScriptFolder, isEntityDocument, isItemDocument, isItemLibraryTableKey, isLibraryTableKey, isEntityLibraryTableKey, ENTITY_LIBRARY_TABLE_KEY, ITEM_LIBRARY_TABLE_KEY, isKitDocument, isMultiQuestDocument, isNavigationDocument, isQuestDocument, isScriptDocument, isSectionFolder, isSimpleQuestDocument, packageAcceptsImportFile, packageAllowsDocuments, packageDocumentExt, renameFlowEntry, stripLibraryTables, uniqueDocumentName, withLibraryTables } from './gameplay/library'
+import { closeAllInGroup, closeInGroup, closeOthersInGroup, closeRightInGroup, focusedGroupId, focusGroup, joinGroups, moveTab, normalizeGroups, openInGroup, openOppositeToKey, readGroup, setSplitRatio, splitTab, togglePinInGroup, type GroupId, type SplitZone } from './gameplay/editorGroups'
+import { ensurePackageSections, folderPath, folderSectionId, isBuiltinScriptFolder, isEntityDocument, isItemDocument, isItemLibraryTableKey, isLevelDocument, isLibraryTableKey, isEntityLibraryTableKey, ENTITY_LIBRARY_TABLE_KEY, ITEM_LIBRARY_TABLE_KEY, isKitDocument, isMultiQuestDocument, isNavigationDocument, isQuestDocument, isScriptDocument, isSectionFolder, isSimpleQuestDocument, packageAcceptsImportFile, packageAllowsDocuments, packageDocumentExt, renameFlowEntry, stripLibraryTables, uniqueDocumentName, withLibraryTables } from './gameplay/library'
 import { normalizeQuestFileName, questAuthorKindFromSource } from './gameplay/questKind'
 import { createFlowDocument, downloadFlowFile, importFlowDocument, stampDocument, type FlowDocument, type FlowPackageId, type FlowWorkspaceState } from './gameplay/storage'
 import { createKit, kitRefFromFileName, readKitSource, stringifyKit, parseKit } from './gameplay/kit'
 import { createProgress, createProgressLocaleSeeds, readProgressSource, stringifyProgress, parseProgress } from './gameplay/progressDoc'
-import { createNavigationPoint, readNavigationSource, stringifyNavigationPoint, parseNavigationPoint } from './gameplay/navigationPoint'
+import { createNavigationPoint, readNavigationSource, stringifyNavigationPoint, parseNavigationPoint, NAV_DISPLAY_NAME } from './gameplay/navigationPoint'
+import { createLevelDocument, parseLevelDocument, readLevelSource, stringifyLevelDocument } from './gameplay/levelDoc'
 import { createItem, itemFromItemStackSource, parseItem, readItemSource, stringifyItem } from './gameplay/itemDoc'
 import {
-  forceRequestItemSnapshots,
   isAutoItemSnapshotRefreshEnabled,
   isItemSnapshotRefreshOnline,
   setAutoItemSnapshotRefreshEnabled,
 } from './gameplay/itemSnapshotCache'
+import { refreshDocumentsItemSnapshots } from './gameplay/itemSnapshotActions'
 import { isItemStackFileName } from './gameplay/itemstack'
 import {
   ensureItemEditNotifyStarted,
@@ -89,6 +92,8 @@ import Editor from '@monaco-editor/react'
 import { HANSHU_THEME_ID, registerHanshuLanguage } from '../monaco/hanshuLanguage'
 import './GameplayWorkspace.css'
 
+const GAMEPLAY_DOCK_KEY = 'hanshu.panelDock.gameplay'
+
 export type GameplayWorkspaceHandle = { handleMenuAction: (item: string) => void }
 
 type History = { past: string[]; future: string[]; lastEdit: number }
@@ -132,6 +137,8 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
         const type=scriptType(source?.srcKind)
         if(scriptTypeInFolder({folders},folderId)!==type||folderId===null)folderId=sectionFolderKey('script',scriptSection(type))
       }
+      if (folderId === null && doc.name.toLowerCase().endsWith('.level')) folderId = sectionFolderKey('level', 'templates')
+      if (folderId === null && doc.name.toLowerCase().endsWith('.nav')) folderId = sectionFolderKey('level', 'dynamic-nav')
       return folderId === (doc.folderId ?? null) ? doc : { ...doc, folderId }
     })
   }, [session.workspace])
@@ -362,6 +369,7 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
     : null
   const presencePath = presenceSource&&!presenceSource.detached ? sourcePathOf(presenceSource) : null
   const navigationDoc = doc ? isNavigationDocument(doc) : false
+  const levelDoc = doc ? isLevelDocument(doc) : false
   const itemTableDoc = doc ? isLibraryTableKey(doc.key) : false
   const entityDoc = doc ? isEntityDocument(doc) : false
   const itemDoc = doc ? isItemDocument(doc) : false
@@ -395,11 +403,15 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
     }
     return map
   }, [state.documents])
+  const levelOptions = useMemo(() => state.documents
+    .filter((document) => isLevelDocument(document))
+    .map((document) => ({ id: document.name.replace(/\.level$/i, ''), label: document.name }))
+    .sort((a, b) => a.label.localeCompare(b.label, 'zh-CN')), [state.documents])
   const parsed = useMemo(() => {
-    if (!doc || shopDoc || scriptDoc || kitDoc || progressDoc || navigationDoc || itemDoc || entityDoc || itemTableDoc) return { flow: null, error: '' }
+    if (!doc || shopDoc || scriptDoc || kitDoc || progressDoc || navigationDoc || levelDoc || itemDoc || entityDoc || itemTableDoc) return { flow: null, error: '' }
     try { return { flow: parseFlow(doc.source), error: '' } }
     catch (error) { return { flow: null, error: error instanceof Error ? error.message : String(error) } }
-  }, [doc, shopDoc, scriptDoc, kitDoc, progressDoc, navigationDoc, itemDoc, entityDoc, itemTableDoc])
+  }, [doc, shopDoc, scriptDoc, kitDoc, progressDoc, navigationDoc, levelDoc, itemDoc, entityDoc, itemTableDoc])
   const docByKey = useMemo(() => new Map(state.documents.map((item) => [item.key, item])), [state.documents])
   const explorerState = useMemo(() => ({ ...state, activeKey: focusedKey }), [state, focusedKey])
   const issues = useMemo(() => parsed.flow ? validateFlow(parsed.flow, goalCatalog.definitions) : [], [parsed.flow, goalCatalog.definitions])
@@ -407,8 +419,8 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
   const readOnly = !client?.writable
   const locked = !projectBound || propertiesKey !== null
   const propertiesDoc = propertiesKey ? state.documents.find((item) => item.key === propertiesKey) ?? null : null
-  const flowLocalizable = Boolean(doc && !shopDoc && !scriptDoc && !kitDoc && !progressDoc && !navigationDoc && !itemDoc && !entityDoc && !itemTableDoc)
-  const localeDoc = Boolean(doc && (shopDoc || flowLocalizable || kitDoc || navigationDoc))
+  const flowLocalizable = Boolean(doc && !shopDoc && !scriptDoc && !kitDoc && !progressDoc && !navigationDoc && !levelDoc && !itemDoc && !entityDoc && !itemTableDoc)
+  const localeDoc = Boolean(doc && (shopDoc || flowLocalizable || kitDoc || navigationDoc || levelDoc))
 
   // 当前焦点文档的语义键 TextMap（literal）
   useEffect(() => {
@@ -745,12 +757,6 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
     updateGroups((previous) => focusGroup(previous, id))
   }
   function selectDocument(key: string, group: GroupId = focusedGroup) {
-    if (isLibraryTableKey(key)) {
-      updateGroups((previous) => openAsRightSplit(previous, key))
-      setProgressSourceKey(null)
-      setNotice('')
-      return
-    }
     updateGroups((previous) => openInGroup(previous, group, key))
     setProgressSourceKey(null)
     setNotice('')
@@ -773,11 +779,16 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
     else if (drag.group !== group) updateGroups((previous) => moveTab(previous, drag.group, group, drag.key, beforeKey))
     else if (beforeKey !== drag.key) updateGroups((previous) => moveTab(previous, group, group, drag.key, beforeKey))
   }
+  function firstLevelId(): string {
+    return state.documents.find((document) => isLevelDocument(document))?.name.replace(/\.level$/i, '') ?? ''
+  }
   function newFlow(value = '新建流程', folderId: string | null = null, packageId: FlowPackageId = 'quest', templateName='default.py', sourceOverride?:string) {
     if (locked || busy) throw new Error('请先完成当前修改。')
-    const ext = packageDocumentExt(packageId)
+    const ext = packageId === 'level'
+      ? (folderSectionId(state, folderId) === 'dynamic-nav' ? '.nav' : '.level')
+      : packageDocumentExt(packageId)
     if (!ext) throw new Error('此分类不支持文件。')
-    const name = uniqueDocumentName(state,value,packageId,folderId)
+    const name = uniqueDocumentName(state,value,packageId,folderId, ext ?? undefined)
     const title = name.slice(0, -ext.length)
     /** 任务包：templateName 区分单进度（progress/simple）与多进度（flow/multi）；缺省单进度 */
     const questKind = packageId === 'quest'
@@ -808,11 +819,13 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
             package: packageId,
             folderId,
           })
-          : ext === '.nav'
+          : ext === '.level'
+            ? stampDocument({ key: randomId(), name, source: stringifyLevelDocument(createLevelDocument()), package: packageId, folderId })
+            : ext === '.nav'
             ? stampDocument({
               key: randomId(),
               name,
-              source: stringifyNavigationPoint(createNavigationPoint(title)),
+              source: stringifyNavigationPoint(createNavigationPoint(firstLevelId())),
               package: packageId,
               folderId,
             })
@@ -842,7 +855,7 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
     input.accept = packageId === 'script' ? '.py,text/x-python'
       : packageId === 'gift' ? '.kit,application/json'
         : packageId === 'quest' ? '.quest,.json,application/json'
-          : packageId === 'navigator' ? '.nav,.json,application/json'
+          : packageId === 'level' ? '.level,.nav,application/json'
             : packageId === 'entities' ? '.entity,application/json'
             : packageId === 'items' ? '.item,.itemstack,.json,application/json'
               : '.quest,.json,application/json'
@@ -859,7 +872,7 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
     const accepted = files.filter((file) => packageAcceptsImportFile(pkg, file.name))
     const skipped = files.length - accepted.length
     if (!accepted.length) {
-      setNotice(pkg === 'script' ? '请放入 .py 脚本。' : pkg === 'gift' ? '请放入 .kit 礼包。' : pkg === 'quest' ? '请放入 .quest 或 JSON 任务文档。' : pkg === 'navigator' ? '请放入 .nav 导航点。' : pkg === 'entities' ? '请放入 .entity 实体模板。' : pkg === 'items' ? '请放入 .item 或 .itemstack。' : '请放入 .quest 或 JSON 任务文档。')
+      setNotice(pkg === 'script' ? '请放入 .py 脚本。' : pkg === 'gift' ? '请放入 .kit 礼包。' : pkg === 'quest' ? '请放入 .quest 或 JSON 任务文档。' : pkg === 'level' ? '请放入 .level 地图模板或 .nav 动态导航点。' : pkg === 'entities' ? '请放入 .entity 实体模板。' : pkg === 'items' ? '请放入 .item 或 .itemstack。' : '请放入 .quest 或 JSON 任务文档。')
       return
     }
     setBusy(true)
@@ -913,16 +926,23 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
           }
           continue
         }
-        if (pkg === 'navigator') {
+        if (pkg === 'level') {
           const source = await file.text()
-          parseNavigationPoint(source)
-          const name = uniqueDocumentName({ ...state, documents: [...state.documents, ...documents] }, file.name, pkg, folderId)
+          const navFile = file.name.toLowerCase().endsWith('.nav')
+          if (navFile) parseNavigationPoint(source)
+          else parseLevelDocument(source)
+          const currentSection = folderSectionId({ folders: state.folders }, folderId)
+          const targetFolder = currentSection === (navFile ? 'dynamic-nav' : 'templates')
+            ? folderId
+            : sectionFolderKey('level', navFile ? 'dynamic-nav' : 'templates')
+          const ext = navFile ? '.nav' : '.level'
+          const name = uniqueDocumentName({ ...state, documents: [...state.documents, ...documents] }, file.name, pkg, targetFolder, ext)
           documents.push(stampDocument({
             key: randomId(),
             name,
             source,
             package: pkg,
-            folderId,
+            folderId: targetFolder,
           }))
           continue
         }
@@ -957,7 +977,7 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
         documents.map((item) => item.key),
       ))
       setSelection({ kind: 'flow' })
-      const kind = pkg === 'script' ? '个脚本' : pkg === 'gift' ? '个礼包' : pkg === 'quest' ? '个任务' : pkg === 'navigator' ? '个导航点' : pkg === 'items' ? '个物品' : '个任务'
+      const kind = pkg === 'script' ? '个脚本' : pkg === 'gift' ? '个礼包' : pkg === 'quest' ? '个任务' : pkg === 'level' ? '个地图资源' : pkg === 'items' ? '个物品' : '个任务'
       setNotice(skipped > 0 ? `已导入 ${documents.length} ${kind}，跳过 ${skipped} 个不匹配的文件。` : `已导入 ${documents.length} ${kind}。`)
     } catch (error) { setNotice(`导入失败：${String(error)}`) }
     finally { setBusy(false) }
@@ -966,10 +986,10 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
     if (locked || busy) return
     const item = state.documents.find((d) => d.key === key)
     if (!item) return
-    if (item.package === 'shop' || isEntityDocument(item) || isScriptDocument(item) || isKitDocument(item) || isSimpleQuestDocument(item) || isNavigationDocument(item) || isItemDocument(item)) {
+    if (item.package === 'shop' || isEntityDocument(item) || isScriptDocument(item) || isKitDocument(item) || isSimpleQuestDocument(item) || isNavigationDocument(item) || isLevelDocument(item) || isItemDocument(item)) {
       const progress = isSimpleQuestDocument(item) ? progressEditorSession(client, sourcePathOf({ name: item.name })) : undefined
       downloadFlowFile(item.name, progress?.getSnapshot().view.source ?? item.source)
-      setNotice(isItemDocument(item) ? '已下载物品。' : isKitDocument(item) ? '已下载礼包。' : isSimpleQuestDocument(item) ? '已下载任务。' : isNavigationDocument(item) ? '已下载导航点。' : '已下载脚本。')
+      setNotice(isItemDocument(item) ? '已下载物品。' : isKitDocument(item) ? '已下载礼包。' : isSimpleQuestDocument(item) ? '已下载任务。' : isLevelDocument(item) ? '已下载地图模板。' : isNavigationDocument(item) ? '已下载动态导航点。' : '已下载脚本。')
       return
     }
     try {
@@ -1015,7 +1035,7 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
   }
   function removeResources({ documents: documentKeys, folders: folderKeys }: { documents: string[]; folders: string[] }) {
     const docs = documentKeys.filter((key) => !isBuiltinScriptDocumentKey(key) && !isLibraryTableKey(key))
-    const foldersToRemove = folderKeys.filter((key) => !isBuiltinScriptFolder(key) && !isSectionFolder(key))
+    const foldersToRemove = folderKeys.filter((key) => !isBuiltinScriptFolder(key) && !isSectionFolder(key) && !key.startsWith('level-static:') && key !== 'level-view:static-nav')
     if (locked || busy || (!docs.length && !foldersToRemove.length)) return
     const parts = [
       docs.length ? `${docs.length} 个流程` : '',
@@ -1076,6 +1096,16 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
     }
   }
   useImperativeHandle(workspaceRef, () => ({ handleMenuAction(item) {
+    if (item === 'editor-layout') {
+      void confirmDialog({
+        title: '编辑器布局',
+        message: '恢复默认停靠布局？当前拖过的栏目位置会丢掉。',
+        confirmLabel: '恢复',
+      }).then((ok) => {
+        if (ok) resetPanelDock(GAMEPLAY_DOCK_KEY)
+      })
+      return
+    }
     if (item === 'save') {
       void saveDraft()
       return
@@ -1096,16 +1126,19 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
     }
     if (item === 'refresh-item-snapshot') {
       const focused = state.documents.find((document) => document.key === focusedKey)
-      if (!focused || !isItemDocument(focused)) {
-        setNotice('请先打开一个 .item，再刷新当前物品快照。')
+      if (!focused) {
+        setNotice('请先打开一个物品、礼包或商店文档，再刷新物品快照。')
         return
       }
-      const parsed = readItemSource(focused.source)
-      if (parsed.error || !parsed.doc.item.id.trim()) {
-        setNotice(parsed.error || '当前物品缺少 id，无法刷新快照。')
+      // 物品库表视图是虚拟文档，刷新它等于刷新整个物品库
+      const targets = isItemLibraryTableKey(focused.key)
+        ? state.documents.filter((document) => isItemDocument(document))
+        : [focused]
+      const count = refreshDocumentsItemSnapshots(targets, { itemCatalog })
+      if (count === 0) {
+        setNotice('当前文档没有可刷新的物品。')
         return
       }
-      forceRequestItemSnapshots([parsed.doc.item])
       // 进度与结果由活动列表「刷新物品快照」任务更新；离线排队文案也在那里
       if (!isItemSnapshotRefreshOnline()) {
         setNotice('未连接游戏开发服务器，快照已排队')
@@ -1113,18 +1146,11 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
       return
     }
     if (item === 'refresh-all-item-snapshots') {
-      const items = []
-      for (const document of state.documents) {
-        if (!isItemDocument(document)) continue
-        const parsed = readItemSource(document.source)
-        if (parsed.error || !parsed.doc.item.id.trim()) continue
-        items.push(parsed.doc.item)
-      }
-      if (items.length === 0) {
-        setNotice('物品库还没有可刷新的 .item。')
+      const count = refreshDocumentsItemSnapshots(state.documents, { itemCatalog })
+      if (count === 0) {
+        setNotice('工程里还没有可刷新的物品。')
         return
       }
-      forceRequestItemSnapshots(items)
       if (!isItemSnapshotRefreshOnline()) {
         setNotice('未连接游戏开发服务器，快照已排队')
       }
@@ -1152,6 +1178,7 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
     const paneKit = isKitDocument(paneDoc)
     const paneProgress = isSimpleQuestDocument(paneDoc)
     const paneNavigation = isNavigationDocument(paneDoc)
+    const paneLevel = isLevelDocument(paneDoc)
     const paneEntityTable = isEntityLibraryTableKey(paneDoc.key)
     const paneItemTable = isItemLibraryTableKey(paneDoc.key)
     const paneEntity = isEntityDocument(paneDoc)
@@ -1159,6 +1186,7 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
     const paneKitParsed = paneKit ? readKitSource(paneDoc.source) : null
     const paneProgressParsed = paneProgress ? readProgressSource(paneDoc.source, goalCatalog.definitions) : null
     const paneNavigationParsed = paneNavigation ? readNavigationSource(paneDoc.source) : null
+    const paneLevelParsed = paneLevel ? readLevelSource(paneDoc.source) : null
     const paneItemParsed = paneItem ? readItemSource(paneDoc.source) : null
     const paneCatalogOptions = kitCatalog.options.filter((option) => option.ref !== kitRefFromFileName(paneDoc.name))
     const paneCatalog = new Map(kitCatalog.map)
@@ -1166,7 +1194,7 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
     if (selfRef) paneCatalog.delete(selfRef)
     let paneFlow: ProgressFlow | null = null
     let paneError = ''
-    if (!paneShop && !paneScript && !paneKit && !paneProgress && !paneNavigation && !paneItem && !paneEntity && !paneItemTable && !paneEntityTable) {
+    if (!paneShop && !paneScript && !paneKit && !paneProgress && !paneNavigation && !paneLevel && !paneItem && !paneEntity && !paneItemTable && !paneEntityTable) {
       // 焦点文档复用 memo 过的 parse，避免父级重渲染换掉 flow 引用打断拖拽
       if (paneDoc.key === focusedKey && parsed.flow) paneFlow = parsed.flow
       else {
@@ -1230,7 +1258,48 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
         />}
       </div>
     }
+    if (paneLevel) {
+      const rows = (paneLevelParsed?.doc?.navigation ?? []).map((point) => ({
+        id: point.id,
+        key: typeof point.custom_data[NAV_DISPLAY_NAME] === 'string' ? String(point.custom_data[NAV_DISPLAY_NAME]) : '',
+      }))
+      return <div className="flow-source-pane flow-level-pane">
+        {paneLevelParsed?.error && <p className="flow-banner is-error" role="alert">地图模板 JSON 无法解析：{paneLevelParsed.error}</p>}
+        <div className="flow-script-editor">
+          <Editor
+            height="100%"
+            language="json"
+            theme={HANSHU_THEME_ID}
+            value={paneDoc.source}
+            path={`progress-level://g${group}/${paneDoc.key}/${paneDoc.name}`}
+            beforeMount={registerHanshuLanguage}
+            onChange={(value) => { if (!disabledPane) changeSource(value ?? '', true, paneDoc.key) }}
+            options={{ fontSize: editorFontSize, mouseWheelZoom: true, minimap: { enabled: false }, wordWrap: 'on', automaticLayout: true, scrollBeyondLastLine: false, padding: { top: 8 }, readOnly: disabledPane }}
+          />
+        </div>
+        {paneDoc.key === focusedKey && rows.length > 0 && <div className="flow-level-locale">
+          <h3>本地化文本</h3>
+          <p className="flow-hint">静态导航点的 display_name 是语义键；在这里写当前语言的译文，键本身留在 JSON 的 <code>rpgtoolkit:display_name</code>。</p>
+          {rows.map((row) => <label key={row.id} className="flow-level-locale-row">
+            <span>{row.id}</span>
+            {isProgressLocaleKey(row.key)
+              ? <input aria-label={`${row.id} 的显示名称`} value={resolveLocaleText(row.key)} onChange={(event) => setLocaleText(row.key, event.target.value)} />
+              : <em>{row.key ? `「${row.key}」不是语义键` : '在 JSON 里给该导航点写 display_name 键'}</em>}
+          </label>)}
+        </div>}
+      </div>
+    }
     if (paneNavigation && paneNavigationParsed) {
+      if (paneNavigationParsed.error.includes('旧版 .nav')) {
+        return <div className="flow-source-pane flow-script-pane" aria-label="旧版 .nav">
+          <p className="flow-banner is-error" role="alert">{paneNavigationParsed.error}</p>
+          <div className="flow-script-editor">
+            <Editor height="100%" language="json" theme={HANSHU_THEME_ID} value={paneDoc.source}
+              path={`progress-nav-legacy://g${group}/${paneDoc.key}/${paneDoc.name}`} beforeMount={registerHanshuLanguage}
+              options={{ fontSize: editorFontSize, minimap: { enabled: false }, wordWrap: 'on', automaticLayout: true, scrollBeyondLastLine: false, padding: { top: 8 }, readOnly: true, domReadOnly: true }} />
+          </div>
+        </div>
+      }
       return <div className="flow-kit-pane">
         <NavigationEditor
           key={paneDoc.key}
@@ -1239,6 +1308,7 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
           disabled={disabledPane}
           resolveText={paneDoc.key === focusedKey ? resolveLocaleText : undefined}
           setText={paneDoc.key === focusedKey ? setLocaleText : undefined}
+          levelOptions={levelOptions}
           onChange={(source) => { if (!disabledPane) changeSource(source, true, paneDoc.key) }}
         />
       </div>
@@ -1443,10 +1513,22 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
     </div>
   }
 
+  const dockPanels: DockPanelSpec[] = [
+    {
+      id: 'explorer',
+      title: '资源管理器',
+      defaultPlacement: 'left',
+      defaultSize: 280,
+      minSize: 180,
+      render: (dock) => (
+        <FlowExplorer onOverrideBuiltinScript={key=>{const d=state.documents.find(d=>d.key===key);if(!d)return;const type=scriptTypeInFolder(state,d.folderId??null);newFlow(d.name,sectionFolderKey('script',scriptSection(type)),'script','default.py',d.source)}} readOnly={readOnly} state={explorerState} active={active} disabled={locked || busy} onChange={(next) => setState((previous) => normalizeGroups({ ...previous, documents: next.documents, folders: next.folders }))} onSelect={(key) => selectDocument(key)} onNew={newFlow} onImport={requestImport} onImportFiles={(files, folderId, packageId) => { void importFiles(files, { folderId, package: packageId }) }} onExport={exportFlow} onDownload={downloadDraft} onRemove={removeResources} onProperties={setPropertiesKey} onViewSource={viewProgressSource} onOpenEntityInGame={key=>{void openEntityInGame(key)}} onOpenItemInGame={(key) => { void openItemInGame(key) }} onNotice={setNotice} placement={dock.placement} onTitlePointerDown={dock.onTitlePointerDown} onRedock={dock.onRedock} />
+      ),
+    },
+  ]
+
   return <section className="gameplay-workspace" aria-label="游戏性工作区">
     <input ref={fileInput} type="file" multiple hidden onChange={(event) => { const files = Array.from(event.target.files ?? []); event.target.value = ''; void importFiles(files) }} />
-    <div className="flow-layout">
-      <FlowExplorer onOverrideBuiltinScript={key=>{const d=state.documents.find(d=>d.key===key);if(!d)return;const type=scriptTypeInFolder(state,d.folderId??null);newFlow(d.name,sectionFolderKey('script',scriptSection(type)),'script','default.py',d.source)}} readOnly={readOnly} state={explorerState} active={active} disabled={locked || busy} onChange={(next) => setState((previous) => normalizeGroups({ ...previous, documents: next.documents, folders: next.folders }))} onSelect={(key) => selectDocument(key)} onNew={newFlow} onImport={requestImport} onImportFiles={(files, folderId, packageId) => { void importFiles(files, { folderId, package: packageId }) }} onExport={exportFlow} onDownload={downloadDraft} onRemove={removeResources} onProperties={setPropertiesKey} onViewSource={viewProgressSource} onOpenEntityInGame={key=>{void openEntityInGame(key)}} onOpenItemInGame={(key) => { void openItemInGame(key) }} onNotice={setNotice} />
+    <PanelDock storageKey={GAMEPLAY_DOCK_KEY} panels={dockPanels}>
       <main className="flow-main">
         {active && client && presencePath && <FilePresenceBar key={`${client.snapshot.session.id}:${presencePath}`} client={client} path={presencePath} mode="optimistic" label={doc?.name} />}
         {state.split ? (
@@ -1459,10 +1541,10 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
             secondary={renderGroup(1)}
           />
         ) : (state.openKeys ?? []).length ? renderGroup(0) : (
-          <div className="flow-empty"><span className="flow-empty-icon">◇</span><h2>设计一个任务</h2><p>在左侧「任务」分类中新建或导入 .quest（单进度表单或多进度树图）；「脚本」可新建 .py；「导航器」可新建 .nav 导航点；「物品库」可新建 .item 或拖入 .itemstack；「礼包」可新建 .kit。打开的文档会出现在上方页条；把页拖到编辑区的左右上下边缘即可拆分对照。</p></div>
+          <div className="flow-empty"><span className="flow-empty-icon">◇</span><h2>设计一个任务</h2><p>在左侧「地图」分类新建 .level（模板内包含区域与静态导航器）；「动态导航器」可新建 .nav；「任务」可新建 .quest（单进度表单或多进度树图）；「脚本」可新建 .py；「物品库」可新建 .item 或拖入 .itemstack；「礼包」可新建 .kit。打开的文档会出现在上方页条；把页拖到编辑区的左右上下边缘即可拆分对照。</p></div>
         )}
       </main>
-    </div>
+    </PanelDock>
     <StatusBarSlots
       active={active}
       left={
@@ -1470,13 +1552,13 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
       }
       right={
         <>
-          {(progressDoc || shopDoc || flowLocalizable || kitDoc || navigationDoc || itemDoc || entityDoc) && (
+          {(progressDoc || shopDoc || flowLocalizable || kitDoc || navigationDoc || levelDoc || itemDoc || entityDoc) && (
             <LocaleSelect
               value={locale}
               onChange={(tag) => { setLocale(tag); saveLocale(tag) }}
             />
           )}
-          <span className="flow-statusbar-type">{itemTableDoc ? (doc&&isEntityLibraryTableKey(doc.key)?'实体库 · 网格表视图':'物品库 · 表视图') : entityDoc ? '实体 · .entity' : itemDoc ? '物品 · .item' : navigationDoc ? '导航点 · .nav' : progressDoc ? '单进度任务 · .quest' : multiQuestDoc ? '多进度任务 · .quest' : shopDoc ? '商店 · .shop' : kitDoc ? '礼包 · .kit' : scriptDoc ? '脚本 · Python' : doc && isQuestDocument(doc) ? '任务 · .quest' : '任务'}</span>
+          <span className="flow-statusbar-type">{itemTableDoc ? (doc&&isEntityLibraryTableKey(doc.key)?'实体库 · 网格表视图':'物品库 · 表视图') : entityDoc ? '实体 · .entity' : itemDoc ? '物品 · .item' : levelDoc ? '地图模板 · .level' : navigationDoc ? '动态导航点 · .nav' : progressDoc ? '单进度任务 · .quest' : multiQuestDoc ? '多进度任务 · .quest' : shopDoc ? '商店 · .shop' : kitDoc ? '礼包 · .kit' : scriptDoc ? '脚本 · Python' : doc && isQuestDocument(doc) ? '任务 · .quest' : '任务'}</span>
         </>
       }
     />

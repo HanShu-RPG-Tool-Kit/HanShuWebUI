@@ -46,6 +46,7 @@ import { parseEntity, stringifyEntity } from '../src/workspaces/gameplay/entityD
 import { parseKit } from '../src/workspaces/gameplay/kit.ts'
 import { parseShop } from '../src/workspaces/gameplay/shop.ts'
 import { parseNavigationPoint, validateNavigationPoint } from '../src/workspaces/gameplay/navigationPoint.ts'
+import { parseLevelDocument, stringifyLevelDocument } from '../src/workspaces/gameplay/levelDoc.ts'
 import { parseFlow } from '../src/workspaces/gameplay/model.ts'
 import { readVoicePlan } from '../src/tts/plan.ts'
 import { readServiceDefinition, resolveService } from '../src/tts/service.ts'
@@ -139,6 +140,7 @@ for (const item of NEW_FILE_TYPES) {
   )
 }
 assert.equal(fileIconKind('a.quest'), 'quest')
+assert.equal(fileIconKind('a.level'), 'level')
 assert.equal(fileIconKind('a.nav'), 'nav')
 assert.equal(fileIconKind('a.kit'), 'kit')
 assert.equal(fileIconKind('a.entity'), 'entity')
@@ -179,6 +181,7 @@ assert.deepEqual(
     'character',
     'script',
     'quest',
+    'level',
     'navigator',
     'shop',
     'gift',
@@ -413,9 +416,17 @@ assert.equal(entityDoc.entity.id, 'minecraft:pig', '.entity 种子使用构造�
 assert.deepEqual(entityDoc.entity.data, { type: 'compound', value: {} })
 assert.equal(sourceKindOf(newFileName(type('entity'), '新实体')), 'entities')
 assert.equal(sourcePathOf({ name: newFileName(type('entity'), '新实体') }), 'src/entities/新实体.entity')
-// `.nav`：解析回来还得过校验（坐标 / 维度 / 半径都得是合法值）
+// `.nav`：v3 形状；新建时还没选模板，所以校验会提示 level，而不是当成坏文档
 const navPoint = parseNavigationPoint(seedOf('nav'))
-assert.deepEqual(validateNavigationPoint(navPoint), [], '.nav 种子应是一份合法导航点')
+assert.equal(navPoint.level, '')
+assert.equal(navPoint.type, 'rpgtoolkit:pos')
+assert.ok(validateNavigationPoint(navPoint).some((item) => item.includes('地图模板')))
+
+// `.level`：空模板可原样往返；路径落在 src/level
+const levelSeed = seedOf('level')
+assert.equal(stringifyLevelDocument(parseLevelDocument(levelSeed)), levelSeed, '.level 种子应能原样往返')
+assert.equal(sourcePathOf({ name: newFileName(type('level'), '新地图') }), 'src/level/新地图.level')
+assert.equal(sourceKindOf(newFileName(type('level'), '新地图')), 'level')
 
 // 多进度 `.quest`：树图文档
 const flowSeed = seedOf('hflow', '序章流程')

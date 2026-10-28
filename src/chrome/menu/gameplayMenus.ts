@@ -37,8 +37,15 @@ export const gameplayMenuContribution: MenuContribution = {
         cmd('toggle-auto-item-snapshot-refresh', '自动刷新物品快照', {
           checked: () => isAutoItemSnapshotRefreshEnabled(),
         }),
-        cmd('refresh-item-snapshot', '刷新物品快照'),
+        cmd('refresh-item-snapshot', '刷新当前文档物品快照'),
         cmd('refresh-all-item-snapshots', '刷新全部物品快照'),
+      ],
+    },
+    {
+      id: 'view',
+      label: '查看',
+      items: [
+        cmd('editor-layout', '编辑器布局'),
       ],
     },
   ],

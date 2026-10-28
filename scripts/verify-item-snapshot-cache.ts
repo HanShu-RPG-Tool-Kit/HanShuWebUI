@@ -234,6 +234,16 @@ async function main() {
     assert.ok(listSnapshotsNeeded().some((row) => row.fingerprint === fp))
   })
 
+  await test('强制刷新按指纹去重，排队数不虚高', () => {
+    resetItemSnapshotCacheForTests()
+    useMemoryItemSnapshotStore()
+    const item = { id: 'minecraft:diamond', components: {} }
+    const count = forceRequestItemSnapshots([item, item, { ...item, components: {} }])
+    assert.equal(count, 1)
+    assert.equal(snapshotsNeededCount(), 1)
+    assert.equal(listSnapshotsNeeded().length, 1)
+  })
+
   console.log(`\n${passed} tests passed`)
 }
 

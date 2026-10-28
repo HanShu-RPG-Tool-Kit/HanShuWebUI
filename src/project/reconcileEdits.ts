@@ -68,8 +68,12 @@ export function reconcileSourceEdits(workspace: Workspace, edits: FileEdit[]): W
     }
     return { ...pkg, name, explorer, scripts }
   })
-  const activeScriptId = packages.some(pkg => pkg.scripts.some(file => file.id === workspace.activeScriptId))
-    ? workspace.activeScriptId : packages.flatMap(pkg => pkg.scripts)[0]?.id ?? null
+  // null 是「当前没打开文件」，不能在同步时偷偷打开第一份。只有原来的 id 失效才回退。
+  const activeScriptId = workspace.activeScriptId === null
+    ? null
+    : packages.some(pkg => pkg.scripts.some(file => file.id === workspace.activeScriptId))
+      ? workspace.activeScriptId
+      : packages.flatMap(pkg => pkg.scripts)[0]?.id ?? null
   return { ...workspace, packages, activeScriptId }
 }
 

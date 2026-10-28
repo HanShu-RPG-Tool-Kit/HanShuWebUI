@@ -32,6 +32,7 @@ export const SOURCE_KIND_ORDER = [
   'character',
   'script',
   'quest',
+  'level',
   'navigator',
   'shop',
   'gift',
@@ -51,6 +52,7 @@ export const FILE_PLANE: Record<string, FilePlane> = {
   '.py': 'server',
   /** 导出前单进度会编译为多进度；PAK 平面跟引擎通用形态走 shared */
   '.quest': 'shared',
+  '.level': 'shared',
   '.nav': 'shared',
   '.item': 'server',
   '.entity': 'server',
@@ -360,9 +362,11 @@ export function loadWorkspace(): Workspace {
               ? (pkg as ScriptPackage).assetFolders
               : [],
           })),
-          activeScriptId: data.packages.some((pkg) => pkg.scripts?.some((script) => script.id === data.activeScriptId))
-            ? data.activeScriptId ?? null
-            : data.packages[0]?.scripts[0]?.id ?? null,
+          activeScriptId: data.activeScriptId === null
+            ? null
+            : data.packages.some((pkg) => pkg.scripts?.some((script) => script.id === data.activeScriptId))
+              ? data.activeScriptId ?? null
+              : data.packages[0]?.scripts[0]?.id ?? null,
           activeAssetId: (data as Workspace).activeAssetId ?? null,
         }
       }

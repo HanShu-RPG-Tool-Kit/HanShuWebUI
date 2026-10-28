@@ -120,7 +120,11 @@ export function sourcesToProgressDocuments(
         ? fromUi
         : getExtension(source.name)==='.py'
           ? sectionFolderKey('script',scriptSection(scriptType(source.srcKind)))
-          : null
+          : getExtension(source.name)==='.level'
+            ? sectionFolderKey('level','templates')
+            : getExtension(source.name)==='.nav'
+              ? sectionFolderKey('level','dynamic-nav')
+              : null
     docs.push(stampDocument({
       key: source.id, detached:source.detached,
       name: source.name,

@@ -16,13 +16,14 @@ import {
 } from '../src/workspaces/gameplay/progressLocale.ts'
 import { createProgress, createProgressLocaleSeeds, stringifyProgress } from '../src/workspaces/gameplay/progressDoc.ts'
 import { createKit, stringifyKit } from '../src/workspaces/gameplay/kit.ts'
-import { createNavigationPoint, stringifyNavigationPoint } from '../src/workspaces/gameplay/navigationPoint.ts'
+import { createNavigationPoint, NAV_DISPLAY_NAME, stringifyNavigationPoint } from '../src/workspaces/gameplay/navigationPoint.ts'
 import { normalizeTextMapKey, TextMap, type TextSink } from '../src/i18n/textMap.ts'
 import { textAssetPath } from '../src/i18n/localeLayout.ts'
 
 assert.equal(textAssetPath('zh_cn', 'quest_a.quest'), 'assets/zh_cn/lang_quest/quest_a.lang')
 assert.equal(textAssetPath('zh_cn', 'src/quest/main.quest'), 'assets/zh_cn/lang_quest/main.lang')
 assert.equal(textAssetPath('zh_cn', 'tower.nav'), 'assets/zh_cn/lang_nav/tower.lang')
+assert.equal(textAssetPath('zh_cn', 'hub.level'), 'assets/zh_cn/lang_level/hub.lang')
 assert.equal(textAssetPath('zh_cn', 'starter.kit'), 'assets/zh_cn/lang_kit/starter.lang')
 assert.equal(normalizeTextMapKey('entry.title', 'literal'), 'entry.title')
 assert.equal(normalizeTextMapKey('7f3a91c2', 'hex'), '7f3a91c2')
@@ -107,14 +108,14 @@ const migratedPredicate = ensureFlowLocaleKeys(parseFlow(JSON.stringify({
 assert.equal(Object.hasOwn(migratedPredicate.flow.predicates![predicate.id]!, 'title'), false)
 assert.equal(Object.hasOwn(migratedPredicate.seeds, flowNodeFieldKey('predicates', predicate.id, 'title')), false)
 
-const nav = createNavigationPoint('旧塔')
-assert.equal(nav.label, NAV_LABEL_KEY)
-assert.deepEqual(defaultNavLocaleSeeds('旧塔'), { label: '旧塔' })
-const legacyNav = { ...nav, label: '明文旧塔' }
+const nav = createNavigationPoint('demo:hub')
+assert.equal(nav.custom_data[NAV_DISPLAY_NAME], NAV_LABEL_KEY)
+assert.deepEqual(defaultNavLocaleSeeds('旧塔'), { display_name: '旧塔' })
+const legacyNav = { ...nav, custom_data: { ...nav.custom_data, [NAV_DISPLAY_NAME]: '明文旧塔' } }
 const migratedNav = ensureNavLocaleKeys(legacyNav)
-assert.equal(migratedNav.point.label, NAV_LABEL_KEY)
+assert.equal(migratedNav.point.custom_data[NAV_DISPLAY_NAME], NAV_LABEL_KEY)
 assert.equal(migratedNav.seeds[NAV_LABEL_KEY], '明文旧塔')
-assert.equal(JSON.parse(stringifyNavigationPoint(migratedNav.point)).label, NAV_LABEL_KEY)
+assert.equal(JSON.parse(stringifyNavigationPoint(migratedNav.point)).custom_data[NAV_DISPLAY_NAME], NAV_LABEL_KEY)
 
 const kit = createKit('新手礼包')
 assert.equal(kit.name, KIT_NAME_KEY)
