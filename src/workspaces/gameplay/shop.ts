@@ -4,7 +4,7 @@ import { isObject } from './model'
 import { parseConditionRules, type ProgressConditionRule } from './conditions'
 import { parseKit, unionKitTags, writeKitItem, type KitItem, type KitParam, type KitModifier } from './kit'
 
-export const STOCK_SUBJECTS = { infinite: '无限库存', player: '玩家', world: '世界', server: '服务器', game: '游戏', npc: '商人 NPC' } as const
+export const STOCK_SUBJECTS = { infinite: '无限库存', player: '玩家', game: '游戏', actor: '角色' } as const
 export type ShopEntry = {
   id: string
   tags: string[]

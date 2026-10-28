@@ -16,6 +16,11 @@ for (const source of fixtures.invalid) assert.throws(() => compileShopCondition(
 const doc = createShop()
 doc.entries.push({ ...createShopEntry(), payment: [{ item: '货币', id: '', components: {}, count: 2 }], goods: [{ id: 'minecraft:bread', components: {}, count: 3 }] })
 assert.deepEqual(parseShop(stringifyShop(doc)), doc)
+for (const stockSubject of ['player', 'game', 'actor'])
+  assert.equal(parseShop(JSON.stringify({ ...doc, stockSubject })).stockSubject, stockSubject)
+for (const stockSubject of ['world', 'server', 'npc'])
+  assert.throws(() => parseShop(JSON.stringify({ ...doc, stockSubject })))
+
 doc.tags = ['village']; doc.entries[0].tags = ['apple/sell']; doc.entries[0].initialCapacity = 4; doc.entries[0].maxCapacity = 10
 assert.deepEqual(parseShop(stringifyShop(doc)), doc)
 assert.throws(() => parseShop(JSON.stringify({ ...doc, entries: [{ ...doc.entries[0], initialCapacity: 11 }] })))

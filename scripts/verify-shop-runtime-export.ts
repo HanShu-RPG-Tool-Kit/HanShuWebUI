@@ -8,7 +8,7 @@ import { createShop, createShopEntry, stringifyShop } from '../src/workspaces/ga
 import { createKitItem } from '../src/workspaces/gameplay/kit'
 
 const shop = createShop()
-shop.id = 'web-shop'; shop.tags = ['village']; shop.stockSubject = 'npc'
+shop.id = 'web-shop'; shop.tags = ['village']; shop.stockSubject = 'actor'
 shop.params = [{ id: 'level', kind: 'int', default: 2, hint: '' }]
 shop.modifiers = [{ id: 'price', label: '', expr: 'x * level' }]
 shop.script = [{ ref: 'trade' }]
