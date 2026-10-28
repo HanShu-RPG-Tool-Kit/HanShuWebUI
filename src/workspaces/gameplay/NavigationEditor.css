@@ -282,6 +282,16 @@
   user-select: text;
 }
 
+.nav-hint {
+  margin: 0;
+  padding: calc(8px * var(--nav-u)) calc(18px * var(--nav-u)) calc(12px * var(--nav-u));
+  color: var(--fl-faint, #8a8a8a);
+  font-size: calc(13px * var(--nav-u));
+  line-height: 1.7;
+}
+
+.nav-hint code { color: var(--text-bright, #e8e8e8); }
+
 @media (max-width: 760px) {
   .nav-type-grid,
   .nav-row,

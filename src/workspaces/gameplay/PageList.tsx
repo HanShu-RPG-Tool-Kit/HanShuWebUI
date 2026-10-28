@@ -1,13 +1,13 @@
 import { useMemo, useState, type DragEvent, type MouseEvent } from 'react'
 import { Icon } from './FlowExplorer'
-import { isItemDocument, isItemLibraryTableKey, isKitDocument, isMultiQuestDocument, isNavigationDocument, isScriptDocument, isSimpleQuestDocument } from './library'
+import { isItemDocument, isItemLibraryTableKey, isKitDocument, isLevelDocument, isMultiQuestDocument, isNavigationDocument, isScriptDocument, isSimpleQuestDocument } from './library'
 import { NodeContextMenu, type NodeMenuItem } from '../../nodeEditor/ContextMenu'
 import type { FlowDocument } from './storage'
 import { PageTabScroller } from '../../ui/PageTabScroller'
 
 export const PAGE_DRAG_TYPE = 'application/x-hanshu-page'
 
-function pageIcon(doc: FlowDocument): 'shop' | 'kit' | 'item' | 'item-table' | 'python' | 'progress' | 'quest' | 'navigator' | 'document' {
+function pageIcon(doc: FlowDocument): 'shop' | 'kit' | 'item' | 'item-table' | 'python' | 'progress' | 'quest' | 'level' | 'navigator' | 'document' {
   if (isItemLibraryTableKey(doc.key)) return 'item-table'
   if (isItemDocument(doc)) return 'item'
   if (doc.package === 'shop') return 'shop'
@@ -15,6 +15,7 @@ function pageIcon(doc: FlowDocument): 'shop' | 'kit' | 'item' | 'item-table' | '
   if (isScriptDocument(doc)) return 'python'
   if (isSimpleQuestDocument(doc)) return 'progress'
   if (isMultiQuestDocument(doc)) return 'quest'
+  if (isLevelDocument(doc)) return 'level'
   if (isNavigationDocument(doc)) return 'navigator'
   return 'document'
 }

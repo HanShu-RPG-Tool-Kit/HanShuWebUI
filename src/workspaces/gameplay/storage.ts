@@ -44,10 +44,11 @@ export type FlowWorkspaceState = {
   split?: FlowEditorSplit | null
 }
 
-const PACKAGE_IDS = new Set<FlowPackageId>(['script', 'quest', 'actor', 'reputation', 'region', 'navigator', 'shop', 'items', 'entities', 'gift'])
-/** 旧草稿 progress/story → quest；未知回落 quest（多进度作者态）。 */
+const PACKAGE_IDS = new Set<FlowPackageId>(['script', 'quest', 'actor', 'reputation', 'level', 'shop', 'items', 'entities', 'gift'])
+/** 旧草稿 progress/story → quest；旧「区域」「导航器」→ level；未知回落 quest（多进度作者态）。 */
 const readPackage = (value: unknown): FlowPackageId => {
   if (value === 'progress' || value === 'story') return 'quest'
+  if (value === 'region' || value === 'navigator') return 'level'
   return typeof value === 'string' && PACKAGE_IDS.has(value as FlowPackageId) ? value as FlowPackageId : 'quest'
 }
 

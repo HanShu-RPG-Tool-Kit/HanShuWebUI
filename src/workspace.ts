@@ -32,6 +32,7 @@ export const SOURCE_KIND_ORDER = [
   'character',
   'script',
   'quest',
+  'level',
   'navigator',
   'shop',
   'gift',
@@ -51,6 +52,7 @@ export const FILE_PLANE: Record<string, FilePlane> = {
   '.py': 'server',
   /** 导出前单进度会编译为多进度；PAK 平面跟引擎通用形态走 shared */
   '.quest': 'shared',
+  '.level': 'shared',
   '.nav': 'shared',
   '.item': 'server',
   '.entity': 'server',

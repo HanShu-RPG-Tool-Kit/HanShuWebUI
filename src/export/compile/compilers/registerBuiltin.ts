@@ -1,5 +1,6 @@
 import {kitCompiler} from './kitScripts'
 import {shopCompiler} from './shop'
+import {levelArtifactPass, levelCompiler, navigationCompiler} from './level'
 import { listFileCompilers, listPackagePasses, listLocaleExportRules, registerFileCompiler, registerPackagePass, registerLocaleExportRule } from '../registry'
 import type { LocaleExportRule } from '../localization'
 import { activeSkinsPass } from './activeSkins'
@@ -21,7 +22,7 @@ const builtinLocaleRules: LocaleExportRule[] = [
     voice: { plane: 'client', keys: 'referenced', keyCase: 'insensitive' },
   },
   { id: 'char', sourceExt: 'char', text: { plane: 'client', keys: 'all' }, voice: { plane: 'client', keys: 'all' } },
-  ...['kit', 'quest', 'nav', 'shop'].map((sourceExt): LocaleExportRule => ({
+  ...['kit', 'quest', 'level', 'nav', 'shop'].map((sourceExt): LocaleExportRule => ({
     id: sourceExt, sourceExt, text: { plane: 'shared', keys: 'all' },
   })),
   ...(['item', 'entity'] as const).map((kind): LocaleExportRule => ({
@@ -36,10 +37,10 @@ const builtinLocaleRules: LocaleExportRule[] = [
 
 /** Idempotent by id; also reinstalls builtins after clearCompileRegistry without replacing overrides. */
 export function ensureBuiltinCompilers(): void {
-  for (const compiler of [hanshuCompiler, itemCompiler, entityCompiler, kitCompiler, shopCompiler, questCompiler, identityCompiler]) {
+  for (const compiler of [hanshuCompiler, itemCompiler, entityCompiler, kitCompiler, shopCompiler, questCompiler, levelCompiler, navigationCompiler, identityCompiler]) {
     if (!listFileCompilers().some((entry) => entry.id === compiler.id)) registerFileCompiler(compiler)
   }
-  for (const pass of [localeAssetsPass, activeSkinsPass]) {
+  for (const pass of [localeAssetsPass, activeSkinsPass, levelArtifactPass]) {
     if (!listPackagePasses().some((entry) => entry.id === pass.id)) registerPackagePass(pass)
   }
   for (const rule of builtinLocaleRules) {

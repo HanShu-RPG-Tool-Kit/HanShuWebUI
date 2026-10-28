@@ -1,29 +1,20 @@
 import { type ReactNode } from 'react'
 import {
+  NAV_COORD_ABS_MAX,
+  NAV_DISPLAY_ICON,
+  NAV_DISPLAY_MAX_DISTANCE,
+  NAV_DISPLAY_MIN_DISTANCE,
+  NAV_DISPLAY_NAME,
   NAV_LABEL_MAX,
-  NAV_RADIUS_MAX,
-  NAV_RADIUS_MIN,
-  NAV_SCAN_RADIUS_DEFAULT,
-  NAV_SCAN_RADIUS_MAX,
-  NAV_SCAN_RADIUS_MIN,
-  NAV_TAG_MAX,
+  NAV_TYPE_LABELS,
+  NAV_TYPE_POS,
   stringifyNavigationPoint,
   validateNavigationPoint,
-  type NavigationEntityMode,
   type NavigationPoint,
-  type NavigationPointType,
+  type NavTypeId,
 } from './navigationPoint'
+import { NAV_LABEL_KEY } from './progressLocale'
 import './NavigationEditor.css'
-
-const TYPE_OPTIONS: { value: NavigationPointType; label: string }[] = [
-  { value: 'position', label: '固定坐标' },
-  { value: 'entity', label: '绑定实体' },
-]
-
-const ENTITY_OPTIONS: { value: NavigationEntityMode; label: string }[] = [
-  { value: 'tag', label: '实体 tag' },
-  { value: 'uuid', label: '实体 UUID' },
-]
 
 function Section({ title, hint, action, children }: { title: string; hint?: string; action?: ReactNode; children: ReactNode }) {
   return <section className="nav-section">
@@ -43,24 +34,34 @@ function Field({ label, hint, wide, children }: { label: string; hint?: string; 
   </label>
 }
 
-export function NavigationEditor({ point, error, disabled, onChange, resolveText, setText }: {
+export function NavigationEditor({ point, error, disabled, onChange, resolveText, setText, levelOptions }: {
   point: NavigationPoint
   error?: string
   disabled?: boolean
   onChange: (source: string) => void
   resolveText?: (key: string) => string
   setText?: (key: string, value: string) => void
+  /** 可选的地图模板（.level 文件名，不含后缀） */
+  levelOptions?: readonly { id: string; label: string }[]
 }) {
   const update = (patch: Partial<NavigationPoint>) => onChange(stringifyNavigationPoint({ ...point, ...patch }))
+  const custom = point.custom_data
+  const displayName = typeof custom[NAV_DISPLAY_NAME] === 'string' ? String(custom[NAV_DISPLAY_NAME]) : ''
   const readText = (key: string) => resolveText?.(key) ?? key
   const writeLabel = (value: string) => {
     if (disabled) return
-    if (setText) setText(point.label, value)
-    else update({ label: value })
+    if (setText) setText(displayName || NAV_LABEL_KEY, value)
+    else update({ custom_data: { ...custom, [NAV_DISPLAY_NAME]: value } })
+  }
+  const setCustom = (key: string, value: unknown) => {
+    const next = { ...custom }
+    if (value === undefined || value === '') delete next[key]
+    else next[key] = value
+    update({ custom_data: next })
   }
   const issues = validateNavigationPoint(point)
   const preview = stringifyNavigationPoint(point).trimEnd()
-  const isPosition = point.type === 'position'
+  const levels = levelOptions ?? []
 
   return <div className="nav-editor">
     <div className="nav-page">
@@ -68,190 +69,105 @@ export function NavigationEditor({ point, error, disabled, onChange, resolveText
 
       <Section
         title="基本信息"
-        hint="导航点只描述「指哪里」"
+        hint="导航点只描述「指哪里」；维度由地图模板绑定决定"
         action={<span className={`nav-status${issues.length ? ' is-warn' : ' is-ok'}`}>{issues.length ? `${issues.length} 项待完善` : '可用'}</span>}
       >
         <div className="nav-row">
-          <Field label="label" hint={`显示名称，≤ ${NAV_LABEL_MAX}`} wide>
-            <input
-              type="text"
+          <Field label="所属地图" hint="必填：level" wide>
+            <select
               disabled={disabled}
-              value={readText(point.label)}
-              maxLength={NAV_LABEL_MAX}
-              placeholder="例如：旧塔"
-              aria-label="label"
-              onChange={(event) => writeLabel(event.target.value)}
-            />
+              value={point.level}
+              aria-label="所属地图模板"
+              onChange={(event) => update({ level: event.target.value })}
+            >
+              <option value="">（未选择）</option>
+              {levels.map((level) => <option key={level.id} value={level.id}>{level.label}</option>)}
+              {point.level && !levels.some((level) => level.id === point.level) && <option value={point.level}>{point.level}（未找到模板）</option>}
+            </select>
           </Field>
-          <Field label="追踪类型" hint="可扩展">
+          <Field label="追踪类型" hint="类型注册表">
             <select
               disabled={disabled}
               value={point.type}
               aria-label="追踪类型"
-              onChange={(event) => update({ type: event.target.value as NavigationPointType })}
+              onChange={(event) => update({ type: event.target.value as NavTypeId })}
             >
-              {TYPE_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
+              {Object.entries(NAV_TYPE_LABELS).map(([value, label]) => (
+                <option key={value} value={value}>{label}</option>
               ))}
             </select>
           </Field>
         </div>
+        <p className="nav-hint">当前只支持 <code>{NAV_TYPE_POS}</code>。实体 / 标签类型等 Mod 侧开放后再加。</p>
       </Section>
 
-      {isPosition ? (
-        <Section title="坐标" hint="绝对值 ≤ 30,000,000">
-          <Field label="维度" hint="必填" wide>
-            <input
-              className="nav-mono"
-              type="text"
-              spellCheck={false}
-              disabled={disabled}
-              placeholder="minecraft:overworld"
-              value={point.dimension}
-              onChange={(event) => update({ dimension: event.target.value })}
-            />
-          </Field>
-          <div className="nav-coords">
-            {(['x', 'y', 'z'] as const).map((axis) => (
-              <label key={axis} className={`nav-coord is-${axis}`}>
-                <b>{axis.toUpperCase()}</b>
-                <input
-                  type="number"
-                  step="any"
-                  disabled={disabled}
-                  value={point[axis]}
-                  aria-label={`${axis.toUpperCase()} 坐标`}
-                  onChange={(event) => update({ [axis]: Number(event.target.value) })}
-                />
-              </label>
-            ))}
-          </div>
-        </Section>
-      ) : (
-        <Section title="目标实体" hint="tag 与 UUID 二选一">
-          <div className="nav-segment" role="radiogroup" aria-label="实体匹配方式">
-            {ENTITY_OPTIONS.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                role="radio"
-                aria-checked={point.entityMode === option.value}
-                className={point.entityMode === option.value ? 'is-active' : ''}
-                disabled={disabled}
-                onClick={() => update({ entityMode: option.value })}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-          {point.entityMode === 'tag' ? (
-            <>
-              <Field label="entity_tag" hint={`原版实体命令 tag，≤ ${NAV_TAG_MAX} 字符；应全局唯一，否则会 AMBIGUOUS`} wide>
-                <input
-                  className="nav-mono"
-                  type="text"
-                  spellCheck={false}
-                  disabled={disabled}
-                  maxLength={NAV_TAG_MAX}
-                  placeholder="quest_source:quartermaster"
-                  value={point.entityTag}
-                  onChange={(event) => update({ entityTag: event.target.value })}
-                />
-              </Field>
-              <Field label="扫描半径" hint={`默认 ${NAV_SCAN_RADIUS_DEFAULT}；在周围 ${NAV_SCAN_RADIUS_MIN}–${NAV_SCAN_RADIUS_MAX} 格内找 tag`}>
-                <div className="nav-radius">
-                  <input
-                    type="range"
-                    min={NAV_SCAN_RADIUS_MIN}
-                    max={NAV_SCAN_RADIUS_MAX}
-                    step={1}
-                    disabled={disabled}
-                    value={point.scanRadius}
-                    aria-label="扫描半径滑块"
-                    onChange={(event) => update({ scanRadius: Number(event.target.value) })}
-                  />
-                  <input
-                    className="nav-radius-num"
-                    type="number"
-                    min={NAV_SCAN_RADIUS_MIN}
-                    max={NAV_SCAN_RADIUS_MAX}
-                    step={1}
-                    disabled={disabled}
-                    value={point.scanRadius}
-                    aria-label="扫描半径"
-                    onChange={(event) => update({ scanRadius: Number(event.target.value) })}
-                  />
-                </div>
-              </Field>
-            </>
-          ) : (
-            <Field label="entity_uuid" hint="标准 UUID 格式" wide>
+      <Section title="坐标" hint={`绝对值 ≤ ${NAV_COORD_ABS_MAX.toLocaleString('en-US')}`}>
+        <div className="nav-coords">
+          {(['x', 'y', 'z'] as const).map((axis) => (
+            <label key={axis} className={`nav-coord is-${axis}`}>
+              <b>{axis.toUpperCase()}</b>
               <input
-                className="nav-mono"
-                type="text"
-                spellCheck={false}
-                disabled={disabled}
-                placeholder="00000000-0000-0000-0000-000000000001"
-                value={point.entityUuid}
-                onChange={(event) => update({ entityUuid: event.target.value })}
-              />
-            </Field>
-          )}
-          <Field label="限定维度" hint="可选；留空则在所有维度查找" wide>
-            <input
-              className="nav-mono"
-              type="text"
-              spellCheck={false}
-              disabled={disabled}
-              placeholder="不限"
-              value={point.dimension}
-              onChange={(event) => update({ dimension: event.target.value })}
-            />
-          </Field>
-        </Section>
-      )}
-
-      <Section title="展示">
-        <div className="nav-row">
-          <Field label="接近半径" hint={`${NAV_RADIUS_MIN}–${NAV_RADIUS_MAX} 格，仅客户端提示`}>
-            <div className="nav-radius">
-              <input
-                type="range"
-                min={NAV_RADIUS_MIN}
-                max={NAV_RADIUS_MAX}
-                step={1}
-                disabled={disabled}
-                value={point.radius}
-                aria-label="接近半径滑块"
-                onChange={(event) => update({ radius: Number(event.target.value) })}
-              />
-              <input
-                className="nav-radius-num"
                 type="number"
-                min={NAV_RADIUS_MIN}
-                max={NAV_RADIUS_MAX}
-                step={1}
+                step="any"
                 disabled={disabled}
-                value={point.radius}
-                aria-label="接近半径"
-                onChange={(event) => update({ radius: Number(event.target.value) })}
+                value={point.param[axis]}
+                aria-label={`${axis.toUpperCase()} 坐标`}
+                onChange={(event) => update({ param: { ...point.param, [axis]: Number(event.target.value) } })}
               />
-            </div>
-          </Field>
-          <div className="nav-field">
-            <span className="nav-field-label">公开<em>开启后普通玩家可自选</em></span>
-            <button
-              type="button"
-              role="switch"
-              aria-checked={point.public}
-              className={`nav-switch${point.public ? ' is-on' : ''}`}
+            </label>
+          ))}
+        </div>
+      </Section>
+
+      <Section title="展示" hint="display_* 只是提示，不是到达判定">
+        <div className="nav-row">
+          <Field label="display_name" hint={`显示名称，≤ ${NAV_LABEL_MAX}`} wide>
+            <input
+              type="text"
               disabled={disabled}
-              onClick={() => update({ public: !point.public })}
-            >
-              <i aria-hidden />
-              <span>{point.public ? '公开' : '不公开'}</span>
-            </button>
-          </div>
+              value={readText(displayName || NAV_LABEL_KEY)}
+              maxLength={NAV_LABEL_MAX}
+              placeholder="例如：旧塔"
+              aria-label="display_name"
+              onChange={(event) => writeLabel(event.target.value)}
+            />
+          </Field>
+          <Field label="display_icon" hint="资源 ID；客户端决定画成物品还是纹理" wide>
+            <input
+              className="nav-mono"
+              type="text"
+              spellCheck={false}
+              disabled={disabled}
+              placeholder="minecraft:compass"
+              value={typeof custom[NAV_DISPLAY_ICON] === 'string' ? String(custom[NAV_DISPLAY_ICON]) : ''}
+              aria-label="display_icon"
+              onChange={(event) => setCustom(NAV_DISPLAY_ICON, event.target.value)}
+            />
+          </Field>
+        </div>
+        <div className="nav-row">
+          <Field label="display_min_distance" hint="0 表示不限">
+            <input
+              type="number"
+              min={0}
+              step="any"
+              disabled={disabled}
+              value={typeof custom[NAV_DISPLAY_MIN_DISTANCE] === 'number' ? String(custom[NAV_DISPLAY_MIN_DISTANCE]) : ''}
+              aria-label="display_min_distance"
+              onChange={(event) => setCustom(NAV_DISPLAY_MIN_DISTANCE, event.target.value === '' ? undefined : Number(event.target.value))}
+            />
+          </Field>
+          <Field label="display_max_distance" hint="0 表示不限">
+            <input
+              type="number"
+              min={0}
+              step="any"
+              disabled={disabled}
+              value={typeof custom[NAV_DISPLAY_MAX_DISTANCE] === 'number' ? String(custom[NAV_DISPLAY_MAX_DISTANCE]) : ''}
+              aria-label="display_max_distance"
+              onChange={(event) => setCustom(NAV_DISPLAY_MAX_DISTANCE, event.target.value === '' ? undefined : Number(event.target.value))}
+            />
+          </Field>
         </div>
       </Section>
 

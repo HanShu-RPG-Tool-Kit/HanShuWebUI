@@ -1,55 +1,53 @@
 import { isObject } from './model'
 import { parseJsonValue } from '../../utils/strictJson'
 
-export type NavigationPointType = 'position' | 'entity'
-export type NavigationEntityMode = 'tag' | 'uuid'
+/**
+ * WebUI 的导航点草稿（v3 / RPGToolKit Level 模型）。
+ *
+ * 形状与引擎 `NavigationPoint` 一致，只是 `level` 允许暂时为空（新建时还没选模板）：
+ *   { level, type, param, custom_data }
+ *
+ * - 不再有 `dimension`：维度由「哪个维度绑了哪个模板」决定，导航点只声明 level。
+ * - 不再有 `public` / `radius` / 到达判定：到没到由给导航的 RPG 流程自己判断。
+ * - `display_*` 是内置 custom_data 键，只是显示提示，不是授权。
+ */
+export type NavTypeId = 'rpgtoolkit:pos'
 
-/** WebUI 草稿用的导航点；形状对齐引擎 NavigationPoint，不写 datapack 路径 / 资源 id。 */
 export type NavigationPoint = {
-  type: NavigationPointType
-  label: string
-  radius: number
-  public: boolean
-  dimension: string
-  x: number
-  y: number
-  z: number
-  entityMode: NavigationEntityMode
-  entityTag: string
-  entityUuid: string
-  /** 仅 entity + tag：在周围扫描匹配实体的半径（格） */
-  scanRadius: number
+  /** 所属地图模板的 ID（= `.level` 文件名去掉后缀）；空串表示尚未选择 */
+  level: string
+  type: NavTypeId
+  param: { x: number; y: number; z: number }
+  custom_data: Record<string, unknown>
 }
 
-export const NAV_RADIUS_DEFAULT = 6
-export const NAV_RADIUS_MIN = 1
-export const NAV_RADIUS_MAX = 32
-export const NAV_SCAN_RADIUS_DEFAULT = 64
-export const NAV_SCAN_RADIUS_MIN = 1
-export const NAV_SCAN_RADIUS_MAX = 256
-export const NAV_COORD_ABS_MAX = 30_000_000
+export const NAV_TYPE_POS: NavTypeId = 'rpgtoolkit:pos'
+export const NAV_TYPE_LABELS: Record<NavTypeId, string> = {
+  'rpgtoolkit:pos': '固定坐标',
+}
+
+export const NAV_DISPLAY_NAME = 'rpgtoolkit:display_name'
+export const NAV_DISPLAY_ICON = 'rpgtoolkit:display_icon'
+export const NAV_DISPLAY_MAX_DISTANCE = 'rpgtoolkit:display_max_distance'
+export const NAV_DISPLAY_MIN_DISTANCE = 'rpgtoolkit:display_min_distance'
+
 export const NAV_LABEL_MAX = 160
-export const NAV_TAG_MAX = 128
+export const NAV_COORD_ABS_MAX = 30_000_000
 
+const TYPE_IDS = new Set<string>([NAV_TYPE_POS])
 const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
-const DIM_RE = /^[a-z0-9_.-]+:[a-z0-9_./-]+$/i
+const IDENTIFIER_RE = /^[a-z0-9_.-]+:[a-z0-9_./-]+$/i
+const LEVEL_ID_RE = /^[^$\\/:*?"<>|\u0000-\u001f]+$/
 
-export function createNavigationPoint(_label = '新导航点'): NavigationPoint {
-  void _label
+/** 旧版 `.nav` 字段：出现任意一个就明确拒绝，避免静默丢字段。 */
+const LEGACY_KEYS = ['dimension', 'label', 'radius', 'public', 'entity_tag', 'entity_uuid', 'scan_radius', 'x', 'y', 'z'] as const
+
+export function createNavigationPoint(level = ''): NavigationPoint {
   return {
-    type: 'position',
-    /** 语义键；译文在 lang_nav */
-    label: 'label',
-    radius: NAV_RADIUS_DEFAULT,
-    public: false,
-    dimension: 'minecraft:overworld',
-    x: 0,
-    y: 64,
-    z: 0,
-    entityMode: 'tag',
-    entityTag: '',
-    entityUuid: '',
-    scanRadius: NAV_SCAN_RADIUS_DEFAULT,
+    level,
+    type: NAV_TYPE_POS,
+    param: { x: 0, y: 64, z: 0 },
+    custom_data: { [NAV_DISPLAY_NAME]: 'display_name' },
   }
 }
 
@@ -57,32 +55,27 @@ export function stringifyNavigationPoint(point: NavigationPoint): string {
   return `${JSON.stringify(toEngineObject(point), null, 2)}\n`
 }
 
-/** 写出与引擎标准一致的 JSON（无 WebUI 私有字段）。 */
+/** 写出与引擎一致的 JSON（无 WebUI 私有字段）。 */
 export function toEngineObject(point: NavigationPoint): Record<string, unknown> {
-  const body: Record<string, unknown> = {}
-  if (point.type !== 'position') body.type = point.type
-  if (point.label.trim()) body.label = point.label.trim().slice(0, NAV_LABEL_MAX)
-  if (point.radius !== NAV_RADIUS_DEFAULT) body.radius = clampRadius(point.radius)
-  if (point.public) body.public = true
-
-  if (point.type === 'position') {
-    body.dimension = point.dimension.trim()
-    body.x = point.x
-    body.y = point.y
-    body.z = point.z
-    return body
+  const custom: Record<string, unknown> = {}
+  const name = typeof point.custom_data[NAV_DISPLAY_NAME] === 'string' ? String(point.custom_data[NAV_DISPLAY_NAME]) : ''
+  if (name.trim()) custom[NAV_DISPLAY_NAME] = name.trim().slice(0, NAV_LABEL_MAX)
+  const icon = typeof point.custom_data[NAV_DISPLAY_ICON] === 'string' ? String(point.custom_data[NAV_DISPLAY_ICON]).trim() : ''
+  if (icon) custom[NAV_DISPLAY_ICON] = icon
+  for (const key of [NAV_DISPLAY_MIN_DISTANCE, NAV_DISPLAY_MAX_DISTANCE] as const) {
+    const value = point.custom_data[key]
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) custom[key] = value
   }
-
-  const dim = point.dimension.trim()
-  if (dim) body.dimension = dim
-  // 空 target 也写出对应键，保证草稿往返能记住 tag / uuid 模式
-  if (point.entityMode === 'uuid') {
-    body.entity_uuid = point.entityUuid.trim()
-  } else {
-    body.entity_tag = point.entityTag.trim()
-    if (point.scanRadius !== NAV_SCAN_RADIUS_DEFAULT) body.scan_radius = clampScanRadius(point.scanRadius)
+  for (const [key, value] of Object.entries(point.custom_data)) {
+    if (key in custom || key === NAV_DISPLAY_NAME || key === NAV_DISPLAY_ICON || key === NAV_DISPLAY_MIN_DISTANCE || key === NAV_DISPLAY_MAX_DISTANCE) continue
+    custom[key] = value
   }
-  return body
+  return {
+    level: point.level.trim(),
+    type: point.type,
+    param: { x: point.param.x, y: point.param.y, z: point.param.z },
+    custom_data: custom,
+  }
 }
 
 export function parseNavigationPoint(source: string): NavigationPoint {
@@ -92,50 +85,53 @@ export function parseNavigationPoint(source: string): NavigationPoint {
 }
 
 export function fromEngineObject(raw: Record<string, unknown>): NavigationPoint {
-  const type: NavigationPointType = raw.type === 'entity' ? 'entity' : 'position'
-  if (raw.type !== undefined && raw.type !== 'position' && raw.type !== 'entity') {
-    throw new Error(`未知导航点类型：${String(raw.type)}（仅支持 position / entity）`)
+  const legacy = LEGACY_KEYS.filter((key) => key in raw)
+  if (legacy.length) {
+    throw new Error(`旧版 .nav 已不再支持（发现 ${legacy.join(' / ')}）。v3 导航点只有 level / type / param / custom_data，请重新创建。`)
   }
 
-  const base = createNavigationPoint(typeof raw.label === 'string' ? raw.label : '')
-  base.type = type
-  base.label = typeof raw.label === 'string' ? raw.label : ''
-  base.radius = typeof raw.radius === 'number' && Number.isFinite(raw.radius) ? clampRadius(raw.radius) : NAV_RADIUS_DEFAULT
-  if (raw.public !== undefined && typeof raw.public !== 'boolean') throw new Error('public 必须是布尔值')
-  base.public = raw.public === true
-  base.dimension = typeof raw.dimension === 'string' ? raw.dimension : type === 'position' ? 'minecraft:overworld' : ''
+  for (const key of Object.keys(raw)) {
+    if (!['level', 'type', 'param', 'custom_data'].includes(key)) throw new Error(`未知导航点字段：${key}`)
+  }
 
-  if (type === 'position') {
-    if ('entity_uuid' in raw || 'entity_tag' in raw) throw new Error('position 类型不能包含 entity_uuid / entity_tag')
-    if ('scan_radius' in raw) throw new Error('position 类型不能包含 scan_radius')
-    if (typeof raw.x !== 'number' || typeof raw.y !== 'number' || typeof raw.z !== 'number') {
-      throw new Error('position 类型需要有限数字字段 x / y / z')
+  if (typeof raw.level !== 'string') throw new Error('导航点需要字符串字段 level')
+  const level = raw.level.trim()
+  if (level && (!LEVEL_ID_RE.test(level) || level === '.' || level === '..')) throw new Error(`level 不是合法的模板 ID：${raw.level}`)
+
+  if (typeof raw.type !== 'string' || !TYPE_IDS.has(raw.type)) {
+    throw new Error(`未知导航点类型：${String(raw.type)}（本轮只支持 ${NAV_TYPE_POS}）`)
+  }
+  const type = raw.type as NavTypeId
+
+  if (!isObject(raw.param)) throw new Error('导航点需要 param 对象')
+  if (type === NAV_TYPE_POS) {
+    const param = raw.param
+    for (const key of Object.keys(param)) if (!['x', 'y', 'z'].includes(key)) throw new Error(`未知 pos 参数：${key}`)
+    const x = requireCoord(param.x, 'param.x')
+    const y = requireCoord(param.y, 'param.y')
+    const z = requireCoord(param.z, 'param.z')
+    return { level, type, param: { x, y, z }, custom_data: readCustomData(raw.custom_data) }
+  }
+
+  throw new Error(`未知导航点类型：${type}`)
+}
+
+function readCustomData(value: unknown): Record<string, unknown> {
+  if (value === undefined) return {}
+  if (!isObject(value)) throw new Error('custom_data 必须是 JSON 对象')
+  const data: Record<string, unknown> = { ...value }
+  if (data[NAV_DISPLAY_NAME] !== undefined && typeof data[NAV_DISPLAY_NAME] !== 'string') {
+    throw new Error(`${NAV_DISPLAY_NAME} 必须是字符串`)
+  }
+  if (data[NAV_DISPLAY_ICON] !== undefined && typeof data[NAV_DISPLAY_ICON] !== 'string') {
+    throw new Error(`${NAV_DISPLAY_ICON} 必须是字符串`)
+  }
+  for (const key of [NAV_DISPLAY_MIN_DISTANCE, NAV_DISPLAY_MAX_DISTANCE]) {
+    if (data[key] !== undefined && (typeof data[key] !== 'number' || !Number.isFinite(data[key]) || (data[key] as number) < 0)) {
+      throw new Error(`${key} 必须是 ≥ 0 的有限数字`)
     }
-    base.x = requireCoord(raw.x, 'x')
-    base.y = requireCoord(raw.y, 'y')
-    base.z = requireCoord(raw.z, 'z')
-    return base
   }
-
-  if ('x' in raw || 'y' in raw || 'z' in raw) throw new Error('entity 类型不能包含 x / y / z')
-  const uuidRaw = typeof raw.entity_uuid === 'string' ? raw.entity_uuid.trim() : ''
-  const tagRaw = typeof raw.entity_tag === 'string' ? raw.entity_tag.trim() : ''
-  const hasUuidKey = typeof raw.entity_uuid === 'string' || 'entity_uuid' in raw
-  if (uuidRaw && tagRaw) throw new Error('entity_uuid 与 entity_tag 只能二选一')
-  // 草稿允许缺 target；用已有键推断模式，避免空 UUID 模式被读回成 tag
-  if (uuidRaw || (hasUuidKey && !tagRaw)) {
-    if ('scan_radius' in raw) throw new Error('entity_uuid 模式不能包含 scan_radius')
-    base.entityMode = 'uuid'
-    base.entityUuid = uuidRaw
-  } else {
-    base.entityMode = 'tag'
-    base.entityTag = tagRaw
-    if (raw.scan_radius !== undefined) {
-      if (typeof raw.scan_radius !== 'number' || !Number.isFinite(raw.scan_radius)) throw new Error('scan_radius 须为有限数')
-      base.scanRadius = clampScanRadius(raw.scan_radius)
-    }
-  }
-  return base
+  return data
 }
 
 export function readNavigationSource(source: string): { point: NavigationPoint; error: string } {
@@ -148,64 +144,51 @@ export function readNavigationSource(source: string): { point: NavigationPoint; 
 
 export function validateNavigationPoint(point: NavigationPoint): string[] {
   const issues: string[] = []
-  if (point.label.length > NAV_LABEL_MAX) issues.push(`label 长度不能超过 ${NAV_LABEL_MAX}`)
-  if (!Number.isFinite(point.radius) || point.radius < NAV_RADIUS_MIN || point.radius > NAV_RADIUS_MAX) {
-    issues.push(`radius 须在 ${NAV_RADIUS_MIN}..${NAV_RADIUS_MAX}`)
-  }
-  if (point.type === 'position') {
-    if (!point.dimension.trim()) issues.push('position 必须填写 dimension')
-    else if (!DIM_RE.test(point.dimension.trim())) issues.push('dimension 格式应为 namespace:path')
-    for (const [name, value] of [['x', point.x], ['y', point.y], ['z', point.z]] as const) {
+  if (!point.level.trim()) issues.push('请选择所属地图模板（level）')
+  else if (!LEVEL_ID_RE.test(point.level.trim()) || point.level.trim() === '.' || point.level.trim() === '..') issues.push('level 不是合法的模板 ID')
+  if (!TYPE_IDS.has(point.type)) issues.push(`未知导航点类型：${point.type}`)
+  if (point.type === NAV_TYPE_POS) {
+    for (const [name, value] of [['x', point.param.x], ['y', point.param.y], ['z', point.param.z]] as const) {
       if (!Number.isFinite(value) || Math.abs(value) > NAV_COORD_ABS_MAX) issues.push(`${name} 须为有限数且绝对值 ≤ ${NAV_COORD_ABS_MAX}`)
     }
-  } else if (point.entityMode === 'uuid') {
-    if (!point.entityUuid.trim()) issues.push('请填写 entity_uuid')
-    else if (!UUID_RE.test(point.entityUuid.trim())) issues.push('entity_uuid 不是合法 UUID')
-    if (point.dimension.trim() && !DIM_RE.test(point.dimension.trim())) issues.push('dimension 格式应为 namespace:path')
-  } else {
-    const tag = point.entityTag.trim()
-    if (!tag) issues.push('请填写 entity_tag')
-    else if (tag.length > NAV_TAG_MAX) issues.push(`entity_tag 长度不能超过 ${NAV_TAG_MAX}`)
-    if (!Number.isFinite(point.scanRadius) || point.scanRadius < NAV_SCAN_RADIUS_MIN || point.scanRadius > NAV_SCAN_RADIUS_MAX) {
-      issues.push(`scan_radius 须在 ${NAV_SCAN_RADIUS_MIN}..${NAV_SCAN_RADIUS_MAX}`)
-    }
-    if (point.dimension.trim() && !DIM_RE.test(point.dimension.trim())) issues.push('dimension 格式应为 namespace:path')
   }
+  const displayName = point.custom_data[NAV_DISPLAY_NAME]
+  if (displayName !== undefined && (typeof displayName !== 'string' || displayName.length > NAV_LABEL_MAX)) {
+    issues.push(`display_name 必须是 ≤ ${NAV_LABEL_MAX} 的字符串`)
+  }
+  const icon = point.custom_data[NAV_DISPLAY_ICON]
+  if (icon !== undefined && (typeof icon !== 'string' || (icon.trim() !== '' && !IDENTIFIER_RE.test(icon.trim())))) {
+    issues.push('display_icon 须为 namespace:path')
+  }
+  const min = point.custom_data[NAV_DISPLAY_MIN_DISTANCE]
+  const max = point.custom_data[NAV_DISPLAY_MAX_DISTANCE]
+  for (const [name, value] of [['display_min_distance', min], ['display_max_distance', max]] as const) {
+    if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value) || value < 0)) {
+      issues.push(`${name} 须为 ≥ 0 的有限数`)
+    }
+  }
+  if (typeof min === 'number' && typeof max === 'number' && max > 0 && min > max) issues.push('display_min_distance 不能大于 display_max_distance')
   return issues
 }
 
 export function summarizeNavigationPoint(point: NavigationPoint): string[] {
   const lines = [
-    point.label.trim() || '（未命名）',
-    point.type === 'position' ? '类型：固定坐标' : '类型：绑定实体',
-    `半径：${clampRadius(point.radius)} · ${point.public ? '公开可选' : '非公开'}`,
+    point.level.trim() || '（未选择模板）',
+    NAV_TYPE_LABELS[point.type] ?? point.type,
+    `坐标：${point.param.x}, ${point.param.y}, ${point.param.z}`,
   ]
-  if (point.type === 'position') {
-    lines.push(`维度：${point.dimension || '—'}`)
-    lines.push(`坐标：${point.x}, ${point.y}, ${point.z}`)
-  } else if (point.entityMode === 'uuid') {
-    lines.push(`实体 UUID：${point.entityUuid || '—'}`)
-    if (point.dimension.trim()) lines.push(`限定维度：${point.dimension}`)
-  } else {
-    lines.push(`实体 tag：${point.entityTag || '—'}`)
-    lines.push(`扫描半径：${clampScanRadius(point.scanRadius)}`)
-    if (point.dimension.trim()) lines.push(`限定维度：${point.dimension}`)
-  }
   const issues = validateNavigationPoint(point)
   if (issues.length) lines.push(`问题：${issues.join('；')}`)
   return lines
 }
 
-function clampRadius(value: number) {
-  return Math.min(NAV_RADIUS_MAX, Math.max(NAV_RADIUS_MIN, value))
+/** UUID 校验留给以后的 entity 类型；当前 pos 不消费。 */
+export function isUuid(value: string): boolean {
+  return UUID_RE.test(value.trim())
 }
 
-function clampScanRadius(value: number) {
-  return Math.min(NAV_SCAN_RADIUS_MAX, Math.max(NAV_SCAN_RADIUS_MIN, value))
-}
-
-function requireCoord(value: number, name: string) {
-  if (!Number.isFinite(value) || Math.abs(value) > NAV_COORD_ABS_MAX) {
+function requireCoord(value: unknown, name: string): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || Math.abs(value) > NAV_COORD_ABS_MAX) {
     throw new Error(`${name} 须为有限数且绝对值 ≤ ${NAV_COORD_ABS_MAX}`)
   }
   return value
