@@ -1188,10 +1188,6 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
     const paneNavigationParsed = paneNavigation ? readNavigationSource(paneDoc.source) : null
     const paneLevelParsed = paneLevel ? readLevelSource(paneDoc.source) : null
     const paneItemParsed = paneItem ? readItemSource(paneDoc.source) : null
-    const paneCatalogOptions = kitCatalog.options.filter((option) => option.ref !== kitRefFromFileName(paneDoc.name))
-    const paneCatalog = new Map(kitCatalog.map)
-    const selfRef = kitRefFromFileName(paneDoc.name)
-    if (selfRef) paneCatalog.delete(selfRef)
     let paneFlow: ProgressFlow | null = null
     let paneError = ''
     if (!paneShop && !paneScript && !paneKit && !paneProgress && !paneNavigation && !paneLevel && !paneItem && !paneEntity && !paneItemTable && !paneEntityTable) {
@@ -1373,9 +1369,6 @@ export function GameplayWorkspace({ active, workspaceRef }: { active: boolean; w
             })
           }}
           error={paneKitParsed.error}
-          selfRef={selfRef}
-          catalog={paneCatalog}
-          catalogOptions={paneCatalogOptions}
           itemCatalog={itemCatalog}
           disabled={disabledPane}
           resolveText={paneDoc.key === focusedKey ? resolveLocaleText : undefined}

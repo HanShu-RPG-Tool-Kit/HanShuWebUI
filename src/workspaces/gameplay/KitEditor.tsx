@@ -4,7 +4,7 @@ import { createPortal } from 'react-dom'
 import type { ItemComponents } from './tnbtJson'
 import {KitScriptField,type KitScriptOptions} from './KitScriptField'
 import { GameCommandInput, GameResourceInput } from '../../gameDevServer/EditingAssistance'
-import type { ItemCatalog, KitCatalog, KitDocument, KitEffect, KitExperience, KitFeedback, KitItem, KitModifier, KitMods, KitParam, KitParamKind, KitPool, KitPoolEntry, KitPoolHit } from './kit'
+import type { ItemCatalog, KitDocument, KitEffect, KitExperience, KitFeedback, KitItem, KitModifier, KitMods, KitParam, KitParamKind, KitPool, KitPoolEntry, KitPoolHit } from './kit'
 import {
   ITEM_LINK_MIME,
   KIT_NUMBER_RULES,
@@ -19,12 +19,10 @@ import {
   createKitPoolEntry,
   decodeItemLinkPayload,
   expandKitItem,
-  flattenKit,
   isKitBindingId,
   isKitItemLink,
   itemRefFromFileName,
   normalizeItemRef,
-  normalizeKitRef,
   normalizeKitTag,
   resolveKit,
   rollKitPools,
@@ -691,56 +689,6 @@ function ExperienceField({ experience, disabled, onChange }: {
   </div>
 }
 
-function CompositionBar({ kit, selfRef, options, disabled, onChange }: {
-  kit: KitDocument
-  selfRef: string
-  options: { ref: string; label: string }[]
-  disabled?: boolean
-  onChange: (patch: Pick<KitDocument, 'extends' | 'includes'>) => void
-}) {
-  const self = normalizeKitRef(selfRef)
-  const parent = normalizeKitRef(kit.extends)
-  const included = kit.includes.map(normalizeKitRef)
-  const others = options.filter((option) => option.ref !== self)
-  const nextInclude = others.find((option) => !included.includes(option.ref) && option.ref !== parent)
-  const empty = others.length === 0 && !parent && kit.includes.length === 0
-
-  return <div className="kit-compose-bar">
-    <label className="kit-compose-slot" title="继承：父礼包先展开；物品等内容卡有内容则整张覆盖；超参数与修饰器按标识符覆盖；标签与父礼包并集">
-      <span className="kit-compose-key">继承</span>
-      <select
-        value={parent}
-        disabled={disabled || (others.length === 0 && !parent)}
-        aria-label="继承父礼包"
-        onChange={(event) => onChange({ extends: event.target.value, includes: kit.includes })}
-      >
-        <option value="">无</option>
-        {others.map((option) => <option key={option.ref} value={option.ref}>{option.label}</option>)}
-        {parent && !others.some((option) => option.ref === parent) && <option value={parent}>{parent}（不存在）</option>}
-      </select>
-    </label>
-    <div className="kit-compose-slot is-wide" title="组合：按顺序追加物品 / 随机池 / 效果 / 指令；超参数与修饰器按 id 并入；不改宿主标签">
-      <span className="kit-compose-key">组合</span>
-      {kit.includes.map((ref, index) => (
-        <span key={`${ref}-${index}`} className="kit-compose-chip">
-          <select
-            value={normalizeKitRef(ref)}
-            disabled={disabled}
-            aria-label={`组合礼包 ${index + 1}`}
-            onChange={(event) => onChange({ extends: kit.extends, includes: replaceAt(kit.includes, index, event.target.value) })}
-          >
-            {others.map((option) => <option key={option.ref} value={option.ref}>{option.label}</option>)}
-            {!others.some((option) => option.ref === normalizeKitRef(ref)) && <option value={normalizeKitRef(ref)}>{normalizeKitRef(ref)}（不存在）</option>}
-          </select>
-          <RemoveButton label={`移除组合 ${ref}`} disabled={disabled} onClick={() => onChange({ extends: kit.extends, includes: removeAt(kit.includes, index) })} />
-        </span>
-      ))}
-      <AddButton label="" disabled={disabled || !nextInclude} onClick={() => { if (nextInclude) onChange({ extends: kit.extends, includes: [...kit.includes, nextInclude.ref] }) }} />
-      {empty && <span className="kit-compose-empty">新建其它 .kit 后可继承或组合</span>}
-    </div>
-  </div>
-}
-
 /** 礼包标签录入：交互对齐皮肤管理器 TagPicker（chip + 回车） */
 export function KitTagField({ tags, disabled, readOnly, onChange, label = '礼包标签' }: {
   tags: string[]
@@ -1158,45 +1106,35 @@ function KitBody({ kit, disabled, readOnly, scriptOptions, onOpenScript, onCreat
 }
 
 const NOOP = () => {}
-const EMPTY_CATALOG: KitCatalog = new Map()
 
-export function KitEditor({ kit, error, disabled, scriptOptions, onOpenScript, onCreateScript, selfRef = 'kit', catalog = EMPTY_CATALOG, catalogOptions = [], itemCatalog = EMPTY_ITEM_CATALOG, onChange, resolveText, setText }: {
+export function KitEditor({ kit, error, disabled, scriptOptions, onOpenScript, onCreateScript, itemCatalog = EMPTY_ITEM_CATALOG, onChange, resolveText, setText }: {
   kit: KitDocument
   error?: string
   disabled?: boolean
   scriptOptions?: KitScriptOptions
   onOpenScript?:(key:string)=>void
   onCreateScript?:(source?:string)=>void
-  /** 当前资源引用名（文件名去 .kit） */
-  selfRef?: string
-  catalog?: KitCatalog
-  catalogOptions?: { ref: string; label: string }[]
   /** 物品库目录：展开礼包里的 `.item` 链接 */
   itemCatalog?: ItemCatalog
   onChange: (source: string) => void
   resolveText?: (key: string) => string
   setText?: (key: string, value: string) => void
 }) {
-  const update = (patch: Partial<KitDocument>) => onChange(stringifyKit({ ...kit, ...patch }))
+  disabled = disabled || Boolean(error)
+  const update = (patch: Partial<KitDocument>) => { if (!error) onChange(stringifyKit({ ...kit, ...patch })) }
   const [preview, setPreview] = useState<Record<string, unknown>>({})
   const [compiledOpen, setCompiledOpen] = useState(true)
-  const flat = useMemo(() => flattenKit(kit, selfRef, catalog), [kit, selfRef, catalog])
-  const compiled = useMemo(() => resolveKit(flat.kit, preview, itemCatalog), [flat.kit, preview, itemCatalog])
-  // 本文件随机池按展开后的修饰器求值，模拟器与当前卡片一一对应
-  const localPools = useMemo(
-    () => resolveKit({ ...kit, params: flat.kit.params, modifiers: flat.kit.modifiers }, preview, itemCatalog).pools,
-    [kit, flat.kit.params, flat.kit.modifiers, preview, itemCatalog],
-  )
+  const compiled = useMemo(() => resolveKit(kit, preview, itemCatalog), [kit, preview, itemCatalog])
+  const localPools = compiled.pools
   const env = compiled.env
   const exprUi = useMemo<KitExprUi>(() => ({
     env,
-    modifiers: activeKitModifiers(flat.kit.modifiers)
+    modifiers: activeKitModifiers(kit.modifiers)
       .filter((modifier) => env.declared.has(modifier.id))
       .map((modifier) => ({ id: modifier.id, label: modifier.label })),
-  }), [env, flat.kit.modifiers])
+  }), [env, kit.modifiers])
   const appliedUi = useMemo<KitExprUi>(() => ({ ...exprUi, applied: true }), [exprUi])
   const problems = [
-    ...flat.errors.map((message) => ({ path: '继承/组合', level: 'error' as const, message })),
     ...env.errors.map((message) => ({ path: '声明', level: 'error' as const, message })),
     ...compiled.issues,
   ]
@@ -1210,7 +1148,7 @@ export function KitEditor({ kit, error, disabled, scriptOptions, onOpenScript, o
   return <ItemCatalogContext.Provider value={itemCatalog}>
     <div className="kit-editor">
       <div className="kit-page">
-        {error && <p className="kit-banner" role="alert">草稿无法解析，已显示空表单：{error}</p>}
+        {error && <p className="kit-banner" role="alert">草稿无法解析，已暂停编辑并保留原文：{error}</p>}
 
         <KitExprContext.Provider value={exprUi}>
           <KitBody
@@ -1218,7 +1156,6 @@ export function KitEditor({ kit, error, disabled, scriptOptions, onOpenScript, o
             disabled={disabled}
             scriptOptions={scriptOptions} onOpenScript={onOpenScript} onCreateScript={onCreateScript}
             simulatorPools={localPools}
-            afterHeader={<CompositionBar kit={kit} selfRef={selfRef} options={catalogOptions} disabled={disabled} onChange={(patch) => update(patch)} />}
             update={update}
             resolveText={resolveText}
             setText={setText}
@@ -1254,8 +1191,7 @@ export function KitEditor({ kit, error, disabled, scriptOptions, onOpenScript, o
             <svg viewBox="0 0 16 16" aria-hidden><path d={compiledOpen ? 'M4 6l4 4 4-4' : 'M6 4l4 4-4 4'} /></svg>
             编译结果
           </button>
-          <span className="kit-compiled-note">只读 · 展开继承与组合，按预览值应用修饰器与插值</span>
-          <ol className="kit-flatten-chain">{flat.chain.map((ref, index) => <li key={`${ref}-${index}`}>{ref}</li>)}</ol>
+          <span className="kit-compiled-note">只读 · 按预览值应用修饰器与插值</span>
           {problems.length > 0 && <span className="kit-compiled-count">{problems.length} 个问题</span>}
         </div>
 

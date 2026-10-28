@@ -19,7 +19,7 @@ from common import helper
 helper.calls = 10
 from mchhui.rpgtoolkit.feature.kit import Kits
 from java.util import Map
-nested = Kits.forServer(player.level().getServer()).grant(player, 'inner', Map.of())
+nested = Kits.get().grant(player, 'inner', Map.of())
 assert str(nested.status()) == 'SUCCESS'
 from common import helper as restored
 assert restored is helper and restored.calls == 10

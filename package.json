@@ -55,6 +55,7 @@
     "test:progress-collaboration:ui": "node scripts/verify-progress-collaboration-ui.mjs",
     "test:kit-runtime-export": "node scripts/run-verification.mjs scripts/verify-kit-runtime-export.ts",
     "test:kit-script": "node scripts/run-verification.mjs scripts/verify-kit-script.ts",
+    "test:kit:ui": "node scripts/verify-kit-ui.mjs",
     "test:kit-expr": "tsx scripts/verify-kit-expr.ts",
     "test:feedback-text": "tsx scripts/verify-feedback-text.ts",
     "test:item-sync": "node scripts/run-verification.mjs scripts/verify-item-sync.ts",

@@ -144,17 +144,7 @@ export type KitPool = {
 
 export type KitDocument = {
   name: string
-  /**
-   * 继承：单个父礼包引用（资源文件名去掉 `.kit`）。
-   * 先展开父礼包，再按卡片稀疏覆盖本文件字段，最后叠 includes。
-   */
-  extends: string
-  /** 组合：按顺序追加其它礼包的物品/池/效果/指令 */
-  includes: string[]
-  /**
-   * 游戏标签（类似 MC Tag 的成员声明）：引擎可按标签查询 / 发放。
-   * 继承时与父礼包并集；组合 includes 不并入宿主标签。
-   */
+  /** 当前礼包的游戏标签。 */
   tags: string[]
   /**
    * 超参数声明：由作者与后端引擎约定、领取时注入。
@@ -193,18 +183,6 @@ export type KitModifier = {
   /** hanshu.kit.expr V1 表达式；`x` 为输入 rawdata */
   expr: string
 }
-
-/** 礼包目录：key 为规范化引用（无 `.kit` 后缀） */
-export type KitCatalog = ReadonlyMap<string, KitDocument>
-
-export type KitFlattenResult = {
-  kit: KitDocument
-  /** 展开顺序（含自身），便于 UI 展示来源链 */
-  chain: string[]
-  errors: string[]
-}
-
-const MAX_KIT_DEPTH = 8
 
 /** `starter.kit` / `starter` → `starter` */
 export function normalizeKitRef(value: string): string {
@@ -397,8 +375,6 @@ export function createKit(_name = '新礼包'): KitDocument {
   return {
     /** 语义键；译文在 lang_kit */
     name: 'name',
-    extends: '',
-    includes: [],
     tags: [],
     params: defaultKitParams(),
     modifiers: [],
@@ -410,153 +386,6 @@ export function createKit(_name = '新礼包'): KitDocument {
     feedback: emptyFeedback(),
     script: [],
   }
-}
-
-/** 仅本层内容（去掉引用），用于合并时叠本地字段 */
-function localLayer(kit: KitDocument): KitDocument {
-  return { ...kit, extends: '', includes: [] }
-}
-
-function feedbackSet(feedback: KitFeedback): boolean {
-  return Boolean(feedback.message || feedback.title || feedback.subtitle || feedback.sound)
-}
-
-/** 按标识符覆盖：同 id 原位替换，新 id 追加；空 id 的条目被无视，不参与合并 */
-function overrideById<T extends { id: string }>(base: T[], overlay: T[]): T[] {
-  const result = [...base]
-  for (const item of overlay) {
-    if (!isKitBindingId(item.id)) continue
-    const index = result.findIndex((candidate) => candidate.id === item.id)
-    if (index >= 0) result[index] = item
-    else result.push(item)
-  }
-  return result
-}
-
-/**
- * 继承合并：内容卡按卡片覆盖，声明卡按标识符覆盖。
- * - tags：与父礼包并集（去重）；组合 includes 另走 concat，不改标签
- * - params / modifiers：同 id 覆盖父礼包的定义，新 id 追加
- * - items / pools / effects / commands：非空数组整表替换
- * - experience：amount>0 时替换整张经验卡
- * - feedback：任一字段非空则整张反馈卡替换
- * - script：非空则替换
- */
-export function overlayKitLayer(base: KitDocument, overlay: KitDocument): KitDocument {
-  return {
-    name: overlay.name || base.name,
-    extends: '',
-    includes: [],
-    tags: unionKitTags(base.tags, overlay.tags),
-    params: overrideById(base.params, overlay.params),
-    modifiers: overrideById(base.modifiers, overlay.modifiers),
-    items: overlay.items.length > 0 ? overlay.items : base.items,
-    pools: overlay.pools.length > 0 ? overlay.pools : base.pools,
-    effects: overlay.effects.length > 0 ? overlay.effects : base.effects,
-    commands: overlay.commands.length > 0 ? overlay.commands : base.commands,
-    experience: overlay.experience.amount > 0 ? overlay.experience : base.experience,
-    feedback: feedbackSet(overlay.feedback) ? { ...overlay.feedback } : { ...base.feedback },
-    script: hasKitScript(overlay.script) ? overlay.script : base.script,
-  }
-}
-
-/**
- * 按 id 并入声明：已有同 id 的保留前者；定义不同则记一条冲突。空 id 的条目不并入。
- */
-function unionById<T extends { id: string }>(base: T[], extra: T[], kind: string, from: string, errors: string[]): T[] {
-  const result = [...base]
-  for (const item of extra) {
-    if (!isKitBindingId(item.id)) continue
-    const existing = result.find((candidate) => candidate.id === item.id)
-    if (!existing) result.push(item)
-    else if (JSON.stringify(existing) !== JSON.stringify(item)) errors.push(`组合「${from}」的${kind}「${item.id}」与已有定义不同，保留先声明的一份`)
-  }
-  return result
-}
-
-/**
- * 组合合并（并入）：追加内容卡；超参数 / 修饰器按 id 并入（先到者优先），不动经验 / 反馈 / 脚本 / 标签。
- * 继承特化先发生，组合模块叠在最终内容上。
- */
-export function concatKitLayer(base: KitDocument, overlay: KitDocument, errors: string[] = [], from = overlay.name): KitDocument {
-  return {
-    ...base,
-    extends: '',
-    includes: [],
-    tags: base.tags,
-    params: unionById(base.params, overlay.params, '超参数', from, errors),
-    modifiers: unionById(base.modifiers, overlay.modifiers, '修饰器', from, errors),
-    items: [...base.items, ...overlay.items],
-    pools: [...base.pools, ...overlay.pools],
-    effects: [...base.effects, ...overlay.effects],
-    commands: [...base.commands, ...overlay.commands],
-  }
-}
-
-/** @deprecated 使用 overlayKitLayer；保留别名以免外部旧引用断裂 */
-export const mergeKitLayer = overlayKitLayer
-
-/** 合并起点：不带新建礼包的默认超参数，避免凭空并入 */
-const emptyLayer = (name = ''): KitDocument => ({ ...createKit(name), params: [] })
-
-function resolveRef(
-  ref: string,
-  selfRef: string,
-  self: KitDocument,
-  catalog: KitCatalog,
-  stack: string[],
-  errors: string[],
-  chain: string[],
-): KitDocument {
-  const key = normalizeKitRef(ref)
-  if (!key) return emptyLayer()
-  if (stack.includes(key)) {
-    errors.push(`礼包引用成环：${[...stack, key].join(' → ')}`)
-    return emptyLayer()
-  }
-  if (stack.length >= MAX_KIT_DEPTH) {
-    errors.push(`礼包引用过深（>${MAX_KIT_DEPTH}）：${key}`)
-    return emptyLayer()
-  }
-
-  const source = key === normalizeKitRef(selfRef) ? self : catalog.get(key)
-  if (!source) {
-    errors.push(`找不到礼包「${key}」`)
-    return emptyLayer()
-  }
-
-  const nextStack = [...stack, key]
-  chain.push(key)
-  let acc = emptyLayer(source.name)
-
-  // 继承：父礼包为基线，本层按卡片覆盖；组合：再追加内容模块
-  if (source.extends) {
-    acc = overlayKitLayer(acc, resolveRef(source.extends, selfRef, self, catalog, nextStack, errors, chain))
-  }
-  acc = overlayKitLayer(acc, localLayer(source))
-  for (const include of source.includes) {
-    if (!normalizeKitRef(include)) continue
-    acc = concatKitLayer(acc, resolveRef(include, selfRef, self, catalog, nextStack, errors, chain), errors, normalizeKitRef(include))
-  }
-  acc.name = source.name
-  return acc
-}
-
-/**
- * 展开继承与组合，得到领取时的有效礼包。
- * `selfRef` 为当前文件引用名；`catalog` 为其它礼包（通常不含自身，或会被 self 覆盖）。
- */
-export function flattenKit(
-  kit: KitDocument,
-  selfRef: string,
-  catalog: KitCatalog = new Map(),
-): KitFlattenResult {
-  const errors: string[] = []
-  const chain: string[] = []
-  const key = normalizeKitRef(selfRef) || normalizeKitRef(kit.name) || 'kit'
-  const flat = resolveRef(key, key, kit, catalog, [], errors, chain)
-  flat.name = kit.name
-  return { kit: flat, chain, errors }
 }
 
 function cleanMods<K extends string>(mods: KitMods<K> | undefined): KitMods<K> | undefined {
@@ -588,10 +417,6 @@ export function writeKitItem(item: KitItem): Record<string, unknown> {
 
 export function stringifyKit(kit: KitDocument): string {
   const out: Record<string, unknown> = { name: kit.name }
-  const parent = normalizeKitRef(kit.extends)
-  if (parent) out.extends = parent
-  const includes = kit.includes.map(normalizeKitRef).filter(Boolean)
-  if (includes.length > 0) out.includes = includes
   const tags = unionKitTags(kit.tags)
   if (tags.length > 0) out.tags = tags
   if (kit.params.length > 0) {
@@ -748,12 +573,6 @@ function readExperience(value: unknown): KitExperience {
   return { kind: 'points', amount: 0 }
 }
 
-function readKitRef(value: unknown, path: string): string {
-  if (value === undefined || value === null || value === '') return ''
-  if (typeof value !== 'string') throw new Error(`${path} 应为字符串`)
-  return normalizeKitRef(value)
-}
-
 const PARAM_KINDS: KitParamKind[] = ['float', 'int', 'string', 'bool']
 
 function readParamDefault(kind: KitParamKind, value: unknown): number | string | boolean {
@@ -794,14 +613,9 @@ function readModifier(value: unknown, path: string): KitModifier {
 export function parseKit(source: string): KitDocument {
   const raw = parseJsonValue(source.replace(/^\uFEFF/, ''), 96)
   if (!isObject(raw)) throw new Error('礼包根节点应为 JSON 对象')
+  if ('extends' in raw || 'includes' in raw) throw new Error('礼包已移除 extends/includes，请改为独立定义')
   return {
     name: readString(raw.name),
-    extends: readKitRef(raw.extends, 'extends'),
-    includes: readList(raw.includes, 'includes', (item, path) => {
-      const ref = readKitRef(item, path)
-      if (!ref) throw new Error(`${path} 不能为空`)
-      return ref
-    }),
     tags: readList(raw.tags, 'tags', (item, path) => {
       if (typeof item !== 'string') throw new Error(`${path} 应为字符串`)
       const tag = normalizeKitTag(item)

@@ -12,7 +12,7 @@ import {
   type KitExprModifierDecl,
   type KitExprParamDecl,
 } from '../src/workspaces/gameplay/kitExpr.ts'
-import { createKit, createKitModifier, flattenKit, parseKit, resolveKit, stringifyKit } from '../src/workspaces/gameplay/kit.ts'
+import { createKit, createKitModifier, parseKit, resolveKit, stringifyKit } from '../src/workspaces/gameplay/kit.ts'
 
 let passed = 0
 function test(name: string, check: () => void) { check(); passed++; console.log(`[OK] ${name}`) }
@@ -189,46 +189,14 @@ test('command interpolation', () => {
   assert.equal(resolved.issues.length, 1)
 })
 
-test('extends overrides params/modifiers by id; includes union them by id', () => {
-  const parent = createKit('parent')
-  parent.params = [{ id: 'intensity', kind: 'float', default: 2, hint: '' }]
-  parent.modifiers = [{ ...createKitModifier('loot'), expr: 'x * intensity' }]
-  const addon = createKit('addon')
-  addon.params = [{ id: 'party', kind: 'int', default: 1, hint: '' }, { id: 'intensity', kind: 'float', default: 9, hint: '' }]
-  addon.modifiers = [{ ...createKitModifier('per_head'), expr: 'x * party' }]
-  addon.items = [{ id: 'minecraft:bread', count: 2, components: {}, mods: { count: 'per_head' } }]
-  const child = createKit('child')
-  child.params = [{ id: 'bonus', kind: 'float', default: 0, hint: '' }, { id: 'intensity', kind: 'float', default: 5, hint: '' }, { id: '', kind: 'float', default: 1, hint: '' }]
-  child.modifiers = [{ ...createKitModifier('extra'), expr: 'x + bonus' }]
-  child.extends = 'parent'
-  child.includes = ['addon']
-  const flat = flattenKit(child, 'child', new Map([['parent', parent], ['addon', addon]]))
-  assert.deepEqual(flat.kit.params.map((param) => param.id), ['intensity', 'bonus', 'party'])
-  assert.equal(flat.kit.params[0]!.default, 5)
-  assert.deepEqual(flat.kit.modifiers.map((modifier) => modifier.id), ['loot', 'extra', 'per_head'])
-  const bare = flattenKit({ ...createKit('bare'), params: [] }, 'bare')
-  assert.equal(bare.kit.params.length, 0)
-  assert.equal(flat.errors.length, 1)
-  const resolved = resolveKit(flat.kit, { party: 3 })
-  assert.equal(resolved.items[0]!.count, 6)
-  assert.equal(resolved.issues.length, 0)
-})
-
-test('extends unions tags; includes do not contribute tags', () => {
-  const parent = createKit('parent')
-  parent.tags = ['daily', 'Event/Summer']
-  const addon = createKit('addon')
-  addon.tags = ['module/loot', 'should-not-appear']
-  addon.items = [{ id: 'minecraft:apple', count: 1, components: {} }]
-  const child = createKit('child')
-  child.tags = ['event/summer', 'hard']
-  child.extends = 'parent'
-  child.includes = ['addon']
-  const flat = flattenKit(child, 'child', new Map([['parent', parent], ['addon', addon]]))
-  assert.deepEqual(flat.kit.tags, ['daily', 'Event/Summer', 'hard'])
-  assert.equal(flat.kit.items.length, 1)
-  const round = parseKit(stringifyKit(child))
-  assert.deepEqual(round.tags, ['event/summer', 'hard'])
+test('standalone kits reject removed inheritance fields', () => {
+  const kit = createKit('independent')
+  kit.tags = ['daily']
+  assert.deepEqual(parseKit(stringifyKit(kit)).tags, ['daily'])
+  assert.equal('extends' in JSON.parse(stringifyKit(kit)), false)
+  assert.equal('includes' in JSON.parse(stringifyKit(kit)), false)
+  for (const fields of [{ extends: 'base' }, { extends: '' }, { includes: [] }, { includes: ['extra'] }])
+    assert.throws(() => parseKit(JSON.stringify({ ...kit, ...fields })), /extends\/includes/)
 })
 
 // 一致性用例与标准文档共用：解析 kit-expr.md 中「一致性用例」表格逐行验证

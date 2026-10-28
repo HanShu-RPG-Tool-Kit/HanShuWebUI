@@ -51,7 +51,7 @@
 
 - **指纹**：`fnv1a(格式标记 + id + 规范化 components)`（**不含 count**）。缓存键与过期判定均为该指纹；写入时会把 `display.snapshotOf` 规范为请求时的指纹。
 - **刷新**：WebUI 经 Control **出站**调用 mod 的 `items.renderSnapshots`（批量 ≤128，`includeIcon` 默认 true）。`iconPending: true` 时先显示文本快照并短暂重试；同一指纹约 3 次仍无图标则接受纯文本并停止对该项重试（否则会一直打同一批）。刷新按指纹去重，同一物品同时出现在 `.item`、礼包和商店时只请求一次。
-- **来源范围**：`.item`、`.itemstack`、`.kit`（本文件 `items` + `pools`，不含 `extends` / `includes`）和 `.shop`（所有条目的 `payment` / `goods`）统一采集；礼包/商店的 `.item` 链接按物品库展开，找不到链接的物品跳过。`.itemstack` 导入后仍转成 `.item`；若工程草稿里直接存在 `.itemstack` 文档，也按 ItemStack 参与刷新。
+- **来源范围**：`.item`、`.itemstack`、`.kit`（本文件 `items` + `pools`）和 `.shop`（所有条目的 `payment` / `goods`）统一采集；礼包/商店的 `.item` 链接按物品库展开，找不到链接的物品跳过。`.itemstack` 导入后仍转成 `.item`；若工程草稿里直接存在 `.itemstack` 文档，也按 ItemStack 参与刷新。
 - **自动刷新**：默认开启。菜单 **编辑 → 自动刷新物品快照** 可关掉；关掉后 miss/过期不再自动入队（清空当前 needed），仍可用手动刷新。偏好记在本机 `localStorage`。
 - **miss / 过期**：自动刷新开启时，编辑器先用 WebUI 近似渲染并登记 needed；连上游戏开发服务器后 drain。
 - **count**：数量变化不改指纹、不触发重新快照（发放数量由礼包等决定）。

@@ -70,7 +70,7 @@ export function collectKitSnapshotItems(
   return out
 }
 
-/** `.kit` 本文件声明的 items + pools；不展开 extends / includes（父礼包由全量扫描覆盖）。 */
+/** `.kit` 本文件声明的 items + pools；礼包是独立定义。 */
 function collectKitDocument(doc: SnapshotDocumentLike, context: SnapshotSourceContext): SnapshotSourceItem[] {
   let kit
   try {
