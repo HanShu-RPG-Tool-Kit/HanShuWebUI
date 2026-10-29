@@ -305,11 +305,12 @@ function KitItemComponentsDialog({
   )
 }
 
-function ItemRow({ item, index, open, disabled, onToggle, onChange, onRemove, onDropReplace }: {
+function ItemRow({ item, index, open, disabled, singleItem, onToggle, onChange, onRemove, onDropReplace }: {
   item: KitItem
   index: number
   open: boolean
   disabled?: boolean
+  singleItem?: boolean
   onToggle: () => void
   onChange: (patch: Partial<KitItem>) => void
   onRemove: () => void
@@ -371,10 +372,10 @@ function ItemRow({ item, index, open, disabled, onToggle, onChange, onRemove, on
       )}
       {showName && <span className="kit-item-name"><ItemTipSegments segments={presentation.name} fallbackColor={presentation.defaultColor} /></span>}
     </div>
-    <span className="kit-numbind">
+    {!singleItem && <span className="kit-numbind">
       <input className="kit-num" type="number" min={0} step={1} value={item.count} disabled={disabled} aria-label={`物品 ${index + 1} 数量`} onChange={(event) => onChange({ count: toCount(event.target.value) })} />
       <ModChip raw={item.count} mod={item.mods?.count} rule={KIT_NUMBER_RULES.count} label={`物品 ${index + 1} 数量`} disabled={disabled} onChange={(id) => onChange({ mods: setMod(item.mods, 'count', id) })} />
-    </span>
+    </span>}
     <button
       type="button"
       className={`kit-chip${componentCount ? ' has-value' : ''}`}
@@ -401,10 +402,11 @@ function ItemRow({ item, index, open, disabled, onToggle, onChange, onRemove, on
   </li>
 }
 
-export function ItemList({ items, header, disabled, onChange }: {
+export function ItemList({ items, header, disabled, singleItem, onChange }: {
   items: KitItem[]
   header?: boolean
   disabled?: boolean
+  singleItem?: boolean
   onChange: (items: KitItem[]) => void
 }) {
   const [open, setOpen] = useState<Set<number>>(() => new Set())
@@ -422,7 +424,7 @@ export function ItemList({ items, header, disabled, onChange }: {
     })
   }
 
-  return <ItemDropZone disabled={disabled} hint={items.length === 0 ? '可拖入 .item（链接）或 .itemstack（内嵌）' : undefined} onDropItems={(dropped) => onChange([...items, ...dropped])}>
+  return <ItemDropZone disabled={disabled} hint={items.length === 0 ? '可拖入 .item（链接）或 .itemstack（内嵌）' : undefined} onDropItems={(dropped) => onChange(singleItem ? dropped.slice(0, 1) : [...items, ...dropped])}>
     {header && items.length > 0 && <div className="kit-row kit-item kit-row-head" aria-hidden><span /><span /><span>物品</span><span>数量</span><span>组件</span><span /></div>}
     {items.length === 0
       ? <p className="kit-empty">暂无物品 · 拖入 .item / .itemstack 或点添加</p>
@@ -434,6 +436,7 @@ export function ItemList({ items, header, disabled, onChange }: {
             index={index}
             open={open.has(index)}
             disabled={disabled}
+            singleItem={singleItem}
             onToggle={() => toggle(index)}
             onChange={(patch) => onChange(replaceAt(items, index, { ...item, ...patch }))}
             onRemove={() => remove(index)}
@@ -441,7 +444,7 @@ export function ItemList({ items, header, disabled, onChange }: {
               if (!dropped.length) return
               const next = [...items]
               next[index] = dropped[0]
-              next.splice(index + 1, 0, ...dropped.slice(1))
+              if (!singleItem) next.splice(index + 1, 0, ...dropped.slice(1))
               onChange(next)
             }}
           />

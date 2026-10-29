@@ -20,6 +20,7 @@ export type ShopDocument = {
   id: string
   name: string
   tags: string[]
+  icon: KitItem | null
   stockSubject: keyof typeof STOCK_SUBJECTS
   params: KitParam[]
   modifiers: KitModifier[]
@@ -27,7 +28,7 @@ export type ShopDocument = {
   entries: ShopEntry[]
 }
 export const createShopEntry = (): ShopEntry => ({ id: randomId(), tags: [], initialCapacity: 0, maxCapacity: 1, payment: [], goods: [], visibility: '', availability: '' })
-export const createShop = (): ShopDocument => ({ format: 'hanshu.shop', version: 1, id: randomId(), name: 'name', tags: [], stockSubject: 'infinite', params: [], modifiers: [], script: [], entries: [] })
+export const createShop = (): ShopDocument => ({ format: 'hanshu.shop', version: 1, id: randomId(), name: 'name', tags: [], icon: null, stockSubject: 'infinite', params: [], modifiers: [], script: [], entries: [] })
 export function shopTags(value: unknown): string[] {
   if (value === undefined) return []
   if (!Array.isArray(value) || value.some(t => typeof t !== 'string' || !t.trim())) throw new Error('标签必须是非空字符串列表')
@@ -35,7 +36,7 @@ export function shopTags(value: unknown): string[] {
 }
 export const stringifyShop = (doc: ShopDocument) => {
   const items = (values: KitItem[]) => values.map(writeKitItem)
-  return JSON.stringify({ format: doc.format, version: doc.version, id: doc.id, name: doc.name, tags: doc.tags, stockSubject: doc.stockSubject, params: doc.params, modifiers: doc.modifiers, script: doc.script, entries: doc.entries.map(e => ({ ...e, payment: items(e.payment), goods: items(e.goods) })) }, null, 2)
+  return JSON.stringify({ format: doc.format, version: doc.version, id: doc.id, name: doc.name, tags: doc.tags, stockSubject: doc.stockSubject, icon: doc.icon ? writeKitItem({ ...doc.icon, count: 1, mods: undefined }) : null, params: doc.params, modifiers: doc.modifiers, script: doc.script, entries: doc.entries.map(e => ({ ...e, payment: items(e.payment), goods: items(e.goods) })) }, null, 2)
 }
 
 /** Reuse kit's item / inline stack and parameter codecs, without kit composition. */
@@ -51,6 +52,15 @@ export function parseShop(source: string, draft = false): ShopDocument {
   if (typeof raw.stockSubject !== 'string' || !Object.hasOwn(STOCK_SUBJECTS, raw.stockSubject)) throw new Error('库存主体类型无效')
   if (!Array.isArray(raw.entries) || !Array.isArray(raw.params) || !Array.isArray(raw.modifiers) || !Array.isArray(raw.script)) throw new Error('条目、超参数、修饰器和脚本必须是列表')
   const kit = parseKit(JSON.stringify({ params: raw.params, modifiers: raw.modifiers }))
+  let icon: KitItem | null = null
+  if (raw.icon !== undefined && raw.icon !== null) {
+    if (!isObject(raw.icon)) throw new Error('图标必须是一个物品或 null')
+    for (const field of ['item', 'id']) if (raw.icon[field] !== undefined && typeof raw.icon[field] !== 'string') throw new Error(`图标 ${field} 必须是字符串`)
+    if ('virtual' in raw.icon || 'virtualItem' in raw.icon) throw new Error('图标必须是实际物品')
+    if (raw.icon.mods !== undefined && (!isObject(raw.icon.mods) || Object.keys(raw.icon.mods).length > 0)) throw new Error('图标不支持数量修饰器')
+    const iconData = parseKit(JSON.stringify({ items: [{ ...raw.icon, count: 1 }] })).items[0]
+    if (iconData.item?.trim() || iconData.id.trim() || draft) icon = { ...iconData, count: 1, mods: undefined }
+  }
   const ids = new Set<string>()
   const entries = raw.entries.map((value): ShopEntry => {
     if (!isObject(value) || typeof value.id !== 'string' || !value.id.trim() || ids.has(value.id)) throw new Error('商品条目 ID 必须非空且唯一')
@@ -75,5 +85,5 @@ export function parseShop(source: string, draft = false): ShopDocument {
     return { ref: value.ref.trim() }
   })
   if (!draft && new Set(script.map(s => s.ref)).size !== script.length) throw new Error('脚本不能重复绑定')
-  return { format: 'hanshu.shop', version: 1, id: raw.id, name: raw.name, tags: shopTags(raw.tags), stockSubject: raw.stockSubject as ShopDocument['stockSubject'], params: kit.params, modifiers: kit.modifiers, script, entries }
+  return { format: 'hanshu.shop', version: 1, id: raw.id, name: raw.name, tags: shopTags(raw.tags), stockSubject: raw.stockSubject as ShopDocument['stockSubject'], icon, params: kit.params, modifiers: kit.modifiers, script, entries }
 }

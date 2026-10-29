@@ -20,6 +20,12 @@ Mod 只保留 `/rpgtoolkit shop list` 和 `open`（可用 `/rt` 别名）。由�
 
 shops 为有序列表（1–64 项），顺序决定展示顺序；每项必须提供 key、template、subject、params。template 为源文件名去掉 .shop，不是模板内部稳定 ID；有限主体显式提供类型与 UUID，无限主体写 null。超参数跟随各模板引用，不写入模板。简写 `/rt shop open <玩家> <模板引用>` **仅允许无限库存模板**，自动使用 key=main、subject=null、params={}；有限库存不会隐式绑定执行者或玩家。open 要求 GM 权限，可由控制台执行，打开真实交易而非模拟预览。游戏内 create/edit/use/bind/unbind/path/reload 已移除，模板重载归统一 PAK 管线。
 
+## 图标
+
+模板的“图标”是单个物品槽，用于游戏内该模板对应的分类书签。可拖入 `.item` 链接或 `.itemstack` 内嵌物品，也可填写物品 ID 和编辑组件；不参与交易，不支持数量或数量修饰器。清空后使用原版绿宝石。
+
+`.shop` 的可选 `icon` 字段为物品对象或 `null`；缺省、null 或空物品 ID 都按未设置处理。链接按物品库定义解析，内嵌物品保留完整 TNBT 组件；导出时数量固定为 1。多个模板组成会话时，各模板保留自己的图标。
+
 ## 库存主体
 
 `stockSubject` 只声明类型：`infinite`（无限库存）、`player`（玩家）、`game`（游戏全局）、`actor`（角色）。有限库存由调用方显式传入主体 UUID；actor 不要求对应实体在线。旧 world/server/npc 类型不再接受。

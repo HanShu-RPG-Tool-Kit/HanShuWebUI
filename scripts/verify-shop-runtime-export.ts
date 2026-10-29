@@ -9,6 +9,9 @@ import { createKitItem } from '../src/workspaces/gameplay/kit'
 
 const shop = createShop()
 shop.id = 'web-shop'; shop.tags = ['village']; shop.stockSubject = 'actor'
+shop.icon = { ...createKitItem('minecraft:chest', 1), components: {
+  'minecraft:custom_data': { type: 'compound', value: { shop_icon: { type: 'string', value: 'fixture' } } },
+} }
 shop.params = [{ id: 'level', kind: 'int', default: 2, hint: '' }]
 shop.modifiers = [{ id: 'price', label: '', expr: 'x * level' }]
 shop.script = [{ ref: 'trade' }]
@@ -30,6 +33,9 @@ for (const pack of exported.packs) {
     assert.equal(Object.hasOwn(result, 'availability'), false)
     assert.equal(result.entries[0].visibility, shop.entries[0].visibility)
     assert.equal(result.entries[0].availability, shop.entries[0].availability)
+    assert.equal(result.icon.id, 'minecraft:chest')
+    assert.equal(result.icon.count, 1)
+    assert.deepEqual(result.icon.components, shop.icon.components)
     assert.equal(result.entries[0].maxCapacity, 10)
     assert.equal(result.entries[0].goods.length, 2)
     if (process.env.SHOP_RUNTIME_PAK_PATH) { await mkdir(dirname(process.env.SHOP_RUNTIME_PAK_PATH), { recursive: true }); await writeFile(process.env.SHOP_RUNTIME_PAK_PATH, bytes) }

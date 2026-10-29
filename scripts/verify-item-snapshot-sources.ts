@@ -84,6 +84,14 @@ test('.shop 合并 payment 与 goods 并跨条目去重', () => {
   assert.deepEqual(items.map((item) => item.id).sort(), ['minecraft:bread', 'minecraft:emerald'])
 })
 
+test('.shop 图标参与快照采集并保留物品链接', () => {
+ const source = stringifyShop({ ...shop, icon: { id: 'minecraft:diamond', count: 1, components: {} } })
+ const items = collectDocumentSnapshotItems({ ...shopDoc, source }, { itemCatalog: catalog })
+ assert(items.some(item => item.id === 'minecraft:diamond'))
+ const linked = stringifyShop({ ...shop, icon: { item: '货币', id: '', count: 1, components: {} } })
+ assert(collectDocumentSnapshotItems({ ...shopDoc, source: linked }, { itemCatalog: catalog }).some(item => item.id === 'minecraft:emerald'))
+})
+
 test('跨文档全量按指纹去重', () => {
   const items = collectWorkspaceSnapshotItems([itemDoc, kitDoc, shopDoc, stackDoc], { itemCatalog: catalog })
   assert.deepEqual(

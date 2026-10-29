@@ -21,6 +21,15 @@ for (const stockSubject of ['player', 'game', 'actor'])
 for (const stockSubject of ['world', 'server', 'npc'])
   assert.throws(() => parseShop(JSON.stringify({ ...doc, stockSubject })))
 
+assert.equal(doc.icon, null)
+const legacy = JSON.parse(stringifyShop(doc)); delete legacy.icon
+assert.equal(parseShop(JSON.stringify(legacy)).icon, null)
+const icon = { id: 'minecraft:chest', count: 7, components: {} }
+assert.equal(parseShop(JSON.stringify({ ...doc, icon })).icon?.count, 1)
+assert.equal(parseShop(JSON.stringify({ ...doc, icon: { id: '', count: 1, components: {} } })).icon, null)
+assert.equal(parseShop(JSON.stringify({ ...doc, icon: { item: 'badge', count: 1 } })).icon?.item, 'badge')
+for (const icon of ['bad', { id: 2 }, { id: 'minecraft:chest', mods: { count: 'price' } }])
+  assert.throws(() => parseShop(JSON.stringify({ ...doc, icon })))
 doc.tags = ['village']; doc.entries[0].tags = ['apple/sell']; doc.entries[0].initialCapacity = 4; doc.entries[0].maxCapacity = 10
 assert.deepEqual(parseShop(stringifyShop(doc)), doc)
 assert.throws(() => parseShop(JSON.stringify({ ...doc, entries: [{ ...doc.entries[0], initialCapacity: 11 }] })))
