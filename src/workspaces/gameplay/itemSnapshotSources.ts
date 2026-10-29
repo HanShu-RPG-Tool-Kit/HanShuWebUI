@@ -85,7 +85,7 @@ function collectKitDocument(doc: SnapshotDocumentLike, context: SnapshotSourceCo
   return collectKitSnapshotItems(items, context.itemCatalog)
 }
 
-/** `.shop` 的 payment / goods；不区分类别，统一按指纹去重。 */
+/** `.shop` 的图标与 payment / goods，统一按指纹去重。 */
 function collectShopDocument(doc: SnapshotDocumentLike, context: SnapshotSourceContext): SnapshotSourceItem[] {
   let shop
   try {
@@ -94,7 +94,7 @@ function collectShopDocument(doc: SnapshotDocumentLike, context: SnapshotSourceC
   } catch {
     return []
   }
-  const items = shop.entries.flatMap((entry) => [...entry.payment, ...entry.goods])
+  const items = [...(shop.icon ? [shop.icon] : []), ...shop.entries.flatMap((entry) => [...entry.payment, ...entry.goods])]
   return collectKitSnapshotItems(items, context.itemCatalog)
 }
 

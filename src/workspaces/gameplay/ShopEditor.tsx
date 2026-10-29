@@ -50,6 +50,13 @@ export function ShopEditor({ source, disabled, onChange, resolveText, setText, i
       <KitTagField label="商店标签" disabled={disabled} tags={doc.tags} onChange={tags => update({ tags })} />
       <details className="shop-identity"><summary>模板 ID</summary><label className="kit-field"><span>模板 ID</span><input aria-label="模板 ID" value={doc.id} disabled={disabled} onChange={e => update({ id: e.target.value })} /></label></details>
     </div>
+    <ItemCatalogContext.Provider value={itemCatalog}>
+      <Panel title="图标" subtitle="分类书签显示的物品 · 留空使用绿宝石" className="shop-icon-slot"
+        action={!doc.icon ? add('设置图标', () => update({ icon: createKitItem() })) : undefined}>
+        <ItemList items={doc.icon ? [doc.icon] : []} singleItem disabled={disabled}
+          onChange={items => update({ icon: items[0] ? { ...items[0], count: 1, mods: undefined } : null })} />
+      </Panel>
+    </ItemCatalogContext.Provider>
     <div className="shop-toolbar">
       <span>商品条目 <span className="kit-badge">{doc.entries.length}</span></span>
       <div className="kit-segment" role="group" aria-label="商品视图">

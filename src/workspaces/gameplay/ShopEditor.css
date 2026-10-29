@@ -73,3 +73,5 @@
 .shop-blank p { font-size:12px; }
 @container (max-width:850px) { .shop-trades { grid-template-columns:210px minmax(0,1fr); gap:12px; } .shop-entry .kit-panel-sub { display:none; } .shop-expression-fields { grid-template-columns:1fr; } }
 @container (max-width:620px) { .shop-trades { grid-template-columns:1fr; } .shop-entry-list { max-height:180px; } .shop-meta-note { display:none; } }
+
+.shop-icon-slot .kit-row.kit-item { grid-template-columns:22px 24px minmax(0,1fr) 54px 28px; }
