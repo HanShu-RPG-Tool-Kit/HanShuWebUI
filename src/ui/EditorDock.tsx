@@ -39,7 +39,7 @@ export function resetEditorDock(storageKey: string) {
   window.dispatchEvent(new CustomEvent(EDITOR_DOCK_RESET_EVENT, { detail: { storageKey } }))
 }
 
-export type EditorDockPage = { id: string; title: string }
+export type EditorDockPage = { id: string; title: string; tooltip?: string }
 
 type DragSession = {
   pointerId: number
@@ -78,8 +78,8 @@ export function EditorDock({
 }) {
   const rootRef = useRef<HTMLDivElement>(null)
   const pageIds = pages.map((page) => page.id).join("\0")
-  const titles = useRef(new Map<string, string>())
-  titles.current = new Map(pages.map((page) => [page.id, page.title]))
+  const titles = useRef(new Map<string, { title: string; tooltip?: string }>())
+  titles.current = new Map(pages.map((page) => [page.id, { title: page.title, tooltip: page.tooltip }]))
   const [layout, setLayout] = useState<EditorDockState>(() =>
     readEditorDockState(readStorage(storageKey), pages.map((page) => page.id), activeId),
   )
@@ -253,7 +253,9 @@ export function EditorDock({
           />
           <PageTabScroller activeKey={group.active} itemCount={group.tabs.length} focused={focused} label="已打开的文件">
             {group.tabs.map((id) => {
-              const title = titles.current.get(id) ?? "未命名"
+              const page = titles.current.get(id)
+              const title = page?.title ?? "未命名"
+              const tooltip = page?.tooltip || title
               const active = id === group.active
               const only = group.tabs.length === 1
               return (
@@ -264,7 +266,7 @@ export function EditorDock({
                   className={`flow-page-tab${active ? " is-active" : ""}${draggingId === id ? " is-dragging" : ""}`}
                   role="tab"
                   aria-selected={active}
-                  title={title}
+                  title={tooltip}
                   onPointerDown={(event) => {
                     if (event.button !== 0) return
                     if (event.target instanceof Element && event.target.closest(".flow-page-tab-close")) return
@@ -277,7 +279,7 @@ export function EditorDock({
                     onClose(id)
                   }}
                 >
-                  <button type="button" className="flow-page-tab-name">
+                  <button type="button" className="flow-page-tab-name" title={tooltip}>
                     <span>{title}</span>
                   </button>
                   <button

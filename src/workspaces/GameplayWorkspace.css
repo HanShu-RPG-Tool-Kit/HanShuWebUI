@@ -55,6 +55,16 @@
 
 .gameplay-workspace > .panel-dock { flex: 1 1 auto; min-width: 0; min-height: 0; background: var(--border); }
 .panel-dock-band > .flow-library { flex: 1 1 auto; width: auto; max-width: none; max-height: none; height: auto; min-width: 0; min-height: 0; align-self: stretch; border: 0; }
+.gameplay-workspace .flow-main > .editor-dock {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  height: auto;
+}
+.gameplay-workspace .editor-dock-body > .flow-group-body {
+  flex: 1 1 auto;
+  min-height: 0;
+}
 .panel-dock-main > .flow-main { flex: 1 1 auto; width: 0; min-width: 0; height: 100%; }
 .flow-explorer-heading.is-draggable { cursor: grab; touch-action: none; user-select: none; }
 body.is-panel-dragging .flow-explorer-heading.is-draggable { cursor: grabbing; }

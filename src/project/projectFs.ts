@@ -445,8 +445,20 @@ export async function collectProjectChanges(binding: BoundProject, current: Work
 export async function removeSourceFromDisk(handle: ProjectDirectory, sourceName: string, srcKind?: string | null): Promise<void> {
   await handle.client.sourceCommand(sourceRelativePath(sourceName, srcKind), null)
 }
+
+/**
+ * 服务端是否见过这条路径。
+ * entry 是当前树里的文件；baseline 是本窗口曾经从服务端拿到过版本的路径。
+ * 两者都没有，说明这是本窗口刚创建、还没保存过的新文件。
+ */
+export function sourcePathKnownToServer(client: ProjectClient, path: string): boolean {
+  return Boolean(client.entry(path)) || client.baseline.has(path)
+}
+
 export async function renameSourceOnDisk(handle: ProjectDirectory, oldName: string, newName: string, content: string, _assetMoves: Array<{fromPath: string; toPath: string}> = [], oldSrcKind?: string | null, newSrcKind?: string | null): Promise<void> {
   const oldPath = sourceRelativePath(oldName, oldSrcKind)
+  // 服务端从未见过的新文件不要发 sourceCommand。下一轮保存会按最终路径 write。
+  if (!sourcePathKnownToServer(handle.client, oldPath)) return
   await handle.client.sourceCommand(oldPath, sourceRelativePath(newName, newSrcKind ?? oldSrcKind), content)
 }
 
