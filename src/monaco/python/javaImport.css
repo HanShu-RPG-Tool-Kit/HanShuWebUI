@@ -1,0 +1,13 @@
+.java-import-dialog { width: min(620px, calc(100vw - 48px)); max-height: calc(100vh - 64px); overflow: auto; padding: 16px; border: 1px solid var(--fl-border, #555); border-radius: 8px; color: var(--fl-fg, #ddd); background: var(--fl-bg, #252526); }
+.java-import-dialog::backdrop { background: #0007; }
+.java-import-dialog header, .java-import-dialog footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 12px; }
+.java-import-dialog input { box-sizing: border-box; width: 100%; padding: 8px; color: inherit; background: var(--fl-input-bg, #333); border: 1px solid var(--fl-border, #666); }
+.java-import-results { max-height: 280px; overflow: auto; margin: 12px 0; }
+.java-import-results button { display: grid; grid-template-columns: 1fr auto; width: 100%; padding: 8px; text-align: left; color: inherit; background: transparent; border: 1px solid transparent; }
+.java-import-results button[aria-selected=true] { background: var(--fl-hover, #3c4658); border-color: var(--fl-accent, #7193c8); }
+.java-import-results code { grid-column: 1 / -1; font-size: 12px; overflow-wrap: anywhere; opacity: .8; }
+.java-import-results small { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .65; }
+.java-import-dialog pre { padding: 10px; white-space: pre-wrap; overflow-wrap: anywhere; background: #0003; }
+.java-import-dialog footer { margin: 12px 0 0; font-size: 12px; }
+.java-import-dialog button { cursor: pointer; }
+.java-import-dialog button:disabled { cursor: default; opacity: .5; }

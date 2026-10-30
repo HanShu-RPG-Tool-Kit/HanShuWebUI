@@ -56,13 +56,19 @@ export const BASE_STUBS:Record<string,string>={'__builtins__.pyi':'from builtins
 /** Discover explicit Java imports; all semantic inference remains in Pyright. */
 export function importedJavaClasses(source: string): string[] {
   const names = new Set<string>()
-  for (const match of source.matchAll(/^\s*from\s+((?:net|com|org|java|javax|mchhui)\.[\w.]+)\s+import\s+([^\n#]+)/gm)) {
-    for (const item of match[2].replace(/[()]/g, '').split(',')) {
+  for (const match of source.matchAll(/^\s*from\s+([A-Za-z_][\w.]*)\s+import[ \t]*(\([\s\S]*?\)|[^\r\n#]+)/gm)) {
+    for (const item of match[2].replace(/#[^\r\n]*/g, '').replace(/[()]/g, '').split(',')) {
       const symbol = item.trim().split(/\s+as\s+/)[0]
       if (/^[A-Za-z_$][\w$]*$/.test(symbol)) names.add(`${match[1]}.${symbol}`)
     }
   }
-  for (const match of source.matchAll(/\b(?:java\.type|java_type)\(\s*['"]([\w.$]+)['"]\s*\)/g)) names.add(match[1])
+  const javaNames = new Set(['java'])
+  for (const match of source.matchAll(/^\s*import\s+([^\n#]+)/gm)) for (const item of match[1].split(',')) {
+    const alias = /^\s*java\s+as\s+([A-Za-z_][\w]*)\s*$/.exec(item)
+    if (alias) javaNames.add(alias[1])
+  }
+  const calls = new RegExp(`\\b(?:${[...javaNames].join('|')})\\.type\\(\\s*['"]([\\w.$]+)['"]\\s*\\)|\\bjava_type\\(\\s*['"]([\\w.$]+)['"]\\s*\\)`, 'g')
+  for (const match of source.matchAll(calls)) names.add(match[1] ?? match[2])
   return [...names]
 }
 

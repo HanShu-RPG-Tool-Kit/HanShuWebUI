@@ -103,6 +103,8 @@
     "test:collaboration:unified": "node scripts/verify-unified-presence.mjs",
     "test:tnbt-json": "node scripts/run-verification.mjs scripts/verify-tnbt-json.ts",
     "test:item-protocol": "node scripts/run-verification.mjs scripts/verify-item-protocol.ts",
+    "test:python-tools": "node scripts/run-verification.mjs scripts/verify-python-tools.ts",
+    "test:python-tools:ui": "node scripts/verify-python-tools-ui.mjs",
     "test:python-language": "node scripts/verify-python-language.mjs",
     "test:editing-assistance:ui": "node scripts/verify-editing-assistance-ui.mjs",
     "test:entity": "node scripts/run-verification.mjs scripts/verify-entity.ts",

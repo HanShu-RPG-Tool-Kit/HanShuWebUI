@@ -1,13 +1,16 @@
 import {getProjectSession,subscribeProjectSession} from '../../project/projectSession'
 import type {ScriptType} from '../../scriptResources/types'
-import { useEffect, useRef,useSyncExternalStore } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import Editor, { type EditorProps, type OnMount } from '@monaco-editor/react'
 import { notify } from '../../activity/activityStore'
 import { attachPython } from './pythonLanguage'
+import { registerJavaImportAction, type ImportRequest } from './javaImportAction'
+import { JavaImportDialog } from './JavaImportDialog'
 import { isControlConnected, subscribeControlHub } from '../../gameDevServer/controlHub'
 
 /** Shared Python editor; host globals and services belong to its project/type profile. */
 export function PythonEditor({ onMount, scriptType='common', ...props }: EditorProps & {scriptType?:ScriptType}) {
+  const [javaImport, setJavaImport] = useState<{ request: ImportRequest; monaco: typeof import('monaco-editor') } | null>(null)
   const project=useSyncExternalStore(subscribeProjectSession,getProjectSession).binding?.handle.client
   const rebind=useRef<()=>void>(()=>{})
   useEffect(()=>{rebind.current()},[scriptType,project])
@@ -26,6 +29,7 @@ export function PythonEditor({ onMount, scriptType='common', ...props }: EditorP
     }
     rebind.current=attach
     attach()
+    const importAction = registerJavaImportAction(editor, monaco, request => setJavaImport({ request, monaco }))
     const listener = editor.onDidChangeModel(attach)
     const stopControl = subscribeControlHub(() => {
       if (!isControlConnected()) {
@@ -33,8 +37,8 @@ export function PythonEditor({ onMount, scriptType='common', ...props }: EditorP
         editor.trigger('hanshu-python', 'closeParameterHints', {})
       }
     })
-    cleanup.current = () => { rebind.current=()=>{};stopControl(); listener.dispose(); binding?.dispose() }
+    cleanup.current = () => { rebind.current=()=>{};stopControl(); importAction.dispose(); listener.dispose(); binding?.dispose() }
     onMount?.(editor, monaco)
   }
-  return <Editor {...props} language="python" onMount={mount} />
+  return <><Editor {...props} language="python" onMount={mount} />{javaImport && <JavaImportDialog request={javaImport.request} monaco={javaImport.monaco} close={() => setJavaImport(null)} />}</>
 }

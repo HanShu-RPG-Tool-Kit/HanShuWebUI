@@ -538,3 +538,6 @@ export function disconnectGameDevControl(): void {
   setPhase('disabled')
   bump()
 }
+
+/** Identity for async editing operations; changes for each new WebSocket attempt. */
+export function controlConnectionGeneration(): number { return connectGeneration }

@@ -1,9 +1,10 @@
 import {pythonProfile} from './profiles'
+import {ActorEnvironmentLoader} from './actorEnvironment'
 import {getProjectSession,subscribeProjectSession} from '../../project/projectSession'
 import {effectiveBuiltinScripts,scriptType,type ScriptType} from '../../scriptResources'
 import type * as Monaco from 'monaco-editor'
 import type { CompletionItem, CompletionList, Diagnostic, Hover, Location, LocationLink, Range, SignatureHelp, TextEdit } from 'vscode-languageserver'
-import { controlRequest, isControlConnected, subscribeControlHub } from '../../gameDevServer/controlHub'
+import { controlRequest, isControlConnected, subscribeControlHub, subscribeControlNotify } from '../../gameDevServer/controlHub'
 import { PyrightClient } from './pyrightClient'
 import { JavaStubLoader } from './stubLoader'
 import { importedJavaClasses, type StubResponse } from './stubs'
@@ -65,9 +66,15 @@ export function attachPython(monaco: MonacoModule, model: Monaco.editor.ITextMod
   return { dispose() { disposed = true; stopControl();stopProject(); release() } }
 }
 
+/** Eagerly hydrate imports after an explicit editor import command. */
+export async function refreshPythonImports(model: Monaco.editor.ITextModel) {
+  await Promise.all([...services.values()].map(({ service }) => service.refreshImports(model)))
+}
+
 export class PythonLanguage {
   readonly client:PyrightClient
   readonly stubs:JavaStubLoader
+  private actorEnvironment?: ActorEnvironmentLoader
   private scriptType:ScriptType
   private projectFiles:Record<string,string>={}
   readonly ready: Promise<void>
@@ -86,6 +93,16 @@ export class PythonLanguage {
     const profile=pythonProfile(type)
     this.client=new PyrightClient(undefined,profile.files)
     this.stubs=new JavaStubLoader(async classes=>controlRequest('python.stubs',{classes}) as Promise<StubResponse>,files=>this.client.writeStubs(files),profile.files,profile.requiredClasses)
+    if (type === 'actor') {
+      this.actorEnvironment = new ActorEnvironmentLoader(
+        () => controlRequest('python.actorHooks', {}),
+        source => this.stubs.replaceBase({ ...profile.files, '__actor_context.pyi': source }),
+      )
+      const stop = subscribeControlNotify(note => {
+        if (note.method === 'python.actorHooks.changed') void this.actorEnvironment?.refresh().catch(error => this.warn(error))
+      })
+      this.disposables.push({ dispose: () => { stop(); this.actorEnvironment?.dispose() } })
+    }
     const project=getProjectSession().binding?.handle.client
     const syncProject=async()=>{
       if(this.disposed||getProjectSession().binding?.handle.client!==project)return
@@ -125,6 +142,11 @@ export class PythonLanguage {
           if (token.isCancellationRequested) return { suggestions: [] }
           const result = await this.client.request<CompletionList | CompletionItem[] | null>('textDocument/completion', this.at(doc, position))
           const items = Array.isArray(result) ? result : result?.items ?? []
+          for (const item of items) {
+            if (!/^["']/.test(item.label)) continue
+            const hook = this.actorEnvironment?.hooks.find(h => h.id === item.label.replace(/^["']|["']$/g, ''))
+            if (hook) item.detail = `演员 hook · ${hook.cancellable ? '可取消' : '不可取消'}`
+          }
           return { incomplete: !Array.isArray(result) && !!result?.isIncomplete, suggestions: items.filter(item => !/^(?:jvm_|__kit_context|__shop_context|__actor_context|__goal_context|__builtins__)/.test(item.label)).map(item => this.completion(item, model, position)) }
         } catch (error) { this.warn(error); return { suggestions: [] } }
       },
@@ -166,6 +188,7 @@ export class PythonLanguage {
     this.ready = this.client.ready.then(async () => {
       await this.stubs.reconnect()
       if(profile.requiredClasses.some(name=>!this.stubs.classes.has(name)))throw new Error('游戏未提供脚本必需的类型，Python 分析已暂停')
+      await this.actorEnvironment?.refresh().catch(error => this.warn(error))
       await syncProject()
     })
     void this.ready.catch(error => this.warn(error))
@@ -210,6 +233,11 @@ export class PythonLanguage {
     clearTimeout(doc.timer)
     doc.version++
     this.client.notify('textDocument/didChange', { textDocument: { uri: doc.uri, version: doc.version }, contentChanges: [{ text: doc.model.getValue() }] })
+  }
+
+  async refreshImports(model: Monaco.editor.ITextModel) {
+    const doc = this.documents.get(model.uri.toString())
+    if (doc) { await this.ready; await this.loadImports(doc) }
   }
 
   private async loadImports(doc: Document) {

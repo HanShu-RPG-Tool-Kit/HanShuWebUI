@@ -89,6 +89,10 @@ try {
     const { PyrightClient } = await import('/src/monaco/python/pyrightClient.ts')
     const { pythonProfile } = await import('/src/monaco/python/profiles.ts')
     const actor = new PyrightClient(undefined, pythonProfile('actor').files)
+    const { ActorEnvironmentLoader } = await import('/src/monaco/python/actorEnvironment.ts')
+    let snapshot = { schemaVersion: 1, runtimeId: 'fixture', revision: 1, hooks: ['init','aistep','tick','hurt','join','leave','remove','died','interact','attack','target','kill','dimension','heal','effect','collide','ridden','leash'].map(id => ({ id, cancellable: ['hurt','attack','died','interact','dimension','heal','effect','ridden'].includes(id) })) }
+    const environment = new ActorEnvironmentLoader(async () => snapshot, source => actor.writeStubs({ '__actor_context.pyi': source }))
+    await environment.refresh()
     await actor.ready
     let version = 0
     const uri = 'file:///typings/actor-check.py'
@@ -111,11 +115,18 @@ try {
     const expectedVersion = version, deadline = Date.now() + 10000
     while (!diagnostics.some(d => d.version === expectedVersion && d.diagnostics.some(e => e.message.includes('int'))) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 30))
     const errors = diagnostics.filter(d => d.version === expectedVersion).flatMap(d => d.diagnostics.map(e => e.message))
-    actor.dispose()
-    return { hooks, prefix, globals, annotated, optional, decorated, errors }
+    snapshot = { ...snapshot, revision: 2, hooks: [{ id: 'new_registered_hook', cancellable: true }] }
+    await environment.refresh()
+    const refreshed = await complete('@hook("')
+    snapshot = { ...snapshot, runtimeId: 'different-game', revision: 0, hooks: [{ id: 'other_game_hook', cancellable: false }] }
+    await environment.refresh()
+    const replaced = await complete('@hook("')
+    environment.dispose(); actor.dispose()
+    return { hooks, prefix, globals, annotated, optional, decorated, errors, refreshed, replaced }
   })
-  const { ACTOR_HOOKS } = await page.evaluate(async () => ({ ACTOR_HOOKS: (await import('/src/monaco/python/actorContext.ts')).ACTOR_HOOKS }))
-  for (const hook of ACTOR_HOOKS) assert(actors.hooks.includes(hook), `actor hook literal completion: ${hook}`)
+  assert.equal(actors.hooks.length, 18, 'all runtime hook literal names')
+  assert(actors.refreshed.includes('new_registered_hook') && !actors.refreshed.includes('tick'), 'new registry snapshot replaces hook literals in live Worker')
+  assert(actors.replaced.includes('other_game_hook') && !actors.replaced.includes('new_registered_hook'), 'switching runtime resets revision and removes stale names')
   assert(actors.prefix.includes('aistep'), 'partial actor hook name completion')
   assert(actors.globals.includes('Blackboard'), 'actor Blackboard injection')
   assert(actors.annotated.includes('upper') && actors.optional.includes('upper'), 'Python function/generic/union annotations drive inference and narrowing')
@@ -251,6 +262,50 @@ try {
     assert.equal(integration.terminated, 3)
     console.log('Connection lifecycle passed: no offline worker, shared online worker, immediate diagnostics cleanup, latest-draft reconnect, last-editor and in-flight startup disposal.')
     console.log(`Actual Java reflection fixture + Monaco integration passed: automatic chain/alias/tuple, document isolation, future imports, builtins, diagnostics. RPC batches: ${integration.calls.length}; chain first/warm: ${integration.coldChainMs}/${integration.warmChainMs} ms.`)
+    const liveActor = await page.evaluate(async fixture => {
+      const monaco = await import('/node_modules/monaco-editor/esm/vs/editor/editor.api.js')
+      const { PythonLanguage } = await import('/src/monaco/python/pythonLanguage.ts')
+      const hub = await import('/src/gameDevServer/controlHub.ts')
+      let snapshot = { schemaVersion: 1, runtimeId: 'live-actor', revision: 1, hooks: [{ id: 'tick', cancellable: false }] }, socket
+      window.WebSocket = class {
+        static OPEN = 1; static CONNECTING = 0; readyState = 0
+        constructor() { socket = this; setTimeout(() => { this.readyState = 1; this.onopen?.({}) }, 5) }
+        close() { this.readyState = 3; this.onclose?.({ code: 1000 }) }
+        send(text) {
+          const request = JSON.parse(text), wanted = new Set(request.params.classes ?? [])
+          const result = request.method === 'python.actorHooks' ? snapshot : { ...fixture, runtimeId: 'live-actor', classes: fixture.classes.filter(c => wanted.has(c.name)), missing: [] }
+          setTimeout(() => this.onmessage?.({ data: JSON.stringify({ type: 'response', id: request.id, ok: true, result }) }), 5)
+        }
+      }
+      hub.reconnectGameDevControlNow()
+      while (!hub.isControlConnected()) await new Promise(resolve => setTimeout(resolve, 10))
+      let provider
+      const adapter = { ...monaco, languages: { ...monaco.languages, registerCompletionItemProvider: (language, value) => { provider = value; return monaco.languages.registerCompletionItemProvider(language, value) } } }
+      const errors = [], service = new PythonLanguage(adapter, error => errors.push(String(error)), 'actor')
+      const model = monaco.editor.createModel('@hook("', 'python', monaco.Uri.parse('file:///live-actor.py'))
+      await service.ready
+      const detach = service.attach(model)
+      const complete = async () => {
+        const result = await provider.provideCompletionItems(model, new monaco.Position(1, 8), {}, { isCancellationRequested: false })
+        return result.suggestions.map(s => ({ label: String(s.label).replace(/^["']|["']$/g, ''), detail: s.detail }))
+      }
+      const first = await complete()
+      snapshot = { ...snapshot, revision: 2, hooks: [...snapshot.hooks, { id: 'runtime_added', cancellable: true }] }
+      socket.onmessage({ data: JSON.stringify({ type: 'notify', method: 'python.actorHooks.changed', params: { runtimeId: snapshot.runtimeId, revision: 2 } }) })
+      let updated = [], deadline = Date.now() + 10000
+      while (Date.now() < deadline) { updated = await complete(); if (updated.some(s => s.label === 'runtime_added')) break; await new Promise(resolve => setTimeout(resolve, 30)) }
+      snapshot = { ...snapshot, runtimeId: 'other-game', revision: 0, hooks: [{ id: 'other_game', cancellable: false }] }
+      socket.onmessage({ data: JSON.stringify({ type: 'notify', method: 'python.actorHooks.changed', params: { runtimeId: snapshot.runtimeId, revision: 0 } }) })
+      let replaced = []; deadline = Date.now() + 10000
+      while (Date.now() < deadline) { replaced = await complete(); if (replaced.some(s => s.label === 'other_game')) break; await new Promise(resolve => setTimeout(resolve, 30)) }
+      detach(); service.dispose(); model.dispose(); hub.disconnectGameDevControl()
+      return { first, updated, replaced, errors }
+    }, fixture)
+    assert(liveActor.first.some(s => s.label === 'tick') && !liveActor.first.some(s => s.label === 'runtime_added'))
+    assert(liveActor.updated.some(s => s.label === 'runtime_added' && s.detail.includes('可取消')))
+    assert(liveActor.replaced.some(s => s.label === 'other_game') && !liveActor.replaced.some(s => s.label === 'runtime_added'))
+    assert.deepEqual(liveActor.errors, [])
+    console.log('Live actor metadata passed: Control notification refreshes an attached Monaco editor, cancellable details, runtime replacement without stale hook names.')
   } else console.log(`Actual Java reflection integration skipped: run Mod JavaPythonStubsTest to produce ${fixturePath}.`)
 } finally { await browser.close(); await server?.close() }
 

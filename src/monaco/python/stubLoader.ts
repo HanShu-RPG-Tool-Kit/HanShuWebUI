@@ -33,6 +33,10 @@ export class JavaStubLoader {
     })
   }
 
+  replaceBase(base: Record<string, string>) {
+    return this.enqueue(async () => { this.base = { ...base }; await this.publish() })
+  }
+
   ensure(names: string[]) {
     return this.enqueue(() => this.load(names))
   }
