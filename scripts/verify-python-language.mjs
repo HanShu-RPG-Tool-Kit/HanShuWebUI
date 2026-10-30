@@ -204,6 +204,34 @@ try {
       const tuple = await complete('for person in players:\n    person.')
       const declaredPrefix = 'from net.minecraft.server.level import ServerPlayer\nfrom mchhui.rpgtoolkit.feature.actor.hook import ActorInteractEvent\ndef on_interact(event: ActorInteractEvent):\n    player: ServerPlayer = event.player()\n'
       const declaredPlayer = await complete(declaredPrefix + '    player.')
+      const completionAt = async (source, name, column) => {
+        model.setValue(source)
+        const position = new monaco.Position(model.getLineCount(), column ?? model.getLineMaxColumn(model.getLineCount()))
+        const list = await completionProvider.provideCompletionItems(model, position, {}, { isCancellationRequested: false })
+        const item = list.suggestions.find(item => (typeof item.label === 'string' ? item.label : item.label.label) === name)
+        if (!item) throw new Error(`Missing completion ${name}`)
+        return completionProvider.resolveCompletionItem(item)
+      }
+      const levelItem = await completionAt(declaredPrefix + '    player.le', 'level')
+      console.log('Resolved level completion', levelItem.label, levelItem.insertText)
+      if (levelItem.kind !== monaco.languages.CompletionItemKind.Method || !levelItem.label.detail?.includes('ServerLevel') || levelItem.insertText !== 'level()$0') throw new Error('level must display its method signature and insert a zero-argument call')
+      const argItem = await completionAt('player.getInventory().getI', 'getItem')
+      if (argItem.insertText !== 'getItem($0)' || argItem.command?.id !== 'editor.action.triggerParameterHints') throw new Error('required arguments need an inside cursor and parameter hints')
+      const existingCall = declaredPrefix + '    player.le()'
+      const existingItem = await completionAt(existingCall, 'level', existingCall.split('\n').at(-1).length - 1)
+      if (existingItem.insertText !== 'level') throw new Error('completion duplicated existing parentheses')
+      await import('/node_modules/monaco-editor/esm/vs/editor/contrib/snippet/browser/snippetController2.js')
+      const editorHost = document.createElement('div'); document.body.append(editorHost)
+      const editor = monaco.editor.create(editorHost, { model, automaticLayout: false })
+      for (const [source, item, expected, inside] of [
+        [declaredPrefix + '    player.le', levelItem, '    player.level()', false],
+        ['player.getInventory().getI', argItem, 'player.getInventory().getItem()', true],
+      ]) {
+        model.setValue(source); editor.setSelection(item.range)
+        editor.getContribution('snippetController2').insert(item.insertText)
+        if (model.getLineContent(model.getLineCount()) !== expected || editor.getPosition().column !== expected.length + (inside ? 0 : 1)) throw new Error('accepted method completion has incorrect text or cursor')
+      }
+      editor.dispose(); editorHost.remove()
       const multilineWorld = await complete(declaredPrefix + '    (\n        player.level()\n    ).')
       const declaredWorld = await complete(declaredPrefix + '    player.level().')
       const worldAlias = await complete(declaredPrefix + '    world = player.level()\n    world.')

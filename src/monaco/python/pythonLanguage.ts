@@ -85,6 +85,7 @@ export class PythonLanguage {
   private disposed = false
   private warned = false
   private resolvedItems = new WeakMap<Monaco.languages.CompletionItem, CompletionItem>()
+  private completionContexts = new WeakMap<Monaco.languages.CompletionItem, { model: Monaco.editor.ITextModel; position: Monaco.Position; version: number }>()
 
   private monaco: MonacoModule
   private reportError: (error: unknown) => void
@@ -156,7 +157,9 @@ export class PythonLanguage {
         if (!original) return item
         try {
           const result = await this.client.request<CompletionItem>('completionItem/resolve', original)
-          return { ...item, detail: result.detail ?? item.detail, documentation: this.documentation(result.documentation) }
+          const context = this.completionContexts.get(item)
+          if (!context || context.model.isDisposed() || context.model.getVersionId() !== context.version) return item
+          return this.completion({ ...original, ...result }, context.model, context.position)
         } catch { return item }
       },
     }))
@@ -293,7 +296,28 @@ export class PythonLanguage {
       insertTextRules: item.insertTextFormat === 2 ? this.monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet : undefined,
       additionalTextEdits: item.additionalTextEdits?.map((edit: TextEdit) => ({ range: this.range(edit.range), text: edit.newText })),
     }
+    const callable = item.kind === 2 || item.kind === 3
+    if (callable) {
+      const documentation = typeof item.documentation === 'string' ? item.documentation : item.documentation?.value ?? ''
+      // Pyright resolves the actual bound signature in its Python documentation.
+      // Keep overload details in the documentation rather than guessing Java arities.
+      const signature = documentation.match(/(?:def\s+)?[\w.]+(\([^\n]*\)\s*->\s*[^\n`]+)/)?.[1]
+      const noArguments = /^(?:\(\s*\))\s*->/.test(signature ?? '')
+      result.label = { label: item.label, detail: signature ?? '(…)', description: item.kind === 2 ? '方法' : '函数' }
+      result.filterText = item.filterText ?? item.label
+      const before = model.getLineContent(range.startLineNumber).slice(0, range.startColumn - 1)
+      const after = model.getLineContent(range.endLineNumber).slice(range.endColumn - 1)
+      // Imports and decorators refer to a callable; existing calls own their brackets.
+      if (result.insertText === item.label && !/^\s*(?:from\b|import\b|@|def\b|class\b)/.test(before) && !/^\s*\(/.test(after)) {
+        result.insertText = noArguments ? `${item.label}()$0` : `${item.label}($0)`
+        result.insertTextRules = this.monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet
+        if (!noArguments) result.command = { id: 'editor.action.triggerParameterHints', title: '参数提示' }
+      }
+    } else if (item.kind === 5 || item.kind === 10) {
+      result.label = { label: item.label, description: item.kind === 5 ? '字段' : '属性' }
+    }
     this.resolvedItems.set(result, item)
+    this.completionContexts.set(result, { model, position, version: model.getVersionId() })
     return result
   }
 
