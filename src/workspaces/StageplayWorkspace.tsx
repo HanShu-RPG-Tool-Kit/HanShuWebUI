@@ -45,9 +45,12 @@ import {
   toggleScriptViewItem,
 } from './scriptView'
 import {
+  allocateNewFileBase,
   findNewFileType,
+  NEW_FILE_TYPES,
   newFileName,
   validateNewFileBase,
+  type NewFileCreateResult,
   type NewFileSeedContext,
   type NewFileTypeId,
 } from '../newFileTypes'
@@ -95,6 +98,7 @@ import {
   removeAssetMeta,
   removeAssetFolder,
   saveWorkspace,
+  getExtension,
   sourcePathOf,
   toggleAssetsCollapsed,
   updateScriptContent,
@@ -124,7 +128,7 @@ import { createVoiceOps, type VoiceOps } from '../i18n/voiceOps'
 import { voiceRootDir } from '../i18n/localeLayout'
 import { buildResourcePackZip } from '../export/resourcePack'
 import { buildProjectPackZip } from '../export/projectPack'
-import { normalizeAssetPath, normalizeFolderPath } from '../assets/paths'
+import { assetFileName, normalizeAssetPath, normalizeFolderPath } from '../assets/paths'
 import {
   moveAssetToDir,
   moveScriptToPackage,
@@ -1864,11 +1868,17 @@ export const StageplayWorkspace = forwardRef<
   }
   const editorPageExists = (ws: Workspace, page: EditorPage) =>
     page.kind === 'script' ? Boolean(findScript(ws, page.id)) : Boolean(findAsset(ws, page.id))
-  const editorPageLabel = (page: EditorPage) =>
-    page.kind === 'script'
-      ? (findScript(workspace, page.id)?.script.name ?? '已关闭')
-      : (findAsset(workspace, page.id)?.asset.path ?? '已关闭')
 
+  const editorPageLabel = (page: EditorPage) => {
+    if (page.kind === 'script') {
+      const script = findScript(workspace, page.id)?.script
+      if (!script) return { title: '已关闭', tooltip: '已关闭' }
+      return { title: assetFileName(script.name), tooltip: sourcePathOf(script) }
+    }
+    const path = findAsset(workspace, page.id)?.asset.path
+    if (!path) return { title: '已关闭', tooltip: '已关闭' }
+    return { title: assetFileName(path), tooltip: path }
+  }
   /** 删掉当前文件后，优先回到已经打开的另一张书签，不要偷偷打开一份没打开过的文件。 */
   const retainOpenScript = (ws: Workspace, removedScriptIds: Set<string>): string | null => {
     if (ws.activeScriptId && !removedScriptIds.has(ws.activeScriptId) && findScript(ws, ws.activeScriptId)) {
@@ -1925,46 +1935,45 @@ export const StageplayWorkspace = forwardRef<
   }
 
   /**
-   * 新建一个文件。**返回 null 表示建成，返回字符串表示要显示在命名行里的原因。**
+   * 选类型后立即创建。省略 base 时分配不重名的默认名。
    *
-   * 取代了旧的 `handleNewScript`：那时候用户在 `window.prompt` 里连后缀一起手打，
-   * 提示语还得把 `MANUAL_FILE_EXTENSIONS_LABEL` 抄一遍。现在类型来自
-   * `newFileTypes` 注册表（后缀由类型决定，用户只给基名），初始正文也由注册表按类型播种 ——
-   * 空正文对 `.quest` / `.kit` 就是一份打开即报错的坏文档。
-   *
-   * 错误**返回**而不是 `window.alert`：调用方（资源树）把它画在输入框下面，
-   * 用户刚敲的名字还在，改一下就能重试。
+   * 失败只返回原因，不弹窗：资源树把它画在包上，文件还没建出来。
+   * 已经建成的文件改名走 handleCommitCreatedName，不再等回车确认。
    */
   const handleNewFile = (
     packageId: string,
     typeId: NewFileTypeId,
-    base: string,
-  ): string | null => {
+    base?: string,
+  ): NewFileCreateResult => {
     const type = findNewFileType(typeId)
-    // 界面传来的 id 与注册表不同步（改过 id 忘了改调用方）—— 说清楚，不要静默新建
-    if (!type) return `不认识的文件类型「${typeId}」`
+    if (!type) return { ok: false, error: `不认识的文件类型「${typeId}」` }
 
     const pkg = workspaceRef.current.packages.find((item) => item.id === packageId)
-    if (!pkg) return '目标工程不存在'
+    if (!pkg) return { ok: false, error: '目标工程不存在' }
 
-    // 先按注册表的规则说清楚（含"别把后缀也敲进来"），再交给既有管线复核
-    const baseError = validateNewFileBase(type, base)
-    if (baseError) return baseError
+    const occupied = (candidate: string) => {
+      const normalized = normalizeResourceName(newFileName(type, candidate))
+      if (!normalized) return false
+      return pkg.scripts.some(
+        (item) =>
+          resourceNameKey(sourcePathOf(item)) ===
+          resourceNameKey(sourcePathOf({ name: normalized, srcKind: type.srcKind })),
+      )
+    }
+    const resolved = base === undefined ? allocateNewFileBase(type, occupied) : base
+    const baseError = validateNewFileBase(type, resolved)
+    if (baseError) return { ok: false, error: baseError }
 
-    const name = newFileName(type, base)
+    const name = newFileName(type, resolved)
     const normalized = normalizeResourceName(name)
-    // 判据与旧路径同源：`.lang` / `.voice` 的名字由剧本名派生，不能手工建
     if (!normalized || !isManualFileName(normalized)) {
-      return `文件名无效。新建允许的后缀：${MANUAL_FILE_EXTENSIONS_LABEL}`
+      return { ok: false, error: `文件名无效。新建允许的后缀：${MANUAL_FILE_EXTENSIONS_LABEL}` }
     }
-    // 重名只看**目标包**：不同包是两份独立工程，同名文件本来就允许
-    if (pkg.scripts.some((item) => resourceNameKey(sourcePathOf(item)) === resourceNameKey(sourcePathOf({name:normalized,srcKind:type.srcKind})))) {
-      return `「${normalized}」已经存在`
-    }
+    if (occupied(resolved)) return { ok: false, error: `「${normalized}」已经存在` }
 
     const script = createScript(
       normalized,
-      type.seed(base, newFileSeedContext()),
+      type.seed(resolved, newFileSeedContext()),
       type.srcKind,
     )
     const nextPackages = flushEditorInto(workspaceRef.current).packages.map((item) =>
@@ -1979,12 +1988,12 @@ export const StageplayWorkspace = forwardRef<
     }
     commitWorkspace(next)
     /*
-     * 正文要**传种子的内容**，不能像旧代码那样传 `''`：那份种子已经写进了工作区，
-     * 而编辑器缓冲区是空的 —— 下一次自动保存会把空正文写回去，种子当场消失。
+     * 正文传种子内容，不能传空串。种子已经写进工作区，
+     * 编辑器缓冲区若是空的，下一次自动保存会把种子覆盖掉。
      */
     loadEditorContent(script.id, script.content, script.updatedAt)
     setRoles(createDefaultRoles())
-    return null
+    return { ok: true, scriptId: script.id, base: resolved.trim() }
   }
 
   /**
@@ -2122,24 +2131,69 @@ export const StageplayWorkspace = forwardRef<
     } finally { setProjectBusy(false) }
   }
 
+  /**
+   * 收下创建后的改名。没改名直接成功，不删文件。
+   * 已有旧路径才经 applyScriptRename 走改名管线；
+   * 服务端没见过的新文件由 renameSourceOnDisk 直接返回，不发 sourceCommand。
+   */
+  const handleCommitCreatedName = async (
+    scriptId: string,
+    base: string,
+  ): Promise<{ ok: true } | { ok: false; error: string }> => {
+    const hit = findScript(workspaceRef.current, scriptId)
+    if (!hit) return { ok: false, error: '文件不存在' }
+    const ext = getExtension(hit.script.name)
+    const type =
+      NEW_FILE_TYPES.find(
+        (item) =>
+          item.ext === ext &&
+          (item.srcKind ?? undefined) === (hit.script.srcKind ?? undefined),
+      ) ?? NEW_FILE_TYPES.find((item) => item.ext === ext)
+    if (!type) return { ok: false, error: '不认识的文件类型' }
+    const baseError = validateNewFileBase(type, base)
+    if (baseError) return { ok: false, error: baseError }
+    const normalized = normalizeResourceName(newFileName(type, base))
+    if (!normalized || !isManualFileName(normalized)) {
+      return { ok: false, error: `文件名无效。新建允许的后缀：${MANUAL_FILE_EXTENSIONS_LABEL}` }
+    }
+    if (normalized === hit.script.name) return { ok: true }
+    const duplicate = hit.pkg.scripts.some(
+      (item) =>
+        item.id !== scriptId &&
+        resourceNameKey(sourcePathOf(item)) ===
+          resourceNameKey(sourcePathOf({ name: normalized, srcKind: hit.script.srcKind })),
+    )
+    if (duplicate) return { ok: false, error: `「${normalized}」已经存在` }
+    const renamed = await applyScriptRename(scriptId, normalized)
+    return renamed.ok ? { ok: true } : { ok: false, error: renamed.error }
+  }
+
   const handleRenameScript = async (scriptId: string) => {
     const hit = findScript(workspaceRef.current, scriptId)
     if (!hit) return
+    const ext = getExtension(hit.script.name)
+    const type =
+      NEW_FILE_TYPES.find(
+        (item) =>
+          item.ext === ext &&
+          (item.srcKind ?? undefined) === (hit.script.srcKind ?? undefined),
+      ) ?? NEW_FILE_TYPES.find((item) => item.ext === ext)
+    if (!type) {
+      await alertDialog('不认识的文件类型，不能改名')
+      return
+    }
+    const currentBase = hit.script.name.toLowerCase().endsWith(type.ext)
+      ? hit.script.name.slice(0, -type.ext.length)
+      : hit.script.name
     const name = await promptDialog({
       title: '重命名',
-      message: `后缀须为 ${MANUAL_FILE_EXTENSIONS_LABEL}`,
-      defaultValue: hit.script.name,
-      validate: (value) => {
-        const normalized = normalizeResourceName(value)
-        if (!normalized || !isManualFileName(normalized)) {
-          return `文件名无效。改名允许的后缀：${MANUAL_FILE_EXTENSIONS_LABEL}`
-        }
-        return null
-      },
+      message: '只改文件名。类型和后缀由分类决定，不能在这里改。',
+      defaultValue: currentBase,
+      validate: (value) => validateNewFileBase(type, value),
     })
     if (name == null) return
-    const normalized = normalizeResourceName(name)
-    if (!normalized || normalized === hit.script.name) return
+    const normalized = normalizeResourceName(newFileName(type, name))
+    if (!normalized || !isManualFileName(normalized) || normalized === hit.script.name) return
     const result = await applyScriptRename(scriptId, normalized)
     if (!result.ok) await alertDialog(`改名未执行：${result.error}`)
   }
@@ -3300,6 +3354,7 @@ export const StageplayWorkspace = forwardRef<
             onToggleAssets={handleToggleAssets}
             onNewPackage={handleNewPackage}
             onNewFile={handleNewFile}
+            onCommitCreatedName={handleCommitCreatedName}
             newFileMenuRequest={newFileMenuRequest}
             onRenamePackage={handleRenamePackage}
             onRenameScript={handleRenameScript}
@@ -3472,7 +3527,7 @@ export const StageplayWorkspace = forwardRef<
       <PanelDock panels={dockPanels}>
           <EditorDock
             storageKey={STAGEPLAY_EDITOR_DOCK_KEY}
-            pages={openPages.map((page) => ({ id: editorPageKey(page), title: editorPageLabel(page) }))}
+            pages={openPages.map((page) => ({ id: editorPageKey(page), ...editorPageLabel(page) }))}
             activeId={visibleEditorPage(workspace) ? editorPageKey(visibleEditorPage(workspace)!) : null}
             onActivate={(id) => {
               const page = parseEditorPageKey(id)

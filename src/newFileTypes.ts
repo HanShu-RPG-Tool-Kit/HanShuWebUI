@@ -1,6 +1,10 @@
-import {resourceBaseError} from './resourceNames'
-export {MAX_BASE_LENGTH} from './resourceNames'
-import {scriptTemplate,SCRIPT_TYPE_NAMES,SCRIPT_TYPES} from './scriptResources'
+import { resourceBaseError } from "./resourceNames";
+export { MAX_BASE_LENGTH } from "./resourceNames";
+import {
+  scriptTemplate,
+  SCRIPT_TYPE_NAMES,
+  SCRIPT_TYPES,
+} from "./scriptResources";
 /**
  * 「资源管理器里能新建什么」的**唯一真相**。
  *
@@ -25,58 +29,68 @@ import {
   MANUAL_FILE_EXTENSIONS,
   type AllowedExtension,
   type PySrcKind,
-} from './workspace'
-import { defaultHsSeed } from './hanshu/defaultSeed'
-import type { ExplorerIconKind } from './explorerIcons'
-import { createFlow } from './workspaces/gameplay/model'
-import { createFlowDocument } from './workspaces/gameplay/storage'
-import { createKit, stringifyKit } from './workspaces/gameplay/kit'
-import { createShop, stringifyShop } from './workspaces/gameplay/shop'
+} from "./workspace";
+import { defaultHsSeed } from "./hanshu/defaultSeed";
+import type { ExplorerIconKind } from "./explorerIcons";
+import { createFlow } from "./workspaces/gameplay/model";
+import { createFlowDocument } from "./workspaces/gameplay/storage";
+import { createKit, stringifyKit } from "./workspaces/gameplay/kit";
+import { createShop, stringifyShop } from "./workspaces/gameplay/shop";
 import {
   createNavigationPoint,
   stringifyNavigationPoint,
-} from './workspaces/gameplay/navigationPoint'
-import { createLevelDocument, stringifyLevelDocument } from './workspaces/gameplay/levelDoc'
-import { createProgress, stringifyProgress } from './workspaces/gameplay/progressDoc'
-import { createItem, stringifyItem } from './workspaces/gameplay/itemDoc'
-import { createEntity, stringifyEntity } from './workspaces/gameplay/entityDoc'
-import type { GoalDefinition } from './workspaces/gameplay/goalDefinitions'
-import { blankServiceDefinition, stringifyServiceDefinition } from './tts/service'
-import { stringifyVoicePlan, type VoicePlan } from './tts/plan'
-import type { ProviderPreset } from './tts/providers'
+} from "./workspaces/gameplay/navigationPoint";
+import {
+  createLevelDocument,
+  stringifyLevelDocument,
+} from "./workspaces/gameplay/levelDoc";
+import {
+  createProgress,
+  stringifyProgress,
+} from "./workspaces/gameplay/progressDoc";
+import { createItem, stringifyItem } from "./workspaces/gameplay/itemDoc";
+import { createEntity, stringifyEntity } from "./workspaces/gameplay/entityDoc";
+import type { GoalDefinition } from "./workspaces/gameplay/goalDefinitions";
+import {
+  blankServiceDefinition,
+  stringifyServiceDefinition,
+} from "./tts/service";
+import { stringifyVoicePlan, type VoicePlan } from "./tts/plan";
+import type { ProviderPreset } from "./tts/providers";
 
 /** 下拉菜单里的分组。顺序即显示顺序（先"写剧本要用的"，再"要另开工作区编的"，最后"资料"） */
-export type NewFileGroupId = 'source' | 'gameplay' | 'meta'
+export type NewFileGroupId = "source" | "gameplay" | "meta";
 
-export const NEW_FILE_GROUPS: readonly { id: NewFileGroupId; label: string }[] = [
-  { id: 'source', label: '源文件' },
-  { id: 'gameplay', label: '游戏性' },
-  { id: 'meta', label: '创作资料' },
-]
+export const NEW_FILE_GROUPS: readonly { id: NewFileGroupId; label: string }[] =
+  [
+    { id: "source", label: "源文件" },
+    { id: "gameplay", label: "游戏性" },
+    { id: "meta", label: "创作资料" },
+  ];
 
 /** 稳定 id：文件菜单 / 测试 / 日志引用它；`label` 改了也不影响 */
 export type NewFileTypeId =
-  | 'hs'
-  | 'char'
-  | 'py'
-  | 'py-goal'
-  | 'py-kit'
-  | 'py-shop'
-  | 'py-item'
-  | 'py-entity'
-  | 'py-enchantment'
-  | 'py-player'
-  | 'progress'
-  | 'hflow'
-  | 'level'
-  | 'nav'
-  | 'item'
-  | 'entity'
-  | 'kit'
-  | 'shop'
-  | 'md'
-  | 'tts'
-  | 'ttsservice'
+  | "hs"
+  | "char"
+  | "py"
+  | "py-goal"
+  | "py-kit"
+  | "py-shop"
+  | "py-item"
+  | "py-entity"
+  | "py-enchantment"
+  | "py-player"
+  | "progress"
+  | "hflow"
+  | "level"
+  | "nav"
+  | "item"
+  | "entity"
+  | "kit"
+  | "shop"
+  | "md"
+  | "tts"
+  | "ttsservice";
 
 /**
  * 播种上下文。注册表**不自己去读工作区**，需要什么由调用方给（见文件头第 3 条）。
@@ -90,39 +104,39 @@ export type NewFileSeedContext = {
    * 它现在收了不用（新建进度一律空 `goals`，由用户在进度工作区加目标），
    * 但将来它开始按定义播种时，这条路径不用改。
    */
-  goalDefinitions: readonly GoalDefinition[]
+  goalDefinitions: readonly GoalDefinition[];
   /** 内置 + 用户自建的供应商预设；`.ttsservice` 拿第一条定 `provider` */
-  ttsPresets: readonly ProviderPreset[]
+  ttsPresets: readonly ProviderPreset[];
   /** 工程语言表的第一条；没有语言时 `.tts` 建不出可用的方案（见 `.tts` 的 seed 注释） */
-  firstLocale: string | null
+  firstLocale: string | null;
   /** 工程里第一个服务 id；`.tts` 的语言条目引用它 */
-  firstServiceId: string
+  firstServiceId: string;
   /** 第一个服务所属预设声明过的默认音色；没有就 null */
-  firstVoiceId: string | null
-}
+  firstVoiceId: string | null;
+};
 
 export type NewFileType = {
-  id: NewFileTypeId
-  ext: AllowedExtension
+  id: NewFileTypeId;
+  ext: AllowedExtension;
   /** 菜单里显示的名字（不含后缀，后缀单独显示） */
-  label: string
+  label: string;
   /** 菜单里那句说明：写"建它做什么 / 建完在哪继续"，不是复述 label */
-  hint: string
-  icon: ExplorerIconKind
-  group: NewFileGroupId
+  hint: string;
+  icon: ExplorerIconKind;
+  group: NewFileGroupId;
   /** 预填的基名（不含后缀） */
-  defaultBase: string
+  defaultBase: string;
   /** `.py` 的脚本类型，对应 src/script/<类型>/；其余类型留空 */
-  srcKind?: PySrcKind
+  srcKind?: PySrcKind;
   /**
    * **这个类型额外**的基名规则。
    * 通用规则（不能为空 / 不能含路径分隔符 / 结尾不能是点或空格 / 别把后缀也敲进来）
    * 由 `validateNewFileBase` 统一加在前面，各条不用重复。
    */
-  validateBase?(base: string): string | null
+  validateBase?(base: string): string | null;
   /** 初始正文；必须能被对应解析器吃回去（文件头第 2 条） */
-  seed(base: string, ctx: NewFileSeedContext): string
-}
+  seed(base: string, ctx: NewFileSeedContext): string;
+};
 
 /**
  * 用户把后缀也敲进来时（`序章.hs`）当场说清楚。
@@ -132,20 +146,70 @@ export type NewFileType = {
  * 这里不能改用 `getExtension`（`v1.2` 会被它看成后缀 `.2`，把合法基名误伤）。
  */
 function typedExtensionError(base: string): string | null {
-  const value = base.trim().toLowerCase()
+  const value = base.trim().toLowerCase();
   return MANUAL_FILE_EXTENSIONS.some((ext) => value.endsWith(ext))
-    ? '不用写后缀，后缀由类型决定'
-    : null
+    ? "不用写后缀，后缀由类型决定"
+    : null;
 }
 
 /** 菜单 / 创建管线共用的校验：静态规则。重名要目标包的文件名表，只能由创建管线判 */
-export function validateNewFileBase(type: NewFileType, base: string): string | null {
-  return resourceBaseError(base) ?? typedExtensionError(base) ?? type.validateBase?.(base) ?? null
+export function validateNewFileBase(
+  type: NewFileType,
+  base: string,
+): string | null {
+  return (
+    resourceBaseError(base) ??
+    typedExtensionError(base) ??
+    type.validateBase?.(base) ??
+    null
+  );
+}
+
+/** 选类型后立即创建的结果。失败原因给界面就地显示，不在这里弹窗。 */
+export type NewFileCreateResult =
+  | { ok: true; scriptId: string; base: string }
+  | { ok: false; error: string };
+
+/**
+ * 选类型后立即创建时用的默认基名。
+ * 已有同名优先加 ` (2)`。这种名字若过不了该类型的校验
+ * （配音服务 id 不能有空格和括号），就改用 `名字-2`。
+ * 两者都不行才退到 `file-<时间戳>`。
+ * 调用方传入的是目标包里已有基名是否占用。
+ */
+export function allocateNewFileBase(
+  type: NewFileType,
+  isTaken: (base: string) => boolean,
+): string {
+  const accept = (base: string) =>
+    !isTaken(base) && !validateNewFileBase(type, base);
+  if (accept(type.defaultBase)) return type.defaultBase;
+  for (let index = 2; index < 1000; index += 1) {
+    const spaced = `${type.defaultBase} (${index})`;
+    const dashed = `${type.defaultBase}-${index}`;
+    if (accept(spaced)) return spaced;
+    if (dashed !== spaced && accept(dashed)) return dashed;
+  }
+  for (let extra = 0; extra < 20; extra += 1) {
+    const fallback = `file-${Date.now() + extra}`;
+    if (accept(fallback)) return fallback;
+  }
+  return `file-${Date.now()}`;
+}
+
+export function createdRenameOnDismiss(
+  base: string,
+  committedBase: string,
+  invalid: boolean,
+): "keep" | "commit" {
+  if (invalid || !base.trim() || base.trim() === committedBase.trim())
+    return "keep";
+  return "commit";
 }
 
 /** 基名 + 该类型的后缀。后缀**只**从这里来，界面上没有让用户改它的地方 */
 export function newFileName(type: NewFileType, base: string): string {
-  return `${base.trim()}${type.ext}`
+  return `${base.trim()}${type.ext}`;
 }
 
 /**
@@ -158,19 +222,19 @@ export function newFileName(type: NewFileType, base: string): string {
 function serviceIdError(base: string): string | null {
   return /^[A-Za-z0-9_.-]+$/.test(base.trim())
     ? null
-    : '服务 id 会拼进凭据引用（app:<id>），只能用字母、数字、. - _'
+    : "服务 id 会拼进凭据引用（app:<id>），只能用字母、数字、. - _";
 }
 
 /** New Python files always use the same bundled templates as the progress explorer. */
 export const NEW_FILE_TYPES: readonly NewFileType[] = [
   {
-    id: 'hs',
-    ext: '.hs',
-    label: '汉书剧本',
-    hint: '对白、选项树、注入点；可本地化与配音',
-    icon: 'hanshu',
-    group: 'source',
-    defaultBase: '新剧本',
+    id: "hs",
+    ext: ".hs",
+    label: "汉书剧本",
+    hint: "对白、选项树、注入点；可本地化与配音",
+    icon: "hanshu",
+    group: "source",
+    defaultBase: "新剧本",
     /*
      * 与新工程默认 `.hs`、本地空工作区种子同形（`defaultHsSeed`）。
      * 场景行用带标签注释 `#【场景】`（编辑器认得）；对白 / 选项须符合当前 .hs 语法。
@@ -178,54 +242,71 @@ export const NEW_FILE_TYPES: readonly NewFileType[] = [
     seed: (base) => defaultHsSeed(base),
   },
   {
-    id: 'char',
-    ext: '.char',
-    label: '角色卡',
-    hint: 'key:msg// 文本槽；角色 id 就是文件名',
-    icon: 'character',
-    group: 'source',
-    defaultBase: '新角色',
+    id: "char",
+    ext: ".char",
+    label: "角色卡",
+    hint: "key:msg// 文本槽；角色 id 就是文件名",
+    icon: "character",
+    group: "source",
+    defaultBase: "新角色",
     /*
      * 角色 id = 文件名，正文里**不再写**一层名字字段（见帮助「.char 角色卡语法」§1）。
      * 只给一个 `name:` 槽当例子：键名词汇表标准不规定，多写几个反而是替作者定约定。
      */
     seed: (base) => {
-      const name = base.trim()
-      return `# 角色卡：${name}（角色 id 就是文件名，正文里不要再写名字字段）\nname:${name}//\n`
+      const name = base.trim();
+      return `# 角色卡：${name}（角色 id 就是文件名，正文里不要再写名字字段）\nname:${name}//\n`;
     },
   },
-  ...SCRIPT_TYPES.map(type=>({
-    id:(type==='common'?'py':`py-${type}`) as NewFileTypeId,ext:'.py' as const,label:SCRIPT_TYPE_NAMES[type],
-    hint:`src/script/${type} · 服务端脚本`,icon:(type==='goal'?'goal':type==='common'?'python':`script-${type}`) as ExplorerIconKind,
-    group:'source' as const,defaultBase:type==='goal'?'新目标':'新脚本',srcKind:type,
-    seed:(base:string)=>scriptTemplate(type,'default.py',base.trim()),
+  ...SCRIPT_TYPES.map((type) => ({
+    id: (type === "common" ? "py" : `py-${type}`) as NewFileTypeId,
+    ext: ".py" as const,
+    label: SCRIPT_TYPE_NAMES[type],
+    hint: `src/script/${type} · 服务端脚本`,
+    icon: (type === "goal"
+      ? "goal"
+      : type === "common"
+        ? "python"
+        : `script-${type}`) as ExplorerIconKind,
+    group: "source" as const,
+    defaultBase: type === "goal" ? "新目标" : "新脚本",
+    srcKind: type,
+    seed: (base: string) => scriptTemplate(type, "default.py", base.trim()),
   })),
   {
-    id: 'shop', ext: '.shop', label: '商店', hint: '库存主体类型、条件与交易条目（src/shop）', icon: 'shop', group: 'gameplay', defaultBase: '新商店', seed: () => stringifyShop(createShop()),
+    id: "shop",
+    ext: ".shop",
+    label: "商店",
+    hint: "库存主体类型、条件与交易条目（src/shop）",
+    icon: "shop",
+    group: "gameplay",
+    defaultBase: "新商店",
+    seed: () => stringifyShop(createShop()),
   },
   {
-    id: 'progress',
-    ext: '.quest',
-    label: '单进度任务',
-    hint: '目标、可见性与奖励（src/quest）；表单编辑',
-    icon: 'progress',
-    group: 'gameplay',
-    defaultBase: '新单进度任务',
+    id: "progress",
+    ext: ".quest",
+    label: "单进度任务",
+    hint: "目标、可见性与奖励（src/quest）；表单编辑",
+    icon: "progress",
+    group: "gameplay",
+    defaultBase: "新单进度任务",
     /*
      * `createProgress` 忽略标题（文档里的 `name` 是**语义键**，译文在 lang_quest），
      * 所以文件名不会进正文 —— 名称由用户在游戏性工作区填，`progressIssues` 会提示"请填写进度名称"。
      * 这是有意的：新建时猜一个显示名，只会让译文表里多一条没人认领的条目。
      */
-    seed: (base, ctx) => stringifyProgress(createProgress(base.trim(), ctx.goalDefinitions)),
+    seed: (base, ctx) =>
+      stringifyProgress(createProgress(base.trim(), ctx.goalDefinitions)),
   },
   {
-    id: 'hflow',
-    ext: '.quest',
-    label: '多进度任务',
-    hint: '树图节点与连线的草稿（src/quest）',
-    icon: 'hflow',
-    group: 'gameplay',
-    defaultBase: '新多进度任务',
+    id: "hflow",
+    ext: ".quest",
+    label: "多进度任务",
+    hint: "树图节点与连线的草稿（src/quest）",
+    icon: "hflow",
+    group: "gameplay",
+    defaultBase: "新多进度任务",
     /*
      * 只取 `createFlowDocument(...).source`（= flow 的 JSON）：文件名由用户在资源树里定，
      * 而 `createFlowDocument` 会按 flow 标题另拼一个 `.quest` 名，与这里的选择无关。
@@ -236,38 +317,42 @@ export const NEW_FILE_TYPES: readonly NewFileType[] = [
      * `package: 'quest'` 是分类的合理默认：剧本工作区没有"分类"这个概念，任务归任务
      * 工作区；`folderId` 留空即落在该分类根（`sourcesToProgressDocuments` 同样这么认）。
      */
-    seed: (base) => createFlowDocument(createFlow(undefined, base.trim()), 'quest').source,
+    seed: (base) =>
+      createFlowDocument(createFlow(undefined, base.trim()), "quest").source,
   },
   {
-    id: 'level',
-    ext: '.level',
-    label: '地图模板',
-    hint: '一个模板文件包含区域与静态导航器（src/level）',
-    icon: 'level',
-    group: 'gameplay',
-    defaultBase: '新地图',
-    validateBase: (base) => base.includes('$') ? '地图模板名不能包含 $（导出 ID 用它分隔模板与子项）' : null,
+    id: "level",
+    ext: ".level",
+    label: "地图模板",
+    hint: "一个模板文件包含区域与静态导航器（src/level）",
+    icon: "level",
+    group: "gameplay",
+    defaultBase: "新地图",
+    validateBase: (base) =>
+      base.includes("$")
+        ? "地图模板名不能包含 $（导出 ID 用它分隔模板与子项）"
+        : null,
     seed: () => stringifyLevelDocument(createLevelDocument()),
   },
   {
-    id: 'nav',
-    ext: '.nav',
-    label: '动态导航点',
-    hint: '独立导航点，编译时写入所属地图模板（src/navigator）',
-    icon: 'nav',
-    group: 'gameplay',
-    defaultBase: '新导航点',
+    id: "nav",
+    ext: ".nav",
+    label: "动态导航点",
+    hint: "独立导航点，编译时写入所属地图模板（src/navigator）",
+    icon: "nav",
+    group: "gameplay",
+    defaultBase: "新导航点",
     // `createNavigationPoint` 同样忽略展示名：`display_name` 是语义键，译文在 lang_nav
     seed: () => stringifyNavigationPoint(createNavigationPoint()),
   },
   {
-    id: 'item',
-    ext: '.item',
-    label: '物品',
-    hint: '物品 id、组件与标签（src/items）',
-    icon: 'item',
-    group: 'gameplay',
-    defaultBase: '新物品',
+    id: "item",
+    ext: ".item",
+    label: "物品",
+    hint: "物品 id、组件与标签（src/items）",
+    icon: "item",
+    group: "gameplay",
+    defaultBase: "新物品",
     /*
      * 与进度工作区的新建文档同式：`stringifyItem(createItem())`。
      *
@@ -278,43 +363,44 @@ export const NEW_FILE_TYPES: readonly NewFileType[] = [
     seed: () => stringifyItem(createItem()),
   },
   {
-    id: 'entity',
-    ext: '.entity',
-    label: '实体',
-    hint: '名称、属性与装备',
-    icon: 'entity',
-    group: 'gameplay',
-    defaultBase: '新实体',
+    id: "entity",
+    ext: ".entity",
+    label: "实体",
+    hint: "名称、属性与装备",
+    icon: "entity",
+    group: "gameplay",
+    defaultBase: "新实体",
     seed: () => stringifyEntity(createEntity()),
   },
   {
-    id: 'kit',
-    ext: '.kit',
-    label: '礼包',
-    hint: '超参数、修饰器与内容卡（src/gift）',
-    icon: 'kit',
-    group: 'gameplay',
-    defaultBase: '新礼包',
+    id: "kit",
+    ext: ".kit",
+    label: "礼包",
+    hint: "超参数、修饰器与内容卡（src/gift）",
+    icon: "kit",
+    group: "gameplay",
+    defaultBase: "新礼包",
     seed: (base) => stringifyKit(createKit(base.trim())),
   },
   {
-    id: 'md',
-    ext: '.md',
-    label: '文档',
-    hint: '设计稿、设定集（meta/docs）；不进 PAK，随工程包导出',
-    icon: 'markdown',
-    group: 'meta',
-    defaultBase: '新文档',
-    seed: (base) => `# ${base.trim()}\n\n> 这份文档在 \`meta/docs/\`，随工程包导出，但不进 PAK。\n`,
+    id: "md",
+    ext: ".md",
+    label: "文档",
+    hint: "设计稿、设定集（meta/docs）；不进 PAK，随工程包导出",
+    icon: "markdown",
+    group: "meta",
+    defaultBase: "新文档",
+    seed: (base) =>
+      `# ${base.trim()}\n\n> 这份文档在 \`meta/docs/\`，随工程包导出，但不进 PAK。\n`,
   },
   {
-    id: 'tts',
-    ext: '.tts',
-    label: '配音方案',
-    hint: '每个说话人一份（meta/voice）；文件名就是说话人名',
-    icon: 'tts',
-    group: 'meta',
-    defaultBase: '新说话人',
+    id: "tts",
+    ext: ".tts",
+    label: "配音方案",
+    hint: "每个说话人一份（meta/voice）；文件名就是说话人名",
+    icon: "tts",
+    group: "meta",
+    defaultBase: "新说话人",
     /*
      * 与录音棚的 `createTtsPlan` 同一份种子：**一条语言 + 第一个服务**，
      * 但**不写音色** —— 音色 id 是厂商账号下的值，新建时无从得知，
@@ -339,19 +425,19 @@ export const NEW_FILE_TYPES: readonly NewFileType[] = [
             }
           : {},
         extra: {},
-      }
-      return stringifyVoicePlan(plan)
+      };
+      return stringifyVoicePlan(plan);
     },
   },
   {
-    id: 'ttsservice',
-    ext: '.ttsservice',
-    label: '配音服务',
-    hint: '一家供应商的端点与凭据引用（meta/voice/service）',
-    icon: 'ttsservice',
-    group: 'meta',
+    id: "ttsservice",
+    ext: ".ttsservice",
+    label: "配音服务",
+    hint: "一家供应商的端点与凭据引用（meta/voice/service）",
+    icon: "ttsservice",
+    group: "meta",
     // 默认名与录音棚的 `createTtsService` 一致（`my-service`），且必须是 ASCII —— 见 serviceIdError
-    defaultBase: 'my-service',
+    defaultBase: "my-service",
     validateBase: serviceIdError,
     /*
      * `blankServiceDefinition` 建成**能通过结构校验**的样子（选第一家预设、按协议形态起好
@@ -363,22 +449,25 @@ export const NEW_FILE_TYPES: readonly NewFileType[] = [
       stringifyServiceDefinition(
         blankServiceDefinition(
           base.trim(),
-          ctx.ttsPresets[0]?.id ?? 'template',
+          ctx.ttsPresets[0]?.id ?? "template",
           ctx.ttsPresets,
         ),
       ),
   },
-]
+];
 
 /** 按 id 取类型；界面传来的 id 来自同一张表，取不到说明两边不同步（调用方要报错，不要静默新建） */
 export function findNewFileType(id: string): NewFileType | null {
-  return NEW_FILE_TYPES.find((type) => type.id === id) ?? null
+  return NEW_FILE_TYPES.find((type) => type.id === id) ?? null;
 }
 
 /** 菜单用的分组视图：空分组不出现（加类型时不用记得同步别处） */
-export function newFileTypesByGroup(): { group: (typeof NEW_FILE_GROUPS)[number]; items: NewFileType[] }[] {
+export function newFileTypesByGroup(): {
+  group: (typeof NEW_FILE_GROUPS)[number];
+  items: NewFileType[];
+}[] {
   return NEW_FILE_GROUPS.map((group) => ({
     group,
     items: NEW_FILE_TYPES.filter((type) => type.group === group.id),
-  })).filter((entry) => entry.items.length > 0)
+  })).filter((entry) => entry.items.length > 0);
 }

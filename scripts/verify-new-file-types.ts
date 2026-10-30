@@ -27,6 +27,8 @@ import {
   MAX_BASE_LENGTH,
   NEW_FILE_GROUPS,
   NEW_FILE_TYPES,
+  allocateNewFileBase,
+  createdRenameOnDismiss,
   findNewFileType,
   newFileName,
   newFileTypesByGroup,
@@ -552,5 +554,26 @@ assert.match(String(validateNewFileBase(service, '我的服务')), /只能用字
 assert.equal(validateNewFileBase(service, 'a_b.c-d'), null)
 // 保留设备名那一条对每种类型都生效（它判在通用规则里，不在各条目的 validateBase）
 assert.match(String(validateNewFileBase(service, 'CON')), /Windows 保留设备名/)
+
+
+// 选类型后立即创建：默认名被占用时加序号；改名失焦不删文件。
+{
+  const fresh = type('hs')
+  assert.equal(allocateNewFileBase(fresh, () => false), fresh.defaultBase)
+  assert.equal(
+    allocateNewFileBase(fresh, (base) => base === fresh.defaultBase),
+    `${fresh.defaultBase} (2)`,
+  )
+  const serviceType = type('ttsservice')
+  assert.equal(
+    allocateNewFileBase(serviceType, (base) => base === serviceType.defaultBase),
+    `${serviceType.defaultBase}-2`,
+    '配音服务 id 不能有空格和括号，应退到短横线序号',
+  )
+  assert.equal(createdRenameOnDismiss(fresh.defaultBase, fresh.defaultBase, false), 'keep')
+  assert.equal(createdRenameOnDismiss('   ', fresh.defaultBase, false), 'keep')
+  assert.equal(createdRenameOnDismiss('序章', fresh.defaultBase, true), 'keep')
+  assert.equal(createdRenameOnDismiss('序章', fresh.defaultBase, false), 'commit')
+}
 
 console.log('verify-new-file-types: ok')

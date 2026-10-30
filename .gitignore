@@ -34,3 +34,10 @@ src-tauri/gen/schemas
 # Default directory project managed by the local Rust service
 .hanshu-project/
 **/.hanshu/service/
+
+# Local scratch files. Do not track inspection dumps.
+.tmp*
+*.tmp
+*.tmp.*
+*.temp
+.temp*

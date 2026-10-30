@@ -13,6 +13,7 @@ export {
   saveProjectToDirectory,
   removeSourceFromDisk,
   renameSourceOnDisk,
+  sourcePathKnownToServer,
   type BoundProject,
   type LoadProjectResult,
 } from './projectFs'
