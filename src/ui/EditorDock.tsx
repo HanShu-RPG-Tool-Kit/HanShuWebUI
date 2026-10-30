@@ -1,11 +1,13 @@
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react"
 import { PageTabScroller } from "./PageTabScroller"
+import { NodeContextMenu, type NodeMenuItem } from "../nodeEditor/ContextMenu"
 import {
   applyEditorDrop,
   createEditorDockState,
@@ -15,6 +17,11 @@ import {
   redockEditorFloat,
   setEditorSplitRatio,
   syncEditorDock,
+  editorDockGroups,
+  editorDockCloseTargets,
+  closeEditorDockTabs,
+  toggleEditorDockPin,
+  mergeEditorDockGroups,
   type EditorDockState,
   type EditorDrop,
   type EditorFloat,
@@ -39,7 +46,7 @@ export function resetEditorDock(storageKey: string) {
   window.dispatchEvent(new CustomEvent(EDITOR_DOCK_RESET_EVENT, { detail: { storageKey } }))
 }
 
-export type EditorDockPage = { id: string; title: string; tooltip?: string }
+export type EditorDockPage = { id: string; title: string; tooltip?: string; icon?: ReactNode }
 
 type DragSession = {
   pointerId: number
@@ -67,6 +74,10 @@ export function EditorDock({
   onClose,
   renderPage,
   tabExtra,
+  enableTabMenu = false,
+  initialPinnedIds = [],
+  onPinnedChange,
+  onCloseMany,
 }: {
   storageKey: string
   pages: readonly EditorDockPage[]
@@ -75,13 +86,16 @@ export function EditorDock({
   onClose: (id: string) => void
   renderPage: (id: string) => ReactNode
   tabExtra?: ReactNode
+  enableTabMenu?: boolean
+  initialPinnedIds?: readonly string[]
+  onPinnedChange?: (ids: string[]) => void
+  onCloseMany?: (ids: string[], nextActiveId?: string) => void
 }) {
   const rootRef = useRef<HTMLDivElement>(null)
   const pageIds = pages.map((page) => page.id).join("\0")
-  const titles = useRef(new Map<string, { title: string; tooltip?: string }>())
-  titles.current = new Map(pages.map((page) => [page.id, { title: page.title, tooltip: page.tooltip }]))
+  const titles = useMemo(() => new Map(pages.map(page => [page.id, page])), [pages])
   const [layout, setLayout] = useState<EditorDockState>(() =>
-    readEditorDockState(readStorage(storageKey), pages.map((page) => page.id), activeId),
+    readEditorDockState(readStorage(storageKey), pages.map((page) => page.id), activeId, initialPinnedIds),
   )
   const layoutRef = useRef(layout)
   layoutRef.current = layout
@@ -91,6 +105,8 @@ export function EditorDock({
   const [ghost, setGhost] = useState<EditorRect | null>(null)
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const dragRef = useRef<DragSession | null>(null)
+  const [menu, setMenu] = useState<{ id: string; groupId: string; x: number; y: number; anchor: HTMLElement } | null>(null)
+  const menuAnchor = useMemo(() => ({ current: menu?.anchor ?? null }), [menu?.anchor])
   const onActivateRef = useRef(onActivate)
   onActivateRef.current = onActivate
 
@@ -219,6 +235,43 @@ export function EditorDock({
     return renderGroup(node, false)
   }
 
+  function closeTabs(groupId: string, id: string, mode: 'one' | 'others' | 'right' | 'group') {
+    const closing = editorDockCloseTargets(layoutRef.current, groupId, id, mode)
+    if (!closing.length) return
+    const next = closeEditorDockTabs(layoutRef.current, closing)
+    layoutRef.current = next; setLayout(next)
+    const activeClosed = activeRef.current && closing.includes(activeRef.current)
+    const groups = editorDockGroups(next)
+    const target = activeClosed ? groups.find(g => g.id === next.focusId) ?? groups[0] : undefined
+    if (onCloseMany) onCloseMany(closing, target?.active)
+    else { closing.forEach(onClose); if (target) onActivate(target.active) }
+  }
+
+  function movePage(groupId: string, id: string, drop: EditorDrop) {
+    const next = applyEditorDrop(layoutRef.current, { fromId: groupId, tabs: [id] }, drop)
+    layoutRef.current = next; setLayout(next); onActivate(id)
+  }
+
+  function tabMenuItems(): NodeMenuItem[] {
+    if (!menu) return []
+    const groups = editorDockGroups(layout), group = groups.find(g => g.id === menu.groupId)
+    if (!group?.tabs.includes(menu.id)) return []
+    const pinned = (layout.pinned ?? []).includes(menu.id)
+    const close = (label: string, mode: 'one' | 'others' | 'right' | 'group'): NodeMenuItem => ({ label, disabled: !editorDockCloseTargets(layout, group.id, menu.id, mode).length, action: () => closeTabs(group.id, menu.id, mode) })
+    const moving: NodeMenuItem[] = [
+      ...(['right', 'bottom'] as const).map(side => ({ label: side === 'right' ? '移动到右侧新分栏' : '移动到下方新分栏', disabled: group.floating || group.tabs.length < 2, hint: group.floating ? "先停靠此页，再建立新分栏" : "至少保留一页在原分栏中", action: () => movePage(group.id, menu.id, { kind: 'split', targetId: group.id, side }) })),
+      { label: '浮动此页', disabled: group.floating && group.tabs.length === 1, action: () => { const rect = rootRef.current?.getBoundingClientRect(); if (rect) movePage(group.id, menu.id, { kind: 'float', rect: clampFloat(rect, { x: 32, y: 40, w: FLOAT_W, h: FLOAT_H }) }) } },
+      ...(group.floating ? [{ label: '将此页停靠回编辑区', action: () => movePage(group.id, menu.id, { kind: 'window', side: 'right' }) }]: []),
+      ...groups.filter(g => g.id !== group.id).map((target, index) => ({ label: `移至${target.floating ? '浮动' : ''}分栏 ${index + 1} · ${titles.get(target.active)?.title ?? '文件'}`, action: () => movePage(group.id, menu.id, { kind: 'tabs', targetId: target.id, beforeId: null }) })),
+      { label: '合并所有分栏到编辑区', disabled: groups.length < 2, action: () => { const next = mergeEditorDockGroups(layoutRef.current, group.id); layoutRef.current = next; setLayout(next); onActivate(group.active) } },
+    ]
+    return [
+      { label: pinned ? '取消固定' : '固定此页', action: () => { const next = toggleEditorDockPin(layoutRef.current, menu.id); layoutRef.current = next; setLayout(next); onPinnedChange?.(next.pinned ?? []) } },
+      close('关闭此页', 'one'), close('关闭其他页（当前分栏）', 'others'), close('关闭右侧页（当前分栏）', 'right'), close('关闭未固定页（当前分栏）', 'group'),
+      { label: '移动与分栏', children: moving },
+    ]
+  }
+
   function renderGroup(group: EditorLeaf | EditorFloat, floating: boolean) {
     const focused = layout.focusId === group.id
     const rect = "rect" in group ? group.rect : null
@@ -228,7 +281,8 @@ export function EditorDock({
         className={`editor-dock-leaf${floating ? " is-float" : ""}${focused ? " is-focused" : ""}`}
         data-editor-group={group.id}
         style={rect ? { left: rect.x, top: rect.y, width: rect.w, height: rect.h } : undefined}
-        onPointerDown={() => {
+        onPointerDown={(event) => {
+          if (event.button !== 0) return
           if (layoutRef.current.focusId === group.id) return
           setLayout((current) => ({ ...current, focusId: group.id }))
         }}
@@ -253,20 +307,23 @@ export function EditorDock({
           />
           <PageTabScroller activeKey={group.active} itemCount={group.tabs.length} focused={focused} label="已打开的文件">
             {group.tabs.map((id) => {
-              const page = titles.current.get(id)
+              const page = titles.get(id)
               const title = page?.title ?? "未命名"
               const tooltip = page?.tooltip || title
               const active = id === group.active
               const only = group.tabs.length === 1
+              const pinned = enableTabMenu && (layout.pinned ?? []).includes(id)
               return (
                 <div
                   key={id}
                   data-dock-tab={id}
                   data-page-key={id}
-                  className={`flow-page-tab${active ? " is-active" : ""}${draggingId === id ? " is-dragging" : ""}`}
+                  className={`flow-page-tab${active ? " is-active" : ""}${pinned ? " is-pinned" : ""}${draggingId === id ? " is-dragging" : ""}`}
                   role="tab"
                   aria-selected={active}
+                  aria-label={title}
                   title={tooltip}
+                  onContextMenu={event => { if (!enableTabMenu) return; event.preventDefault(); event.stopPropagation(); setMenu({ id, groupId: group.id, x: event.clientX, y: event.clientY, anchor: event.currentTarget }) }}
                   onPointerDown={(event) => {
                     if (event.button !== 0) return
                     if (event.target instanceof Element && event.target.closest(".flow-page-tab-close")) return
@@ -276,19 +333,25 @@ export function EditorDock({
                   onAuxClick={(event) => {
                     if (event.button !== 1) return
                     event.preventDefault()
-                    onClose(id)
+                    if (enableTabMenu) closeTabs(group.id, id, 'one')
+                    else onClose(id)
                   }}
                 >
-                  <button type="button" className="flow-page-tab-name" title={tooltip}>
+                  <button type="button" className="flow-page-tab-name" title={tooltip}
+                    onClick={event => { if (event.detail === 0) onActivate(id) }}
+                    onKeyDown={event => { if (enableTabMenu && (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10'))) { event.preventDefault(); const rect = event.currentTarget.getBoundingClientRect(); setMenu({ id, groupId: group.id, x: rect.left, y: rect.bottom, anchor: event.currentTarget }) } }}>
+                    {page?.icon}
                     <span>{title}</span>
+                    {pinned && <span className="editor-dock-pin" aria-label="已固定">◆</span>}
                   </button>
                   <button
                     type="button"
                     className="flow-page-tab-close"
                     aria-label={`关闭 ${title}`}
-                    title="关闭"
+                    title={pinned ? "请先取消固定再关闭" : "关闭"}
+                    disabled={pinned}
                     onMouseDown={(event) => event.stopPropagation()}
-                    onClick={() => onClose(id)}
+                    onClick={() => enableTabMenu ? closeTabs(group.id, id, 'one') : onClose(id)}
                   >
                     ×
                   </button>
@@ -336,6 +399,7 @@ export function EditorDock({
       {layout.root ? renderNode(layout.root) : layout.floats.length === 0 ? <div className="editor-closed" role="status">未打开文件</div> : null}
       {layout.floats.map((group) => renderGroup(group, true))}
       {ghost && <div className="editor-dock-ghost" style={{ left: ghost.x, top: ghost.y, width: ghost.w, height: ghost.h }} />}
+      {menu && titles.has(menu.id) && tabMenuItems().length > 0 && <NodeContextMenu x={menu.x} y={menu.y} title={titles.get(menu.id)?.title ?? '页签'} label="页签操作" items={tabMenuItems()} anchor={menuAnchor} onClose={restore => { const anchor = menu.anchor; setMenu(null); if (restore !== false) requestAnimationFrame(() => { if (anchor.isConnected) (anchor.matches('button') ? anchor : anchor.querySelector<HTMLButtonElement>('.flow-page-tab-name'))?.focus({ preventScroll: true }) }) }} />}
       <div className={`panel-dock-zones${preview ? " is-open" : ""}`}>
         <div
           className={`panel-dock-zone${preview ? " is-hot" : ""}${preview?.line ? " is-line" : ""}`}

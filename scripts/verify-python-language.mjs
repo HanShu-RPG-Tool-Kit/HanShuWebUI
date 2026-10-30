@@ -202,6 +202,14 @@ try {
       const warmChainMs = Math.round(performance.now() - warmStart)
       const alias = await complete('bag = player.getInventory()\nitem = bag.getItem(0)\nitem.')
       const tuple = await complete('for person in players:\n    person.')
+      const declaredPrefix = 'from net.minecraft.server.level import ServerPlayer\nfrom mchhui.rpgtoolkit.feature.actor.hook import ActorInteractEvent\ndef on_interact(event: ActorInteractEvent):\n    player: ServerPlayer = event.player()\n'
+      const declaredPlayer = await complete(declaredPrefix + '    player.')
+      const multilineWorld = await complete(declaredPrefix + '    (\n        player.level()\n    ).')
+      const declaredWorld = await complete(declaredPrefix + '    player.level().')
+      const worldAlias = await complete(declaredPrefix + '    world = player.level()\n    world.')
+      const indexedWorld = await complete(declaredPrefix + '    worlds = [player.level()]\n    worlds[0].')
+      const worldChain = await complete(declaredPrefix + '    player.level().getBlockState(player.blockPosition()).')
+      const noCall = await complete(declaredPrefix + '    player.level.')
       const own = await complete('unique_marker = "hello"\nunique_')
       const isolated = await complete('unique_', other)
       const future = await complete('"""Module docstring."""\nfrom __future__ import annotations\nkit.')
@@ -246,9 +254,17 @@ try {
       if (created !== 3 || terminated !== 3) throw new Error('disconnect during startup leaked a worker')
       a.dispose(); b.dispose(); window.Worker = NativeWorker
 
-      return { root, chain, alias, tuple, own, isolated, future, builtins, coldChainMs, warmChainMs, markers, calls, errors, created, terminated }
+      return { root, chain, alias, tuple, declaredPlayer, declaredWorld, worldAlias, multilineWorld, indexedWorld, worldChain, noCall, own, isolated, future, builtins, coldChainMs, warmChainMs, markers, calls, errors, created, terminated }
     }, fixture)
     if(!integration.chain.includes('getCount'))console.log(JSON.stringify({root:integration.root.slice(0,8),chain:integration.chain.slice(0,12),errors:integration.errors,calls:integration.calls},null,2))
+    console.log('World-chain reproduction', {direct:integration.declaredWorld.includes('getGameTime'), alias:integration.worldAlias.includes('getGameTime'), multiline:integration.multilineWorld.includes('getGameTime'), indexed:integration.indexedWorld.includes('getGameTime'), chain:integration.worldChain.includes('isAir'), noCall:integration.noCall.includes('getGameTime')})
+    assert(integration.declaredPlayer.includes('getInventory'), 'annotated event.player() retains ServerPlayer type')
+    assert(integration.declaredWorld.includes('getGameTime'), 'annotated player.level() loads actual ServerLevel members')
+    assert(integration.worldAlias.includes('getGameTime'), 'world alias retains returned type')
+    assert(integration.multilineWorld.includes('getGameTime'), 'multiline receiver loads returned Java type')
+    assert(integration.indexedWorld.includes('getGameTime'), 'indexed receiver loads returned Java type')
+    assert(integration.worldChain.includes('isAir'), 'multi-step world/block-state chain')
+    assert(!integration.noCall.includes('getGameTime'), 'bound Java method is not its return value until called')
     assert(integration.root.includes('getInventory'), 'actual Minecraft player methods')
     assert(integration.chain.includes('getCount'), 'automatic dependency hydration through actual Minecraft signatures')
     assert(integration.alias.includes('getCount'), 'aliases retain inferred Minecraft types')

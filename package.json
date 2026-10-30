@@ -65,6 +65,8 @@
     "test:item-editor:ui": "node scripts/verify-item-editor-ui.mjs",
     "test:item-snapshot-cache": "tsx scripts/verify-item-snapshot-cache.ts",
     "test:item-snapshot-sources": "tsx scripts/verify-item-snapshot-sources.ts",
+    "test:editor-tabs": "node scripts/run-verification.mjs scripts/verify-editor-tabs.ts",
+    "test:editor-tabs:ui": "node scripts/verify-editor-tabs-ui.mjs",
     "test:editor-groups": "tsx scripts/verify-editor-groups.ts",
     "test:text-key-rules": "tsx scripts/verify-text-key-rules.ts",
     "test:text-live-geometry": "tsx scripts/verify-text-live-geometry.ts",

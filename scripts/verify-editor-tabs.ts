@@ -1,0 +1,28 @@
+import assert from 'node:assert/strict'
+import { applyEditorDrop, closeEditorDockTabs, createEditorDockState, editorDockCloseTargets, editorDockGroups, mergeEditorDockGroups, readEditorDockState, syncEditorDock, toggleEditorDockPin } from '../src/ui/editorDockModel'
+
+let layout = createEditorDockState(['a', 'b', 'c', 'd'], 'b')
+layout = toggleEditorDockPin(layout, 'c')
+assert.deepEqual(editorDockGroups(layout)[0].tabs, ['c', 'a', 'b', 'd'])
+assert.deepEqual(editorDockCloseTargets(layout, 'ed-1', 'c', 'one'), [])
+assert.deepEqual(editorDockCloseTargets(layout, 'ed-1', 'b', 'right'), ['d'])
+layout = applyEditorDrop(layout, { fromId: 'ed-1', tabs: ['b'] }, { kind: 'split', targetId: 'ed-1', side: 'right' })
+assert.equal(editorDockGroups(layout).length, 2)
+assert.deepEqual(editorDockCloseTargets(layout, 'ed-1', 'a', 'group'), ['a', 'd'], 'bulk close never leaks to other columns or pinned tabs')
+assert.deepEqual(editorDockCloseTargets(layout, 'missing', 'b', 'group'), [])
+assert.deepEqual(editorDockCloseTargets(layout, 'ed-1', 'b', 'group'), [])
+const closed = closeEditorDockTabs(layout, ['a', 'd'])
+assert.deepEqual(editorDockGroups(closed).map(g => g.tabs), [['c'], ['b']])
+assert.deepEqual(closed.pinned, ['c'])
+const merged = mergeEditorDockGroups(layout, 'ed-1')
+assert.equal(editorDockGroups(merged).length, 1)
+assert.deepEqual(editorDockGroups(merged)[0].tabs, ['c', 'a', 'd', 'b'])
+assert.deepEqual(merged.pinned, ['c'])
+assert.deepEqual(editorDockGroups(applyEditorDrop(closed, { fromId: 'ed-1', tabs: ['c'] }, { kind: 'split', targetId: 'ed-1', side: 'right' })), editorDockGroups(closed), 'one tab cannot make an empty duplicate split')
+const legacy = createEditorDockState(['a', 'b'], 'a'); delete legacy.pinned
+assert.deepEqual(readEditorDockState(JSON.stringify(legacy), ['a', 'b'], 'a', ['b']).pinned, ['b'])
+assert.deepEqual(readEditorDockState(JSON.stringify({ ...legacy, pinned: [] }), ['a', 'b'], 'a', ['b']).pinned, [], 'explicit unpin survives legacy migration')
+assert.deepEqual(syncEditorDock(layout, ['a', 'b', 'd'], 'b').pinned, [], 'deleted resource removes pin')
+const neighbor = closeEditorDockTabs(createEditorDockState(['a', 'b', 'c'], 'b'), ['b'])
+assert.equal(editorDockGroups(neighbor)[0].active, 'c')
+console.log('PASS editor tabs: dock-scoped closes, pinned protection/order/migration, unique move splits, merge and neighbor focus')

@@ -33,6 +33,44 @@ export type EditorDockState = {
   floats: EditorFloat[]
   focusId: string | null
   seq: number
+  pinned?: string[]
+}
+
+export function editorDockGroups(state: EditorDockState) {
+  return groups(state).map(group => ({ id: group.id, tabs: [...group.tabs], active: group.active, floating: state.floats.some(f => f.id === group.id) }))
+}
+
+export function editorDockCloseTargets(state: EditorDockState, groupId: string, tabId: string, mode: 'one' | 'others' | 'right' | 'group') {
+  const group = groupOf(state, groupId)
+  if (!group || !group.tabs.includes(tabId)) return []
+  const pinned = new Set(state.pinned ?? [])
+  return group.tabs.filter((id, index) => !pinned.has(id) && (mode === 'group' || (mode === 'one' ? id === tabId : mode === 'others' ? id !== tabId : index > group.tabs.indexOf(tabId))))
+}
+
+export function closeEditorDockTabs(state: EditorDockState, ids: string[]): EditorDockState {
+  const next = clone(state), closing = new Set(ids)
+  for (const group of groups(next)) {
+    const activeIndex = group.tabs.indexOf(group.active)
+    if (closing.has(group.active)) group.active = group.tabs.slice(activeIndex + 1).find(id => !closing.has(id)) ?? group.tabs.slice(0, activeIndex).reverse().find(id => !closing.has(id)) ?? ''
+    group.tabs = group.tabs.filter(id => !closing.has(id))
+  }
+  return normalize(next)
+}
+
+export function toggleEditorDockPin(state: EditorDockState, id: string): EditorDockState {
+  if (!allTabs(state).includes(id)) return state
+  const next = clone(state), pinned = next.pinned ?? []
+  next.pinned = pinned.includes(id) ? pinned.filter(key => key !== id) : [...pinned, id]
+  return normalize(next)
+}
+
+export function mergeEditorDockGroups(state: EditorDockState, targetId: string): EditorDockState {
+  const target = groupOf(state, targetId)
+  if (!target) return state
+  const next = clone(state), tabs = unique([...target.tabs, ...allTabs(state)])
+  next.root = { kind: 'leaf', id: targetId, tabs, active: target.active }
+  next.floats = []; next.focusId = targetId
+  return normalize(next)
 }
 
 export type EditorDrag = {
@@ -58,10 +96,11 @@ const MIN_CROSS = 16
 
 export function createEditorDockState(pageIds: string[], activeId: string | null): EditorDockState {
   const tabs = unique(pageIds)
-  if (!tabs.length) return { version: 1, root: null, floats: [], focusId: null, seq: 1 }
+  if (!tabs.length) return { version: 1, root: null, floats: [], focusId: null, seq: 1, pinned: [] }
   const active = activeId && tabs.includes(activeId) ? activeId : tabs[0]!
   return {
     version: 1,
+    pinned: [],
     root: { kind: "leaf", id: "ed-1", tabs, active },
     floats: [],
     focusId: "ed-1",
@@ -69,14 +108,16 @@ export function createEditorDockState(pageIds: string[], activeId: string | null
   }
 }
 
-export function readEditorDockState(raw: string | null, pageIds: string[], activeId: string | null): EditorDockState {
-  if (!raw) return createEditorDockState(pageIds, activeId)
+export function readEditorDockState(raw: string | null, pageIds: string[], activeId: string | null, initialPinnedIds: readonly string[] = []): EditorDockState {
+  const fallback = () => syncEditorDock({ ...createEditorDockState(pageIds, activeId), pinned: [...initialPinnedIds] }, pageIds, activeId)
+  if (!raw) return fallback()
   try {
     const parsed = JSON.parse(raw) as EditorDockState
-    if (!parsed || parsed.version !== 1) return createEditorDockState(pageIds, activeId)
+    if (!parsed || parsed.version !== 1) return fallback()
+    parsed.pinned ??= [...initialPinnedIds]
     return syncEditorDock(parsed, pageIds, activeId)
   } catch {
-    return createEditorDockState(pageIds, activeId)
+    return fallback()
   }
 }
 
@@ -302,8 +343,12 @@ function stripUnknown(state: EditorDockState, live: Set<string>) {
 function normalize(state: EditorDockState): EditorDockState {
   state.root = collapse(state.root)
   state.floats = state.floats.filter((float) => float.tabs.length)
+  const live = new Set(allTabs(state))
+  state.pinned = unique((state.pinned ?? []).filter(id => live.has(id)))
+  const pinned = new Set(state.pinned)
   for (const group of groups(state)) {
     group.tabs = unique(group.tabs)
+    group.tabs = [...group.tabs.filter(id => pinned.has(id)), ...group.tabs.filter(id => !pinned.has(id))]
     if (!group.tabs.includes(group.active)) group.active = group.tabs[0] ?? ""
   }
   if (state.focusId && !groupOf(state, state.focusId)) state.focusId = firstGroupId(state)

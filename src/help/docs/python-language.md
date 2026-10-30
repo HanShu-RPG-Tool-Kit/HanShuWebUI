@@ -34,8 +34,17 @@ Blackboard 是运行时动态 Python 对象，任意属性的静态类型默认�
 
 任意 Python 脚本编辑器右键「导入 Java 类…」，或聚焦编辑器后按 **Ctrl+Alt+J**，打开游戏类搜索。选中文字或光标下的名称会预填为搜索词；支持短类名、包名前缀和完整 binary name。列表展示完整类名及来源；↑↓ 选择、Enter 导入、Esc 取消。需要连接支持 `python.classes.search` 的游戏开发服务器。
 
-普通类插入 `from 包名 import 类名`；已有导入（含多行和别名）复用。重名时自动避让，可在预览中填写别名；原选中的正文引用随之替换。嵌套类或包名包含 Python 关键字时使用 `java.type("包.Outer$Inner")`，复用已有 java 模块别名。导入放到模块文档字符串和 `__future__` 之后；插入与引用替换共用一次撤销，只修改当前草稿，仍经工程保存事务落盘。
+普通类插入 `from 包名 import 类名`；已有导入（含多行和别名）复用。重名时自动避让，可在预览中填写别名；只替换与所选类匹配的正文类名、类名前缀或完整类名；从无关变量/方法名触发时不改写该名称，也不改写注释和字符串。嵌套类或包名包含 Python 关键字时使用 `java.type("包.Outer$Inner")`，复用已有 java 模块别名。导入固定放在模块文档字符串和 `__future__` 后的导入区，位于正文分节注释之前；不把尾随空行/注释算成导入位置。保留 BOM、shebang 和编码声明；连续 `java.type` 绑定按导入顺序追加。插入后光标保留在原正文引用，插入与引用替换共用一次撤销，只修改当前草稿，仍经工程保存事务落盘。
 
 选择后再次向游戏核实类型与 runtimeId，并立即加载反射存根。支持其他 Mod 的自定义包名前缀；未能反射的普通 Python 导入不生成假 Java 模块。只读不允许导入；搜索期间编辑、切换文档/工程/游戏连接或权限变化后，旧窗口不能继续写入。
 
 `test:python-tools` 验证导入规划、动态注册表版本与旧 Mod 降级；`test:python-tools:ui` 用真实 Monaco 验证右键、快捷键、别名预览、一次撤销、只读与断线边界。
+
+
+## Java 方法返回值与链式补全
+
+Java 方法必须先调用才能访问其返回对象。当前 MC 的 ServerPlayer 提供 `level() -> ServerLevel`，所以应写 `player.level().`，或先写 `world = player.level()` 再输入 `world.`；`player.level.` 是绑定方法对象，不会列出 ServerLevel 的成员。显式类型注解仍参与 Pyright 推断，不会自动替作者调用方法。
+
+WebUI 按完整逻辑语句查询 Pyright 的 type-definition / hover，再按需请求真实 Java 存根，支持括号跨行、返回值别名、容器索引和继续调用返回对象的方法；不再只检查光标当前物理行。语义推断仍由 Pyright 完成，词法扫描只用于找到查询位置。
+
+`test:python-language` 使用 Mod 反射的 ServerPlayer、ActorInteractEvent、ServerLevel、BlockPos 和 BlockState 验证显式注解、首次跨行补全、世界别名/索引及方块状态调用链，并验证未调用 level 时不会错误地补出世界成员。

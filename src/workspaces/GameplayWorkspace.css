@@ -461,3 +461,11 @@ body.is-panel-dragging .flow-explorer-heading.is-draggable { cursor: grabbing; }
 @media (max-width: 760px) {
   .flow-statusbar-type { display: none; }
 }
+
+/* File type icons and local pin state on docked and floating gameplay tabs. */
+.gameplay-workspace .flow-page-tab .explorer-icon { width: 15px; height: 15px; flex-shrink: 0; opacity: .85; }
+.gameplay-workspace .flow-page-tab .editor-dock-pin { flex-shrink: 0; font-size: 9px; color: var(--accent); }
+.gameplay-workspace .flow-page-tab.is-pinned .flow-page-tab-close { opacity: .18; cursor: default; }
+
+.gameplay-workspace .flow-page-tab .editor-dock-file-icon { position: relative; display: inline-flex; width: 15px; height: 15px; overflow: visible; flex-shrink: 0; }
+.gameplay-workspace .flow-page-tab .editor-dock-file-icon small { position: absolute; right: -3px; bottom: -5px; font-size: 10px; line-height: 1; background: var(--fl-head); }

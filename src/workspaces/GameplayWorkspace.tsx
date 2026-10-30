@@ -1,3 +1,4 @@
+import { ExplorerIcon, sourceIconKind } from "../explorerIcons";
 import { ServiceError } from "../collab/protocol";
 import {
   EXPLORER_ORGANIZATION_PATH,
@@ -1272,11 +1273,20 @@ export function GameplayWorkspace({
     setProgressSourceKey(key);
     setNotice("");
   }
-  function closeGameplayPage(key: string) {
+  function closeGameplayPages(keys: string[], nextActiveId?: string) {
+    const closing = new Set(keys);
     updateGroups((previous) => {
-      const primary = closeInGroup(previous, 0, [key]);
-      return primary.split ? closeInGroup(primary, 1, [key]) : primary;
+      // Dock owns pin/close semantics; legacy groups only project the open resource set.
+      const cleared = { ...previous, pinnedKeys: (previous.pinnedKeys ?? []).filter(key => !closing.has(key)),
+        split: previous.split ? { ...previous.split, group: { ...previous.split.group, pinnedKeys: previous.split.group.pinnedKeys.filter(key => !closing.has(key)) } } : null };
+      const primary = closeInGroup(cleared, 0, keys);
+      const next = primary.split ? closeInGroup(primary, 1, keys) : primary;
+      return nextActiveId ? openInGroup(next, focusedGroupId(next), nextActiveId) : next;
     });
+  }
+  function syncPagePins(ids: string[]) {
+    updateGroups(previous => ({ ...previous, pinnedKeys: ids.filter(id => (previous.openKeys ?? []).includes(id)),
+      split: previous.split ? { ...previous.split, group: { ...previous.split.group, pinnedKeys: ids.filter(id => previous.split!.group.openKeys.includes(id)) } } : null }));
   }
   function defaultCreateName(
     packageId: FlowPackageId,
@@ -2756,7 +2766,11 @@ export function GameplayWorkspace({
     .filter((key, index, all) => all.indexOf(key) === index)
     .flatMap((key) => {
       const item = docByKey.get(key);
-      return item ? [{ id: item.key, title: item.name, tooltip: item.name }] : [];
+      if (!item) return [];
+      const type = scriptTypeInFolder(state, item.folderId ?? null);
+      const kind = isEntityLibraryTableKey(key) ? 'entity' : isItemLibraryTableKey(key) ? 'item' : isSimpleQuestDocument(item) ? 'progress' : isMultiQuestDocument(item) ? 'hflow' : sourceIconKind({ name: item.name, srcKind: type });
+      const tooltip = isLibraryTableKey(key) ? `${item.name} · 表视图` : `${isBuiltinScriptDocumentKey(key) ? '内置 · ' : ''}${sourcePathOf({ name: item.name, srcKind: type })}`;
+      return [{ id: item.key, title: item.name, tooltip, icon: <span className="editor-dock-file-icon"><ExplorerIcon kind={kind} />{isLibraryTableKey(key) && <small aria-hidden="true">▦</small>}</span> }];
     });
 
   return (
@@ -2789,7 +2803,11 @@ export function GameplayWorkspace({
               pages={editorPages}
               activeId={focusedKey}
               onActivate={(id) => selectDocument(id)}
-              onClose={(id) => closeGameplayPage(id)}
+              onClose={(id) => closeGameplayPages([id])}
+              onCloseMany={closeGameplayPages}
+              enableTabMenu
+              initialPinnedIds={[...(state.pinnedKeys ?? []), ...(state.split?.group.pinnedKeys ?? [])]}
+              onPinnedChange={syncPagePins}
               renderPage={(id) => {
                 const paneDoc = docByKey.get(id) ?? null;
                 if (!paneDoc) return null;

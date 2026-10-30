@@ -1,4 +1,5 @@
 import {pythonProfile} from './profiles'
+import { pythonStatements } from './pythonStatements'
 import {ActorEnvironmentLoader} from './actorEnvironment'
 import {getProjectSession,subscribeProjectSession} from '../../project/projectSession'
 import {effectiveBuiltinScripts,scriptType,type ScriptType} from '../../scriptResources'
@@ -251,8 +252,12 @@ export class PythonLanguage {
       await this.loadImports(doc)
       // Query Pyright's inferred receiver types, including aliases and function return types.
       // Placeholder classes preserve identity before their public API is loaded.
-      const line = doc.model.getLineContent(position.lineNumber).slice(0, position.column - 1)
-      const positions = [...line.matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)].slice(-16).map(match => ({ line: position.lineNumber - 1, character: match.index! }))
+      const prefix = doc.model.getValueInRange({ startLineNumber: 1, startColumn: 1, endLineNumber: position.lineNumber, endColumn: position.column })
+      const statement = pythonStatements(prefix).at(-1)
+      const positions = statement ? [...statement.text.matchAll(/[A-Za-z_][A-Za-z0-9_]*/g)].slice(-32).map(match => {
+        const at = doc.model.getPositionAt(statement.start + match.index!)
+        return { line: at.lineNumber - 1, character: at.column - 1 }
+      }) : []
       for (let round = 0; round < 6; round++) {
         const names = new Set<string>()
         await Promise.all(positions.map(async point => {
