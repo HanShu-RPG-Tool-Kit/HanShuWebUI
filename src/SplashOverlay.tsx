@@ -18,6 +18,7 @@ const CREDITS = [
   'Muzermat',
   'Vallovely',
   'Sweda',
+  'D',
 ] as const
 
 /** Brand pixel palette, light → dark (same steps as the icon). */
