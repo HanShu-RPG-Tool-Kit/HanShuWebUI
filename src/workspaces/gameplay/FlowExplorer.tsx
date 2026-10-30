@@ -64,7 +64,6 @@ import {
 } from "../../immediateCreateWheel";
 import {
   isQuestViewKey,
-  QUEST_EXT,
   QUEST_VIEW_MULTI,
   QUEST_VIEW_NAMES,
   QUEST_VIEW_SIMPLE,
@@ -96,6 +95,7 @@ type Edit = {
   mode:
     | "flow"
     | "script"
+    | "actor"
     | "shop"
     | "kit"
     | "progress"
@@ -211,7 +211,7 @@ const sectionIconKind = (key: string): Parameters<typeof Icon>[0]["kind"] => {
         kit: "kit",
         shop: "shop",
         item: "item",
-        entity: "entities",
+        actor: "actor",
         enchantment: "enchantment",
         player: "actor",
       } as const
@@ -327,6 +327,7 @@ export function FlowExplorer({
   onChange,
   onSelect,
   onNew,
+  onCommitCreatedName,
   onImport,
   onImportFiles,
   onExport,
@@ -404,6 +405,7 @@ export function FlowExplorer({
     mode:
       | "flow"
       | "script"
+      | "actor"
       | "shop"
       | "kit"
       | "progress"
@@ -461,14 +463,7 @@ export function FlowExplorer({
   const allowsKits = packageAllowsKits(currentPkg);
   const allowsLevel = packageAllowsLevel(currentPkg);
   const allowsItems = packageAllowsItems(currentPkg);
-  const allowsDocuments =
-    allowsShops ||
-    allowsQuest ||
-    allowsScripts ||
-    allowsKits ||
-    allowsLevel ||
-    allowsItems ||
-    packageAllowsEntities(currentPkg);
+  const allowsDocuments = packageAllowsDocuments(currentPkg);
   const questCreateMode = allowsQuest
     ? createModeForQuestFocus(rawFolder)
     : null;
@@ -486,6 +481,7 @@ export function FlowExplorer({
   const newDocumentMode:
     | "flow"
     | "script"
+    | "actor"
     | "shop"
     | "kit"
     | "progress"
@@ -493,7 +489,7 @@ export function FlowExplorer({
     | "level"
     | "entity"
     | "item"
-    | null = allowsQuest
+    | null = currentPkg === "actor" ? "actor" : allowsQuest
     ? questCreateMode
     : allowsScripts
       ? "script"
@@ -508,7 +504,7 @@ export function FlowExplorer({
               : allowsItems
                 ? "item"
                 : null;
-  const newLabel = allowsQuest
+  const newLabel = currentPkg === "actor" ? "新建演员模板" : allowsQuest
     ? questCreateMode === "progress"
       ? "新建单进度任务"
       : questCreateMode === "flow"
@@ -529,7 +525,7 @@ export function FlowExplorer({
               : allowsScripts
                 ? "新建脚本"
                 : "新建流程";
-  const importLabel = allowsQuest
+  const importLabel = currentPkg === "actor" ? "导入演员模板" : allowsQuest
     ? "导入任务"
     : packageAllowsEntities(currentPkg)
       ? "导入实体"
@@ -1107,11 +1103,11 @@ export function FlowExplorer({
       const before =
         entry.kind === "folder"
           ? latest.folders.find((folder) => folder.key === entry.key)?.name
-          : latest.documents.find((doc) => doc.key === entry.key)?.name;
+          : entry.kind === "document" ? latest.documents.find((doc) => doc.key === entry.key)?.name : undefined;
       const after =
         entry.kind === "folder"
           ? next.folders.find((folder) => folder.key === entry.key)?.name
-          : next.documents.find((doc) => doc.key === entry.key)?.name;
+          : entry.kind === "document" ? next.documents.find((doc) => doc.key === entry.key)?.name : undefined;
       if (before === after) return;
       onChange(next);
     } catch (error) {
@@ -1140,8 +1136,8 @@ export function FlowExplorer({
       onNotice("脚本只能建在「脚本」分类中。");
       return;
     }
-    if (mode === "shop" && pkg !== "shop") {
-      onNotice("商店只能建在商店分类中。");
+    if ((mode === "actor" && pkg !== "actor") || (mode === "shop" && pkg !== "shop")) {
+      onNotice(mode === "actor" ? "演员模板只能建在演员分类中。" : "商店只能建在商店分类中。");
       return;
     }
     if (mode === "kit" && !packageAllowsKits(pkg)) {
@@ -1191,6 +1187,7 @@ export function FlowExplorer({
     const documentMode =
       mode === "flow" ||
       mode === "script" ||
+      mode === "actor" ||
       mode === "shop" ||
       mode === "kit" ||
       mode === "progress" ||
@@ -1909,13 +1906,13 @@ export function FlowExplorer({
             action: () => onImport(folder, pkg),
           });
         }
-        if (pkg === "shop") {
+        if (pkg === "shop" || pkg === "actor") {
           items.unshift({
-            label: "新建商店",
-            action: () => startEdit("shop", entry),
+            label: pkg === "actor" ? "新建演员模板" : "新建商店",
+            action: () => startEdit(pkg === "actor" ? "actor" : "shop", entry),
           });
           items.push({
-            label: "导入商店…",
+            label: pkg === "actor" ? "导入演员模板…" : "导入商店…",
             action: () => onImport(folder, pkg),
           });
         }
@@ -2204,7 +2201,7 @@ export function FlowExplorer({
                       ? questViewIcon
                       : itemTableDoc
                         ? "item-table"
-                        : entityDoc
+                        : document?.package === "actor" ? "actor" : entityDoc
                           ? "entities"
                           : itemDoc
                             ? "item"
@@ -2337,7 +2334,7 @@ export function FlowExplorer({
                       aria-label={
                         created.mode === "script"
                           ? "新脚本名称"
-                          : created.mode === "shop"
+                          : created.mode === "actor" ? "新演员模板名称" : created.mode === "shop"
                             ? "新商店名称"
                             : created.mode === "kit"
                               ? "新礼包名称"

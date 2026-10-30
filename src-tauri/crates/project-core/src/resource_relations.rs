@@ -19,6 +19,7 @@ pub enum ResourceRelationRole {
     RewardKit,
     KitScript,
     ShopScript,
+    ActorScript,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, TS)]
@@ -52,6 +53,7 @@ fn source_directory(kind: &str) -> Option<&'static str> {
         "nav" => "navigator",
         "kit" => "gift",
         "shop" => "shop",
+        "actor" => "actors",
         "item" => "items",
         "entity" => "entities",
         _ => return None,
@@ -136,19 +138,19 @@ pub(crate) fn resolve(tree: &Tree) -> Vec<ResourceRelation> {
                 });
             }
         }
-        if let Some(script_kind) = source(path).map(|s| s.kind).filter(|kind| kind == "kit" || kind == "shop") {
+        if let Some(script_kind) = source(path).map(|s| s.kind).filter(|kind| kind == "kit" || kind == "shop" || kind == "actor") {
             if let Some(document) = bytes
                 .as_ref()
                 .and_then(|b| serde_json::from_slice::<serde_json::Value>(b).ok())
             {
-                let script = document.get("script");
+                let script = document.get(if script_kind == "actor" { "scripts" } else { "script" });
                 let entries: Vec<_> = match script {
                     Some(serde_json::Value::Array(values)) => values.iter().collect(),
                     Some(value) => vec![value],
                     None => vec![],
                 };
                 for entry in entries {
-                    let Some(reference) = entry.get("ref").and_then(serde_json::Value::as_str) else {
+                    let Some(reference) = (if script_kind == "actor" { entry.as_str() } else { entry.get("ref").and_then(serde_json::Value::as_str) }) else {
                         continue;
                     };
                     let id = reference.trim();
@@ -163,7 +165,7 @@ pub(crate) fn resolve(tree: &Tree) -> Vec<ResourceRelation> {
                     {
                         relations.insert(ResourceRelation {
                             kind: ResourceRelationKind::Reference,
-                            role: if script_kind == "shop" { ResourceRelationRole::ShopScript } else { ResourceRelationRole::KitScript },
+                            role: if script_kind == "actor" { ResourceRelationRole::ActorScript } else if script_kind == "shop" { ResourceRelationRole::ShopScript } else { ResourceRelationRole::KitScript },
                             from: path.clone(),
                             to: target,
                         });
@@ -230,6 +232,6 @@ pub(crate) fn relocated_owned(relation: &ResourceRelation, next_source: &Source)
             "assets/{locale}/voice_{}/{}",
             next_source.kind, next_source.stem
         ),
-        ResourceRelationRole::RewardKit | ResourceRelationRole::KitScript | ResourceRelationRole::ShopScript => return None,
+        ResourceRelationRole::RewardKit | ResourceRelationRole::KitScript | ResourceRelationRole::ShopScript | ResourceRelationRole::ActorScript => return None,
     })
 }

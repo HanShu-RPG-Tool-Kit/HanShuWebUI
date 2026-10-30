@@ -1,3 +1,4 @@
+import actorGuide from './docs/actor-guide.md?raw'
 import resourceOrganization from './docs/resource-organization.md?raw'
 import pythonLanguage from './docs/python-language.md?raw'
 import scriptResources from './docs/script-resources.md?raw'
@@ -52,6 +53,7 @@ export type HelpTopicId =
   | 'hsc-machine'
   | 'hsc-machine-framework'
   | 'kit-guide'
+  | 'actor-guide'
   | 'shop-guide'
   | 'kit-expr'
   | 'kit-runtime'
@@ -129,6 +131,7 @@ export const HELP_TOPICS: HelpTopic[] = [
     inDocs: true,
     body: hscMachineFramework,
   },
+  { id: 'actor-guide', title: '演员模板与脚本（.actor）', group: '游戏性', audience: 'user', inDocs: true, body: actorGuide },
   {
     id: 'shop-guide', title: '商店模板（.shop）', group: '游戏性', audience: 'user', inDocs: true, body: shopGuide,
   },

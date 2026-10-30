@@ -7,7 +7,7 @@ import {loginProject} from './project-ui-helpers.mjs'
 const h=await harness({web:true});let browser
 try{
  const owner=await h.login(h.credential,'script setup'),account=await h.api(owner.token,'/api/subjects','POST',{name:'script author',kind:'account',role:'editor'})
- const kinds=['common','goal','kit','shop','item','entity','enchantment','player']
+ const kinds=['common','goal','kit','shop','item','actor','enchantment','player']
  await h.commit(owner.token,kinds.map(kind=>({path:`src/script/${kind}/shared.py`,content:`# ${kind}`})));await h.release(owner.token)
  browser=await chromium.launch({headless:true,...(process.platform==='win32'?{channel:'msedge'}:{})})
  const page=await browser.newPage({viewport:{width:1500,height:1000}}),errors=[];page.on('pageerror',e=>errors.push(e.message))

@@ -1,3 +1,4 @@
+import {ACTOR_CONTEXT, ACTOR_EVENT_CLASS, ACTOR_API_CLASS} from './actorContext'
 import type {ScriptType} from '../../scriptResources/types'
 import {KIT_CONTEXT,SHOP_CONTEXT,PLAYER_CLASS,javaModule} from './stubs'
 const GOAL_CONTEXT=`from typing import Any, Callable
@@ -23,6 +24,7 @@ export function pythonProfile(type:ScriptType){
  if(type==='kit'){files['__kit_context.pyi']=KIT_CONTEXT;files['__builtins__.pyi']+='from __kit_context import kit as kit, player as player, players as players, random as random\n';files[`${javaModule(PLAYER_CLASS)}.pyi`]='class ServerPlayer: ...\n'}
  if(type==='shop'){files['__shop_context.pyi']=SHOP_CONTEXT;files['__builtins__.pyi']+='from __shop_context import shop as shop, player as player\n';files[`${javaModule(PLAYER_CLASS)}.pyi`]='class ServerPlayer: ...\n'}
  if(type==='goal'){files['__goal_context.pyi']=GOAL_CONTEXT;files['__builtins__.pyi']+='from __goal_context import BaseGoalPy as BaseGoalPy, goal as goal, config as config, state as state, subscribe as subscribe, field as field, st as st, cfg as cfg, pick_locale as pick_locale, java_type as java_type, instanceof as instanceof\n'}
- // item/entity hosts are not implemented yet: never invent hooks or injected globals.
- return {type,files,requiredClasses:type==='kit'||type==='shop'?[PLAYER_CLASS]:[]}
+ if(type==='actor'){files['__actor_context.pyi']=ACTOR_CONTEXT;files['__builtins__.pyi']+='from __actor_context import hook as hook, Blackboard as Blackboard\n';files[`${javaModule(ACTOR_EVENT_CLASS)}.pyi`]='class ActorEvent: ...\n'}
+ // Other unimplemented hosts must not acquire actor globals.
+ return {type,files,requiredClasses:type==='actor'?[ACTOR_EVENT_CLASS,ACTOR_API_CLASS]:type==='kit'||type==='shop'?[PLAYER_CLASS]:[]}
 }

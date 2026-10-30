@@ -167,6 +167,8 @@ import {
   withBuiltinScripts,
 } from "./gameplay/goalDefinitions";
 import { ShopEditor } from "./gameplay/ShopEditor";
+import { ActorEditor } from "./gameplay/ActorEditor";
+import { createActor, parseActor, stringifyActor } from "./gameplay/actor";
 import { createShop, parseShop, stringifyShop } from "./gameplay/shop";
 import { KitEditor } from "./gameplay/KitEditor";
 import { ProgressCollaborativeEditor } from "./gameplay/ProgressCollaborativeEditor";
@@ -672,6 +674,7 @@ export function GameplayWorkspace({
   const doc = state.documents.find((item) => item.key === focusedKey);
   const scriptDoc = doc ? isScriptDocument(doc) : false;
   const shopDoc = doc?.package === "shop";
+  const actorDoc = doc?.package === "actor";
   const kitDoc = doc ? isKitDocument(doc) : false;
   const progressDoc = doc ? isSimpleQuestDocument(doc) : false;
   const multiQuestDoc = doc ? isMultiQuestDocument(doc) : false;
@@ -744,6 +747,7 @@ export function GameplayWorkspace({
   const parsed = useMemo(() => {
     if (
       !doc ||
+      actorDoc ||
       shopDoc ||
       scriptDoc ||
       kitDoc ||
@@ -765,6 +769,7 @@ export function GameplayWorkspace({
     }
   }, [
     doc,
+    actorDoc,
     shopDoc,
     scriptDoc,
     kitDoc,
@@ -798,6 +803,7 @@ export function GameplayWorkspace({
     : null;
   const flowLocalizable = Boolean(
     doc &&
+    !actorDoc &&
     !shopDoc &&
     !scriptDoc &&
     !kitDoc &&
@@ -1278,6 +1284,7 @@ export function GameplayWorkspace({
     ext: string,
   ) {
     if (packageId === "script" || ext === ".py") return "新建脚本.py";
+    if (packageId === "actor" || ext === ".actor") return "新建演员.actor";
     if (packageId === "shop" || ext === ".shop") return "新建商店.shop";
     if (packageId === "gift" || ext === ".kit") return "新建礼包.kit";
     if (packageId === "quest")
@@ -1346,6 +1353,8 @@ export function GameplayWorkspace({
               package: packageId,
               folderId,
             })
+          : ext === ".actor"
+            ? stampDocument({ key: randomId(), name, source: stringifyActor(createActor()), package: packageId, folderId })
           : ext === ".shop"
             ? stampDocument({
                 key: randomId(),
@@ -1474,7 +1483,7 @@ export function GameplayWorkspace({
     const input = fileInput.current;
     if (!input) return;
     input.accept =
-      packageId === "script"
+      packageId === "actor" ? ".actor,application/json" : packageId === "shop" ? ".shop,application/json" : packageId === "script"
         ? ".py,text/x-python"
         : packageId === "gift"
           ? ".kit,application/json"
@@ -1503,7 +1512,7 @@ export function GameplayWorkspace({
     const skipped = files.length - accepted.length;
     if (!accepted.length) {
       setNotice(
-        pkg === "script"
+        pkg === "actor" ? "请放入 .actor 演员模板。" : pkg === "shop" ? "请放入 .shop 商店模板。" : pkg === "script"
           ? "请放入 .py 脚本。"
           : pkg === "gift"
             ? "请放入 .kit 礼包。"
@@ -1543,9 +1552,10 @@ export function GameplayWorkspace({
           );
           continue;
         }
-        if (pkg === "gift" || pkg === "shop") {
+        if (pkg === "gift" || pkg === "shop" || pkg === "actor") {
           const source = await file.text();
-          if (pkg === "shop") parseShop(source);
+          if (pkg === "actor") parseActor(source);
+          else if (pkg === "shop") parseShop(source);
           else parseKit(source);
           const name = uniqueDocumentName(
             { ...state, documents: [...state.documents, ...documents] },
@@ -1687,7 +1697,7 @@ export function GameplayWorkspace({
       );
       setSelection({ kind: "flow" });
       const kind =
-        pkg === "script"
+        pkg === "actor" ? "个演员模板" : pkg === "shop" ? "个商店模板" : pkg === "script"
           ? "个脚本"
           : pkg === "gift"
             ? "个礼包"
@@ -1714,6 +1724,7 @@ export function GameplayWorkspace({
     const item = state.documents.find((d) => d.key === key);
     if (!item) return;
     if (
+      item.package === "actor" ||
       item.package === "shop" ||
       isEntityDocument(item) ||
       isScriptDocument(item) ||
@@ -2036,6 +2047,7 @@ export function GameplayWorkspace({
     }
     const paneScript = isScriptDocument(paneDoc);
     const paneShop = paneDoc.package === "shop";
+    const paneActor = paneDoc.package === "actor";
     const paneKit = isKitDocument(paneDoc);
     const paneProgress = isSimpleQuestDocument(paneDoc);
     const paneNavigation = isNavigationDocument(paneDoc);
@@ -2056,6 +2068,7 @@ export function GameplayWorkspace({
     let paneFlow: ProgressFlow | null = null;
     let paneError = "";
     if (
+      !paneActor &&
       !paneShop &&
       !paneScript &&
       !paneKit &&
@@ -2099,6 +2112,7 @@ export function GameplayWorkspace({
       readOnly ||
       (paneProgress && !graphLive);
 
+    if (paneActor) return <ActorEditor key={paneDoc.key} source={paneDoc.source} disabled={disabledPane} onChange={source => changeSource(source, false, paneDoc.key)} scriptOptions={state.documents.filter(d => d.package === "script" && scriptTypeInFolder(state, d.folderId ?? null) === "actor").map(d => ({ ref: d.name.replace(/\.py$/i, ""), label: d.name, key: d.key }))} onOpenScript={key => selectDocument(key)} />;
     if (paneShop)
       return (
         <ShopEditor
@@ -2859,7 +2873,7 @@ export function GameplayWorkspace({
                 ? doc && isEntityLibraryTableKey(doc.key)
                   ? "实体库 · 网格表视图"
                   : "物品库 · 表视图"
-                : entityDoc
+                : actorDoc ? "演员模板 · .actor" : entityDoc
                   ? "实体 · .entity"
                   : itemDoc
                     ? "物品 · .item"

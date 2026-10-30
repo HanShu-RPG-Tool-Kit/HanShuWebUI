@@ -85,6 +85,43 @@ try {
   console.log('Python profiles passed: common/goal/kit isolation and virtual project library imports.')
   assert(profiles.shopMembers.includes('condition')&&profiles.shopMembers.includes('entries'),'shop host methods')
   assert(profiles.entryMembers.includes('adjustDelta')&&profiles.entryMembers.includes('maxCapacity'),'shop quota handle inference')
+  const actors = await page.evaluate(async () => {
+    const { PyrightClient } = await import('/src/monaco/python/pyrightClient.ts')
+    const { pythonProfile } = await import('/src/monaco/python/profiles.ts')
+    const actor = new PyrightClient(undefined, pythonProfile('actor').files)
+    await actor.ready
+    let version = 0
+    const uri = 'file:///typings/actor-check.py'
+    actor.notify('textDocument/didOpen', { textDocument: { uri, languageId: 'python', version, text: '' } })
+    const diagnostics = []
+    actor.onNotification = (method, params) => { if (method === 'textDocument/publishDiagnostics' && params.uri === uri) diagnostics.push(params) }
+    const complete = async (text) => {
+      actor.notify('textDocument/didChange', { textDocument: { uri, version: ++version }, contentChanges: [{ text }] })
+      const lines = text.split('\n')
+      const result = await actor.request('textDocument/completion', { textDocument: { uri }, position: { line: lines.length - 1, character: lines.at(-1).length } })
+      return (Array.isArray(result) ? result : result?.items ?? []).map(item => item.label.replace(/^['"]|['"]$/g, ''))
+    }
+    const hooks = await complete('@hook("')
+    const prefix = await complete('@hook("ai')
+    const globals = await complete('Blackb')
+    const annotated = await complete('def names(values: list[str]) -> str:\n    return values[0]\nnames(["guard"]).')
+    const optional = await complete('def check(value: str | None) -> None:\n    if value is not None:\n        value.')
+    const decorated = await complete('@hook("tick")\ndef on_tick(event, blackboard) -> str:\n    return "ok"\non_tick(None, None).')
+    await complete('age: int = "wrong"\n@hook("unknown_hook")\ndef invalid(event, blackboard):\n    pass\n')
+    const expectedVersion = version, deadline = Date.now() + 10000
+    while (!diagnostics.some(d => d.version === expectedVersion && d.diagnostics.some(e => e.message.includes('int'))) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 30))
+    const errors = diagnostics.filter(d => d.version === expectedVersion).flatMap(d => d.diagnostics.map(e => e.message))
+    actor.dispose()
+    return { hooks, prefix, globals, annotated, optional, decorated, errors }
+  })
+  const { ACTOR_HOOKS } = await page.evaluate(async () => ({ ACTOR_HOOKS: (await import('/src/monaco/python/actorContext.ts')).ACTOR_HOOKS }))
+  for (const hook of ACTOR_HOOKS) assert(actors.hooks.includes(hook), `actor hook literal completion: ${hook}`)
+  assert(actors.prefix.includes('aistep'), 'partial actor hook name completion')
+  assert(actors.globals.includes('Blackboard'), 'actor Blackboard injection')
+  assert(actors.annotated.includes('upper') && actors.optional.includes('upper'), 'Python function/generic/union annotations drive inference and narrowing')
+  assert(actors.decorated.includes('upper'), 'hook decorator preserves annotated function return type')
+  assert(actors.errors.some(e => e.includes('int')) && actors.errors.some(e => e.includes('unknown_hook')), 'annotation mismatch and invalid hook diagnostics')
+  console.log('Actor Worker passed: all 18 hook names, partial literals, Blackboard, typed return/generic/union narrowing, decorated return inference and type diagnostics.')
   const productionWorker = (await readdir('dist/assets').catch(() => [])).find(name => name.startsWith('pyright.worker-') && name.endsWith('.js'))
   if (productionWorker) {
     await page.route('**/assets/*.js', async route => {

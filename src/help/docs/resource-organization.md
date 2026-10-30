@@ -15,7 +15,7 @@
 
 ## 路径和文件夹
 
-普通源资源保持扁平，例如 `src/items/宝刀.item`、`src/quest/序章.quest`。脚本有真实类型目录：`src/script/<common|goal|kit|shop|item|entity|enchantment|player>/<名字>.py`。创作资料使用 `meta/docs`、`meta/voice` 等约定目录。读取工程时校验完整路径，无法由源文件模型往返表示的嵌套路径明确报错，绝不丢掉父目录后另存到分类根。
+普通源资源保持扁平，例如 `src/items/宝刀.item`、`src/quest/序章.quest`。脚本有真实类型目录：`src/script/<common|goal|kit|shop|item|actor|enchantment|player>/<名字>.py`。创作资料使用 `meta/docs`、`meta/voice` 等约定目录。读取工程时校验完整路径，无法由源文件模型往返表示的嵌套路径明确报错，绝不丢掉父目录后另存到分类根。
 
 剧本工作区按实际保存目录展示源资源；脚本按八种真实类型分组，同名脚本可以通过类型分组和路径提示区分。它不展示游戏性的共享整理树。
 
@@ -67,3 +67,7 @@
 5. 若增加的是视图，明确它是否属于共享组织、是否筛选资源、是否只读，不能伪装成能落盘的新文件类型。
 
 验证入口：`npm run test:resource-organization` 检查路径、类型、移动、命名、工程导出、刷新竞态及冲突同步；`npm run test:resource-organization:ui` 使用真实 S 和隔离浏览器上下文验证共享树、未保存文档归属、文件夹移动、重新打开与事务边界。
+
+## 演员模板
+
+演员分类原生格式为 `.actor`，保存于 `src/actors/<ID>.actor`，导出到 server PAK 的 `actors/<ID>.actor`。演员脚本使用 `src/script/actor/<ID>.py`。模板中的 `scripts` 仅引用 actor 类型脚本，保留顺序且不可重复；改名、删除不自动改写引用，也不会级联删除脚本。详细契约见[演员模板与脚本](#actor-guide)。旧 `src/script/entity/` 不再作为演员脚本目录，需要作者显式调整目录，不自动改写旧工程。

@@ -17,7 +17,7 @@ test('canonical paths are lossless and nested source paths fail explicitly',()=>
 })
 test('category formats and import conversion are distinct',()=>{
  assert.deepEqual(categoryExtensions('items'),['.item']);assert(packageAcceptsImportFile('items','a.itemstack'));assert(!categoryExtensions('items').includes('.itemstack'))
- assert.equal(categoryExtensions('actor').length,0)
+ assert.deepEqual(categoryExtensions('actor'),['.actor'])
 })
 test('folder cannot retag incompatible children by crossing categories',()=>{
  assert.equal(canMoveFlowEntry(state(),{kind:'folder',key:'f'},'gift',null),false)
@@ -39,9 +39,9 @@ test('real builtin and library views do not block empty or populated folder move
 test('script subtree moves with builtin views check nested destination name collisions',()=>{
  const s=withLibraryTables(withBuiltinScripts({documents:[{key:'a',name:'same.py',package:'script',folderId:'nested',source:''},{key:'b',name:'same.py',package:'script',folderId:sectionFolderKey('script','kit'),source:''}],folders:[{key:'f',name:'Folder',parentId:sectionFolderKey('script','common'),package:'script'},{key:'nested',name:'Nested',parentId:'f',package:'script'}],activeKey:null}))
  assert.throws(()=>moveFlowEntry(s,{kind:'folder',key:'f'},'script',sectionFolderKey('script','kit')),/同名/)
- assert.doesNotThrow(()=>requireAvailableName(s,'same.py','script',sectionFolderKey('script','entity')))
- const moved=moveFlowEntry(s,{kind:'folder',key:'f'},'script',sectionFolderKey('script','entity'))
- assert.equal(scriptTypeInFolder(moved,moved.documents.find(doc=>doc.key==='a')!.folderId??null),'entity')
+ assert.doesNotThrow(()=>requireAvailableName(s,'same.py','script',sectionFolderKey('script','actor')))
+ const moved=moveFlowEntry(s,{kind:'folder',key:'f'},'script',sectionFolderKey('script','actor'))
+ assert.equal(scriptTypeInFolder(moved,moved.documents.find(doc=>doc.key==='a')!.folderId??null),'actor')
  assert.equal(scriptTypeInFolder(moved,moved.documents.find(doc=>doc.key==='b')!.folderId??null),'kit')
 })
 test('shared placements are canonical paths, not window-local IDs',()=>{

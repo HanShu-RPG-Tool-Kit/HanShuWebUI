@@ -32,7 +32,7 @@ export const EXPLORER_ICON_KINDS = [
   'script-kit',
   'script-shop',
   'script-item',
-  'script-entity',
+  'script-actor',
   'script-enchantment',
   'script-player',
   'markdown',
@@ -47,6 +47,7 @@ export const EXPLORER_ICON_KINDS = [
   'nav',
   'item',
   'entity',
+  'actor',
   'kit',
   'shop',
   'image',
@@ -86,8 +87,9 @@ const PATHS: Record<ExplorerIconKind, string> = {
   'script-item':'M4 3h12v9H4z M8 6l-2 2 2 2 M12 6l2 2-2 2 M17 13l5 3v5l-5 3-5-3v-5z M12 16l5 3 5-3',
   'script-enchantment':'M4 3h12v9H4z M8 6l-2 2 2 2 M12 6l2 2-2 2 M18 12l2 4 4 2-4 2-2 4-2-4-4-2 4-2z',
   'script-player':'M4 3h12v9H4z M8 6l-2 2 2 2 M12 6l2 2-2 2 M18 17a3 3 0 100-6 3 3 0 000 6z M12 23a6 6 0 0112 0',
-  'script-entity':'M4 3h12v9H4z M8 6l-2 2 2 2 M12 6l2 2-2 2 M15 13h6v5h-6z M13 18h10v5H13z',
+  'script-actor':'M4 3h12v9H4z M8 6l-2 2 2 2 M12 6l2 2-2 2 M15 13h6v5h-6z M13 18h10v5H13z',
   item: 'M6 3h12l4 6-10 12L2 9z M2 9h20',
+  actor: 'M12 3a4 4 0 110 8 4 4 0 010-8z M5 22v-5a7 7 0 0114 0v5 M3 3h3 M3 3v5 M21 3h-3 M21 3v5',
   entity: 'M8 3h8v6H8z M5 21v-6a7 7 0 0114 0v6 M8 15v6 M16 15v6',
   kit: 'M4 11h16v10H4z M2 7h20v4H2z M12 7v14 M12 7c0-2.5-2-4-4-4S5 5.5 5 7h7 M12 7c0-2.5 2-4 4-4s3 1.5 3 4h-7',
   shop: 'M3 10h18L19 3H5z M5 10v11h14V10 M9 21v-7h6v7',
@@ -118,6 +120,7 @@ const BY_EXT: Record<string, ExplorerIconKind> = {
   '.item': 'item',
   '.entity': 'entity',
   '.kit': 'kit',
+  '.actor': 'actor',
   '.shop': 'shop',
   '.png': 'image',
   '.jpg': 'image',
@@ -147,7 +150,7 @@ export function sourceIconKind(file: {
   name: string
   srcKind?: string | null
 }): ExplorerIconKind {
-  if(getExtension(file.name)==='.py'&&['kit','shop','item','entity','enchantment','player'].includes(file.srcKind??''))return `script-${file.srcKind}` as ExplorerIconKind
+  if(getExtension(file.name)==='.py'&&['kit','shop','item','actor','enchantment','player'].includes(file.srcKind??''))return `script-${file.srcKind}` as ExplorerIconKind
   if(getExtension(file.name)==='.entity')return 'entity'
   if (getExtension(file.name) === '.py' && file.srcKind === 'goal') return 'goal'
   return fileIconKind(file.name)

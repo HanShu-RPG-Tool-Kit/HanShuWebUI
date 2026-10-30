@@ -892,3 +892,21 @@ fn shop_script_reference_is_type_scoped_and_never_owned() {
     assert!(plan.operations.iter().all(|op| !op.path.starts_with("src/script/")));
     assert!(plan.lease_paths.iter().all(|path| !path.starts_with("src/script/")));
 }
+
+#[test]
+fn actor_script_reference_is_type_scoped_and_never_owned() {
+    let dir = tempfile::tempdir().unwrap();
+    let (engine, sid) = setup(dir.path(), &[
+        ("src/actors/guard.actor", r#"{"scripts":["guard","../bad"]}"#),
+        ("src/script/actor/guard.py", "pass"),
+        ("src/script/kit/guard.py", "pass"),
+    ]);
+    let facts = engine.resource_relations(&sid, "src/actors/guard.actor").unwrap();
+    let refs: Vec<_> = facts.relations.iter().filter(|r| r.role == ResourceRelationRole::ActorScript).collect();
+    assert_eq!(refs.len(), 1);
+    assert_eq!(refs[0].to, "src/script/actor/guard.py");
+    let plan = engine.plan_file_operations(&sid, &[request(FileOperationKind::Remove, "src/actors/guard.actor", None)]).unwrap();
+    assert!(plan.operations.iter().all(|op| !op.path.starts_with("src/script/")));
+    assert!(plan.lease_paths.iter().all(|path| !path.starts_with("src/script/")));
+    assert!(plan.authorities.iter().any(|a| a.source_kind.as_deref() == Some("actor")));
+}

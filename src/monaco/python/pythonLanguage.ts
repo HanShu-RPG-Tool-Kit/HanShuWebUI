@@ -125,7 +125,7 @@ export class PythonLanguage {
           if (token.isCancellationRequested) return { suggestions: [] }
           const result = await this.client.request<CompletionList | CompletionItem[] | null>('textDocument/completion', this.at(doc, position))
           const items = Array.isArray(result) ? result : result?.items ?? []
-          return { incomplete: !Array.isArray(result) && !!result?.isIncomplete, suggestions: items.filter(item => !/^(?:jvm_|__kit_context|__goal_context|__builtins__)/.test(item.label)).map(item => this.completion(item, model, position)) }
+          return { incomplete: !Array.isArray(result) && !!result?.isIncomplete, suggestions: items.filter(item => !/^(?:jvm_|__kit_context|__shop_context|__actor_context|__goal_context|__builtins__)/.test(item.label)).map(item => this.completion(item, model, position)) }
         } catch (error) { this.warn(error); return { suggestions: [] } }
       },
       resolveCompletionItem: async item => {

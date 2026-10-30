@@ -185,6 +185,7 @@ assert.deepEqual(
     'quest',
     'level',
     'navigator',
+    'actors',
     'shop',
     'gift',
     'items',
@@ -248,13 +249,13 @@ assert.ok(
     '不放过就是"滚轮一碰菜单，菜单瞬间消失"',
 )
 assert.ok(
-  /addEventListener\('scroll', onScroll, true\)/.test(explorerSource),
+  /addEventListener\(["']scroll["'], onScroll, true\)/.test(explorerSource),
   '资源树那种不冒泡的容器滚动仍要靠捕获阶段抓 —— 别顺手把 true 去掉',
 )
 
 // 滚轮要在菜单这一层被拦住：菜单自己不能滚（或已到边界）时 preventDefault，别让它滚到树上去
 assert.ok(
-  /addEventListener\('wheel', onWheel, \{ passive: false \}\)/.test(explorerSource),
+  /addEventListener\(["']wheel["'], onWheel, \{ passive: false \}\)/.test(explorerSource),
   '菜单要挂一个**非 passive** 的 wheel 监听：React 的 onWheel 在根节点上是 passive，' +
     '里面 preventDefault 不生效',
 )

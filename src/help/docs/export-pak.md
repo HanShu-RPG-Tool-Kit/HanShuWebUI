@@ -125,7 +125,8 @@ registerLocaleExportRule({
 
 | kind | 内容 |
 | --- | --- |
-| `script/<类型>` | `common` / `goal` / `kit` / `item` / `entity` / `enchantment` / `player` 脚本；内置脚本先入，工程同类型同名文件覆盖 |
+| `actors` | 演员模板（`.actor`）：脚本有序引用、标签与 freezeAi；仅 server 平面 |
+| `script/<类型>` | `common` / `goal` / `kit` / `shop` / `item` / `actor` / `enchantment` / `player` 脚本；内置脚本先入，工程同类型同名文件覆盖 |
 | `hanshu` / `character` / `quest` / `level` / `navigator` / `gift` / `items` / `entities` | 其它源类型（旧工程 `progress` / `story` 目录仍可读） |
 
 脚本资源、内置覆盖与新建模板的完整约定见[脚本资源](#script-resources)。

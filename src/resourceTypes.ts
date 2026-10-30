@@ -9,6 +9,7 @@ export const RESOURCE_TYPES = [
   { id:'item', ext:'.item', directory:'src/items', category:'items' },
   { id:'entity', ext:'.entity', directory:'src/entities', category:'entities' },
   { id:'kit', ext:'.kit', directory:'src/gift', category:'gift' },
+  { id:'actor', ext:'.actor', directory:'src/actors', category:'actor' },
   { id:'shop', ext:'.shop', directory:'src/shop', category:'shop' },
   { id:'md', ext:'.md', directory:'meta/docs', category:'meta' },
   { id:'tts', ext:'.tts', directory:'meta/voice', category:'meta' },
@@ -21,7 +22,7 @@ export const resourceNameKey = (name:string) => name.normalize('NFC').toLowerCas
 export const GAMEPLAY_CATEGORIES = {
   script:{name:'脚本',types:['py'],imports:['.py']},
   quest:{name:'任务',types:['quest'],imports:['.quest','.json']},
-  actor:{name:'演员',types:[],imports:[]},
+  actor:{name:'演员',types:['actor'],imports:['.actor']},
   reputation:{name:'声誉',types:[],imports:[]},
   level:{name:'地图',types:['level','nav'],imports:['.level','.nav','.json']},
   shop:{name:'商店',types:['shop'],imports:['.shop']},
