@@ -183,7 +183,7 @@ export function ReputationEditor({
           ? <BannerPreview banner={doc.banner} />
           : <div className="rep-media-frame is-empty"><span>竖旗<br />≤24×40</span></div>}
         <div className="rep-media-info">
-          <p className="sheet-note">预览按游戏同款缩放：缩进 ≤24×40，放大只取整数倍；此处再 ×{BANNER_PREVIEW_ZOOM} 方便查看。解码后不超过 256 KiB。{doc.banner && <> 当前 <b>{(bannerBytes(doc.banner) / 1024).toFixed(1)} KiB</b>。</>}</p>
+          <p className="sheet-note">预览按游戏同款缩放：缩进 ≤24×40，放大只取整数倍；此处再 ×{BANNER_PREVIEW_ZOOM} 方便查看。解码后不超过 256 KiB。游戏内可用 <code>/rt banner</code> 把当前旗帜导出为 Base64，再粘贴到下方。{doc.banner && <> 当前 <b>{(bannerBytes(doc.banner) / 1024).toFixed(1)} KiB</b>。</>}</p>
           {bannerError && <p className="kit-banner" role="alert">{bannerError}</p>}
           <div className="rep-media-actions">
             <label className={`sheet-btn rep-upload${disabled ? ' is-disabled' : ''}`}>
