@@ -7,7 +7,7 @@
 .rep-header .kit-name-field { flex: 1 1 18em; }
 
 .rep-description { padding: 0 2px; }
-.flow-kit-pane .rep-description textarea { min-height: 52px; background: var(--fl-panel, #303030); }
+.flow-kit-pane .rep-description textarea { min-height: 260px; background: var(--fl-panel, #303030); }
 
 .rep-warning {
   margin: 0;

@@ -131,7 +131,7 @@ export function ReputationEditor({
       </div>
     </header>
     <SheetField label="描述" className="rep-description" hint={setText ? '显示名与描述写入 lang_rep；阵营 ID 使用文件名。' : '聚焦此文件后可编辑本地化文本。'}>
-      <textarea aria-label="阵营描述" disabled={!textEditable} value={resolveText?.('description') ?? ''} placeholder="玩家声誉页中显示的阵营介绍" onChange={e => setText?.('description', e.target.value)} rows={2} />
+      <textarea aria-label="阵营描述" disabled={!textEditable} value={resolveText?.('description') ?? ''} placeholder="玩家声誉页中显示的阵营介绍" onChange={e => setText?.('description', e.target.value)} rows={10} />
     </SheetField>
     {pending && <PendingBanner issue={pending.issue} onDiscard={discard} />}
 
