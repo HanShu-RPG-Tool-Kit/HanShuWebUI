@@ -2140,7 +2140,7 @@ export function GameplayWorkspace({
       const injectOptions = [...new Map((session.workspace.packages[0]?.scripts ?? [])
         .filter(script => script.name.toLowerCase().endsWith(".hs"))
         .flatMap(script => collectHsInjectNames(script.content).map(name => [name.toLowerCase(), { ref: name, label: `${name} · ${script.name}` }] as const))
-        .values()]
+      ).values()]
       return <ActorEditor
         key={paneDoc.key}
         source={paneDoc.source}
