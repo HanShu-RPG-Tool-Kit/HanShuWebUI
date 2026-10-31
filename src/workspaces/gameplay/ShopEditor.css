@@ -228,7 +228,7 @@
 
 .shop-sheet {
   width: 100%;
-  min-width: 968px;
+  min-width: 872px;
   border-collapse: separate;
   border-spacing: 0;
   table-layout: fixed;
@@ -240,7 +240,6 @@
 .shop-sheet-capacity { width: 132px; }
 .shop-sheet-conditions { width: auto; }
 .shop-sheet-tags { width: auto; }
-.shop-sheet-actions { width: 96px; }
 
 .shop-sheet th,
 .shop-sheet td {
@@ -536,25 +535,7 @@
   text-overflow: ellipsis;
 }
 
-.shop-row-actions { display: flex; align-items: center; gap: 2px; }
-.shop-row-actions .kit-remove { margin-left: auto; }
-.shop-editor .shop-row-actions .kit-remove,
 .shop-editor .shop-rule .kit-remove { opacity: 0.7; }
-
-.shop-editor .shop-order {
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border: 0;
-  border-radius: var(--kit-radius);
-  background: transparent;
-  color: var(--text-dim);
-  cursor: pointer;
-}
-.shop-editor .shop-order:hover:not(:disabled) {
-  background: var(--kit-row-hover);
-  color: var(--text);
-}
 .shop-editor button:disabled { opacity: 0.45; cursor: default; }
 
 .shop-blank {
