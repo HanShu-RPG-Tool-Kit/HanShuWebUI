@@ -24,6 +24,10 @@ export const packageAllowsFlows = (id: FlowPackageId) => id === 'quest'
 export const packageAllowsScripts = (id: FlowPackageId) => id === 'script'
 export const packageAllowsShops = (id: FlowPackageId) => id === 'shop'
 export const isShopDocument = (document: { package: FlowPackageId; name: string }) => document.package === 'shop' || document.name.toLowerCase().endsWith('.shop')
+export const packageAllowsActors = (id: FlowPackageId) => id === 'actor'
+export const isActorDocument = (document: { package: FlowPackageId; name: string }) => document.package === 'actor' || document.name.toLowerCase().endsWith('.actor')
+export const packageAllowsReputation = (id: FlowPackageId) => id === 'reputation'
+export const isReputationDocument = (document: { package: FlowPackageId; name: string }) => document.package === 'reputation' || document.name.toLowerCase().endsWith('.rep')
 export const packageAllowsKits = (id: FlowPackageId) => id === 'gift'
 /** @deprecated 使用 packageAllowsQuest */
 export const packageAllowsProgress = (id: FlowPackageId) => id === 'quest'
@@ -305,6 +309,9 @@ export function canMoveFlowEntry(state: FlowWorkspaceState, entry: FlowEntry, pk
     if (isLevelDocument(document)) return pkg === 'level' && folderSectionId(state, parent) === 'templates'
     if (isNavigationDocument(document)) return pkg === 'level' && folderSectionId(state, parent) === 'dynamic-nav'
     if (isKitDocument(document)) return packageAllowsKits(pkg)
+    if (isShopDocument(document)) return packageAllowsShops(pkg)
+    if (isActorDocument(document)) return packageAllowsActors(pkg)
+    if (isReputationDocument(document)) return packageAllowsReputation(pkg)
     if (isProgressDocument(document)) return packageAllowsProgress(pkg)
     if (isEntityDocument(document)) return packageAllowsEntities(pkg)
     if (isItemDocument(document)) return packageAllowsItems(pkg)
@@ -346,11 +353,14 @@ export function moveFlowEntry(state: FlowWorkspaceState, entry: FlowEntry, pkg: 
     if (document && isLevelDocument(document) && !(pkg === 'level' && folderSectionId(state, parent) === 'templates')) throw new Error('地图模板只能放在「地图模板」分类中。')
     if (document && isNavigationDocument(document) && !(pkg === 'level' && folderSectionId(state, parent) === 'dynamic-nav')) throw new Error('动态导航点只能放在「动态导航器」分类中。')
     if (document && isKitDocument(document) && !packageAllowsKits(pkg)) throw new Error('礼包只能放在「礼包」分类中。')
+    if (document && isShopDocument(document) && !packageAllowsShops(pkg)) throw new Error('商店只能放在「商店」分类中。')
+    if (document && isActorDocument(document) && !packageAllowsActors(pkg)) throw new Error('演员只能放在「演员」分类中。')
+    if (document && isReputationDocument(document) && !packageAllowsReputation(pkg)) throw new Error('声誉只能放在「声誉」分类中。')
     if (document && isProgressDocument(document) && !packageAllowsProgress(pkg)) throw new Error('进度只能放在「进度」分类中。')
     if(document && isEntityDocument(document) && !packageAllowsEntities(pkg)) throw new Error('实体只能放在实体库中。')
     if (document && isItemDocument(document) && !packageAllowsItems(pkg)) throw new Error('物品只能放在「物品库」分类中。')
     if (document && isScriptDocument(document) && !packageAllowsScripts(pkg)) throw new Error('脚本只能放在「脚本」分类中。')
-    if (document && !isKitDocument(document) && !isProgressDocument(document) && !isNavigationDocument(document) && !isItemDocument(document) && !isEntityDocument(document) && !isScriptDocument(document) && !packageAllowsFlows(pkg)) throw new Error('流程只能放在「故事流程」分类中。')
+    if (document && !isKitDocument(document) && !isShopDocument(document) && !isActorDocument(document) && !isReputationDocument(document) && !isProgressDocument(document) && !isNavigationDocument(document) && !isItemDocument(document) && !isEntityDocument(document) && !isScriptDocument(document) && !packageAllowsFlows(pkg)) throw new Error('流程只能放在「故事流程」分类中。')
   }
   const name = entry.kind === 'folder' ? state.folders.find((folder) => folder.key === entry.key)!.name : state.documents.find((document) => document.key === entry.key)!.name
   requireAvailableName(state, name, pkg, parent, entry.key, entry.kind === 'folder' ? 'folder' : 'document')
