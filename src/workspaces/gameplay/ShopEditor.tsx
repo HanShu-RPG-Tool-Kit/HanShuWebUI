@@ -1,4 +1,4 @@
-import { Fragment, useContext, useMemo, useState, type DragEvent, type MouseEvent } from 'react'
+import { Fragment, useContext, useMemo, useRef, useState, type DragEvent, type MouseEvent } from 'react'
 import { TextField } from './Fields'
 import { conditionStatesFor, createConditionRule, type ProgressConditionRule } from './conditions'
 import { acceptKitItemDrops, AddButton, hasKitItemDrag, ItemCatalogContext, ItemList, ItemVisual, KitExprContext, KitTagField, ModifierPanel, Panel, ParamPanel, RemoveButton } from './KitEditor'
@@ -12,15 +12,25 @@ import './ShopEditor.css'
 
 const itemSummary = (items: KitItem[]) => items.length ? items.map(item => `${item.item || item.id || '未选择物品'} ×${item.count}`).join('、') : '未设置'
 const capacityLabel = (value: ShopEntry, subject: ShopDocument['stockSubject']) => subject === 'infinite'
-  ? (value.initialCapacity < value.maxCapacity ? '∞' : '关闭')
+  ? (value.initialCapacity < value.maxCapacity ? '' : '关闭')
   : `剩余 ${Math.max(0, value.maxCapacity - value.initialCapacity)}`
 const capacityHint = (value: ShopEntry, subject: ShopDocument['stockSubject']) => `当前额度 = 初始额度 + delta，每交易一次增加 1，与物品数量无关。${subject === 'infinite'
-  ? `无限主体：${value.initialCapacity < value.maxCapacity ? '∞（无主体、无 delta）' : '额度关闭'}`
+  ? (value.initialCapacity < value.maxCapacity ? '无限主体：无主体、无 delta' : '额度关闭')
   : `默认剩余次数：${Math.max(0, value.maxCapacity - value.initialCapacity)}，实例按主体共享 delta。`}`
 const parseCapacity = (raw: string) => { const n = Number(raw); return Number.isSafeInteger(n) && n >= 0 ? n : null }
 const TRADE_SIDES = { payment: { label: '支付', title: '支付内容', flow: '玩家交付 → 库存主体' }, goods: { label: '获得', title: '获得内容', flow: '库存主体 → 玩家' } } as const
 const SHEET_COLUMNS = 7
-const ROW_CONTROLS = 'input,select,textarea,button,a,label,.kit-tags-row'
+const ROW_CONTROLS = 'input,select,textarea,button,a,label,.kit-tags-row,.shop-cell-items,.shop-row-toggle'
+const SHOP_ROW_MIME = 'application/x-hanshu-shop-row'
+type ShopRowDrag = { fromId: string }
+const readShopRow = (dt: DataTransfer | null): ShopRowDrag | null => {
+  if (!dt) return null
+  try {
+    const value = JSON.parse(dt.getData(SHOP_ROW_MIME) || 'null') as ShopRowDrag | null
+    if (value && typeof value.fromId === 'string') return value
+  } catch { /* ignore malformed drag payload */ }
+  return null
+}
 
 function ShopItemIcon({ item }: { item: KitItem }) {
   const catalog = useContext(ItemCatalogContext)
@@ -37,6 +47,9 @@ export function ShopEditor({ source, disabled, onChange, resolveText, setText, i
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<string | null>(null)
   const [preview, setPreview] = useState<Record<string, unknown>>({})
+  const skipClick = useRef(false)
+  const [cardDrag, setCardDrag] = useState<ShopRowDrag | null>(null)
+  const [cardDrop, setCardDrop] = useState<string | null>(null)
   let doc: ShopDocument
   try { doc = parseShop(source, true) } catch (cause) {
     return <div className="flow-kit-pane shop-editor"><div className="kit-page"><p className="kit-banner" role="alert">{String(cause)}</p><TextField label="商店 JSON 源码" multiline disabled={disabled} value={source} onChange={onChange} /></div></div>
@@ -47,14 +60,14 @@ export function ShopEditor({ source, disabled, onChange, resolveText, setText, i
   const displayName = resolveText?.(doc.name) ?? ''
   const toggle = (id: string) => setExpandedId(current => current === id ? null : id)
   const dropKey = (id: string, field: 'payment' | 'goods') => `${id}:${field}`
-  const onItemDragOver = (event: DragEvent<HTMLButtonElement>, key: string) => {
+  const onItemDragOver = (event: DragEvent<HTMLElement>, key: string) => {
     if (disabled || !hasKitItemDrag(event.dataTransfer)) return
     event.preventDefault()
     event.stopPropagation()
     event.dataTransfer.dropEffect = 'copy'
     if (dropTarget !== key) setDropTarget(key)
   }
-  const onItemDrop = (event: DragEvent<HTMLButtonElement>, id: string, field: 'payment' | 'goods') => {
+  const onItemDrop = (event: DragEvent<HTMLElement>, id: string, field: 'payment' | 'goods') => {
     event.preventDefault()
     event.stopPropagation()
     setDropTarget(null)
@@ -98,46 +111,117 @@ export function ShopEditor({ source, disabled, onChange, resolveText, setText, i
     action={<><ItemSnapshotPanelStatus items={value[field]} catalog={itemCatalog} disabled={disabled} />{add(`添加${TRADE_SIDES[field].label}物品`, () => entry(value.id, { [field]: [...value[field], createKitItem()] }))}</>}>
     <ItemList header items={value[field]} disabled={disabled} onChange={items => entry(value.id, { [field]: items })} />
   </Panel>
-  const rowClick = (event: MouseEvent<HTMLTableRowElement>, id: string) => { if (!(event.target as Element).closest(ROW_CONTROLS)) toggle(id) }
+  const rowClick = (event: MouseEvent<HTMLTableRowElement>, id: string) => {
+    if (skipClick.current) { skipClick.current = false; return }
+    if (!(event.target as Element).closest(ROW_CONTROLS)) toggle(id)
+  }
+  const ignoreClick = () => {
+    if (!skipClick.current) return false
+    skipClick.current = false
+    return true
+  }
+  const swapEntries = (fromId: string, toId: string) => {
+    if (disabled || fromId === toId) return
+    const entries = [...doc.entries]
+    const from = entries.findIndex(item => item.id === fromId)
+    const to = entries.findIndex(item => item.id === toId)
+    if (from < 0 || to < 0) return
+    ;[entries[from], entries[to]] = [entries[to], entries[from]]
+    update({ entries })
+  }
+  const onCardStart = (event: DragEvent<HTMLElement>, fromId: string) => {
+    if (disabled) { event.preventDefault(); return }
+    event.stopPropagation()
+    skipClick.current = true
+    const payload: ShopRowDrag = { fromId }
+    event.dataTransfer.setData(SHOP_ROW_MIME, JSON.stringify(payload))
+    event.dataTransfer.effectAllowed = 'move'
+    const row = event.currentTarget.closest('tr')
+    if (row) event.dataTransfer.setDragImage(row, 24, 16)
+    setCardDrag(payload)
+  }
+  const onCardEnd = () => {
+    setCardDrag(null)
+    setCardDrop(null)
+    window.setTimeout(() => { skipClick.current = false }, 0)
+  }
+  const onCardOver = (event: DragEvent<HTMLElement>, id: string) => {
+    if (disabled || !cardDrag || cardDrag.fromId === id) return
+    event.preventDefault()
+    event.stopPropagation()
+    event.dataTransfer.dropEffect = 'move'
+    if (cardDrop !== id) setCardDrop(id)
+  }
+  const onCardDrop = (event: DragEvent<HTMLElement>, id: string) => {
+    event.preventDefault()
+    event.stopPropagation()
+    const drag = cardDrag ?? readShopRow(event.dataTransfer)
+    setCardDrop(null)
+    setCardDrag(null)
+    if (!drag || drag.fromId === id || disabled) return
+    swapEntries(drag.fromId, id)
+  }
+  const rowCardClass = (id: string) => `${cardDrag?.fromId === id ? ' is-card-dragging' : ''}${cardDrop === id ? ' is-row-drop' : ''}`
+
   const rows = doc.entries.map((value, index) => {
     const open = value.id === expandedId
     const detailId = `shop-detail-${value.id}`
     const invalid = value.initialCapacity > value.maxCapacity
     return <Fragment key={value.id}>
-      <tr data-entry-id={value.id} className={`shop-sheet-row${open ? ' is-expanded' : ''}`} onClick={e => rowClick(e, value.id)}>
-        <th scope="row"><button type="button" className="shop-row-toggle" aria-label={`交易 ${index + 1}`} aria-expanded={open} aria-controls={open ? detailId : undefined} title={value.id} onClick={() => toggle(value.id)}>
-          <span className="shop-row-chevron" aria-hidden>▸</span>{index + 1}
-        </button></th>
+      <tr data-entry-id={value.id} className={`shop-sheet-row${open ? ' is-expanded' : ''}${invalid ? ' is-invalid' : ''}${rowCardClass(value.id)}`} onClick={e => rowClick(e, value.id)} onDragOver={e => onCardOver(e, value.id)} onDrop={e => onCardDrop(e, value.id)}>
+        <th scope="row" className="shop-row-handle" onDragOver={e => onCardOver(e, value.id)} onDrop={e => onCardDrop(e, value.id)}>
+          <div
+            className="shop-row-toggle"
+            draggable={!disabled}
+            role="button"
+            tabIndex={disabled ? -1 : 0}
+            aria-label={`交易 ${index + 1}`}
+            aria-expanded={open}
+            aria-controls={open ? detailId : undefined}
+            title={value.id}
+            onClick={() => { if (ignoreClick()) return; toggle(value.id) }}
+            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (!ignoreClick()) toggle(value.id) } }}
+            onDragStart={e => onCardStart(e, value.id)}
+            onDragEnd={onCardEnd}
+          >
+            {index + 1}
+          </div>
+        </th>
         {(['payment', 'goods'] as const).map(field => {
           const key = dropKey(value.id, field)
-          return <td key={field}><button type="button"
-            className={`shop-cell-items${dropTarget === key ? ' is-drop' : ''}`}
+          return <td key={field} className={`shop-col shop-col-${field}${dropTarget === key ? ' is-drop' : ''}`}
+            onDragEnter={e => onItemDragOver(e, key)}
+            onDragOver={e => { onCardOver(e, value.id); onItemDragOver(e, key) }}
+            onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropTarget(current => current === key ? null : current) }}
+            onDrop={e => { if (cardDrag || readShopRow(e.dataTransfer)) onCardDrop(e, value.id); else onItemDrop(e, value.id, field) }}>
+            <div
+            className="shop-cell-items"
+            role="button"
+            tabIndex={disabled ? -1 : 0}
             aria-label={`交易 ${index + 1} ${TRADE_SIDES[field].label}物品`}
             aria-expanded={open}
             aria-controls={open ? detailId : undefined}
             title={itemSummary(value[field]) || (disabled ? '未设置' : '点击展开，或拖入 .item / .itemstack')}
-            onClick={() => toggle(value.id)}
-            onDragEnter={e => onItemDragOver(e, key)}
-            onDragOver={e => onItemDragOver(e, key)}
-            onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropTarget(current => current === key ? null : current) }}
-            onDrop={e => onItemDrop(e, value.id, field)}
+            onClick={() => { if (ignoreClick()) return; toggle(value.id) }}
+            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (!ignoreClick()) toggle(value.id) } }}
           >
             {value[field].length
               ? <ul className="shop-item-icons">{value[field].map((item, itemIndex) => <li key={itemIndex}><ShopItemIcon item={item} /></li>)}</ul>
               : <span className="shop-cell-empty">{disabled ? '未设置' : '拖入物品或点击展开'}</span>}
-          </button></td>
+          </div></td>
         })}
         <td><div className="shop-cell shop-cell-fields">
           <label><span>初始</span><input type="number" min="0" step="1" aria-label={`交易 ${index + 1} 初始额度`} aria-invalid={invalid} value={value.initialCapacity} disabled={disabled} onChange={e => setCapacity(value.id, 'initialCapacity', e.target.value)} /></label>
           <label><span>最大</span><input type="number" min="0" step="1" aria-label={`交易 ${index + 1} 最大额度`} aria-invalid={invalid} value={value.maxCapacity} disabled={disabled} onChange={e => setCapacity(value.id, 'maxCapacity', e.target.value)} /></label>
-          <span className={`shop-cell-note${invalid ? ' is-invalid' : ''}`} title={capacityHint(value, doc.stockSubject)}>{invalid ? '初始超过最大' : capacityLabel(value, doc.stockSubject)}</span>
+          {invalid ? <span className="shop-cell-note is-invalid" title={capacityHint(value, doc.stockSubject)}>初始超过最大</span> : (capacityLabel(value, doc.stockSubject) ? <span className="shop-cell-note" title={capacityHint(value, doc.stockSubject)}>{capacityLabel(value, doc.stockSubject)}</span> : null)}
+          {doc.stockSubject !== 'infinite' && !invalid ? <span className="shop-capacity-meter" aria-hidden><span style={{ width: `${value.maxCapacity > 0 ? Math.min(100, Math.max(0, value.maxCapacity - value.initialCapacity) / value.maxCapacity * 100) : 0}%` }} /></span> : null}
         </div></td>
         <td><div className="shop-cell shop-cell-fields">
           <label><span>可见</span><input aria-label={`交易 ${index + 1} 可见性表达式`} value={value.visibility} disabled={disabled} placeholder="不限制" title={value.visibility} onChange={e => entry(value.id, { visibility: e.target.value })} /></label>
           <label><span>可用</span><input aria-label={`交易 ${index + 1} 可用性表达式`} value={value.availability} disabled={disabled} placeholder="不限制" title={value.availability} onChange={e => entry(value.id, { availability: e.target.value })} /></label>
         </div></td>
         <td><div className="shop-cell shop-cell-tags"><KitTagField label={`交易 ${index + 1} 标签`} tags={value.tags} disabled={disabled} onChange={tags => entry(value.id, { tags })} /></div></td>
-        <td><div className="shop-cell shop-row-actions">
+        <td onDragOver={e => onCardOver(e, value.id)} onDrop={e => onCardDrop(e, value.id)}><div className="shop-cell shop-row-actions">
           <button className="shop-order" type="button" aria-label={`上移交易 ${index + 1}`} title="上移" disabled={disabled || index === 0} onClick={() => move(-1, value.id)}>↑</button>
           <button className="shop-order" type="button" aria-label={`下移交易 ${index + 1}`} title="下移" disabled={disabled || index === doc.entries.length - 1} onClick={() => move(1, value.id)}>↓</button>
           <RemoveButton label={`删除交易 ${index + 1}`} disabled={disabled} onClick={() => removeEntry(value.id)} />
@@ -159,7 +243,7 @@ export function ShopEditor({ source, disabled, onChange, resolveText, setText, i
       </td></tr>}
     </Fragment>
   })
-  const sheet = <div className="shop-sheet-scroll" tabIndex={0} role="region" aria-label="商品表格滚动区域"><table className="shop-sheet" aria-label="商品交易表格">
+  const sheet = <div className={`shop-sheet-scroll${cardDrag ? ' is-card-dragging' : ''}`} tabIndex={0} role="region" aria-label="商品表格滚动区域"><table className="shop-sheet" aria-label="商品交易表格">
     <colgroup>
       <col className="shop-sheet-number" />
       <col className="shop-sheet-items" />
@@ -171,22 +255,24 @@ export function ShopEditor({ source, disabled, onChange, resolveText, setText, i
     </colgroup>
     <thead><tr>
       <th scope="col">序号</th>
-      <th scope="col">支付内容<small>玩家交付</small></th>
-      <th scope="col">获得内容<small>玩家获得</small></th>
+      <th scope="col" className="shop-col shop-col-payment">支付内容<small>玩家交付</small></th>
+      <th scope="col" className="shop-col shop-col-goods">获得内容<small>玩家获得</small></th>
       <th scope="col">额度<small>初始 / 最大</small></th>
       <th scope="col">条件<small>商品表达式</small></th>
       <th scope="col">标签</th>
       <th scope="col">操作</th>
     </tr></thead>
-    <tbody>{doc.entries.length ? rows : <tr className="shop-sheet-empty"><td colSpan={SHEET_COLUMNS}><div className="shop-blank"><span aria-hidden>⇄</span><strong>暂无商品条目</strong><p>{emptyHint}</p></div></td></tr>}</tbody>
+    <tbody>{doc.entries.length ? rows : <tr className="shop-sheet-empty"><td colSpan={SHEET_COLUMNS}><div className="shop-blank"><span className="shop-blank-mark" aria-hidden>⇄</span><strong>暂无商品条目</strong><p>{emptyHint}</p></div></td></tr>}</tbody>
   </table></div>
   return <div className="flow-kit-pane shop-editor"><div className="kit-editor"><div className="kit-page shop-page">
     <header className="kit-header shop-header">
       <label className="kit-name-field"><span className="kit-name-label">名称</span><input className="kit-title" aria-label="商店名称" placeholder="未命名商店" value={displayName} disabled={disabled || !setText} onChange={e => setText?.(doc.name, e.target.value)} /></label>
       <label className="shop-stock-field"><span>库存主体</span><select aria-label="库存主体类型" disabled={disabled} value={doc.stockSubject} onChange={e => update({ stockSubject: e.target.value as ShopDocument['stockSubject'] })}>{Object.entries(STOCK_SUBJECTS).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
-      <span className="shop-meta-note">主体收款并供货 · 具体实体由实例绑定</span>
-      <span className="shop-template-badge">商店模板</span>
-      <details className="shop-identity"><summary>模板 ID</summary><label className="kit-field"><span>模板 ID</span><input aria-label="模板 ID" value={doc.id} disabled={disabled} onChange={e => update({ id: e.target.value })} /></label></details>
+      <div className="shop-header-meta">
+        <span className="shop-meta-note">主体收款并供货 · 具体实体由实例绑定</span>
+        <span className="shop-template-badge">商店模板</span>
+        <details className="shop-identity"><summary>模板 ID</summary><label className="kit-field"><span>模板 ID</span><input aria-label="模板 ID" value={doc.id} disabled={disabled} onChange={e => update({ id: e.target.value })} /></label></details>
+      </div>
     </header>
     <div className="shop-header-secondary">
       <KitTagField label="商店标签" disabled={disabled} tags={doc.tags} onChange={tags => update({ tags })} />
@@ -208,6 +294,7 @@ export function ShopEditor({ source, disabled, onChange, resolveText, setText, i
       {sheet}
       <p className="kit-hint shop-sheet-note">商品表达式可引用本模板超参数与修饰器，留空直接满足；与下方商店级条件组分开求值。</p>
       <div className="kit-stack shop-settings" role="region" aria-label="商店条件与参数">
+        <header className="shop-section-head"><strong>商店规则</strong><span>可见性、可用性、超参数与脚本作用于整店，与单笔交易条件分开求值</span></header>
         <div className="shop-condition-columns">{conditions('visibility', '商店可见性条件组')}{conditions('availability', '商店可用性条件组')}</div>
         <Panel title="超参数" subtitle="由实例注入 · 此处为默认值" count={doc.params.length} action={add('添加超参数', () => update({ params: [...doc.params, createKitParam()] }))}><ParamPanel params={doc.params} preview={preview} disabled={disabled} onChange={params => update({ params })} onPreview={(id, value) => setPreview(p => ({ ...p, [id]: value }))} /></Panel>
         <Panel title="修饰器" subtitle="一元函数 f(x) · 仅本模板作用域" count={doc.modifiers.length} action={add('添加修饰器', () => update({ modifiers: [...doc.modifiers, createKitModifier()] }))}><ModifierPanel modifiers={doc.modifiers} env={env} disabled={disabled} onChange={modifiers => update({ modifiers })} />{env.errors.map((error, i) => <p className="kit-banner" role="alert" key={i}>{error}</p>)}</Panel>

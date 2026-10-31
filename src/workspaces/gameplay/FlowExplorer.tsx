@@ -556,15 +556,13 @@ export function FlowExplorer({
       setSelectedIds(new Set([entryId(defaultFocus)]));
       anchorId.current = entryId(defaultFocus);
     }
-    setExpanded((previous) => {
-      const next = new Set(previous);
-      for (const pkg of FLOW_PACKAGE_ORDER)
-        next.add(entryId(packageEntry(pkg)));
-      for (const id of allQuestViewEntryIds()) next.add(id);
-      const doc = state.documents.find((d) => d.key === state.activeKey);
-      if (doc) {
-        next.add(entryId(packageEntry(doc.package)));
-        if (isQuestDocument(doc))
+    // Reveal the open file only. Re-adding every package/quest view here
+    // would undo folders the author just collapsed.
+    const doc = state.documents.find((d) => d.key === state.activeKey);
+    if (doc) {
+      setExpanded((previous) => {
+        const next = new Set(previous).add(entryId(packageEntry(doc.package)));
+        if (isQuestDocument(doc) && !doc.folderId)
           next.add(`folder:${questViewKey(questAuthorKindOf(doc))}`);
         let parent = doc.folderId ?? null;
         while (parent !== null) {
@@ -572,9 +570,9 @@ export function FlowExplorer({
           parent =
             state.folders.find((f) => f.key === parent)?.parentId ?? null;
         }
-      }
-      return next;
-    });
+        return next;
+      });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.activeKey]);
   useEffect(() => {
