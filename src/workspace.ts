@@ -35,6 +35,7 @@ export const SOURCE_KIND_ORDER = [
   'level',
   'navigator',
   'actors',
+  'reputations',
   'shop',
   'gift',
   'items',
@@ -59,6 +60,7 @@ export const FILE_PLANE: Record<string, FilePlane> = {
   '.entity': 'server',
   '.kit': 'server',
   '.actor': 'server',
+  '.rep': 'server',
   '.shop': 'server',
 }
 
@@ -255,7 +257,7 @@ export function editorLanguageForFile(name: string): string {
   if (ext === '.py') return 'python'
   if (
     ext === '.lang' || ext === '.voice' || ext === '.tts' || ext === '.ttsservice'
-    || ext === '.quest' || ext === '.nav' || ext === '.item' || ext === '.entity' || ext === '.kit' || ext === '.shop' || ext === '.actor'
+    || ext === '.quest' || ext === '.nav' || ext === '.item' || ext === '.entity' || ext === '.kit' || ext === '.shop' || ext === '.actor' || ext === '.rep'
   ) {
     return 'json'
   }

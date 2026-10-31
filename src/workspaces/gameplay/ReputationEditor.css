@@ -1,0 +1,23 @@
+.reputation-bar {
+  position: relative;
+  height: 10px;
+  margin: 8px 0 16px;
+  background: color-mix(in srgb, CanvasText 12%, transparent);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.reputation-bar-fill {
+  display: block;
+  height: 100%;
+  background: color-mix(in srgb, CanvasText 55%, transparent);
+}
+.reputation-bar-mark {
+  position: absolute;
+  top: -3px;
+  width: 2px;
+  height: 16px;
+  margin-left: -1px;
+  background: CanvasText;
+}
+.reputation-bar-mark.is-neutral { opacity: 0.55; }
+.reputation-bar-mark.is-friendly { opacity: 0.9; }

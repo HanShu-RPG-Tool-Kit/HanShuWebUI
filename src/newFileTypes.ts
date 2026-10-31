@@ -36,6 +36,7 @@ import { createFlow } from "./workspaces/gameplay/model";
 import { createFlowDocument } from "./workspaces/gameplay/storage";
 import { createKit, stringifyKit } from "./workspaces/gameplay/kit";
 import { createActor, stringifyActor } from "./workspaces/gameplay/actor";
+import { createReputation, stringifyReputation } from "./workspaces/gameplay/reputation";
 import { createShop, stringifyShop } from "./workspaces/gameplay/shop";
 import {
   createNavigationPoint,
@@ -89,6 +90,7 @@ export type NewFileTypeId =
   | "entity"
   | "kit"
   | "actor"
+  | "rep"
   | "shop"
   | "md"
   | "tts"
@@ -275,7 +277,8 @@ export const NEW_FILE_TYPES: readonly NewFileType[] = [
     srcKind: type,
     seed: (base: string) => scriptTemplate(type, "default.py", base.trim()),
   })),
-  { id: "actor", ext: ".actor", label: "演员模板", hint: "演员脚本、标签与原版 AI 软冻结（src/actors）", icon: "actor", group: "gameplay", defaultBase: "新演员", seed: () => stringifyActor(createActor()) },
+  { id: "actor", ext: ".actor", label: "演员模板", hint: "演员脚本、标签、显示、对话、服务与声誉成员（src/actors）", icon: "actor", group: "gameplay", defaultBase: "新演员", seed: () => stringifyActor(createActor()) },
+  { id: "rep", ext: ".rep", label: "声誉阵营", hint: "点数阈值、敌对关系与旗帜（src/reputations）", icon: "reputation", group: "gameplay", defaultBase: "新阵营", seed: () => stringifyReputation(createReputation()) },
   {
     id: "shop",
     ext: ".shop",

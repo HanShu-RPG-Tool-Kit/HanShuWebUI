@@ -20,6 +20,9 @@ pub enum ResourceRelationRole {
     KitScript,
     ShopScript,
     ActorScript,
+    ActorReputation,
+    ActorShop,
+    ReputationHostile,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, TS)]
@@ -54,6 +57,7 @@ fn source_directory(kind: &str) -> Option<&'static str> {
         "kit" => "gift",
         "shop" => "shop",
         "actor" => "actors",
+        "rep" => "reputations",
         "item" => "items",
         "entity" => "entities",
         _ => return None,
@@ -171,6 +175,87 @@ pub(crate) fn resolve(tree: &Tree) -> Vec<ResourceRelation> {
                         });
                     }
                 }
+                if script_kind == "actor" {
+                    if let Some(faction) = document
+                        .get("reputation")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::trim)
+                        .filter(|id| {
+                            !id.is_empty()
+                                && *id != "."
+                                && *id != ".."
+                                && !id.chars().any(|c| matches!(c, '/' | '\\' | ':') || c.is_control())
+                        })
+                    {
+                        let target = format!("src/reputations/{faction}.rep");
+                        if path_ok(&target).is_ok() {
+                            relations.insert(ResourceRelation {
+                                kind: ResourceRelationKind::Reference,
+                                role: ResourceRelationRole::ActorReputation,
+                                from: path.clone(),
+                                to: target,
+                            });
+                        }
+                    }
+                    if document
+                        .get("interactService")
+                        .and_then(|service| service.get("type"))
+                        .and_then(serde_json::Value::as_str)
+                        .map(|value| value.eq_ignore_ascii_case("shop"))
+                        .unwrap_or(false)
+                    {
+                        if let Some(template) = document
+                            .pointer("/interactService/param/template")
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::trim)
+                            .filter(|id| {
+                                !id.is_empty()
+                                    && *id != "."
+                                    && *id != ".."
+                                    && !id.chars().any(|c| matches!(c, '/' | '\\' | ':') || c.is_control())
+                            })
+                        {
+                            let target = format!("src/shop/{template}.shop");
+                            if path_ok(&target).is_ok() {
+                                relations.insert(ResourceRelation {
+                                    kind: ResourceRelationKind::Reference,
+                                    role: ResourceRelationRole::ActorShop,
+                                    from: path.clone(),
+                                    to: target,
+                                });
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if source(path).is_some_and(|s| s.kind == "rep") {
+            if let Some(hostile) = bytes
+                .as_ref()
+                .and_then(|b| serde_json::from_slice::<serde_json::Value>(b).ok())
+                .as_ref()
+                .and_then(|document| document.get("hostile"))
+                .and_then(serde_json::Value::as_array)
+            {
+                for entry in hostile.iter().filter_map(serde_json::Value::as_str) {
+                    let id = entry.trim();
+                    let target = format!("src/reputations/{id}.rep");
+                    if !id.is_empty()
+                        && id != "."
+                        && id != ".."
+                        && !id
+                            .chars()
+                            .any(|c| matches!(c, '/' | '\\' | ':') || c.is_control())
+                        && path_ok(&target).is_ok()
+                    {
+                        relations.insert(ResourceRelation {
+                            kind: ResourceRelationKind::Reference,
+                            role: ResourceRelationRole::ReputationHostile,
+                            from: path.clone(),
+                            to: target,
+                        });
+                    }
+                }
             }
         }
         if source(path).is_some_and(|s| s.kind == "quest") {
@@ -232,6 +317,12 @@ pub(crate) fn relocated_owned(relation: &ResourceRelation, next_source: &Source)
             "assets/{locale}/voice_{}/{}",
             next_source.kind, next_source.stem
         ),
-        ResourceRelationRole::RewardKit | ResourceRelationRole::KitScript | ResourceRelationRole::ShopScript | ResourceRelationRole::ActorScript => return None,
+        ResourceRelationRole::RewardKit
+        | ResourceRelationRole::KitScript
+        | ResourceRelationRole::ShopScript
+        | ResourceRelationRole::ActorScript
+        | ResourceRelationRole::ActorReputation
+        | ResourceRelationRole::ActorShop
+        | ResourceRelationRole::ReputationHostile => return None,
     })
 }

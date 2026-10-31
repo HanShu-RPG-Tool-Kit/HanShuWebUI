@@ -96,6 +96,7 @@ type Edit = {
     | "flow"
     | "script"
     | "actor"
+    | "reputation"
     | "shop"
     | "kit"
     | "progress"
@@ -460,6 +461,8 @@ export function FlowExplorer({
   const allowsQuest = packageAllowsQuest(currentPkg);
   const allowsScripts = packageAllowsScripts(currentPkg);
   const allowsShops = currentPkg === "shop";
+  const allowsActors = currentPkg === "actor";
+  const allowsReputation = currentPkg === "reputation";
   const allowsKits = packageAllowsKits(currentPkg);
   const allowsLevel = packageAllowsLevel(currentPkg);
   const allowsItems = packageAllowsItems(currentPkg);
@@ -482,6 +485,7 @@ export function FlowExplorer({
     | "flow"
     | "script"
     | "actor"
+    | "reputation"
     | "shop"
     | "kit"
     | "progress"
@@ -489,7 +493,7 @@ export function FlowExplorer({
     | "level"
     | "entity"
     | "item"
-    | null = currentPkg === "actor" ? "actor" : allowsQuest
+    | null = allowsActors ? "actor" : allowsReputation ? "reputation" : allowsQuest
     ? questCreateMode
     : allowsScripts
       ? "script"
@@ -504,7 +508,7 @@ export function FlowExplorer({
               : allowsItems
                 ? "item"
                 : null;
-  const newLabel = currentPkg === "actor" ? "新建演员模板" : allowsQuest
+  const newLabel = allowsActors ? "新建演员模板" : allowsReputation ? "新建声誉阵营" : allowsQuest
     ? questCreateMode === "progress"
       ? "新建单进度任务"
       : questCreateMode === "flow"
@@ -525,7 +529,7 @@ export function FlowExplorer({
               : allowsScripts
                 ? "新建脚本"
                 : "新建流程";
-  const importLabel = currentPkg === "actor" ? "导入演员模板" : allowsQuest
+  const importLabel = allowsActors ? "导入演员模板" : allowsReputation ? "导入声誉阵营" : allowsQuest
     ? "导入任务"
     : packageAllowsEntities(currentPkg)
       ? "导入实体"
@@ -1134,8 +1138,8 @@ export function FlowExplorer({
       onNotice("脚本只能建在「脚本」分类中。");
       return;
     }
-    if ((mode === "actor" && pkg !== "actor") || (mode === "shop" && pkg !== "shop")) {
-      onNotice(mode === "actor" ? "演员模板只能建在演员分类中。" : "商店只能建在商店分类中。");
+    if ((mode === "actor" && pkg !== "actor") || (mode === "reputation" && pkg !== "reputation") || (mode === "shop" && pkg !== "shop")) {
+      onNotice(mode === "actor" ? "演员模板只能建在演员分类中。" : mode === "reputation" ? "声誉阵营只能建在声誉分类中。" : "商店只能建在商店分类中。");
       return;
     }
     if (mode === "kit" && !packageAllowsKits(pkg)) {
@@ -1186,6 +1190,7 @@ export function FlowExplorer({
       mode === "flow" ||
       mode === "script" ||
       mode === "actor" ||
+      mode === "reputation" ||
       mode === "shop" ||
       mode === "kit" ||
       mode === "progress" ||
@@ -1904,13 +1909,13 @@ export function FlowExplorer({
             action: () => onImport(folder, pkg),
           });
         }
-        if (pkg === "shop" || pkg === "actor") {
+        if (pkg === "shop" || pkg === "actor" || pkg === "reputation") {
           items.unshift({
-            label: pkg === "actor" ? "新建演员模板" : "新建商店",
-            action: () => startEdit(pkg === "actor" ? "actor" : "shop", entry),
+            label: pkg === "actor" ? "新建演员模板" : pkg === "reputation" ? "新建声誉阵营" : "新建商店",
+            action: () => startEdit(pkg === "actor" ? "actor" : pkg === "reputation" ? "reputation" : "shop", entry),
           });
           items.push({
-            label: pkg === "actor" ? "导入演员模板…" : "导入商店…",
+            label: pkg === "actor" ? "导入演员模板…" : pkg === "reputation" ? "导入声誉阵营…" : "导入商店…",
             action: () => onImport(folder, pkg),
           });
         }
@@ -2199,7 +2204,7 @@ export function FlowExplorer({
                       ? questViewIcon
                       : itemTableDoc
                         ? "item-table"
-                        : document?.package === "actor" ? "actor" : entityDoc
+                        : document?.package === "actor" ? "actor" : document?.package === "reputation" ? "reputation" : entityDoc
                           ? "entities"
                           : itemDoc
                             ? "item"
@@ -2332,7 +2337,9 @@ export function FlowExplorer({
                       aria-label={
                         created.mode === "script"
                           ? "新脚本名称"
-                          : created.mode === "actor" ? "新演员模板名称" : created.mode === "shop"
+                          : created.mode === "actor" ? "新演员模板名称" : created.mode === "reputation"
+                            ? "新声誉阵营名称"
+                            : created.mode === "shop"
                             ? "新商店名称"
                             : created.mode === "kit"
                               ? "新礼包名称"
@@ -2421,7 +2428,7 @@ export function FlowExplorer({
             .nav；「任务」下新建或拖入 .quest（单进度 /
             多进度）；「脚本」下新建或拖入 .py；「物品库」下新建 .item 或拖入
             .item / .itemstack；「商店」下新建或拖入 .shop；「礼包」下新建或拖入
-            .kit；其他分类可先建文件夹占位。
+            .kit；「演员」下新建或拖入 .actor；「声誉」下新建或拖入 .rep。
           </p>
         )}
       </div>

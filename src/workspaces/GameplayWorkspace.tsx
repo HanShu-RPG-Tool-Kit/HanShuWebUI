@@ -169,8 +169,11 @@ import {
 } from "./gameplay/goalDefinitions";
 import { ShopEditor } from "./gameplay/ShopEditor";
 import { ActorEditor } from "./gameplay/ActorEditor";
+import { ReputationEditor } from "./gameplay/ReputationEditor";
 import { createActor, parseActor, stringifyActor } from "./gameplay/actor";
+import { createReputation, parseReputation, stringifyReputation } from "./gameplay/reputation";
 import { createShop, parseShop, stringifyShop } from "./gameplay/shop";
+import { collectHsInjectNames } from "../hanshu/hsSyntaxRules";
 import { KitEditor } from "./gameplay/KitEditor";
 import { ProgressCollaborativeEditor } from "./gameplay/ProgressCollaborativeEditor";
 import { progressEditorSession } from "./gameplay/progressEditRegistry";
@@ -676,6 +679,7 @@ export function GameplayWorkspace({
   const scriptDoc = doc ? isScriptDocument(doc) : false;
   const shopDoc = doc?.package === "shop";
   const actorDoc = doc?.package === "actor";
+  const reputationDoc = doc?.package === "reputation";
   const kitDoc = doc ? isKitDocument(doc) : false;
   const progressDoc = doc ? isSimpleQuestDocument(doc) : false;
   const multiQuestDoc = doc ? isMultiQuestDocument(doc) : false;
@@ -749,6 +753,7 @@ export function GameplayWorkspace({
     if (
       !doc ||
       actorDoc ||
+      reputationDoc ||
       shopDoc ||
       scriptDoc ||
       kitDoc ||
@@ -771,6 +776,7 @@ export function GameplayWorkspace({
   }, [
     doc,
     actorDoc,
+    reputationDoc,
     shopDoc,
     scriptDoc,
     kitDoc,
@@ -805,6 +811,7 @@ export function GameplayWorkspace({
   const flowLocalizable = Boolean(
     doc &&
     !actorDoc &&
+    !reputationDoc &&
     !shopDoc &&
     !scriptDoc &&
     !kitDoc &&
@@ -816,7 +823,7 @@ export function GameplayWorkspace({
     !itemTableDoc,
   );
   const localeDoc = Boolean(
-    doc && (shopDoc || flowLocalizable || kitDoc || navigationDoc || levelDoc),
+    doc && (shopDoc || reputationDoc || flowLocalizable || kitDoc || navigationDoc || levelDoc),
   );
 
   // 当前焦点文档的语义键 TextMap（literal）
@@ -1295,6 +1302,7 @@ export function GameplayWorkspace({
   ) {
     if (packageId === "script" || ext === ".py") return "新建脚本.py";
     if (packageId === "actor" || ext === ".actor") return "新建演员.actor";
+    if (packageId === "reputation" || ext === ".rep") return "新建阵营.rep";
     if (packageId === "shop" || ext === ".shop") return "新建商店.shop";
     if (packageId === "gift" || ext === ".kit") return "新建礼包.kit";
     if (packageId === "quest")
@@ -1365,6 +1373,8 @@ export function GameplayWorkspace({
             })
           : ext === ".actor"
             ? stampDocument({ key: randomId(), name, source: stringifyActor(createActor()), package: packageId, folderId })
+          : ext === ".rep"
+            ? stampDocument({ key: randomId(), name, source: stringifyReputation(createReputation()), package: packageId, folderId })
           : ext === ".shop"
             ? stampDocument({
                 key: randomId(),
@@ -1443,6 +1453,7 @@ export function GameplayWorkspace({
       else if (ext === ".kit")
         queueLocaleSeeds(next.key, defaultKitLocaleSeeds(title));
       else if (ext === ".shop") queueLocaleSeeds(next.key, { name: title });
+      else if (ext === ".rep") queueLocaleSeeds(next.key, { name: title, description: "" });
       const placed = openInGroup(
         { ...current, documents: [...current.documents, next] },
         focusedGroupId(current),
@@ -1493,7 +1504,7 @@ export function GameplayWorkspace({
     const input = fileInput.current;
     if (!input) return;
     input.accept =
-      packageId === "actor" ? ".actor,application/json" : packageId === "shop" ? ".shop,application/json" : packageId === "script"
+      packageId === "actor" ? ".actor,application/json" : packageId === "reputation" ? ".rep,application/json" : packageId === "shop" ? ".shop,application/json" : packageId === "script"
         ? ".py,text/x-python"
         : packageId === "gift"
           ? ".kit,application/json"
@@ -1522,7 +1533,7 @@ export function GameplayWorkspace({
     const skipped = files.length - accepted.length;
     if (!accepted.length) {
       setNotice(
-        pkg === "actor" ? "请放入 .actor 演员模板。" : pkg === "shop" ? "请放入 .shop 商店模板。" : pkg === "script"
+        pkg === "actor" ? "请放入 .actor 演员模板。" : pkg === "reputation" ? "请放入 .rep 声誉阵营。" : pkg === "shop" ? "请放入 .shop 商店模板。" : pkg === "script"
           ? "请放入 .py 脚本。"
           : pkg === "gift"
             ? "请放入 .kit 礼包。"
@@ -1562,9 +1573,10 @@ export function GameplayWorkspace({
           );
           continue;
         }
-        if (pkg === "gift" || pkg === "shop" || pkg === "actor") {
+        if (pkg === "gift" || pkg === "shop" || pkg === "actor" || pkg === "reputation") {
           const source = await file.text();
           if (pkg === "actor") parseActor(source);
+          else if (pkg === "reputation") parseReputation(source);
           else if (pkg === "shop") parseShop(source);
           else parseKit(source);
           const name = uniqueDocumentName(
@@ -2058,6 +2070,7 @@ export function GameplayWorkspace({
     const paneScript = isScriptDocument(paneDoc);
     const paneShop = paneDoc.package === "shop";
     const paneActor = paneDoc.package === "actor";
+    const paneReputation = paneDoc.package === "reputation";
     const paneKit = isKitDocument(paneDoc);
     const paneProgress = isSimpleQuestDocument(paneDoc);
     const paneNavigation = isNavigationDocument(paneDoc);
@@ -2079,6 +2092,7 @@ export function GameplayWorkspace({
     let paneError = "";
     if (
       !paneActor &&
+      !paneReputation &&
       !paneShop &&
       !paneScript &&
       !paneKit &&
@@ -2122,7 +2136,32 @@ export function GameplayWorkspace({
       readOnly ||
       (paneProgress && !graphLive);
 
-    if (paneActor) return <ActorEditor key={paneDoc.key} source={paneDoc.source} disabled={disabledPane} onChange={source => changeSource(source, false, paneDoc.key)} scriptOptions={state.documents.filter(d => d.package === "script" && scriptTypeInFolder(state, d.folderId ?? null) === "actor").map(d => ({ ref: d.name.replace(/\.py$/i, ""), label: d.name, key: d.key }))} onOpenScript={key => selectDocument(key)} />;
+    if (paneActor) {
+      const injectOptions = [...new Map((session.workspace.packages[0]?.scripts ?? [])
+        .filter(script => script.name.toLowerCase().endsWith(".hs"))
+        .flatMap(script => collectHsInjectNames(script.content).map(name => [name.toLowerCase(), { ref: name, label: `${name} · ${script.name}` }] as const))
+        .values()]
+      return <ActorEditor
+        key={paneDoc.key}
+        source={paneDoc.source}
+        disabled={disabledPane}
+        onChange={source => changeSource(source, false, paneDoc.key)}
+        scriptOptions={state.documents.filter(d => d.package === "script" && scriptTypeInFolder(state, d.folderId ?? null) === "actor").map(d => ({ ref: d.name.replace(/\.py$/i, ""), label: d.name, key: d.key }))}
+        reputationOptions={state.documents.filter(d => d.package === "reputation" && d.name.toLowerCase().endsWith(".rep")).map(d => ({ ref: d.name.replace(/\.rep$/i, ""), label: d.name, key: d.key }))}
+        shopOptions={state.documents.filter(d => d.package === "shop" && d.name.toLowerCase().endsWith(".shop")).map(d => ({ ref: d.name.replace(/\.shop$/i, ""), label: d.name, key: d.key }))}
+        injectOptions={injectOptions}
+        onOpenScript={key => selectDocument(key)}
+      />
+    }
+    if (paneReputation) return <ReputationEditor
+      key={paneDoc.key}
+      source={paneDoc.source}
+      disabled={disabledPane}
+      onChange={source => changeSource(source, false, paneDoc.key)}
+      factionOptions={state.documents.filter(d => d.package === "reputation" && d.name.toLowerCase().endsWith(".rep") && d.key !== paneDoc.key).map(d => ({ ref: d.name.replace(/\.rep$/i, ""), label: d.name }))}
+      resolveText={paneDoc.key === focusedKey ? resolveLocaleText : undefined}
+      setText={paneDoc.key === focusedKey ? setLocaleText : undefined}
+    />
     if (paneShop)
       return (
         <ShopEditor
@@ -2872,6 +2911,7 @@ export function GameplayWorkspace({
           <>
             {(progressDoc ||
               shopDoc ||
+              reputationDoc ||
               flowLocalizable ||
               kitDoc ||
               navigationDoc ||
@@ -2891,7 +2931,7 @@ export function GameplayWorkspace({
                 ? doc && isEntityLibraryTableKey(doc.key)
                   ? "实体库 · 网格表视图"
                   : "物品库 · 表视图"
-                : actorDoc ? "演员模板 · .actor" : entityDoc
+                : actorDoc ? "演员模板 · .actor" : reputationDoc ? "声誉阵营 · .rep" : entityDoc
                   ? "实体 · .entity"
                   : itemDoc
                     ? "物品 · .item"

@@ -47,6 +47,8 @@ import { parseItem, stringifyItem } from '../src/workspaces/gameplay/itemDoc.ts'
 import { parseEntity, stringifyEntity } from '../src/workspaces/gameplay/entityDoc.ts'
 import { parseKit } from '../src/workspaces/gameplay/kit.ts'
 import { parseShop } from '../src/workspaces/gameplay/shop.ts'
+import { parseActor } from '../src/workspaces/gameplay/actor.ts'
+import { parseReputation } from '../src/workspaces/gameplay/reputation.ts'
 import { parseNavigationPoint, validateNavigationPoint } from '../src/workspaces/gameplay/navigationPoint.ts'
 import { parseLevelDocument, stringifyLevelDocument } from '../src/workspaces/gameplay/levelDoc.ts'
 import { parseFlow } from '../src/workspaces/gameplay/model.ts'
@@ -186,6 +188,7 @@ assert.deepEqual(
     'level',
     'navigator',
     'actors',
+    'reputations',
     'shop',
     'gift',
     'items',
@@ -403,6 +406,8 @@ assert.equal(newFileName(type('progress'), '示例'), '示例.quest')
 const kitSeed = seedOf('kit')
 assert.equal(parseKit(kitSeed).name, 'name', '礼包名是语义键，种子不该写死展示名')
 assert.equal(parseShop(seedOf('shop')).format, 'hanshu.shop')
+assert.equal(parseActor(seedOf('actor')).format, 'rpgtoolkit:actor-template')
+assert.equal(parseReputation(seedOf('rep')).format, 'rpgtoolkit:reputation-faction')
 /*
  * `.item`（上游的物品库文档）：往返一致。
  * 物品 id 是**数据**（`minecraft:` 命名空间），不该由文件名猜出来 —— 种子里是
