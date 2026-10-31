@@ -52,12 +52,12 @@ assert.ok(JSON.stringify(result).includes('game'))
 for (const patch of [{ extends: 'parent' }, { includes: [] }, { entries: [...doc.entries, doc.entries[0]] }, { entries: [{ ...doc.entries[0], payment: [{ count: 1 }] }] }, { stockSubject: 'entity-id' }]) {
   assert.throws(() => parseShop(JSON.stringify({ ...doc, ...patch })))
 }
-for (const field of ['visibility', 'availability']) {
-  const legacy = parseShop(JSON.stringify({ ...doc, [field]: [] }))
-  assert.equal(Object.hasOwn(legacy, field), false)
-  assert.equal(Object.hasOwn(JSON.parse(stringifyShop(legacy)), field), false)
-  assert.throws(() => parseShop(JSON.stringify({ ...doc, [field]: [{ kind: 'expr', state: 'true', target: '0' }] })), /条件组已移除/)
-}
+doc.visibility = [{ kind: 'task', state: 'succeeded', target: '序章' }]
+doc.availability = [{ kind: 'expr', state: 'true', target: 'level > 1' }]
+assert.deepEqual(parseShop(stringifyShop(doc)).visibility, doc.visibility)
+assert.deepEqual(parseShop(stringifyShop(doc)).availability, doc.availability)
+assert.throws(() => parseShop(JSON.stringify({ ...doc, visibility: [{ kind: 'repeat', state: 'satisfied', target: '' }] })))
+assert.deepEqual(parseShop(JSON.stringify({ ...doc, visibility: undefined, availability: undefined })).visibility, [])
 doc.entries[0].visibility = 'level > 2'
 doc.entries[0].availability = 'price(1) > 0'
 const entryRoundTrip = parseShop(stringifyShop(doc))

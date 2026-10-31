@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { TextField } from './Fields'
+import { conditionStatesFor, createConditionRule, type ProgressConditionRule } from './conditions'
 import { AddButton, ItemCatalogContext, ItemList, KitExprContext, KitTagField, ModifierPanel, Panel, ParamPanel, RemoveButton } from './KitEditor'
 import { KitScriptField, type KitScriptOptions } from './KitScriptField'
 import { ItemSnapshotPanelStatus } from './ItemSnapshotPanelStatus'
@@ -39,6 +40,20 @@ export function ShopEditor({ source, disabled, onChange, resolveText, setText, i
   }
   const addEntry = () => { const value = createShopEntry(); update({ entries: [...doc.entries, value] }); setSelectedId(value.id) }
   const add = (label: string, onClick: () => void) => <AddButton label={label} disabled={disabled} onClick={onClick} />
+  function conditions(field: 'visibility' | 'availability', title: string) {
+    const replace = (index: number, rule: ProgressConditionRule) => update({ [field]: doc[field].map((r, i) => i === index ? rule : r) })
+    return <Panel title={title} count={doc[field].length} subtitle="全部满足" action={add(`添加${title}`, () => update({ [field]: [...doc[field], createConditionRule('task')] }))}>
+      {doc[field].length === 0 ? <p className="kit-empty">没有条件，直接满足</p> : <div className="shop-rules">
+        {doc[field].map((rule, index) => <div className="shop-rule" key={index}>
+          <span className="kit-row-index">{index + 1}</span>
+          <select disabled={disabled} aria-label={`${title} ${index + 1} 类型`} value={rule.kind} onChange={e => replace(index, createConditionRule(e.target.value as 'task' | 'dialogue' | 'expr'))}><option value="task">任务</option><option value="dialogue">对话</option><option value="expr">求值</option></select>
+          <select disabled={disabled} aria-label={`${title} ${index + 1} 状态`} value={rule.state} onChange={e => replace(index, { ...rule, state: e.target.value } as ProgressConditionRule)}>{Object.entries(conditionStatesFor(rule.kind)).map(([id, label]) => <option value={id} key={id}>{label}</option>)}</select>
+          <input disabled={disabled} aria-label={`${title} ${index + 1} 对象`} placeholder={rule.kind === 'expr' ? '条件表达式' : rule.kind === 'task' ? '任务对象' : '对话对象'} value={rule.target} onChange={e => { if (rule.kind !== 'repeat') replace(index, { ...rule, target: e.target.value }) }} />
+          <RemoveButton label={`移除${title} ${index + 1}`} disabled={disabled} onClick={() => update({ [field]: doc[field].filter((_, i) => i !== index) })} />
+        </div>)}
+      </div>}
+    </Panel>
+  }
   return <div className="flow-kit-pane shop-editor"><div className="kit-editor"><div className="kit-page shop-page">
     <header className="kit-header">
       <label className="kit-name-field"><span className="kit-name-label">名称</span><input className="kit-title" aria-label="商店名称" placeholder="未命名商店" value={resolveText?.(doc.name) ?? doc.name} disabled={disabled || !setText} onChange={e => setText?.(doc.name, e.target.value)} /></label>
@@ -97,7 +112,8 @@ export function ShopEditor({ source, disabled, onChange, resolveText, setText, i
           <section className="shop-advanced" aria-label="商品高级条件"><div className="shop-expression-fields"><TextField label="商品可见性表达式" disabled={disabled} value={selected.visibility} placeholder="留空表示直接满足" onChange={visibility => entry(selected.id, { visibility })} /><TextField label="商品可用性表达式" disabled={disabled} value={selected.availability} placeholder="留空表示直接满足" onChange={availability => entry(selected.id, { availability })} /></div><p className="kit-hint">表达式可引用本模板超参数与修饰器；只作用于当前商品。</p></section>
         </section> : <div className="shop-blank"><span aria-hidden>⇄</span><strong>建立一笔交易</strong><p>左侧添加商品，再选择玩家支付与获得的物品。</p></div>}
       </div>}
-      <div className="kit-stack shop-settings" role="region" aria-label="商店参数与脚本">
+      <div className="kit-stack shop-settings" role="region" aria-label="商店条件与参数">
+        <div className="shop-condition-columns">{conditions('visibility', '商店可见性条件组')}{conditions('availability', '商店可用性条件组')}</div>
         <Panel title="超参数" subtitle="由实例注入 · 此处为默认值" count={doc.params.length} action={add('添加超参数', () => update({ params: [...doc.params, createKitParam()] }))}><ParamPanel params={doc.params} preview={preview} disabled={disabled} onChange={params => update({ params })} onPreview={(id, value) => setPreview(p => ({ ...p, [id]: value }))} /></Panel>
         <Panel title="修饰器" subtitle="一元函数 f(x) · 仅本模板作用域" count={doc.modifiers.length} action={add('添加修饰器', () => update({ modifiers: [...doc.modifiers, createKitModifier()] }))}><ModifierPanel modifiers={doc.modifiers} env={env} disabled={disabled} onChange={modifiers => update({ modifiers })} />{env.errors.map((error, i) => <p className="kit-banner" role="alert" key={i}>{error}</p>)}</Panel>
         <Panel title="脚本" subtitle="按列表顺序执行" count={doc.script.length} className="kit-script" action={<span className="kit-lang">Python</span>}><KitScriptField value={doc.script} options={scriptOptions} resourceLabel="商店脚本" disabled={disabled} onOpen={onOpenScript} onChange={script => update({ script: kitScriptRefs(script).map(ref => ({ ref })) })} /></Panel>
