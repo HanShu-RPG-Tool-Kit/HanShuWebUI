@@ -128,6 +128,33 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
   const [autoRotate, setAutoRotate] = useState(true)
   const [notice, setNotice] = useState<string | null>(null)
   const [recoveryDrafts, setRecoveryDrafts] = useState<ReturnType<typeof recoverableEntryDrafts>>([])
+  const draftScope = useMemo(() => {
+    if (!project) return null
+    return JSON.stringify([
+      project.handle.client.connection.url,
+      project.handle.client.snapshot.projectId,
+      project.handle.client.snapshot.session.subjectId,
+    ])
+  }, [project])
+  const refreshRecoveryDrafts = useCallback(() => {
+    if (!draftScope) {
+      setRecoveryDrafts([])
+      return
+    }
+    setRecoveryDrafts(recoverableEntryDrafts(draftScope))
+  }, [draftScope])
+  useEffect(() => {
+    refreshRecoveryDrafts()
+  }, [refreshRecoveryDrafts, detailDirty, active])
+  useEffect(() => {
+    const onFocus = () => refreshRecoveryDrafts()
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [refreshRecoveryDrafts])
+  const draftEntryIds = useMemo(
+    () => new Set(recoveryDrafts.map((item) => item.entry.entryId)),
+    [recoveryDrafts],
+  )
   const [listError, setListError] = useState<string | null>(null)
   const [layoutMode, setLayoutMode] = useState<LayoutMode>('large')
   const [thumbType, setThumbType] = useState<ThumbType>('full')
@@ -872,6 +899,9 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
             {e.favorite ? '★ ' : ''}
             {e.name}
           </span>
+          {draftEntryIds.has(e.entryId) && (
+            <span className={styles.cardDraft} title="有未保存的详情修改">未保存</span>
+          )}
           {showEntryPath && <span className={styles.cardPath}>{entryPathLabel(e)}</span>}
           {!showEntryPath && <span className={styles.cardModel}>{e.model}</span>}
         </button>
@@ -1105,18 +1135,6 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
               onChange={(e) => setSearch(e.target.value)}
               aria-label="搜索皮肤"
             />
-            <details className={styles.recoveryDrafts} onToggle={e => {
-              if (e.currentTarget.open) setRecoveryDrafts(recoverableEntryDrafts(JSON.stringify([
-                project.handle.client.connection.url, project.handle.client.snapshot.projectId, project.handle.client.snapshot.session.subjectId,
-              ])))
-            }}>
-              <summary>本窗口草稿</summary>
-              {recoveryDrafts.length ? recoveryDrafts.map(recovered => (
-                <button type="button" key={recovered.entry.entryId} onClick={() => {
-                  setHovered(null); setPinned(recovered.entry)
-                }}>{recovered.name || '未命名皮肤'}</button>
-              )) : <p>暂无未保存的皮肤详情。</p>}
-            </details>
             <nav className={styles.quickNav} aria-label="快速访问">
               <div className={styles.quickNavHead}>
                 <span>快速访问</span>
@@ -1369,6 +1387,29 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
             </div>
           </div>
 
+          {recoveryDrafts.length > 0 && (
+            <div className={styles.draftBanner} role="status">
+              <span className={styles.draftBannerLabel}>
+                {recoveryDrafts.length} 项未保存的详情
+              </span>
+              <div className={styles.draftBannerList}>
+                {recoveryDrafts.map((recovered) => (
+                  <button
+                    type="button"
+                    key={recovered.entry.entryId}
+                    className={pinned?.entryId === recovered.entry.entryId ? styles.draftBannerChipActive : undefined}
+                    onClick={() => {
+                      setHovered(null)
+                      setPinned(recovered.entry)
+                    }}
+                  >
+                    {recovered.name || '未命名皮肤'}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
           {checked.size > 0 && (
             <div className={styles.batchBar} role="toolbar" aria-label="批量操作">
               <span>已勾选 {checked.size} 项</span>
@@ -1481,6 +1522,7 @@ export function SkinWorkspace({ active }: SkinWorkspaceProps) {
               entries={entries}
               folders={folders}
               checked={new Set(checked.keys())}
+              draftEntryIds={draftEntryIds}
               onToggleChecked={toggleChecked}
               onSelect={(e) => setPinned(e)}
               onContextMenu={(ev, e) => openContextMenu(ev, entryContextMenuItems(e))}

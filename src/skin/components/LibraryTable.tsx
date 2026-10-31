@@ -10,6 +10,7 @@ export interface LibraryTableProps {
   entries: LibraryEntry[]
   folders: FolderWithStats[]
   checked: Set<string>
+  draftEntryIds?: Set<string>
   onToggleChecked: (entryId: string) => void
   onSelect: (entry: LibraryEntry) => void
   onContextMenu: (e: React.MouseEvent, entry: LibraryEntry) => void
@@ -20,6 +21,7 @@ export function LibraryTable({
   entries,
   folders,
   checked,
+  draftEntryIds,
   onToggleChecked,
   onSelect,
   onContextMenu,
@@ -123,6 +125,9 @@ export function LibraryTable({
                 <td>
                   {e.favorite ? '★ ' : ''}
                   {e.name}
+                  {draftEntryIds?.has(e.entryId) ? (
+                    <span className={styles.tableDraft} title="有未保存的详情修改">未保存</span>
+                  ) : null}
                 </td>
                 <td>
                   <span
