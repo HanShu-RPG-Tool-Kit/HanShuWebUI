@@ -8,7 +8,7 @@ import {
 export const HANSHU_LANGUAGE_ID = 'hanshu'
 /** `.hsc`（编译产物）单独一套着色：语句以行为界 */
 export const HANSHU_HSC_LANGUAGE_ID = 'hanshu-hsc'
-export const HANSHU_THEME_ID = 'hanshu-dark-v5'
+export const HANSHU_THEME_ID = 'hanshu-dark-v6'
 
 /**
  * 注意：Monarch 正则里 @ 是特殊字符，字面量 @ 必须写成两个 @。
@@ -398,6 +398,13 @@ export function registerHanshuLanguage(monaco: Monaco) {
     base: 'vs-dark',
     inherit: true,
     rules: [
+      // Python 等内置语言：vs-dark 的 keyword(#569CD6) 和默认前景太接近，看起来像「关键字没上色」。
+      // 显式加亮，并覆盖 decorator（Monarch 记为 tag）。
+      { token: 'keyword', foreground: '4FC1FF' },
+      { token: 'tag', foreground: '4FC1FF' },
+      { token: 'string', foreground: 'CE9178' },
+      { token: 'comment', foreground: '6A9955' },
+      { token: 'number', foreground: 'B5CEA8' },
       { token: 'hanshu.speaker', foreground: '4FC1FF', fontStyle: 'bold' },
       { token: 'hanshu.punct', foreground: 'D4D4D4' },
       { token: 'hanshu.block.end', foreground: '808080', fontStyle: 'bold' },
