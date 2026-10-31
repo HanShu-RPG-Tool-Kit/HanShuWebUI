@@ -28,7 +28,7 @@
 | `hostile` | 单向敌对的其它阵营 ID；需两边各自声明才互敌 |
 | `hidden` | 为 true 时不出现在玩家声誉页 |
 | `attackedByMobs` | 成员是否吸引附近无目标的敌对生物 |
-| `banner` | 可选 Base64 PNG；游戏内以竖旗展示（缩进 ≤24×40，保持像素比），解码后 ≤ 256 KiB |
+| `banner` | 可选 Base64 PNG；游戏内以竖旗展示（缩进 ≤24×40，保持像素比），解码后 ≤ 256 KiB；可用 `/rt banner` 导出 Base64 再粘贴进编辑器 |
 
 站位：`hostile` / `neutral` / `friendly`。当 `neutralPoints == friendlyPoints` 时没有中立区间，点数会从敌对直接跳到友好。
 
