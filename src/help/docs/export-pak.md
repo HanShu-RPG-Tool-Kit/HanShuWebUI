@@ -125,7 +125,8 @@ registerLocaleExportRule({
 
 | kind | 内容 |
 | --- | --- |
-| `actors` | 演员模板（`.actor`）：脚本有序引用、标签与 freezeAi；仅 server 平面 |
+| `actors` | 演员模板（`.actor`）：脚本、标签、freezeAi、显示／对话／服务／声誉；仅 server 平面 |
+| `reputations` | 声誉阵营（`.rep`）：点数阈值、敌对关系与旗帜；仅 server 平面；译文在 `lang_rep` |
 | `script/<类型>` | `common` / `goal` / `kit` / `shop` / `item` / `actor` / `enchantment` / `player` 脚本；内置脚本先入，工程同类型同名文件覆盖 |
 | `hanshu` / `character` / `quest` / `level` / `navigator` / `gift` / `items` / `entities` | 其它源类型（旧工程 `progress` / `story` 目录仍可读） |
 

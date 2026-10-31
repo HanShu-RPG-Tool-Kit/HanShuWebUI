@@ -8,15 +8,61 @@
   "version": 1,
   "scripts": ["guard"],
   "tags": ["village"],
-  "freezeAi": true
+  "freezeAi": true,
+  "display": { "title": "&a卫兵", "subtitle": "&7东门" },
+  "reputation": "village_guard",
+  "dialogue": {
+    "talkId": "卫兵",
+    "playerRole": "玩家",
+    "entries": [
+      { "when": [{ "kind": "talk_unread", "inject": "village_intro" }], "inject": "village_intro" },
+      { "when": [], "inject": "village_idle" }
+    ]
+  },
+  "interactService": { "type": "shop", "param": { "template": "village" } }
 }
 ```
 
-五个字段固定，不能增加其他字段。`scripts` 是有序、不重复的演员脚本 ID，对应 `src/script/actor/<ID>.py`；不带路径或命名空间。表单可选择脚本、调整顺序、打开脚本及移除绑定。未解析引用会显示缺失并阻止 PAK 导出；其他类型同名脚本不能替代演员脚本。标签去重保序。`freezeAi` 软冻结原版 Goal/Brain，保留 navigation/control；它不控制脚本是否运行。
+## 字段
 
-工程保存、只读和冲突沿用[多人协作编程指南](#collaboration-programming)的普通文件事务。改名与删除模板不会改写或删除引用的脚本。WebUI 不执行 Python。
+- **必填**：`format` / `version` / `scripts` / `tags` / `freezeAi`
+- **可选**（可省略或 `null`；未知键拒载）：`display` / `reputation` / `dialogue` / `interactService`
 
-在游戏中使用 `/rt actor bind <entity-uuid> <ID>` 绑定模板；带脚本的模板仅能绑定 Mob。重新 bind 强制重建脚本会话；PAK reload 也重建已加载 Mob 的会话。初始化清空共享黑板，所有脚本恢复 running，按列表顺序接收 init。区块卸载再加载且会话指纹未变时不重新 init。
+`scripts` 是有序、不重复的演员脚本 ID，对应 `src/script/actor/<ID>.py`。表单可选择脚本、调整顺序、打开脚本及移除绑定；未解析引用会显示缺失并阻止 PAK 导出。标签去重保序。`freezeAi` 软冻结原版 Goal/Brain，保留 navigation/control；它不控制脚本是否运行。
+
+### 显示与声誉副作用
+
+有脚本：在会话 **init** 时写入宿主。无脚本：在绑定时写入。解绑 actor **不**清除名牌或声誉成员。
+
+| 字段 | 含义 |
+| --- | --- |
+| `display.title` / `subtitle` | 魔杖兼容的 `&` 纯文本；对象存在则整板写入，两行皆空则清除名牌 |
+| `reputation` | 已发布阵营 id（`src/reputations/<id>.rep`） |
+
+Boss 血条是脚本 API（`event.api().bossBar()`），**不能**写进 `.actor`。
+
+### 对话路由
+
+右键顺序：脚本 `interact` → `dialogue`（首条 when 全满足）→ `interactService` → 原版。
+
+| 字段 | 含义 |
+| --- | --- |
+| `talkId` / `playerRole` | 非空且互不相同的角色 ID |
+| `entries` | 有序；`when` 为 AND 条件集合，空数组恒真；`inject` 为全局 `@inject` 名 |
+| 条件 `kind` | `always`（禁止 inject）／`talk_read`／`talk_unread`（后两者必须带 inject） |
+
+### 交互服务
+
+| type | param | 行为 |
+| --- | --- | --- |
+| `shop` | `{ "template": "<源名去.shop>" }` | 打开无限库存商店模板 |
+| `vault` | `{}` | 打开本地仓库 |
+
+## 协作与引用
+
+工程保存、只读和冲突沿用[多人协作编程指南](#collaboration-programming)的普通文件事务。改名与删除模板不会改写或删除引用的脚本／阵营／商店／注入点。WebUI 不执行 Python。
+
+在游戏中使用 `/rt actor bind <entity-uuid> <ID>` 绑定模板；带脚本的模板仅能绑定 Mob。重新 bind 强制重建脚本会话；PAK reload 也重建已加载 Mob 的会话。
 
 ## Hook 与调度
 
@@ -47,4 +93,4 @@ def on_hurt(event: ActorHurtEvent, blackboard: GuardBoard) -> None:
     # api.state("guard") / api.sleep("guard", 20)
 ```
 
-`@hook` 名称补全、类型注解、动态黑板和在线限制见[Python 编辑器与语言服务](#python-language)。
+`@hook` 名称补全、类型注解、动态黑板和在线限制见[Python 编辑器与语言服务](#python-language)。声誉阵营见[声誉阵营](#reputation-guide)。

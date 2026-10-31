@@ -1,4 +1,5 @@
 import actorGuide from './docs/actor-guide.md?raw'
+import reputationGuide from './docs/reputation-guide.md?raw'
 import resourceOrganization from './docs/resource-organization.md?raw'
 import pythonLanguage from './docs/python-language.md?raw'
 import scriptResources from './docs/script-resources.md?raw'
@@ -54,6 +55,7 @@ export type HelpTopicId =
   | 'hsc-machine-framework'
   | 'kit-guide'
   | 'actor-guide'
+  | 'reputation-guide'
   | 'shop-guide'
   | 'kit-expr'
   | 'kit-runtime'
@@ -132,6 +134,7 @@ export const HELP_TOPICS: HelpTopic[] = [
     body: hscMachineFramework,
   },
   { id: 'actor-guide', title: '演员模板与脚本（.actor）', group: '游戏性', audience: 'user', inDocs: true, body: actorGuide },
+  { id: 'reputation-guide', title: '声誉阵营（.rep）', group: '游戏性', audience: 'user', inDocs: true, body: reputationGuide },
   {
     id: 'shop-guide', title: '商店模板（.shop）', group: '游戏性', audience: 'user', inDocs: true, body: shopGuide,
   },

@@ -70,4 +70,8 @@
 
 ## 演员模板
 
-演员分类原生格式为 `.actor`，保存于 `src/actors/<ID>.actor`，导出到 server PAK 的 `actors/<ID>.actor`。演员脚本使用 `src/script/actor/<ID>.py`。模板中的 `scripts` 仅引用 actor 类型脚本，保留顺序且不可重复；改名、删除不自动改写引用，也不会级联删除脚本。详细契约见[演员模板与脚本](#actor-guide)。旧 `src/script/entity/` 不再作为演员脚本目录，需要作者显式调整目录，不自动改写旧工程。
+演员分类原生格式为 `.actor`，保存于 `src/actors/<ID>.actor`，导出到 server PAK 的 `actors/<ID>.actor`。演员脚本使用 `src/script/actor/<ID>.py`。模板中的 `scripts` 仅引用 actor 类型脚本，保留顺序且不可重复；还可选引用声誉阵营、商店文件名和对话 `@inject`。改名、删除不自动改写引用，也不会级联删除脚本。详细契约见[演员模板与脚本](#actor-guide)。旧 `src/script/entity/` 不再作为演员脚本目录，需要作者显式调整目录，不自动改写旧工程。
+
+## 声誉阵营
+
+声誉分类原生格式为 `.rep`，保存于 `src/reputations/<ID>.rep`，导出到 server PAK 的 `reputations/<ID>.rep`。显示名与描述在 `assets/<locale>/lang_rep/<ID>.lang`（键 `name` / `description`），不写进 `.rep`。`hostile` 为单向阵营引用。详细契约见[声誉阵营](#reputation-guide)。
