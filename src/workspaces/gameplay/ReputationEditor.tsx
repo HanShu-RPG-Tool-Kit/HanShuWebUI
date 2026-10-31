@@ -25,6 +25,14 @@ async function fileToBanner(file: File): Promise<string> {
   return validateReputationBanner(btoa(binary))
 }
 
+/** Accept raw Base64 or `data:image/png;base64,...` paste. */
+function pasteToBanner(raw: string): string {
+  const trimmed = raw.trim().replace(/\s+/g, '')
+  const payload = trimmed.replace(/^data:image\/png;base64,/i, '')
+  if (!payload) throw new Error('请粘贴 PNG 的 Base64 文本')
+  return validateReputationBanner(payload)
+}
+
 const bannerBytes = (base64: string) => Math.floor(base64.length * 3 / 4) - (base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0)
 const readInt = (raw: string) => raw.trim() === '' ? Number.NaN : Number(raw)
 const shownInt = (value: number) => Number.isFinite(value) ? value : ''
@@ -41,6 +49,8 @@ export function ReputationEditor({
 }) {
   const [repairing, setRepairing] = useState(false)
   const [bannerError, setBannerError] = useState('')
+  const [bannerPaste, setBannerPaste] = useState('')
+  const [pasteOpen, setPasteOpen] = useState(false)
   const [previewOverride, setPreviewOverride] = useState<number | null>(null)
   const { pending, commit, discard } = useSheetDraft(source, disabled, parseReputation, stringifyReputation, onChange)
   let parsed: ReputationDocument = createReputation(), error = ''
@@ -167,13 +177,13 @@ export function ReputationEditor({
       </Panel>
     </div>
 
-    <Panel title="旗帜" subtitle="可选 · Base64 PNG" className="rep-banner">
+    <Panel title="旗帜" subtitle="可选 · 竖旗 PNG（游戏内 ≤24×40）" className="rep-banner">
       <div className="rep-media">
         <div className={`rep-media-frame${doc.banner ? '' : ' is-empty'}`}>
-          {doc.banner ? <img alt="阵营旗帜预览" src={`data:image/png;base64,${doc.banner}`} /> : <span>未设置旗帜</span>}
+          {doc.banner ? <img alt="阵营旗帜预览" src={`data:image/png;base64,${doc.banner}`} /> : <span>竖旗预览<br />24×40</span>}
         </div>
         <div className="rep-media-info">
-          <p className="sheet-note">按 2:1 区域展示；解码后不超过 256 KiB。{doc.banner && <> 当前 <b>{(bannerBytes(doc.banner) / 1024).toFixed(1)} KiB</b>。</>}</p>
+          <p className="sheet-note">游戏声誉页以<strong>竖旗</strong>展示（最长边缩进 ≤24×40，保持像素比）；任意分辨率 PNG 均可，解码后不超过 256 KiB。{doc.banner && <> 当前 <b>{(bannerBytes(doc.banner) / 1024).toFixed(1)} KiB</b>。</>}</p>
           {bannerError && <p className="kit-banner" role="alert">{bannerError}</p>}
           <div className="rep-media-actions">
             <label className={`sheet-btn rep-upload${disabled ? ' is-disabled' : ''}`}>
@@ -183,6 +193,7 @@ export function ReputationEditor({
                 if (!file) return
                 try {
                   setBannerError('')
+                  setBannerPaste('')
                   update({ banner: await fileToBanner(file) })
                 } catch (cause) {
                   setBannerError(errorText(cause))
@@ -190,8 +201,30 @@ export function ReputationEditor({
               }} />
               {doc.banner ? '替换 PNG' : '上传 PNG'}
             </label>
-            <button type="button" className="sheet-btn is-quiet" disabled={disabled || !doc.banner} onClick={() => { setBannerError(''); update({ banner: null }) }}>清除旗帜</button>
+            <button type="button" className="sheet-btn is-quiet" disabled={disabled} aria-expanded={pasteOpen} onClick={() => { setPasteOpen(open => !open); setBannerError('') }}>
+              {pasteOpen ? '收起 Base64' : '粘贴 Base64'}
+            </button>
+            <button type="button" className="sheet-btn is-quiet" disabled={disabled || !doc.banner} onClick={() => { setBannerError(''); setBannerPaste(''); update({ banner: null }) }}>清除旗帜</button>
           </div>
+          {pasteOpen && <div className="rep-banner-paste">
+            <SheetField label="Base64" hint="可粘贴纯 Base64，或 data:image/png;base64,…">
+              <textarea aria-label="阵营旗帜 Base64" disabled={disabled} value={bannerPaste} rows={4} placeholder="iVBORw0KGgo…" spellCheck={false} onChange={e => { setBannerPaste(e.target.value); setBannerError('') }} />
+            </SheetField>
+            <div className="rep-media-actions">
+              <button type="button" className="sheet-btn" disabled={disabled || !bannerPaste.trim()} onClick={() => {
+                try {
+                  const next = pasteToBanner(bannerPaste)
+                  setBannerError('')
+                  setBannerPaste('')
+                  setPasteOpen(false)
+                  update({ banner: next })
+                } catch (cause) {
+                  setBannerError(errorText(cause))
+                }
+              }}>应用 Base64</button>
+              <button type="button" className="sheet-btn is-quiet" disabled={disabled || !bannerPaste} onClick={() => setBannerPaste('')}>清空输入</button>
+            </div>
+          </div>}
         </div>
       </div>
     </Panel>
