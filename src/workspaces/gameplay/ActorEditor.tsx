@@ -1,19 +1,47 @@
 import { useState } from 'react'
-import { KitTagField } from './KitEditor'
+import { AddButton, KitTagField, Panel, RemoveButton } from './KitEditor'
+import { IconButton, JsonRepairPane, PendingBanner, RefBadge, SheetField, SheetToggle, useSheetDraft } from './SheetParts'
 import {
   createActor,
   parseActor,
   stringifyActor,
+  type ActorDialogue,
   type ActorDialogueCondition,
   type ActorDialogueEntry,
   type ActorDocument,
   type ActorInteractService,
 } from './actor'
+import './ActorEditor.css'
 
 type RefOption = { ref: string; label: string; key?: string }
 
-function nextCondition(kind: ActorDialogueCondition['kind']): ActorDialogueCondition {
-  return kind === 'always' ? { kind: 'always' } : { kind, inject: '' }
+const CONDITION_KINDS: Record<ActorDialogueCondition['kind'], string> = {
+  always: '恒真',
+  talk_read: '已读',
+  talk_unread: '未读',
+}
+
+function nextCondition(kind: ActorDialogueCondition['kind'], previous?: ActorDialogueCondition): ActorDialogueCondition {
+  if (kind === 'always') return { kind: 'always' }
+  return { kind, inject: previous && previous.kind !== 'always' ? previous.inject : '' }
+}
+
+function swap<T>(list: T[], index: number, delta: number): T[] {
+  const next = [...list], target = index + delta
+  ;[next[index], next[target]] = [next[target], next[index]]
+  return next
+}
+
+function InjectSelect({ label, value, options, disabled, onChange }: { label: string; value: string; options: RefOption[]; disabled: boolean; onChange: (value: string) => void }) {
+  const known = !value || options.some(option => option.ref === value)
+  return <span className="actor-ref-field">
+    <select className="sheet-select" aria-label={label} aria-invalid={!value} disabled={disabled} value={value} onChange={e => onChange(e.target.value)}>
+      <option value="">选择 @inject…</option>
+      {options.map(option => <option key={option.ref} value={option.ref}>{option.label}</option>)}
+      {!known && <option value={value}>{value}（未索引）</option>}
+    </select>
+    <RefBadge missing={!known} text="未索引" />
+  </span>
 }
 
 export function ActorEditor({
@@ -28,155 +56,202 @@ export function ActorEditor({
   injectOptions?: RefOption[]
   onOpenScript(key: string): void
 }) {
-  const [repair, setRepair] = useState<string | null>(null)
-  const [repairError, setRepairError] = useState('')
-  let doc: ActorDocument = createActor(), error = ''
-  try { doc = parseActor(source) } catch (cause) { error = String(cause) }
-  const update = (next: ActorDocument) => { if (!disabled) onChange(stringifyActor(next)) }
-  if (error || repair !== null) return <div className="flow-kit-pane">
-    <p role="alert">{repairError || error || '编辑演员模板 JSON'}</p>
-    <textarea aria-label="演员模板 JSON" disabled={disabled} value={repair ?? source} onChange={e => { setRepair(e.target.value); setRepairError('') }} rows={18} />
-    <button disabled={disabled} onClick={() => { try { onChange(stringifyActor(parseActor(repair ?? source))); setRepair(null) } catch (cause) { setRepairError(String(cause)) } }}>应用 JSON</button>
-  </div>
+  const [repairing, setRepairing] = useState(false)
+  const { pending, commit, discard } = useSheetDraft(source, disabled, parseActor, stringifyActor, onChange)
+  let parsed: ActorDocument = createActor(), error = ''
+  try { parsed = parseActor(source) } catch (cause) { error = cause instanceof Error ? cause.message : String(cause) }
+  if (error || repairing) return <JsonRepairPane
+    key={error ? 'invalid' : 'manual'}
+    title="演员模板"
+    label="演员模板 JSON"
+    source={source}
+    error={error}
+    disabled={disabled}
+    apply={text => { onChange(stringifyActor(parseActor(text))); setRepairing(false) }}
+    onCancel={error ? undefined : () => setRepairing(false)}
+  />
 
-  const move = (index: number, delta: number) => {
-    const scripts = [...doc.scripts], target = index + delta
-    ;[scripts[index], scripts[target]] = [scripts[target], scripts[index]]
-    update({ ...doc, scripts })
-  }
+  const doc = pending?.doc ?? parsed
+  const update = (patch: Partial<ActorDocument>) => commit({ ...doc, ...patch })
   const display = doc.display ?? null
   const dialogue = doc.dialogue ?? null
   const service = doc.interactService ?? null
-  const setDisplay = (next: ActorDocument['display']) => update({ ...doc, display: next })
-  const setDialogue = (next: ActorDocument['dialogue']) => update({ ...doc, dialogue: next })
-  const setService = (next: ActorDocument['interactService']) => update({ ...doc, interactService: next })
-  const setEntries = (entries: ActorDialogueEntry[]) => {
-    if (!dialogue) return
-    setDialogue({ ...dialogue, entries })
-  }
-  const moveEntry = (index: number, delta: number) => {
-    if (!dialogue) return
-    const entries = [...dialogue.entries], target = index + delta
-    ;[entries[index], entries[target]] = [entries[target], entries[index]]
-    setEntries(entries)
-  }
+  const setDialogue = (next: Partial<ActorDialogue>) => { if (dialogue) update({ dialogue: { ...dialogue, ...next } }) }
+  const setEntries = (entries: ActorDialogueEntry[]) => setDialogue({ entries })
   const patchEntry = (index: number, patch: Partial<ActorDialogueEntry>) => {
-    if (!dialogue) return
-    setEntries(dialogue.entries.map((entry, i) => i === index ? { ...entry, ...patch } : entry))
+    if (dialogue) setEntries(dialogue.entries.map((entry, i) => i === index ? { ...entry, ...patch } : entry))
   }
   const patchCondition = (entryIndex: number, conditionIndex: number, next: ActorDialogueCondition) => {
     if (!dialogue) return
-    const entries = dialogue.entries.map((entry, i) => {
-      if (i !== entryIndex) return entry
-      const when = entry.when.map((condition, j) => j === conditionIndex ? next : condition)
-      return { ...entry, when }
-    })
-    setEntries(entries)
+    const entry = dialogue.entries[entryIndex]
+    patchEntry(entryIndex, { when: entry.when.map((condition, j) => j === conditionIndex ? next : condition) })
   }
   const changeServiceType = (type: ActorInteractService['type']) => {
-    setService(type === 'shop' ? { type: 'shop', param: { template: '' } } : { type: 'vault', param: {} })
+    if (service?.type === type) return
+    update({ interactService: type === 'shop' ? { type: 'shop', param: { template: '' } } : { type: 'vault', param: {} } })
   }
+  const add = (label: string, onClick: () => void) => <AddButton label={label} disabled={disabled} onClick={onClick} />
 
-  return <div className="flow-kit-pane" aria-label="演员模板编辑器">
-    <h2>演员模板</h2>
-    <p className="flow-hint">模板 ID 使用文件名。脚本按列表顺序执行，共享同一实例黑板；重新绑定或重载会重建会话。有脚本时在会话 init 写入名牌与声誉成员，无脚本时在绑定时写入；解绑不会回滚这两项。</p>
-    <label><input type="checkbox" checked={doc.freezeAi} disabled={disabled} onChange={e => update({ ...doc, freezeAi: e.target.checked })} />软冻结原版 AI（保留导航与控制）</label>
-    <KitTagField label="演员标签" tags={doc.tags} disabled={disabled} onChange={tags => update({ ...doc, tags })} />
+  const availableScripts = scriptOptions.filter(option => !doc.scripts.includes(option.ref))
+  const reputationMissing = !!doc.reputation && !reputationOptions.some(option => option.ref === doc.reputation)
+  const shopTemplate = service?.type === 'shop' ? service.param.template : ''
+  const shopMissing = !!shopTemplate && !shopOptions.some(option => option.ref === shopTemplate)
+  const talkIdIssue = dialogue && (!dialogue.talkId.trim() ? '必填' : dialogue.talkId.trim() === dialogue.playerRole.trim() ? '不能与玩家角色相同' : '')
+  const playerRoleIssue = dialogue && !dialogue.playerRole.trim() ? '必填' : ''
 
-    <h3>演员脚本（有序）</h3>
-    {doc.scripts.map((id, index) => {
-      const option = scriptOptions.find(s => s.ref === id)
-      return <div key={id}>
-        <span>{index + 1}. {id}{!option && '（引用缺失）'}</span>
-        {option?.key && <button onClick={() => onOpenScript(option.key!)}>打开脚本</button>}
-        <button aria-label={`上移 ${id}`} disabled={disabled || index === 0} onClick={() => move(index, -1)}>↑</button>
-        <button aria-label={`下移 ${id}`} disabled={disabled || index === doc.scripts.length - 1} onClick={() => move(index, 1)}>↓</button>
-        <button aria-label={`移除 ${id}`} disabled={disabled} onClick={() => update({ ...doc, scripts: doc.scripts.filter(s => s !== id) })}>移除</button>
+  const scriptPanel = <Panel title="演员脚本" subtitle="按列表顺序执行 · 共享同一实例黑板" count={doc.scripts.length} className="actor-scripts"
+    action={<select className="sheet-select actor-add-select" aria-label="添加演员脚本" value="" disabled={disabled} onChange={e => { if (e.target.value) update({ scripts: [...doc.scripts, e.target.value] }) }}>
+      <option value="">{availableScripts.length ? '+ 添加脚本…' : scriptOptions.length ? '已全部添加' : '没有演员脚本'}</option>
+      {availableScripts.map(option => <option key={option.ref} value={option.ref}>{option.label}</option>)}
+    </select>}>
+    {doc.scripts.length === 0
+      ? <p className="kit-empty">{scriptOptions.length ? '尚未绑定脚本。从右上角选择 src/script/actor 下的脚本。' : '项目中还没有演员脚本。在 src/script/actor 下新建 .py 后即可绑定。'}</p>
+      : <ol className="kit-list actor-script-list">
+        {doc.scripts.map((id, index) => {
+          const option = scriptOptions.find(s => s.ref === id)
+          return <li key={id} className={`kit-row actor-script-row${option ? '' : ' is-missing'}`}>
+            <span className="kit-row-index">{index + 1}</span>
+            <span className="actor-script-name">
+              <code>{id}</code>
+              {option && option.label !== id && <small>{option.label}</small>}
+              <RefBadge missing={!option} />
+            </span>
+            {option?.key ? <button type="button" className="sheet-btn is-quiet" onClick={() => onOpenScript(option.key!)}>打开脚本</button> : <span />}
+            <span className="actor-row-tools">
+              <IconButton label={`上移 ${id}`} glyph="↑" disabled={disabled || index === 0} onClick={() => update({ scripts: swap(doc.scripts, index, -1) })} />
+              <IconButton label={`下移 ${id}`} glyph="↓" disabled={disabled || index === doc.scripts.length - 1} onClick={() => update({ scripts: swap(doc.scripts, index, 1) })} />
+              <RemoveButton label={`移除 ${id}`} disabled={disabled} onClick={() => update({ scripts: doc.scripts.filter(s => s !== id) })} />
+            </span>
+          </li>
+        })}
+      </ol>}
+  </Panel>
+
+  const displayPanel = <Panel title="显示名牌" subtitle="支持 & 颜色码" className={`sheet-panel${display ? '' : ' is-off'}`}
+    action={<SheetToggle label="启用" ariaLabel="启用显示名牌" checked={display != null} disabled={disabled} onChange={on => update({ display: on ? { title: '', subtitle: '' } : null })} />}>
+    {display ? <div className="sheet-panel-body">
+      <SheetField label="主标题"><input aria-label="名牌主标题" disabled={disabled} value={display.title} placeholder={'&6村长'} onChange={e => update({ display: { ...display, title: e.target.value } })} /></SheetField>
+      <SheetField label="副标题" hint={!display.title && !display.subtitle ? '两行皆空时会清除实体名牌。' : undefined}><input aria-label="名牌副标题" disabled={disabled} value={display.subtitle} placeholder={'&7右键交谈'} onChange={e => update({ display: { ...display, subtitle: e.target.value } })} /></SheetField>
+      <p className="sheet-note">整板写入名牌。Boss 血条请在脚本中调用 <code>api.bossBar()</code>。</p>
+    </div> : <p className="sheet-off">未启用 · 不改写实体名牌</p>}
+  </Panel>
+
+  const reputationPanel = <Panel title="声誉成员" subtitle={'reputations/<id>.rep'} className={`sheet-panel${doc.reputation ? '' : ' is-off'}`}>
+    <div className="sheet-panel-body">
+      <SheetField label="阵营" invalid={reputationMissing} hint={reputationMissing ? '找不到对应的 .rep 资源，Mod 加载时会报错。' : '绑定时写入实体的阵营成员关系。'}>
+        <span className="actor-ref-field">
+          <select aria-label="声誉阵营" disabled={disabled} value={doc.reputation ?? ''} onChange={e => update({ reputation: e.target.value || null })}>
+            <option value="">不设置</option>
+            {reputationOptions.map(option => <option key={option.ref} value={option.ref}>{option.label}</option>)}
+            {reputationMissing && <option value={doc.reputation!}>{doc.reputation}（引用缺失）</option>}
+          </select>
+          <RefBadge missing={reputationMissing} />
+        </span>
+      </SheetField>
+    </div>
+  </Panel>
+
+  const dialoguePanel = <Panel title="对话路由" subtitle="脚本 interact 之后匹配 · 首条全部满足的条目生效" count={dialogue ? dialogue.entries.length : undefined} className={`sheet-panel actor-dialogue${dialogue ? '' : ' is-off'}`}
+    action={<>
+      {dialogue && add('添加对话条目', () => setEntries([...dialogue.entries, { when: [], inject: '' }]))}
+      <SheetToggle label="启用" ariaLabel="启用对话路由" checked={dialogue != null} disabled={disabled} onChange={on => update({ dialogue: on ? { talkId: '', playerRole: '玩家', entries: [] } : null })} />
+    </>}>
+    {dialogue ? <div className="sheet-panel-body">
+      <div className="actor-dialogue-roles">
+        <SheetField label="角色 ID" invalid={!!talkIdIssue} hint={talkIdIssue || '对话脚本中 NPC 的角色名'}><input aria-label="对话角色 ID" aria-invalid={!!talkIdIssue} disabled={disabled} value={dialogue.talkId} placeholder="村长" onChange={e => setDialogue({ talkId: e.target.value })} /></SheetField>
+        <SheetField label="玩家角色 ID" invalid={!!playerRoleIssue} hint={playerRoleIssue || '对话脚本中代表玩家的角色名'}><input aria-label="对话玩家角色 ID" aria-invalid={!!playerRoleIssue} disabled={disabled} value={dialogue.playerRole} onChange={e => setDialogue({ playerRole: e.target.value })} /></SheetField>
       </div>
-    })}
-    <select aria-label="添加演员脚本" value="" disabled={disabled} onChange={e => { if (e.target.value) update({ ...doc, scripts: [...doc.scripts, e.target.value] }) }}>
-      <option value="">选择演员脚本…</option>
-      {scriptOptions.filter(s => !doc.scripts.includes(s.ref)).map(s => <option key={s.ref} value={s.ref}>{s.label}</option>)}
-    </select>
+      {dialogue.entries.length === 0
+        ? <p className="kit-empty actor-dialogue-empty">没有对话条目，右键时直接落到交互服务。</p>
+        : <ol className="actor-entries">
+          {dialogue.entries.map((entry, entryIndex) => {
+            const n = entryIndex + 1
+            return <li key={entryIndex} className={`actor-entry${entry.inject ? '' : ' is-incomplete'}`}>
+              <header className="actor-entry-head">
+                <span className="actor-entry-index">#{n}</span>
+                <span className="actor-entry-verb">进入</span>
+                <InjectSelect label={`对话条目 ${n} 注入点`} value={entry.inject} options={injectOptions} disabled={disabled} onChange={inject => patchEntry(entryIndex, { inject })} />
+                <span className="actor-row-tools">
+                  <IconButton label={`上移对话条目 ${n}`} glyph="↑" disabled={disabled || entryIndex === 0} onClick={() => setEntries(swap(dialogue.entries, entryIndex, -1))} />
+                  <IconButton label={`下移对话条目 ${n}`} glyph="↓" disabled={disabled || entryIndex === dialogue.entries.length - 1} onClick={() => setEntries(swap(dialogue.entries, entryIndex, 1))} />
+                  <RemoveButton label={`移除对话条目 ${n}`} disabled={disabled} onClick={() => setEntries(dialogue.entries.filter((_, i) => i !== entryIndex))} />
+                </span>
+              </header>
+              <div className="actor-conditions">
+                <span className="actor-conditions-label">当{entry.when.length > 1 ? '（全部满足）' : ''}</span>
+                {entry.when.length === 0
+                  ? <span className="actor-condition-empty">无条件 · 恒真</span>
+                  : <ul>
+                    {entry.when.map((condition, conditionIndex) => {
+                      const label = `对话条目 ${n} 条件 ${conditionIndex + 1}`
+                      return <li key={conditionIndex} className="actor-condition">
+                        {conditionIndex > 0 && <span className="actor-condition-and">且</span>}
+                        <select className="sheet-select actor-condition-kind" aria-label={`${label} 类型`} disabled={disabled} value={condition.kind} onChange={e => patchCondition(entryIndex, conditionIndex, nextCondition(e.target.value as ActorDialogueCondition['kind'], condition))}>
+                          {Object.entries(CONDITION_KINDS).map(([kind, text]) => <option key={kind} value={kind}>{text} · {kind}</option>)}
+                        </select>
+                        {condition.kind !== 'always'
+                          ? <InjectSelect label={`${label} 注入点`} value={condition.inject} options={injectOptions} disabled={disabled} onChange={inject => patchCondition(entryIndex, conditionIndex, { kind: condition.kind, inject })} />
+                          : <span className="actor-condition-note">始终成立</span>}
+                        <RemoveButton label={`移除${label}`} disabled={disabled} onClick={() => patchEntry(entryIndex, { when: entry.when.filter((_, i) => i !== conditionIndex) })} />
+                      </li>
+                    })}
+                  </ul>}
+                {add('添加条件', () => patchEntry(entryIndex, { when: [...entry.when, { kind: 'talk_unread', inject: '' }] }))}
+              </div>
+            </li>
+          })}
+        </ol>}
+      {!injectOptions.length && <p className="sheet-note">项目中还没有带 @inject 的 .hs 对话脚本，注入点只能手写到 JSON。</p>}
+    </div> : <p className="sheet-off">未启用 · 右键不触发对话</p>}
+  </Panel>
 
-    <h3>显示名牌</h3>
-    <p className="flow-hint">启用后整板写入；两行皆空会清除名牌。未启用不改名牌。支持魔杖兼容的 &amp; 颜色码。Boss 血条请用脚本 api.bossBar()，不要写进模板。</p>
-    <label><input type="checkbox" aria-label="启用显示名牌" checked={display != null} disabled={disabled} onChange={e => setDisplay(e.target.checked ? { title: '', subtitle: '' } : null)} />启用显示名牌</label>
-    {display && <>
-      <label>主标题<input aria-label="名牌主标题" disabled={disabled} value={display.title} onChange={e => setDisplay({ ...display, title: e.target.value })} /></label>
-      <label>副标题<input aria-label="名牌副标题" disabled={disabled} value={display.subtitle} onChange={e => setDisplay({ ...display, subtitle: e.target.value })} /></label>
-    </>}
+  const servicePanel = <Panel title="交互服务" subtitle="对话未命中后打开" className={`sheet-panel actor-service${service ? '' : ' is-off'}`}
+    action={<SheetToggle label="启用" ariaLabel="启用交互服务" checked={service != null} disabled={disabled} onChange={on => update({ interactService: on ? { type: 'shop', param: { template: '' } } : null })} />}>
+    {service ? <div className="sheet-panel-body">
+      <div className="actor-service-types" role="radiogroup" aria-label="交互服务类型">
+        {([['shop', '商店', '无限库存商店模板'], ['vault', '本地仓库', '玩家个人仓库，无参数']] as const).map(([type, title, hint]) =>
+          <button key={type} type="button" role="radio" aria-checked={service.type === type} className={`actor-service-type${service.type === type ? ' is-active' : ''}`} disabled={disabled} onClick={() => changeServiceType(type)}>
+            <b>{title}</b><small>{hint}</small>
+          </button>)}
+      </div>
+      {service.type === 'shop'
+        ? <SheetField label="商店模板" invalid={!shopTemplate || shopMissing} hint={!shopTemplate ? '必填：选择一个商店模板' : shopMissing ? '找不到对应的 .shop 资源' : '有限库存的商店请在脚本中打开。'}>
+          <span className="actor-ref-field">
+            <select aria-label="商店模板" disabled={disabled} value={shopTemplate} onChange={e => update({ interactService: { type: 'shop', param: { template: e.target.value } } })}>
+              <option value="">选择商店…</option>
+              {shopOptions.map(option => <option key={option.ref} value={option.ref}>{option.label}</option>)}
+              {shopMissing && <option value={shopTemplate}>{shopTemplate}（引用缺失）</option>}
+            </select>
+            <RefBadge missing={shopMissing} />
+          </span>
+        </SheetField>
+        : <p className="sheet-note">右键时打开该玩家的本地仓库。</p>}
+    </div> : <p className="sheet-off">未启用 · 对话未命中时不做任何事</p>}
+  </Panel>
 
-    <h3>声誉成员</h3>
-    <p className="flow-hint">绑定时写入实体声誉成员关系；解绑不会清除。阵营 ID 对应 reputations/&lt;id&gt;.rep。</p>
-    <label>阵营
-      <select aria-label="声誉阵营" disabled={disabled} value={doc.reputation ?? ''} onChange={e => update({ ...doc, reputation: e.target.value || null })}>
-        <option value="">不设置</option>
-        {reputationOptions.map(option => <option key={option.ref} value={option.ref}>{option.label}</option>)}
-        {doc.reputation && !reputationOptions.some(option => option.ref === doc.reputation) && <option value={doc.reputation}>{doc.reputation}（引用缺失）</option>}
-      </select>
-    </label>
-
-    <h3>对话路由</h3>
-    <p className="flow-hint">右键时在脚本 interact 之后匹配；首条 when 全满足的 entry 生效。条件为 AND；空 when 恒真。</p>
-    <label><input type="checkbox" aria-label="启用对话路由" checked={dialogue != null} disabled={disabled} onChange={e => setDialogue(e.target.checked ? { talkId: '', playerRole: '玩家', entries: [] } : null)} />启用对话路由</label>
-    {dialogue && <>
-      <label>角色 ID<input aria-label="对话角色 ID" disabled={disabled} value={dialogue.talkId} onChange={e => setDialogue({ ...dialogue, talkId: e.target.value })} /></label>
-      <label>玩家角色 ID<input aria-label="对话玩家角色 ID" disabled={disabled} value={dialogue.playerRole} onChange={e => setDialogue({ ...dialogue, playerRole: e.target.value })} /></label>
-      {dialogue.entries.map((entry, entryIndex) => <div key={entryIndex} className="actor-dialogue-entry">
-        <div>
-          <strong>条目 {entryIndex + 1}</strong>
-          <button aria-label={`上移对话条目 ${entryIndex + 1}`} disabled={disabled || entryIndex === 0} onClick={() => moveEntry(entryIndex, -1)}>↑</button>
-          <button aria-label={`下移对话条目 ${entryIndex + 1}`} disabled={disabled || entryIndex === dialogue.entries.length - 1} onClick={() => moveEntry(entryIndex, 1)}>↓</button>
-          <button aria-label={`移除对话条目 ${entryIndex + 1}`} disabled={disabled} onClick={() => setEntries(dialogue.entries.filter((_, i) => i !== entryIndex))}>移除</button>
-        </div>
-        <label>注入点
-          <select aria-label={`对话条目 ${entryIndex + 1} 注入点`} disabled={disabled} value={entry.inject} onChange={e => patchEntry(entryIndex, { inject: e.target.value })}>
-            <option value="">选择 @inject…</option>
-            {injectOptions.map(option => <option key={option.ref} value={option.ref}>{option.label}</option>)}
-            {entry.inject && !injectOptions.some(option => option.ref === entry.inject) && <option value={entry.inject}>{entry.inject}（未索引）</option>}
-          </select>
-        </label>
-        <div>
-          <span>条件</span>
-          <button disabled={disabled} onClick={() => patchEntry(entryIndex, { when: [...entry.when, { kind: 'always' }] })}>添加条件</button>
-        </div>
-        {entry.when.map((condition, conditionIndex) => <div key={conditionIndex}>
-          <select aria-label={`对话条目 ${entryIndex + 1} 条件 ${conditionIndex + 1} 类型`} disabled={disabled} value={condition.kind} onChange={e => patchCondition(entryIndex, conditionIndex, nextCondition(e.target.value as ActorDialogueCondition['kind']))}>
-            <option value="always">always</option>
-            <option value="talk_read">talk_read</option>
-            <option value="talk_unread">talk_unread</option>
-          </select>
-          {condition.kind !== 'always' && <select aria-label={`对话条目 ${entryIndex + 1} 条件 ${conditionIndex + 1} 注入点`} disabled={disabled} value={condition.inject} onChange={e => patchCondition(entryIndex, conditionIndex, { kind: condition.kind, inject: e.target.value })}>
-            <option value="">选择 @inject…</option>
-            {injectOptions.map(option => <option key={option.ref} value={option.ref}>{option.label}</option>)}
-            {condition.inject && !injectOptions.some(option => option.ref === condition.inject) && <option value={condition.inject}>{condition.inject}（未索引）</option>}
-          </select>}
-          <button aria-label={`移除对话条目 ${entryIndex + 1} 条件 ${conditionIndex + 1}`} disabled={disabled} onClick={() => patchEntry(entryIndex, { when: entry.when.filter((_, i) => i !== conditionIndex) })}>移除条件</button>
-        </div>)}
-      </div>)}
-      <button disabled={disabled} onClick={() => setEntries([...dialogue.entries, { when: [], inject: '' }])}>添加对话条目</button>
-    </>}
-
-    <h3>交互服务</h3>
-    <p className="flow-hint">对话未命中后打开商店或本地仓库。商店仅支持无限库存模板；有限库存请用脚本打开。</p>
-    <label><input type="checkbox" aria-label="启用交互服务" checked={service != null} disabled={disabled} onChange={e => setService(e.target.checked ? { type: 'shop', param: { template: '' } } : null)} />启用交互服务</label>
-    {service && <>
-      <label>类型
-        <select aria-label="交互服务类型" disabled={disabled} value={service.type} onChange={e => changeServiceType(e.target.value as ActorInteractService['type'])}>
-          <option value="shop">商店</option>
-          <option value="vault">本地仓库</option>
-        </select>
-      </label>
-      {service.type === 'shop' && <label>商店模板
-        <select aria-label="商店模板" disabled={disabled} value={service.param.template} onChange={e => setService({ type: 'shop', param: { template: e.target.value } })}>
-          <option value="">选择商店…</option>
-          {shopOptions.map(option => <option key={option.ref} value={option.ref}>{option.label}</option>)}
-          {service.param.template && !shopOptions.some(option => option.ref === service.param.template) && <option value={service.param.template}>{service.param.template}（引用缺失）</option>}
-        </select>
-      </label>}
-    </>}
-
-    <button disabled={disabled} onClick={() => setRepair(source)}>编辑 JSON</button>
-  </div>
+  return <div className="flow-kit-pane sheet-editor actor-editor" aria-label="演员模板编辑器"><div className="kit-editor"><div className="kit-page sheet-page">
+    <header className="kit-header sheet-header">
+      <div className="sheet-heading">
+        <h2>演员模板</h2>
+        <span className="sheet-kind">.actor</span>
+      </div>
+      <span className="sheet-header-hint">模板 ID 使用文件名；重新绑定或重载会重建会话。</span>
+      <div className="sheet-header-actions">
+        <button type="button" className="sheet-btn is-quiet" disabled={disabled} onClick={() => { discard(); setRepairing(true) }}>编辑 JSON</button>
+      </div>
+    </header>
+    <div className="actor-primary">
+      <SheetToggle label="软冻结原版 AI" hint="停用原版目标与行为，保留导航与控制" checked={doc.freezeAi} disabled={disabled} onChange={freezeAi => update({ freezeAi })} />
+      <KitTagField label="演员标签" tags={doc.tags} disabled={disabled} onChange={tags => update({ tags })} />
+    </div>
+    {pending && <PendingBanner issue={pending.issue} onDiscard={discard} />}
+    {scriptPanel}
+    <div className="sheet-columns">
+      {displayPanel}
+      {reputationPanel}
+    </div>
+    <p className="sheet-note is-info"><span>名牌与声誉成员在有脚本时于会话 init 写入，无脚本时于绑定时写入；<b>解绑不会回滚这两项</b>，需要时请在脚本中自行清理。</span></p>
+    {dialoguePanel}
+    {servicePanel}
+  </div></div></div>
 }
