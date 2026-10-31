@@ -31,6 +31,34 @@ export type ShopDocument = {
   entries: ShopEntry[]
 }
 export const createShopEntry = (): ShopEntry => ({ id: randomId(), tags: [], initialCapacity: 0, maxCapacity: 1, payment: [], goods: [], visibility: '', availability: '' })
+/** Copy payment/goods as-is: `.item` links keep `item`, inline stacks keep `id` + components. Only the entry id is new. */
+export function cloneShopEntry(entry: ShopEntry): ShopEntry {
+  const cloneItem = (item: KitItem): KitItem => {
+    if (item.item) {
+      const next: KitItem = { item: item.item, id: '', count: item.count, components: {} }
+      if (item.mods) next.mods = { ...item.mods }
+      return next
+    }
+    const next: KitItem = { id: item.id, count: item.count, components: structuredClone(item.components) }
+    if (item.display) next.display = structuredClone(item.display)
+    if (item.mods) next.mods = { ...item.mods }
+    return next
+  }
+  return {
+    id: randomId(),
+    tags: [...entry.tags],
+    initialCapacity: entry.initialCapacity,
+    maxCapacity: entry.maxCapacity,
+    payment: entry.payment.map(cloneItem),
+    goods: entry.goods.map(cloneItem),
+    visibility: entry.visibility,
+    availability: entry.availability,
+  }
+}
+/** Overlay source fields onto target; keep target entry id. Item vs itemstack copy rules match cloneShopEntry. */
+export function overlayShopEntry(target: ShopEntry, source: ShopEntry): ShopEntry {
+  return { ...cloneShopEntry(source), id: target.id }
+}
 export const createShop = (): ShopDocument => ({ format: 'hanshu.shop', version: 1, id: randomId(), name: 'name', tags: [], icon: null, stockSubject: 'infinite', visibility: [], availability: [], params: [], modifiers: [], script: [], entries: [] })
 export function shopTags(value: unknown): string[] {
   if (value === undefined) return []

@@ -2,12 +2,13 @@ import { Fragment, useContext, useMemo, useRef, useState, type DragEvent, type M
 import { TextField } from './Fields'
 import { conditionStatesFor, createConditionRule, type ProgressConditionRule } from './conditions'
 import { acceptKitItemDrops, AddButton, hasKitItemDrag, ItemCatalogContext, ItemList, ItemVisual, KitExprContext, KitTagField, ModifierPanel, Panel, ParamPanel, RemoveButton } from './KitEditor'
+import { NodeContextMenu } from '../../nodeEditor/ContextMenu'
 import { KitScriptField, type KitScriptOptions } from './KitScriptField'
 import { ItemSnapshotPanelStatus } from './ItemSnapshotPanelStatus'
 import { useItemPresentation } from './itemPresentation'
 import { activeKitModifiers, activeKitParams, createKitItem, createKitModifier, createKitParam, expandKitItem, kitScriptRefs, type ItemCatalog, type KitItem } from './kit'
 import { buildKitModifierEnv } from './kitExpr'
-import { createShopEntry, parseShop, STOCK_SUBJECTS, stringifyShop, type ShopDocument, type ShopEntry } from './shop'
+import { createShopEntry, overlayShopEntry, parseShop, STOCK_SUBJECTS, stringifyShop, type ShopDocument, type ShopEntry } from './shop'
 import './ShopEditor.css'
 
 const itemSummary = (items: KitItem[]) => items.length ? items.map(item => `${item.item || item.id || '未选择物品'} ×${item.count}`).join('、') : '未设置'
@@ -19,9 +20,10 @@ const capacityHint = (value: ShopEntry, subject: ShopDocument['stockSubject']) =
   : `默认剩余次数：${Math.max(0, value.maxCapacity - value.initialCapacity)}，实例按主体共享 delta。`}`
 const parseCapacity = (raw: string) => { const n = Number(raw); return Number.isSafeInteger(n) && n >= 0 ? n : null }
 const TRADE_SIDES = { payment: { label: '支付', title: '支付内容', flow: '玩家交付 → 库存主体' }, goods: { label: '获得', title: '获得内容', flow: '库存主体 → 玩家' } } as const
-const SHEET_COLUMNS = 7
+const SHEET_COLUMNS = 6
 const ROW_CONTROLS = 'input,select,textarea,button,a,label,.kit-tags-row,.shop-cell-items,.shop-row-toggle'
 const SHOP_ROW_MIME = 'application/x-hanshu-shop-row'
+let shopEntryClipboard: ShopEntry | null = null
 type ShopRowDrag = { fromId: string }
 const readShopRow = (dt: DataTransfer | null): ShopRowDrag | null => {
   if (!dt) return null
@@ -50,6 +52,7 @@ export function ShopEditor({ source, disabled, onChange, resolveText, setText, i
   const skipClick = useRef(false)
   const [cardDrag, setCardDrag] = useState<ShopRowDrag | null>(null)
   const [cardDrop, setCardDrop] = useState<string | null>(null)
+  const [menu, setMenu] = useState<{ x: number; y: number; entryId: string | null } | null>(null)
   let doc: ShopDocument
   try { doc = parseShop(source, true) } catch (cause) {
     return <div className="flow-kit-pane shop-editor"><div className="kit-page"><p className="kit-banner" role="alert">{String(cause)}</p><TextField label="商店 JSON 源码" multiline disabled={disabled} value={source} onChange={onChange} /></div></div>
@@ -79,20 +82,35 @@ export function ShopEditor({ source, disabled, onChange, resolveText, setText, i
       entry(id, { [field]: [...current[field], ...dropped] })
     }, () => {})
   }
-  const move = (offset: number, id: string) => {
-    const entries = [...doc.entries]
-    const index = entries.findIndex(value => value.id === id)
-    const next = index + offset
-    if (index < 0) return
-    if (next < 0 || next >= entries.length) return
-    ;[entries[index], entries[next]] = [entries[next], entries[index]]
-    update({ entries })
+  const addEntry = () => {
+    const value = createShopEntry()
+    update({ entries: [...doc.entries, value] })
+    setExpandedId(value.id)
   }
-  const addEntry = () => { const value = createShopEntry(); update({ entries: [...doc.entries, value] }); setExpandedId(value.id) }
+  const copyEntry = (id: string) => {
+    const source = doc.entries.find(value => value.id === id)
+    if (!source) return
+    shopEntryClipboard = structuredClone(source)
+  }
+  const pasteEntryValues = (id: string) => {
+    if (!shopEntryClipboard) return
+    const target = doc.entries.find(value => value.id === id)
+    if (!target) return
+    const value = overlayShopEntry(target, shopEntryClipboard)
+    update({ entries: doc.entries.map(item => item.id === id ? value : item) })
+    setExpandedId(id)
+  }
   const removeEntry = (id: string) => { update({ entries: doc.entries.filter(e => e.id !== id) }); if (expandedId === id) setExpandedId(null) }
+  const onSheetMenu = (event: MouseEvent<HTMLElement>, entryId: string | null = null) => {
+    if (disabled) return
+    if ((event.target as Element).closest('input,select,textarea,a')) return
+    event.preventDefault()
+    event.stopPropagation()
+    setMenu({ x: event.clientX, y: event.clientY, entryId })
+  }
   const setCapacity = (id: string, field: 'initialCapacity' | 'maxCapacity', raw: string) => { const n = parseCapacity(raw); if (n !== null) entry(id, { [field]: n }) }
   const add = (label: string, onClick: () => void) => <AddButton label={label} disabled={disabled} onClick={onClick} />
-  const emptyHint = disabled ? '当前为只读，该商店模板还没有商品条目。' : '点击「添加商品条目」建立第一笔交易。'
+  const emptyHint = disabled ? '当前为只读，该商店模板还没有商品条目。' : '点击「添加商品条目」或在表格空白处右键建立第一笔交易。'
   function conditions(field: 'visibility' | 'availability', title: string) {
     const replace = (index: number, rule: ProgressConditionRule) => update({ [field]: doc[field].map((r, i) => i === index ? rule : r) })
     return <Panel title={title} count={doc[field].length} subtitle="全部满足" action={add(`添加${title}`, () => update({ [field]: [...doc[field], createConditionRule('task')] }))}>
@@ -168,7 +186,7 @@ export function ShopEditor({ source, disabled, onChange, resolveText, setText, i
     const detailId = `shop-detail-${value.id}`
     const invalid = value.initialCapacity > value.maxCapacity
     return <Fragment key={value.id}>
-      <tr data-entry-id={value.id} className={`shop-sheet-row${open ? ' is-expanded' : ''}${invalid ? ' is-invalid' : ''}${rowCardClass(value.id)}`} onClick={e => rowClick(e, value.id)} onDragOver={e => onCardOver(e, value.id)} onDrop={e => onCardDrop(e, value.id)}>
+      <tr data-entry-id={value.id} className={`shop-sheet-row${open ? ' is-expanded' : ''}${invalid ? ' is-invalid' : ''}${rowCardClass(value.id)}`} onClick={e => rowClick(e, value.id)} onContextMenu={e => onSheetMenu(e, value.id)} onDragOver={e => onCardOver(e, value.id)} onDrop={e => onCardDrop(e, value.id)}>
         <th scope="row" className="shop-row-handle" onDragOver={e => onCardOver(e, value.id)} onDrop={e => onCardDrop(e, value.id)}>
           <div
             className="shop-row-toggle"
@@ -221,14 +239,9 @@ export function ShopEditor({ source, disabled, onChange, resolveText, setText, i
           <label><span>可用</span><input aria-label={`交易 ${index + 1} 可用性表达式`} value={value.availability} disabled={disabled} placeholder="不限制" title={value.availability} onChange={e => entry(value.id, { availability: e.target.value })} /></label>
         </div></td>
         <td><div className="shop-cell shop-cell-tags"><KitTagField label={`交易 ${index + 1} 标签`} tags={value.tags} disabled={disabled} onChange={tags => entry(value.id, { tags })} /></div></td>
-        <td onDragOver={e => onCardOver(e, value.id)} onDrop={e => onCardDrop(e, value.id)}><div className="shop-cell shop-row-actions">
-          <button className="shop-order" type="button" aria-label={`上移交易 ${index + 1}`} title="上移" disabled={disabled || index === 0} onClick={() => move(-1, value.id)}>↑</button>
-          <button className="shop-order" type="button" aria-label={`下移交易 ${index + 1}`} title="下移" disabled={disabled || index === doc.entries.length - 1} onClick={() => move(1, value.id)}>↓</button>
-          <RemoveButton label={`删除交易 ${index + 1}`} disabled={disabled} onClick={() => removeEntry(value.id)} />
-        </div></td>
       </tr>
       {open && <tr className="shop-sheet-detail"><td colSpan={SHEET_COLUMNS}>
-        <section className="shop-detail" id={detailId} role="region" aria-label={`交易 ${index + 1} 物品`}>
+        <section className="shop-detail" id={detailId} role="region" aria-label={`交易 ${index + 1} 物品`} onContextMenu={e => onSheetMenu(e, value.id)}>
           <header className="shop-detail-head">
             <strong>交易 {index + 1} · 物品</strong>
             <span className="shop-detail-id" title={value.id}>{value.id}</span>
@@ -243,7 +256,7 @@ export function ShopEditor({ source, disabled, onChange, resolveText, setText, i
       </td></tr>}
     </Fragment>
   })
-  const sheet = <div className={`shop-sheet-scroll${cardDrag ? ' is-card-dragging' : ''}`} tabIndex={0} role="region" aria-label="商品表格滚动区域"><table className="shop-sheet" aria-label="商品交易表格">
+  const sheet = <div className={`shop-sheet-scroll${cardDrag ? ' is-card-dragging' : ''}`} tabIndex={0} role="region" aria-label="商品表格滚动区域" onContextMenu={e => onSheetMenu(e)}><table className="shop-sheet" aria-label="商品交易表格">
     <colgroup>
       <col className="shop-sheet-number" />
       <col className="shop-sheet-items" />
@@ -251,7 +264,6 @@ export function ShopEditor({ source, disabled, onChange, resolveText, setText, i
       <col className="shop-sheet-capacity" />
       <col className="shop-sheet-conditions" />
       <col className="shop-sheet-tags" />
-      <col className="shop-sheet-actions" />
     </colgroup>
     <thead><tr>
       <th scope="col">序号</th>
@@ -260,7 +272,6 @@ export function ShopEditor({ source, disabled, onChange, resolveText, setText, i
       <th scope="col">额度<small>初始 / 最大</small></th>
       <th scope="col">条件<small>商品表达式</small></th>
       <th scope="col">标签</th>
-      <th scope="col">操作</th>
     </tr></thead>
     <tbody>{doc.entries.length ? rows : <tr className="shop-sheet-empty"><td colSpan={SHEET_COLUMNS}><div className="shop-blank"><span className="shop-blank-mark" aria-hidden>⇄</span><strong>暂无商品条目</strong><p>{emptyHint}</p></div></td></tr>}</tbody>
   </table></div>
@@ -286,7 +297,7 @@ export function ShopEditor({ source, disabled, onChange, resolveText, setText, i
     </div>
     <div className="shop-toolbar">
       <span className="shop-toolbar-title">商品条目 <span className="kit-badge">{doc.entries.length}</span></span>
-      <span className="shop-toolbar-hint">点击行展开编辑支付与获得物品；额度、条件、标签直接在表格中修改</span>
+      <span className="shop-toolbar-hint">点击行展开编辑；右键添加、复制条目的值、粘贴条目的值或删除；拖动序号调整顺序</span>
       {add('添加商品条目', addEntry)}
     </div>
     {doc.entries.filter(value => value.initialCapacity > value.maxCapacity).map(value => <p className="kit-banner" role="alert" key={value.id}>交易 {doc.entries.indexOf(value) + 1}：初始额度不能超过最大额度。</p>)}
@@ -302,5 +313,23 @@ export function ShopEditor({ source, disabled, onChange, resolveText, setText, i
         <p className="shop-scope-note">组合与参数注入在商店实例中配置；组合保留各模板边界与独立参数作用域。</p>
       </div>
     </KitExprContext.Provider></ItemCatalogContext.Provider>
-  </div></div></div>
+        {menu && !disabled ? <NodeContextMenu
+        x={menu.x}
+        y={menu.y}
+        title={menu.entryId ? `交易 ${Math.max(1, doc.entries.findIndex(item => item.id === menu.entryId) + 1)}` : '商品条目'}
+        label="商品条目操作"
+        items={(() => {
+          const entryId = menu.entryId
+          return [
+            { label: '添加商品条目', action: addEntry },
+            ...(entryId ? [
+              { label: '复制条目的值', action: () => copyEntry(entryId) },
+              { label: '粘贴条目的值', action: () => pasteEntryValues(entryId), disabled: !shopEntryClipboard },
+              { label: '删除条目', action: () => removeEntry(entryId) },
+            ] : []),
+          ]
+        })()}
+        onClose={() => setMenu(null)}
+      /> : null}
+</div></div></div>
 }
