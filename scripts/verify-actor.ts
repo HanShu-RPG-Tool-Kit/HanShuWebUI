@@ -15,8 +15,8 @@ const doc = {
   scripts: ['guard', 'watch'],
   tags: ['guard', 'guard'],
   freezeAi: true,
-  display: { title: '&a卫兵', subtitle: '&7东门' },
-  reputation: 'village_guard',
+  display: { mode: 'set' as const, title: '&a卫兵', subtitle: '&7东门' },
+  reputation: { mode: 'set' as const, id: 'village_guard' },
   dialogue: {
     talkId: '卫兵',
     playerRole: '玩家',
@@ -29,6 +29,8 @@ const doc = {
 }
 assert.deepEqual(parseActor(stringifyActor(doc)), { ...doc, tags: ['guard'] })
 assert.equal(stringifyActor(createActor()).includes('display'), false)
+assert.deepEqual(parseActor(JSON.stringify({ ...createActor(), display: { mode: 'clear' } })).display, { mode: 'clear' })
+assert.deepEqual(parseActor(JSON.stringify({ ...createActor(), reputation: { mode: 'leave' } })).reputation, { mode: 'leave' })
 for (const bad of [
   { scripts: ['x', 'x'] },
   { scripts: ['../x'] },
@@ -40,6 +42,11 @@ for (const bad of [
   { bossBar: { title: 'x' } },
   { dialogue: { talkId: 'a', playerRole: 'a', entries: [] } },
   { interactService: { type: 'shop', param: {} } },
+  { display: { title: '&a' } },
+  { display: { mode: 'clear', title: 'x' } },
+  { reputation: 'village_guard' },
+  { reputation: { mode: 'set' } },
+  { reputation: { mode: 'clear', id: 'x' } },
 ]) assert.throws(() => parseActor(JSON.stringify({ ...createActor(), ...bad })))
 assert.deepEqual(parseActor(JSON.stringify({ ...createActor(), display: null })).display, null)
 assert.deepEqual(parseActor(JSON.stringify({ ...createActor(), reputation: null })).reputation, null)

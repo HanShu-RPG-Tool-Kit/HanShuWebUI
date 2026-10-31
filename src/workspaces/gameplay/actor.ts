@@ -10,7 +10,13 @@ export type ActorDialogue = { talkId: string; playerRole: string; entries: Actor
 export type ActorInteractService =
   | { type: 'shop'; param: { template: string } }
   | { type: 'vault'; param: Record<string, never> }
-export type ActorDisplaySpec = { title: string; subtitle: string }
+export type ActorSideEffectMode = 'leave' | 'set' | 'clear'
+export type ActorDisplaySpec =
+  | { mode: 'leave' | 'clear' }
+  | { mode: 'set'; title: string; subtitle: string }
+export type ActorReputationSpec =
+  | { mode: 'leave' | 'clear' }
+  | { mode: 'set'; id: string }
 export type ActorDocument = {
   format: 'rpgtoolkit:actor-template'
   version: 1
@@ -18,7 +24,7 @@ export type ActorDocument = {
   tags: string[]
   freezeAi: boolean
   display?: ActorDisplaySpec | null
-  reputation?: string | null
+  reputation?: ActorReputationSpec | null
   dialogue?: ActorDialogue | null
   interactService?: ActorInteractService | null
 }
@@ -26,6 +32,7 @@ export type ActorDocument = {
 const REQUIRED_KEYS = ['format', 'version', 'scripts', 'tags', 'freezeAi'] as const
 const OPTIONAL_KEYS = ['dialogue', 'interactService', 'display', 'reputation'] as const
 const ALL_KEYS = new Set<string>([...REQUIRED_KEYS, ...OPTIONAL_KEYS])
+const SIDE_EFFECT_MODES = new Set<ActorSideEffectMode>(['leave', 'set', 'clear'])
 
 export const createActor = (): ActorDocument => ({
   format: 'rpgtoolkit:actor-template',
@@ -43,8 +50,16 @@ export function stringifyActor(doc: ActorDocument): string {
     tags: doc.tags,
     freezeAi: doc.freezeAi,
   }
-  if (doc.display != null) out.display = { title: doc.display.title, subtitle: doc.display.subtitle }
-  if (doc.reputation != null) out.reputation = doc.reputation
+  if (doc.display != null) {
+    out.display = doc.display.mode === 'set'
+      ? { mode: 'set', title: doc.display.title, subtitle: doc.display.subtitle }
+      : { mode: doc.display.mode }
+  }
+  if (doc.reputation != null) {
+    out.reputation = doc.reputation.mode === 'set'
+      ? { mode: 'set', id: doc.reputation.id }
+      : { mode: doc.reputation.mode }
+  }
   if (doc.dialogue != null) out.dialogue = {
     talkId: doc.dialogue.talkId,
     playerRole: doc.dialogue.playerRole,
@@ -89,10 +104,44 @@ function optionalStringField(raw: Record<string, unknown>, key: string, label: s
   return requireString(raw[key], label)
 }
 
+function parseSideEffectMode(value: unknown, label: string): ActorSideEffectMode {
+  if (typeof value !== 'string') throw new Error(`${label}.mode 必须是 leave|set|clear`)
+  const mode = value.trim().toLowerCase() as ActorSideEffectMode
+  if (!SIDE_EFFECT_MODES.has(mode)) throw new Error(`${label}.mode 必须是 leave|set|clear`)
+  return mode
+}
+
 function parseDisplay(value: unknown): ActorDisplaySpec {
   if (!isObject(value)) throw new Error('display 必须是对象或 null')
-  for (const key of Object.keys(value)) if (key !== 'title' && key !== 'subtitle') throw new Error(`未知 display 字段：${key}`)
-  return { title: optionalStringField(value, 'title', 'display.title'), subtitle: optionalStringField(value, 'subtitle', 'display.subtitle') }
+  for (const key of Object.keys(value)) if (key !== 'mode' && key !== 'title' && key !== 'subtitle') {
+    throw new Error(`未知 display 字段：${key}`)
+  }
+  if (!('mode' in value) || value.mode == null) throw new Error('display.mode 必填')
+  const mode = parseSideEffectMode(value.mode, 'display')
+  if (mode !== 'set') {
+    if ('title' in value || 'subtitle' in value) throw new Error('display title/subtitle 仅允许 mode=set')
+    return { mode }
+  }
+  return {
+    mode: 'set',
+    title: optionalStringField(value, 'title', 'display.title'),
+    subtitle: optionalStringField(value, 'subtitle', 'display.subtitle'),
+  }
+}
+
+function parseReputation(value: unknown): ActorReputationSpec {
+  if (!isObject(value)) throw new Error('reputation 必须是对象或 null')
+  for (const key of Object.keys(value)) if (key !== 'mode' && key !== 'id') {
+    throw new Error(`未知 reputation 字段：${key}`)
+  }
+  if (!('mode' in value) || value.mode == null) throw new Error('reputation.mode 必填')
+  const mode = parseSideEffectMode(value.mode, 'reputation')
+  if (mode !== 'set') {
+    if ('id' in value) throw new Error('reputation.id 仅允许 mode=set')
+    return { mode }
+  }
+  if (!('id' in value) || value.id == null) throw new Error('reputation.id 在 mode=set 时必填')
+  return { mode: 'set', id: parseFlatResourceId(requireString(value.id, 'reputation.id'), '声誉阵营') }
 }
 
 function parseCondition(value: unknown): ActorDialogueCondition {
@@ -169,11 +218,6 @@ export function parseActor(source: string): ActorDocument {
   if (new Set(scripts).size !== scripts.length) throw new Error('演员脚本不能重复绑定')
   if (!Array.isArray(raw.tags) || raw.tags.some(tag => typeof tag !== 'string' || !tag.trim())) throw new Error('标签必须是非空字符串列表')
   const tags = [...new Set((raw.tags as string[]).map(tag => tag.trim()))]
-  let reputation: string | null | undefined
-  if ('reputation' in raw) {
-    if (raw.reputation == null) reputation = null
-    else reputation = parseFlatResourceId(requireString(raw.reputation, 'reputation'), '声誉阵营')
-  }
   return {
     format: 'rpgtoolkit:actor-template',
     version: 1,
@@ -181,7 +225,7 @@ export function parseActor(source: string): ActorDocument {
     tags,
     freezeAi: raw.freezeAi,
     display: parseOptionalObject(raw, 'display', parseDisplay),
-    reputation,
+    reputation: parseOptionalObject(raw, 'reputation', parseReputation),
     dialogue: parseOptionalObject(raw, 'dialogue', parseDialogue),
     interactService: parseOptionalObject(raw, 'interactService', parseInteractService),
   }

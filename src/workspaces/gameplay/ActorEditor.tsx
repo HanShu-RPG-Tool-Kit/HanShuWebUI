@@ -8,8 +8,11 @@ import {
   type ActorDialogue,
   type ActorDialogueCondition,
   type ActorDialogueEntry,
+  type ActorDisplaySpec,
   type ActorDocument,
   type ActorInteractService,
+  type ActorReputationSpec,
+  type ActorSideEffectMode,
 } from './actor'
 import './ActorEditor.css'
 
@@ -19,6 +22,46 @@ const CONDITION_KINDS: Record<ActorDialogueCondition['kind'], string> = {
   always: '恒真',
   talk_read: '已读',
   talk_unread: '未读',
+}
+
+const SIDE_EFFECT_MODES: { id: ActorSideEffectMode; label: string }[] = [
+  { id: 'leave', label: '不动' },
+  { id: 'set', label: '写入' },
+  { id: 'clear', label: '清除' },
+]
+
+function displayModeOf(value: ActorDisplaySpec | null | undefined): ActorSideEffectMode | 'omit' {
+  return value?.mode ?? 'omit'
+}
+
+function reputationModeOf(value: ActorReputationSpec | null | undefined): ActorSideEffectMode | 'omit' {
+  return value?.mode ?? 'omit'
+}
+
+function nextDisplay(mode: ActorSideEffectMode | 'omit', previous: ActorDisplaySpec | null): ActorDisplaySpec | null {
+  if (mode === 'omit') return null
+  if (mode === 'set') return previous?.mode === 'set' ? previous : { mode: 'set', title: '', subtitle: '' }
+  return { mode }
+}
+
+function nextReputation(mode: ActorSideEffectMode | 'omit', previous: ActorReputationSpec | null): ActorReputationSpec | null {
+  if (mode === 'omit') return null
+  if (mode === 'set') return previous?.mode === 'set' ? previous : { mode: 'set', id: '' }
+  return { mode }
+}
+
+function ModeSelect({
+  label, value, disabled, onChange,
+}: {
+  label: string
+  value: ActorSideEffectMode | 'omit'
+  disabled: boolean
+  onChange(mode: ActorSideEffectMode | 'omit'): void
+}) {
+  return <select className="sheet-select" aria-label={label} disabled={disabled} value={value} onChange={e => onChange(e.target.value as ActorSideEffectMode | 'omit')}>
+    <option value="omit">省略（等同不动）</option>
+    {SIDE_EFFECT_MODES.map(mode => <option key={mode.id} value={mode.id}>{mode.label}</option>)}
+  </select>
 }
 
 function nextCondition(kind: ActorDialogueCondition['kind'], previous?: ActorDialogueCondition): ActorDialogueCondition {
@@ -93,11 +136,13 @@ export function ActorEditor({
   const add = (label: string, onClick: () => void) => <AddButton label={label} disabled={disabled} onClick={onClick} />
 
   const availableScripts = scriptOptions.filter(option => !doc.scripts.includes(option.ref))
-  const reputationMissing = !!doc.reputation && !reputationOptions.some(option => option.ref === doc.reputation)
+  const reputationId = doc.reputation?.mode === 'set' ? doc.reputation.id : ''
+  const reputationMissing = !!reputationId && !reputationOptions.some(option => option.ref === reputationId)
   const shopTemplate = service?.type === 'shop' ? service.param.template : ''
   const shopMissing = !!shopTemplate && !shopOptions.some(option => option.ref === shopTemplate)
   const talkIdIssue = dialogue && (!dialogue.talkId.trim() ? '必填' : dialogue.talkId.trim() === dialogue.playerRole.trim() ? '不能与玩家角色相同' : '')
   const playerRoleIssue = dialogue && !dialogue.playerRole.trim() ? '必填' : ''
+  const reputationIdIssue = doc.reputation?.mode === 'set' && !reputationId.trim() ? '写入时必填阵营 ID' : ''
 
   const scriptPanel = <Panel title="演员脚本" subtitle="按列表顺序执行 · 共享同一实例黑板" count={doc.scripts.length} className="actor-scripts"
     action={<select className="sheet-select actor-add-select" aria-label="添加演员脚本" value="" disabled={disabled} onChange={e => { if (e.target.value) update({ scripts: [...doc.scripts, e.target.value] }) }}>
@@ -127,27 +172,38 @@ export function ActorEditor({
       </ol>}
   </Panel>
 
-  const displayPanel = <Panel title="显示名牌" subtitle="支持 & 颜色码" className={`sheet-panel${display ? '' : ' is-off'}`}
-    action={<SheetToggle label="启用" ariaLabel="启用显示名牌" checked={display != null} disabled={disabled} onChange={on => update({ display: on ? { title: '', subtitle: '' } : null })} />}>
-    {display ? <div className="sheet-panel-body">
-      <SheetField label="主标题"><input aria-label="名牌主标题" disabled={disabled} value={display.title} placeholder={'&6村长'} onChange={e => update({ display: { ...display, title: e.target.value } })} /></SheetField>
-      <SheetField label="副标题" hint={!display.title && !display.subtitle ? '两行皆空时会清除实体名牌。' : undefined}><input aria-label="名牌副标题" disabled={disabled} value={display.subtitle} placeholder={'&7右键交谈'} onChange={e => update({ display: { ...display, subtitle: e.target.value } })} /></SheetField>
-      <p className="sheet-note">整板写入名牌。Boss 血条请在脚本中调用 <code>api.bossBar()</code>。</p>
-    </div> : <p className="sheet-off">未启用 · 不改写实体名牌</p>}
+  const displayPanel = <Panel title="显示名牌" subtitle="mode: leave / set / clear" className={`sheet-panel${display?.mode === 'set' ? '' : display ? '' : ' is-off'}`}>
+    <div className="sheet-panel-body">
+      <SheetField label="副作用" hint="省略或 null 等同不动。写入时 title/subtitle 可用 & 颜色码。">
+        <ModeSelect label="名牌副作用" value={displayModeOf(display)} disabled={disabled} onChange={mode => update({ display: nextDisplay(mode, display) })} />
+      </SheetField>
+      {display?.mode === 'set' && <>
+        <SheetField label="主标题"><input aria-label="名牌主标题" disabled={disabled} value={display.title} placeholder={'&6村长'} onChange={e => update({ display: { mode: 'set', title: e.target.value, subtitle: display.subtitle } })} /></SheetField>
+        <SheetField label="副标题"><input aria-label="名牌副标题" disabled={disabled} value={display.subtitle} placeholder={'&7右键交谈'} onChange={e => update({ display: { mode: 'set', title: display.title, subtitle: e.target.value } })} /></SheetField>
+      </>}
+      {display?.mode === 'clear' && <p className="sheet-note">绑定时清除实体名牌。</p>}
+      {(!display || display.mode === 'leave') && <p className="sheet-off">不改写实体名牌</p>}
+      <p className="sheet-note">Boss 血条请在脚本中调用 <code>api.bossBar()</code>，不要写进模板。</p>
+    </div>
   </Panel>
 
   const reputationPanel = <Panel title="声誉成员" subtitle={'reputations/<id>.rep'} className={`sheet-panel${doc.reputation ? '' : ' is-off'}`}>
     <div className="sheet-panel-body">
-      <SheetField label="阵营" invalid={reputationMissing} hint={reputationMissing ? '找不到对应的 .rep 资源，Mod 加载时会报错。' : '绑定时写入实体的阵营成员关系。'}>
+      <SheetField label="副作用" hint="省略或 null 等同不动。写入需要已发布阵营 ID。">
+        <ModeSelect label="声誉副作用" value={reputationModeOf(doc.reputation)} disabled={disabled} onChange={mode => update({ reputation: nextReputation(mode, doc.reputation ?? null) })} />
+      </SheetField>
+      {doc.reputation?.mode === 'set' && <SheetField label="阵营" invalid={!!reputationIdIssue || reputationMissing} hint={reputationIdIssue || (reputationMissing ? '找不到对应的 .rep 资源。' : '绑定时写入实体的阵营成员关系。')}>
         <span className="actor-ref-field">
-          <select aria-label="声誉阵营" disabled={disabled} value={doc.reputation ?? ''} onChange={e => update({ reputation: e.target.value || null })}>
-            <option value="">不设置</option>
+          <select aria-label="声誉阵营" aria-invalid={!!reputationIdIssue || reputationMissing} disabled={disabled} value={reputationId} onChange={e => update({ reputation: { mode: 'set', id: e.target.value } })}>
+            <option value="">选择阵营…</option>
             {reputationOptions.map(option => <option key={option.ref} value={option.ref}>{option.label}</option>)}
-            {reputationMissing && <option value={doc.reputation!}>{doc.reputation}（引用缺失）</option>}
+            {reputationMissing && <option value={reputationId}>{reputationId}（引用缺失）</option>}
           </select>
           <RefBadge missing={reputationMissing} />
         </span>
-      </SheetField>
+      </SheetField>}
+      {doc.reputation?.mode === 'clear' && <p className="sheet-note">绑定时清除实体声誉成员。</p>}
+      {(!doc.reputation || doc.reputation.mode === 'leave') && <p className="sheet-off">不改写声誉成员</p>}
     </div>
   </Panel>
 
@@ -250,7 +306,7 @@ export function ActorEditor({
       {displayPanel}
       {reputationPanel}
     </div>
-    <p className="sheet-note is-info"><span>名牌与声誉成员在有脚本时于会话 init 写入，无脚本时于绑定时写入；<b>解绑不会回滚这两项</b>，需要时请在脚本中自行清理。</span></p>
+    <p className="sheet-note is-info"><span>名牌／声誉副作用在有脚本时于会话 init 应用，无脚本时于绑定时应用；模板可显式 <code>clear</code>。<b>解绑本身不会回滚</b>这两项。</span></p>
     {dialoguePanel}
     {servicePanel}
   </div></div></div>

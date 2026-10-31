@@ -176,25 +176,33 @@ pub(crate) fn resolve(tree: &Tree) -> Vec<ResourceRelation> {
                     }
                 }
                 if script_kind == "actor" {
-                    if let Some(faction) = document
-                        .get("reputation")
+                    let reputation = document.get("reputation");
+                    let set_mode = reputation
+                        .and_then(|value| value.get("mode"))
                         .and_then(serde_json::Value::as_str)
-                        .map(str::trim)
-                        .filter(|id| {
-                            !id.is_empty()
-                                && *id != "."
-                                && *id != ".."
-                                && !id.chars().any(|c| matches!(c, '/' | '\\' | ':') || c.is_control())
-                        })
-                    {
-                        let target = format!("src/reputations/{faction}.rep");
-                        if path_ok(&target).is_ok() {
-                            relations.insert(ResourceRelation {
-                                kind: ResourceRelationKind::Reference,
-                                role: ResourceRelationRole::ActorReputation,
-                                from: path.clone(),
-                                to: target,
-                            });
+                        .map(|mode| mode.eq_ignore_ascii_case("set"))
+                        .unwrap_or(false);
+                    if set_mode {
+                        if let Some(faction) = reputation
+                            .and_then(|value| value.get("id"))
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::trim)
+                            .filter(|id| {
+                                !id.is_empty()
+                                    && *id != "."
+                                    && *id != ".."
+                                    && !id.chars().any(|c| matches!(c, '/' | '\\' | ':') || c.is_control())
+                            })
+                        {
+                            let target = format!("src/reputations/{faction}.rep");
+                            if path_ok(&target).is_ok() {
+                                relations.insert(ResourceRelation {
+                                    kind: ResourceRelationKind::Reference,
+                                    role: ResourceRelationRole::ActorReputation,
+                                    from: path.clone(),
+                                    to: target,
+                                });
+                            }
                         }
                     }
                     if document

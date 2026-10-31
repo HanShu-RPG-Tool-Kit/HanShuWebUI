@@ -21,9 +21,9 @@ export const actorCompiler: FileCompiler = {
       const ids = new Set(ctx.index.package.scripts.filter(s => s.name.toLowerCase().endsWith('.py') && s.srcKind === 'actor').map(s => s.name.slice(0, -3)))
       for (const script of effectiveBuiltinScripts(ctx.index.package.scripts)) if (script.type === 'actor') ids.add(script.name.slice(0, -3))
       for (const id of actor.scripts) if (!ids.has(id)) throw new Error(`缺少演员脚本：${id}（src/script/actor/${id}.py）`)
-      if (actor.reputation) {
-        const path = `src/reputations/${actor.reputation}.rep`
-        if (!ctx.index.package.scripts.some(s => sourcePathOf(s) === path)) throw new Error(`缺少声誉阵营：${actor.reputation}（${path}）`)
+      if (actor.reputation?.mode === 'set') {
+        const path = `src/reputations/${actor.reputation.id}.rep`
+        if (!ctx.index.package.scripts.some(s => sourcePathOf(s) === path)) throw new Error(`缺少声誉阵营：${actor.reputation.id}（${path}）`)
       }
       if (actor.interactService?.type === 'shop') {
         const template = actor.interactService.param.template

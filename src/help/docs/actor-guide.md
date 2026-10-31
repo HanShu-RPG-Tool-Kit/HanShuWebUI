@@ -9,8 +9,8 @@
   "scripts": ["guard"],
   "tags": ["village"],
   "freezeAi": true,
-  "display": { "title": "&a卫兵", "subtitle": "&7东门" },
-  "reputation": "village_guard",
+  "display": { "mode": "set", "title": "&a卫兵", "subtitle": "&7东门" },
+  "reputation": { "mode": "set", "id": "village_guard" },
   "dialogue": {
     "talkId": "卫兵",
     "playerRole": "玩家",
@@ -32,14 +32,14 @@
 
 ### 显示与声誉副作用
 
-有脚本：在会话 **init** 时写入宿主。无脚本：在绑定时写入。解绑 actor **不**清除名牌或声誉成员。
+有脚本：在会话 **init** 时应用。无脚本：在绑定时应用。解绑 actor **不**自动清除二者。整键省略／`null` 等同 `mode: leave`（不动实例）。有对象时 **`mode` 必填**：`leave`｜`set`｜`clear`。
 
 | 字段 | 含义 |
 | --- | --- |
-| `display.title` / `subtitle` | 魔杖兼容的 `&` 纯文本；对象存在则整板写入，两行皆空则清除名牌 |
-| `reputation` | 已发布阵营 id（`src/reputations/<id>.rep`） |
+| `display.mode` | `leave` 不动名牌；`set` 整板写入（`title`／`subtitle` 可选，`&` 纯文本）；`clear` 清除名牌 |
+| `reputation.mode` | `leave` 不动成员；`set` 需 `id`（已发布阵营）；`clear` 清除成员 |
 
-Boss 血条是脚本 API（`event.api().bossBar()`），**不能**写进 `.actor`。
+`leave`／`clear` 不得附带 `title`／`subtitle` 或 `id`。Boss 血条是脚本 API（`event.api().bossBar()`），**不能**写进 `.actor`。
 
 ### 对话路由
 
