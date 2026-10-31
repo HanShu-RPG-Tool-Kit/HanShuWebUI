@@ -1,11 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Panel, RemoveButton } from './KitEditor'
 import { JsonRepairPane, PendingBanner, RefBadge, SheetField, SheetToggle, errorText, useSheetDraft } from './SheetParts'
 import {
   createReputation,
   parseReputation,
-  reputationBarRatio,
-  reputationStanding,
   stringifyReputation,
   validateReputationBanner,
   type ReputationDocument,
@@ -14,9 +12,11 @@ import './ReputationEditor.css'
 
 type RefOption = { ref: string; label: string }
 
-const STANDING_LABEL = { hostile: '敌对', neutral: '中立', friendly: '友好' } as const
-/** Client bar keeps a small inset at both ends; ratios map into the inner 88%. */
-const barPercent = (ratio: number) => (0.06 + ratio * 0.88) * 100
+/** In-game slot from ReputationStandingScreen. */
+const BANNER_MAX_W = 24
+const BANNER_MAX_H = 40
+/** Editor-only integer zoom so the tiny in-game size stays readable. */
+const BANNER_PREVIEW_ZOOM = 4
 
 async function fileToBanner(file: File): Promise<string> {
   const buffer = new Uint8Array(await file.arrayBuffer())
@@ -31,6 +31,46 @@ function pasteToBanner(raw: string): string {
   const payload = trimmed.replace(/^data:image\/png;base64,/i, '')
   if (!payload) throw new Error('请粘贴 PNG 的 Base64 文本')
   return validateReputationBanner(payload)
+}
+
+/** Same fit rule as the Mod client: shrink freely, enlarge only by integer scale. */
+function gameBannerSize(naturalW: number, naturalH: number): { width: number; height: number; scale: number } {
+  let scale = Math.min(BANNER_MAX_W / naturalW, BANNER_MAX_H / naturalH)
+  if (scale >= 1) scale = Math.floor(scale)
+  return {
+    scale,
+    width: Math.max(1, Math.round(naturalW * scale)),
+    height: Math.max(1, Math.round(naturalH * scale)),
+  }
+}
+
+function BannerPreview({ banner }: { banner: string }) {
+  const [natural, setNatural] = useState<{ w: number; h: number } | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    const image = new Image()
+    image.onload = () => {
+      if (!cancelled) setNatural({ w: image.naturalWidth, h: image.naturalHeight })
+    }
+    image.onerror = () => {
+      if (!cancelled) setNatural(null)
+    }
+    image.src = `data:image/png;base64,${banner}`
+    return () => { cancelled = true }
+  }, [banner])
+  const fitted = natural ? gameBannerSize(natural.w, natural.h) : null
+  return <div className="rep-media-frame">
+    {fitted
+      ? <img
+          alt="阵营旗帜预览"
+          src={`data:image/png;base64,${banner}`}
+          width={fitted.width * BANNER_PREVIEW_ZOOM}
+          height={fitted.height * BANNER_PREVIEW_ZOOM}
+          style={{ width: fitted.width * BANNER_PREVIEW_ZOOM, height: fitted.height * BANNER_PREVIEW_ZOOM }}
+        />
+      : <span>加载中…</span>}
+    {natural && fitted && <span className="rep-media-meta">{natural.w}×{natural.h} → 游戏 {fitted.width}×{fitted.height}</span>}
+  </div>
 }
 
 const bannerBytes = (base64: string) => Math.floor(base64.length * 3 / 4) - (base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0)
@@ -51,7 +91,6 @@ export function ReputationEditor({
   const [bannerError, setBannerError] = useState('')
   const [bannerPaste, setBannerPaste] = useState('')
   const [pasteOpen, setPasteOpen] = useState(false)
-  const [previewOverride, setPreviewOverride] = useState<number | null>(null)
   const { pending, commit, discard } = useSheetDraft(source, disabled, parseReputation, stringifyReputation, onChange)
   let parsed: ReputationDocument = createReputation(), error = ''
   try { parsed = parseReputation(source) } catch (cause) { error = errorText(cause) }
@@ -71,13 +110,6 @@ export function ReputationEditor({
   const textEditable = !disabled && !!setText
   const thresholdsInverted = doc.neutralPoints > doc.friendlyPoints
   const thresholdsEqual = doc.neutralPoints === doc.friendlyPoints
-  const scale = Number.isFinite(doc.neutralPoints) && Number.isFinite(doc.friendlyPoints) && !thresholdsInverted ? doc : parsed
-  const defaultPoints = Number.isFinite(doc.defaultPoints) ? doc.defaultPoints : parsed.defaultPoints
-  const previewPoints = previewOverride ?? defaultPoints
-  const standing = reputationStanding(scale, previewPoints)
-  const fill = barPercent(reputationBarRatio(scale, previewPoints))
-  const defaultMark = barPercent(reputationBarRatio(scale, defaultPoints))
-  const outer = Math.max(1, Math.trunc((scale.friendlyPoints - scale.neutralPoints) / 2))
   const availableFactions = factionOptions.filter(option => !doc.hostile.includes(option.ref))
 
   const pointField = (key: 'defaultPoints' | 'neutralPoints' | 'friendlyPoints', label: string, hint: string) => {
@@ -94,7 +126,6 @@ export function ReputationEditor({
         <input className="kit-title" aria-label="阵营显示名" placeholder="未命名阵营" disabled={!textEditable} value={resolveText?.('name') ?? ''} onChange={e => setText?.('name', e.target.value)} />
       </label>
       <div className="sheet-header-actions">
-        <span className={`rep-standing-pill is-${standing}`} title="按预览点数计算">{STANDING_LABEL[standing]}</span>
         <span className="sheet-kind">.rep</span>
         <button type="button" className="sheet-btn is-quiet" disabled={disabled} onClick={() => { discard(); setRepairing(true) }}>编辑 JSON</button>
       </div>
@@ -113,37 +144,6 @@ export function ReputationEditor({
         </div>
         {thresholdsInverted && <p className="kit-banner" role="alert">中立阈值（neutralPoints）不能大于友好阈值（friendlyPoints），修正前不会保存。</p>}
         {!thresholdsInverted && thresholdsEqual && <p className="rep-warning" role="alert">中立与友好阈值相同：站位会从敌对直接跳到友好，没有中立区间。</p>}
-
-        <div className="rep-preview">
-          <div className="rep-preview-head">
-            <span className="rep-preview-title">站位预览</span>
-            <label className="rep-preview-points">
-              <span>预览点数</span>
-              <input aria-label="预览点数" type="number" step="1" value={previewPoints} onChange={e => { const n = readInt(e.target.value); setPreviewOverride(Number.isFinite(n) ? n : null) }} />
-            </label>
-            <input className="rep-preview-range" type="range" aria-hidden tabIndex={-1}
-              min={thresholdsEqual ? scale.neutralPoints - 10 : scale.neutralPoints - outer}
-              max={thresholdsEqual ? scale.friendlyPoints + 10 : scale.friendlyPoints + outer}
-              value={previewPoints} onChange={e => setPreviewOverride(Number(e.target.value))} />
-            <button type="button" className="sheet-btn is-quiet" disabled={previewOverride === null} onClick={() => setPreviewOverride(null)}>回到默认点数</button>
-          </div>
-          <div className="rep-bar" role="img" aria-label="好感条预览" title={`${previewPoints} · ${STANDING_LABEL[standing]}`}>
-            <span className="rep-bar-zone is-hostile" style={{ left: 0, width: `${barPercent(0.25)}%` }} />
-            <span className="rep-bar-zone is-neutral" style={{ left: `${barPercent(0.25)}%`, width: `${barPercent(0.75) - barPercent(0.25)}%` }} />
-            <span className="rep-bar-zone is-friendly" style={{ left: `${barPercent(0.75)}%`, right: 0 }} />
-            <span className={`rep-bar-fill is-${standing}`} style={{ width: `${fill}%` }} />
-            <span className="rep-bar-mark" style={{ left: `${barPercent(0.25)}%` }} />
-            <span className="rep-bar-mark" style={{ left: `${barPercent(0.75)}%` }} />
-            <span className="rep-bar-default" style={{ left: `${defaultMark}%` }} title={`默认 ${defaultPoints}`} />
-          </div>
-          <div className="rep-bar-scale" aria-hidden>
-            {!thresholdsEqual && <span style={{ left: `${barPercent(0)}%` }}>≤{scale.neutralPoints - outer}</span>}
-            <span className="is-neutral" style={{ left: `${barPercent(0.25)}%` }}>中立 {scale.neutralPoints}</span>
-            <span className="is-friendly" style={{ left: `${barPercent(0.75)}%` }}>友好 {scale.friendlyPoints}</span>
-            {!thresholdsEqual && <span style={{ left: `${barPercent(1)}%` }}>≥{scale.friendlyPoints + outer}</span>}
-          </div>
-          <p className="rep-preview-result">{previewPoints} 点 → <b className={`is-${standing}`}>{STANDING_LABEL[standing]}</b><small>（{standing}）</small><span>▾ 为默认点数</span></p>
-        </div>
       </div>
     </Panel>
 
@@ -179,11 +179,11 @@ export function ReputationEditor({
 
     <Panel title="旗帜" subtitle="可选 · 竖旗 PNG（游戏内 ≤24×40）" className="rep-banner">
       <div className="rep-media">
-        <div className={`rep-media-frame${doc.banner ? '' : ' is-empty'}`}>
-          {doc.banner ? <img alt="阵营旗帜预览" src={`data:image/png;base64,${doc.banner}`} /> : <span>竖旗预览<br />24×40</span>}
-        </div>
+        {doc.banner
+          ? <BannerPreview banner={doc.banner} />
+          : <div className="rep-media-frame is-empty"><span>竖旗<br />≤24×40</span></div>}
         <div className="rep-media-info">
-          <p className="sheet-note">游戏声誉页以<strong>竖旗</strong>展示（最长边缩进 ≤24×40，保持像素比）；任意分辨率 PNG 均可，解码后不超过 256 KiB。{doc.banner && <> 当前 <b>{(bannerBytes(doc.banner) / 1024).toFixed(1)} KiB</b>。</>}</p>
+          <p className="sheet-note">预览按游戏同款缩放：缩进 ≤24×40，放大只取整数倍；此处再 ×{BANNER_PREVIEW_ZOOM} 方便查看。解码后不超过 256 KiB。{doc.banner && <> 当前 <b>{(bannerBytes(doc.banner) / 1024).toFixed(1)} KiB</b>。</>}</p>
           {bannerError && <p className="kit-banner" role="alert">{bannerError}</p>}
           <div className="rep-media-actions">
             <label className={`sheet-btn rep-upload${disabled ? ' is-disabled' : ''}`}>

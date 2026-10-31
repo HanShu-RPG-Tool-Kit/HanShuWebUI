@@ -6,18 +6,6 @@
 
 .rep-header .kit-name-field { flex: 1 1 18em; }
 
-.rep-standing-pill {
-  padding: 2px 8px;
-  border: 1px solid currentColor;
-  border-radius: 999px;
-  font-size: 11px;
-  line-height: 16px;
-  white-space: nowrap;
-}
-.rep-standing-pill.is-hostile { color: var(--rep-hostile); }
-.rep-standing-pill.is-neutral { color: var(--rep-neutral); }
-.rep-standing-pill.is-friendly { color: var(--rep-friendly); }
-
 .rep-description { padding: 0 2px; }
 .flow-kit-pane .rep-description textarea { min-height: 52px; background: var(--fl-panel, #303030); }
 
@@ -43,152 +31,6 @@
 .rep-point.is-neutralPoints { border-left-color: color-mix(in srgb, var(--rep-neutral) 70%, transparent); }
 .rep-point.is-friendlyPoints { border-left-color: color-mix(in srgb, var(--rep-friendly) 70%, transparent); }
 .flow-kit-pane .rep-point input { height: 30px; font-size: calc(14px * var(--fl-s, 1.25) / 1.1); }
-
-/* ---------- standing preview ---------- */
-.rep-preview {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 10px 12px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--kit-radius);
-  background: #2a2a2a;
-}
-
-.rep-preview-head {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px 14px;
-}
-
-.rep-preview-title {
-  color: var(--text);
-  font-size: calc(12.5px * var(--fl-s, 1.25) / 1.1);
-}
-
-.rep-preview-points {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--text-dim);
-  font-size: calc(11.5px * var(--fl-s, 1.25) / 1.1);
-}
-.flow-kit-pane .rep-preview-points input {
-  width: 7em;
-  height: 26px;
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0 8px;
-  border: 1px solid var(--border);
-  border-radius: var(--kit-radius);
-  background: var(--kit-field);
-  color: var(--text-bright);
-  font: calc(12.5px * var(--fl-s, 1.25) / 1.1) var(--kit-mono);
-}
-.flow-kit-pane .rep-preview-points input:focus { border-color: var(--accent); outline: none; }
-
-.rep-preview-range {
-  flex: 1 1 140px;
-  min-width: 100px;
-  margin: 0;
-  accent-color: var(--accent);
-}
-
-.rep-preview-head .sheet-btn { height: 24px; }
-
-.rep-bar {
-  position: relative;
-  height: 14px;
-  margin-top: 6px;
-  border: 1px solid #0008;
-  border-radius: 2px;
-  background: #1b1b1b;
-  box-shadow: inset 0 1px 0 #0006, 0 1px 0 #ffffff0d;
-}
-
-.rep-bar-zone {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  opacity: 0.22;
-}
-.rep-bar-zone.is-hostile { background: var(--rep-hostile); }
-.rep-bar-zone.is-neutral { background: var(--rep-neutral); }
-.rep-bar-zone.is-friendly { background: var(--rep-friendly); }
-
-.rep-bar-fill {
-  position: absolute;
-  top: 2px;
-  bottom: 2px;
-  left: 0;
-  border-radius: 1px;
-  transition: width 0.15s ease-out, background 0.15s;
-}
-.rep-bar-fill::after {
-  content: '';
-  position: absolute;
-  top: -4px;
-  right: -1px;
-  bottom: -4px;
-  width: 2px;
-  background: var(--text-bright);
-  box-shadow: 0 0 4px #000a;
-}
-.rep-bar-fill.is-hostile { background: linear-gradient(180deg, color-mix(in srgb, var(--rep-hostile) 90%, #fff), var(--rep-hostile)); }
-.rep-bar-fill.is-neutral { background: linear-gradient(180deg, color-mix(in srgb, var(--rep-neutral) 90%, #fff), var(--rep-neutral)); }
-.rep-bar-fill.is-friendly { background: linear-gradient(180deg, color-mix(in srgb, var(--rep-friendly) 90%, #fff), var(--rep-friendly)); }
-
-.rep-bar-mark {
-  position: absolute;
-  top: -4px;
-  bottom: -4px;
-  width: 1px;
-  margin-left: -0.5px;
-  background: color-mix(in srgb, var(--text) 70%, transparent);
-}
-
-.rep-bar-default {
-  position: absolute;
-  top: -9px;
-  width: 0;
-  height: 0;
-  margin-left: -4px;
-  border: 4px solid transparent;
-  border-top: 5px solid var(--text-dim);
-}
-
-.rep-bar-scale {
-  position: relative;
-  height: 16px;
-  color: var(--text-dim);
-  font: calc(10.5px * var(--fl-s, 1.25) / 1.1)/16px var(--kit-mono);
-}
-.rep-bar-scale > span {
-  position: absolute;
-  top: 0;
-  transform: translateX(-50%);
-  white-space: nowrap;
-}
-.rep-bar-scale > span:first-child:not(.is-neutral) { transform: none; }
-.rep-bar-scale > span:last-child:not(.is-friendly) { transform: translateX(-100%); }
-.rep-bar-scale .is-neutral { color: var(--rep-neutral); }
-.rep-bar-scale .is-friendly { color: var(--rep-friendly); }
-
-.rep-preview-result {
-  display: flex;
-  align-items: baseline;
-  gap: 6px;
-  margin: 0;
-  color: var(--text-dim);
-  font-size: calc(12px * var(--fl-s, 1.25) / 1.1);
-}
-.rep-preview-result b { font-weight: 600; }
-.rep-preview-result b.is-hostile { color: var(--rep-hostile); }
-.rep-preview-result b.is-neutral { color: var(--rep-neutral); }
-.rep-preview-result b.is-friendly { color: var(--rep-friendly); }
-.rep-preview-result small { opacity: 0.7; font-family: var(--kit-mono); }
-.rep-preview-result > span { margin-left: auto; opacity: 0.7; }
 
 /* ---------- hostile ---------- */
 .flow-kit-pane .rep-add-select {
@@ -239,13 +81,16 @@
 }
 
 .rep-media-frame {
-  /* Match in-game vertical flag slot: ≤24×40 (3:5). */
   flex: none;
-  display: grid;
-  place-items: center;
-  width: 96px;
-  height: 160px;
-  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 96px;
+  min-height: 160px;
+  padding: 8px;
+  box-sizing: border-box;
   border: 1px solid #000;
   border-radius: 2px;
   box-shadow: 0 0 0 1px var(--border);
@@ -253,14 +98,18 @@
     repeating-conic-gradient(#2c2c2c 0 25%, #252525 0 50%) 0 0 / 12px 12px;
 }
 .rep-media-frame img {
-  max-width: 100%;
-  max-height: 100%;
-  width: auto;
-  height: auto;
-  object-fit: contain;
+  display: block;
   image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+.rep-media-meta {
+  color: var(--text-dim);
+  font: calc(10.5px * var(--fl-s, 1.25) / 1.1) var(--kit-mono);
+  white-space: nowrap;
 }
 .rep-media-frame.is-empty {
+  width: 96px;
+  height: 160px;
   border-style: dashed;
   box-shadow: none;
   background: var(--kit-field);
@@ -289,7 +138,7 @@
   min-width: 0;
 }
 
-.rep-media-actions { display: flex; gap: 8px; }
+.rep-media-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
 .rep-upload { position: relative; }
 .rep-upload > input {
