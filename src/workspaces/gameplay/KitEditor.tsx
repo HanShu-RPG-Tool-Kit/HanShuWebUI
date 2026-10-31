@@ -152,7 +152,7 @@ function ItemIcon({ item, presentation }: { item: KitItem; presentation: ItemPre
   </span>
 }
 
-function ItemVisual({ item, presentation }: { item: KitItem; presentation: ItemPresentation }) {
+export function ItemVisual({ item, presentation }: { item: KitItem; presentation: ItemPresentation }) {
   const locale = item.id ? getCachedDisplaySync(itemFingerprint(item))?.locale : undefined
   return <ItemHoverTipTarget id={item.id} presentation={presentation} locale={locale}>
     <ItemIcon item={item} presentation={presentation} />
@@ -166,11 +166,11 @@ function hasItemLinkDrag(dataTransfer: DataTransfer | null): boolean {
   return Array.from(dataTransfer.files ?? []).some((file) => isItemFileName(file.name) || isItemStackFileName(file.name))
 }
 
-function hasKitItemDrag(dataTransfer: DataTransfer | null): boolean {
+export function hasKitItemDrag(dataTransfer: DataTransfer | null): boolean {
   return hasItemStackDrag(dataTransfer) || hasItemLinkDrag(dataTransfer)
 }
 
-async function acceptKitItemDrops(event: DragEvent, onItems: (items: KitItem[]) => void, onNotice: (message: string) => void) {
+export async function acceptKitItemDrops(event: DragEvent, onItems: (items: KitItem[]) => void, onNotice: (message: string) => void) {
   event.preventDefault()
   event.stopPropagation()
   const transfer = event.dataTransfer
