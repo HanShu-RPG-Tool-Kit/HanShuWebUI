@@ -3285,6 +3285,20 @@ body.is-panel-dragging .dock-panel-title.is-draggable {
   cursor: grab;
   touch-action: none;
   user-select: none;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.editor-dock-tabbar .flow-page-list {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  background: transparent;
+  border-bottom: 0;
+}
+
+.editor-dock-tabbar .flow-page-list-scroll {
+  min-width: 0;
 }
 
 .editor-dock-grip {
