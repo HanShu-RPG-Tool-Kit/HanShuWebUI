@@ -2,6 +2,7 @@ import {pythonProfile} from './profiles'
 import { pythonStatements } from './pythonStatements'
 import {ActorEnvironmentLoader} from './actorEnvironment'
 import {PlayerEnvironmentLoader} from './playerEnvironment'
+import { collectInteropMarkers, INTEROP_MARKER_OWNER, InteropHazardsLoader } from './interopHazards'
 import {getProjectSession,subscribeProjectSession} from '../../project/projectSession'
 import {effectiveBuiltinScripts,scriptType,type ScriptType} from '../../scriptResources'
 import type * as Monaco from 'monaco-editor'
@@ -35,7 +36,10 @@ export function attachPython(monaco: MonacoModule, model: Monaco.editor.ITextMod
   let failed = false
   const release = () => {
     detach?.(); detach = undefined
-    if (!model.isDisposed()) monaco.editor.setModelMarkers(model, 'hanshu-pyright', [])
+    if (!model.isDisposed()) {
+      monaco.editor.setModelMarkers(model, 'hanshu-pyright', [])
+      monaco.editor.setModelMarkers(model, INTEROP_MARKER_OWNER, [])
+    }
     const previous = current
     current = undefined
     if (!previous) return
@@ -78,6 +82,7 @@ export class PythonLanguage {
   readonly stubs:JavaStubLoader
   private actorEnvironment?: ActorEnvironmentLoader
   private playerEnvironment?: PlayerEnvironmentLoader
+  private interopHazards: InteropHazardsLoader
   private scriptType:ScriptType
   private projectFiles:Record<string,string>={}
   readonly ready: Promise<void>
@@ -97,6 +102,8 @@ export class PythonLanguage {
     const profile=pythonProfile(type)
     this.client=new PyrightClient(undefined,profile.files)
     this.stubs=new JavaStubLoader(async classes=>controlRequest('python.stubs',{classes}) as Promise<StubResponse>,files=>this.client.writeStubs(files),profile.files,profile.requiredClasses)
+    this.interopHazards = new InteropHazardsLoader(() => controlRequest('python.interopHazards', {}))
+    this.disposables.push({ dispose: () => this.interopHazards.dispose() })
     if (type === 'actor') {
       this.actorEnvironment = new ActorEnvironmentLoader(
         () => controlRequest('python.actorHooks', {}),
@@ -209,6 +216,7 @@ export class PythonLanguage {
       if(profile.requiredClasses.some(name=>!this.stubs.classes.has(name)))throw new Error('游戏未提供脚本必需的类型，Python 分析已暂停')
       await this.actorEnvironment?.refresh().catch(error => this.warn(error))
       await this.playerEnvironment?.refresh().catch(error => this.warn(error))
+      await this.interopHazards.refresh()
       await syncProject()
     })
     void this.ready.catch(error => this.warn(error))
@@ -228,11 +236,16 @@ export class PythonLanguage {
     void this.ready.then(() => {
       if (this.disposed || this.documents.get(key) !== doc) return
       this.client.notify('textDocument/didOpen', { textDocument: { uri: doc.uri, languageId: 'python', version: doc.version, text: model.getValue() } })
-      return this.loadImports(doc)
+      return this.loadImports(doc).then(() => this.refreshInteropMarkers(doc))
     }).catch(error => this.warn(error))
     doc.listener = model.onDidChangeContent(() => {
       clearTimeout(doc.timer)
-      doc.timer = setTimeout(() => { void this.sync(doc).then(() => this.loadImports(doc)).catch(error => this.warn(error)) }, 300)
+      doc.timer = setTimeout(() => {
+        void this.sync(doc)
+          .then(() => this.loadImports(doc))
+          .then(() => this.refreshInteropMarkers(doc))
+          .catch(error => this.warn(error))
+      }, 300)
     })
     return () => this.detach(key)
   }
@@ -244,7 +257,10 @@ export class PythonLanguage {
     doc.listener.dispose()
     this.documents.delete(key)
     this.client.notify('textDocument/didClose', { textDocument: { uri: doc.uri } })
-    if (!doc.model.isDisposed()) this.monaco.editor.setModelMarkers(doc.model, 'hanshu-pyright', [])
+    if (!doc.model.isDisposed()) {
+      this.monaco.editor.setModelMarkers(doc.model, 'hanshu-pyright', [])
+      this.monaco.editor.setModelMarkers(doc.model, INTEROP_MARKER_OWNER, [])
+    }
   }
 
   private async sync(doc: Document) {
@@ -257,11 +273,33 @@ export class PythonLanguage {
 
   async refreshImports(model: Monaco.editor.ITextModel) {
     const doc = this.documents.get(model.uri.toString())
-    if (doc) { await this.ready; await this.loadImports(doc) }
+    if (doc) {
+      await this.ready
+      await this.loadImports(doc)
+      await this.refreshInteropMarkers(doc)
+    }
   }
 
   private async loadImports(doc: Document) {
     if (isControlConnected() && !doc.model.isDisposed()) await this.stubs.ensure(importedJavaClasses(doc.model.getValue()))
+  }
+
+  private async refreshInteropMarkers(doc: Document) {
+    if (this.disposed || doc.model.isDisposed() || !isControlConnected()) return
+    try {
+      const markers = await collectInteropMarkers({
+        monaco: this.monaco,
+        model: doc.model,
+        uri: doc.uri,
+        client: this.client,
+        stubs: this.stubs,
+        hazards: this.interopHazards.hazards,
+      })
+      if (this.disposed || doc.model.isDisposed()) return
+      this.monaco.editor.setModelMarkers(doc.model, INTEROP_MARKER_OWNER, markers)
+    } catch (error) {
+      this.warn(error)
+    }
   }
 
   private async prepare(doc: Document, position: Monaco.Position) {
@@ -345,7 +383,10 @@ export class PythonLanguage {
     for (const doc of this.documents.values()) {
       clearTimeout(doc.timer)
       doc.listener.dispose()
-      if (!doc.model.isDisposed()) this.monaco.editor.setModelMarkers(doc.model, 'hanshu-pyright', [])
+      if (!doc.model.isDisposed()) {
+        this.monaco.editor.setModelMarkers(doc.model, 'hanshu-pyright', [])
+        this.monaco.editor.setModelMarkers(doc.model, INTEROP_MARKER_OWNER, [])
+      }
     }
     this.documents.clear()
     this.disposables.forEach(disposable => disposable.dispose())

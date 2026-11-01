@@ -28,6 +28,8 @@ Blackboard 是运行时动态 Python 对象，任意属性的静态类型默认�
 
 游戏连接时分别获取 `python.actorHooks`／`python.playerHooks` 完整快照；收到对应 `.changed` 后重新查询并更新当前 Worker，无需关闭脚本。使用 runtimeId 和 revision 防止旧回复回滚；切换游戏后替换整个集合。候选显示可取消标记。旧版 Mod 没有查询接口时，hook 参数降为 str，保留 Python 分析，不用旧的固定名单误报未知名称。
 
+另获取 `python.interopHazards`（GraalPy 危险成员目录）。与 `.pyi`／`@deprecated` 无关：当接收者静态类型命中目录中的 `className` 且调用对应 `member` 时，WebUI 打 **专用红线**（marker owner `hanshu-interop`），文案来自 Mod 的 `message`／`prefer`。首条规则为 `ServerPlayer.level()` → 请用 `event.api().level()`。后续同类坑只在 Mod 追加目录项，Web 走同一扫描器。旧版 Mod 无此 RPC 时跳过，不阻断编辑。
+
 验证 `test:python-language` 覆盖真实 Worker 的 actor／player hook 候选、动态快照替换、Control 通知到已打开 Monaco 文档的更新、运行实例隔离，以及泛型/联合/返回值注解、类型收窄和错误诊断。
 
 ## 导入 Java 类
@@ -45,7 +47,7 @@ Blackboard 是运行时动态 Python 对象，任意属性的静态类型默认�
 
 补全列表使用方法、函数、字段和属性各自的图标，方法候选标注 `()`，选中后显示 Pyright 返回的参数和返回类型签名。接受方法或函数补全时自动插入括号：无参调用的光标留在括号后，需要参数时留在括号内并打开参数提示。后面已有左括号时只补名字；导入语句和装饰器位置不自动添加调用括号。字段和属性保持名称补全。
 
-Java 方法必须先调用才能访问其返回对象。当前 MC 的 ServerPlayer 提供 `level() -> ServerLevel`，所以应写 `player.level().`，或先写 `world = player.level()` 再输入 `world.`；`player.level.` 是绑定方法对象，不会列出 ServerLevel 的成员。显式类型注解仍参与 Pyright 推断，不会自动替作者调用方法。
+Java 方法必须先调用才能访问其返回对象。对普通实体，`mob.level()` 通常可用；对 **ServerPlayer**，GraalPy 无法解析 `player.level()`（Level／ServerLevel 桥接），应写 `event.api().level()`（或先 `world = event.api().level()`）。反射 stub 仍暴露 `ServerPlayer.level()` 供类型发现，运行时禁区由 `python.interopHazards` 红线提示。`player.level.`（无调用）是绑定方法对象，不会列出世界成员。
 
 WebUI 按完整逻辑语句查询 Pyright 的 type-definition / hover，再按需请求真实 Java 存根，支持括号跨行、返回值别名、容器索引和继续调用返回对象的方法；不再只检查光标当前物理行。语义推断仍由 Pyright 完成，词法扫描只用于找到查询位置。
 
