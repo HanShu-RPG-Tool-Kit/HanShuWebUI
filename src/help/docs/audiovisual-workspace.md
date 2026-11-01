@@ -1,37 +1,49 @@
 # 视听效果工作区
 
-工作区 ID 为 `audiovisual`，与剧本（`stageplay`）、游戏性（`gameplay`）并列。工程读写仍经同一 `ProjectClient` 与文件事务；不要另开写通道。
+视听效果工作区管理 `src/bossbars/` 下的 `.bossbar`。模板内嵌一张 PNG，组件、UV、变量声明和动画随同一个文件保存。文件读写复用工程服务与事务，资源分类登记在 `AUDIOVISUAL_CATEGORIES`，路径使用 `sourcePathOf`。
 
-## 资源分类
+## 编辑
 
-当前仅一个顶层分类：
+打开文件默认进入设计视图，顶部可以切换 JSON。两种视图编辑同一份草稿，切换保留撤销记录和上次有效画面。v1 文件需要先点击升级；JSON 无效时保留原文、显示错误并暂停设计修改。
 
-| 分类 | 格式 | 物理目录 | 说明 |
-| --- | --- | --- | --- |
-| BOSS血条 | `.bossbar` | `src/bossbars/` | JSON 正文；首版用源码编辑器，可视化编辑器后补 |
+左侧是文件树和图层，中央是一个无限编辑画布，右侧有属性、变量、图集面板。播放、时间轴、逐帧和变量模拟都在编辑画布中生效。图层支持锁定、临时隐藏、排序、复制与删除，唯一显示区域固定保留。
 
-资源类型登记在 `RESOURCE_TYPES`；业务分类在 `AUDIOVISUAL_CATEGORIES`（**不要**塞进 `GAMEPLAY_CATEGORIES`）。路径一律走 `sourcePathOf`。
+滚轮平移，Ctrl/⌘ + 滚轮缩放，空格或中键拖动画面，方向键微调，Alt 临时关闭吸附。“定位显示区域”适配当前视口。“整体移动”同时平移显示区域与组件，“适配到全部组件”主动重设区域。所有组件完整位于显示区域内，四边相切合法，修改越界时拒绝提交。
 
-## 编辑与保存
+## 进度与文本
 
-- 左侧资源管理器按分类列出 `.bossbar`；可新建、重命名、删除。
-- 打开文档后以 Monaco JSON 编辑；`Ctrl+S` / 菜单「保存」走 `saveProjectToDirectory`。
-- 布局、页签、折叠为本机状态（`hanshu.audiovisualUi.v1` 等）；共享虚拟文件夹首版未接入。
-
-## 种子正文
-
-新建种子形如：
+条的 `progress` 直接使用有限数值或 double 变量引用，绘制时夹紧到 `[0,1]`。生命、护盾各使用独立条；客户端可以平滑主条并显示延迟尾条。服务端发送已经算好的进度，模板不含 value/min/max 范围。
 
 ```json
-{
-  "format": "hanshu.bossbar",
-  "version": 1,
-  "id": "新血条"
-}
+{"type":"bar","id":"health","box":{"x":0,"y":0,"width":320,"height":16},"progress":{"var":"healthProgress"},"fill":{"kind":"solid","color":"#E84032FF"}}
 ```
 
-未知字段会被严格解析器拒绝；可视化字段契约确定后再扩展。
+文本 runs 只有字面文本和变量引用，支持各自覆盖颜色。变量按原值显示，long 保留完整十进制字符串。百分比、缩写、精度和本地化由服务端处理为 string 再发送。
 
-## 导出
+```json
+"runs":[{"text":"生命："},{"var":"healthText","color":"#FFFFFFFF"}]
+```
 
-未注册专用编译器时，由 identity 编译器原样写入 PAK 的 `bossbars/<名>.bossbar`（默认 client 平面）。
+变量面板支持 long、double、bool、string。long 输入使用 int64 十进制字符串，double 接受有限数值和科学计数法。缺失、类型不匹配或超长时回退到声明默认值，并显示原因。只读成员也能调整模拟值，模拟状态不进入文档或 PAK。
+
+## 图集与帧
+
+纹理画笔的 UV 使用图集像素坐标，必须为整数并完整落在 PNG 内。背景支持 stretch、contain、cover、nine-slice；条填充只支持 stretch。动画只切换同一张图集的 UV，组件 box 保持不变。
+
+PNG 可以上传、替换或粘贴 Base64。替换后保留 UV 并重新校验，越界时拒绝替换，撤销恢复旧图片和 UV。帧列表可以框选任意帧、复制帧、按行列展开，以及用 FPS 生成整数毫秒时长。逐帧按选中动画的帧边界步进，支持不等时长和相位偏移。
+
+## 排列与导出
+
+根字段 `priority` 为 int32，默认 0。客户端排列多条血条时，较大的 priority 靠上，同级按实例 UUID 稳定排序。`layout` 保存顶部居中缩放与安全边距，`display_region` 的实际高度决定行高。
+
+`.bossbar` 只输出到 client 平面，路径为 `bossbars/<文件名>.bossbar`。client 与 combined 包包含相同模板字节，server 包没有模板。服务端发送变量和实例身份，不读取 PNG、组件或客户端布局。
+
+编译器检查全部包的最终有效路径。不同路径使用相同模板 ID 时拒绝导出，同路径覆盖遵循包顺序。图集内嵌，不生成外链 PNG 或资源清单。完整协议、预算和后续变量包契约见[自定义 BossBar 约定](bossbar-design.md)。
+
+## 保存与验证
+
+Ctrl/⌘ + S 和菜单保存走已有的工程事务。保存、携带脏正文改名和导出均执行 BossBar 校验；非法 JSON、图集损坏、组件或 UV 越界、错误类型和预算超限会阻止提交，原始草稿保留。版本冲突保留本窗口输入，避免覆盖其他成员修改。相机、网格、参考底图和面板状态只保存在本机。
+
+`npm run test:bossbar` 执行协议、渲染、图集、编辑工具和保存导出回归。`npm run generate:bossbar-spec` 更新可机器校验的 schema 与夹具，生成结果随协议修改一起提交。演示文件位于 `demo-projects/bossbar-demo/`，无需连接游戏即可模拟满血、受伤、护盾和狂暴。
+
+浏览器字体与游戏字体仍需在实际客户端复核。游戏的变量包发送、追踪清理、客户端模板加载及 HUD 接线留待后续游戏阶段。

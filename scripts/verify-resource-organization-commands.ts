@@ -29,7 +29,10 @@ function fixture() {
   client.originals.set(metadata, { version: 'organization-v1', data: serializeOrganization(organization) })
   const owners = new Map([[language, source], [nextLanguage, destination]])
   let submitted: FileEdit[] = []
+  let markPlanning!: () => void
+  const planning = new Promise<void>(resolve => { markPlanning = resolve })
   client.planOperations = async operations => {
+    markPlanning()
     const expanded: FileOperationRequest[] = operations.flatMap(operation => operation.path === source
       ? [operation, { ...operation, path: language, destination: operation.destination ? nextLanguage : null }]
       : [operation])
@@ -40,13 +43,14 @@ function fixture() {
     for (const operation of plan.operations) if (operation.path === language) operation.originPath = source
     return plan
   }
-  client.apply = async edits => { submitted = client.captureEdits(edits) }
+  // Preserve real transaction records for sourceCommands and stub only the send.
+  Object.defineProperty(client, 'perform', { value: async (edits: FileEdit[]) => { submitted = edits } })
   const split = (edits = submitted) => partitionSyncEdits(edits, {
     revision: 2,
     entries: [...versions].map(([path, version]) => ({ path, kind: 'file', size: 1,
       version: path === metadata ? 'organization-v2' : version })),
   }, path => owners.get(path) ?? path)
-  return { client, batch: () => submitted, split }
+  return { client, batch: () => submitted, split, planning }
 }
 
 let checks = 0
@@ -75,13 +79,14 @@ await test('automatic placement relocation keeps rename, destination content and
 })
 
 await test('explicit metadata freezes all source command paths and preserves pre-existing recovery scope', async () => {
-  const { client, batch, split } = fixture()
+  const { client, batch, split, planning } = fixture()
   const priorScope = 'src/items/additional.item'
   const extra: FileEdit = { op: 'write', path: metadata, data: serializeOrganization({ ...organization, placements: {} }),
     version: 'organization-v1', affectedPaths: [priorScope, source] }
   const pending = client.sourceCommands([
     { path: source, destination }, { path: otherSource, destination: null },
   ], [extra])
+  await planning
   extra.affectedPaths!.push('src/items/changed-after-capture.item')
   await pending
   const frozen = batch().find(edit => edit.path === metadata)!

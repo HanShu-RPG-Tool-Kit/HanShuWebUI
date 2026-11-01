@@ -1,0 +1,1099 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "hanshu:bossbar/v2",
+  "title": "汉数 BossBar v2 规范文档",
+  "description": "规范形式：解析器补齐默认值后的 v2 文档。单文件自包含——唯一 Base64 PNG 图集、唯一 display_region，全部组件的 box 位于显示区域内。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "format",
+    "version",
+    "id",
+    "priority",
+    "texture",
+    "layout",
+    "variables",
+    "components"
+  ],
+  "properties": {
+    "format": {
+      "const": "hanshu.bossbar"
+    },
+    "version": {
+      "const": 2
+    },
+    "priority": {
+      "type": "integer",
+      "minimum": -2147483648,
+      "maximum": 2147483647
+    },
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "allOf": [
+        {
+          "pattern": "^[^\\s](?:[\\s\\S]*[^\\s])?$"
+        },
+        {
+          "pattern": "^[^\\u0000-\\u001f\\u007f-\\u009f]+$"
+        }
+      ]
+    },
+    "texture": {
+      "type": "string",
+      "minLength": 4,
+      "maxLength": 5592410,
+      "pattern": "^[A-Za-z0-9+/]+={0,2}$"
+    },
+    "layout": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dock",
+        "scale",
+        "safeMargin"
+      ],
+      "properties": {
+        "dock": {
+          "enum": [
+            "top-center"
+          ]
+        },
+        "scale": {
+          "type": "number",
+          "minimum": 0.1,
+          "maximum": 4
+        },
+        "safeMargin": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1024
+        }
+      }
+    },
+    "variables": {
+      "type": "object",
+      "maxProperties": 64,
+      "propertyNames": {
+        "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+      },
+      "additionalProperties": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "default"
+            ],
+            "properties": {
+              "type": {
+                "const": "long"
+              },
+              "default": {
+                "type": "string",
+                "pattern": "^(?:0|-?[1-9][0-9]*)$"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "default"
+            ],
+            "properties": {
+              "type": {
+                "const": "double"
+              },
+              "default": {
+                "type": "number"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "default"
+            ],
+            "properties": {
+              "type": {
+                "const": "bool"
+              },
+              "default": {
+                "type": "boolean"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "type",
+              "default",
+              "maxLength"
+            ],
+            "properties": {
+              "type": {
+                "const": "string"
+              },
+              "default": {
+                "type": "string",
+                "maxLength": 256
+              },
+              "maxLength": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 256
+              }
+            }
+          }
+        ]
+      }
+    },
+    "components": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "type",
+              "box"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+              },
+              "type": {
+                "const": "display_region"
+              },
+              "box": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "x",
+                  "y",
+                  "width",
+                  "height"
+                ],
+                "properties": {
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  },
+                  "width": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "height": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  }
+                }
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "type",
+              "box",
+              "visible",
+              "opacity",
+              "paint"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+              },
+              "type": {
+                "const": "background"
+              },
+              "box": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "x",
+                  "y",
+                  "width",
+                  "height"
+                ],
+                "properties": {
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  },
+                  "width": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "height": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  }
+                }
+              },
+              "visible": {
+                "oneOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "var"
+                    ],
+                    "properties": {
+                      "var": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                      }
+                    }
+                  }
+                ]
+              },
+              "opacity": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "paint": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "kind",
+                      "color"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "solid"
+                      },
+                      "color": {
+                        "type": "string",
+                        "pattern": "^#[0-9A-Fa-f]{8}$"
+                      }
+                    }
+                  },
+                  {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "kind",
+                          "uv",
+                          "fit"
+                        ],
+                        "properties": {
+                          "kind": {
+                            "const": "texture"
+                          },
+                          "uv": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "x",
+                              "y",
+                              "width",
+                              "height"
+                            ],
+                            "properties": {
+                              "x": {
+                                "type": "integer",
+                                "minimum": 0
+                              },
+                              "y": {
+                                "type": "integer",
+                                "minimum": 0
+                              },
+                              "width": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "height": {
+                                "type": "integer",
+                                "minimum": 1
+                              }
+                            }
+                          },
+                          "animation": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "mode",
+                              "phaseMs",
+                              "frames"
+                            ],
+                            "properties": {
+                              "mode": {
+                                "enum": [
+                                  "loop",
+                                  "once",
+                                  "pingpong"
+                                ]
+                              },
+                              "phaseMs": {
+                                "type": "integer",
+                                "minimum": 0
+                              },
+                              "frames": {
+                                "type": "array",
+                                "minItems": 1,
+                                "maxItems": 256,
+                                "items": {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "required": [
+                                    "uv",
+                                    "durationMs"
+                                  ],
+                                  "properties": {
+                                    "uv": {
+                                      "type": "object",
+                                      "additionalProperties": false,
+                                      "required": [
+                                        "x",
+                                        "y",
+                                        "width",
+                                        "height"
+                                      ],
+                                      "properties": {
+                                        "x": {
+                                          "type": "integer",
+                                          "minimum": 0
+                                        },
+                                        "y": {
+                                          "type": "integer",
+                                          "minimum": 0
+                                        },
+                                        "width": {
+                                          "type": "integer",
+                                          "minimum": 1
+                                        },
+                                        "height": {
+                                          "type": "integer",
+                                          "minimum": 1
+                                        }
+                                      }
+                                    },
+                                    "durationMs": {
+                                      "type": "integer",
+                                      "minimum": 16,
+                                      "maximum": 60000
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          "fit": {
+                            "enum": [
+                              "stretch",
+                              "contain",
+                              "cover"
+                            ]
+                          }
+                        }
+                      },
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "kind",
+                          "uv",
+                          "fit",
+                          "insets"
+                        ],
+                        "properties": {
+                          "kind": {
+                            "const": "texture"
+                          },
+                          "uv": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "x",
+                              "y",
+                              "width",
+                              "height"
+                            ],
+                            "properties": {
+                              "x": {
+                                "type": "integer",
+                                "minimum": 0
+                              },
+                              "y": {
+                                "type": "integer",
+                                "minimum": 0
+                              },
+                              "width": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "height": {
+                                "type": "integer",
+                                "minimum": 1
+                              }
+                            }
+                          },
+                          "animation": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "mode",
+                              "phaseMs",
+                              "frames"
+                            ],
+                            "properties": {
+                              "mode": {
+                                "enum": [
+                                  "loop",
+                                  "once",
+                                  "pingpong"
+                                ]
+                              },
+                              "phaseMs": {
+                                "type": "integer",
+                                "minimum": 0
+                              },
+                              "frames": {
+                                "type": "array",
+                                "minItems": 1,
+                                "maxItems": 256,
+                                "items": {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "required": [
+                                    "uv",
+                                    "durationMs"
+                                  ],
+                                  "properties": {
+                                    "uv": {
+                                      "type": "object",
+                                      "additionalProperties": false,
+                                      "required": [
+                                        "x",
+                                        "y",
+                                        "width",
+                                        "height"
+                                      ],
+                                      "properties": {
+                                        "x": {
+                                          "type": "integer",
+                                          "minimum": 0
+                                        },
+                                        "y": {
+                                          "type": "integer",
+                                          "minimum": 0
+                                        },
+                                        "width": {
+                                          "type": "integer",
+                                          "minimum": 1
+                                        },
+                                        "height": {
+                                          "type": "integer",
+                                          "minimum": 1
+                                        }
+                                      }
+                                    },
+                                    "durationMs": {
+                                      "type": "integer",
+                                      "minimum": 16,
+                                      "maximum": 60000
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          "fit": {
+                            "const": "nine-slice"
+                          },
+                          "insets": {
+                            "type": "array",
+                            "minItems": 4,
+                            "maxItems": 4,
+                            "items": {
+                              "type": "integer",
+                              "minimum": 0
+                            }
+                          }
+                        }
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "type",
+              "box",
+              "visible",
+              "opacity",
+              "progress",
+              "direction",
+              "fill",
+              "smoothMs"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+              },
+              "type": {
+                "const": "bar"
+              },
+              "box": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "x",
+                  "y",
+                  "width",
+                  "height"
+                ],
+                "properties": {
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  },
+                  "width": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "height": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  }
+                }
+              },
+              "visible": {
+                "oneOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "var"
+                    ],
+                    "properties": {
+                      "var": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                      }
+                    }
+                  }
+                ]
+              },
+              "opacity": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "progress": {
+                "oneOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "var"
+                    ],
+                    "properties": {
+                      "var": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                      }
+                    }
+                  }
+                ]
+              },
+              "direction": {
+                "enum": [
+                  "left-to-right",
+                  "right-to-left",
+                  "bottom-to-top",
+                  "top-to-bottom"
+                ]
+              },
+              "fill": {
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "kind",
+                      "color"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "solid"
+                      },
+                      "color": {
+                        "type": "string",
+                        "pattern": "^#[0-9A-Fa-f]{8}$"
+                      }
+                    }
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "kind",
+                      "uv",
+                      "fit"
+                    ],
+                    "properties": {
+                      "kind": {
+                        "const": "texture"
+                      },
+                      "uv": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "x",
+                          "y",
+                          "width",
+                          "height"
+                        ],
+                        "properties": {
+                          "x": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "y": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "width": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "height": {
+                            "type": "integer",
+                            "minimum": 1
+                          }
+                        }
+                      },
+                      "animation": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "mode",
+                          "phaseMs",
+                          "frames"
+                        ],
+                        "properties": {
+                          "mode": {
+                            "enum": [
+                              "loop",
+                              "once",
+                              "pingpong"
+                            ]
+                          },
+                          "phaseMs": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "frames": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 256,
+                            "items": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "required": [
+                                "uv",
+                                "durationMs"
+                              ],
+                              "properties": {
+                                "uv": {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "required": [
+                                    "x",
+                                    "y",
+                                    "width",
+                                    "height"
+                                  ],
+                                  "properties": {
+                                    "x": {
+                                      "type": "integer",
+                                      "minimum": 0
+                                    },
+                                    "y": {
+                                      "type": "integer",
+                                      "minimum": 0
+                                    },
+                                    "width": {
+                                      "type": "integer",
+                                      "minimum": 1
+                                    },
+                                    "height": {
+                                      "type": "integer",
+                                      "minimum": 1
+                                    }
+                                  }
+                                },
+                                "durationMs": {
+                                  "type": "integer",
+                                  "minimum": 16,
+                                  "maximum": 60000
+                                }
+                              }
+                            }
+                          }
+                        }
+                      },
+                      "fit": {
+                        "const": "stretch"
+                      }
+                    }
+                  }
+                ]
+              },
+              "trail": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "paint",
+                  "delayMs",
+                  "durationMs"
+                ],
+                "properties": {
+                  "paint": {
+                    "oneOf": [
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "kind",
+                          "color"
+                        ],
+                        "properties": {
+                          "kind": {
+                            "const": "solid"
+                          },
+                          "color": {
+                            "type": "string",
+                            "pattern": "^#[0-9A-Fa-f]{8}$"
+                          }
+                        }
+                      },
+                      {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "kind",
+                          "uv",
+                          "fit"
+                        ],
+                        "properties": {
+                          "kind": {
+                            "const": "texture"
+                          },
+                          "uv": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "x",
+                              "y",
+                              "width",
+                              "height"
+                            ],
+                            "properties": {
+                              "x": {
+                                "type": "integer",
+                                "minimum": 0
+                              },
+                              "y": {
+                                "type": "integer",
+                                "minimum": 0
+                              },
+                              "width": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "height": {
+                                "type": "integer",
+                                "minimum": 1
+                              }
+                            }
+                          },
+                          "animation": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "mode",
+                              "phaseMs",
+                              "frames"
+                            ],
+                            "properties": {
+                              "mode": {
+                                "enum": [
+                                  "loop",
+                                  "once",
+                                  "pingpong"
+                                ]
+                              },
+                              "phaseMs": {
+                                "type": "integer",
+                                "minimum": 0
+                              },
+                              "frames": {
+                                "type": "array",
+                                "minItems": 1,
+                                "maxItems": 256,
+                                "items": {
+                                  "type": "object",
+                                  "additionalProperties": false,
+                                  "required": [
+                                    "uv",
+                                    "durationMs"
+                                  ],
+                                  "properties": {
+                                    "uv": {
+                                      "type": "object",
+                                      "additionalProperties": false,
+                                      "required": [
+                                        "x",
+                                        "y",
+                                        "width",
+                                        "height"
+                                      ],
+                                      "properties": {
+                                        "x": {
+                                          "type": "integer",
+                                          "minimum": 0
+                                        },
+                                        "y": {
+                                          "type": "integer",
+                                          "minimum": 0
+                                        },
+                                        "width": {
+                                          "type": "integer",
+                                          "minimum": 1
+                                        },
+                                        "height": {
+                                          "type": "integer",
+                                          "minimum": 1
+                                        }
+                                      }
+                                    },
+                                    "durationMs": {
+                                      "type": "integer",
+                                      "minimum": 16,
+                                      "maximum": 60000
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          },
+                          "fit": {
+                            "const": "stretch"
+                          }
+                        }
+                      }
+                    ]
+                  },
+                  "delayMs": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 60000
+                  },
+                  "durationMs": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 60000
+                  }
+                }
+              },
+              "smoothMs": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1000
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "type",
+              "box",
+              "visible",
+              "opacity",
+              "runs",
+              "fontSize",
+              "color",
+              "align",
+              "verticalAlign",
+              "shadow"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+              },
+              "type": {
+                "const": "text"
+              },
+              "box": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "x",
+                  "y",
+                  "width",
+                  "height"
+                ],
+                "properties": {
+                  "x": {
+                    "type": "number"
+                  },
+                  "y": {
+                    "type": "number"
+                  },
+                  "width": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  },
+                  "height": {
+                    "type": "number",
+                    "exclusiveMinimum": 0
+                  }
+                }
+              },
+              "visible": {
+                "oneOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "var"
+                    ],
+                    "properties": {
+                      "var": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                      }
+                    }
+                  }
+                ]
+              },
+              "opacity": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "runs": {
+                "type": "array",
+                "maxItems": 64,
+                "items": {
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "text"
+                      ],
+                      "properties": {
+                        "text": {
+                          "type": "string",
+                          "maxLength": 1024
+                        },
+                        "color": {
+                          "type": "string",
+                          "pattern": "^#[0-9A-Fa-f]{8}$"
+                        }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "var"
+                      ],
+                      "properties": {
+                        "var": {
+                          "type": "string",
+                          "pattern": "^[A-Za-z][A-Za-z0-9_]{0,63}$"
+                        },
+                        "color": {
+                          "type": "string",
+                          "pattern": "^#[0-9A-Fa-f]{8}$"
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "fontSize": {
+                "type": "number",
+                "minimum": 4,
+                "maximum": 512
+              },
+              "color": {
+                "type": "string",
+                "pattern": "^#[0-9A-Fa-f]{8}$"
+              },
+              "align": {
+                "enum": [
+                  "left",
+                  "center",
+                  "right"
+                ]
+              },
+              "verticalAlign": {
+                "enum": [
+                  "top",
+                  "middle",
+                  "bottom"
+                ]
+              },
+              "shadow": {
+                "type": "boolean"
+              }
+            }
+          }
+        ]
+      }
+    }
+  }
+}

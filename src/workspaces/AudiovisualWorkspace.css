@@ -270,6 +270,48 @@
   background: #1e1e1e;
 }
 
+.av-design-host {
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.av-view-switch {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--av-panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.av-view-switch button {
+  height: 28px;
+  padding: 0 12px;
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--border-soft);
+  border-radius: 0;
+  cursor: pointer;
+  font-size: calc(12px * var(--av-s) / 1.1);
+  font-family: inherit;
+}
+
+.av-view-switch button.is-active {
+  background: var(--av-active);
+  color: var(--text-bright);
+  border-color: var(--accent);
+}
+
+.av-view-hint {
+  margin-left: auto;
+  color: var(--text-dim);
+  font-size: 0.85em;
+  opacity: 0.8;
+}
+
 .av-banner {
   margin: 0;
   padding: 8px 12px;

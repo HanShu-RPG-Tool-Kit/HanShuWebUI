@@ -1,5 +1,6 @@
 import {kitCompiler} from './kitScripts'
 import {actorCompiler} from './actor'
+import {bossbarCompiler} from './bossbar'
 import {reputationCompiler} from './reputation'
 import {shopCompiler} from './shop'
 import {levelArtifactPass, levelCompiler, navigationCompiler} from './level'
@@ -40,7 +41,7 @@ const builtinLocaleRules: LocaleExportRule[] = [
 
 /** Idempotent by id; also reinstalls builtins after clearCompileRegistry without replacing overrides. */
 export function ensureBuiltinCompilers(): void {
-  for (const compiler of [hanshuCompiler, itemCompiler, entityCompiler, kitCompiler, shopCompiler, actorCompiler, reputationCompiler, questCompiler, levelCompiler, navigationCompiler, scriptLoadCompiler, identityCompiler]) {
+  for (const compiler of [hanshuCompiler, itemCompiler, entityCompiler, kitCompiler, shopCompiler, actorCompiler, bossbarCompiler, reputationCompiler, questCompiler, levelCompiler, navigationCompiler, scriptLoadCompiler, identityCompiler]) {
     if (!listFileCompilers().some((entry) => entry.id === compiler.id)) registerFileCompiler(compiler)
   }
   for (const pass of [localeAssetsPass, activeSkinsPass, levelArtifactPass]) {

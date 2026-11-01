@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "name": "演示 BossBar",
+  "id": "demo-bossbar",
+  "activeScript": "ember_guard.bossbar",
+  "collapsed": false,
+  "assetsCollapsed": false
+}

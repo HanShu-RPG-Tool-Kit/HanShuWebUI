@@ -696,7 +696,6 @@ export function GameplayWorkspace({
   const progressPath =
     progressDoc && doc ? sourcePathOf({ name: doc.name }) : null;
   const progressEditable = !!progressPath && !!client?.writable;
-  const scriptLoadType = doc ? scriptLoadTypeOfKey(doc.key) : null;
   const presenceSource =
     doc && !isBuiltinScriptDocumentKey(doc.key) && !isLibraryTableKey(doc.key)
       ? session.workspace.packages

@@ -196,7 +196,7 @@ export function applyProgressDocumentsToWorkspace(
   }
   const nextSources: SourceFile[] = [
     ...kept,
-    ...documents.map((doc) => {
+    ...documents.map((doc): SourceFile | null => {
       const loadType = scriptLoadTypeOfKey(doc.key)
       if (loadType) {
         return {

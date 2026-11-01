@@ -393,7 +393,7 @@ export const NEW_FILE_TYPES: readonly NewFileType[] = [
     id: "bossbar",
     ext: ".bossbar",
     label: "BOSS血条",
-    hint: "BOSS 血条样式（src/bossbars）；目前用 JSON 源码编辑",
+    hint: "BOSS 血条样式（src/bossbars）；设计视图 + 内嵌单张 PNG 图集",
     icon: "bossbar",
     group: "audiovisual",
     defaultBase: "新血条",

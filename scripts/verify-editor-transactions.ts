@@ -253,18 +253,22 @@ await test('源文件改名在查询关联计划前冻结本地版本，网络�
   client.baseline.set('src/hanshu/a.hs', 'read-before-plan')
   client.onCapture = edit => captureWorkspaceEdit(workspace, edit)
   let edits: FileEdit[] = []
-  client.apply = async batch => { edits = batch }
+  // Keep the real transaction record consumed by sourceCommands; only stub transport.
+  Object.defineProperty(client, 'perform', { value: async (batch: FileEdit[]) => { edits = batch } })
   const oldFetch = globalThis.fetch
   const gate = deferred()
+  const planning = deferred()
   globalThis.fetch = async (input, init) => {
     const url = new URL(String(input))
     if (url.pathname === '/api/files/relations') return Response.json({ path: url.searchParams.get('path'), relations: [] })
     assert.equal(url.pathname, '/api/files/plan')
+    planning.resolve()
     await gate.promise
     return Response.json(resourcePlanFixture(JSON.parse(String(init?.body)).operations, { versions: new Map([['src/hanshu/a.hs', 'plan-latest-version']]) }))
   }
   try {
     const saving = client.sourceCommand('src/hanshu/a.hs', 'src/hanshu/renamed.hs', 'old draft')
+    await planning.promise
     workspace = structuredClone(workspace); workspace.packages[0].scripts[0].content = 'typed during plan'
     client.baseline.set('src/hanshu/a.hs', 'peer-version-during-plan')
     gate.resolve(); await saving
@@ -310,7 +314,7 @@ await test('S计划的进度与语言改名使用C冻结版本，引用礼包不
   const client = new ProjectClient({ url: 'http://plan.test', token: '' }, { role: 'editor', projectId: 'test', session: { subjectId: 'subject' } } as never)
   client.baseline.set(source, 'source-read-v1'); client.baseline.set(language, 'lang-read-v1')
   let submitted: FileEdit[] = []; const requests: unknown[] = []
-  client.apply = async edits => { submitted = edits }
+  Object.defineProperty(client, 'perform', { value: async (edits: FileEdit[]) => { submitted = edits } })
   const oldFetch = globalThis.fetch
   globalThis.fetch = async (input, init) => {
     const url = new URL(String(input))

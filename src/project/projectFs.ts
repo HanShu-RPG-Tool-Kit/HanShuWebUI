@@ -3,6 +3,7 @@ import {EXPLORER_ORGANIZATION_PATH,emptyOrganization,parseOrganization,serialize
 import {assertCanonicalSourcePath} from '../workspace'
 import { sha256Hex } from './crypto'
 import { ServiceError } from '../collab/protocol'
+import { parseBossbar } from '../workspaces/audiovisual/bossbar/parse'
 import { getProjectSession, setProjectSession } from './projectSession'
 import type { ProjectClient, ProjectDirectory } from './serviceClient'
 import { setBoundProject } from './bindingBus'
@@ -433,7 +434,16 @@ export async function collectProjectChanges(binding: BoundProject, current: Work
     for (const source of pkg.scripts) {
       if(source.detached)continue
       const path = sourcePathOf(source)
-      if (client.texts.get(path) !== source.content) edits.push({ op: 'write', path, data: source.content })
+      if (client.texts.get(path) !== source.content) {
+        if (path.toLowerCase().endsWith('.bossbar')) {
+          try {
+            parseBossbar(source.content)
+          } catch (error) {
+            throw new Error(`${source.name} 无法保存：${error instanceof Error ? error.message : String(error)}`)
+          }
+        }
+        edits.push({ op: 'write', path, data: source.content })
+      }
     }
     // Asset content comparison avoids replacing another client's unchanged binary resources.
     for (const asset of pkg.assets) {
