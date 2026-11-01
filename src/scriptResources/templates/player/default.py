@@ -1,2 +1,13 @@
-# {{name}} · 玩家脚本
-# 宿主运行时接口尚未接入。
+# {{name}}
+from __future__ import annotations
+from mchhui.rpgtoolkit.feature.script.player import PlayerEvent
+
+
+@hook("join")
+def on_join(event: PlayerEvent, blackboard: Blackboard) -> None:
+    pass
+
+
+@hook("tick")
+def on_tick(event: PlayerEvent, blackboard: Blackboard) -> None:
+    pass

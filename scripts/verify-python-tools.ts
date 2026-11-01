@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { importedJavaClasses } from '../src/monaco/python/stubs'
 import { planJavaImport, javaImportReferenceMatches, type JavaClassEntry } from '../src/monaco/python/javaImportPlan'
 import { ActorEnvironmentLoader, readActorEnvironment } from '../src/monaco/python/actorEnvironment'
+import { PlayerEnvironmentLoader, readPlayerEnvironment } from '../src/monaco/python/playerEnvironment'
 
 assert.deepEqual(importedJavaClasses('from custom.mod.api import CustomThing as Thing'), ['custom.mod.api.CustomThing'])
 
@@ -69,4 +70,23 @@ assert.equal(published.length, 2, 'late reply cannot install a disposed environm
 const unsupported = new ActorEnvironmentLoader(async () => { throw new Error('unknown_method') }, async source => { published.push(source) })
 await assert.rejects(unsupported.refresh())
 assert(published.at(-1)?.includes('name: str'), 'old Mods do not cause false unknown-hook errors')
-console.log('PASS Python tools: import headers/docstrings/future imports, aliases, collisions, inner classes, CRLF; dynamic hook revisions, runtime isolation, disposal and old-Mod fallback')
+
+const playerSnapshot = { schemaVersion: 1 as const, runtimeId: 'player-one', revision: 1, hooks: [{ id: 'join', cancellable: false }, { id: 'hurt', cancellable: true }] }
+assert.deepEqual(readPlayerEnvironment(playerSnapshot), playerSnapshot)
+assert.throws(() => readPlayerEnvironment({ ...playerSnapshot, hooks: [...playerSnapshot.hooks, ...playerSnapshot.hooks] }))
+const playerPublished: string[] = []
+let playerCurrent = playerSnapshot
+const playerLoader = new PlayerEnvironmentLoader(async () => playerCurrent, async source => { playerPublished.push(source) })
+await playerLoader.refresh()
+assert(playerPublished.at(-1)?.includes('Literal["join", "hurt"]'))
+playerCurrent = { ...playerSnapshot, revision: 0, hooks: [{ id: 'stale', cancellable: false }] }
+await playerLoader.refresh()
+assert.equal(playerPublished.length, 1)
+playerCurrent = { ...playerCurrent, runtimeId: 'player-two' }
+await playerLoader.refresh()
+assert(playerPublished.at(-1)?.includes('Literal["stale"]'))
+playerLoader.dispose(); await playerLoader.refresh(); assert.equal(playerPublished.length, 2)
+const unsupportedPlayer = new PlayerEnvironmentLoader(async () => { throw new Error('unknown_method') }, async source => { playerPublished.push(source) })
+await assert.rejects(unsupportedPlayer.refresh())
+assert(playerPublished.at(-1)?.includes('name: str'), 'old Mods do not cause false unknown-player-hook errors')
+console.log('PASS Python tools: import headers/docstrings/future imports, aliases, collisions, inner classes, CRLF; dynamic actor/player hook revisions, runtime isolation, disposal and old-Mod fallback')

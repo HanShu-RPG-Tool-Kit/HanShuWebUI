@@ -133,6 +133,51 @@ try {
   assert(actors.decorated.includes('upper'), 'hook decorator preserves annotated function return type')
   assert(actors.errors.some(e => e.includes('int')) && actors.errors.some(e => e.includes('unknown_hook')), 'annotation mismatch and invalid hook diagnostics')
   console.log('Actor Worker passed: all 18 hook names, partial literals, Blackboard, typed return/generic/union narrowing, decorated return inference and type diagnostics.')
+  const players = await page.evaluate(async () => {
+    const { PyrightClient } = await import('/src/monaco/python/pyrightClient.ts')
+    const { pythonProfile } = await import('/src/monaco/python/profiles.ts')
+    const player = new PyrightClient(undefined, pythonProfile('player').files)
+    const { PlayerEnvironmentLoader } = await import('/src/monaco/python/playerEnvironment.ts')
+    let snapshot = { schemaVersion: 1, runtimeId: 'fixture', revision: 1, hooks: ['init','join','leave','tick','respawn','dimension','hurt','died','kill','attack','interact_entity','interact_block','chat','break','place','pickup','drop','use_item','use_item_tick','use_item_finish','change_slot','teleport','sleep','wake','xp_change','level_change','advancement','effect','heal'].map(id => ({ id, cancellable: ['dimension','hurt','died','attack','interact_entity','interact_block','chat','break','place','pickup','drop','use_item','use_item_tick','teleport','sleep','effect','heal'].includes(id) })) }
+    const environment = new PlayerEnvironmentLoader(async () => snapshot, source => player.writeStubs({ '__player_context.pyi': source }))
+    await environment.refresh()
+    await player.ready
+    let version = 0
+    const uri = 'file:///typings/player-check.py'
+    player.notify('textDocument/didOpen', { textDocument: { uri, languageId: 'python', version, text: '' } })
+    const diagnostics = []
+    player.onNotification = (method, params) => { if (method === 'textDocument/publishDiagnostics' && params.uri === uri) diagnostics.push(params) }
+    const complete = async (text) => {
+      player.notify('textDocument/didChange', { textDocument: { uri, version: ++version }, contentChanges: [{ text }] })
+      const lines = text.split('\n')
+      const result = await player.request('textDocument/completion', { textDocument: { uri }, position: { line: lines.length - 1, character: lines.at(-1).length } })
+      return (Array.isArray(result) ? result : result?.items ?? []).map(item => item.label.replace(/^['"]|['"]$/g, ''))
+    }
+    const hooks = await complete('@hook("')
+    const prefix = await complete('@hook("use_')
+    const globals = await complete('Blackb')
+    const decorated = await complete('@hook("tick")\ndef on_tick(event, blackboard) -> str:\n    return "ok"\non_tick(None, None).')
+    await complete('age: int = "wrong"\n@hook("unknown_hook")\ndef invalid(event, blackboard):\n    pass\n')
+    const expectedVersion = version, deadline = Date.now() + 10000
+    while (!diagnostics.some(d => d.version === expectedVersion && d.diagnostics.some(e => e.message.includes('int'))) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 30))
+    const errors = diagnostics.filter(d => d.version === expectedVersion).flatMap(d => d.diagnostics.map(e => e.message))
+    snapshot = { ...snapshot, revision: 2, hooks: [{ id: 'new_player_hook', cancellable: true }] }
+    await environment.refresh()
+    const refreshed = await complete('@hook("')
+    snapshot = { ...snapshot, runtimeId: 'different-game', revision: 0, hooks: [{ id: 'other_player_hook', cancellable: false }] }
+    await environment.refresh()
+    const replaced = await complete('@hook("')
+    environment.dispose(); player.dispose()
+    return { hooks, prefix, globals, decorated, errors, refreshed, replaced }
+  })
+  assert.equal(players.hooks.length, 29, 'all runtime player hook literal names')
+  assert(players.refreshed.includes('new_player_hook') && !players.refreshed.includes('tick'), 'new player registry snapshot replaces hook literals in live Worker')
+  assert(players.replaced.includes('other_player_hook') && !players.replaced.includes('new_player_hook'), 'switching runtime resets player revision and removes stale names')
+  assert(players.prefix.includes('use_item') && players.prefix.includes('use_item_tick'), 'partial player hook name completion')
+  assert(players.globals.includes('Blackboard'), 'player Blackboard injection')
+  assert(players.decorated.includes('upper'), 'player hook decorator preserves annotated function return type')
+  assert(players.errors.some(e => e.includes('int')) && players.errors.some(e => e.includes('unknown_hook')), 'player annotation mismatch and invalid hook diagnostics')
+  console.log('Player Worker passed: all 29 hook names, partial literals, Blackboard, decorated return inference and type diagnostics.')
   const productionWorker = (await readdir('dist/assets').catch(() => [])).find(name => name.startsWith('pyright.worker-') && name.endsWith('.js'))
   if (productionWorker) {
     await page.route('**/assets/*.js', async route => {
@@ -350,6 +395,50 @@ try {
     assert(liveActor.replaced.some(s => s.label === 'other_game') && !liveActor.replaced.some(s => s.label === 'runtime_added'))
     assert.deepEqual(liveActor.errors, [])
     console.log('Live actor metadata passed: Control notification refreshes an attached Monaco editor, cancellable details, runtime replacement without stale hook names.')
+    const livePlayer = await page.evaluate(async fixture => {
+      const monaco = await import('/node_modules/monaco-editor/esm/vs/editor/editor.api.js')
+      const { PythonLanguage } = await import('/src/monaco/python/pythonLanguage.ts')
+      const hub = await import('/src/gameDevServer/controlHub.ts')
+      let snapshot = { schemaVersion: 1, runtimeId: 'live-player', revision: 1, hooks: [{ id: 'join', cancellable: false }] }, socket
+      window.WebSocket = class {
+        static OPEN = 1; static CONNECTING = 0; readyState = 0
+        constructor() { socket = this; setTimeout(() => { this.readyState = 1; this.onopen?.({}) }, 5) }
+        close() { this.readyState = 3; this.onclose?.({ code: 1000 }) }
+        send(text) {
+          const request = JSON.parse(text), wanted = new Set(request.params.classes ?? [])
+          const result = request.method === 'python.playerHooks' ? snapshot : { ...fixture, runtimeId: 'live-player', classes: fixture.classes.filter(c => wanted.has(c.name)), missing: [] }
+          setTimeout(() => this.onmessage?.({ data: JSON.stringify({ type: 'response', id: request.id, ok: true, result }) }), 5)
+        }
+      }
+      hub.reconnectGameDevControlNow()
+      while (!hub.isControlConnected()) await new Promise(resolve => setTimeout(resolve, 10))
+      let provider
+      const adapter = { ...monaco, languages: { ...monaco.languages, registerCompletionItemProvider: (language, value) => { provider = value; return monaco.languages.registerCompletionItemProvider(language, value) } } }
+      const errors = [], service = new PythonLanguage(adapter, error => errors.push(String(error)), 'player')
+      const model = monaco.editor.createModel('@hook("', 'python', monaco.Uri.parse('file:///live-player.py'))
+      await service.ready
+      const detach = service.attach(model)
+      const complete = async () => {
+        const result = await provider.provideCompletionItems(model, new monaco.Position(1, 8), {}, { isCancellationRequested: false })
+        return result.suggestions.map(s => ({ label: String(s.label).replace(/^["']|["']$/g, ''), detail: s.detail }))
+      }
+      const first = await complete()
+      snapshot = { ...snapshot, revision: 2, hooks: [...snapshot.hooks, { id: 'runtime_added', cancellable: true }] }
+      socket.onmessage({ data: JSON.stringify({ type: 'notify', method: 'python.playerHooks.changed', params: { runtimeId: snapshot.runtimeId, revision: 2 } }) })
+      let updated = [], deadline = Date.now() + 10000
+      while (Date.now() < deadline) { updated = await complete(); if (updated.some(s => s.label === 'runtime_added')) break; await new Promise(resolve => setTimeout(resolve, 30)) }
+      snapshot = { ...snapshot, runtimeId: 'other-game', revision: 0, hooks: [{ id: 'other_game', cancellable: false }] }
+      socket.onmessage({ data: JSON.stringify({ type: 'notify', method: 'python.playerHooks.changed', params: { runtimeId: snapshot.runtimeId, revision: 0 } }) })
+      let replaced = []; deadline = Date.now() + 10000
+      while (Date.now() < deadline) { replaced = await complete(); if (replaced.some(s => s.label === 'other_game')) break; await new Promise(resolve => setTimeout(resolve, 30)) }
+      detach(); service.dispose(); model.dispose(); hub.disconnectGameDevControl()
+      return { first, updated, replaced, errors }
+    }, fixture)
+    assert(livePlayer.first.some(s => s.label === 'join') && !livePlayer.first.some(s => s.label === 'runtime_added'))
+    assert(livePlayer.updated.some(s => s.label === 'runtime_added' && s.detail.includes('可取消')))
+    assert(livePlayer.replaced.some(s => s.label === 'other_game') && !livePlayer.replaced.some(s => s.label === 'runtime_added'))
+    assert.deepEqual(livePlayer.errors, [])
+    console.log('Live player metadata passed: Control notification refreshes an attached Monaco editor, cancellable details, runtime replacement without stale hook names.')
   } else console.log(`Actual Java reflection integration skipped: run Mod JavaPythonStubsTest to produce ${fixturePath}.`)
 } finally { await browser.close(); await server?.close() }
 

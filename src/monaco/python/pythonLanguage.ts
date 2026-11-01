@@ -1,6 +1,7 @@
 import {pythonProfile} from './profiles'
 import { pythonStatements } from './pythonStatements'
 import {ActorEnvironmentLoader} from './actorEnvironment'
+import {PlayerEnvironmentLoader} from './playerEnvironment'
 import {getProjectSession,subscribeProjectSession} from '../../project/projectSession'
 import {effectiveBuiltinScripts,scriptType,type ScriptType} from '../../scriptResources'
 import type * as Monaco from 'monaco-editor'
@@ -76,6 +77,7 @@ export class PythonLanguage {
   readonly client:PyrightClient
   readonly stubs:JavaStubLoader
   private actorEnvironment?: ActorEnvironmentLoader
+  private playerEnvironment?: PlayerEnvironmentLoader
   private scriptType:ScriptType
   private projectFiles:Record<string,string>={}
   readonly ready: Promise<void>
@@ -104,6 +106,16 @@ export class PythonLanguage {
         if (note.method === 'python.actorHooks.changed') void this.actorEnvironment?.refresh().catch(error => this.warn(error))
       })
       this.disposables.push({ dispose: () => { stop(); this.actorEnvironment?.dispose() } })
+    }
+    if (type === 'player') {
+      this.playerEnvironment = new PlayerEnvironmentLoader(
+        () => controlRequest('python.playerHooks', {}),
+        source => this.stubs.replaceBase({ ...profile.files, '__player_context.pyi': source }),
+      )
+      const stop = subscribeControlNotify(note => {
+        if (note.method === 'python.playerHooks.changed') void this.playerEnvironment?.refresh().catch(error => this.warn(error))
+      })
+      this.disposables.push({ dispose: () => { stop(); this.playerEnvironment?.dispose() } })
     }
     const project=getProjectSession().binding?.handle.client
     const syncProject=async()=>{
@@ -146,10 +158,13 @@ export class PythonLanguage {
           const items = Array.isArray(result) ? result : result?.items ?? []
           for (const item of items) {
             if (!/^["']/.test(item.label)) continue
-            const hook = this.actorEnvironment?.hooks.find(h => h.id === item.label.replace(/^["']|["']$/g, ''))
-            if (hook) item.detail = `演员 hook · ${hook.cancellable ? '可取消' : '不可取消'}`
+            const id = item.label.replace(/^["']|["']$/g, '')
+            const actorHook = this.actorEnvironment?.hooks.find(h => h.id === id)
+            if (actorHook) item.detail = `演员 hook · ${actorHook.cancellable ? '可取消' : '不可取消'}`
+            const playerHook = this.playerEnvironment?.hooks.find(h => h.id === id)
+            if (playerHook) item.detail = `玩家 hook · ${playerHook.cancellable ? '可取消' : '不可取消'}`
           }
-          return { incomplete: !Array.isArray(result) && !!result?.isIncomplete, suggestions: items.filter(item => !/^(?:jvm_|__kit_context|__shop_context|__actor_context|__goal_context|__builtins__)/.test(item.label)).map(item => this.completion(item, model, position)) }
+          return { incomplete: !Array.isArray(result) && !!result?.isIncomplete, suggestions: items.filter(item => !/^(?:jvm_|__kit_context|__shop_context|__actor_context|__player_context|__goal_context|__builtins__)/.test(item.label)).map(item => this.completion(item, model, position)) }
         } catch (error) { this.warn(error); return { suggestions: [] } }
       },
       resolveCompletionItem: async item => {
@@ -193,6 +208,7 @@ export class PythonLanguage {
       await this.stubs.reconnect()
       if(profile.requiredClasses.some(name=>!this.stubs.classes.has(name)))throw new Error('游戏未提供脚本必需的类型，Python 分析已暂停')
       await this.actorEnvironment?.refresh().catch(error => this.warn(error))
+      await this.playerEnvironment?.refresh().catch(error => this.warn(error))
       await syncProject()
     })
     void this.ready.catch(error => this.warn(error))

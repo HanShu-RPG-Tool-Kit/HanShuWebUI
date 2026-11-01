@@ -48,7 +48,7 @@
 - kit：一次礼包调用；官方宿主不提供事件订阅装饰器，不承诺安全沙箱。可信程序员主动绕过契约属于其自身责任。
 - shop：商店交易预提交脚本，注入 shop/player，通过条目句柄暂存 delta，契约见[商店模板](#shop-guide)。
 - actor（演员脚本）：已接入演员模板绑定、hook、会话内共享黑板和脚本调度；契约见[演员模板与脚本](#actor-guide)。
-- player（玩家脚本）：已支持分类、专属图标、新建模板、工程保存、启动列表及 PAK 导出；Mod 宿主加载与执行接口尚未接入。其 Python 环境目前为普通 Python 与按需 Java stub，不注入未实现的全局变量。启动序见 `src/script/player/load.json`。
+- player（玩家脚本）：已支持分类、专属图标、新建模板、工程保存、启动列表及 PAK 导出。语言服务注入 `hook`／`Blackboard`，名称由游戏 `python.playerHooks` 注册表驱动；事件与宿主 API 按需反射。启动序见 `src/script/player/load.json`。
 
 WebUI 已统一资源模型、编辑器与 PAK 导出。Mod 已接入 script/kit/ 的引用执行，并按需为礼包提供 script/common/ 库导入；不会在加载 PAK 时自动运行 common 订阅，也尚未接入 goal 的新 PAK 加载器；actor 已由独立宿主接入。启动列表文件会进入 server PAK，宿主按列表挂载的契约待 Mod 侧对齐。
 
