@@ -242,27 +242,6 @@ export function validateBossbarSemantics(
   const region = regionIndex >= 0 ? components[regionIndex] : null
   const regionBox = region && region.type === 'display_region' ? region.box : null
 
-  if (regionBox) {
-    if (regionBox.width > BOSSBAR_LIMITS.displayRegion.maxWidth) {
-      diagnostics.push(
-        bossbarDiagnostic(
-          'display_region',
-          'components[' + regionIndex + '].box.width',
-          '显示区域宽度不能超过 ' + BOSSBAR_LIMITS.displayRegion.maxWidth,
-        ),
-      )
-    }
-    if (regionBox.height > BOSSBAR_LIMITS.displayRegion.maxHeight) {
-      diagnostics.push(
-        bossbarDiagnostic(
-          'display_region',
-          'components[' + regionIndex + '].box.height',
-          '显示区域高度不能超过 ' + BOSSBAR_LIMITS.displayRegion.maxHeight,
-        ),
-      )
-    }
-  }
-
   const checkBox = (box: BossbarBox): boolean =>
     Number.isFinite(box.x) &&
     Number.isFinite(box.y) &&

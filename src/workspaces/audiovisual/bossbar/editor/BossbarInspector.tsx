@@ -273,10 +273,10 @@ function RegionFields({
         <NumberField value={region.box.y} disabled={readOnly} onCommit={(y) => commit({ y })} />
       </Row>
       <Row label="宽">
-        <NumberField value={region.box.width} min={1} max={4096} disabled={readOnly} onCommit={(width) => commit({ width })} />
+        <NumberField value={region.box.width} min={1} disabled={readOnly} onCommit={(width) => commit({ width })} />
       </Row>
       <Row label="高">
-        <NumberField value={region.box.height} min={1} max={1024} disabled={readOnly} onCommit={(height) => commit({ height })} />
+        <NumberField value={region.box.height} min={1} disabled={readOnly} onCommit={(height) => commit({ height })} />
       </Row>
     </>
   )

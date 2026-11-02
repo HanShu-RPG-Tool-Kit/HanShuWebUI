@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { PointerEvent as ReactPointerEvent, WheelEvent as ReactWheelEvent } from 'react'
+import type { PointerEvent as ReactPointerEvent } from 'react'
 import {
   isDisplayRegion,
   isPaintable,
@@ -13,6 +13,7 @@ import {
   BOSSBAR_HANDLES,
   boxesIntersect,
   collectSnapLines,
+  constrainResize,
   handleCursor,
   handlePoint,
   normalizeBox,
@@ -21,11 +22,11 @@ import {
   moveRegionBox,
   pointInBox,
   resizeBox,
+  unionBox,
   snapResize,
   type BossbarHandle,
   type ViewTransform,
 } from './editorGeometry'
-import { clampBoxToRegion } from '../document'
 import { createTextMeasurer } from './useBossbarImages'
 
 /**
@@ -81,6 +82,7 @@ export function BossbarCanvasStage({
   textureHeight,
   view,
   fitRequest,
+  homeRequest,
   grid,
   showGrid,
   showRulers,
@@ -101,6 +103,7 @@ export function BossbarCanvasStage({
   textureHeight: number
   view: ViewTransform
   fitRequest: number
+  homeRequest: number
   grid: number
   showGrid: boolean
   showRulers: boolean
@@ -117,6 +120,7 @@ export function BossbarCanvasStage({
   const dragRef = useRef<DragState | null>(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
   const lastFitRequestRef = useRef<number | null>(null)
+  const lastHomeRequestRef = useRef(0)
   const [marquee, setMarquee] = useState<BossbarBox | null>(null)
   const [guides, setGuides] = useState<{ x: number[]; y: number[] }>({ x: [], y: [] })
   const [spaceHeld, setSpaceHeld] = useState(false)
@@ -156,6 +160,22 @@ export function BossbarCanvasStage({
       panY: size.height / 2 - (region.box.y + region.box.height / 2) * zoom,
     })
   }, [fitRequest, onViewChange, region, size.height, size.width, view.panX, view.panY, view.zoom])
+
+  useEffect(() => {
+    if (!homeRequest || size.width <= 0 || size.height <= 0) return
+    if (lastHomeRequestRef.current === homeRequest) return
+    lastHomeRequestRef.current = homeRequest
+    const zoom = view.zoom
+    if (!region) {
+      onViewChange({ zoom, panX: 0, panY: 0 })
+      return
+    }
+    onViewChange({
+      zoom,
+      panX: size.width / 2 - (region.box.x + region.box.width / 2) * zoom,
+      panY: size.height / 2 - (region.box.y + region.box.height / 2) * zoom,
+    })
+  }, [homeRequest, onViewChange, region, size.height, size.width, view.zoom])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -230,8 +250,11 @@ export function BossbarCanvasStage({
     ctx.strokeStyle = 'rgba(120,180,255,0.5)'
     ctx.lineWidth = 1
     ctx.beginPath()
-    const originX = Math.round(view.panX) + 0.5
-    const originY = Math.round(view.panY) + 0.5
+    const origin = region
+      ? { x: region.box.x + region.box.width / 2, y: region.box.y + region.box.height / 2 }
+      : { x: 0, y: 0 }
+    const originX = Math.round(view.panX + origin.x * view.zoom) + 0.5
+    const originY = Math.round(view.panY + origin.y * view.zoom) + 0.5
     ctx.moveTo(originX - 8, originY)
     ctx.lineTo(originX + 8, originY)
     ctx.moveTo(originX, originY - 8)
@@ -266,6 +289,7 @@ export function BossbarCanvasStage({
     view.panX,
     view.panY,
     view.zoom,
+    region,
   ])
 
   const toDesign = useCallback(
@@ -456,8 +480,7 @@ export function BossbarCanvasStage({
         const snapped = skipSnap
           ? { box: raw, guides: { x: [], y: [] } }
           : snapResize(raw, drag.handle, lines, threshold)
-        let box = normalizeBox(snapped.box)
-        if (region) box = clampBoxToRegion(region.box, box)
+        const box = constrainResize(drag.origin, drag.handle, snapped.box, { inside: region?.box ?? null })
         setGuides(snapped.guides)
         onBoxesChange({ [drag.id]: roundBox(box) }, false)
         return
@@ -474,19 +497,10 @@ export function BossbarCanvasStage({
       }
 
       if (drag.mode === 'region-resize') {
-        let box = normalizeBox(resizeBox(drag.origin, drag.handle, { x: point.x - drag.start.x, y: point.y - drag.start.y }))
-        const others = boundsOf(paintables.map((component) => component.id))
-        if (others.length) {
-          const minLeft = Math.min(...others.map((entry) => entry.x))
-          const maxRight = Math.max(...others.map((entry) => entry.x + entry.width))
-          const minTop = Math.min(...others.map((entry) => entry.y))
-          const maxBottom = Math.max(...others.map((entry) => entry.y + entry.height))
-          const left = Math.min(box.x, minLeft)
-          const top = Math.min(box.y, minTop)
-          const right = Math.max(box.x + box.width, maxRight)
-          const bottom = Math.max(box.y + box.height, maxBottom)
-          box = { x: left, y: top, width: right - left, height: bottom - top }
-        }
+        const raw = resizeBox(drag.origin, drag.handle, { x: point.x - drag.start.x, y: point.y - drag.start.y })
+        const box = constrainResize(drag.origin, drag.handle, raw, {
+          contain: unionBox(boundsOf(paintables.map((component) => component.id))),
+        })
         const regionId = findRegionId(document)
         if (regionId) onBoxesChange({ [regionId]: roundBox(box) }, false)
       }
@@ -537,27 +551,42 @@ export function BossbarCanvasStage({
     [hiddenSet, lockedSet, onBoxesChange, onSelectionChange, paintables, selection],
   )
 
-  const onWheel = useCallback(
-    (event: ReactWheelEvent<HTMLDivElement>) => {
+  const viewRef = useRef(view)
+  const onViewChangeRef = useRef(onViewChange)
+  viewRef.current = view
+  onViewChangeRef.current = onViewChange
+
+  useEffect(() => {
+    const element = wrapRef.current
+    if (!element) return
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault()
+      const current = viewRef.current
       if (event.ctrlKey || event.metaKey) {
-        event.preventDefault()
-        const element = wrapRef.current
-        if (!element) return
         const rect = element.getBoundingClientRect()
         const localX = event.clientX - rect.left
         const localY = event.clientY - rect.top
-        const factor = event.deltaY < 0 ? 1.1 : 1 / 1.1
-        const zoom = Math.max(0.05, Math.min(16, view.zoom * factor))
-        const designX = (localX - view.panX) / view.zoom
-        const designY = (localY - view.panY) / view.zoom
-        onViewChange({ zoom, panX: localX - designX * zoom, panY: localY - designY * zoom })
+        const factor = event.deltaY < 0 ? 1.25 : 1 / 1.25
+        const zoom = Math.max(0.1, Math.min(16, current.zoom * factor))
+        if (zoom === current.zoom) return
+        const designX = (localX - current.panX) / current.zoom
+        const designY = (localY - current.panY) / current.zoom
+        onViewChangeRef.current({
+          zoom,
+          panX: localX - designX * zoom,
+          panY: localY - designY * zoom,
+        })
         return
       }
-      event.preventDefault()
-      onViewChange({ ...view, panX: view.panX - event.deltaX, panY: view.panY - event.deltaY })
-    },
-    [onViewChange, view],
-  )
+      onViewChangeRef.current({
+        ...current,
+        panX: current.panX - event.deltaX,
+        panY: current.panY - event.deltaY,
+      })
+    }
+    element.addEventListener('wheel', onWheel, { passive: false })
+    return () => element.removeEventListener('wheel', onWheel)
+  }, [])
 
   return (
     <div className="bb-stage" role="region" aria-label="BossBar 编辑视口" ref={wrapRef} data-space={spaceHeld ? 'pan' : undefined}>
@@ -568,7 +597,6 @@ export function BossbarCanvasStage({
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
-        onWheel={onWheel}
         style={{ cursor: spaceHeld ? 'grab' : 'default' }}
       >
         {region && (

@@ -1,6 +1,8 @@
 :is(.audiovisual-workspace) {
   --bg: #1d1d1d;
   --bg-title: #383838;
+  --bg-tab: #232323;
+  --bg-tab-active: #303030;
   --border: #1a1a1a;
   --border-soft: #404040;
   --text: #e6e6e6;
@@ -14,6 +16,11 @@
   --av-danger: #e87d7d;
   --av-s: var(--app-ui-scale, 1.25);
   --av-font: calc(14px * var(--av-s));
+  --fl-s: var(--av-s);
+  --fl-font-sm: calc(14px * var(--av-s));
+  --fl-hover: var(--av-hover);
+  --fl-head: var(--bg-title);
+  --fl-panel-2: var(--av-panel-2);
   color-scheme: dark;
 }
 
@@ -118,8 +125,7 @@
   gap: 4px;
 }
 
-.av-explorer-tools button,
-.av-explorer-delete {
+.av-explorer-tools button {
   border: 1px solid var(--border-soft);
   background: var(--av-panel-2);
   color: inherit;
@@ -129,8 +135,7 @@
   cursor: pointer;
 }
 
-.av-explorer-tools button:hover:not(:disabled),
-.av-explorer-delete:hover:not(:disabled) {
+.av-explorer-tools button:hover:not(:disabled) {
   background: var(--av-hover);
 }
 
@@ -203,6 +208,10 @@
   margin-bottom: 2px;
 }
 
+.av-explorer-row:hover {
+  background: var(--av-hover);
+}
+
 .av-explorer-row.is-active {
   background: var(--av-active);
 }
@@ -249,8 +258,29 @@
 }
 
 .av-explorer-delete {
-  color: var(--av-danger);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: var(--text-dim);
+  min-width: 22px;
+  height: 22px;
+  padding: 0 6px;
   margin-right: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+}
+
+.av-explorer-row:hover .av-explorer-delete,
+.av-explorer-row:focus-within .av-explorer-delete {
+  display: inline-flex;
+}
+
+.av-explorer-delete:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--av-danger);
 }
 
 .av-editor-pane {
@@ -351,4 +381,20 @@
 
 .av-empty code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.audiovisual-workspace .editor-dock-tabbar {
+  position: relative;
+}
+.audiovisual-workspace .editor-dock-grip {
+  display: none;
+}
+.audiovisual-workspace .editor-dock-tabbar .flow-page-tab button {
+  cursor: grab;
+}
+.audiovisual-workspace .flow-page-tab button:focus,
+.audiovisual-workspace .flow-page-tab button:focus-visible,
+.audiovisual-workspace .editor-dock-grip:focus,
+.audiovisual-workspace .editor-dock-grip:focus-visible {
+  outline: none;
 }

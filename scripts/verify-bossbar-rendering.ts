@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict'
 import { createBossbar } from '../src/workspaces/audiovisual/bossbar/parse'
+import { resetDisplayRegionOrigin, translateAll } from '../src/workspaces/audiovisual/bossbar/document'
 import { buildScene } from '../src/workspaces/audiovisual/bossbar/render/scene'
 import { drawBossbarScene } from '../src/workspaces/audiovisual/bossbar/render/canvas'
-import { collectSnapLines, movableSelection, moveBoxes, moveRegionBox } from '../src/workspaces/audiovisual/bossbar/editor/editorGeometry'
+import { collectSnapLines, movableSelection, moveBoxes, moveRegionBox, constrainResize, resizeBox } from '../src/workspaces/audiovisual/bossbar/editor/editorGeometry'
 import type { BossbarBox } from '../src/workspaces/audiovisual/bossbar/protocol'
 
 const near = (actual: number, expected: number) => assert.ok(Math.abs(actual - expected) < 1e-9, `${actual} != ${expected}`)
@@ -51,6 +52,40 @@ assert.deepEqual(
 )
 assert.deepEqual(contents, [{ x: -80, y: -40, width: 40, height: 20 }, { x: 20, y: 10, width: 40, height: 20 }], '单独移动区域不带动组件')
 assert.deepEqual(moveRegionBox(region, { x: -10, y: 20 }, []), { ...region, x: -10, y: 20 }, '空区域可自由移动')
+
+const resizeOrigin = { x: 10, y: 20, width: 40, height: 30 }
+assert.deepEqual(
+  constrainResize(resizeOrigin, 'se', { x: 10, y: 20, width: 400, height: 400 }, { inside: region }),
+  { x: 10, y: 20, width: 90, height: 50 },
+  'SE hits the outer max without moving NW',
+)
+const seStopped = constrainResize(resizeOrigin, 'se', { x: 10, y: 20, width: -80, height: -90 }, { inside: region })
+assert.deepEqual(seStopped, { x: 10, y: 20, width: 1, height: 1 }, 'SE cannot invert and move NW')
+const regionOrigin = { x: 0, y: 0, width: 100, height: 70 }
+const children = { x: 10, y: 10, width: 20, height: 10 }
+assert.deepEqual(
+  constrainResize(regionOrigin, 'se', { x: 0, y: 0, width: 5, height: 5 }, { contain: children }),
+  { x: 0, y: 0, width: 30, height: 20 },
+  'region SE stops at children without moving NW',
+)
+assert.deepEqual(
+  constrainResize(regionOrigin, 'nw', resizeBox(regionOrigin, 'nw', { x: 80, y: 80 }), { contain: children }),
+  { x: 10, y: 10, width: 90, height: 60 },
+  'region NW stops at children without moving SE',
+)
+
+const shifted = {
+  ...document,
+  components: [
+    { ...document.components[0], box: { x: 40, y: 20, width: 100, height: 40 } },
+    { id: 'child', type: 'background', box: { x: 50, y: 30, width: 20, height: 10 }, visible: true, opacity: 1, paint: { kind: 'solid', color: '#000000' } },
+  ],
+}
+const homed = resetDisplayRegionOrigin(shifted)
+assert.deepEqual(homed.components[0].box, { x: -50, y: -20, width: 100, height: 40 }, 'home pins region center at origin')
+assert.deepEqual(homed.components[1].box, { x: -40, y: -10, width: 20, height: 10 }, 'home translates children with the region')
+assert.equal(resetDisplayRegionOrigin(homed), homed, 'already-centered home is a no-op')
+assert.deepEqual(translateAll(homed, 10, 4).components[0].box, { x: -40, y: -16, width: 100, height: 40 })
 
 // Exercise the scene-to-Canvas path: color alpha and component opacity multiply once.
 document.components = [document.components[0],

@@ -45,7 +45,6 @@ export const BOSSBAR_LIMITS = {
     minSafeMargin: 0,
     maxSafeMargin: 1024,
   },
-  displayRegion: { maxWidth: 4096, maxHeight: 1024 },
   components: 128,
   variables: 64,
   sequenceFrames: 256,

@@ -222,12 +222,12 @@ body.is-panel-dragging .flow-explorer-heading.is-draggable { cursor: grabbing; }
 }
 .flow-page-tab.is-dragging { opacity: 0.45; }
 .flow-page-tab.is-drop { box-shadow: inset 2px 0 0 var(--accent); }
-:is(.gameplay-workspace, .stageplay-workspace) .flow-page-tab button {
+:is(.gameplay-workspace, .stageplay-workspace, .audiovisual-workspace) .flow-page-tab button {
   appearance: none; height: 100%; margin: 0; border: 0; border-radius: 0;
   background: transparent; color: inherit; font: inherit; cursor: pointer;
 }
-:is(.gameplay-workspace, .stageplay-workspace) .flow-page-tab button:hover:not(:disabled) { background: transparent; }
-.gameplay-workspace .flow-page-tab-name {
+:is(.gameplay-workspace, .stageplay-workspace, .audiovisual-workspace) .flow-page-tab button:hover:not(:disabled) { background: transparent; }
+:is(.gameplay-workspace, .audiovisual-workspace) .flow-page-tab-name {
   display: flex; align-items: center; gap: 6px; min-width: 0; padding: 0 2px 0 10px;
 }
 .flow-page-tab.is-pinned .flow-page-tab-name { padding-right: 10px; }
@@ -252,14 +252,14 @@ body.is-panel-dragging .flow-explorer-heading.is-draggable { cursor: grabbing; }
   transform: rotate(45deg);
 }
 .flow-page-tab.is-active .flow-page-pin { color: var(--accent); }
-:is(.gameplay-workspace, .stageplay-workspace) .flow-page-tab-close {
+:is(.gameplay-workspace, .stageplay-workspace, .audiovisual-workspace) .flow-page-tab-close {
   display: grid; place-items: center;
   width: calc(20px * var(--fl-s, 1.25));
   margin-right: 4px; padding: 0; line-height: 1; opacity: 0;
 }
 .flow-page-tab:hover .flow-page-tab-close,
 .flow-page-tab.is-active .flow-page-tab-close { opacity: 0.55; }
-:is(.gameplay-workspace, .stageplay-workspace) .flow-page-tab .flow-page-tab-close:hover:not(:disabled) {
+:is(.gameplay-workspace, .stageplay-workspace, .audiovisual-workspace) .flow-page-tab .flow-page-tab-close:hover:not(:disabled) {
   opacity: 1; color: var(--text-bright); background: rgba(255, 255, 255, 0.08);
 }
 
@@ -477,9 +477,9 @@ body.is-panel-dragging .flow-explorer-heading.is-draggable { cursor: grabbing; }
 }
 
 /* File type icons and local pin state on docked and floating gameplay tabs. */
-.gameplay-workspace .flow-page-tab .explorer-icon { width: 15px; height: 15px; flex-shrink: 0; opacity: .85; }
-.gameplay-workspace .flow-page-tab .editor-dock-pin { flex-shrink: 0; font-size: 9px; color: var(--accent); }
-.gameplay-workspace .flow-page-tab.is-pinned .flow-page-tab-close { opacity: .18; cursor: default; }
+:is(.gameplay-workspace, .audiovisual-workspace) .flow-page-tab .explorer-icon { width: 15px; height: 15px; flex-shrink: 0; opacity: .85; }
+:is(.gameplay-workspace, .audiovisual-workspace) .flow-page-tab .editor-dock-pin { flex-shrink: 0; font-size: 9px; color: var(--accent); }
+:is(.gameplay-workspace, .audiovisual-workspace) .flow-page-tab.is-pinned .flow-page-tab-close { opacity: .18; cursor: default; }
 
-.gameplay-workspace .flow-page-tab .editor-dock-file-icon { position: relative; display: inline-flex; width: 15px; height: 15px; overflow: visible; flex-shrink: 0; }
-.gameplay-workspace .flow-page-tab .editor-dock-file-icon small { position: absolute; right: -3px; bottom: -5px; font-size: 10px; line-height: 1; background: var(--fl-head); }
+:is(.gameplay-workspace, .audiovisual-workspace) .flow-page-tab .editor-dock-file-icon { position: relative; display: inline-flex; width: 15px; height: 15px; overflow: visible; flex-shrink: 0; }
+:is(.gameplay-workspace, .audiovisual-workspace) .flow-page-tab .editor-dock-file-icon small { position: absolute; right: -3px; bottom: -5px; font-size: 10px; line-height: 1; background: var(--fl-head); }

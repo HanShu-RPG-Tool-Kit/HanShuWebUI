@@ -119,6 +119,42 @@ export function resizeBox(
   return { x, y, width, height }
 }
 
+/** Pin the opposite corner; stop dragged edges at contain/inside limits instead of shifting the whole box. */
+export function constrainResize(
+  origin: BossbarBox,
+  handle: BossbarHandle,
+  proposed: BossbarBox,
+  bounds?: { contain?: BossbarBox | null; inside?: BossbarBox | null },
+): BossbarBox {
+  const pinLeft = !handle.includes('w')
+  const pinRight = !handle.includes('e')
+  const pinTop = !handle.includes('n')
+  const pinBottom = !handle.includes('s')
+  let left = pinLeft ? origin.x : proposed.x
+  let right = pinRight ? origin.x + origin.width : proposed.x + proposed.width
+  let top = pinTop ? origin.y : proposed.y
+  let bottom = pinBottom ? origin.y + origin.height : proposed.y + proposed.height
+  const contain = bounds?.contain
+  if (contain) {
+    if (!pinLeft) left = Math.min(left, contain.x)
+    if (!pinRight) right = Math.max(right, contain.x + contain.width)
+    if (!pinTop) top = Math.min(top, contain.y)
+    if (!pinBottom) bottom = Math.max(bottom, contain.y + contain.height)
+  }
+  const inside = bounds?.inside
+  if (inside) {
+    if (!pinLeft) left = Math.max(left, inside.x)
+    if (!pinRight) right = Math.min(right, inside.x + inside.width)
+    if (!pinTop) top = Math.max(top, inside.y)
+    if (!pinBottom) bottom = Math.min(bottom, inside.y + inside.height)
+  }
+  if (!pinLeft) left = Math.min(left, right - 1)
+  if (!pinRight) right = Math.max(right, left + 1)
+  if (!pinTop) top = Math.min(top, bottom - 1)
+  if (!pinBottom) bottom = Math.max(bottom, top + 1)
+  return { x: left, y: top, width: right - left, height: bottom - top }
+}
+
 export type SnapLines = { x: number[]; y: number[] }
 
 /** 显示区域边界、中线、组件边缘，以及与设计原点对齐的网格线。 */
