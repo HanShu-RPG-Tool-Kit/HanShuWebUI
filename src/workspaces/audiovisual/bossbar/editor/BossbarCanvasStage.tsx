@@ -124,6 +124,7 @@ export function BossbarCanvasStage({
   const [marquee, setMarquee] = useState<BossbarBox | null>(null)
   const [guides, setGuides] = useState<{ x: number[]; y: number[] }>({ x: [], y: [] })
   const [spaceHeld, setSpaceHeld] = useState(false)
+  const [panning, setPanning] = useState(false)
   const measure = useMemo(() => createTextMeasurer(), [])
 
   const hiddenSet = useMemo(() => new Set(hidden), [hidden])
@@ -179,12 +180,17 @@ export function BossbarCanvasStage({
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.code === 'Space') setSpaceHeld(true)
+      if (event.code !== 'Space') return
+      const tag = (event.target as HTMLElement | null)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      event.preventDefault()
+      setSpaceHeld(true)
     }
     const onKeyUp = (event: KeyboardEvent) => {
-      if (event.code === 'Space') setSpaceHeld(false)
+      if (event.code !== 'Space') return
+      setSpaceHeld(false)
     }
-    window.addEventListener('keydown', onKeyDown)
+    window.addEventListener('keydown', onKeyDown, { passive: false })
     window.addEventListener('keyup', onKeyUp)
     return () => {
       window.removeEventListener('keydown', onKeyDown)
@@ -356,8 +362,10 @@ export function BossbarCanvasStage({
   const onPointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
       if (event.button === 1 || (event.button === 0 && spaceHeld)) {
+        event.preventDefault()
         dragRef.current = { mode: 'pan', startClient: { x: event.clientX, y: event.clientY }, origin: view }
         event.currentTarget.setPointerCapture(event.pointerId)
+        setPanning(true)
         return
       }
       if (event.button !== 0) return
@@ -525,6 +533,7 @@ export function BossbarCanvasStage({
     (event: ReactPointerEvent<HTMLDivElement>) => {
       const drag = dragRef.current
       dragRef.current = null
+      setPanning(false)
       setGuides({ x: [], y: [] })
       if (event.currentTarget.hasPointerCapture(event.pointerId)) {
         event.currentTarget.releasePointerCapture(event.pointerId)
@@ -597,7 +606,9 @@ export function BossbarCanvasStage({
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
-        style={{ cursor: spaceHeld ? 'grab' : 'default' }}
+        data-space={spaceHeld || panning ? 'pan' : undefined}
+        data-panning={panning ? 'true' : undefined}
+        style={{ cursor: panning ? 'grabbing' : spaceHeld ? 'grab' : 'default' }}
       >
         {region && (
           <>

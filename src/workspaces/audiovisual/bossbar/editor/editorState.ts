@@ -16,7 +16,7 @@ import {
  * 不写进 .bossbar，也不是共享工程数据。
  */
 
-export type BossbarInspectorTab = 'component' | 'variables' | 'atlas'
+export type BossbarInspectorTab = 'component' | 'variables'
 
 export type BossbarEditorViewState = {
   zoom: number
@@ -71,7 +71,7 @@ function editorViewState(input: Partial<BossbarEditorViewState>): BossbarEditorV
     referenceAsset: typeof input.referenceAsset === 'string' ? input.referenceAsset : null,
     referenceOpacity: Math.max(0, Math.min(1, finite(input.referenceOpacity, 0.35))),
     playbackSpeed: Math.max(0.1, Math.min(2, finite(input.playbackSpeed, 1))),
-    inspectorTab: input.inspectorTab === 'variables' || input.inspectorTab === 'atlas' ? input.inspectorTab : 'component',
+    inspectorTab: input.inspectorTab === 'variables' ? 'variables' : 'component',
   }
 }
 

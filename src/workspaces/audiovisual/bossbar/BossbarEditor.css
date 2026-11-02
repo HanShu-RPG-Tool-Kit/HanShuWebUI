@@ -73,6 +73,43 @@
   min-width: 0;
 }
 
+.bb-design > .panel-dock {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  background: var(--border, #1a1a1a);
+}
+
+.panel-dock-band > .bb-layers,
+.panel-dock-band > .bb-side {
+  flex: 1 1 auto;
+  width: auto;
+  max-width: none;
+  max-height: none;
+  height: auto;
+  min-width: 0;
+  min-height: 0;
+  align-self: stretch;
+  border: 0;
+}
+
+.panel-dock-main > .bb-design-center {
+  flex: 1 1 auto;
+  width: 0;
+  min-width: 0;
+  height: 100%;
+}
+
+.bb-design .dock-panel-title {
+  min-height: calc(28px * var(--bb-s));
+  padding: 0 10px;
+  background: var(--bg-title);
+  border-bottom: 1px solid var(--border, #1a1a1a);
+  color: var(--text);
+  font-size: var(--bb-font-title);
+}
+
 /* ---------------------------------------------------------------- 图层 */
 
 .bb-layers {
@@ -81,6 +118,8 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
+  overflow: hidden;
   background: var(--av-panel, #303030);
   border-right: 1px solid var(--border, #1a1a1a);
 }
@@ -285,6 +324,10 @@
   cursor: grab;
 }
 
+.bb-stage-surface[data-panning='true'] {
+  cursor: grabbing;
+}
+
 .bb-region-outline {
   position: absolute;
   border: 1px dashed rgba(120, 180, 255, 0.65);
@@ -383,6 +426,8 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
+  overflow: hidden;
   background: var(--av-panel, #303030);
   border-left: 1px solid var(--border, #1a1a1a);
 }
@@ -420,8 +465,25 @@
 .bb-atlas {
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
   gap: 10px;
   padding: 10px;
+  overflow: auto;
+}
+
+.bb-atlas-view {
+  flex: 1 1 auto;
+  min-height: 160px;
+  display: flex;
+  flex-direction: column;
+}
+
+.bb-atlas-view .bb-section-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 .bb-section {
@@ -660,6 +722,19 @@
   color: var(--text-dim, #b0b0b0);
   opacity: 0.8;
 }
+
+.bb-paint {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.bb-paint > .bb-row .bb-button {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
 
 /* 画笔 / 范围 / 文本片段 */
 
@@ -903,11 +978,30 @@
 /* 图集面板 */
 
 .bb-atlas-canvas-wrap {
-  max-height: 260px;
+  flex: 1 1 auto;
+  min-height: 120px;
+  max-height: none;
   overflow: auto;
   border: 1px solid var(--border, #1a1a1a);
   background: #101418;
   display: flex;
+  touch-action: none;
+  overscroll-behavior: none;
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.bb-atlas-canvas-wrap[data-space='pan'] {
+  cursor: grab;
+}
+
+.bb-atlas-canvas-wrap[data-panning='true'] {
+  cursor: grabbing;
+}
+
+.bb-atlas-canvas-wrap[data-uv='true'] {
+  cursor: crosshair;
 }
 
 .bb-atlas-canvas {
@@ -915,6 +1009,9 @@
   flex: 0 0 auto;
   margin-inline: auto;
   image-rendering: pixelated;
+  cursor: inherit;
+  -webkit-user-drag: none;
+  user-select: none;
 }
 
 .bb-atlas-target {

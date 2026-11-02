@@ -23,27 +23,37 @@ const MODE_LABELS: Record<(typeof BOSSBAR_ANIMATION_MODES)[number], string> = {
   pingpong: '往复',
 }
 
-function uvFields(
-  uv: BossbarUv,
-  texture: { width: number; height: number },
-  onChange: (uv: BossbarUv) => void,
-  readOnly: boolean,
-) {
+function UvRows({
+  uv,
+  texture,
+  readOnly,
+  onChange,
+}: {
+  uv: BossbarUv
+  texture: { width: number; height: number }
+  readOnly: boolean
+  onChange: (uv: BossbarUv) => void
+}) {
+  const fields: { key: keyof BossbarUv; label: string; min: number; max: number }[] = [
+    { key: 'x', label: 'UV X', min: 0, max: Math.max(0, texture.width - 1) },
+    { key: 'y', label: 'UV Y', min: 0, max: Math.max(0, texture.height - 1) },
+    { key: 'width', label: 'UV 宽', min: 1, max: texture.width },
+    { key: 'height', label: 'UV 高', min: 1, max: texture.height },
+  ]
   return (
-    <span className="bb-uv-fields">
-      {(['x', 'y', 'width', 'height'] as const).map((key) => (
-        <label key={key}>
-          <span>{key === 'x' ? 'X' : key === 'y' ? 'Y' : key === 'width' ? '宽' : '高'}</span>
+    <>
+      {fields.map((field) => (
+        <Row key={field.key} label={field.label}>
           <NumberField
-            value={uv[key]}
-            min={key === 'width' || key === 'height' ? 1 : 0}
-            max={key === 'x' ? Math.max(0, texture.width - 1) : key === 'y' ? Math.max(0, texture.height - 1) : key === 'width' ? texture.width : texture.height}
+            value={uv[field.key]}
+            min={field.min}
+            max={field.max}
             disabled={readOnly}
-            onCommit={(next) => onChange({ ...uv, [key]: Math.round(next) })}
+            onCommit={(next) => onChange({ ...uv, [field.key]: Math.round(next) })}
           />
-        </label>
+        </Row>
       ))}
-    </span>
+    </>
   )
 }
 
@@ -97,15 +107,18 @@ export function BossbarPaintEditor({
         </Row>
       ) : (
         <>
-          <Row label="UV">
-            {uvFields(paint.uv, texture, (uv) => {
+          <UvRows
+            uv={paint.uv}
+            texture={texture}
+            readOnly={readOnly}
+            onChange={(uv) => {
               const next: BossbarPaint = paint.animation
                 ? { ...paint, uv, animation: { ...paint.animation, frames: retargetFirstUv(paint.animation.frames, uv) } }
                 : { ...paint, uv }
               onChange(next)
-            }, readOnly)}
-          </Row>
-          <Row label="">
+            }}
+          />
+          <Row label="框选">
             <Button variant="ghost" disabled={readOnly} onClick={() => onRequestUv?.()}>
               在图集上框选 UV
             </Button>
@@ -129,34 +142,28 @@ export function BossbarPaintEditor({
               }}
             />
           </Row>
-          {paint.fit === 'nine-slice' && (
-            <Row label="边距 左/上/右/下">
-              <span className="bb-uv-fields">
-                {[0, 1, 2, 3].map((index) => {
-                  const insets = paint.insets ?? [8, 8, 8, 8]
-                  return (
-                    <label key={index}>
-                      <span>{['左', '上', '右', '下'][index]}</span>
-                      <NumberField
-                        value={insets[index]}
-                        min={0}
-                        disabled={readOnly}
-                        onCommit={(next) => {
-                          const copy: [number, number, number, number] = [...insets]
-                          copy[index] = Math.round(next)
-                          onChange({ ...paint, insets: copy })
-                        }}
-                      />
-                    </label>
-                  )
-                })}
-              </span>
-            </Row>
-          )}
+          {paint.fit === 'nine-slice' &&
+            (['左', '上', '右', '下'] as const).map((label, index) => {
+              const values = paint.insets ?? [8, 8, 8, 8]
+              return (
+                <Row key={label} label={label}>
+                  <NumberField
+                    value={values[index]}
+                    min={0}
+                    disabled={readOnly}
+                    onCommit={(next) => {
+                      const copy: [number, number, number, number] = [...values]
+                      copy[index] = Math.round(next)
+                      onChange({ ...paint, insets: copy })
+                    }}
+                  />
+                </Row>
+              )
+            })}
           {allowAnimation && (
             <Row label="UV 动画">
               <ToggleField
-                label={paint.animation ? '启用' : '关闭'}
+                label="启用"
                 checked={Boolean(paint.animation)}
                 disabled={readOnly}
                 onCommit={(enabled) => {

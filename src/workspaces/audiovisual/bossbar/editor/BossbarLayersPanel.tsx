@@ -1,4 +1,7 @@
+import type { PointerEvent as ReactPointerEvent } from 'react'
 import { isDisplayRegion, type BossbarComponent, type BossbarDocument } from '../protocol'
+import type { DockPlacement } from '../../../../ui/PanelDock'
+import { DockPanelTitle } from '../../../../ui/DockPanelTitle'
 import { Button } from './BossbarEditorUi'
 
 const TYPE_LABEL: Record<BossbarComponent['type'], string> = {
@@ -14,6 +17,9 @@ export function BossbarLayersPanel({
   locked,
   hidden,
   readOnly,
+  placement,
+  onTitlePointerDown,
+  onRedock,
   onSelectionChange,
   onLockToggle,
   onHiddenToggle,
@@ -27,6 +33,9 @@ export function BossbarLayersPanel({
   locked: readonly string[]
   hidden: readonly string[]
   readOnly: boolean
+  placement: DockPlacement
+  onTitlePointerDown: (event: ReactPointerEvent<HTMLElement>) => void
+  onRedock?: () => void
   onSelectionChange: (ids: string[]) => void
   onLockToggle: (id: string) => void
   onHiddenToggle: (id: string) => void
@@ -48,10 +57,14 @@ export function BossbarLayersPanel({
 
   return (
     <div className="bb-layers">
-      <div className="bb-layers-head">
-        <h4>图层</h4>
+      <DockPanelTitle
+        title="图层"
+        placement={placement}
+        onTitlePointerDown={onTitlePointerDown}
+        onRedock={onRedock}
+      >
         <span className="bb-layers-count">{paintables.length}</span>
-      </div>
+      </DockPanelTitle>
       <ul className="bb-layer-list">
         {region && (
           <li

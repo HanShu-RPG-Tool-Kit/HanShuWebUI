@@ -51,6 +51,8 @@ import { Button } from './BossbarEditorUi'
 import { useBossbarTexture, useReferenceImage } from './useBossbarImages'
 import { updatePaintUv } from './editorPaint'
 import '../BossbarEditor.css'
+import { PanelDock, type DockPanelSpec } from '../../../../ui/PanelDock'
+import { DockPanelTitle } from '../../../../ui/DockPanelTitle'
 
 /**
  * 设计视图总装。
@@ -70,6 +72,9 @@ const ALIGN_LABELS: Record<AlignAction, string> = {
   'distribute-x': '水平等距',
   'distribute-y': '垂直等距',
 }
+
+const BOSSBAR_DOCK_KEY = 'hanshu.panelDock.bossbar'
+const BOSSBAR_FLOAT = { x: 48, y: 48, w: 500, h: 300 }
 
 export function BossbarDesignView({
   fileId,
@@ -359,52 +364,17 @@ export function BossbarDesignView({
 
   const region = document ? displayRegionOf(document) : null
 
-  return (
-    <div className="bb-design" aria-label={'BossBar 设计视图 ' + fileName}>
-      {inspection.status === 'v1' && (
-        <div className="bb-banner">
-          <strong>这是 v1 文档</strong>
-          <span>升级将修改草稿，保存后生效。</span>
-          <Button
-            variant="primary"
-            disabled={readOnly}
-            onClick={() => {
-              const upgraded = upgradeBossbarV1({
-                format: 'hanshu.bossbar',
-                version: 1,
-                id: inspection.document.id,
-              })
-              const next = stringifyBossbar(upgraded)
-              history.commit(next)
-              onChange(next)
-            }}
-          >
-            升级为可视化血条
-          </Button>
-        </div>
-      )}
-      {document && inspection.status !== 'v1' && (
-        <>
-          {!sourceValid && (
-            <div className="bb-banner">
-              <strong>源码当前无效</strong>
-              <span>显示上次有效预览，请修复 JSON 后继续编辑。</span>
-              {inspection.status === 'invalid' && <ul>{inspection.diagnostics.slice(0, 8).map((diagnostic) =>
-                <li key={diagnostic.path + diagnostic.code}>{describeDiagnostic(diagnostic)}</li>,
-              )}</ul>}
-            </div>
-          )}
-          {problems.length > 0 && (
-            <div className="bb-banner bb-banner-error">
-              <strong>无法应用修改</strong>
-              <ul>
-                {problems.slice(0, 6).map((problem, index) => (
-                  <li key={index}>{problem}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-          <div className="bb-design-body">
+  const dockPanels: DockPanelSpec[] =
+    document && inspection.status !== 'v1'
+      ? [
+          {
+            id: 'layers',
+            title: '图层',
+            defaultPlacement: 'left',
+            defaultSize: 232,
+            minSize: 160,
+            defaultFloat: BOSSBAR_FLOAT,
+            render: (dock) => (
             <BossbarLayersPanel
               document={document}
               selection={selection}
@@ -451,7 +421,194 @@ export function BossbarDesignView({
                 applyDocument(addComponent(document, component))
                 setSelection([id])
               }}
+              placement={dock.placement}
+              onTitlePointerDown={dock.onTitlePointerDown}
+              onRedock={dock.onRedock}
             />
+            ),
+          },
+          {
+            id: 'inspector',
+            title: '属性',
+            defaultPlacement: 'right',
+            defaultSize: 344,
+            minSize: 220,
+            defaultFloat: { ...BOSSBAR_FLOAT, x: 96, y: 72 },
+            render: (dock) => (
+            <aside className="bb-side">
+              <DockPanelTitle
+                title="属性"
+                placement={dock.placement}
+                onTitlePointerDown={dock.onTitlePointerDown}
+                onRedock={dock.onRedock}
+              />
+              <div className="bb-tabs">
+                {(
+                  [
+                    ['component', '属性'],
+                    ['variables', '变量'],
+                  ] as const
+                ).map(([id, label]) => (
+                  <button
+                    key={id}
+                    type="button"
+                    className={view.inspectorTab === id ? 'is-active' : undefined}
+                    onClick={() => setView({ inspectorTab: id })}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <div className="bb-tab-body">
+                {view.inspectorTab === 'component' && (
+                  <BossbarInspector
+                    document={effectiveDocument ?? document}
+                    selection={selection}
+                    texture={texture.size}
+                    readOnly={!editable}
+                    onChange={applyDocument}
+                    onMoveAll={(dx, dy) => applyDocument(translateAll(document, dx, dy))}
+                    onFitRegion={() => {
+                      const result = fitRegionToComponents(document)
+                      if (result.ok) applyDocument(result.document)
+                    }}
+                    onFocusRegion={() => setFitRequest((request) => request + 1)}
+                    onPickUv={(slot, frameIndex) => {
+                      if (selection.length !== 1) return
+                      setUvTarget({ componentId: selection[0], slot, frameIndex })
+                    }}
+                  />
+                )}
+                {view.inspectorTab === 'variables' && (
+                  <BossbarVariablesPanel
+                    document={document}
+                    values={values}
+                    readOnly={!editable}
+                    onDocumentChange={applyDocument}
+                    onValuesChange={setValues}
+                    onSelectComponent={(id) => {
+                      setSelection([id])
+                      setView({ inspectorTab: 'component' })
+                    }}
+                  />
+                )}
+              </div>
+            </aside>
+            ),
+          },
+          {
+            id: 'atlas',
+            title: '图集',
+            defaultPlacement: 'right',
+            defaultSize: 344,
+            minSize: 220,
+            defaultStack: { with: 'inspector', side: 'bottom' },
+            defaultFloat: { ...BOSSBAR_FLOAT, x: 144, y: 96 },
+            render: (dock) => (
+            <aside className="bb-side">
+              <DockPanelTitle
+                title="图集"
+                placement={dock.placement}
+                onTitlePointerDown={dock.onTitlePointerDown}
+                onRedock={dock.onRedock}
+              />
+              <BossbarAtlasPanel
+                document={document}
+                textureImage={texture.image}
+                textureSize={texture.size}
+                target={uvTarget}
+                readOnly={!editable}
+                onProblems={setProblems}
+                onClearTarget={() => setUvTarget(null)}
+                onTextureChange={(base64) => {
+                  applyDocument({ ...document, texture: base64 })
+                }}
+                onUvChange={(uv) => {
+                  if (!uvTarget) return
+                  const component = document.components.find((entry) => entry.id === uvTarget.componentId)
+                  if (!component) return
+                  if (uvTarget.slot === 'paint' && component.type === 'background' && component.paint.kind === 'texture') {
+                    applyDocument(
+                      updateComponent(document, component.id, {
+                        paint: updatePaintUv(component.paint, uv, uvTarget.frameIndex),
+                      } as Partial<typeof component>),
+                    )
+                    return
+                  }
+                  if (component.type === 'bar') {
+                    if (uvTarget.slot === 'fill' && component.fill.kind === 'texture') {
+                      applyDocument(
+                        updateComponent(document, component.id, {
+                          fill: updatePaintUv(component.fill, uv, uvTarget.frameIndex),
+                        } as Partial<typeof component>),
+                      )
+                      return
+                    }
+                    if (uvTarget.slot === 'trail' && component.trail && component.trail.paint.kind === 'texture') {
+                      applyDocument(
+                        updateComponent(document, component.id, {
+                          trail: {
+                            ...component.trail,
+                            paint: updatePaintUv(component.trail.paint, uv, uvTarget.frameIndex),
+                          },
+                        } as Partial<typeof component>),
+                      )
+                    }
+                  }
+                }}
+              />
+            </aside>
+            ),
+          },
+        ]
+      : []
+
+  return (
+    <div className="bb-design" aria-label={'BossBar 设计视图 ' + fileName}>
+      {inspection.status === 'v1' && (
+        <div className="bb-banner">
+          <strong>这是 v1 文档</strong>
+          <span>升级将修改草稿，保存后生效。</span>
+          <Button
+            variant="primary"
+            disabled={readOnly}
+            onClick={() => {
+              const upgraded = upgradeBossbarV1({
+                format: 'hanshu.bossbar',
+                version: 1,
+                id: inspection.document.id,
+              })
+              const next = stringifyBossbar(upgraded)
+              history.commit(next)
+              onChange(next)
+            }}
+          >
+            升级为可视化血条
+          </Button>
+        </div>
+      )}
+      {document && inspection.status !== 'v1' && (
+        <>
+          {!sourceValid && (
+            <div className="bb-banner">
+              <strong>源码当前无效</strong>
+              <span>显示上次有效预览，请修复 JSON 后继续编辑。</span>
+              {inspection.status === 'invalid' && <ul>{inspection.diagnostics.slice(0, 8).map((diagnostic) =>
+                <li key={diagnostic.path + diagnostic.code}>{describeDiagnostic(diagnostic)}</li>,
+              )}</ul>}
+            </div>
+          )}
+          {problems.length > 0 && (
+            <div className="bb-banner bb-banner-error">
+              <strong>无法应用修改</strong>
+              <ul>
+                {problems.slice(0, 6).map((problem, index) => (
+                  <li key={index}>{problem}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          <PanelDock storageKey={BOSSBAR_DOCK_KEY} panels={dockPanels}>
             <div className="bb-design-center">
               <div className="bb-toolbar">
                 <span className="bb-toolbar-group">
@@ -585,109 +742,7 @@ export function BossbarDesignView({
                 }}
               />
             </div>
-            <aside className="bb-side">
-              <div className="bb-tabs">
-                {(
-                  [
-                    ['component', '属性'],
-                    ['variables', '变量'],
-                    ['atlas', '图集'],
-                  ] as const
-                ).map(([id, label]) => (
-                  <button
-                    key={id}
-                    type="button"
-                    className={view.inspectorTab === id ? 'is-active' : undefined}
-                    onClick={() => setView({ inspectorTab: id })}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-              <div className="bb-tab-body">
-                {view.inspectorTab === 'component' && (
-                  <BossbarInspector
-                    document={effectiveDocument ?? document}
-                    selection={selection}
-                    texture={texture.size}
-                    readOnly={!editable}
-                    onChange={applyDocument}
-                    onMoveAll={(dx, dy) => applyDocument(translateAll(document, dx, dy))}
-                    onFitRegion={() => {
-                      const result = fitRegionToComponents(document)
-                      if (result.ok) applyDocument(result.document)
-                    }}
-                    onFocusRegion={() => setFitRequest((request) => request + 1)}
-                    onPickUv={(slot, frameIndex) => {
-                      if (selection.length !== 1) return
-                      setUvTarget({ componentId: selection[0], slot, frameIndex })
-                      setView({ inspectorTab: 'atlas' })
-                    }}
-                  />
-                )}
-                {view.inspectorTab === 'variables' && (
-                  <BossbarVariablesPanel
-                    document={document}
-                    values={values}
-                    readOnly={!editable}
-                    onDocumentChange={applyDocument}
-                    onValuesChange={setValues}
-                    onSelectComponent={(id) => {
-                      setSelection([id])
-                      setView({ inspectorTab: 'component' })
-                    }}
-                  />
-                )}
-                {view.inspectorTab === 'atlas' && (
-                  <BossbarAtlasPanel
-                    document={document}
-                    textureImage={texture.image}
-                    textureSize={texture.size}
-                    target={uvTarget}
-                    readOnly={!editable}
-                    onProblems={setProblems}
-                    onClearTarget={() => setUvTarget(null)}
-                    onTextureChange={(base64) => {
-                      applyDocument({ ...document, texture: base64 })
-                    }}
-                    onUvChange={(uv) => {
-                      if (!uvTarget) return
-                      const component = document.components.find((entry) => entry.id === uvTarget.componentId)
-                      if (!component) return
-                      if (uvTarget.slot === 'paint' && component.type === 'background' && component.paint.kind === 'texture') {
-                        applyDocument(
-                          updateComponent(document, component.id, {
-                            paint: updatePaintUv(component.paint, uv, uvTarget.frameIndex),
-                          } as Partial<typeof component>),
-                        )
-                        return
-                      }
-                      if (component.type === 'bar') {
-                        if (uvTarget.slot === 'fill' && component.fill.kind === 'texture') {
-                          applyDocument(
-                            updateComponent(document, component.id, {
-                              fill: updatePaintUv(component.fill, uv, uvTarget.frameIndex),
-                            } as Partial<typeof component>),
-                          )
-                          return
-                        }
-                        if (uvTarget.slot === 'trail' && component.trail && component.trail.paint.kind === 'texture') {
-                          applyDocument(
-                            updateComponent(document, component.id, {
-                              trail: {
-                                ...component.trail,
-                                paint: updatePaintUv(component.trail.paint, uv, uvTarget.frameIndex),
-                              },
-                            } as Partial<typeof component>),
-                          )
-                        }
-                      }
-                    }}
-                  />
-                )}
-              </div>
-            </aside>
-          </div>
+          </PanelDock>
           <footer className="bb-design-footer">
             <label className="bb-footer-field">
               <span>参考底图</span>

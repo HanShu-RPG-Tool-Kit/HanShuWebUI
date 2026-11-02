@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import {
   BOSSBAR_LIMITS,
@@ -18,6 +18,21 @@ import { Button, Empty, NumberField, Row, Section, TextField } from './BossbarEd
  */
 
 export type BossbarUvTarget = { componentId: string; slot: 'paint' | 'fill' | 'trail'; frameIndex?: number }
+
+const ATLAS_ZOOM_MIN = 0.1
+const ATLAS_ZOOM_MAX = 32
+
+function clampAtlasZoom(value: number): number {
+  if (!Number.isFinite(value)) return 1
+  return Math.max(ATLAS_ZOOM_MIN, Math.min(ATLAS_ZOOM_MAX, value))
+}
+
+function formatAtlasZoom(value: number): string {
+  if (value >= 10) return Math.round(value) + '×'
+  const rounded = Math.round(value * 10) / 10
+  if (rounded >= 1) return rounded + '×'
+  return (Math.round(value * 100) / 100) + '×'
+}
 
 function paintAt(document: BossbarDocument, target: BossbarUvTarget): BossbarPaint | null {
   const component = document.components.find((entry) => entry.id === target.componentId)
@@ -50,10 +65,21 @@ export function BossbarAtlasPanel({
   onProblems: (problems: string[]) => void
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const wrapRef = useRef<HTMLDivElement | null>(null)
   const dragRef = useRef<{ start: { x: number; y: number }; current: { x: number; y: number } } | null>(null)
+  const panRef = useRef<{ pointerId: number; lastX: number; lastY: number } | null>(null)
+  const spaceHeldRef = useRef(false)
   const loadVersionRef = useRef(0)
+  const zoomRef = useRef(8)
+  const pendingScrollRef = useRef<{ left: number; top: number } | null>(null)
   const [zoom, setZoom] = useState(8)
   const [draft, setDraft] = useState<BossbarUv | null>(null)
+  const [spaceHeld, setSpaceHeld] = useState(false)
+  const [panning, setPanning] = useState(false)
+  zoomRef.current = zoom
+  spaceHeldRef.current = spaceHeld
+  const viewWidth = Math.max(16, textureSize.width * zoom)
+  const viewHeight = Math.max(16, textureSize.height * zoom)
 
   const paint = target ? paintAt(document, target) : null
   const currentUv = paint && paint.kind === 'texture'
@@ -65,8 +91,8 @@ export function BossbarAtlasPanel({
   const draw = useCallback(() => {
     const canvas = canvasRef.current
     if (!canvas) return
-    const width = Math.max(16, textureSize.width * zoom)
-    const height = Math.max(16, textureSize.height * zoom)
+    const width = viewWidth
+    const height = viewHeight
     // 放大只改变查看尺寸；图集本身最多4096边，不能随32倍缩放分配同等大小的位图。
     const ratio = Math.min(window.devicePixelRatio || 1, 4096 / width, 4096 / height)
     canvas.width = Math.round(width * ratio)
@@ -109,29 +135,134 @@ export function BossbarAtlasPanel({
       ctx.strokeRect(box.x * zoom + 1, box.y * zoom + 1, box.width * zoom - 2, box.height * zoom - 2)
       ctx.restore()
     }
-  }, [currentUv, draft, textureImage, textureSize.height, textureSize.width, zoom])
+  }, [currentUv, draft, textureImage, textureSize.height, textureSize.width, viewHeight, viewWidth, zoom])
 
   useEffect(() => {
     draw()
   }, [draw])
 
-  const pointOf = (event: ReactPointerEvent<HTMLCanvasElement>) => {
-    const rect = event.currentTarget.getBoundingClientRect()
+  useLayoutEffect(() => {
+    const pending = pendingScrollRef.current
+    const wrap = wrapRef.current
+    if (!pending || !wrap) return
+    wrap.scrollLeft = pending.left
+    wrap.scrollTop = pending.top
+    pendingScrollRef.current = null
+  }, [viewHeight, viewWidth, zoom])
+
+  useEffect(() => {
+    const wrap = wrapRef.current
+    if (!wrap) return
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault()
+      const current = zoomRef.current
+      const factor = event.deltaY < 0 ? 1.25 : 1 / 1.25
+      const next = clampAtlasZoom(current * factor)
+      if (next === current) return
+      const rect = wrap.getBoundingClientRect()
+      const localX = event.clientX - rect.left + wrap.scrollLeft
+      const localY = event.clientY - rect.top + wrap.scrollTop
+      pendingScrollRef.current = {
+        left: (localX / current) * next - (event.clientX - rect.left),
+        top: (localY / current) * next - (event.clientY - rect.top),
+      }
+      setZoom(next)
+    }
+    wrap.addEventListener('wheel', onWheel, { passive: false })
+    return () => wrap.removeEventListener('wheel', onWheel)
+  }, [])
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.code !== 'Space') return
+      const tag = (event.target as HTMLElement | null)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      event.preventDefault()
+      if (event.repeat) return
+      spaceHeldRef.current = true
+      setSpaceHeld(true)
+    }
+    const onKeyUp = (event: KeyboardEvent) => {
+      if (event.code !== 'Space') return
+      spaceHeldRef.current = false
+      setSpaceHeld(false)
+    }
+    const onBlur = () => {
+      spaceHeldRef.current = false
+      setSpaceHeld(false)
+    }
+    window.addEventListener('keydown', onKeyDown, { passive: false })
+    window.addEventListener('keyup', onKeyUp)
+    window.addEventListener('blur', onBlur)
+    return () => {
+      window.removeEventListener('keydown', onKeyDown)
+      window.removeEventListener('keyup', onKeyUp)
+      window.removeEventListener('blur', onBlur)
+    }
+  }, [])
+
+  const pointOf = (event: { clientX: number; clientY: number }) => {
+    const canvas = canvasRef.current
+    if (!canvas) return { x: 0, y: 0 }
+    const rect = canvas.getBoundingClientRect()
     return {
       x: Math.floor((event.clientX - rect.left) / zoom),
       y: Math.floor((event.clientY - rect.top) / zoom),
     }
   }
 
-  const onPointerDown = (event: ReactPointerEvent<HTMLCanvasElement>) => {
-    if (readOnly || !target) return
+  const overCanvas = (event: { clientX: number; clientY: number }) => {
+    const canvas = canvasRef.current
+    if (!canvas) return false
+    const rect = canvas.getBoundingClientRect()
+    return (
+      event.clientX >= rect.left &&
+      event.clientX < rect.right &&
+      event.clientY >= rect.top &&
+      event.clientY < rect.bottom
+    )
+  }
+
+  const endPan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const pan = panRef.current
+    if (!pan || pan.pointerId !== event.pointerId) return false
+    panRef.current = null
+    setPanning(false)
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    }
+    return true
+  }
+
+  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0 && event.button !== 1) return
+    const wantPan = event.button === 1 || (event.button === 0 && spaceHeldRef.current)
+    if (wantPan) {
+      event.preventDefault()
+      event.currentTarget.setPointerCapture(event.pointerId)
+      panRef.current = { pointerId: event.pointerId, lastX: event.clientX, lastY: event.clientY }
+      setPanning(true)
+      return
+    }
+    if (readOnly || !target || event.button !== 0 || !overCanvas(event)) return
     event.currentTarget.setPointerCapture(event.pointerId)
     const point = pointOf(event)
     dragRef.current = { start: point, current: point }
     setDraft({ x: point.x, y: point.y, width: 1, height: 1 })
   }
 
-  const onPointerMove = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+  const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const pan = panRef.current
+    if (pan && pan.pointerId === event.pointerId) {
+      const wrap = wrapRef.current
+      if (wrap) {
+        wrap.scrollLeft -= event.clientX - pan.lastX
+        wrap.scrollTop -= event.clientY - pan.lastY
+      }
+      pan.lastX = event.clientX
+      pan.lastY = event.clientY
+      return
+    }
     const drag = dragRef.current
     if (!drag) return
     drag.current = pointOf(event)
@@ -147,7 +278,8 @@ export function BossbarAtlasPanel({
     })
   }
 
-  const onPointerUp = (event: ReactPointerEvent<HTMLCanvasElement>) => {
+  const onPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (endPan(event)) return
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId)
     }
@@ -193,6 +325,7 @@ export function BossbarAtlasPanel({
   return (
     <div className="bb-atlas">
       <Section
+        className="bb-atlas-view"
         title="图集"
         extra={
           <span className="bb-tag">
@@ -200,27 +333,39 @@ export function BossbarAtlasPanel({
           </span>
         }
       >
-        <div className="bb-atlas-canvas-wrap">
+        <div
+          className="bb-atlas-canvas-wrap"
+          ref={wrapRef}
+          data-panning={panning ? 'true' : undefined}
+          data-space={spaceHeld && !panning ? 'pan' : undefined}
+          data-uv={target && !readOnly && !spaceHeld && !panning ? 'true' : undefined}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
+          onMouseDown={(event) => {
+            if (event.button === 1) event.preventDefault()
+          }}
+        >
           <canvas
             ref={canvasRef}
             className="bb-atlas-canvas"
-            onPointerDown={onPointerDown}
-            onPointerMove={onPointerMove}
-            onPointerUp={onPointerUp}
-            onPointerCancel={onPointerUp}
-            style={{ cursor: target && !readOnly ? 'crosshair' : 'default' }}
+            style={{
+              width: viewWidth,
+              height: viewHeight,
+            }}
           />
         </div>
         <Row label="放大">
           <input
             type="range"
-            min={1}
-            max={32}
-            step={1}
+            min={ATLAS_ZOOM_MIN}
+            max={ATLAS_ZOOM_MAX}
+            step={0.1}
             value={zoom}
-            onChange={(event) => setZoom(Number(event.target.value))}
+            onChange={(event) => setZoom(clampAtlasZoom(Number(event.target.value)))}
           />
-          <span className="bb-tag">{zoom}×</span>
+          <span className="bb-tag">{formatAtlasZoom(zoom)}</span>
         </Row>
         {target ? (
           <div className="bb-atlas-target">
