@@ -193,7 +193,9 @@ export class JavaScriptLanguage {
   let revision=this.javaRevision,diagnostics=await this.client.request('diagnostics',{file:doc.file}) as TypeDiagnostic[]
   if(!current())return
   // Empty dependency placeholders are not evidence that a real Java member is absent.
-  const locations=this.receiverLocations(doc.model,diagnostics.filter(d=>d.code===2339||d.code===2551).map(d=>({line:d.start.line,column:d.end.column})))
+  const callbackPoints=await this.client.request('callbackLocations',{file:doc.file}) as {line:number;column:number}[]
+  if(!current())return
+  const locations=this.receiverLocations(doc.model,[...diagnostics.filter(d=>d.code===2339||d.code===2551).map(d=>({line:d.start.line,column:d.end.column})),...callbackPoints])
   await this.hydrateLocations(doc,locations);if(!current())return
   if(revision!==this.javaRevision){revision=this.javaRevision;diagnostics=await this.client.request('diagnostics',{file:doc.file}) as TypeDiagnostic[]}
   if(!current()||revision!==this.javaRevision)return
