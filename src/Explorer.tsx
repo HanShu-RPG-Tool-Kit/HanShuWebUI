@@ -37,9 +37,9 @@ import {
 import { ExplorerIcon, fileIconKind, sourceIconKind } from "./explorerIcons";
 import {
   findNewFileType,
-  NEW_FILE_TYPES,
   newFileName,
-  newFileTypesByGroup,
+  stageplayNewFileTypes,
+  stageplayNewFileTypesByGroup,
   validateNewFileBase,
   type NewFileCreateResult,
   type NewFileType,
@@ -51,9 +51,10 @@ import {
 } from "./immediateCreateWheel";
 import { shouldHoldWheel } from "./newFileMenuWheel";
 import {
-  WORKSPACE_GROUP_ORDER,
+  STAGEPLAY_WORKSPACE_GROUP_ORDER,
   groupDirPrefix,
   isManualFileName,
+  isStageplayExplorerSource,
   sourceKindOf,
 } from "./workspace";
 import "./explorer-newfile.css";
@@ -719,7 +720,7 @@ function NewFileTypeMenu({
    * 不在 JSX 里累加计数器（那是对渲染期变量的改写，React 编译器会拦）。
    */
   const items = useMemo(
-    () => newFileTypesByGroup().flatMap((entry) => entry.items),
+    () => stageplayNewFileTypesByGroup().flatMap((entry) => entry.items),
     [],
   );
 
@@ -855,7 +856,7 @@ function NewFileTypeMenu({
       role="menu"
       aria-label="新建文件类型"
     >
-      {newFileTypesByGroup().map(({ group, items: groupItems }) => (
+      {stageplayNewFileTypesByGroup().map(({ group, items: groupItems }) => (
         <li key={group.id} role="none">
           <div className="explorer-newfile-group" aria-hidden>
             {group.label}
@@ -992,7 +993,7 @@ export type ExplorerContextItem = {
 };
 
 function typesInDirectory(directory: string): NewFileType[] {
-  return NEW_FILE_TYPES.filter((type) => {
+  return stageplayNewFileTypes().filter((type) => {
     const path = sourceRelativePath(newFileName(type, "pending"), type.srcKind);
     const slash = path.lastIndexOf("/");
     return slash >= 0 && path.slice(0, slash) === directory;
@@ -1000,7 +1001,7 @@ function typesInDirectory(directory: string): NewFileType[] {
 }
 
 function typesInKind(kind: string): NewFileType[] {
-  return NEW_FILE_TYPES.filter(
+  return stageplayNewFileTypes().filter(
     (type) => sourceKindOf(newFileName(type, "pending"), type.srcKind) === kind,
   );
 }
@@ -1036,7 +1037,7 @@ function withAnyType(
     {
       id: "new-any",
       label: "新建文件…",
-      hint: "全部类型",
+      hint: "剧本类型",
       separatorBefore: items.length > 0,
       onSelect: openAll,
     },
@@ -1219,47 +1220,30 @@ function PackageNode({
   /**
    * 源文件按 `src/<kind>/` 分组、创作资料归 `meta/`。
    *
-   * 桶按 `WORKSPACE_GROUP_ORDER`（**全部**源类型 + `meta`）建，不是剧本工作区那套
-   * `STAGEPLAY_WORKSPACE_GROUP_ORDER`（只有 hanshu / character / script / meta）。
-   * 用后者时 `sourceKindOf` 返回 goal / progress / story / navigator / gift 的文件
-   * **既不入桶也不入 root**，被 `continue` 静默丢掉：从「+剧」新建进度 / 流程 / 导航 /
-   * 礼包 / 目标定义（11 种里的 5 种）建完就在树里消失 —— 文件其实建成了、还成了活动文件，
-   * 只是看不见。**树永远不许静默丢文件**：宁可多列一个分组头，也不能让刚建出来的文件找不到。
-   *
-   * 这是有意的行为变化：`src/progress` / `src/story` / `src/navigator` / `src/gift` /
-   * `src/script/goal` 里有文件时，剧本资源树也会把它们列出来。进度工作区照样用它自己那套视图
-   * 展示同一批文件（同一份 `SourceFile`，两种视图），两边不冲突 ——
-   * 而"刚建出来的文件必须找得到"比"两个工作区的分组严格不重叠"重要得多。
-   *
-   * `unknownByKind` 是给"将来往 `FILE_DIRS` 加了新后缀、忘了同步 `SOURCE_KIND_ORDER`"
-   * 兜的底：那种文件同样必须看得见（分组头退回 `src/<kind>` 的原始名字）。
+   * 剧本资源树只建 `STAGEPLAY_WORKSPACE_GROUP_ORDER` 的桶，并经
+   * `isStageplayExplorerSource` 过滤。脚本与游戏性 / 视听文件不在此展示；
+   * 它们由对应工作区新建与管理。不变式：**剧本菜单能建的类型，树里一定找得到**
+   * （见 `stageplayNewFileTypes` 与 verify-new-file-types）。
    */
   const grouped = useMemo(() => {
     const byKind = new Map<string, Array<(typeof pkg.scripts)[number]>>(
-      (WORKSPACE_GROUP_ORDER as readonly string[]).map((kind) => [kind, []]),
+      (STAGEPLAY_WORKSPACE_GROUP_ORDER as readonly string[]).map((kind) => [
+        kind,
+        [],
+      ]),
     );
     const root: Array<(typeof pkg.scripts)[number]> = [];
-    const unknownByKind = new Map<
-      string,
-      Array<(typeof pkg.scripts)[number]>
-    >();
     for (const script of pkg.scripts) {
+      if (!isStageplayExplorerSource(script)) continue;
       const kind = sourceKindOf(script.name, script.srcKind);
       // `root` 语义不变：未归类（留在包根）的文件直接挂在包下面，不套分组头
       if (kind === "root") {
         root.push(script);
         continue;
       }
-      const bucket = byKind.get(kind);
-      if (bucket) {
-        bucket.push(script);
-        continue;
-      }
-      const fallback = unknownByKind.get(kind);
-      if (fallback) fallback.push(script);
-      else unknownByKind.set(kind, [script]);
+      byKind.get(kind)?.push(script);
     }
-    return { byKind, root, unknownByKind };
+    return { byKind, root };
   }, [pkg.scripts]);
 
   const openPackageMenu = (event: React.MouseEvent) => {
@@ -1500,16 +1484,19 @@ function PackageNode({
     </li>
   );
 
-  const groupsToRender = useMemo(() => {
-    const order: string[] = [...WORKSPACE_GROUP_ORDER];
-    for (const kind of grouped.unknownByKind.keys()) {
-      if (!order.includes(kind)) order.push(kind);
-    }
-    return order.map((kind) => ({
-      kind,
-      items: grouped.byKind.get(kind) ?? grouped.unknownByKind.get(kind) ?? [],
-    }));
-  }, [grouped]);
+  const groupsToRender = useMemo(
+    () =>
+      (STAGEPLAY_WORKSPACE_GROUP_ORDER as readonly string[]).map((kind) => ({
+        kind,
+        items: grouped.byKind.get(kind) ?? [],
+      })),
+    [grouped],
+  );
+
+  const visibleScriptCount = useMemo(
+    () => pkg.scripts.filter(isStageplayExplorerSource).length,
+    [pkg.scripts],
+  );
 
   return (
     <div
@@ -1575,7 +1562,7 @@ function PackageNode({
               return renderKindGroup(kind, items);
             })}
             {grouped.root.map(renderScriptRow)}
-            {pkg.scripts.length === 0 && (
+            {visibleScriptCount === 0 && (
               <li className="explorer-empty nested" title="空包，右键可新建">
                 空包，右键可新建
               </li>

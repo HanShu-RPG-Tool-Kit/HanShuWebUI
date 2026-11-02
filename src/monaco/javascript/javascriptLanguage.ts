@@ -8,6 +8,7 @@ import {buildJavaFiles,type JavaStub,type StubResponse,javaModule} from './stubs
 import {javascriptProfile} from './profiles'
 import {diagnosticValue,languageDiagnosticHistory,recordLanguageDiagnostic} from './diagnostics'
 import {javascriptCompletion,type LanguageCompletion} from './completion'
+import {libraryKey,readJavaLibrary,readLibraryClasses,subscribeJavaLibrary,type JavaLibrary} from './javaLibrary'
 type M=typeof Monaco
 type LanguageDocument={model:Monaco.editor.ITextModel;file:string;source:string;refs:number;listener:Monaco.IDisposable;timer?:ReturnType<typeof setTimeout>;diagnosticRun:number}
 type TypeDiagnostic={code:number;message:string;start:{line:number;column:number};end:{line:number;column:number};error:boolean}
@@ -50,6 +51,7 @@ export class JavaScriptLanguage {
  private monaco:M; private report:(e:unknown)=>void; private type:ScriptType
  private missingClasses=new Set<string>()
  private javaRevision=0;private typeDiagnosticsTimer?:ReturnType<typeof setTimeout>
+ private library?:JavaLibrary;private libraryReady:Promise<void>=Promise.resolve();private endpoint=''
  constructor(monaco:M,report:(e:unknown)=>void,type:ScriptType='common'){
   this.monaco=monaco;this.report=error=>{recordLanguageDiagnostic(this.diagnosticId,'error',error);if(!this.disposed)report(error)};this.type=type
   recordLanguageDiagnostic(this.diagnosticId,'created',{type,worker:this.client.diagnosticId})
@@ -66,7 +68,7 @@ export class JavaScriptLanguage {
   const signatures=monaco.languages.registerSignatureHelpProvider(LANGUAGE,{signatureHelpTriggerCharacters:['(',','],signatureHelpRetriggerCharacters:[')'],provideSignatureHelp:(model,position)=>this.provide<Monaco.languages.SignatureHelpResult|null>('signature',model,position,null,async()=>{const doc=this.documents.get(model.uri.toString());if(!doc)return null;await this.update(doc);await this.hydrate(doc,position);const value=await this.client.request('signature',{file:doc.file,line:position.lineNumber,column:position.column});return value?{value,dispose(){}}:null})})
   this.disposables.push(()=>completion.dispose(),()=>hover.dispose(),()=>signatures.dispose())
   const sync=()=>{void this.syncProject().catch(this.report)},connection=()=>{void this.reconnect().catch(this.report)}
-  this.disposables.push(subscribeProjectSession(sync),subscribeControlHub(connection),subscribeControlNotify(note=>{if(note.method===`javascript.${type}Hooks.changed`)void this.loadHooks().catch(this.report)}))
+  this.disposables.push(subscribeJavaLibrary(()=>{void this.reconnect(true).catch(this.report)}),subscribeProjectSession(sync),subscribeControlHub(connection),subscribeControlNotify(note=>{if(note.method===`javascript.${type}Hooks.changed`)void this.loadHooks().catch(this.report)}))
   sync();connection()
  }
  private async provide<T>(kind:string,model:Monaco.editor.ITextModel,position:Monaco.Position,empty:T,request:()=>Promise<T>):Promise<T>{
@@ -90,17 +92,21 @@ export class JavaScriptLanguage {
   const changes:Record<string,string|null>={...next};for(const path of Object.keys(this.projectFiles))if(!(path in next))changes[path]=null
   this.projectFiles=next;await this.client.writeFiles(changes)
  }
- private async reconnect(){
-  const generation=controlConnectionGeneration(),connected=isControlConnected();if(this.generation===generation&&this.connected===connected)return;this.generation=generation;this.connected=connected
+ private async reconnect(force=false){
+  const generation=controlConnectionGeneration(),connected=isControlConnected(),endpoint=libraryKey();if(!force&&this.endpoint===endpoint&&this.generation===generation&&this.connected===connected)return;this.endpoint=endpoint;this.generation=generation;this.connected=connected
   recordLanguageDiagnostic(this.diagnosticId,'connection',{generation,connected})
   clearTimeout(this.typeDiagnosticsTimer)
-  this.classes.clear();this.missingClasses.clear();this.runtime='';this.hooks=[];this.hookClasses.clear();this.hookRevision=-1;this.hookRuntime='';await this.publishJava()
-  if(this.disposed)return
-  if(!isControlConnected()){for(const doc of this.documents.values()){await this.update(doc);this.monaco.editor.setModelMarkers(doc.model,'hanshu-tsserver',[])}return}
+  this.classes.clear();this.missingClasses.clear();this.runtime='';this.hooks=[];this.hookClasses.clear();this.hookRevision=-1;this.hookRuntime='';this.library=undefined
+  this.libraryReady=readJavaLibrary(endpoint).then(library=>{if(this.endpoint===endpoint&&this.generation===generation)this.library=library}).catch(error=>{recordLanguageDiagnostic(this.diagnosticId,'local-library-error',error);this.library=undefined})
+  await this.libraryReady
+  await this.publishJava()
+  if(this.disposed||this.generation!==generation||this.endpoint!==endpoint)return
+  if(!isControlConnected()&&!this.library){for(const doc of this.documents.values()){await this.update(doc);this.monaco.editor.setModelMarkers(doc.model,'hanshu-tsserver',[])}return}
   await this.fetchClasses(this.profile.requiredClasses);await this.loadHooks()
   for(const doc of this.documents.values()){await this.refreshImports(doc.model);await this.diagnose(doc)}
  }
  private async loadHooks(){
+  if(this.library){const snapshot=this.type==='actor'?this.library.actor:this.type==='player'?this.library.player:undefined;if(snapshot){this.hookRuntime=snapshot.runtimeId;this.hookRevision=snapshot.revision;this.hooks=snapshot.hooks.map(h=>h.id);this.hookClasses=new Map(snapshot.hooks.filter(h=>h.eventClass).map(h=>[h.id,h.eventClass!]));}return}
   if(!isControlConnected()||!['actor','player'].includes(this.type))return
   const generation=controlConnectionGeneration(),r=await this.requestControl(`javascript.${this.type}Hooks`,{}) as {schemaVersion:number;runtimeId:string;revision:number;hooks:{id:string;cancellable:boolean;eventClass?:string}[]}
   if(this.disposed||generation!==controlConnectionGeneration())return
@@ -111,7 +117,6 @@ export class JavaScriptLanguage {
   for(const doc of this.documents.values()){await this.refreshImports(doc.model);await this.update(doc)}
  }
  private async hydrate(doc:{file:string;model:Monaco.editor.ITextModel},position:Monaco.Position){
-  if(!isControlConnected())return
   await this.refreshImports(doc.model)
   const locations=this.receiverLocations(doc.model,[{line:position.lineNumber,column:position.column}])
   await this.hydrateLocations(doc,locations)
@@ -131,7 +136,7 @@ export class JavaScriptLanguage {
  private async hydrateLocations(doc:{file:string;model:Monaco.editor.ITextModel},locations:{line:number;column:number}[]){
   if(!locations.length)return
   for(let round=0;round<4;round++){
-   if(this.disposed||doc.model.isDisposed()||!isControlConnected())return
+   if(this.disposed||doc.model.isDisposed()||(!isControlConnected()&&!this.library))return
    const modules=new Set(await this.client.request('types',{file:doc.file,locations}) as string[]),names=new Set<string>()
    for(const c of this.classes.values())for(const dependency of c.dependencies)if(modules.has(javaModule(dependency))&&!this.classes.has(dependency)&&!this.missingClasses.has(dependency))names.add(dependency)
    if(!names.size)break;await this.fetchClasses([...names])
@@ -143,12 +148,15 @@ export class JavaScriptLanguage {
   for(const path of Object.keys(this.javaFiles))if(!(path in next))changes[path]=null
   if(!Object.keys(changes).length)return
   this.javaFiles=next;await this.client.writeFiles(changes);this.javaRevision++
-  if(this.disposed||!isControlConnected())return
+  if(this.disposed)return
   clearTimeout(this.typeDiagnosticsTimer)
   this.typeDiagnosticsTimer=setTimeout(()=>{for(const doc of this.documents.values())void this.diagnose(doc).catch(this.report)},50)
  }
  private async fetchClasses(names:string[]){
-  if(!isControlConnected()||this.disposed)return
+  await this.libraryReady
+  if(this.disposed)return
+  if(this.library){const library=this.library,missing=[...new Set(names)].filter(n=>!this.classes.has(n)&&!this.missingClasses.has(n)),stubs=await readLibraryClasses(library,missing);if(this.disposed||this.library!==library)return;for(const stub of stubs)this.classes.set(stub.name,stub);for(const name of missing)if(!this.classes.has(name))this.missingClasses.add(name);this.runtime=library.runtimeId;await this.publishJava();return}
+  if(!isControlConnected())return
   const generation=controlConnectionGeneration(),missing=[...new Set(names)].filter(n=>!this.classes.has(n)&&!this.missingClasses.has(n))
   if(!missing.length&&this.runtime)return
   for(let i=0;i<Math.max(1,missing.length);i+=24){const r=await this.requestControl('javascript.stubs',{classes:missing.slice(i,i+24)}) as StubResponse
@@ -185,7 +193,9 @@ export class JavaScriptLanguage {
   let revision=this.javaRevision,diagnostics=await this.client.request('diagnostics',{file:doc.file}) as TypeDiagnostic[]
   if(!current())return
   // Empty dependency placeholders are not evidence that a real Java member is absent.
-  const locations=this.receiverLocations(doc.model,diagnostics.filter(d=>d.code===2339||d.code===2551).map(d=>({line:d.start.line,column:d.end.column})))
+  const callbackPoints=await this.client.request('callbackLocations',{file:doc.file}) as {line:number;column:number}[]
+  if(!current())return
+  const locations=this.receiverLocations(doc.model,[...diagnostics.filter(d=>d.code===2339||d.code===2551).map(d=>({line:d.start.line,column:d.end.column})),...callbackPoints])
   await this.hydrateLocations(doc,locations);if(!current())return
   if(revision!==this.javaRevision){revision=this.javaRevision;diagnostics=await this.client.request('diagnostics',{file:doc.file}) as TypeDiagnostic[]}
   if(!current()||revision!==this.javaRevision)return

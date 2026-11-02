@@ -23,6 +23,8 @@ import {
  * 3. **注册表不认识工作区**。语言表、服务定义、供应商预设、目标定义都由调用方经
  *    `NewFileSeedContext` 现取现给 —— 让一张纯数据表去拉这些，等于把「新建文件」
  *    和配音 / 进度两个工作区焊在一起，测试也就再跑不起来了。
+ * 4. **剧本工作区只消费剧本子集**。全表仍是工程级真相；剧本资源树 / 「+」菜单经
+ *    `stageplayNewFileTypes*` 过滤，不在剧本里新建或展示脚本 / 游戏性 / 视听类型。
  */
 
 import {
@@ -478,13 +480,49 @@ export function findNewFileType(id: string): NewFileType | null {
   return NEW_FILE_TYPES.find((type) => type.id === id) ?? null;
 }
 
+/**
+ * 剧本工作区允许新建的类型 id。
+ * 与 `STAGEPLAY_WORKSPACE_GROUP_ORDER` 对齐：`.hs` / `.char` / `meta` 资料。
+ * 全部脚本（含通用）与游戏性 / 视听类型不在此列。
+ */
+export const STAGEPLAY_NEW_FILE_TYPE_IDS = [
+  "hs",
+  "char",
+  "md",
+  "tts",
+  "ttsservice",
+] as const satisfies readonly NewFileTypeId[];
+
+export function isStageplayNewFileType(
+  type: Pick<NewFileType, "id">,
+): boolean {
+  return (STAGEPLAY_NEW_FILE_TYPE_IDS as readonly string[]).includes(type.id);
+}
+
+/** 剧本「新建」菜单用的类型列表 */
+export function stageplayNewFileTypes(): NewFileType[] {
+  return NEW_FILE_TYPES.filter((type) =>
+    (STAGEPLAY_NEW_FILE_TYPE_IDS as readonly string[]).includes(type.id),
+  );
+}
+
 /** 菜单用的分组视图：空分组不出现（加类型时不用记得同步别处） */
-export function newFileTypesByGroup(): {
+export function newFileTypesByGroup(
+  types: readonly NewFileType[] = NEW_FILE_TYPES,
+): {
   group: (typeof NEW_FILE_GROUPS)[number];
   items: NewFileType[];
 }[] {
   return NEW_FILE_GROUPS.map((group) => ({
     group,
-    items: NEW_FILE_TYPES.filter((type) => type.group === group.id),
+    items: types.filter((type) => type.group === group.id),
   })).filter((entry) => entry.items.length > 0);
+}
+
+/** 剧本工作区新建菜单：只含剧本类分组 */
+export function stageplayNewFileTypesByGroup(): {
+  group: (typeof NEW_FILE_GROUPS)[number];
+  items: NewFileType[];
+}[] {
+  return newFileTypesByGroup(stageplayNewFileTypes());
 }

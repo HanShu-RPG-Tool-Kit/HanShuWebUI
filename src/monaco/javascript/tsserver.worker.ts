@@ -56,6 +56,17 @@ self.onmessage=({data})=>{
    const file=params.file,pos=offset(file,params.line??1,params.column??1)
    if(method==='diagnostics')result=[...service.getSyntacticDiagnostics(file),...service.getSemanticDiagnostics(file)].map(d=>({code:d.code,message:readableJavaTypes(ts.flattenDiagnosticMessageText(d.messageText,'\n')),start:point(file,d.start??0),end:point(file,(d.start??0)+(d.length??1)),error:d.category===ts.DiagnosticCategory.Error}))
    else if(method==='completion')result=completionEntries(file,pos)
+   else if(method==='callbackLocations'){
+    const source=service.getProgram()?.getSourceFile(file),locations:{line:number;column:number}[]=[]
+    source?.forEachChild(function visit(node){
+     if(locations.length>=256)return
+     if(ts.isCallExpression(node)&&node.arguments.some(argument=>{while(ts.isParenthesizedExpression(argument))argument=argument.expression;return ts.isFunctionExpression(argument)})){
+      const collect=(part:ts.Node)=>{if(locations.length>=256)return;if(ts.isIdentifier(part))locations.push(point(file,part.getStart(source)));part.forEachChild(collect)}
+      collect(node.expression)
+     }
+     node.forEachChild(visit)
+    });result=locations
+   }
    else if(method==='hover'){const h=service.getQuickInfoAtPosition(file,pos);result=h?{text:readableJavaTypes(ts.displayPartsToString(h.displayParts)),documentation:ts.displayPartsToString(h.documentation)}:null}
    else if(method==='types'){
     const names=new Set<string>()

@@ -133,7 +133,9 @@
     "test:javascript-dialect": "node scripts/run-verification.mjs scripts/verify-javascript-dialect.ts && node scripts/run-verification.mjs scripts/verify-javascript-contract.ts",
     "test:javascript-language": "node scripts/verify-javascript-language.mjs",
     "test:javascript-diagnostics": "node scripts/verify-javascript-diagnostics.mjs",
-    "test:javascript-members": "node scripts/verify-javascript-members.mjs"
+    "test:javascript-members": "node scripts/verify-javascript-members.mjs",
+    "test:java-library": "node scripts/verify-java-library.mjs",
+    "test:java-callbacks": "node scripts/verify-java-callbacks.mjs"
   },
   "dependencies": {
     "@audio/encode-ogg": "^1.3.0",

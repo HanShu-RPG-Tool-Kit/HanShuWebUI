@@ -1,6 +1,6 @@
-# JavaScript 编辑器与语言服务
+# RPGTK-JS 编辑器与语言服务
 
-内容脚本使用 Nashorn ES5 方言 JS，工程源文件为 `src/script/<common|goal|kit|shop|actor|player>/<id>.js`。IBE 插件仍使用其独立 Python 运行时，不属于这里的内容脚本。
+RPGTK-JS 是本项目的 Nashorn ES5 脚本方言，工程源文件为 `src/script/<common|goal|kit|shop|actor|player>/<id>.js`。IBE 插件仍使用其独立 Python 运行时，不属于这里的内容脚本。
 
 ## 作者语法
 
@@ -25,9 +25,23 @@ function on_tick(event: PlayerEvent, board: Blackboard): void {
 
 方言变换严格一行换一行。编辑侧仅注释 hook / Goal 注解，保留参数与返回类型，交给 TS 子集虚拟文档；导出时同行剥掉签名类型，import / require 转成运行时绑定。作者文件与 PAK 均用 `.js`。作者、虚拟文档、PAK 源码和引擎报错保持相同行数，不产生 source map；hook 不再注入参数 JSDoc。
 
-`monaco/javascript/JavaScriptEditor` 使用独立浏览器 Worker 中 TypeScript 的 tsserver 语言服务引擎。它分析 JS、推导类型、提供成员补全、悬浮信息、调用签名和诊断，不执行作者脚本。相同工程与宿主类型共享 Worker；各文档保持模块隔离，最后一个编辑器关闭时释放。离线仍可分析普通 JavaScript 和工程 common 导出；Java 类型需要游戏开发服务器。
+`monaco/javascript/JavaScriptEditor` 使用独立浏览器 Worker 中 TypeScript 的 tsserver 语言服务引擎。它分析 JS、推导类型、提供成员补全、悬浮信息、调用签名和诊断，不执行作者脚本。相同工程与宿主类型共享 Worker；各文档保持模块隔离，最后一个编辑器关闭时释放。离线仍可分析普通 JavaScript 和工程 common 导出；同步本地类型库后也能分析 Java 类型。
 
-`javascript.stubs` 返回工程级共享 `.d.ts` 虚拟文件，Java 类型按 `JavaTypeMap` 与 `Java.type` 关联，不把全量 Minecraft 类型插入每个缓冲区。显式 Java imports 同时提供值和签名可用的类型；相关 Java 类型按需加载，断线和游戏进程变化清理旧类型。不同宿主仅拥有各自的全局变量：kit 的 kit/player/players/random，shop 的 shop/player，goal 的 cfg/st/pick_locale/update_satisfied_state/complete/fail。事件类型由作者签名明确声明，`Blackboard` 保持动态键。类型判断使用原生 `value instanceof JavaType`。
+`javascript.stubs` 返回工程级共享 `.d.ts` 虚拟文件，Java 类型按 `JavaTypeMap` 与 `Java.type` 关联，不把全量 Minecraft 类型插入每个缓冲区。显式 Java imports 同时提供值和签名可用的类型；相关 Java 类型按需加载。有本地完整类型库时优先使用该快照；没有时在线按需请求，断线和游戏进程变化清理在线临时类型。不同宿主仅拥有各自的全局变量：kit 的 kit/player/players/random，shop 的 shop/player，goal 的 cfg/st/pick_locale/update_satisfied_state/complete/fail。事件类型由作者签名明确声明，`Blackboard` 保持动态键。类型判断使用原生 `value instanceof JavaType`。
+
+## Java 回调推导
+
+Java 方法要求公开函数式接口（单一抽象方法，SAM）时，可以传普通内嵌 `function`，无需写参数类型。类型库提供 JS 函数签名和 Java 接口对象两种参数形式，保留 Consumer、Predicate、Function、Comparator 等签名；继承泛型和回调参数的 `? super T` 会代入具体类型。例如 `List<ServerPlayer>.forEach(function(player) { ... })` 中 player 推导为 ServerPlayer；removeIf 的回调必须返回 boolean；Stream.map 的返回类型可继续传给后续回调。悬浮、成员补全和诊断沿用现有语言服务。
+
+需要 API 声明保留具体泛型。裸集合或无类型上下文的独立函数不能可靠推导参数；多抽象方法接口不作为函数回调，声明自身含泛型方法的复杂 SAM 暂不展开。此功能不开放作者箭头语法，也不要求内嵌 function 写类型。使用本地类型库的用户升级 Mod 后须手动重新同步，旧快照不会自动变成新签名。
+
+## 本地游戏类型库
+
+从菜单栏「编辑 → 同步游戏类型库…」打开同步窗口，连接游戏后点击「开始同步」。不会在打开窗口、打开工程或重连时自动下载完整库。窗口显示扫描进度、已获取类数量、声明大小和上次同步时间，支持取消；取消、断线或保存失败保留之前的完整快照。新版 WebUI 需要配套支持 `javascript.library.page` 的 Mod。
+
+同步覆盖当前游戏类索引中可反射的公开类型、依赖与 actor/player hook 快照；无法读取或非公开类计入不可用候选，不代表这些类有可用静态声明。新库分批下载到本机 IndexedDB 的 `hanshu.java-library.v1`，完整保存后原子替换当前快照。它是 C 侧提示缓存，不写工程、不上传 S。缓存按游戏 host:port 区分，不保存密码；清除网站数据会删除缓存，不同浏览器或 WebUI origin 不共享缓存。更换游戏／模组版本后须手动重新同步，旧快照不会自动更新。
+
+刷新或重启 WebUI 后离线也可以补全、悬浮、查看重载参数、检查类型和搜索导入 Java 类。Worker 仅从本地库按需加载相关声明，不一次解析整个库。未同步、未收录或动态生成的类不保证离线可用。
 
 通用脚本按 id 发布独立虚拟模块，`require fx from "effects"` 的类型来自该模块的 exports。其他宿主不能互相 require。类型检查不是运行时授权，工程保存依旧经 S 的原有文件事务。
 
@@ -60,3 +74,7 @@ function on_tick(event: PlayerEvent, board: Blackboard): void {
 `test:javascript-diagnostics` 验证真实编辑器下载、只读/离线导出、Worker 超时与崩溃证据、凭据脱敏和资源释放。
 
 `test:javascript-members` 验证玩家模板无内置 JS 误报、Java 方法/字段按需加载、真实补全接受与括号/光标行为，以及未知成员仍正确报错。
+
+`test:java-library` 验证编辑菜单入口、手动分页同步、IndexedDB 持久化、失败/取消保留旧库，以及刷新后的真实离线类型链、悬浮、诊断和类搜索。
+
+`test:java-callbacks` 使用 Mod 实际反射生成的声明验证泛型回调参数与返回值、流式 map、重载、Java 接口对象兼容、错误返回与非 SAM 拒绝，以及冷启动 Monaco 回调依赖加载。

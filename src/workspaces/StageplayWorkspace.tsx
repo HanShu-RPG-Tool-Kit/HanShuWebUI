@@ -47,6 +47,7 @@ import {
 import {
   allocateNewFileBase,
   findNewFileType,
+  isStageplayNewFileType,
   NEW_FILE_TYPES,
   newFileName,
   validateNewFileBase,
@@ -94,6 +95,7 @@ import {
   ALLOWED_EXTENSIONS_LABEL,
   MANUAL_FILE_EXTENSIONS_LABEL,
   isManualFileName,
+  isStageplayExplorerSource,
   registerAsset,
   removeAssetMeta,
   removeAssetFolder,
@@ -1947,6 +1949,12 @@ export const StageplayWorkspace = forwardRef<
   ): NewFileCreateResult => {
     const type = findNewFileType(typeId)
     if (!type) return { ok: false, error: `不认识的文件类型「${typeId}」` }
+    if (!isStageplayNewFileType(type)) {
+      return {
+        ok: false,
+        error: `「${type.label}」请在游戏性或视听工作区新建，剧本工作区只建剧本类文件`,
+      }
+    }
 
     const pkg = workspaceRef.current.packages.find((item) => item.id === packageId)
     if (!pkg) return { ok: false, error: '目标工程不存在' }
@@ -2866,6 +2874,13 @@ export const StageplayWorkspace = forwardRef<
     createSource: (source, content) => {
       const checked = normalizeAgentSource(source)
       if ('error' in checked) return checked.error
+      if (!isStageplayExplorerSource({ name: checked.name })) {
+        return {
+          ok: false,
+          error: `剧本工作区不能新建「${checked.name}」`,
+          hint: '脚本与游戏性类型请到游戏性工作区创建；此处只建 .hs / .char / meta 资料',
+        }
+      }
       if (findScriptByName(workspaceRef.current, checked.name)) {
         return {
           ok: false,

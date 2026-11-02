@@ -45,11 +45,10 @@ export const PROGRESS_SOURCE_EXTS = new Set(
   (Object.keys(GAMEPLAY_CATEGORIES) as GameplayCategoryId[]).flatMap(categoryExtensions),
 )
 
-/** 剧本资源树展示的 kind（不含进度专属目录） */
+/** 剧本资源树展示的 kind（不含脚本与游戏性目录） */
 export const SCRIPT_EXPLORER_KINDS = new Set([
   'hanshu',
   'character',
-  'script',
   'meta',
   'root',
 ])
