@@ -1,5 +1,6 @@
 /** TypeScript's tsserver language-service engine, with an in-memory browser host. */
 import ts from 'typescript'
+import {readableJavaTypes} from './typeDisplay'
 import es5 from 'typescript/lib/lib.es5.d.ts?raw'
 import decorators from 'typescript/lib/lib.decorators.d.ts?raw'
 import decoratorsLegacy from 'typescript/lib/lib.decorators.legacy.d.ts?raw'
@@ -53,9 +54,9 @@ self.onmessage=({data})=>{
   else if(method==='snapshot')result={typescriptVersion:ts.version,compilerOptions:host.getCompilationSettings(),files:[...files].map(([name,file])=>({name,version:file.version,characters:file.text.length,...name.startsWith('/lib.')?{builtin:true}:{text:file.text}}))}
   else{
    const file=params.file,pos=offset(file,params.line??1,params.column??1)
-   if(method==='diagnostics')result=[...service.getSyntacticDiagnostics(file),...service.getSemanticDiagnostics(file)].map(d=>({code:d.code,message:ts.flattenDiagnosticMessageText(d.messageText,'\n'),start:point(file,d.start??0),end:point(file,(d.start??0)+(d.length??1)),error:d.category===ts.DiagnosticCategory.Error}))
+   if(method==='diagnostics')result=[...service.getSyntacticDiagnostics(file),...service.getSemanticDiagnostics(file)].map(d=>({code:d.code,message:readableJavaTypes(ts.flattenDiagnosticMessageText(d.messageText,'\n')),start:point(file,d.start??0),end:point(file,(d.start??0)+(d.length??1)),error:d.category===ts.DiagnosticCategory.Error}))
    else if(method==='completion')result=completionEntries(file,pos)
-   else if(method==='hover'){const h=service.getQuickInfoAtPosition(file,pos);result=h?{text:ts.displayPartsToString(h.displayParts),documentation:ts.displayPartsToString(h.documentation)}:null}
+   else if(method==='hover'){const h=service.getQuickInfoAtPosition(file,pos);result=h?{text:readableJavaTypes(ts.displayPartsToString(h.displayParts)),documentation:ts.displayPartsToString(h.documentation)}:null}
    else if(method==='types'){
     const names=new Set<string>()
     const locations=(params.locations??(params.positions as number[]).map(column=>({line:params.line,column}))) as {line:number;column:number}[]
@@ -65,7 +66,7 @@ self.onmessage=({data})=>{
      for(const d of service.getTypeDefinitionAtPosition(file,at)??[])if(d.fileName.startsWith('/java/'))names.add(d.fileName.slice(6,-5))
     }result=[...names]
    }
-   else if(method==='signature'){const h=service.getSignatureHelpItems(file,pos,undefined);result=h?{activeSignature:h.selectedItemIndex,activeParameter:h.argumentIndex,signatures:h.items.map(s=>({label:ts.displayPartsToString(s.prefixDisplayParts)+s.parameters.map(p=>ts.displayPartsToString(p.displayParts)).join(ts.displayPartsToString(s.separatorDisplayParts))+ts.displayPartsToString(s.suffixDisplayParts),documentation:ts.displayPartsToString(s.documentation),parameters:s.parameters.map(p=>({label:ts.displayPartsToString(p.displayParts),documentation:ts.displayPartsToString(p.documentation)}))}))}:null}
+   else if(method==='signature'){const h=service.getSignatureHelpItems(file,pos,undefined);result=h?{activeSignature:h.selectedItemIndex,activeParameter:h.argumentIndex,signatures:h.items.map(s=>({label:readableJavaTypes(ts.displayPartsToString(s.prefixDisplayParts)+s.parameters.map(p=>ts.displayPartsToString(p.displayParts)).join(ts.displayPartsToString(s.separatorDisplayParts))+ts.displayPartsToString(s.suffixDisplayParts)),documentation:ts.displayPartsToString(s.documentation),parameters:s.parameters.map(p=>({label:readableJavaTypes(ts.displayPartsToString(p.displayParts)),documentation:ts.displayPartsToString(p.documentation)}))}))}:null}
   }
   self.postMessage({id,result})
  }catch(error){self.postMessage({id,error:String(error)})}

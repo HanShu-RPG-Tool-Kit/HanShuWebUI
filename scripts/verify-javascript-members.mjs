@@ -115,8 +115,19 @@ try{
    const entries=await client.request('completion',{file:'/test.ts',line:1,column:11})
    await client.writeFiles({'/overloads.ts':'declare function choose(value: string): string;\ndeclare function choose(value: number, radix: number): number;\nchoose(1, '})
    const overloads=await client.request('signature',{file:'/overloads.ts',line:3,column:11})
+   await client.writeFiles({
+    '/display.d.ts':'declare namespace jvm_net_d_test_d_Level { class Level { private levelBrand: void; } } declare namespace jvm_net_d_test_d_Player { class Player { private playerBrand: void; } } declare function teleport(target: jvm_net_d_test_d_Level.Level): jvm_net_d_test_d_Player.Player[];',
+    '/display.ts':'var result = teleport(null);\nteleport(\n',
+    '/display-error.ts':'var level: jvm_net_d_test_d_Level.Level; var player: jvm_net_d_test_d_Player.Player; level = player;',
+   })
+   const typeHover=await client.request('hover',{file:'/display.ts',line:1,column:6})
+   const typeSignature=await client.request('signature',{file:'/display.ts',line:2,column:10})
+   const typeErrors=await client.request('diagnostics',{file:'/display-error.ts'})
+   const rawTypes=await client.request('types',{file:'/display.ts',locations:[{line:1,column:6}]})
+   const {readableJavaTypes}=await import('/src/monaco/javascript/typeDisplay.ts')
+   const escaped=readableJavaTypes('jvm_net_d_test_d_Outer_s_Inner__d__Name.Inner_d_Name[]')
    const redacted=JSON.parse(stringifyLanguageDiagnostics({document:{source:'import X from "mchhui.rpgtoolkit.X"'},typeText:'jvm_mchhui_d_rpgtoolkit',error:{message:'password=mchhui'}},'','mchhui'))
-   return {entries,redacted,overloads}
+   return {entries,redacted,overloads,typeHover,typeSignature,typeErrors,rawTypes,escaped}
   }finally{client.dispose()}
  })
  assert.equal(callable.entries.find(entry=>entry.name==='run').callable,true)
@@ -127,6 +138,13 @@ try{
  assert(callable.overloads.signatures[1].label.includes('radix: number'))
  assert.equal(callable.overloads.activeSignature,1)
  assert.equal(callable.overloads.activeParameter,1)
+ assert(callable.typeHover.text.includes('Player[]'),JSON.stringify(callable.typeHover))
+ assert.equal(callable.typeSignature.signatures[0].label,'teleport(target: Level): Player[]')
+ assert.equal(callable.typeSignature.signatures[0].parameters[0].label,'target: Level')
+ assert(callable.typeErrors.some(error=>error.message.includes("type 'Player'")&&error.message.includes("type 'Level'")),JSON.stringify(callable.typeErrors))
+ assert(!JSON.stringify([callable.typeHover,callable.typeSignature,callable.typeErrors]).includes('jvm_'))
+ assert(callable.rawTypes.some(name=>name.startsWith('jvm_')),'dependency hydration must retain internal Java identities')
+ assert.equal(callable.escaped,'Inner_d_Name[]')
  assert(callable.redacted.document.source.includes('mchhui.rpgtoolkit'))
  assert(callable.redacted.typeText.includes('mchhui'))
  assert(!callable.redacted.error.message.includes('mchhui'))
