@@ -210,6 +210,16 @@ export function translateAll<T extends WithComponents>(
   }
 }
 
+/** Put the display-region origin at its center by translating the whole design so the center sits at (0, 0). */
+export function resetDisplayRegionOrigin<T extends WithComponents>(document: T): T {
+  const region = displayRegionOf(document)
+  if (!region) return document
+  const dx = -(region.box.x + region.box.width / 2)
+  const dy = -(region.box.y + region.box.height / 2)
+  if (dx === 0 && dy === 0) return document
+  return translateAll(document, dx, dy)
+}
+
 /** 作者主动执行：把显示区域设为全部可绘制组件的联合外框 */
 export function fitRegionToComponents<T extends WithComponents>(
   document: T,

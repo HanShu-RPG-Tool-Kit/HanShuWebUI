@@ -24,6 +24,7 @@ import {
   fitRegionToComponents,
   moveComponent,
   removeComponent,
+  resetDisplayRegionOrigin,
   translateAll,
   updateComponent,
 } from '../document'
@@ -131,6 +132,7 @@ export function BossbarDesignView({
   const [playing, setPlaying] = useState(true)
   const [timeMs, setTimeMs] = useState(0)
   const [fitRequest, setFitRequest] = useState(0)
+  const [homeRequest, setHomeRequest] = useState(0)
 
   const history = useBossbarHistory(content)
 
@@ -493,7 +495,17 @@ export function BossbarDesignView({
                     value={view.grid}
                     onChange={(event) => setView({ grid: Math.max(1, Number(event.target.value) || 1) })}
                   />
-                  <Button onClick={() => setView({ panX: 0, panY: 0, zoom: 1 })}>回到原点</Button>
+                  <Button
+                    onClick={() => {
+                      if (document && editable) {
+                        const next = resetDisplayRegionOrigin(document)
+                        if (next !== document) applyDocument(next)
+                      }
+                      setHomeRequest((request) => request + 1)
+                    }}
+                  >
+                    回到原点
+                  </Button>
                 </span>
                 {selection.length > 1 && (
                   <span className="bb-toolbar-group bb-toolbar-align">
@@ -537,6 +549,7 @@ export function BossbarDesignView({
                 textureHeight={texture.size.height}
                 view={{ zoom: view.zoom, panX: view.panX, panY: view.panY } as ViewTransform}
                 fitRequest={fitRequest}
+                homeRequest={homeRequest}
                 grid={view.grid}
                 showGrid={view.showGrid}
                 showRulers={view.showRulers}
@@ -594,7 +607,7 @@ export function BossbarDesignView({
               <div className="bb-tab-body">
                 {view.inspectorTab === 'component' && (
                   <BossbarInspector
-                    document={document}
+                    document={effectiveDocument ?? document}
                     selection={selection}
                     texture={texture.size}
                     readOnly={!editable}
