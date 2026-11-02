@@ -75,11 +75,36 @@ export function defaultPlaneForFile(name: string): FilePlane {
   return FILE_PLANE[getExtension(name)] ?? 'shared'
 }
 
-/** 剧本工作区资源树分组（不含进度专属目录） */
+/**
+ * 剧本工作区资源树分组。
+ *
+ * 只含剧本类物理目录：汉书 / 角色卡 / 脚本 / 创作资料。
+ * 任务、地图、商店、物品等游戏性与视听类型由对应工作区展示与新建，不在此列。
+ * 脚本分组在树里再收窄到通用脚本（见 `STAGEPLAY_SCRIPT_TYPES`）。
+ */
 export const STAGEPLAY_WORKSPACE_GROUP_ORDER = ['hanshu', 'character', 'script', 'meta'] as const
 
-/** 工作区分组顺序：全部源类型 + 创作资料 `meta` */
+/** 剧本工作区展示 / 新建的脚本类型（仅通用；goal/kit/shop/actor/player 归游戏性） */
+export const STAGEPLAY_SCRIPT_TYPES = ['common'] as const satisfies readonly ScriptType[]
+
+/** 全工程源类型分组顺序（游戏性等其它视图 / 护栏用）：全部源类型 + 创作资料 `meta` */
 export const WORKSPACE_GROUP_ORDER = [...SOURCE_KIND_ORDER, 'meta'] as const
+
+/** 是否属于剧本资源树应展示的源文件（按 kind + 脚本子类型） */
+export function isStageplayExplorerSource(file: {
+  name: string
+  srcKind?: ScriptType
+}): boolean {
+  const kind = sourceKindOf(file.name, file.srcKind)
+  if (kind === 'root') return true
+  if (!(STAGEPLAY_WORKSPACE_GROUP_ORDER as readonly string[]).includes(kind)) return false
+  if (kind === 'script') {
+    return (STAGEPLAY_SCRIPT_TYPES as readonly string[]).includes(
+      scriptType(file.srcKind),
+    )
+  }
+  return true
+}
 
 /** `.js` 的 srcKind 为五种明确的脚本类型 */
 export type JsSrcKind = ScriptType

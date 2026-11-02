@@ -47,6 +47,7 @@ import {
 import {
   allocateNewFileBase,
   findNewFileType,
+  isStageplayNewFileType,
   NEW_FILE_TYPES,
   newFileName,
   validateNewFileBase,
@@ -1947,6 +1948,12 @@ export const StageplayWorkspace = forwardRef<
   ): NewFileCreateResult => {
     const type = findNewFileType(typeId)
     if (!type) return { ok: false, error: `不认识的文件类型「${typeId}」` }
+    if (!isStageplayNewFileType(type)) {
+      return {
+        ok: false,
+        error: `「${type.label}」请在游戏性或视听工作区新建，剧本工作区只建剧本类文件`,
+      }
+    }
 
     const pkg = workspaceRef.current.packages.find((item) => item.id === packageId)
     if (!pkg) return { ok: false, error: '目标工程不存在' }

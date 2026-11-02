@@ -20,7 +20,10 @@ import { readFileSync } from 'node:fs'
 import {
   MANUAL_FILE_EXTENSIONS,
   SOURCE_KIND_ORDER,
+  STAGEPLAY_SCRIPT_TYPES,
+  STAGEPLAY_WORKSPACE_GROUP_ORDER,
   WORKSPACE_GROUP_ORDER,
+  isStageplayExplorerSource,
   sourceKindOf,
   sourcePathOf,
 } from '../src/workspace.ts'
@@ -28,11 +31,15 @@ import {
   MAX_BASE_LENGTH,
   NEW_FILE_GROUPS,
   NEW_FILE_TYPES,
+  STAGEPLAY_NEW_FILE_TYPE_IDS,
   allocateNewFileBase,
   createdRenameOnDismiss,
   findNewFileType,
+  isStageplayNewFileType,
   newFileName,
   newFileTypesByGroup,
+  stageplayNewFileTypes,
+  stageplayNewFileTypesByGroup,
   validateNewFileBase,
   type NewFileSeedContext,
   type NewFileType,
@@ -67,8 +74,7 @@ const type = (id: string): NewFileType => {
 /**
  * 去掉注释，只留代码。
  *
- * 源码级护栏必须只看**代码**：`Explorer.tsx` 的注释里正大光明地写着
- * `STAGEPLAY_WORKSPACE_GROUP_ORDER`（解释 D-1 是怎么来的），拿原文做子串匹配会误判。
+ * 源码级护栏必须只看**代码**：注释里也会提到分组常量名，拿原文做子串匹配会误判。
  * 这个剥离器不追求通用（不认识字符串字面量里的 `//`），够这里用即可 ——
  * 判据是"标识符还在不在代码里"，被多剥掉一段只会让断言更严，不会放过回归。
  */
@@ -157,28 +163,20 @@ assert.equal(type('progress').ext, '.quest')
 assert.equal(type('hflow').ext, '.quest')
 assert.notEqual(type('progress').icon, type('hflow').icon, '单/多进度在新建菜单里必须能区分')
 
-// ===== 2b. 注册表建得出来的文件，资源树必须渲染得出来 =====
+// ===== 2b. 剧本菜单能建的，剧本树必须渲染得出来；全表 kind 仍须落在工程分组 =====
 
 /*
- * 守的是 D-1 那个 bug：资源树当时只给 `STAGEPLAY_WORKSPACE_GROUP_ORDER`
- * （hanshu / character / script / meta）建桶，而 `sourceKindOf` 返回
- * goal / progress / story / navigator / gift 的文件**既不入桶也不入 root**，
- * 被静默丢掉 —— 从「+剧」新建进度 / 流程 / 导航 / 礼包 / 目标定义（11 种里的 5 种）
- * 建完就在树里消失（文件其实建成了、还成了活动文件）。
+ * 剧本工作区只展示 / 新建剧本类（`STAGEPLAY_*`）。游戏性类型改由游戏性工作区建，
+ * 不再要求剧本树覆盖全表 —— 否则会把任务 / 商店等再次塞进剧本栏。
  *
- * 这种"菜单能建、树里看不见"的 bug 靠人眼点 11 个类型是发现不了的，必须由测试守。
+ * 不变式：
+ * 1. `WORKSPACE_GROUP_ORDER` 仍覆盖全部源类型（工程级目录真相 / 其它护栏）。
+ * 2. 剧本可建类型 ⊆ 剧本树可见（`isStageplayExplorerSource`）。
+ * 3. Explorer 分桶用 `STAGEPLAY_WORKSPACE_GROUP_ORDER`，菜单用 `stageplayNewFileTypes*`。
  *
- * 为什么断言 `WORKSPACE_GROUP_ORDER`（从 workspace 取）而不是从 `Explorer.tsx` 导出的常量：
- * `Explorer.tsx` 顶层 `import './explorer-newfile.css'`，tsx 起不来
- * （实测 `Unknown file extension ".css"`），所以测试**无法** import 它。
- * 退而取 `WORKSPACE_GROUP_ORDER` —— 这正是 `Explorer` 现在 import 的那个常量，
- * 两者是同一个值、同一个出处（`workspace.ts`），不存在抄一份的问题。
- * 下面再补一条**源码级**护栏，防止有人把 Explorer 改回按窄常量分桶。
+ * 为什么断言常量而不是 import Explorer：顶层 `import './explorer-newfile.css'`，
+ * tsx 会 `Unknown file extension ".css"`。
  */
-const RENDERED_GROUPS = new Set<string>([...WORKSPACE_GROUP_ORDER, 'root'])
-
-// 先钉死这个常量本身：`SOURCE_KIND_ORDER` 少一个 kind（或 `meta` 被摘掉）时，
-// 光靠"注册表 ext 集合 == MANUAL_FILE_EXTENSIONS"是发现不了的
 assert.deepEqual(
   [...WORKSPACE_GROUP_ORDER],
   [
@@ -197,37 +195,99 @@ assert.deepEqual(
     'bossbars',
     'meta',
   ],
-  'WORKSPACE_GROUP_ORDER 必须覆盖全部源类型 + meta（资源树按它建桶）',
+  'WORKSPACE_GROUP_ORDER 必须覆盖全部源类型 + meta',
 )
-assert.deepEqual([...SOURCE_KIND_ORDER], [...WORKSPACE_GROUP_ORDER].slice(0, -1), 'WORKSPACE_GROUP_ORDER 应是 SOURCE_KIND_ORDER + meta')
+assert.deepEqual(
+  [...SOURCE_KIND_ORDER],
+  [...WORKSPACE_GROUP_ORDER].slice(0, -1),
+  'WORKSPACE_GROUP_ORDER 应是 SOURCE_KIND_ORDER + meta',
+)
+assert.deepEqual(
+  [...STAGEPLAY_WORKSPACE_GROUP_ORDER],
+  ['hanshu', 'character', 'script', 'meta'],
+  '剧本资源树只含 hanshu / character / script / meta',
+)
+assert.deepEqual([...STAGEPLAY_SCRIPT_TYPES], ['common'], '剧本工作区脚本仅通用')
+assert.deepEqual(
+  [...STAGEPLAY_NEW_FILE_TYPE_IDS],
+  ['hs', 'char', 'js', 'md', 'tts', 'ttsservice'],
+  '剧本新建类型必须钉死这六种',
+)
 
+const ALL_KIND_GROUPS = new Set<string>([...WORKSPACE_GROUP_ORDER, 'root'])
 for (const item of NEW_FILE_TYPES) {
   const name = newFileName(item, item.defaultBase)
   const kind = sourceKindOf(name, item.srcKind)
   assert.ok(
-    RENDERED_GROUPS.has(kind),
-    `${item.id}（${name}）的 sourceKindOf = 「${kind}」不在资源树渲染的分组里 —— ` +
-      `建出来就会在树里消失（可用分组：${[...RENDERED_GROUPS].join(' / ')}）`,
+    ALL_KIND_GROUPS.has(kind),
+    `${item.id}（${name}）的 sourceKindOf = 「${kind}」不在工程分组里`,
   )
 }
 
+for (const item of stageplayNewFileTypes()) {
+  assert.ok(isStageplayNewFileType(item), `${item.id} 应被 isStageplayNewFileType 认作剧本类`)
+  const name = newFileName(item, item.defaultBase)
+  assert.ok(
+    isStageplayExplorerSource({ name, srcKind: item.srcKind }),
+    `${item.id}（${name}）剧本菜单能建，但 isStageplayExplorerSource 为假 —— 会在树里消失`,
+  )
+}
+assert.deepEqual(
+  stageplayNewFileTypesByGroup().flatMap((entry) => entry.items.map((item) => item.id)),
+  [...STAGEPLAY_NEW_FILE_TYPE_IDS],
+  '剧本新建菜单分组视图不能漏项或掺入游戏性类型',
+)
+assert.equal(
+  stageplayNewFileTypesByGroup().some((entry) => entry.group.id === 'gameplay'),
+  false,
+  '剧本新建菜单不应出现游戏性分组',
+)
+assert.equal(
+  stageplayNewFileTypesByGroup().some((entry) => entry.group.id === 'audiovisual'),
+  false,
+  '剧本新建菜单不应出现视听分组',
+)
+assert.equal(
+  isStageplayExplorerSource({ name: '村口商店.shop' }),
+  false,
+  '商店等游戏性文件不得出现在剧本树',
+)
+assert.equal(
+  isStageplayExplorerSource({ name: '新目标.js', srcKind: 'goal' }),
+  false,
+  '目标定义脚本不得出现在剧本树',
+)
+assert.equal(
+  isStageplayExplorerSource({ name: '公共库.js', srcKind: 'common' }),
+  true,
+  '通用脚本应出现在剧本树',
+)
+
 /*
- * 源码级护栏：`Explorer.tsx` 分桶必须用 `WORKSPACE_GROUP_ORDER`，
- * 且**不能**再出现按 `STAGEPLAY_WORKSPACE_GROUP_ORDER` 分桶的写法。
- *
- * 为什么要读源码而不是 import：见上面那段（CSS 让 tsx 起不来）。
- * 它挡的正是 D-1 的原始形态 —— 有人觉得"剧本树只该列剧本那几个目录"，把常量换回去。
+ * 源码级护栏：Explorer 必须按剧本分组建桶与过滤，且新建菜单走 stageplay 子集。
  */
 const explorerSource = stripComments(
   readFileSync(new URL('../src/Explorer.tsx', import.meta.url), 'utf8'),
 )
 assert.ok(
-  /WORKSPACE_GROUP_ORDER/.test(explorerSource),
-  'Explorer.tsx 应按 WORKSPACE_GROUP_ORDER 给资源树建桶',
+  /STAGEPLAY_WORKSPACE_GROUP_ORDER/.test(explorerSource),
+  'Explorer.tsx 应按 STAGEPLAY_WORKSPACE_GROUP_ORDER 给剧本资源树建桶',
 )
 assert.ok(
-  !/STAGEPLAY_WORKSPACE_GROUP_ORDER/.test(explorerSource),
-  'Explorer.tsx 不能再按 STAGEPLAY_WORKSPACE_GROUP_ORDER 建桶 —— 那会让进度/流程/导航/礼包/目标定义在树里消失',
+  /isStageplayExplorerSource/.test(explorerSource),
+  'Explorer.tsx 应按 isStageplayExplorerSource 过滤剧本树',
+)
+assert.ok(
+  /stageplayNewFileTypesByGroup/.test(explorerSource),
+  'Explorer.tsx 新建菜单应使用 stageplayNewFileTypesByGroup',
+)
+assert.ok(
+  !/\bWORKSPACE_GROUP_ORDER\b/.test(explorerSource),
+  'Explorer.tsx 不应再按全量 WORKSPACE_GROUP_ORDER 建剧本树桶',
+)
+assert.ok(
+  !/\bnewFileTypesByGroup\s*\(\s*\)/.test(explorerSource),
+  'Explorer.tsx 不应再调用无过滤的 newFileTypesByGroup()',
 )
 
 // ===== 2c. 菜单能滚：滚轮不能被"关菜单"或"穿透去滚树"吃掉 =====
