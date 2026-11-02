@@ -15,7 +15,7 @@ async function openProgress(p){await closeCollaboration(p);await p.getByRole('ta
 async function sync(p){await collaboration(p,'修改');await p.getByRole('button',{name:'放弃冲突修改并同步修改',exact:true}).click();await p.getByRole('dialog',{name:'正在同步修改',exact:true}).waitFor({state:'hidden'});assert.equal(await p.getByRole('alert').filter({hasText:'仍有'}).count(),0)}
 try {
   const admin=await h.api('','/api/local-session','POST',{credential:h.credential,clientName:'验收准备'})
-  await h.commit(admin.token,[{path:'src/script/common/conflict.py',content:'print("base")\n'},{path:'src/script/common/safe.py',content:'print("safe")\n'}]);await h.release(admin.token)
+  await h.commit(admin.token,[{path:'src/script/common/conflict.js',content:'print("base")\n'},{path:'src/script/common/safe.js',content:'print("safe")\n'}]);await h.release(admin.token)
   const skin=skinFixture()
   await h.commit(admin.token,[{path:skin.objectPath,content:skin.object},{path:'.hanshu/skinmanager/library.json',content:JSON.stringify({schemaVersion:5,revision:1,folders:[],entries:[skin.entry('sync-skin','同步皮肤')]})}]);await h.release(admin.token)
   const peerUser=await h.api(admin.token,'/api/accounts','POST',{username:'peer',nickname:'作者 B',password:'Peer-password-123',role:'editor'})
@@ -39,12 +39,12 @@ try {
   const [a,b]=pages
   await collaboration(a);await a.locator('.collab-members strong').filter({hasText:'作者 A'}).waitFor();assert.equal(await a.getByRole('button',{name:'用户管理',exact:true}).count(),0);await closeCollaboration(a)
   console.log('通过：本机 Admin 界面创建账号，分享页面用户名密码登录，协作显示昵称，远端没有用户管理入口')
-  for(const file of ['conflict.py','safe.py']) {
+  for(const file of ['conflict.js','safe.js']) {
     await active(a).getByText(file,{exact:true}).first().click();await active(a).locator('.monaco-editor .view-lines').first().click({position:{x:80,y:15}});await a.keyboard.press('Control+End');await a.keyboard.type('\n# A local draft')
   }
-  await h.commit(peer.token,[{path:'src/script/common/conflict.py',content:'print("server B")\n'}]);await h.release(peer.token)
+  await h.commit(peer.token,[{path:'src/script/common/conflict.js',content:'print("server B")\n'}]);await h.release(peer.token)
   await a.keyboard.press('Control+s');await a.locator('.collab-attention-label').waitFor();await sync(a)
-  assert.equal(await disk('src/script/common/conflict.py'),'print("server B")\n');assert.ok((await disk('src/script/common/safe.py')).includes('A local draft'))
+  assert.equal(await disk('src/script/common/conflict.js'),'print("server B")\n');assert.ok((await disk('src/script/common/safe.js')).includes('A local draft'))
   await a.screenshot({path:join(output,'synchronized.png')})
   console.log('通过：失败的多文件保存仅放弃冲突文件，其余文件提交落盘，最终视图跟随服务器')
   await Promise.all(pages.map(openProgress))
@@ -59,7 +59,7 @@ try {
   assert.equal(await title.inputValue(),'B 的服务器标题');assert.equal(await description.inputValue(),'A 可以提交的描述')
   console.log('通过：同一进度内放弃冲突标题，保留并提交不冲突的描述，不整份覆盖语言文件')
   await closeCollaboration(a);await a.getByRole('tab',{name:'剧本',exact:true}).click()
-  await active(a).getByText('safe.py',{exact:true}).first().click();await active(a).locator('.monaco-editor .view-lines').first().click({position:{x:80,y:15}});await a.keyboard.press('Control+End');await a.keyboard.type('\n# confirmed once')
+  await active(a).getByText('safe.js',{exact:true}).first().click();await active(a).locator('.monaco-editor .view-lines').first().click({position:{x:80,y:15}});await a.keyboard.press('Control+End');await a.keyboard.type('\n# confirmed once')
   let commits=0
   await a.route('**/api/files/commit',async route=>{commits++;const response=await route.fetch();assert.equal((await response.json()).status,'committed');await route.fulfill({status:200,contentType:'application/json',body:'{"incomplete":true}'})})
   await a.keyboard.press('Control+s');await a.locator('.collab-attention-label').waitFor()
@@ -67,7 +67,7 @@ try {
   await collaboration(a,'修改');await a.getByRole('button',{name:'放弃冲突修改并同步修改',exact:true}).click();await a.getByRole('dialog',{name:'正在同步修改',exact:true}).waitFor({state:'hidden'})
   await a.getByRole('alert').filter({hasText:'仍有结果待确认'}).first().waitFor();assert.equal(commits,1)
   await a.unroute('**/api/files/transactions/*');await a.unroute('**/api/files/commit');await sync(a)
-  assert.equal(commits,1);assert.equal((await disk('src/script/common/safe.py')).split('confirmed once').length-1,1)
+  assert.equal(commits,1);assert.equal((await disk('src/script/common/safe.js')).split('confirmed once').length-1,1)
   console.log('通过：回执未查明时不丢草稿或重发；查询确认成功后同步，不重复提交已落盘内容')
   await closeCollaboration(a);await a.getByRole('tab',{name:'皮肤管理器',exact:true}).click()
   await active(a).locator('.skinWorkspaceCenter').getByRole('button').filter({has:a.getByText('同步皮肤',{exact:true})}).first().click()

@@ -90,12 +90,12 @@ const scripts = [
   }, null, 2), updatedAt: 1 },
   { id: 'blade', name: 'kit_blade.item', content: stringifyItem(createItem('minecraft:iron_sword')), updatedAt: 1 },
   { id: 'hs', name: 'town.hs', content: '@village_intro\n卫兵:你好//\n@village_idle\n卫兵:路过//\n', updatedAt: 1 },
-  ...['guard', 'watch'].map(id => ({ id, name: `${id}.py`, srcKind: 'actor' as const, content: scriptTemplate('actor', 'default.py', id), updatedAt: 1 })),
+  ...['guard', 'watch'].map(id => ({ id, name: `${id}.js`, srcKind: 'actor' as const, content: scriptTemplate('actor', 'default.js', id), updatedAt: 1 })),
 ]
 assert.equal(sourcePathOf(scripts[0]), 'src/actors/village.actor')
 assert.equal(sourcePathOf(scripts[1]), 'src/reputations/village_guard.rep')
 assert.equal(sourcePathOf(scripts[3]), 'src/items/kit_blade.item')
-assert.equal(sourcePathOf(scripts[5]), 'src/script/actor/guard.py')
+assert.equal(sourcePathOf(scripts[5]), 'src/script/actor/guard.js')
 const workspace: Workspace = { packages: [{ id: 'p', name: 'actors', collapsed: false, scripts, assets: [], assetFolders: [] }], activeScriptId: null, activeAssetId: null }
 const state = ensurePackageSections({ documents: sourcesToProgressDocuments(scripts), folders: [], activeKey: null })
 assert.equal(state.documents.find(d => d.name.endsWith('.actor'))?.package, 'actor')
@@ -107,12 +107,12 @@ assert.deepEqual(
 const graph = await buildCompileGraph(workspace)
 assert(!graph.diagnostics.some(d => d.severity === 'error'), JSON.stringify(graph.diagnostics))
 assert.equal(graph.artifacts.find(a => a.path === 'actors/village.actor')?.plane, 'server')
-assert(graph.artifacts.some(a => a.path === 'script/actor/guard.py'))
+assert(graph.artifacts.some(a => a.path === 'script/actor/guard.js'))
 const exported = await exportPaks(workspace, { targets: ['server', 'client'] })
 for (const pak of exported.packs) {
   const zip = await JSZip.loadAsync(await pak.blob.arrayBuffer())
   assert.equal(!!zip.file('actors/village.actor'), pak.target === 'server')
-  assert.equal(!!zip.file('script/actor/guard.py'), pak.target === 'server')
+  assert.equal(!!zip.file('script/actor/guard.js'), pak.target === 'server')
 }
 workspace.packages[0].scripts = scripts.filter(s => s.id !== 'guard')
 const missing = await buildCompileGraph(workspace)

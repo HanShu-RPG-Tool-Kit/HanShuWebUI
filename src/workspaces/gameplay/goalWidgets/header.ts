@@ -14,19 +14,19 @@ export type GoalHeaderMeta = {
   localize?: Record<string, string>
 }
 
-/** 跳过前置空行与 `#` 注释后，解析文件头三引号 JSON（只给 WebUI）。 */
+/** 跳过前置空行与 `//` 注释后，解析文件头块注释 JSON（只给 WebUI）。 */
 export function parseGoalHeaderMeta(source: string): GoalHeaderMeta | null {
   const text = source.replace(/\r\n/g, '\n')
   const lines = text.split('\n')
   let index = 0
   while (
     index < lines.length &&
-    (lines[index]!.trim() === '' || lines[index]!.trim().startsWith('#'))
+    (lines[index]!.trim() === '' || lines[index]!.trim().startsWith('//'))
   ) {
     index += 1
   }
   const rest = lines.slice(index).join('\n')
-  const match = /^('''|""")([\s\S]*?)\1/.exec(rest)
+  const match = /^(\/\*)([\s\S]*?)\*\//.exec(rest)
   if (!match) return null
   try {
     const raw = JSON.parse(match[2]!) as unknown

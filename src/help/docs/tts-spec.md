@@ -655,8 +655,7 @@ OpenAI 指定语句录音),应用内再设任何字段都证明不了什么 —�
 ├── src/
 │   ├── hanshu/     *.hs        剧本（源）
 │   ├── character/  *.char      角色卡（源）
-│   ├── script/     *.py        普通脚本（源）
-│   └── goal/       *.py        目标定义（源；与 script 平级）
+│   └── script/<类型>/ *.js     方言 JS 脚本（common / goal / kit / shop / actor / player）
 ├── meta/                       创作资料 —— 不进 PAK
 │   ├── docs/       *.md        说明文档（**扁平**）
 │   └── voice/                  TTS 配音配置

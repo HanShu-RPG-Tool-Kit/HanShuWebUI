@@ -505,9 +505,9 @@ impl Engine {
             }
         } else if kind == ResourceKind::GoalDefinition {
             require(
-                name.ends_with(".py") && content.as_ref().is_some_and(|s| s.len() <= 1024 * 1024),
+                name.ends_with(".js") && content.as_ref().is_some_and(|s| s.len() <= 1024 * 1024),
                 "invalid",
-                "目标定义应为不超过 1 MiB 的 .py 脚本",
+                "目标定义应为不超过 1 MiB 的 .js 脚本",
             )?;
         } else {
             require(content.is_none(), "invalid", "文件夹不能有正文")?;
@@ -623,7 +623,7 @@ impl Engine {
                 name.ends_with(if r.kind == ResourceKind::Progress {
                     ".quest"
                 } else {
-                    ".py"
+                    ".js"
                 }),
                 "invalid",
                 "文件须保留原后缀",

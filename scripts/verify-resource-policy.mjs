@@ -49,7 +49,7 @@ try {
   assert.deepEqual(writePlan.operations.map(item => item.path), [language])
   assert.ok(writePlan.leasePaths.includes(source))
   assert.ok(writePlan.leasePaths.includes(language))
-  assert.ok(writePlan.authorities.some(item => item.path === language && item.authorityPath === source && item.sourceKind === 'progress'))
+  assert.ok(writePlan.authorities.some(item => item.path === language && item.authorityPath === source && item.sourceKind === 'quest'))
   assert.deepEqual(await h.files(owner.token), beforeTree)
   assert.deepEqual((await h.api(owner.token, '/api/project')).leases, beforeState.leases)
   passed('只读主体可查询关系与计划；查询不获取租约、不修改文件')

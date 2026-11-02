@@ -13,30 +13,28 @@ kit.experience = {kind:'points',amount:7}
 kit.commands = ['tag @s add kit_command_ran']
 kit.feedback = {message:'feedback.message',title:'',subtitle:'',sound:''}
 kit.script = [{ref:'web-reward'}]
-const script = `from common.helper import marker
-assert marker() == "library-ok"
-from common import helper
-helper.calls = 10
-from mchhui.rpgtoolkit.feature.kit import Kits
-from java.util import Map
-nested = Kits.get().grant(player, 'inner', Map.of())
-assert str(nested.status()) == 'SUCCESS'
-from common import helper as restored
-assert restored is helper and restored.calls == 10
-import math
-from net.minecraft.network.chat import Component
-assert 'seen' not in globals()
-seen = True
-assert isinstance(kit.param('distributionId'), int)
-assert len(players) == kit.param('distributionCount')
-assert 0 <= random() < 1
-assert kit.expr('round(2.5)') == 3
-assert kit.tags == ('Test', '礼包')
-assert kit.param('difficulty') == 0
-player.addTag('kit_script_ran')
-if kit.param('distributionId') == 0:
-    raise RuntimeError('expected first-recipient failure')
-player.sendSystemMessage(Component.literal('kit-script-ok'))
+const script = `require helper from "helper"
+import Kits from "mchhui.rpgtoolkit.feature.kit.Kits"
+import Map from "java.util.Map"
+import Component from "net.minecraft.network.chat.Component"
+function check(value: boolean): void { if (!value) throw new Error("kit fixture failed"); }
+check(helper.marker() === "library-ok");
+helper.calls = 10;
+var nested = Kits.get().grant(player, "inner", Map.of());
+check(String(nested.status()) === "SUCCESS");
+require restored from "helper"
+check(restored === helper && restored.calls === 10);
+check(typeof seen === "undefined");
+var seen = true;
+check(Number(kit.param("distributionId")) % 1 === 0);
+check(players.length === Number(kit.param("distributionCount")));
+var draw = random(); check(draw >= 0 && draw < 1);
+check(kit.expr("round(2.5)") === 3);
+check(String(kit.tags[0]) === "Test" && kit.tags.length === 2);
+check(Number(kit.param("difficulty")) === 0);
+player.addTag("kit_script_ran");
+if (Number(kit.param("distributionId")) === 0) throw new Error("expected first-recipient failure");
+player.sendSystemMessage(Component.literal("kit-script-ok"));
 `
 const source=stringifyKit(kit)
 const roundtrip=parseKit(source)
@@ -47,5 +45,5 @@ assert.equal(resolved.items[0].count,4)
 // Serialization preserves authored values; runtime must distribute 10 as 4/3/3.
 assert.equal(JSON.parse(source).items[0].count,10)
 assert.deepEqual(roundtrip.script,[{ref:'web-reward'}])
-if(process.env.KIT_RUNTIME_EXPORT_PATH){await writeFile(process.env.KIT_RUNTIME_EXPORT_PATH,source);await writeFile(join(dirname(process.env.KIT_RUNTIME_EXPORT_PATH),'web-reward.py'),script)}
+if(process.env.KIT_RUNTIME_EXPORT_PATH){await writeFile(process.env.KIT_RUNTIME_EXPORT_PATH,source);await writeFile(join(dirname(process.env.KIT_RUNTIME_EXPORT_PATH),'web-reward.js'),script)}
 console.log('通过：kit 运行时夹具使用 WebUI 实际序列化器生成，保留模板链接、修饰器和完整奖励类型')

@@ -253,7 +253,7 @@ export function ActorEditor({
       {availableScripts.map(option => <option key={option.ref} value={option.ref}>{option.label}</option>)}
     </select>}>
     {doc.scripts.length === 0
-      ? <p className="kit-empty">{scriptOptions.length ? '尚未绑定脚本。从右上角选择 src/script/actor 下的脚本。' : '项目中还没有演员脚本。在 src/script/actor 下新建 .py 后即可绑定。'}</p>
+      ? <p className="kit-empty">{scriptOptions.length ? '尚未绑定脚本。从右上角选择 src/script/actor 下的脚本。' : '项目中还没有演员脚本。在 src/script/actor 下新建 .js 后即可绑定。'}</p>
       : <ol className="kit-list actor-script-list">
         {doc.scripts.map((id, index) => {
           const option = scriptOptions.find(s => s.ref === id)

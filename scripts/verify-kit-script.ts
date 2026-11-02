@@ -2,11 +2,11 @@ import assert from 'node:assert/strict'
 import {createKit,parseKit,stringifyKit} from '../src/workspaces/gameplay/kit'
 import {buildCompileGraph} from '../src/export/compile'
 import type {Workspace} from '../src/workspace'
-const kit=createKit('test');kit.script=[{ref:'reward.py'}]
-assert.deepEqual(parseKit(stringifyKit(kit)).script,[{ref:'reward.py'}],'ID may itself end in .py')
+const kit=createKit('test');kit.script=[{ref:'reward.js'}]
+assert.deepEqual(parseKit(stringifyKit(kit)).script,[{ref:'reward.js'}],'ID may itself end in .js')
 for(const ref of ['../x','a/b','a:b'])assert.throws(()=>parseKit(JSON.stringify({...kit,script:{ref}})))
 const legacy=parseKit(JSON.stringify({...kit,script:'player.addTag("old")'}));assert.equal(legacy.script,'player.addTag("old")')
-const workspace={packages:[{id:'p',name:'test',scripts:[{id:'k',name:'test.kit',content:stringifyKit(kit),updatedAt:0},{id:'s',name:'reward.py.py',srcKind:'kit',content:'# script',updatedAt:0}],assets:[],assetFolders:[]}],activePackageId:'p',activeScriptId:'k'} as unknown as Workspace
+const workspace={packages:[{id:'p',name:'test',scripts:[{id:'k',name:'test.kit',content:stringifyKit(kit),updatedAt:0},{id:'s',name:'reward.js.js',srcKind:'kit',content:'// script',updatedAt:0}],assets:[],assetFolders:[]}],activePackageId:'p',activeScriptId:'k'} as unknown as Workspace
 let graph=await buildCompileGraph(workspace);assert(!graph.diagnostics.some(d=>d.code==='kit_script_missing'))
 workspace.packages[0].scripts[1].srcKind='common';graph=await buildCompileGraph(workspace);assert(graph.diagnostics.some(d=>d.code==='kit_script_missing'))
 workspace.packages[0].scripts[0].content=stringifyKit(legacy);graph=await buildCompileGraph(workspace);assert(graph.diagnostics.some(d=>d.code==='kit_inline_script'))

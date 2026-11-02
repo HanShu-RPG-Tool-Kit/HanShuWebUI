@@ -7,12 +7,12 @@ import { PageTabScroller } from '../../ui/PageTabScroller'
 
 export const PAGE_DRAG_TYPE = 'application/x-hanshu-page'
 
-function pageIcon(doc: FlowDocument): 'shop' | 'kit' | 'item' | 'item-table' | 'python' | 'progress' | 'quest' | 'level' | 'navigator' | 'document' {
+function pageIcon(doc: FlowDocument): 'shop' | 'kit' | 'item' | 'item-table' | 'javascript' | 'progress' | 'quest' | 'level' | 'navigator' | 'document' {
   if (isItemLibraryTableKey(doc.key)) return 'item-table'
   if (isItemDocument(doc)) return 'item'
   if (doc.package === 'shop') return 'shop'
   if (isKitDocument(doc)) return 'kit'
-  if (isScriptDocument(doc)) return 'python'
+  if (isScriptDocument(doc)) return 'javascript'
   if (isSimpleQuestDocument(doc)) return 'progress'
   if (isMultiQuestDocument(doc)) return 'quest'
   if (isLevelDocument(doc)) return 'level'

@@ -8,7 +8,7 @@ import { loginProject } from './project-ui-helpers.mjs'
 const h = await harness({ web: true }); let browser
 try {
   const owner = await h.login(h.credential, 'shop setup')
-  await h.commit(owner.token, [{ path: 'src/script/shop/trade.py', content: 'print("trade")\n' }, { path: 'src/script/shop/example.py', content: 'print("example")\n' }])
+  await h.commit(owner.token, [{ path: 'src/script/shop/trade.js', content: 'print("trade")\n' }, { path: 'src/script/shop/example.js', content: 'print("example")\n' }])
   await h.release(owner.token)
   const account = await h.api(owner.token, '/api/subjects', 'POST', { name: 'shop author', kind: 'account', role: 'editor' })
   browser = await chromium.launch({ headless: true, ...(process.platform === 'win32' ? { channel: 'msedge' } : {}) })
@@ -116,11 +116,11 @@ try {
   await pane.getByLabel('修饰器 1 标识符', { exact: true }).fill('price')
   await pane.getByLabel('修饰器 1 表达式', { exact: true }).fill('x * 2')
   await pane.getByLabel('添加商店脚本', { exact: true }).click()
-  await pane.getByRole('button', { name: 'example.py', exact: true }).click()
+  await pane.getByRole('button', { name: 'example.js', exact: true }).click()
   await pane.getByLabel('添加商店脚本', { exact: true }).click()
-  await pane.getByRole('button', { name: 'trade.py', exact: true }).click()
+  await pane.getByRole('button', { name: 'trade.js', exact: true }).click()
   await pane.getByRole('button', { name: '上移脚本 2', exact: true }).click()
-  assert.ok((await pane.locator('.kit-script-row').first().textContent()).includes('trade.py'))
+  assert.ok((await pane.locator('.kit-script-row').first().textContent()).includes('trade.js'))
   await page.keyboard.press('Control+s')
   let doc
   for (let i = 0; i < 100; i++) {

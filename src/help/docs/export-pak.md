@@ -110,7 +110,7 @@ registerLocaleExportRule({
 | 平面 | 含义 | 默认后缀（`FILE_PLANE`） |
 | --- | --- | --- |
 | `client` | 仅客户端 | `.hs` / `.char`；本地化产物由注册规则决定 |
-| `server` | 仅服务端 | `.py`（`script/<类型>/`）/ `.item`（编成 `.it`）/ `.kit` |
+| `server` | 仅服务端 | `.js`（`script/<类型>/`）/ `.item`（编成 `.it`）/ `.kit` |
 | `shared` | 两端都要 | **`.quest`** / `.nav`；未列出后缀默认 shared |
 
 语言与配音的平面由注册规则决定，不由 `.lang` / `.ogg` 后缀统一决定。例如礼包 / 任务语言表随已导出源进入 shared，combined、client、server 均含译文。
@@ -127,7 +127,7 @@ registerLocaleExportRule({
 | --- | --- |
 | `actors` | 演员模板（`.actor`）：脚本、标签、freezeAi、显示／掉落／对话／服务／声誉；仅 server 平面 |
 | `reputations` | 声誉阵营（`.rep`）：点数阈值、敌对关系与旗帜；仅 server 平面；译文在 `lang_rep` |
-| `script/<类型>` | `common` / `goal` / `kit` / `shop` / `actor` / `player` 脚本；内置脚本先入，工程同类型同名文件覆盖；`common`／`player` 另含有序启动列表 `load.json`（缺失引用为 warning）。启动列表只影响运行时挂载，**不裁剪**未启用脚本——全部 `.py` 仍导出 |
+| `script/<类型>` / `goal_scripts` | `common` / `kit` / `shop` / `actor` / `player` 脚本与单独的 goal 定义目录；内置脚本先入，工程同类型同名文件覆盖；`common`／`player` 另含有序启动列表 `load.json`（缺失引用为 warning）。启动列表只影响运行时挂载，**不裁剪**未启用脚本——全部 `.js` 仍导出 |
 | `hanshu` / `character` / `quest` / `level` / `navigator` / `gift` / `items` / `entities` | 其它源类型（旧工程 `progress` / `story` 目录仍可读） |
 
 脚本资源、内置覆盖与新建模板的完整约定见[脚本资源](#script-resources)。
@@ -179,3 +179,9 @@ PAK 本体是 ZIP。内部条目路径：
 | 裁剪 | 引用 / 平面 | 全量 |
 | `.ref` | → `.ogg` | 原样 |
 | `meta/` | 不进 | 带上 |
+
+## Nashorn 内容脚本
+
+`.js` 脚本导出为 `script/<类型>/<id>.js` （goal 类型为 `goal_scripts/<id>.js`）与同目录 `<id>.hooks.json`。源码中的 import / require / hook / Goal 注解按一行换一行规则转换，强制签名类型在导出时同行剥离，非法方言阻止导出。旁表为 `{version:2,hooks:[{hook,function,line,cancellable,priority,receiveCancelled}],goal:null}`；Goal 目录的 goal 为文件级声明与订阅元数据对象；line 是作者 hook 注解的 1-based 行号。即使没有 hook 也输出空数组；游戏显式按已编译入口核对源码与旁表，原始作者源码则须通过强制类型闸门。
+
+工程 ZIP 保留作者方言源文档，PAK 才包含可执行 JS。全部脚本产物只进入 server / combined PAK，client PAK 不包含脚本或 hook 旁表。旧 Python 内容脚本不会被自动改名后执行；需要显式改写为 JavaScript。

@@ -27,7 +27,7 @@ export const EXPLORER_ICON_KINDS = [
   'group',
   'hanshu',
   'character',
-  'python',
+  'javascript',
   'goal',
   'script-kit',
   'script-shop',
@@ -64,8 +64,8 @@ const PATHS: Record<ExplorerIconKind, string> = {
   group: 'M2 5h6l2 2h12v12H2z M6 13h12',
   hanshu: 'M4 5h7a3 3 0 013 3v12a3 3 0 00-3-3H4z M20 5h-7a3 3 0 00-3 3v12a3 3 0 013-3h7z',
   character: 'M12 12a4 4 0 100-8 4 4 0 000 8z M4 21a8 8 0 0116 0',
-  python: 'M5 2h9l5 5v15H5z M14 2v6h5 M9 13c0 1.1.9 2 2 2h1 M14 13v2a2 2 0 01-2 2 M9 11v-1a2 2 0 012-2h1 M14 11c0-1.1-.9-2-2-2',
-  // 目标定义也是 .py，所以形状差别要够大：脚本是"文件 + 蛇形折线"，这里是"写字板 + 对勾"
+  javascript: 'M5 2h9l5 5v15H5z M14 2v6h5 M9 13c0 1.1.9 2 2 2h1 M14 13v2a2 2 0 01-2 2 M9 11v-1a2 2 0 012-2h1 M14 11c0-1.1-.9-2-2-2',
+  // 目标定义也是 .js，所以形状差别要够大：脚本是"文件 + 蛇形折线"，这里是"写字板 + 对勾"
   goal: 'M8 4h11a2 2 0 012 2v14a2 2 0 01-2 2H8a2 2 0 01-2-2V6a2 2 0 012-2z M5 8H3 M5 12H3 M5 16H3 M11 10l2 2 4-4',
   markdown: 'M5 2h9l5 5v15H5z M14 2v6h5 M8 12h8 M8 16h8 M8 8h3',
   lang: 'M12 21a9 9 0 100-18 9 9 0 000 18z M3 12h18 M12 3c2.5 2.5 3.8 5.5 3.8 9s-1.3 6.5-3.8 9c-2.5-2.5-3.8-5.5-3.8-9S9.5 5.5 12 3z',
@@ -109,7 +109,7 @@ const PATHS: Record<ExplorerIconKind, string> = {
 const BY_EXT: Record<string, ExplorerIconKind> = {
   '.hs': 'hanshu',
   '.char': 'character',
-  '.py': 'python',
+  '.js': 'javascript',
   '.md': 'markdown',
   '.lang': 'lang',
   '.voice': 'voice',
@@ -145,7 +145,7 @@ export function fileIconKind(name: string): ExplorerIconKind {
 /**
  * 源文件（`SourceFile`）的图标。
  *
- * 后缀不够用：**`.py` 的目标定义与普通脚本在磁盘上是两个目录**（`src/script/goal` / `src/script`），
+ * 后缀不够用：**`.js` 的目标定义与普通脚本在磁盘上是两个目录**（`src/script/goal` / `src/script`），
  * 只有 `srcKind` 分得开。光看后缀的话，进度要用的目标定义与普通脚本会画成同一个图标，
  * 而这正是新建菜单要用户分清的那一对。
  */
@@ -153,9 +153,9 @@ export function sourceIconKind(file: {
   name: string
   srcKind?: string | null
 }): ExplorerIconKind {
-  if(getExtension(file.name)==='.py'&&['kit','shop','actor','player'].includes(file.srcKind??''))return `script-${file.srcKind}` as ExplorerIconKind
+  if(getExtension(file.name)==='.js'&&['kit','shop','actor','player'].includes(file.srcKind??''))return `script-${file.srcKind}` as ExplorerIconKind
   if(getExtension(file.name)==='.entity')return 'entity'
-  if (getExtension(file.name) === '.py' && file.srcKind === 'goal') return 'goal'
+  if (getExtension(file.name) === '.js' && file.srcKind === 'goal') return 'goal'
   return fileIconKind(file.name)
 }
 

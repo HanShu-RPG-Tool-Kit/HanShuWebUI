@@ -3,7 +3,7 @@ import Editor, { type OnMount } from "@monaco-editor/react"
 import { AssetPreview } from "../../AssetPreview"
 import { CHAR_THEME_ID, registerCharLanguage } from "../../monaco/charLanguage"
 import { HANSHU_THEME_ID, registerHanshuLanguage } from "../../monaco/hanshuLanguage"
-import { PythonEditor } from "../../monaco/python/PythonEditor"
+import { JavaScriptEditor } from "../../monaco/javascript/JavaScriptEditor"
 import { useProjectSession } from "../../project/projectSession"
 import { scriptType } from "../../scriptResources/types"
 import { useViewFlags } from "../../ui/viewFlags"
@@ -62,8 +62,8 @@ function SecondaryScriptEditor({
 }) {
   const view = useViewFlags(scriptViewFlags)
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null)
-  const python = editorLanguageForFile(name) === "python"
-  const SourceEditor = python ? PythonEditor : Editor
+  const javascript = editorLanguageForFile(name) === "javascript"
+  const SourceEditor = javascript ? JavaScriptEditor : Editor
   const projectId = useProjectSession().binding?.handle.client.snapshot.projectId ?? "unbound"
   useEffect(() => {
     editorRef.current?.updateOptions({ ...scriptEditorAppearance(view), readOnly })
@@ -73,7 +73,7 @@ function SecondaryScriptEditor({
       <div className="editor-pane">
         <SourceEditor
           key={scriptId}
-          {...(python ? { scriptType: scriptType(srcKind), path: `python-source://${projectId}/${scriptId}/${name}` } : {})}
+          {...(javascript ? { scriptType: scriptType(srcKind), path: `javascript-source://${projectId}/${scriptId}/${name}` } : {})}
           height="100%"
           language={editorLanguageForFile(name)}
           theme={isCharFile(name) ? CHAR_THEME_ID : HANSHU_THEME_ID}

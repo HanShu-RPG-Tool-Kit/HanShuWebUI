@@ -17,8 +17,8 @@ function test(name: string, check: () => void) {
 
 test('header parser skips comments and reads widget options', () => {
   const meta = parseGoalHeaderMeta(`
-# note
-'''
+// note
+/*
 {
   "id": "demo:x",
   "labels": { "zh_cn": { "name": "示例" } },
@@ -35,8 +35,11 @@ test('header parser skips comments and reads widget options', () => {
   },
   "localize": { "zh_cn": "模式 {mode}" }
 }
-'''
+*/
 @goal("demo:x")
+@config()
+@state()
+function update_state(instance: GoalInstance): void {}
 `)
   assert.equal(meta?.id, 'demo:x')
   assert.equal(meta?.labels?.zh_cn?.name, '示例')

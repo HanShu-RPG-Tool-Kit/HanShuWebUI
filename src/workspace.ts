@@ -55,7 +55,7 @@ export type FilePlane = 'client' | 'server' | 'shared'
 export const FILE_PLANE: Record<string, FilePlane> = {
   '.hs': 'client',
   '.char': 'client',
-  '.py': 'server',
+  '.js': 'server',
   /** 导出前单进度会编译为多进度；PAK 平面跟引擎通用形态走 shared */
   '.quest': 'shared',
   '.level': 'shared',
@@ -81,8 +81,8 @@ export const STAGEPLAY_WORKSPACE_GROUP_ORDER = ['hanshu', 'character', 'script',
 /** 工作区分组顺序：全部源类型 + 创作资料 `meta` */
 export const WORKSPACE_GROUP_ORDER = [...SOURCE_KIND_ORDER, 'meta'] as const
 
-/** `.py` 的 srcKind 为五种明确的脚本类型 */
-export type PySrcKind = ScriptType
+/** `.js` 的 srcKind 为五种明确的脚本类型 */
+export type JsSrcKind = ScriptType
 
 /** 文件的目标目录（相对包根）；未归类返回 null（留在包根） */
 export function fileDir(name: string): string | null {
@@ -107,7 +107,7 @@ export function srcKindFromDiskPath(relativePath: string): string | undefined {
 
 /**
  * 文件在工程结构里的相对路径。
- * `.py` 按 srcKind 保存到 src/script/<类型>/。
+ * `.js` 按 srcKind 保存到 src/script/<类型>/。
  */
 export function sourceRelativePath(
   name: string,
@@ -118,7 +118,7 @@ export function sourceRelativePath(
     if (!SCRIPT_LOAD_TYPES.has(kind)) throw new Error('启动列表仅用于 common / player 脚本类型')
     return `src/script/${kind}/load.json`
   }
-  if (getExtension(name) === '.py') {
+  if (getExtension(name) === '.js') {
     const kind=scriptType(srcKind)
     return `src/script/${kind}/${name}`
   }
@@ -140,7 +140,7 @@ export function sourceKindOf(
   _srcKind?: string | null,
 ): string {
   if (isMetaFile(name)) return 'meta'
-  if (getExtension(name) === '.py' || isScriptLoadFileName(name)) {
+  if (getExtension(name) === '.js' || isScriptLoadFileName(name)) {
     return 'script'
   }
   const dir = fileDir(name)
@@ -185,7 +185,7 @@ export type SourceFile = {
   content: string
   updatedAt: number
   /**
-   * `.py` 的脚本类型；对应 src/script/<类型>/ 与 PAK script/<类型>/。
+   * `.js` 的脚本类型；对应 src/script/<类型>/ 与 PAK script/<类型>/。
    */
   srcKind?: string
 }
@@ -265,7 +265,7 @@ export function editorLanguageForFile(name: string): string {
   const ext = getExtension(name)
   if (ext === '.md') return 'markdown'
   if (ext === '.char') return 'hanshu-char'
-  if (ext === '.py') return 'python'
+  if (ext === '.js') return 'javascript'
   if (
     ext === '.lang' || ext === '.voice' || ext === '.tts' || ext === '.ttsservice'
     || ext === '.quest' || ext === '.nav' || ext === '.item' || ext === '.entity' || ext === '.kit' || ext === '.shop' || ext === '.actor' || ext === '.rep'

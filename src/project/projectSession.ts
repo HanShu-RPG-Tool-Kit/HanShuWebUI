@@ -40,7 +40,7 @@ export const PROGRESS_UI_STORAGE_KEY = 'hanshu.gameplayUi.v2'
 /** 旧整库草稿；迁入工程后删除 */
 export const LEGACY_PROGRESS_WORKSPACE_KEY = 'hanshu.progressWorkspace.v1'
 
-/** 进度工作区认领的源文件后缀（含目标定义用的 .py） */
+/** 进度工作区认领的源文件后缀（含目标定义用的 .js） */
 export const PROGRESS_SOURCE_EXTS = new Set(
   (Object.keys(GAMEPLAY_CATEGORIES) as GameplayCategoryId[]).flatMap(categoryExtensions),
 )
@@ -159,7 +159,7 @@ export function sourcesToProgressDocuments(
     const folderId =
       typeof fromUi === 'string' && fromUi
         ? fromUi
-        : getExtension(source.name)==='.py'
+        : getExtension(source.name)==='.js'
           ? sectionFolderKey('script',scriptSection(scriptType(source.srcKind)))
           : getExtension(source.name)==='.level'
             ? sectionFolderKey('level','templates')
@@ -209,7 +209,7 @@ export function applyProgressDocumentsToWorkspace(
         }
       }
       if (isScriptLoadDocumentKey(doc.key)) return null
-      const srcKind=getExtension(doc.name)==='.py'?scriptTypeInFolder(folderState,doc.folderId??null):undefined
+      const srcKind=getExtension(doc.name)==='.js'?scriptTypeInFolder(folderState,doc.folderId??null):undefined
       return {
         id: doc.key, detached:doc.detached,
         name: doc.name,

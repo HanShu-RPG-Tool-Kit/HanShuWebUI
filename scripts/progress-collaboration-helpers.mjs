@@ -18,19 +18,21 @@ export const fixtureProgress = () => ({
   ...structuredClone(progress),
   goals: [{ id: 'goal-counter', kind: 'acceptance:counter', config: { target: 10, bonus: 3 } }],
 })
-export const goalDefinition = `@goal("acceptance:counter")
-@config(
-    field("target", "int", default=10, label="目标数量"),
-    field("bonus", "int", default=3, label="额外数量")
-)
-class AcceptanceCounterGoal(BaseGoalPy):
-    pass
+export const goalDefinition = `/* {"params":{"target":{"labels":{"zh_cn":{"name":"目标数量"}}},"bonus":{"labels":{"zh_cn":{"name":"额外数量"}}}}} */
+import GoalInstance from "mchhui.rpgtoolkit.feature.goal.GoalInstance"
+import PlayerTickPost from "net.neoforged.neoforge.event.tick.PlayerTickEvent$Post"
+@goal("acceptance:counter")
+@config(field("target", "int", 10), field("bonus", "int", 3))
+@state()
+@subscribe(PlayerTickPost)
+function on_tick(instance: GoalInstance, event: PlayerTickPost): void {}
+function update_state(instance: GoalInstance): void {}
 `
 export async function seedProgress(h, token) {
   try {
     const receipt = await h.commit(token, [
       { path: progressPath, content: JSON.stringify(fixtureProgress()) },
-      { path: 'src/script/goal/acceptance_counter.py', content: goalDefinition },
+      { path: 'src/script/goal/acceptance_counter.js', content: goalDefinition },
     ])
     assert.equal(receipt.status, 'committed')
   } finally { await h.release(token) }

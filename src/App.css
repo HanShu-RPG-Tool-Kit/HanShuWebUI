@@ -1655,7 +1655,7 @@ body.is-resizing .monaco-editor {
 .explorer-icon.is-group { color: #d4b47d; }
 .explorer-icon.is-hanshu { color: #8eb0d4; }
 .explorer-icon.is-character { color: #c49bb8; }
-.explorer-icon.is-python { color: #7eb8a2; }
+.explorer-icon.is-javascript { color: #7eb8a2; }
 .explorer-icon.is-markdown { color: #a8a8a8; }
 .explorer-icon.is-lang { color: #7aaf9a; }
 .explorer-icon.is-voice { color: #c48a9a; }

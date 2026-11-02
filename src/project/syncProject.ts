@@ -107,7 +107,7 @@ export async function synchronizeProject(client: ProjectClient): Promise<string>
   const paths=[...remote.keys()]
   for(const [path,value] of remote) {
     if(value.version)client.baseline.set(path,value.version);else client.baseline.delete(path)
-    if(value.blob) {client.originals.set(path,{version:value.version!,data:value.blob});if(/\.(hs|py|md|json|lang|ref|voice|char|item|kit|progress|hflow|nav|tts|ttsservice)$/i.test(path))client.texts.set(path,await value.blob.text())}
+    if(value.blob) {client.originals.set(path,{version:value.version!,data:value.blob});if(/\.(hs|js|md|json|lang|ref|voice|char|item|kit|progress|hflow|nav|tts|ttsservice)$/i.test(path))client.texts.set(path,await value.blob.text())}
     else {client.originals.delete(path);client.texts.delete(path)}
     if(path.startsWith('assets/')) {
       client.assetEpochs.set(path,assetCacheEpoch(client.assetPackageId,path))

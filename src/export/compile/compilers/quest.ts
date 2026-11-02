@@ -31,7 +31,7 @@ export const questCompiler: FileCompiler = {
       try {
         const flow = parseFlow(file.content)
         const scripts = ctx.index.workspace.packages.flatMap(pkg => pkg.scripts).filter(script => !script.id.startsWith('builtin:'))
-        const sources = [...effectiveBuiltinScripts(scripts).filter(script => script.type === 'goal').map(script => ({ name: script.name, content: script.source })), ...scripts.filter(script => script.srcKind === 'goal' && script.name.endsWith('.py'))]
+        const sources = [...effectiveBuiltinScripts(scripts).filter(script => script.type === 'goal').map(script => ({ name: script.name, content: script.source })), ...scripts.filter(script => script.srcKind === 'goal' && script.name.endsWith('.js'))]
         const definitions = sources.flatMap(script => parseGoalDefinitionsFromSource(script.content, { sourceName: script.name, sourceKey: null }))
         const seen = new Map<string, typeof definitions[number]>()
         for (const definition of definitions) {

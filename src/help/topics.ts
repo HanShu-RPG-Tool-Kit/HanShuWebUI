@@ -1,7 +1,7 @@
 import actorGuide from './docs/actor-guide.md?raw'
 import reputationGuide from './docs/reputation-guide.md?raw'
 import resourceOrganization from './docs/resource-organization.md?raw'
-import pythonLanguage from './docs/python-language.md?raw'
+import javascriptLanguage from './docs/javascript-language.md?raw'
 import scriptResources from './docs/script-resources.md?raw'
 import entityGuide from './docs/entity-guide.md?raw'
 import nodeEditor from './docs/node-editor.md?raw'
@@ -40,7 +40,7 @@ import about from './docs/about.md?raw'
 /** 帮助条目 id；正文用 `[标题](#topic-id)` 互链 */
 export type HelpTopicId =
   | 'script-resources'
-  | 'python-language'
+  | 'javascript-language'
   | 'collaboration-guide'
   | 'collaboration-service'
   | 'node-editor'
@@ -180,7 +180,7 @@ export const HELP_TOPICS: HelpTopic[] = [
     inDocs: true,
     body: itemGuide,
   },
-  {id:'python-language',title:'Python 编辑器与语言服务',group:'进度',audience:'both',inDocs:true,body:pythonLanguage},
+  {id:'javascript-language',title:'JavaScript 编辑器与语言服务',group:'进度',audience:'both',inDocs:true,body:javascriptLanguage},
   {id:'script-resources',title:'脚本资源：分类、内置与模板',group:'进度',audience:'both',inDocs:true,body:scriptResources},
   {
     id: 'entity-guide',

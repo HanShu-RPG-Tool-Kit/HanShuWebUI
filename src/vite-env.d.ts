@@ -12,7 +12,7 @@ declare module '*.md?raw' {
   export default content
 }
 
-declare module '*.py?raw' {
+declare module '*.js?raw' {
   const content: string
   export default content
 }

@@ -195,7 +195,7 @@ async function readPackageFromDirectory(
     assertCanonicalSourcePath(path)
     if(/^src\/script\/[^/]+\/load\.json$/i.test(path)){
       if(!/^src\/script\/(common|player)\/load\.json$/i.test(path))throw new Error(`启动列表仅允许 src/script/common/load.json 或 src/script/player/load.json，收到：${path}`)
-    } else if(name.toLowerCase().endsWith('.py')&&!/^src\/script\/(common|goal|kit|shop|actor|player)\/[^/]+\.py$/i.test(path)){
+    } else if(name.toLowerCase().endsWith('.js')&&!/^src\/script\/(common|goal|kit|shop|actor|player)\/[^/]+\.js$/i.test(path)){
       throw new Error(`脚本目录需要调整：${path}。请放入 src/script/<common|goal|kit|shop|actor|player>/。`)
     }
     if (seen.has(resourceNameKey(path))) throw new Error(`存在重名资源路径：${path}`)

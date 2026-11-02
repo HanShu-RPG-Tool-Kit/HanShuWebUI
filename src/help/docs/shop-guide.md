@@ -80,11 +80,11 @@ Mod 默认接入对话已读和表达式；任务状态由宿主通过 `ShopServ
 
 `params`、`modifiers` 使用 kit 的声明格式和编辑器，商店默认均为空，不带礼包专属参数。预览值仅留在编辑器会话中，不写入模板。数量可通过 ƒ 绑定修饰器。
 
-`script` 是有序 `{ref}` 数组，专属类型为**商店脚本**，工程位于 `src/script/shop/`，PAK 位于 `script/shop/`。`ref` 为文件名去掉最后一个 `.py` 的 ID，不能传路径或从 common/kit 等其他类型回退查找；ID 本身的点号不再去除。同一引用不重复绑定，WebUI 支持搜索选择、打开和排序，公共库通过 `from common...` 导入。
+`script` 是有序 `{ref}` 数组，专属类型为**商店脚本**，工程位于 `src/script/shop/`，PAK 位于 `script/shop/`。`ref` 为文件名去掉最后一个 `.js` 的 ID，不能传路径或从 common/kit 等其他类型回退查找；ID 本身的点号不再去除。同一引用不重复绑定，WebUI 支持搜索选择、打开和排序，公共库通过 `require library from "id"` 导入。
 
-Mod 在交易预提交阶段按涉及模板引用及其脚本列表顺序执行，注入 `shop` 与 `player`。`shop.id/tags`、`param(id)`、`mod(id,x)`、`expr(source)`（数值）、`condition(source)`（布尔）、`entry(id)`、`entries(tag=None)` 在当前模板引用作用域内工作。条目句柄提供 `id/tags/quantity/delta/current/initialCapacity/maxCapacity`；`adjustDelta(amount)` 暂存正负调整。默认交易增量已在脚本前暂存，脚本可观察到本单变更；无限主体不允许调整 delta。
+Mod 在交易预提交阶段按涉及模板引用及其脚本列表顺序执行，注入 `shop` 与 `player`。`shop.id/tags`、`param(id)`、`mod(id,x)`、`expr(source)`（数值）、`condition(source)`（布尔）、`entry(id)`、`entries(tag)`（省略 tag 取全部条目） 在当前模板引用作用域内工作。条目句柄提供 `id/tags/quantity/delta/current/initialCapacity/maxCapacity`；`adjustDelta(amount)` 暂存正负调整。默认交易增量已在脚本前暂存，脚本可观察到本单变更；无限主体不允许调整 delta。
 
-脚本抛错时引擎不提交本单物品与额度计划。脚本仍是可信 Python，直接通过裸 `player` 或其他 Java API 产生的外部副作用无法自动回滚；应通过暂存句柄维护额度，不能自行扣物、写主体或把副作用误当成交易的一部分。实际恢复与持久化契约以 Mod 商店文档为准。
+脚本抛错时引擎不提交本单物品与额度计划。脚本仍是可信 JavaScript，直接通过裸 `player` 或其他 Java API 产生的外部副作用无法自动回滚；应通过暂存句柄维护额度，不能自行扣物、写主体或把副作用误当成交易的一部分。实际恢复与持久化契约以 Mod 商店文档为准。
 
 交易外补货或主动关闭可由经过宿主授权的服务端代码调用 `ShopService.adjustDelta(server, subject, templateSourceId, entryId, amount)`。交易脚本运行期间禁止走这个立即持久化入口，必须使用当前 `shop.entry(...).adjustDelta(...)` 暂存句柄。
 

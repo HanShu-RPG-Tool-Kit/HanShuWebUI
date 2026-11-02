@@ -41,7 +41,7 @@ const h=await harness(true);let browser
 try{
  const owner=await h.login(h.credential,'organization owner')
  const account=await h.api(owner.token,'/api/subjects','POST',{name:'Editor',kind:'human',role:'editor'})
- await h.commit(owner.token,[{path:'src/script/common/shared.py',content:'pass'},{path:'src/script/kit/shared.py',content:'pass'},{path:'meta/explorer.json',content:JSON.stringify({version:1,folders:[{key:'shared-folder',name:'共享章节',package:'quest',parentId:null}],placements:{'src/quest/example.quest':'shared-folder'}})}]);await h.release(owner.token)
+ await h.commit(owner.token,[{path:'src/script/common/shared.js',content:'pass'},{path:'src/script/kit/shared.js',content:'pass'},{path:'meta/explorer.json',content:JSON.stringify({version:1,folders:[{key:'shared-folder',name:'共享章节',package:'quest',parentId:null}],placements:{'src/quest/example.quest':'shared-folder'}})}]);await h.release(owner.token)
  browser=await chromium.launch({headless:true,...process.platform==='win32'?{channel:'msedge'}:{}})
  const contextA=await browser.newContext(),contextB=await browser.newContext()
  const a=await contextA.newPage(),b=await contextB.newPage()
@@ -49,8 +49,8 @@ try{
  for(const [page,name]of [[a,'author A'],[b,'author B']]){await loginProject(page,h.base,account.credential,name);await page.getByRole('tab',{name:'游戏性',exact:true}).click()}
  await a.getByRole('tab',{name:'剧本',exact:true}).click()
  for(const kind of ['common','kit'])assert.equal(await a.locator(`.app-workspace-pane.active .explorer-kind-row[title="src/script/${kind}"]`).count(),1)
- assert.equal(await a.locator('.app-workspace-pane.active button[title^="src/script/common/shared.py"]').count(),1)
- assert.equal(await a.locator('.app-workspace-pane.active button[title^="src/script/kit/shared.py"]').count(),1)
+ assert.equal(await a.locator('.app-workspace-pane.active button[title^="src/script/common/shared.js"]').count(),1)
+ assert.equal(await a.locator('.app-workspace-pane.active button[title^="src/script/kit/shared.js"]').count(),1)
  await a.getByRole('tab',{name:'游戏性',exact:true}).click()
  const folder=page=>page.locator('.app-workspace-pane.active [role=treeitem][title="共享章节"]')
  await folder(a).waitFor();await folder(b).waitFor()
@@ -157,8 +157,8 @@ try{
  const stale=(await h.files(owner.token)).entries.find(e=>e.path==='meta/explorer.json').version
  meta.folders[0].name='服务器新版本';await h.commit(owner.token,[{path:'meta/explorer.json',content:JSON.stringify(meta)}]);await h.release(owner.token)
  const peer=await h.login(account.credential,'CAS peer')
- await h.commit(peer.token,[{path:'meta/explorer.json',content:JSON.stringify({...meta,folders:[]}),version:stale},{path:'src/script/common/should-not-exist.py',content:'pass'}],409);await h.release(peer.token)
- assert(!(await h.files(owner.token)).entries.some(e=>e.path.endsWith('should-not-exist.py')))
+ await h.commit(peer.token,[{path:'meta/explorer.json',content:JSON.stringify({...meta,folders:[]}),version:stale},{path:'src/script/common/should-not-exist.js',content:'pass'}],409);await h.release(peer.token)
+ assert(!(await h.files(owner.token)).entries.some(e=>e.path.endsWith('should-not-exist.js')))
  const viewerAccount=await h.api(owner.token,'/api/subjects','POST',{name:'Reader',kind:'human',role:'viewer'}),viewer=await h.login(viewerAccount.credential,'reader')
  await h.api(viewer.token,'/api/files/leases','POST',{paths:['meta/explorer.json']},403)
  // Remote deletion resets the cached version; the next directory edit recreates metadata with a null base.

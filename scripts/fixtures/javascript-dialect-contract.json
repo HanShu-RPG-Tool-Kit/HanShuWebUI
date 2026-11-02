@@ -1,0 +1,678 @@
+[
+  {
+    "name": "plain-crlf",
+    "source": "var x = 1;\r\n// import text\r\n",
+    "valid": true,
+    "output": "var x = 1;\r\n// import text\r\n",
+    "hooks": [],
+    "goal": null
+  },
+  {
+    "name": "java-import",
+    "source": "import Component from \"net.minecraft.network.chat.Component\"\n",
+    "valid": true,
+    "output": "var Component = Java.type(\"net.minecraft.network.chat.Component\");\n",
+    "hooks": [],
+    "goal": null
+  },
+  {
+    "name": "common-unicode-space",
+    "source": "require fx from \"战斗 特效\"\n",
+    "valid": true,
+    "output": "var fx = __require(\"战斗 特效\");\n",
+    "hooks": [],
+    "goal": null
+  },
+  {
+    "name": "indented-hook",
+    "source": "  @hook(\"tick\");\r\n  function on_tick(event: any, board: any): void { board.n = 1; }\r\n",
+    "valid": true,
+    "output": "  //@hook(\"tick\");\r\n  function on_tick(event, board) { board.n = 1; }\r\n",
+    "hooks": [
+      {
+        "hook": "tick",
+        "function": "on_tick",
+        "line": 1,
+        "cancellable": null,
+        "priority": "NORMAL",
+        "receiveCancelled": false
+      }
+    ],
+    "goal": null
+  },
+  {
+    "name": "options-trailing-comma",
+    "source": "@hook(\"hit\", {priority:\"HIGH\", receiveCancelled:true, cancellable:true,})\nfunction hit(event: any, board: any): void {}",
+    "valid": true,
+    "output": "//@hook(\"hit\", {priority:\"HIGH\", receiveCancelled:true, cancellable:true,})\nfunction hit(event, board) {}",
+    "hooks": [
+      {
+        "hook": "hit",
+        "function": "hit",
+        "line": 1,
+        "cancellable": true,
+        "priority": "HIGH",
+        "receiveCancelled": true
+      }
+    ],
+    "goal": null
+  },
+  {
+    "name": "comment-prose",
+    "source": "/* import Bad from \"x\"\nrequire(\"x\"); @hook(\"bad\") */\nvar text = \"loadWithNewGlobal import @hook\";\n",
+    "valid": true,
+    "output": "/* import Bad from \"x\"\nrequire(\"x\"); @hook(\"bad\") */\nvar text = \"loadWithNewGlobal import @hook\";\n",
+    "hooks": [],
+    "goal": null
+  },
+  {
+    "name": "escaped-newline-string",
+    "source": "var text = \"one\\\ntwo\";\n@hook(\"tick\")\nfunction on_tick(event: any, board: any): void {}",
+    "valid": true,
+    "output": "var text = \"one\\\ntwo\";\n//@hook(\"tick\")\nfunction on_tick(event, board) {}",
+    "hooks": [
+      {
+        "hook": "tick",
+        "function": "on_tick",
+        "line": 3,
+        "cancellable": null,
+        "priority": "NORMAL",
+        "receiveCancelled": false
+      }
+    ],
+    "goal": null
+  },
+  {
+    "name": "module-import",
+    "source": "import {X} from \"java.util.List\"",
+    "valid": false
+  },
+  {
+    "name": "relative-import",
+    "source": "import X from \"./fx\"",
+    "valid": false
+  },
+  {
+    "name": "fqcn-require",
+    "source": "require x from \"java.util.List\"",
+    "valid": false
+  },
+  {
+    "name": "require-path",
+    "source": "require x from \"../fx\"",
+    "valid": false
+  },
+  {
+    "name": "call-require",
+    "source": "var x = require(\"fx\");",
+    "valid": false
+  },
+  {
+    "name": "builtin-load",
+    "source": "load(\"x\");",
+    "valid": false
+  },
+  {
+    "name": "load-new-global",
+    "source": "loadWithNewGlobal(\"x\");",
+    "valid": false
+  },
+  {
+    "name": "multiline-import",
+    "source": "import X\nfrom \"java.util.List\"",
+    "valid": false
+  },
+  {
+    "name": "multiline-hook",
+    "source": "@hook(\n\"tick\")\nfunction on_tick(event: any, board: any): void {}",
+    "valid": false
+  },
+  {
+    "name": "nested-hook",
+    "source": "function outer(): void {\n@hook(\"tick\")\nfunction on_tick(event: any, board: any): void {}\n}",
+    "valid": false
+  },
+  {
+    "name": "nonadjacent-hook",
+    "source": "@hook(\"tick\")\n\nfunction on_tick(event: any, board: any): void {}",
+    "valid": false
+  },
+  {
+    "name": "bad-arity",
+    "source": "@hook(\"tick\")\nfunction on_tick(event: any): void {}",
+    "valid": false
+  },
+  {
+    "name": "duplicate-option",
+    "source": "@hook(\"tick\",{priority:\"HIGH\",priority:\"LOW\"})\nfunction on_tick(event: any, board: any): void {}",
+    "valid": false
+  },
+  {
+    "name": "invalid-priority",
+    "source": "@hook(\"tick\",{priority:\"FIRST\"})\nfunction on_tick(event: any, board: any): void {}",
+    "valid": false
+  },
+  {
+    "name": "duplicate-handler",
+    "source": "@hook(\"tick\")\nfunction on_tick(event: any, board: any): void {}\n@hook(\"join\")\nfunction on_tick(event: any, board: any): void {}",
+    "valid": false
+  },
+  {
+    "name": "regular-expression-not-dialect",
+    "source": "var pattern = /load|require|[{]/;\n@hook(\"tick\")\nfunction on_tick(event: any, board: any): void { board.n = 8 / 2; }",
+    "valid": true,
+    "output": "var pattern = /load|require|[{]/;\n//@hook(\"tick\")\nfunction on_tick(event, board) { board.n = 8 / 2; }",
+    "hooks": [
+      {
+        "hook": "tick",
+        "function": "on_tick",
+        "line": 2,
+        "cancellable": null,
+        "priority": "NORMAL",
+        "receiveCancelled": false
+      }
+    ],
+    "goal": null
+  },
+  {
+    "name": "es6-let",
+    "source": "let x = 1;",
+    "valid": false
+  },
+  {
+    "name": "es6-const",
+    "source": "const x = 1;",
+    "valid": false
+  },
+  {
+    "name": "es6-arrow",
+    "source": "var x = () => 1;",
+    "valid": false
+  },
+  {
+    "name": "es6-template",
+    "source": "var x = `template`;",
+    "valid": false
+  },
+  {
+    "name": "es6-class",
+    "source": "class Example {}",
+    "valid": false
+  },
+  {
+    "name": "es6-generator",
+    "source": "function* next() { yield 1; }",
+    "valid": false
+  },
+  {
+    "name": "es6-default-parameter",
+    "source": "function f(x = 1) { return x; }",
+    "valid": false
+  },
+  {
+    "name": "es6-destructuring",
+    "source": "var [x] = [1];",
+    "valid": false
+  },
+  {
+    "name": "es6-for-of",
+    "source": "for (var item of [1]) {}",
+    "valid": false
+  },
+  {
+    "name": "commented-exported-hook",
+    "source": "/* disabled example\n//@hook(\"tick\")\nfunction tick(event, board) {}\n*/\nvar x=1;",
+    "valid": true,
+    "output": "/* disabled example\n//@hook(\"tick\")\nfunction tick(event, board) {}\n*/\nvar x=1;",
+    "hooks": [],
+    "goal": null
+  },
+  {
+    "name": "java-load-member",
+    "source": "var target = {};\ntarget.load(\"state\");\ntarget.require(\"value\");",
+    "valid": true,
+    "output": "var target = {};\ntarget.load(\"state\");\ntarget.require(\"value\");",
+    "hooks": [],
+    "goal": null
+  },
+  {
+    "name": "regex-after-condition",
+    "source": "if (true) /load|require/.test(\"load\");",
+    "valid": true,
+    "output": "if (true) /load|require/.test(\"load\");",
+    "hooks": [],
+    "goal": null
+  },
+  {
+    "name": "author-disabled-hook",
+    "source": "//@hook(\"tick\")\nfunction tick(event: any, board: any): void { board.count = 1; }",
+    "valid": true,
+    "output": "//@hook(\"tick\")\nfunction tick(event, board) { board.count = 1; }",
+    "hooks": [],
+    "goal": null
+  },
+  {
+    "name": "typed-return-array",
+    "source": "function echo(values: java.lang.String[]): string[] { return values; }",
+    "valid": true,
+    "output": "function echo(values) { return values; }",
+    "hooks": [],
+    "goal": null,
+    "editorOutput": "function echo(values: java.lang.String[]): string[] { return values; }"
+  },
+  {
+    "name": "typed-zero-arguments",
+    "source": "function value(): number { return 1; }",
+    "valid": true,
+    "output": "function value() { return 1; }",
+    "hooks": [],
+    "goal": null,
+    "editorOutput": "function value(): number { return 1; }"
+  },
+  {
+    "name": "typed-function-keeps-object-colon",
+    "source": "function value(input: any): any { var pair={key: input}; return pair; }",
+    "valid": true,
+    "output": "function value(input) { var pair={key: input}; return pair; }",
+    "hooks": [],
+    "goal": null
+  },
+  {
+    "name": "nested-es5-function",
+    "source": "function outer(input: number): number { function inner(x) { return x; } return inner(input); }",
+    "valid": true,
+    "output": "function outer(input) { function inner(x) { return x; } return inner(input); }",
+    "hooks": [],
+    "goal": null
+  },
+  {
+    "name": "common-es5-function-expression",
+    "source": "exports.double = function(value) { return value * 2; };",
+    "valid": true,
+    "output": "exports.double = function(value) { return value * 2; };",
+    "hooks": [],
+    "goal": null
+  },
+  {
+    "name": "two-declarations-one-line",
+    "source": "function a(x: number): number {return x;} function b(): void {}",
+    "valid": true,
+    "output": "function a(x) {return x;} function b() {}",
+    "hooks": [],
+    "goal": null
+  },
+  {
+    "name": "goal-metadata-roundtrip",
+    "source": "import Tick from \"example.events.Tick\"\n@goal(\"example:counter\", {requires_delivery:true})\n@config(field(\"count\", \"int\", 2), field(\"target\", \"string\"), field(\"flag\", \"bool\", false, {required:true}))\n// Metadata block comment\n@state(field(\"have\", \"int\", 0))\n@subscribe(Tick, {priority:\"HIGH\", receiveCancelled:true})\nfunction on_tick(instance: GoalInstance, event: Tick): void { st.have += 1; }\nfunction update_state(instance: GoalInstance): void { update_satisfied_state(instance, st.have >= cfg.count); }\nfunction deliver(instance: GoalInstance, context: GoalDeliverContext): boolean { return true; }\nfunction localize(instance: GoalInstance, locale: string): string { return \"Count \" + st.have; }\n",
+    "valid": true,
+    "output": "var Tick = Java.type(\"example.events.Tick\");\n//@goal(\"example:counter\", {requires_delivery:true})\n//@config(field(\"count\", \"int\", 2), field(\"target\", \"string\"), field(\"flag\", \"bool\", false, {required:true}))\n// Metadata block comment\n//@state(field(\"have\", \"int\", 0))\n//@subscribe(Tick, {priority:\"HIGH\", receiveCancelled:true})\nfunction on_tick(instance, event) { st.have += 1; }\nfunction update_state(instance) { update_satisfied_state(instance, st.have >= cfg.count); }\nfunction deliver(instance, context) { return true; }\nfunction localize(instance, locale) { return \"Count \" + st.have; }\n",
+    "hooks": [],
+    "goal": {
+      "id": "example:counter",
+      "line": 2,
+      "configLine": 3,
+      "stateLine": 5,
+      "config": [
+        {
+          "name": "count",
+          "type": "int",
+          "required": false,
+          "defaultValue": 2
+        },
+        {
+          "name": "target",
+          "type": "string",
+          "required": true,
+          "defaultValue": null
+        },
+        {
+          "name": "flag",
+          "type": "bool",
+          "required": true,
+          "defaultValue": false
+        }
+      ],
+      "state": [
+        {
+          "name": "have",
+          "type": "int",
+          "required": false,
+          "defaultValue": 0
+        }
+      ],
+      "handlers": [
+        {
+          "event": "example.events.Tick",
+          "function": "on_tick",
+          "line": 6,
+          "priority": "HIGH",
+          "receiveCancelled": true
+        }
+      ],
+      "requiresDelivery": true
+    }
+  },
+  {
+    "name": "goal-crlf-roundtrip",
+    "source": "import Tick from \"example.events.Tick\"\r\n@goal(\"example:counter\", {requires_delivery:true})\r\n@config(field(\"count\", \"int\", 2), field(\"target\", \"string\"), field(\"flag\", \"bool\", false, {required:true}))\r\n// Metadata block comment\r\n@state(field(\"have\", \"int\", 0))\r\n@subscribe(Tick, {priority:\"HIGH\", receiveCancelled:true})\r\nfunction on_tick(instance: GoalInstance, event: Tick): void { st.have += 1; }\r\nfunction update_state(instance: GoalInstance): void { update_satisfied_state(instance, st.have >= cfg.count); }\r\nfunction deliver(instance: GoalInstance, context: GoalDeliverContext): boolean { return true; }\r\nfunction localize(instance: GoalInstance, locale: string): string { return \"Count \" + st.have; }\r\n",
+    "valid": true,
+    "output": "var Tick = Java.type(\"example.events.Tick\");\r\n//@goal(\"example:counter\", {requires_delivery:true})\r\n//@config(field(\"count\", \"int\", 2), field(\"target\", \"string\"), field(\"flag\", \"bool\", false, {required:true}))\r\n// Metadata block comment\r\n//@state(field(\"have\", \"int\", 0))\r\n//@subscribe(Tick, {priority:\"HIGH\", receiveCancelled:true})\r\nfunction on_tick(instance, event) { st.have += 1; }\r\nfunction update_state(instance) { update_satisfied_state(instance, st.have >= cfg.count); }\r\nfunction deliver(instance, context) { return true; }\r\nfunction localize(instance, locale) { return \"Count \" + st.have; }\r\n",
+    "hooks": [],
+    "goal": {
+      "id": "example:counter",
+      "line": 2,
+      "configLine": 3,
+      "stateLine": 5,
+      "config": [
+        {
+          "name": "count",
+          "type": "int",
+          "required": false,
+          "defaultValue": 2
+        },
+        {
+          "name": "target",
+          "type": "string",
+          "required": true,
+          "defaultValue": null
+        },
+        {
+          "name": "flag",
+          "type": "bool",
+          "required": true,
+          "defaultValue": false
+        }
+      ],
+      "state": [
+        {
+          "name": "have",
+          "type": "int",
+          "required": false,
+          "defaultValue": 0
+        }
+      ],
+      "handlers": [
+        {
+          "event": "example.events.Tick",
+          "function": "on_tick",
+          "line": 6,
+          "priority": "HIGH",
+          "receiveCancelled": true
+        }
+      ],
+      "requiresDelivery": true
+    }
+  },
+  {
+    "name": "goal-spacing-and-comment",
+    "source": "import Tick from \"example.events.Tick\"\n@goal (\"example:counter\", {requires_delivery:true})\n@config(field(\"count\", \"int\", 2), field(\"target\", \"string\"), field(\"flag\", \"bool\", false, {required:true}))\n// Metadata block comment\n@state(field(\"have\", \"int\", 0)) // comment (not args)\n@subscribe(Tick, {priority:\"HIGH\", receiveCancelled:true})\nfunction on_tick(instance: GoalInstance, event: Tick): void { st.have += 1; }\nfunction update_state(instance: GoalInstance): void { update_satisfied_state(instance, st.have >= cfg.count); }\nfunction deliver(instance: GoalInstance, context: GoalDeliverContext): boolean { return true; }\nfunction localize(instance: GoalInstance, locale: string): string { return \"Count \" + st.have; }\n",
+    "valid": true,
+    "output": "var Tick = Java.type(\"example.events.Tick\");\n//@goal (\"example:counter\", {requires_delivery:true})\n//@config(field(\"count\", \"int\", 2), field(\"target\", \"string\"), field(\"flag\", \"bool\", false, {required:true}))\n// Metadata block comment\n//@state(field(\"have\", \"int\", 0)) // comment (not args)\n//@subscribe(Tick, {priority:\"HIGH\", receiveCancelled:true})\nfunction on_tick(instance, event) { st.have += 1; }\nfunction update_state(instance) { update_satisfied_state(instance, st.have >= cfg.count); }\nfunction deliver(instance, context) { return true; }\nfunction localize(instance, locale) { return \"Count \" + st.have; }\n",
+    "hooks": [],
+    "goal": {
+      "id": "example:counter",
+      "line": 2,
+      "configLine": 3,
+      "stateLine": 5,
+      "config": [
+        {
+          "name": "count",
+          "type": "int",
+          "required": false,
+          "defaultValue": 2
+        },
+        {
+          "name": "target",
+          "type": "string",
+          "required": true,
+          "defaultValue": null
+        },
+        {
+          "name": "flag",
+          "type": "bool",
+          "required": true,
+          "defaultValue": false
+        }
+      ],
+      "state": [
+        {
+          "name": "have",
+          "type": "int",
+          "required": false,
+          "defaultValue": 0
+        }
+      ],
+      "handlers": [
+        {
+          "event": "example.events.Tick",
+          "function": "on_tick",
+          "line": 6,
+          "priority": "HIGH",
+          "receiveCancelled": true
+        }
+      ],
+      "requiresDelivery": true
+    }
+  },
+  {
+    "name": "missing-parameter-type",
+    "source": "function value(x): number {return x;}",
+    "valid": false
+  },
+  {
+    "name": "missing-return-type",
+    "source": "function value(x: number) {return x;}",
+    "valid": false
+  },
+  {
+    "name": "missing-all-types",
+    "source": "function value(x) {return x;}",
+    "valid": false
+  },
+  {
+    "name": "optional-parameter",
+    "source": "function value(x?: number): number {return x;}",
+    "valid": false
+  },
+  {
+    "name": "generic-type",
+    "source": "function value(x: List<string>): number {return 1;}",
+    "valid": false
+  },
+  {
+    "name": "union-type",
+    "source": "function value(x: string | number): string {return String(x);}",
+    "valid": false
+  },
+  {
+    "name": "typed-variable",
+    "source": "var x: number = 1;",
+    "valid": false
+  },
+  {
+    "name": "typed-function-expression",
+    "source": "var fn = function named(x: number): number { return x; };",
+    "valid": false
+  },
+  {
+    "name": "typed-nested-function",
+    "source": "function outer(): void { function inner(x: number): void {} }",
+    "valid": false
+  },
+  {
+    "name": "multiline-signature",
+    "source": "function value(\n x: number\n): number {return x;}",
+    "valid": false
+  },
+  {
+    "name": "interface-declaration",
+    "source": "interface Value { x: number; }",
+    "valid": false
+  },
+  {
+    "name": "type-alias",
+    "source": "type Value = number;",
+    "valid": false
+  },
+  {
+    "name": "field-outside-metadata",
+    "source": "var value=field(\"x\",\"int\",1);",
+    "valid": false
+  },
+  {
+    "name": "goal-missing-state",
+    "source": "import Tick from \"example.events.Tick\"\n@goal(\"example:counter\", {requires_delivery:true})\n@config(field(\"count\", \"int\", 2), field(\"target\", \"string\"), field(\"flag\", \"bool\", false, {required:true}))\n// Metadata block comment\n@subscribe(Tick, {priority:\"HIGH\", receiveCancelled:true})\nfunction on_tick(instance: GoalInstance, event: Tick): void { st.have += 1; }\nfunction update_state(instance: GoalInstance): void { update_satisfied_state(instance, st.have >= cfg.count); }\nfunction deliver(instance: GoalInstance, context: GoalDeliverContext): boolean { return true; }\nfunction localize(instance: GoalInstance, locale: string): string { return \"Count \" + st.have; }\n",
+    "valid": false
+  },
+  {
+    "name": "goal-wrong-order",
+    "source": "import Tick from \"example.events.Tick\"\n@goal(\"example:counter\", {requires_delivery:true})\n@state(field(\"count\", \"int\", 2), field(\"target\", \"string\"), field(\"flag\", \"bool\", false, {required:true}))\n// Metadata block comment\n@config(field(\"have\", \"int\", 0))\n@subscribe(Tick, {priority:\"HIGH\", receiveCancelled:true})\nfunction on_tick(instance: GoalInstance, event: Tick): void { st.have += 1; }\nfunction update_state(instance: GoalInstance): void { update_satisfied_state(instance, st.have >= cfg.count); }\nfunction deliver(instance: GoalInstance, context: GoalDeliverContext): boolean { return true; }\nfunction localize(instance: GoalInstance, locale: string): string { return \"Count \" + st.have; }\n",
+    "valid": false
+  },
+  {
+    "name": "goal-business-before-block",
+    "source": "import Tick from \"example.events.Tick\"\nvar before=1;\n@goal(\"example:counter\", {requires_delivery:true})\n@config(field(\"count\", \"int\", 2), field(\"target\", \"string\"), field(\"flag\", \"bool\", false, {required:true}))\n// Metadata block comment\n@state(field(\"have\", \"int\", 0))\n@subscribe(Tick, {priority:\"HIGH\", receiveCancelled:true})\nfunction on_tick(instance: GoalInstance, event: Tick): void { st.have += 1; }\nfunction update_state(instance: GoalInstance): void { update_satisfied_state(instance, st.have >= cfg.count); }\nfunction deliver(instance: GoalInstance, context: GoalDeliverContext): boolean { return true; }\nfunction localize(instance: GoalInstance, locale: string): string { return \"Count \" + st.have; }\n",
+    "valid": false
+  },
+  {
+    "name": "goal-import-between-header",
+    "source": "import Tick from \"example.events.Tick\"\n@goal(\"example:counter\", {requires_delivery:true})\nimport Other from \"example.Other\"\n@config(field(\"count\", \"int\", 2), field(\"target\", \"string\"), field(\"flag\", \"bool\", false, {required:true}))\n// Metadata block comment\n@state(field(\"have\", \"int\", 0))\n@subscribe(Tick, {priority:\"HIGH\", receiveCancelled:true})\nfunction on_tick(instance: GoalInstance, event: Tick): void { st.have += 1; }\nfunction update_state(instance: GoalInstance): void { update_satisfied_state(instance, st.have >= cfg.count); }\nfunction deliver(instance: GoalInstance, context: GoalDeliverContext): boolean { return true; }\nfunction localize(instance: GoalInstance, locale: string): string { return \"Count \" + st.have; }\n",
+    "valid": false
+  },
+  {
+    "name": "goal-block-comment-in-header",
+    "source": "import Tick from \"example.events.Tick\"\n@goal(\"example:counter\", {requires_delivery:true})\n@config(field(\"count\", \"int\", 2), field(\"target\", \"string\"), field(\"flag\", \"bool\", false, {required:true}))\n/* Not permitted between headers */\n@state(field(\"have\", \"int\", 0))\n@subscribe(Tick, {priority:\"HIGH\", receiveCancelled:true})\nfunction on_tick(instance: GoalInstance, event: Tick): void { st.have += 1; }\nfunction update_state(instance: GoalInstance): void { update_satisfied_state(instance, st.have >= cfg.count); }\nfunction deliver(instance: GoalInstance, context: GoalDeliverContext): boolean { return true; }\nfunction localize(instance: GoalInstance, locale: string): string { return \"Count \" + st.have; }\n",
+    "valid": false
+  },
+  {
+    "name": "goal-duplicate-block",
+    "source": "import Tick from \"example.events.Tick\"\n@goal(\"example:counter\", {requires_delivery:true})\n@config(field(\"count\", \"int\", 2), field(\"target\", \"string\"), field(\"flag\", \"bool\", false, {required:true}))\n// Metadata block comment\n@state(field(\"have\", \"int\", 0))\n@subscribe(Tick, {priority:\"HIGH\", receiveCancelled:true})\nfunction on_tick(instance: GoalInstance, event: Tick): void { st.have += 1; }\nfunction update_state(instance: GoalInstance): void { update_satisfied_state(instance, st.have >= cfg.count); }\nfunction deliver(instance: GoalInstance, context: GoalDeliverContext): boolean { return true; }\nfunction localize(instance: GoalInstance, locale: string): string { return \"Count \" + st.have; }\n@goal(\"duplicate:id\")\n@config()\n@state()",
+    "valid": false
+  },
+  {
+    "name": "goal-hook-forbidden",
+    "source": "import Tick from \"example.events.Tick\"\n@goal(\"example:counter\", {requires_delivery:true})\n@config(field(\"count\", \"int\", 2), field(\"target\", \"string\"), field(\"flag\", \"bool\", false, {required:true}))\n// Metadata block comment\n@state(field(\"have\", \"int\", 0))\n@hook(\"tick\")\nfunction on_tick(instance: GoalInstance, event: Tick): void { st.have += 1; }\nfunction update_state(instance: GoalInstance): void { update_satisfied_state(instance, st.have >= cfg.count); }\nfunction deliver(instance: GoalInstance, context: GoalDeliverContext): boolean { return true; }\nfunction localize(instance: GoalInstance, locale: string): string { return \"Count \" + st.have; }\n",
+    "valid": false
+  },
+  {
+    "name": "goal-missing-handler",
+    "source": "import Tick from \"example.events.Tick\"\n@goal(\"example:counter\", {requires_delivery:true})\n@config(field(\"count\", \"int\", 2), field(\"target\", \"string\"), field(\"flag\", \"bool\", false, {required:true}))\n// Metadata block comment\n@state(field(\"have\", \"int\", 0))\nfunction on_tick(instance: GoalInstance, event: Tick): void { st.have += 1; }\nfunction update_state(instance: GoalInstance): void { update_satisfied_state(instance, st.have >= cfg.count); }\nfunction deliver(instance: GoalInstance, context: GoalDeliverContext): boolean { return true; }\nfunction localize(instance: GoalInstance, locale: string): string { return \"Count \" + st.have; }\n",
+    "valid": false
+  },
+  {
+    "name": "goal-missing-update",
+    "source": "import Tick from \"example.events.Tick\"\n@goal(\"example:counter\", {requires_delivery:true})\n@config(field(\"count\", \"int\", 2), field(\"target\", \"string\"), field(\"flag\", \"bool\", false, {required:true}))\n// Metadata block comment\n@state(field(\"have\", \"int\", 0))\n@subscribe(Tick, {priority:\"HIGH\", receiveCancelled:true})\nfunction on_tick(instance: GoalInstance, event: Tick): void { st.have += 1; }\nfunction deliver(instance: GoalInstance, context: GoalDeliverContext): boolean { return true; }\nfunction localize(instance: GoalInstance, locale: string): string { return \"Count \" + st.have; }\n",
+    "valid": false
+  },
+  {
+    "name": "goal-bad-update-arity",
+    "source": "import Tick from \"example.events.Tick\"\n@goal(\"example:counter\", {requires_delivery:true})\n@config(field(\"count\", \"int\", 2), field(\"target\", \"string\"), field(\"flag\", \"bool\", false, {required:true}))\n// Metadata block comment\n@state(field(\"have\", \"int\", 0))\n@subscribe(Tick, {priority:\"HIGH\", receiveCancelled:true})\nfunction on_tick(instance: GoalInstance, event: Tick): void { st.have += 1; }\nfunction update_state(instance: GoalInstance, extra: any): void { update_satisfied_state(instance, st.have >= cfg.count); }\nfunction deliver(instance: GoalInstance, context: GoalDeliverContext): boolean { return true; }\nfunction localize(instance: GoalInstance, locale: string): string { return \"Count \" + st.have; }\n",
+    "valid": false
+  },
+  {
+    "name": "goal-unknown-event-alias",
+    "source": "import Tick from \"example.events.Tick\"\n@goal(\"example:counter\", {requires_delivery:true})\n@config(field(\"count\", \"int\", 2), field(\"target\", \"string\"), field(\"flag\", \"bool\", false, {required:true}))\n// Metadata block comment\n@state(field(\"have\", \"int\", 0))\n@subscribe(Unknown, {priority:\"HIGH\", receiveCancelled:true})\nfunction on_tick(instance: GoalInstance, event: Tick): void { st.have += 1; }\nfunction update_state(instance: GoalInstance): void { update_satisfied_state(instance, st.have >= cfg.count); }\nfunction deliver(instance: GoalInstance, context: GoalDeliverContext): boolean { return true; }\nfunction localize(instance: GoalInstance, locale: string): string { return \"Count \" + st.have; }\n",
+    "valid": false
+  },
+  {
+    "name": "goal-invalid-field-default",
+    "source": "import Tick from \"example.events.Tick\"\n@goal(\"example:counter\", {requires_delivery:true})\n@config(field(\"count\", \"int\", \"two\"), field(\"target\", \"string\"), field(\"flag\", \"bool\", false, {required:true}))\n// Metadata block comment\n@state(field(\"have\", \"int\", 0))\n@subscribe(Tick, {priority:\"HIGH\", receiveCancelled:true})\nfunction on_tick(instance: GoalInstance, event: Tick): void { st.have += 1; }\nfunction update_state(instance: GoalInstance): void { update_satisfied_state(instance, st.have >= cfg.count); }\nfunction deliver(instance: GoalInstance, context: GoalDeliverContext): boolean { return true; }\nfunction localize(instance: GoalInstance, locale: string): string { return \"Count \" + st.have; }\n",
+    "valid": false
+  },
+  {
+    "name": "goal-duplicate-field",
+    "source": "import Tick from \"example.events.Tick\"\n@goal(\"example:counter\", {requires_delivery:true})\n@config(field(\"count\", \"int\", 2), field(\"count\", \"string\"), field(\"flag\", \"bool\", false, {required:true}))\n// Metadata block comment\n@state(field(\"have\", \"int\", 0))\n@subscribe(Tick, {priority:\"HIGH\", receiveCancelled:true})\nfunction on_tick(instance: GoalInstance, event: Tick): void { st.have += 1; }\nfunction update_state(instance: GoalInstance): void { update_satisfied_state(instance, st.have >= cfg.count); }\nfunction deliver(instance: GoalInstance, context: GoalDeliverContext): boolean { return true; }\nfunction localize(instance: GoalInstance, locale: string): string { return \"Count \" + st.have; }\n",
+    "valid": false
+  },
+  {
+    "name": "goal-required-not-boolean",
+    "source": "import Tick from \"example.events.Tick\"\n@goal(\"example:counter\", {requires_delivery:true})\n@config(field(\"count\", \"int\", 2), field(\"target\", \"string\"), field(\"flag\", \"bool\", false, {required:1}))\n// Metadata block comment\n@state(field(\"have\", \"int\", 0))\n@subscribe(Tick, {priority:\"HIGH\", receiveCancelled:true})\nfunction on_tick(instance: GoalInstance, event: Tick): void { st.have += 1; }\nfunction update_state(instance: GoalInstance): void { update_satisfied_state(instance, st.have >= cfg.count); }\nfunction deliver(instance: GoalInstance, context: GoalDeliverContext): boolean { return true; }\nfunction localize(instance: GoalInstance, locale: string): string { return \"Count \" + st.have; }\n",
+    "valid": false
+  },
+  {
+    "name": "goal-deliver-flag",
+    "source": "import Tick from \"example.events.Tick\"\n@goal(\"example:counter\", {requires_delivery:false})\n@config(field(\"count\", \"int\", 2), field(\"target\", \"string\"), field(\"flag\", \"bool\", false, {required:true}))\n// Metadata block comment\n@state(field(\"have\", \"int\", 0))\n@subscribe(Tick, {priority:\"HIGH\", receiveCancelled:true})\nfunction on_tick(instance: GoalInstance, event: Tick): void { st.have += 1; }\nfunction update_state(instance: GoalInstance): void { update_satisfied_state(instance, st.have >= cfg.count); }\nfunction deliver(instance: GoalInstance, context: GoalDeliverContext): boolean { return true; }\nfunction localize(instance: GoalInstance, locale: string): string { return \"Count \" + st.have; }\n",
+    "valid": false
+  },
+  {
+    "name": "subscribe-outside-goal",
+    "source": "import Tick from \"example.Tick\"\n@subscribe(Tick)\nfunction tick(instance: any,event: Tick): void {}",
+    "valid": false
+  },
+  {
+    "name": "goal-literal-tail-statements",
+    "source": "import Tick from \"example.events.Tick\"\n@goal(\"example:counter\"; print(\"bad\"); \"tail\", {requires_delivery:true})\n@config(field(\"count\", \"int\", 2), field(\"target\", \"string\"), field(\"flag\", \"bool\", false, {required:true}))\n// Metadata block comment\n@state(field(\"have\", \"int\", 0))\n@subscribe(Tick, {priority:\"HIGH\", receiveCancelled:true})\nfunction on_tick(instance: GoalInstance, event: Tick): void { st.have += 1; }\nfunction update_state(instance: GoalInstance): void { update_satisfied_state(instance, st.have >= cfg.count); }\nfunction deliver(instance: GoalInstance, context: GoalDeliverContext): boolean { return true; }\nfunction localize(instance: GoalInstance, locale: string): string { return \"Count \" + st.have; }\n",
+    "valid": false
+  },
+  {
+    "name": "field-literal-tail-statements",
+    "source": "import Tick from \"example.events.Tick\"\n@goal(\"example:counter\", {requires_delivery:true})\n@config(field(\"count\", \"int\", 2), field(\"target\"; print(\"bad\"); \"tail\", \"string\"), field(\"flag\", \"bool\", false, {required:true}))\n// Metadata block comment\n@state(field(\"have\", \"int\", 0))\n@subscribe(Tick, {priority:\"HIGH\", receiveCancelled:true})\nfunction on_tick(instance: GoalInstance, event: Tick): void { st.have += 1; }\nfunction update_state(instance: GoalInstance): void { update_satisfied_state(instance, st.have >= cfg.count); }\nfunction deliver(instance: GoalInstance, context: GoalDeliverContext): boolean { return true; }\nfunction localize(instance: GoalInstance, locale: string): string { return \"Count \" + st.have; }\n",
+    "valid": false
+  },
+  {
+    "name": "goal-literal-concatenation",
+    "source": "import Tick from \"example.events.Tick\"\n@goal(\"example:\" + \"counter\", {requires_delivery:true})\n@config(field(\"count\", \"int\", 2), field(\"target\", \"string\"), field(\"flag\", \"bool\", false, {required:true}))\n// Metadata block comment\n@state(field(\"have\", \"int\", 0))\n@subscribe(Tick, {priority:\"HIGH\", receiveCancelled:true})\nfunction on_tick(instance: GoalInstance, event: Tick): void { st.have += 1; }\nfunction update_state(instance: GoalInstance): void { update_satisfied_state(instance, st.have >= cfg.count); }\nfunction deliver(instance: GoalInstance, context: GoalDeliverContext): boolean { return true; }\nfunction localize(instance: GoalInstance, locale: string): string { return \"Count \" + st.have; }\n",
+    "valid": false
+  },
+  {
+    "name": "goal-multiline-config",
+    "source": "import Tick from \"example.events.Tick\"\n@goal(\"example:counter\", {requires_delivery:true})\n@config(\nfield(\"count\", \"int\", 2), field(\"target\", \"string\"), field(\"flag\", \"bool\", false, {required:true}))\n// Metadata block comment\n@state(field(\"have\", \"int\", 0))\n@subscribe(Tick, {priority:\"HIGH\", receiveCancelled:true})\nfunction on_tick(instance: GoalInstance, event: Tick): void { st.have += 1; }\nfunction update_state(instance: GoalInstance): void { update_satisfied_state(instance, st.have >= cfg.count); }\nfunction deliver(instance: GoalInstance, context: GoalDeliverContext): boolean { return true; }\nfunction localize(instance: GoalInstance, locale: string): string { return \"Count \" + st.have; }\n",
+    "valid": false
+  },
+  {
+    "name": "null-hook-priority",
+    "valid": false,
+    "source": "@hook(\"tick\", {priority:null})\nfunction tick(event: any, board: any): void {}\n"
+  },
+  {
+    "name": "null-goal-priority",
+    "valid": false,
+    "source": "import Tick from \"example.events.Tick\"\n@goal(\"example:counter\", {requires_delivery:true})\n@config(field(\"count\", \"int\", 2), field(\"target\", \"string\"), field(\"flag\", \"bool\", false, {required:true}))\n// Metadata block comment\n@state(field(\"have\", \"int\", 0))\n@subscribe(Tick, {priority:null, receiveCancelled:true})\nfunction on_tick(instance: GoalInstance, event: Tick): void { st.have += 1; }\nfunction update_state(instance: GoalInstance): void { update_satisfied_state(instance, st.have >= cfg.count); }\nfunction deliver(instance: GoalInstance, context: GoalDeliverContext): boolean { return true; }\nfunction localize(instance: GoalInstance, locale: string): string { return \"Count \" + st.have; }\n"
+  },
+  {
+    "name": "bare-load-binding",
+    "valid": false,
+    "source": "var load = other;\n"
+  },
+  {
+    "name": "bare-load-global-reference",
+    "valid": false,
+    "source": "var value = loadWithNewGlobal;\n"
+  },
+  {
+    "name": "typed-expression-same-name-after-declaration",
+    "valid": false,
+    "source": "function helper(value: number): number { return value; } var fn = function helper(value: number): number { return value; };\n"
+  },
+  {
+    "name": "typed-expression-same-name-before-declaration",
+    "valid": false,
+    "source": "var fn = function helper(value: number): number { return value; }; function helper(value: number): number { return value; }\n"
+  },
+  {
+    "name": "typed-expression-same-name-different-line",
+    "valid": false,
+    "source": "function helper(value: number): number { return value; }\nvar fn = function helper(value: number): number { return value; };\n"
+  },
+  {
+    "name": "untyped-declaration-with-typed-same-name-expression",
+    "valid": false,
+    "source": "var fn = function helper(value: number): number { return value; }; function helper(value) { return value; }\n"
+  },
+  {
+    "name": "untyped-expression-same-name-before-declaration",
+    "valid": true,
+    "source": "var fn = function helper(value) { return value; }; function helper(value: number): number { return value; }\n",
+    "output": "var fn = function helper(value) { return value; }; function helper(value) { return value; }\n",
+    "hooks": [],
+    "goal": null
+  },
+  {
+    "name": "untyped-expression-same-name-after-declaration",
+    "valid": true,
+    "source": "function helper(value: number): number { return value; } var fn = function helper(value) { return value; };\n",
+    "output": "function helper(value) { return value; } var fn = function helper(value) { return value; };\n",
+    "hooks": [],
+    "goal": null
+  }
+]

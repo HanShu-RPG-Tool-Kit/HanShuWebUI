@@ -37,12 +37,12 @@ for (const bad of [
 
 assert(isScriptLoadDocumentKey(scriptLoadDocumentKey('common')))
 assert(!isBuiltinScriptDocumentKey(scriptLoadDocumentKey('common')))
-assert(isBuiltinScriptDocumentKey('builtin:script:common:foo.py'))
+assert(isBuiltinScriptDocumentKey('builtin:script:common:foo.js'))
 assert(!isBuiltinScriptDocumentKey('builtin:script-load:player'))
 
 const sources = [
-  { id: 'py-common', name: 'economy.py', content: '# economy\n', srcKind: 'common' as const, updatedAt: 1 },
-  { id: 'py-player', name: 'motd.py', content: '# motd\n', srcKind: 'player' as const, updatedAt: 2 },
+  { id: 'js-common', name: 'economy.js', content: '// economy\n', srcKind: 'common' as const, updatedAt: 1 },
+  { id: 'js-player', name: 'motd.js', content: '// motd\n', srcKind: 'player' as const, updatedAt: 2 },
   {
     id: 'source:src/script/common/load.json',
     name: 'load.json',

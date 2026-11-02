@@ -77,7 +77,7 @@ export function FlowDocumentProperties({ doc, onSave, onCancel }: {
       ) : progress ? (
         <p className="flow-hint">单进度任务以 `.quest`（JSON，`hanshu.progress`）写入工程目录；内容在主区表单中修改。</p>
       ) : script ? (
-        <p className="flow-hint">脚本以 `.py` 写入工程目录；内容在主编辑区修改。</p>
+        <p className="flow-hint">脚本以 `.js` 写入工程目录；内容在主编辑区修改。</p>
       ) : parsed.flow || currentId ? (
         <IdField key={currentId || flowId} label="文档 ID" value={currentId || flowId} disabled={false} onPending={(_, pending) => setPendingId(pending)} onApply={(value) => { applyId(value); setError('') }} />
       ) : (

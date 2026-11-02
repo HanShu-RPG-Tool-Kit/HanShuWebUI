@@ -28,7 +28,7 @@ import {
 import {
   MANUAL_FILE_EXTENSIONS,
   type AllowedExtension,
-  type PySrcKind,
+  type JsSrcKind,
 } from "./workspace";
 import { defaultHsSeed } from "./hanshu/defaultSeed";
 import type { ExplorerIconKind } from "./explorerIcons";
@@ -76,12 +76,12 @@ export const NEW_FILE_GROUPS: readonly { id: NewFileGroupId; label: string }[] =
 export type NewFileTypeId =
   | "hs"
   | "char"
-  | "py"
-  | "py-goal"
-  | "py-kit"
-  | "py-shop"
-  | "py-actor"
-  | "py-player"
+  | "js"
+  | "js-goal"
+  | "js-kit"
+  | "js-shop"
+  | "js-actor"
+  | "js-player"
   | "progress"
   | "hflow"
   | "level"
@@ -131,8 +131,8 @@ export type NewFileType = {
   group: NewFileGroupId;
   /** 预填的基名（不含后缀） */
   defaultBase: string;
-  /** `.py` 的脚本类型，对应 src/script/<类型>/；其余类型留空 */
-  srcKind?: PySrcKind;
+  /** `.js` 的脚本类型，对应 src/script/<类型>/；其余类型留空 */
+  srcKind?: JsSrcKind;
   /**
    * **这个类型额外**的基名规则。
    * 通用规则（不能为空 / 不能含路径分隔符 / 结尾不能是点或空格 / 别把后缀也敲进来）
@@ -230,7 +230,7 @@ function serviceIdError(base: string): string | null {
     : "服务 id 会拼进凭据引用（app:<id>），只能用字母、数字、. - _";
 }
 
-/** New Python files always use the same bundled templates as the progress explorer. */
+/** New JavaScript files always use the same bundled templates as the progress explorer. */
 export const NEW_FILE_TYPES: readonly NewFileType[] = [
   {
     id: "hs",
@@ -264,19 +264,19 @@ export const NEW_FILE_TYPES: readonly NewFileType[] = [
     },
   },
   ...SCRIPT_TYPES.map((type) => ({
-    id: (type === "common" ? "py" : `py-${type}`) as NewFileTypeId,
-    ext: ".py" as const,
+    id: (type === "common" ? "js" : `js-${type}`) as NewFileTypeId,
+    ext: ".js" as const,
     label: SCRIPT_TYPE_NAMES[type],
     hint: `src/script/${type} · 服务端脚本`,
     icon: (type === "goal"
       ? "goal"
       : type === "common"
-        ? "python"
+        ? "javascript"
         : `script-${type}`) as ExplorerIconKind,
     group: "source" as const,
     defaultBase: type === "goal" ? "新目标" : "新脚本",
     srcKind: type,
-    seed: (base: string) => scriptTemplate(type, "default.py", base.trim()),
+    seed: (base: string) => scriptTemplate(type, "default.js", base.trim()),
   })),
   { id: "actor", ext: ".actor", label: "演员模板", hint: "演员脚本、标签、显示、掉落、对话、服务与声誉成员（src/actors）", icon: "actor", group: "gameplay", defaultBase: "新演员", seed: () => stringifyActor(createActor()) },
   { id: "rep", ext: ".rep", label: "声誉阵营", hint: "点数阈值、敌对关系与旗帜（src/reputations）", icon: "reputation", group: "gameplay", defaultBase: "新阵营", seed: () => stringifyReputation(createReputation()) },

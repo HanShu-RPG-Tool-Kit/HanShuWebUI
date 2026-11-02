@@ -1,0 +1,40 @@
+# JavaScript 编辑器与语言服务
+
+内容脚本使用 Nashorn ES5 方言 JS，工程源文件为 `src/script/<common|goal|kit|shop|actor|player>/<id>.js`。IBE 插件仍使用其独立 Python 运行时，不属于这里的内容脚本。
+
+## 作者语法
+
+```javascript
+import SoundEvents from "net.minecraft.sounds.SoundEvents"
+import PlayerEvent from "mchhui.rpgtoolkit.feature.script.player.PlayerEvent"
+require fx from "effects"
+
+@hook("tick")
+function on_tick(event: PlayerEvent, board: Blackboard): void {
+    fx.spark(event.player());
+}
+```
+
+`import Ident from "FQCN"` 只引 Java 类型；`require Ident from "common id"` 只引通用脚本。它们必须独占顶层一行，不能用 ES 模块具名导入、相对路径或 Node 式 `require()`。通用脚本通过 `exports.name = value` 导出；宿主负责模块缓存和权限，不允许 `load` / `loadWithNewGlobal`。
+
+`@hook` 必须在自由函数声明正上方一行，函数有两个具名参数。所有顶层具名函数都必须为每个参数和返回值写类型，签名只占一行；允许简单名、点分名和数组类型，禁止可选参数、默认参数、泛型、interface/type、类和箭头函数。复杂类型由共享 `.d.ts` 提供命名类型。可选第二参数为 `{cancellable:false}`；common 事件订阅使用完整事件类名与 `{priority:"NORMAL",receiveCancelled:false}`。编辑器、PAK 导出与 Mod 作者源码加载均硬校验这些规则。
+
+目标定义在 import / require 之后、业务函数之前，连续写唯一的 `@goal("id")`、`@config(field(...))`、`@state(field(...))` 三行；空字段也保留空注解。`field(name,type)` 表示必填，`field(name,type,defaultLiteral)` 表示有默认值，第四参数可用 `{required:true}` 覆盖。事件使用紧邻函数上一行的 `@subscribe(EventAlias,{priority:"NORMAL",receiveCancelled:false})`；`update_state`、`localize`、`deliver` 是带类型签名的顶层函数。交付声明见[脚本资源](#script-resources)。
+
+## 行号与类型
+
+方言变换严格一行换一行。编辑侧仅注释 hook / Goal 注解，保留参数与返回类型，交给 TS 子集虚拟文档；导出时同行剥掉签名类型，import / require 转成运行时绑定。作者文件与 PAK 均用 `.js`。作者、虚拟文档、PAK 源码和引擎报错保持相同行数，不产生 source map；hook 不再注入参数 JSDoc。
+
+`monaco/javascript/JavaScriptEditor` 使用独立浏览器 Worker 中 TypeScript 的 tsserver 语言服务引擎。它分析 JS、推导类型、提供成员补全、悬浮信息、调用签名和诊断，不执行作者脚本。相同工程与宿主类型共享 Worker；各文档保持模块隔离，最后一个编辑器关闭时释放。离线仍可分析普通 JavaScript 和工程 common 导出；Java 类型需要游戏开发服务器。
+
+`javascript.stubs` 返回工程级共享 `.d.ts` 虚拟文件，Java 类型按 `JavaTypeMap` 与 `Java.type` 关联，不把全量 Minecraft 类型插入每个缓冲区。显式 Java imports 同时提供值和签名可用的类型；相关 Java 类型按需加载，断线和游戏进程变化清理旧类型。不同宿主仅拥有各自的全局变量：kit 的 kit/player/players/random，shop 的 shop/player，goal 的 cfg/st/pick_locale/update_satisfied_state/complete/fail。事件类型由作者签名明确声明，`Blackboard` 保持动态键。类型判断使用原生 `value instanceof JavaType`。
+
+通用脚本按 id 发布独立虚拟模块，`require fx from "effects"` 的类型来自该模块的 exports。其他宿主不能互相 require。类型检查不是运行时授权，工程保存依旧经 S 的原有文件事务。
+
+## Java 类导入
+
+右键「导入 Java 类…」或 Ctrl+Alt+J，通过 `javascript.classes.search` 搜索游戏公开类。可选别名自动避让已有名称；确认后插入方言 import，一次撤销可恢复。操作重新核验工程、连接、文档版本和只读状态，不会把迟到搜索结果写进已切换的文档。
+
+## 验证
+
+`test:javascript-dialect` 验证同行变换、红线与跨仓契约；`test:javascript-builtins` 验证全部内置目标；`test:javascript-language` 以真实浏览器 Worker 验证成员与返回类型、common 导出、诊断行号和多文档隔离。这些自动化不等于已在原生 Minecraft 客户端完成全部玩法验收。

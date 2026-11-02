@@ -1,10 +1,7 @@
 import assert from 'node:assert/strict'
 import { createProgress, createProgressGoal, duplicateProgressGoal, moveProgressGoal, parseProgress, progressIssues, readProgressSource, stringifyProgress } from '../src/workspaces/gameplay/progressDoc.ts'
 import { parseGoalDefinitionsFromSource } from '../src/workspaces/gameplay/goalDefinitions.ts'
-const defs = parseGoalDefinitionsFromSource(`@goal("sample:counter")
-@config(field("target", "int", required=True, default=10))
-class CounterGoal(BaseGoalPy):
-    pass`, { sourceKey: 'counter-script', sourceName: 'counter.py' })
+const defs = parseGoalDefinitionsFromSource(`import Tick from "test.Tick"\n@goal("sample:counter")\n@config(field("target","int",10,{required:true}))\n@state()\n@subscribe(Tick)\nfunction on_tick(instance: GoalInstance,event: Tick): void {}\nfunction update_state(instance: GoalInstance): void {}`, { sourceKey: 'counter-script', sourceName: 'counter.js' })
 const doc = createProgress(' 名称输入中的空格 ')
 doc.rewardKits = ['travel_supplies', 'completion_bonus']
 assert.deepEqual(parseProgress(stringifyProgress(doc)).rewardKits, doc.rewardKits)

@@ -30,7 +30,7 @@ Subject 是身份主体，可表示自然人、agent、服务或工具。`id` �
 ```text
 工程根/
   project.json                 # 原工程清单，不是服务身份数据库
-  src/                         # .hs/.char/.py/.quest/.nav/.item/.kit
+  src/                         # .hs/.char/.js/.quest/.nav/.item/.kit
   meta/                        # 创作资料与配音服务配置
   assets/                      # 语言、图片、音频等
   .hanshu/

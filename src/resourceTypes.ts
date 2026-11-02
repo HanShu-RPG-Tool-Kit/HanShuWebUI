@@ -2,7 +2,7 @@
 export const RESOURCE_TYPES = [
   { id:'hs', ext:'.hs', directory:'src/hanshu', category:'hanshu' },
   { id:'char', ext:'.char', directory:'src/character', category:'character' },
-  { id:'py', ext:'.py', directory:'src/script/common', category:'script' },
+  { id:'js', ext:'.js', directory:'src/script/common', category:'script' },
   { id:'quest', ext:'.quest', directory:'src/quest', category:'quest' },
   { id:'level', ext:'.level', directory:'src/level', category:'level' },
   { id:'nav', ext:'.nav', directory:'src/navigator', category:'level' },
@@ -22,7 +22,7 @@ export const resourceTypeForExtension = (ext:string) => RESOURCE_TYPES.find(type
 export const resourceNameKey = (name:string) => name.normalize('NFC').toLowerCase()
 /** Saved formats and convertible import formats are different capabilities. */
 export const GAMEPLAY_CATEGORIES = {
-  script:{name:'脚本',types:['py'],imports:['.py']},
+  script:{name:'脚本',types:['js'],imports:['.js']},
   quest:{name:'任务',types:['quest'],imports:['.quest','.json']},
   actor:{name:'演员',types:['actor'],imports:['.actor']},
   reputation:{name:'声誉',types:['rep'],imports:['.rep']},

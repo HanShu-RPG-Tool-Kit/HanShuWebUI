@@ -7,7 +7,7 @@ import {
   organizationFromDocuments,
   serializeOrganization,
 } from "../project/explorerOrganization";
-import { PythonEditor } from "../monaco/python/PythonEditor";
+import { JavaScriptEditor } from "../monaco/javascript/JavaScriptEditor";
 import { scriptType, scriptSection, scriptTemplate } from "../scriptResources";
 import { scriptTypeInFolder, sectionFolderKey } from "./gameplay/library";
 import { openEntityEditInGame } from "../gameDevServer/entityWorkbench";
@@ -277,7 +277,7 @@ export function GameplayWorkspace({
       const source = session.workspace.packages[0]?.scripts.find(
         (source) => source.id === doc.key,
       );
-      if (doc.name.toLowerCase().endsWith(".py")) {
+      if (doc.name.toLowerCase().endsWith(".js")) {
         const type = scriptType(source?.srcKind);
         if (
           scriptTypeInFolder({ folders }, folderId) !== type ||
@@ -388,7 +388,7 @@ export function GameplayWorkspace({
       if (isScriptLoadDocumentKey(doc.key)) return [];
       const old = prevScripts.find((script) => progressDocumentMatchesSource(doc, script));
       if (!old) return [];
-      const srcKind = doc.name.toLowerCase().endsWith(".py")
+      const srcKind = doc.name.toLowerCase().endsWith(".js")
         ? scriptTypeInFolder(next, doc.folderId ?? null)
         : old.srcKind;
       return old.name !== doc.name ||
@@ -1310,7 +1310,7 @@ export function GameplayWorkspace({
     templateName: string | undefined,
     ext: string,
   ) {
-    if (packageId === "script" || ext === ".py") return "新建脚本.py";
+    if (packageId === "script" || ext === ".js") return "新建脚本.js";
     if (packageId === "actor" || ext === ".actor") return "新建演员.actor";
     if (packageId === "reputation" || ext === ".rep") return "新建阵营.rep";
     if (packageId === "shop" || ext === ".shop") return "新建商店.shop";
@@ -1331,7 +1331,7 @@ export function GameplayWorkspace({
   function createGameplayDocument(
     folderId: string | null,
     packageId: FlowPackageId,
-    templateName = "default.py",
+    templateName = "default.js",
     value?: string,
     sourceOverride?: string,
   ) {
@@ -1367,7 +1367,7 @@ export function GameplayWorkspace({
           .find((document) => isLevelDocument(document))
           ?.name.replace(/\.level$/i, "") ?? "";
       const next =
-        ext === ".py"
+        ext === ".js"
           ? stampDocument({
               key: randomId(),
               name,
@@ -1515,7 +1515,7 @@ export function GameplayWorkspace({
     if (!input) return;
     input.accept =
       packageId === "actor" ? ".actor,application/json" : packageId === "reputation" ? ".rep,application/json" : packageId === "shop" ? ".shop,application/json" : packageId === "script"
-        ? ".py,text/x-python"
+        ? ".js,text/x-javascript"
         : packageId === "gift"
           ? ".kit,application/json"
           : packageId === "quest"
@@ -1544,7 +1544,7 @@ export function GameplayWorkspace({
     if (!accepted.length) {
       setNotice(
         pkg === "actor" ? "请放入 .actor 演员模板。" : pkg === "reputation" ? "请放入 .rep 声誉阵营。" : pkg === "shop" ? "请放入 .shop 商店模板。" : pkg === "script"
-          ? "请放入 .py 脚本。"
+          ? "请放入 .js 脚本。"
           : pkg === "gift"
             ? "请放入 .kit 礼包。"
             : pkg === "quest"
@@ -2157,11 +2157,11 @@ export function GameplayWorkspace({
       const options = state.documents
         .filter(d =>
           d.package === "script" &&
-          d.name.toLowerCase().endsWith(".py") &&
+          d.name.toLowerCase().endsWith(".js") &&
           scriptTypeInFolder(state, d.folderId ?? null) === paneScriptLoad,
         )
         .map(d => ({
-          ref: d.name.replace(/\.py$/i, ""),
+          ref: d.name.replace(/\.js$/i, ""),
           label: d.name,
           key: d.key,
           builtin: isBuiltinScriptDocumentKey(d.key) || Boolean(d.folderId && isBuiltinScriptFolder(d.folderId)),
@@ -2186,7 +2186,7 @@ export function GameplayWorkspace({
         source={paneDoc.source}
         disabled={disabledPane}
         onChange={source => changeSource(source, false, paneDoc.key)}
-        scriptOptions={state.documents.filter(d => d.package === "script" && scriptTypeInFolder(state, d.folderId ?? null) === "actor").map(d => ({ ref: d.name.replace(/\.py$/i, ""), label: d.name, key: d.key }))}
+        scriptOptions={state.documents.filter(d => d.package === "script" && scriptTypeInFolder(state, d.folderId ?? null) === "actor").map(d => ({ ref: d.name.replace(/\.js$/i, ""), label: d.name, key: d.key }))}
         reputationOptions={state.documents.filter(d => d.package === "reputation" && d.name.toLowerCase().endsWith(".rep")).map(d => ({ ref: d.name.replace(/\.rep$/i, ""), label: d.name, key: d.key }))}
         shopOptions={state.documents.filter(d => d.package === "shop" && d.name.toLowerCase().endsWith(".shop")).map(d => ({ ref: d.name.replace(/\.shop$/i, ""), label: d.name, key: d.key }))}
         injectOptions={injectOptions}
@@ -2222,7 +2222,7 @@ export function GameplayWorkspace({
                 scriptTypeInFolder(state, d.folderId ?? null) === "shop",
             )
             .map((d) => ({
-              ref: d.name.replace(/\.py$/i, ""),
+              ref: d.name.replace(/\.js$/i, ""),
               label: d.name,
               key: d.key,
             }))}
@@ -2558,7 +2558,7 @@ export function GameplayWorkspace({
                   scriptTypeInFolder(state, d.folderId ?? null) === "kit",
               )
               .map((d) => ({
-                ref: d.name.replace(/\.py$/i, ""),
+                ref: d.name.replace(/\.js$/i, ""),
                 label: d.name,
                 key: d.key,
               }))}
@@ -2571,7 +2571,7 @@ export function GameplayWorkspace({
                 );
                 const name = uniqueDocumentName(
                   previous,
-                  `${paneDoc.name.replace(/\.kit$/i, "")}-发放脚本.py`,
+                  `${paneDoc.name.replace(/\.kit$/i, "")}-发放脚本.js`,
                   "script",
                   folderId,
                 );
@@ -2582,8 +2582,8 @@ export function GameplayWorkspace({
                     source ??
                     scriptTemplate(
                       "kit",
-                      "default.py",
-                      name.replace(/\.py$/i, ""),
+                      "default.js",
+                      name.replace(/\.js$/i, ""),
                     ),
                   package: "script",
                   folderId,
@@ -2602,7 +2602,7 @@ export function GameplayWorkspace({
                                 : paneKitParsed.kit.script.ref
                                   ? [paneKitParsed.kit.script]
                                   : []),
-                            { ref: name.replace(/\.py$/i, "") },
+                            { ref: name.replace(/\.js$/i, "") },
                           ],
                         }),
                       }
@@ -2639,10 +2639,10 @@ export function GameplayWorkspace({
             </p>
           )}
           <div className="flow-script-editor">
-            <PythonEditor
+            <JavaScriptEditor
               scriptType={scriptTypeInFolder(state, paneDoc.folderId ?? null)}
               height="100%"
-              language="python"
+              language="javascript"
               theme={HANSHU_THEME_ID}
               value={paneDoc.source}
               path={`progress-script://g${group}/${paneDoc.key}/${paneDoc.name}`}
@@ -2823,7 +2823,7 @@ export function GameplayWorkspace({
             void createGameplayDocument(
               sectionFolderKey("script", scriptSection(type)),
               "script",
-              "default.py",
+              "default.js",
               doc.name,
               doc.source,
             ).catch((error) =>
@@ -2930,7 +2930,7 @@ export function GameplayWorkspace({
                 .level（模板内包含区域与静态导航器）；「动态导航器」可新建
                 .nav；「任务」可新建
                 .quest（单进度表单或多进度树图）；「脚本」可新建
-                .py；「物品库」可新建 .item 或拖入 .itemstack；「礼包」可新建
+                .js；「物品库」可新建 .item 或拖入 .itemstack；「礼包」可新建
                 .kit。打开的文档会出现在上方页条；把页拖到编辑区的左右上下边缘即可拆分对照。
               </p>
             </div>
@@ -2994,7 +2994,7 @@ export function GameplayWorkspace({
                               : kitDoc
                                 ? "礼包 · .kit"
                                 : scriptDoc
-                                  ? "脚本 · Python"
+                                  ? "脚本 · JavaScript"
                                   : doc && isQuestDocument(doc)
                                     ? "任务 · .quest"
                                     : "任务"}

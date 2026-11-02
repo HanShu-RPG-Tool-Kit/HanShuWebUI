@@ -1,5 +1,5 @@
 import {resourceNameKey} from '../resourceTypes'
-import {PythonEditor} from '../monaco/python/PythonEditor'
+import {JavaScriptEditor} from '../monaco/javascript/JavaScriptEditor'
 import {scriptType} from '../scriptResources/types'
 import {
   forwardRef,
@@ -375,7 +375,7 @@ export const StageplayWorkspace = forwardRef<
   const packageName = viewingAsset
     ? activeAssetHit!.pkg.name
     : (active?.pkg.name ?? '')
-  const SourceEditor=editorLanguageForFile(titleName)==='python'?PythonEditor:Editor
+  const SourceEditor=editorLanguageForFile(titleName)==='javascript'?JavaScriptEditor:Editor
   const editingMarkdown = !viewingAsset && isMarkdownFile(titleName)
   const editingHanshu = !viewingAsset && isHanshuFile(titleName)
   const editingChar = !viewingAsset && isCharFile(titleName)
@@ -2008,7 +2008,7 @@ export const StageplayWorkspace = forwardRef<
     const firstService = [...ttsServices.values()][0]
     return {
       /*
-       * 目标定义只扫 `srcKind === 'goal'` 的 `.py`。解析器是纯函数（只看源码文本），
+       * 目标定义只扫 `srcKind === 'goal'` 的 `.js`。解析器是纯函数（只看源码文本），
        * 所以这里不必去问进度工作区要它的 catalog。
        * 说明：`createProgress` 现在**收了不用**（新建进度一律空 `goals`，由用户自己加），
        * 所以这一项眼下不改变播种结果 —— 留着是为了它开始按定义播种那天不用改这条路径。
@@ -3646,7 +3646,7 @@ export const StageplayWorkspace = forwardRef<
                     <div className="editor-pane">
                       <SourceEditor
                         scriptType={scriptType(active?.script.srcKind)}
-                        path={editorLanguageForFile(titleName)==='python'?`python-source://${presenceClient?.snapshot.projectId??'unbound'}/${active?.script.id??'scratch'}/${titleName}`:undefined}
+                        path={editorLanguageForFile(titleName)==='javascript'?`javascript-source://${presenceClient?.snapshot.projectId??'unbound'}/${active?.script.id??'scratch'}/${titleName}`:undefined}
                         key={`${presenceClient?.snapshot.projectId ?? 'unbound'}:${presenceClient?.discardVersions.get(presencePath ?? '') ?? 0}:${active?.script.id ?? 'empty'}:${titleName}`}
                         height="100%"
                         language={editorLanguageForFile(titleName)}

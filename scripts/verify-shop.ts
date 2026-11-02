@@ -33,7 +33,7 @@ for (const icon of ['bad', { id: 2 }, { id: 'minecraft:chest', mods: { count: 'p
 doc.tags = ['village']; doc.entries[0].tags = ['apple/sell']; doc.entries[0].initialCapacity = 4; doc.entries[0].maxCapacity = 10
 assert.deepEqual(parseShop(stringifyShop(doc)), doc)
 assert.throws(() => parseShop(JSON.stringify({ ...doc, entries: [{ ...doc.entries[0], initialCapacity: 11 }] })))
-assert.throws(() => parseShop(JSON.stringify({ ...doc, script: [{ ref: 'src/script/shop/trade.py' }] })))
+assert.throws(() => parseShop(JSON.stringify({ ...doc, script: [{ ref: 'src/script/shop/trade.js' }] })))
 const draft = { ...doc, entries: [{ ...doc.entries[0], payment: [{ id: '', count: 1, components: {} }] }] }
 assert.doesNotThrow(() => parseShop(stringifyShop(draft), true))
 assert.throws(() => parseShop(stringifyShop(draft)), /item|ItemStack/)

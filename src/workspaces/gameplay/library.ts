@@ -101,7 +101,7 @@ export const isLevelStaticKey = (key: string) => key.startsWith('level-static:')
 
 export const isScriptDocument = (document: { key?: string; package: FlowPackageId; name: string }) => {
   if (document.key && isScriptLoadDocumentKey(document.key)) return false
-  return document.package === 'script' || document.name.toLowerCase().endsWith('.py')
+  return document.package === 'script' || document.name.toLowerCase().endsWith('.js')
 }
 export const isKitDocument = (document: { package: FlowPackageId; name: string }) =>
   document.package === 'gift' || document.name.toLowerCase().endsWith('.kit')

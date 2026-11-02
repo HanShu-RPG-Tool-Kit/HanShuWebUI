@@ -158,7 +158,7 @@ pub(crate) fn resolve(tree: &Tree) -> Vec<ResourceRelation> {
                         continue;
                     };
                     let id = reference.trim();
-                    let target = format!("src/script/{script_kind}/{id}.py");
+                    let target = format!("src/script/{script_kind}/{id}.js");
                     if !id.is_empty()
                         && id != "."
                         && id != ".."

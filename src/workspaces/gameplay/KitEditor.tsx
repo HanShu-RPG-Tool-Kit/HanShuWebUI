@@ -1104,7 +1104,7 @@ function KitBody({ kit, disabled, scriptOptions, onOpenScript, onCreateScript, s
           <FeedbackForm feedback={kit.feedback} disabled={locked} resolveText={resolveText} setText={setText} onChange={(patch) => update({ feedback: { ...kit.feedback, ...patch } })} />
         </Panel>
 
-        <Panel title="礼包脚本" subtitle="选择发放时执行的脚本" className="kit-script" action={<span className="kit-lang">Python</span>}>
+        <Panel title="礼包脚本" subtitle="选择发放时执行的脚本" className="kit-script" action={<span className="kit-lang">JavaScript</span>}>
           <KitScriptField value={kit.script} options={scriptOptions} disabled={locked} onChange={script=>update({script})} onOpen={onOpenScript} onCreate={onCreateScript}/>
         </Panel>
       </div>

@@ -9,7 +9,7 @@
 
 本标准规定礼包修饰器所用的数值表达式语言：语法、求值语义、内置函数，以及修饰器绑定到条目字段后的取值规则。WebUI 与后端引擎**必须**按本标准得到一致结果。
 
-> 实现方**不得**借助 JavaScript `eval` / `Function` 或 Python `eval` 求值；必须自行解析，名字和函数一律按白名单解析。
+> 实现方**不得**借助 JavaScript `eval` / `Function` 或 JavaScript `eval` 求值；必须自行解析，名字和函数一律按白名单解析。
 
 ## 1. 范围
 
@@ -99,7 +99,7 @@ primary = number
 | `round(v)` | 四舍五入，`.5` **远离 0**：`round(2.5)=3`，`round(-2.5)=-3` |
 | `clamp(v, lo, hi)` | 限制在 `[lo, hi]`；若 `lo > hi` 先交换 |
 
-> `round` 不是银行家舍入。Python 实现不能直接使用内置 `round`，应写成 `sign(v) * floor(abs(v) + 0.5)`。
+> `round` 不是银行家舍入。JavaScript 实现不能直接使用内置 `round`，应写成 `sign(v) * floor(abs(v) + 0.5)`。
 
 ### 7.2 分段
 
@@ -198,21 +198,23 @@ xp add @s ${loot(10)} points
 
 ## 12. 脚本接口
 
-礼包内联脚本（Python）由引擎执行。完整注入表、发放顺序与失败语义见 [引擎发放契约](#kit-runtime)。本节只定与表达式相关的 `kit` 数值接口。
+礼包内联脚本（JavaScript）由引擎执行。完整注入表、发放顺序与失败语义见 [引擎发放契约](#kit-runtime)。本节只定与表达式相关的 `kit` 数值接口。
 
 引擎在脚本全局**至少**注入只读对象 `kit`、当前领取者 `player`（裸 `ServerPlayer`）、以及本次 `grant` 的 `players` 列表。完整约定见 [引擎发放契约](#kit-runtime)。
 
 | 接口 | 含义 |
 | --- | --- |
-| `kit.param(id)` | 超参数当前值，按声明类型返回 `float` / `int` / `bool` / `str` |
+| `kit.param(id)` | 超参数当前值，按声明类型返回 `number` / `boolean` / `string` |
 | `kit.mod(id, x)` | 对数值 `x` 应用修饰器 `id`，返回 `float`；不做字段取整 |
 | `kit.expr(src)` | 求值独立表达式（第 10 节），返回 `float` |
 
-```python
-bonus = int(round(kit.mod("loot", 3)))
-if kit.param("difficulty") >= 2:
-    # player 为裸 ServerPlayer；具体 API 随游戏版本
-    player.sendSystemMessage(...)  # 示例，以发放契约为准
+```js
+import Component from "net.minecraft.network.chat.Component"
+
+var bonus = Math.round(kit.mod("loot", 3));
+if (kit.param("difficulty") >= 2) {
+    player.sendSystemMessage(Component.literal("奖励倍率：" + bonus));
+}
 ```
 
 以上 `kit.*` 接口出错时抛出异常，异常信息应包含第 13 节的错误类别。脚本里的数值逻辑仍应尽量写成修饰器，这样 WebUI 可以预览并检查。

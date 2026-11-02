@@ -454,7 +454,7 @@ export function settleProgress(flow: ProgressFlow, sim: FlowSimState, id: string
   if (outcome === 'succeeded' && getProgressNode(flow, id)?.submission) return sim
   return reportProgressOutcome(flow, sim, id, outcome, deferred)
 }
-/** One instance report for delivery of ALL goals. No per-goal simulation or Python execution. */
+/** One instance report for delivery of ALL goals. No per-goal simulation or JavaScript execution. */
 export function submitProgress(flow: ProgressFlow, sim: FlowSimState, id: string, accepted: boolean, deferred = false): FlowSimState {
   if (!getProgressNode(flow, id)?.submission || progressState(sim, id) !== 'running' || !sim.initialized || !connectedToStart(flow).has(id) || !canTrigger(sim)) return sim
   if (accepted) return reportProgressOutcome(flow, sim, id, 'succeeded', deferred)

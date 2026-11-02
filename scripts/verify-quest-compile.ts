@@ -106,15 +106,15 @@ multi.objectives![backgroundId].submission={submit_type:'ui',param:null}
 const submissionExport=await questCompiler.compile(file('submit.quest',JSON.stringify(multi)),ctx)
 assert.equal(submissionExport.length,1)
 assert.deepEqual(JSON.parse(String(submissionExport[0].bytes)).nodes[backgroundId].submission,multi.objectives![backgroundId].submission)
-const override={...file('core_item_mc_type_submit.py','@goal("core:item_mc_type_submit")\nclass Replacement(BaseGoalPy):\n    requires_delivery = False\n'),srcKind:'goal' as const}
+const override={...file('core_item_mc_type_submit.js','import Tick from "test.Tick"\n@goal("core:item_mc_type_submit",{requires_delivery:false})\n@config()\n@state()\n@subscribe(Tick)\nfunction on_tick(instance: GoalInstance,event: Tick): void {}\nfunction update_state(instance: GoalInstance): void {}'),srcKind:'goal' as const}
 pkg.scripts.push(override)
 delete multi.objectives![backgroundId].submission
 assert.equal((await questCompiler.compile(file('override.quest',JSON.stringify(multi)),ctx)).length,1,'effective project file overrides builtin capability too')
-override.content='@goal("core:item_mc_type_submit")\nclass Replacement(BaseGoalPy):\n    def deliver(self, instance, context):\n        return True\n'
+override.content='import Tick from "test.Tick"\n@goal("core:item_mc_type_submit")\n@config()\n@state()\n@subscribe(Tick)\nfunction on_tick(instance: GoalInstance,event: Tick): void {}\nfunction update_state(instance: GoalInstance): void {}\nfunction deliver(instance: GoalInstance,context: GoalDeliverContext): boolean {return true;}'
 assert.equal((await questCompiler.compile(file('undeclared.quest',JSON.stringify(multi)),ctx)).length,0,'undeclared delivery hook is a configuration error')
 console.log('PASS: delivery declarations, submission requirements, effective overrides and descriptor roundtrip')
 
-override.content='@goal("core:item_mc_type_submit")\nclass Replacement(BaseGoalPy):\n    requires_delivery = True\n'
+override.content='import Tick from "test.Tick"\n@goal("core:item_mc_type_submit",{requires_delivery:true})\n@config()\n@state()\n@subscribe(Tick)\nfunction on_tick(instance: GoalInstance,event: Tick): void {}\nfunction update_state(instance: GoalInstance): void {}'
 multi.objectives![backgroundId].submission={submit_type:'dialogue_injection',param:'submit_goal'}
 multi.progress[multi.start].goals=[{id:'one',kind:'core:item_mc_type_submit',params:{}},{id:'two',kind:'core:item_mc_type_submit',params:{}}]
 assert.equal((await questCompiler.compile(file('missing-progress-submit.quest',JSON.stringify(multi)),ctx)).length,0)

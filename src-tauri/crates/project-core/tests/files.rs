@@ -73,8 +73,8 @@ fn all_file_types_are_server_owned_and_stale_versions_cannot_overwrite() {
     for path in [
         "src/hanshu/story.hs",
         "src/character/npc.char",
-        "src/script/action.py",
-        "src/goal/goal.py",
+        "src/script/action.js",
+        "src/goal/goal.js",
         "src/quest/quest.quest",
         "src/quest/tree.quest",
         "src/navigator/point.nav",

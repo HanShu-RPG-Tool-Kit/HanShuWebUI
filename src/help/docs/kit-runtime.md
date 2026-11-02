@@ -60,7 +60,7 @@ listByTag(tag) → [kitId, …]
 
 | 情况 | 引擎行为 |
 | --- | --- |
-| 调用方未传 `distributionCount` | 对每位领取者注入 `distributionCount = len(players)`（过滤后） |
+| 调用方未传 `distributionCount` | 对每位领取者注入 `distributionCount = players.size()`（过滤后） |
 | 调用方未传 `distributionId` | 对第 `i` 位（0 起）注入 `distributionId = i` |
 | 调用方已传上述任一键 | 尊重调用方；此时多人列表仍逐人发放，但分配公式完全由调用方负责 |
 
@@ -126,7 +126,7 @@ listByTag(tag) → [kitId, …]
 
 ## 5. 脚本注入
 
-`script` 使用 `[{ "ref": "脚本 ID" }]`，从已发布 `script/kit/<ID>.py` 解析 Python 源码；发放前若直接引用缺失则整体失败、无奖励副作用。引擎在**独立**全局字典中执行，仅注入下表。
+`script` 使用 `[{ "ref": "脚本 ID" }]`，从已发布 `script/kit/<ID>.js` 解析 JavaScript 源码；发放前若直接引用缺失则整体失败、无奖励副作用。引擎在**独立**全局作用域中执行，仅注入下表。
 
 每位领取者各执行一遍脚本（与流水线一致）；同一 `grant` 内后一名玩家看到前一名已造成的世界副作用。
 
@@ -136,51 +136,52 @@ listByTag(tag) → [kitId, …]
 | --- | --- | --- |
 | `kit` | 否 | 本礼包求值句柄（见 5.2）；数值已按**当前玩家**超参数视图绑定 |
 | `player` | 否 | **当前**领取者，裸 `net.minecraft.server.level.ServerPlayer`（见 5.3） |
-| `players` | 否 | 本次 `grant` 的领取者列表（同序），元素同为裸 `ServerPlayer` |
+| `players` | 否 | 本次 `grant` 的冻结 JS 数组（同序），元素同为裸 `ServerPlayer`；用 `players.length` 读长度 |
 | `random` | 否 | 可调用的 `random()`，返回 `[0, 1)` 浮点随机；与池子共用本次种子派生的流 |
 
-引擎不额外注入其它服务端单例、文件系统或网络门面；这不构成访问限制，可信脚本可以正常 import，或通过裸游戏对象调用服务端 API。
+引擎不额外注入其它服务端单例、文件系统或网络门面；这不构成访问限制，可信脚本可以用方言 import 引入 Java 类型，或通过裸游戏对象调用服务端 API。
 
 ### 5.2 `kit`
 
 | 接口 | 返回 | 说明 |
 | --- | --- | --- |
-| `kit.param(id)` | 按声明类型的 `float`/`int`/`bool`/`str` | 未知 id → 异常 `name` |
+| `kit.param(id)` | 按声明类型的 `number` / `boolean` / `string` | 未知 id → 异常 `name` |
 | `kit.mod(id, x)` | `float` | 应用修饰器；不做字段取整；失败抛表达式类别异常 |
 | `kit.expr(src)` | `float` | 独立表达式（不可用 `x`） |
-| `kit.id` | `str` | 当前礼包引用 |
-| `kit.tags` | `tuple[str, …]` | 展开后的有效标签 |
+| `kit.id` | `string` | 当前礼包引用 |
+| `kit.tags` | `string[]` | 展开后的有效标签 |
 
 ### 5.3 `player`（裸游戏对象）
 
-`player` **不是**包装类型。在当代未混淆的服务端映射下，脚本拿到的就是真实的 `ServerPlayer`（GraalPy / 同类宿主的 Java 对象互操作）。
+`player` **不是**包装类型。在当代未混淆的服务端映射下，脚本拿到的就是真实的 `ServerPlayer`（Nashorn 的 Java 对象互操作）。
 
 - 可用该类型及通过它到达的公共 API（背包、发消息、传送等），与 Java 插件相同。
 - 引擎**不**再提供 `player.give` / `player.message` 一类门面。
 - 作者自行承担版本 API 差异；帮助与示例按当前目标 MC / NeoForge 编写。
 
-```python
-from net.minecraft.network.chat import Component
-from net.minecraft.world.item import ItemStack
-from net.minecraft.core.registries import BuiltInRegistries
-from net.minecraft.resources import Identifier
+```js
+import Component from "net.minecraft.network.chat.Component"
+import ItemStack from "net.minecraft.world.item.ItemStack"
+import BuiltInRegistries from "net.minecraft.core.registries.BuiltInRegistries"
+import Identifier from "net.minecraft.resources.Identifier"
 
-bonus = int(round(kit.mod("loot", 3)))
-if kit.param("difficulty") >= 2:
-    item = BuiltInRegistries.ITEM.getValue(Identifier.parse("minecraft:diamond"))
-    player.getInventory().add(ItemStack(item, max(1, bonus)))
-    player.sendSystemMessage(Component.literal("高难度额外奖励"))
+var bonus = Math.round(kit.mod("loot", 3));
+if (kit.param("difficulty") >= 2) {
+    var item = BuiltInRegistries.ITEM.getValue(Identifier.parse("minecraft:diamond"));
+    player.getInventory().add(new ItemStack(item, Math.max(1, bonus)));
+    player.sendSystemMessage(Component.literal("高难度额外奖励"));
+}
 ```
 
 信任模型：
 
 - PAK 脚本视为可信服务器程序，与服务端 Java 代码同等级；相信作者知道自己在做什么。
-- 不设置 import 白名单、沙箱、执行预算或强制超时；可正常导入 Python 模块和游戏 Java 类。
+- 不设置 import 白名单、沙箱、执行预算或强制超时；可通过方言 import 引入游戏 Java 类，通过 require 引入 common 脚本。
 - 入口在服务端主线程；长时间运行会阻塞服务器。作者自行安排异步工作，并负责把游戏状态修改调度回正确线程。
 
 ### 5.4 脚本失败
 
-- 未捕获异常 → 记在**当前玩家**结果上，**跳过该玩家后续步骤**（含 feedback）；**不回滚**已发放内容；**继续下一名玩家**。
+- 未捕获异常 → 记在**当前玩家**结果上，继续后续绑定脚本和 feedback；**不回滚**已发放内容；继续下一名玩家。
 - `kit.*` 出错抛异常，信息带 [表达式错误类别](#kit-expr)。
 
 ## 6. 失败语义汇总
@@ -190,7 +191,7 @@ if kit.param("difficulty") >= 2:
 | 未知 `kitId` / 展开成环 / 深度超限 / 无有效玩家 | 整次失败，零发放 |
 | 单条物品解析失败、插值失败、无效音效 | 跳过该项，继续该玩家与其余玩家 |
 | 背包满 | 落地；警告 |
-| 某玩家脚本异常 | 不回滚；跳过该玩家后续；继续其他人 |
+| 某玩家脚本异常 | 记录问题、不回滚；继续后续绑定脚本、反馈和其他人 |
 | `dryRun` | 无世界副作用；仍可做展开与 expr 校验 |
 
 整体成功：没有「整次失败」类错误即可；允许 `ok_with_warnings` 或部分玩家失败（报告须可区分）。
@@ -236,10 +237,10 @@ if kit.param("difficulty") >= 2:
 箱子界面使用服务端 ChestGui：可搜索、翻页、查看默认参数下的奖励，再明确点击“发放给自己”。详情随机池为 seed=0 的模拟；实际领取重新抽取。预览不会执行指令、脚本和反馈，也不会发放任何东西。
 
 
-脚本与 common 库按发放开始时的已发布快照执行，重载后下一次发放使用新版。加载 PAK 不执行脚本。礼包 Python 可 `from common.helper import function` 导入已发布 script/common/helper.py；每次调用的模块缓存独立，支持相对导入，不向 common 模块注入礼包全局变量，也不自动注册事件监听。更改公共库的顶层副作用由可信作者负责。
+脚本与 common 库按发放开始时的已发布快照执行，重载后下一次发放使用新版。加载 PAK 不执行脚本。礼包 JavaScript 可 `require helper from "helper"` 引用已发布 script/common/helper.js 的 exports；每次调用的模块缓存独立，不支持相对导入，不向 common 模块注入礼包全局变量，也不自动注册事件监听。更改公共库的顶层副作用由可信作者负责。
 
 ### 多脚本绑定
 
-`script` 保存有序引用数组，例如 `"script": [{"ref":"基础发放"},{"ref":"额外效果"}]`。同一脚本不能重复绑定。发放前验证全部引用，缺失任意脚本则整次发放失败、不会先发奖励。每位接收者依列表顺序执行；各脚本有独立调用环境，使用相同 kit/player/players 与连续随机数源。脚本抛错会终止该接收者后续步骤，已有副作用不回滚。脚本只执行当前礼包声明的列表。
+`script` 保存有序引用数组，例如 `"script": [{"ref":"基础发放"},{"ref":"额外效果"}]`。同一脚本不能重复绑定。发放前验证全部引用，缺失任意脚本则整次发放失败、不会先发奖励。每位接收者依列表顺序执行；各脚本有独立调用环境，使用相同 kit/player/players 与连续随机数源。脚本抛错记入该接收者的问题列表，继续后续绑定脚本与反馈，已有副作用不回滚。脚本只执行当前礼包声明的列表。
 
 WebUI 支持从资源管理器拖入礼包脚本、拖动排序、点击名称打开，行末 × 解除绑定。添加菜单包含已有脚本和“新建并绑定”；旧内嵌代码仍须显式提取。

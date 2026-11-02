@@ -1,3 +1,4 @@
+import {transformDialect} from '../../monaco/javascript/dialect'
 import { isObject } from './model'
 import {isScriptDocument,scriptTypeInFolder,isBuiltinScriptDocumentKey} from './library'
 import {type FlowDocument,type FlowWorkspaceState} from './storage'
@@ -35,7 +36,7 @@ export type GoalDefinition = {
   /** WebUI 预览模板；非运行时权威 */
   localize?: Record<string, string>
   fields: GoalConfigField[]
-  /** Class-level Python declaration, not presentation metadata. */
+  /** Literal JavaScript declaration, not presentation metadata. */
   requiresDelivery?: boolean
   /** 来源脚本文档 key；内置种子可为 null */
   sourceKey: string | null
@@ -60,59 +61,28 @@ export function localizedGoalDefinitionLabel(definition: GoalDefinition, locale:
   return pickGoalLocaleName(definition.labels, locale, definition.label || definition.kind)
 }
 
-/**
- * 从目标定义 py 源码抽出 @goal / @config(field…)。
- * 只做装饰器表层解析，不跑 Python。
- */
+/** Parse only dialect metadata. Author code is never evaluated by WebUI. */
 export function parseGoalDefinitionsFromSource(source: string, meta: { sourceKey: string | null; sourceName: string }): GoalDefinition[] {
-  const text = source.replace(/\r\n/g, '\n')
-  const defs: GoalDefinition[] = []
-  const goalRe = /@goal\(\s*(['"])([^'"\n]+)\1\s*\)/g
-  let match: RegExpExecArray | null
-  while ((match = goalRe.exec(text))) {
-    const kind = match[2]!.trim()
-    if (!kind) continue
-    const after = text.slice(match.index + match[0].length).split(/@goal\s*\(/, 1)[0]!
-    const fields = parseConfigBlock(after.split(/\bclass\s+/, 1)[0]!)
-    const className = /^[\s\S]*?\bclass\s+([A-Za-z_][\w]*)/.exec(after)?.[1]
-    const label = className
-      ? className.replace(/Goal$/, '').replace(/([a-z])([A-Z])/g, '$1 $2')
-      : kind
-    defs.push(applyGoalHeaderMeta({
-      kind,
-      label,
-      fields,
-      ...parseDeliveryDeclaration(after),
-      sourceKey: meta.sourceKey,
-      sourceName: meta.sourceName,
-    }, parseGoalHeaderMeta(text)))
+  const result = transformDialect(source)
+  if (!result.goal) {
+    if (result.diagnostics.length) throw Error(result.diagnostics.map(d => `第 ${d.line} 行：${d.message}`).join('；'))
+    return []
   }
-  return defs
+  const goal = result.goal
+  const fields: GoalConfigField[] = goal.config.map(field => ({
+    key: field.name,
+    type: normalizeFieldType(field.type)!,
+    required: field.required,
+    label: field.name,
+    ...(field.defaultValue !== null ? {default: field.defaultValue} : {}),
+  }))
+  return [applyGoalHeaderMeta({
+    kind: goal.id, label: goal.id, fields, requiresDelivery: goal.requiresDelivery, ...meta,
+    ...(result.diagnostics.length ? {error:result.diagnostics.map(d => `第 ${d.line} 行：${d.message}`).join('；')} : {}),
+  }, parseGoalHeaderMeta(source))]
 }
 
-/** Literal class-level capability. Do not infer delivery from goal kind or JSON labels. */
-function parseDeliveryDeclaration(source: string): { requiresDelivery: boolean; error?: string } {
-  const masked = source.replace(/("""|''')[\s\S]*?\1|#[^\n]*/g, match => match.replace(/[^\n]/g, ' '))
-  const header = /^([ \t]*)class\s+\w+[^\n]*?:[ \t]*([^\n]*)$/m.exec(masked)
-  if (!header) return { requiresDelivery: false }
-  const lines: string[] = []
-  if (header[2].trim()) lines.push(...header[2].split(';').map(member => `${header[1]}    ${member.trim()}`))
-  for (const line of masked.slice(header.index + header[0].length).split('\n')) {
-    if (line.trim() && line.search(/\S/) <= header[1].length) break
-    lines.push(line)
-  }
-  const indent = Math.min(...lines.filter(line => line.trim()).map(line => line.search(/\S/)))
-  const members = lines.filter(line => line.trim() && line.search(/\S/) === indent)
-  const declarations = members.filter(line => /^\s*requires_delivery\b/.test(line))
-  const literal = declarations.length === 1 ? /^\s*requires_delivery\s*=\s*(True|False)\s*$/.exec(declarations[0]) : null
-  const delivers = members.some(line => /^\s*def\s+deliver\s*\(/.test(line))
-  const requiresDelivery = literal?.[1] === 'True'
-  if (declarations.length && !literal) return { requiresDelivery, error: 'requires_delivery 必须是唯一的类级 True / False 字面量声明。' }
-  if (delivers && !requiresDelivery) return { requiresDelivery, error: '实现 deliver 的目标定义必须显式声明 requires_delivery = True。' }
-  return { requiresDelivery }
-}
-
-/** 把文件头 labels / widget / localize 叠到 @config 字段上；头与装饰器不一致时仍保留运行时字段。 */
+/** 把文件头 labels / widget / localize 叠到 config 字段上；头与配置声明不一致时仍保留运行时字段。 */
 export function applyGoalHeaderMeta(definition: GoalDefinition, header: ReturnType<typeof parseGoalHeaderMeta>): GoalDefinition {
   if (!header) return definition
   const labels = header.labels
@@ -138,83 +108,6 @@ export function applyGoalHeaderMeta(definition: GoalDefinition, header: ReturnTy
   }
 }
 
-/** 从 `@config(` 起读到配对的 `)`；不含 `@state` 等后续装饰器。 */
-function readDecoratorCallBody(source: string, decorator: string): string | null {
-  const start = new RegExp(`@${decorator}\\s*\\(`).exec(source)
-  if (!start) return null
-  const open = start.index + start[0].length - 1
-  let depth = 0
-  let quote: '"' | "'" | null = null
-  for (let i = open; i < source.length; i++) {
-    const ch = source[i]!
-    if (quote) {
-      if (ch === '\\' && i + 1 < source.length) {
-        i++
-        continue
-      }
-      if (ch === quote) quote = null
-      continue
-    }
-    if (ch === '"' || ch === "'") {
-      quote = ch
-      continue
-    }
-    if (ch === '(') depth++
-    else if (ch === ')') {
-      depth--
-      if (depth === 0) return source.slice(open + 1, i)
-    }
-  }
-  return null
-}
-
-function parseConfigBlock(afterGoal: string): GoalConfigField[] {
-  const body = readDecoratorCallBody(afterGoal, 'config')
-  if (body === null) return []
-  const fields: GoalConfigField[] = []
-  const fieldRe = /field\(\s*(['"])([^'"\n]+)\1\s*,\s*(['"])([^'"\n]+)\3\s*([^)]*)\)/g
-  let fieldMatch: RegExpExecArray | null
-  while ((fieldMatch = fieldRe.exec(body))) {
-    const key = fieldMatch[2]!.trim()
-    const typeRaw = normalizeFieldType(fieldMatch[4]!.trim())
-    if (!key || !typeRaw) continue
-    const kwargs = fieldMatch[5] ?? ''
-    const required = /\brequired\s*=\s*True\b/.test(kwargs)
-    const hint = readKwString(kwargs, 'hint')
-    const label = readKwString(kwargs, 'label')
-    const defaultValue = readKwDefault(kwargs, typeRaw)
-    fields.push({
-      key,
-      type: typeRaw,
-      required,
-      ...(defaultValue !== undefined ? { default: defaultValue } : {}),
-      ...(hint ? { hint } : {}),
-      ...(label ? { label } : { label: key }),
-    })
-  }
-  return fields
-}
-
-function readKwString(kwargs: string, name: string): string | undefined {
-  const match = new RegExp(`\\b${name}\\s*=\\s*(['"])([^'"\\n]*)\\1`).exec(kwargs)
-  return match ? match[2] : undefined
-}
-
-function readKwDefault(kwargs: string, type: GoalConfigFieldType): GoalConfigValue | undefined {
-  if (!/\bdefault\s*=/.test(kwargs)) return undefined
-  if (/\bdefault\s*=\s*True\b/.test(kwargs)) return true
-  if (/\bdefault\s*=\s*False\b/.test(kwargs)) return false
-  const str = readKwString(kwargs, 'default')
-  if (str !== undefined) return str
-  const num = /\bdefault\s*=\s*(-?\d+(?:\.\d+)?)\b/.exec(kwargs)
-  if (num) {
-    const value = Number(num[1])
-    return type === 'int' ? Math.trunc(value) : value
-  }
-  if (/\bdefault\s*=\s*None\b/.test(kwargs)) return type === 'string' ? '' : type === 'bool' ? false : 0
-  return undefined
-}
-
 export function defaultConfigFromFields(fields: GoalConfigField[]): Record<string, GoalConfigValue> {
   const config: Record<string, GoalConfigValue> = {}
   for (const field of fields) {
@@ -233,7 +126,7 @@ export function isGoalDefinitionDocument(state: FlowWorkspaceState, document: Fl
 }
 
 /**
- * 目标定义管理器：扫描「目标定义」下的 .py（含虚拟内置），解析为 kind 目录。
+ * 目标定义管理器：扫描「目标定义」下的 .js（含虚拟内置），解析为 kind 目录。
  * 先按类型和文件名应用工程整文件覆盖，再解析有效脚本；不同文件的类型 ID 冲突单独报告。
  */
 export function buildGoalDefinitionCatalog(state: FlowWorkspaceState): GoalDefinitionCatalog {
@@ -249,7 +142,7 @@ export function buildGoalDefinitionCatalog(state: FlowWorkspaceState): GoalDefin
         sourceName: document.name,
       })
       if (!parsed.length) {
-        errors.push({ sourceKey: document.key, sourceName: document.name, message: '未找到 @goal(…) 声明' })
+        errors.push({ sourceKey: document.key, sourceName: document.name, message: '未找到 @goal / @config / @state 文件级元数据块' })
         return
       }
       for (const def of parsed) {

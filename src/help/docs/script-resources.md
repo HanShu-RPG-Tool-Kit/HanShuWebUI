@@ -2,16 +2,16 @@
 
 ## 目录与身份
 
-脚本有六种类型：common（通用）、goal（目标定义）、kit（礼包）、shop（商店）、actor（演员）、player（玩家）。工程统一保存为 `src/script/<类型>/<文件名>.py`；PAK 对应 `script/<类型>/<文件名>.py`，均属于 server 平面。类型是真实分类，类型内的用户文件夹是保存到工程 `meta/explorer.json` 的共享整理视图，不创建磁盘子目录；文件名在同类型内唯一，不同类型可以同名。
+脚本有六种类型：common（通用）、goal（目标定义）、kit（礼包）、shop（商店）、actor（演员）、player（玩家）。工程统一保存为 `src/script/<类型>/<文件名>.js`；PAK 通常对应 `script/<类型>/<文件名>.js`；goal 特例导出为 `goal_scripts/<文件名>.js`，界面分类为 `goal-def`，均属于 server 平面。类型是真实分类，类型内的用户文件夹是保存到工程 `meta/explorer.json` 的共享整理视图，不创建磁盘子目录；文件名在同类型内唯一，不同类型可以同名。
 
-脚本类型由工程路径决定，不通过执行 Python 猜测类型。拖动到另一类型属于类型转换，会改变源文件路径，经 S 的版本校验与事务执行；代码不会被自动改写成新类型。检查入口后再转换。目录规则集中在 scriptResources/types.ts、workspace.ts，禁止业务页面自己拼另一套路径。
+脚本类型由工程路径决定，不通过执行 JavaScript 猜测类型。拖动到另一类型属于类型转换，会改变源文件路径，经 S 的版本校验与事务执行；代码不会被自动改写成新类型。检查入口后再转换。目录规则集中在 scriptResources/types.ts、workspace.ts，禁止业务页面自己拼另一套路径。
 
 ## 内置脚本与模板
 
 维护目录位于 `src/scriptResources/`：
 
-- `builtin/<类型>/*.py`：内置可用脚本。直接增删改文件，构建时自动收集；资源管理器在对应类型下显示只读「内置」。空类型无需填充虚假的可执行文件。
-- `templates/<类型>/*.py`：新建代码模板；默认使用 default.py，资源管理器新建脚本可选择同类型其他模板。模板不参与目标定义收集，不作为内置运行脚本导出。
+- `builtin/<类型>/*.js`：内置可用脚本。直接增删改文件，构建时自动收集；资源管理器在对应类型下显示只读「内置」。空类型无需填充虚假的可执行文件。
+- `templates/<类型>/*.js`：新建代码模板；默认使用 default.js，资源管理器新建脚本可选择同类型其他模板。模板不参与目标定义收集，不作为内置运行脚本导出。
 
 模板正文可用 `{{name}}` 插入新建脚本的名称。新建产生普通工程草稿，后续通过工程服务保存。模板文件自身不进入工程；生成后的文件正常导出。修改模板不追溯修改已有工程脚本。
 
@@ -33,47 +33,47 @@
 }
 ```
 
-`scripts` 为去重的扁平脚本 id（文件名去掉最后一个 `.py`）。**出现即启用**；未列入的脚本不会自动挂载，但仍可作为库被 import。空数组表示不自动启用任何脚本。同 priority／同 hook 内按列表下标破平；跨 priority 仍先比事件总线优先级。
+`scripts` 为去重的扁平脚本 id（文件名去掉最后一个 `.js`）。**出现即启用**；未列入的脚本不会自动挂载，common 仍可作为库被 require。空数组表示不自动启用任何脚本。同 priority／同 hook 内按列表下标破平；跨 priority 仍先比事件总线优先级。
 
-**PAK 导出与启用无关**：`load.json` 只决定运行时挂载顺序，不裁剪产物。工程内全部 `.py`（及未被覆盖的内置脚本）仍照常进入 server PAK；未启用脚本同样导出，供 import 或日后启用。
+**PAK 导出与启用无关**：`load.json` 只决定运行时挂载顺序，不裁剪产物。工程内全部 `.js`（及未被覆盖的内置脚本）仍照常进入 server PAK；未启用脚本同样导出，供 common 引用或日后启用。
 
 资源树在「通用脚本」「玩家脚本」分类下各有固定虚入口「通用启动列表」「玩家启动列表」（不可改名／移动／删除），编辑的就是上述文件。候选包含工程脚本与**有效内置脚本**（内置会随 PAK 导出；工程同名整文件覆盖后按覆盖结果计入）。改名不级联改写列表；缺失 id 在编辑器标红，编译导出记为 **warning** 并跳过该项，不阻断整包。
 
 验证：`npm run test:script-load`。
 
-## 类型能力与后续 Mod 契约
+## 类型能力与 Mod 契约
 
-- common：公共库、全局服务、事件订阅；主动启用顺序由 `src/script/common/load.json` 决定，未被列入的仅可作 import 库。
+- common：公共库、全局服务、事件订阅；主动启用顺序由 `src/script/common/load.json` 决定，未被列入的可通过 require 作为库使用。
 - goal：注册目标类型，沿用 goal 自己的配置与实例状态。
-- kit：一次礼包调用；官方宿主不提供事件订阅装饰器，不承诺安全沙箱。可信程序员主动绕过契约属于其自身责任。
+- kit：一次礼包调用；官方宿主不提供事件订阅入口，不承诺安全沙箱。可信程序员主动绕过契约属于其自身责任。
 - shop：商店交易预提交脚本，注入 shop/player，通过条目句柄暂存 delta，契约见[商店模板](#shop-guide)。
 - actor（演员脚本）：已接入演员模板绑定、hook、会话内共享黑板和脚本调度；契约见[演员模板与脚本](#actor-guide)。
-- player（玩家脚本）：已支持分类、专属图标、新建模板、工程保存、启动列表及 PAK 导出。语言服务注入 `hook`／`Blackboard`，名称由游戏 `python.playerHooks` 注册表驱动；事件与宿主 API 按需反射。启动序见 `src/script/player/load.json`。
+- player（玩家脚本）：已支持分类、专属图标、新建模板、工程保存、启动列表及 PAK 导出。作者为 `@hook` 函数参数与返回值显式写类型，语言服务使用这些签名，名称由游戏 `javascript.playerHooks` 注册表驱动；事件与宿主 API 按需反射。启动序见 `src/script/player/load.json`。
 
-WebUI 已统一资源模型、编辑器与 PAK 导出。Mod 已接入 script/kit/ 的引用执行，并按需为礼包提供 script/common/ 库导入；不会在加载 PAK 时自动运行 common 订阅，也尚未接入 goal 的新 PAK 加载器；actor 已由独立宿主接入。启动列表文件会进入 server PAK，宿主按列表挂载的契约待 Mod 侧对齐。
+WebUI 的编辑、方言校验与 PAK 导出对接 Nashorn 内容脚本宿主。common/player 按启动列表挂载，actor 按模板顺序执行，goal 注册类型，kit/shop 按业务调用执行。导出保持作者行号并附带 hook 元数据。`import Type from "package.Type"` 只引 Java 类型，`require library from "id"` 只引 common 的 exports；不支持 Node、ES 模块或相对路径。
 
-语言服务规范见[Python 编辑器与语言服务](#python-language)。
+语言服务规范见[JavaScript 编辑器与语言服务](#javascript-language)。
 
 ### goal 交付声明
 
-目标类使用类级布尔字面量 `requires_delivery = True` 声明“满足条件后仍需交付”；未声明默认 False，也可显式写 False。实现 `deliver(self, instance, context)` 的类型必须声明 True，不能通过 goal 类型名、`consume` 参数或文件头展示 JSON 猜测。声明不能是计算表达式，也不能藏在方法体内。内置四种物品持有/提交目标均实现交付钩子，因此声明 True。
+目标定义在文件级 `@goal("id", {requires_delivery: true})` 中使用布尔字面量声明“满足条件后仍需交付”；未声明默认 false。实现 `deliver(instance, context)` 的类型必须声明 true，不能通过目标类型名、`consume` 参数或文件头展示 JSON 猜测。声明不能是计算表达式，也不能藏在方法体内。内置四种物品持有/提交目标均声明 true。
 
 目标节点引用该类型，或进度的任意 goal 引用该类型时，所属节点必须显式配置 `submission: {submit_type, param}`；缺失时编辑器、模拟入口和 PAK 导出报错。UI 类型为 `ui`、param 为 null；对话类型为 `dialogue_injection`、param 为不带 `@` 的注入点名，均不本地化。进度只在节点自身配置一次提交，提交全部 goal；目标也只在节点自身配置，不在 goal 中配置入口。所有目标节点均须具名，与是否提交无关。满足条件仅代表可提交；宿主实际交付成功后才令节点进入已成功并发 A。交付拒绝应保留运行中，不能当成目标已失败。详细生命周期和提交字段见[多进度节点图](#progress-node-graph)。
 
-WebUI 只静态读取声明并保存/导出配置，不执行 Python。`requires_delivery` 是后续 Mod goal 加载与提交接入必须读取的契约；本次并未修改 Mod 加载器或提供实际游戏内提交界面。
+WebUI 只静态读取声明并保存/导出配置，不执行 JavaScript。`requires_delivery` 由 JS 目标定义显式声明；完整任务/进度提交界面是否可用仍以 Mod 对应功能契约为准。
 
 
 ## 旧工程与验证
 
-原型阶段不维护旧的 src/goal/、src/script/*.py 或 src/scripts/ 布局兼容层。旧工程需先明确将脚本移到 src/script/<类型>/；打开旧路径时给出具体路径错误，不自动迁移、不覆盖文件。既有内置 goal 的代码在本次原样迁移，未顺带改写其运行逻辑。
+原型阶段不维护旧的 src/goal/、src/script/*.js 或 src/scripts/ 布局兼容层。旧 Python 内容脚本需改写为方言 JS，并保存为 src/script/<类型>/*.js；仅改后缀不会转换语言。旧目录需将文件移到 src/script/<类型>/；打开旧路径时给出具体路径错误，不自动迁移、不覆盖文件。内置 goal 已改写为方言 JS，保持事件、状态、本地化与交付语义。
 
 验证：`npm run test:script-resources` 覆盖六类型路径、会话往返、同名隔离、整文件覆盖和 PAK server/client 内容；`test:goal-definitions` 与 `test:new-file-types` 验证目标解析和创建入口；`test:script-resources:ui` 对真实 S 验证创建、保存、重开与内置覆盖。
 
 
 ## 礼包脚本引用
 
-.kit 的 script 字段使用明确引用：`"script": [{"ref": "新手礼包-发放脚本"}]`。ref 是 script/kit/ 下文件名去掉最后一个 .py 的 ID，不能使用路径、命名空间或从 common 等其他类型解析。ID 本身可以包含普通点号，不能再自动去除其末尾的 .py。空列表表示本地未指定，继承时沿用父礼包。
+.kit 的 script 字段使用明确引用：`"script": [{"ref": "新手礼包-发放脚本"}]`。ref 是 script/kit/ 下文件名去掉最后一个 .js 的 ID，不能使用路径、命名空间或从 common 等其他类型解析。ID 本身可以包含普通点号，不能再自动去除其末尾的 .js。空列表表示本地未指定，继承时沿用父礼包。
 
 礼包表单提供搜索选择、打开、新建并关联、清除引用。新建自动按礼包名命名并避让；不再内嵌代码编辑器。旧版字符串 script 只作为待提取代码保留，明确显示提示；“提取为礼包脚本”在同一次草稿变更中创建脚本并替换引用，保存时两文件经过 S 合批事务，失败保留草稿及服务端旧版本。不会把旧字符串猜成文件名。未提取代码或引用缺失时 PAK 编译报错。
 
-脚本改名/删除不自动改写礼包引用；引用不授予联动写权或级联删除，用户需修复缺失引用。Mod 发放前检查直接引用，缺失时整个发放失败、不给奖励；执行中的 Python 异常仍按既有流水线规则处理，不回滚此前已发放内容。
+脚本改名/删除不自动改写礼包引用；引用不授予联动写权或级联删除，用户需修复缺失引用。Mod 发放前检查直接引用，缺失时整个发放失败、不给奖励；执行中的 JavaScript 异常仍按既有流水线规则处理，不回滚此前已发放内容。

@@ -398,7 +398,7 @@ export function registerHanshuLanguage(monaco: Monaco) {
     base: 'vs-dark',
     inherit: true,
     rules: [
-      // Python 等内置语言：vs-dark 的 keyword(#569CD6) 和默认前景太接近，看起来像「关键字没上色」。
+      // JavaScript 等内置语言：vs-dark 的 keyword(#569CD6) 和默认前景太接近，看起来像「关键字没上色」。
       // 显式加亮，并覆盖 decorator（Monarch 记为 tag）。
       { token: 'keyword', foreground: '4FC1FF' },
       { token: 'tag', foreground: '4FC1FF' },

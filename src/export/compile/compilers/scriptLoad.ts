@@ -34,7 +34,7 @@ export const scriptLoadCompiler: FileCompiler = {
           severity: 'warning',
           code: 'script_load_missing',
           sourcePath: sourcePathOf(file),
-          message: `启动列表缺少脚本：${id}（src/script/${type}/${id}.py）`,
+          message: `启动列表缺少脚本：${id}（src/script/${type}/${id}.js）`,
         })
       }
     }

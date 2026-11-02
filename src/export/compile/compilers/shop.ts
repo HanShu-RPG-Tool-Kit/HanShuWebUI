@@ -21,7 +21,7 @@ export const shopCompiler: FileCompiler = {
     for (const rule of [...shop.visibility, ...shop.availability]) if (rule.kind === 'expr') {
       try { compileShopCondition(rule.target, env) } catch (cause) { error(`商店条件：${String(cause)}`) }
     }
-    for (const script of shop.script) if (!ctx.index.package.scripts.some(s => sourcePathOf(s) === `src/script/shop/${script.ref}.py`)) error(`缺少商店脚本：${script.ref}`)
+    for (const script of shop.script) if (!ctx.index.package.scripts.some(s => sourcePathOf(s) === `src/script/shop/${script.ref}.js`)) error(`缺少商店脚本：${script.ref}`)
     if (shop.icon?.item && !ctx.index.package.scripts.some(s => s.name === `${shop.icon!.item}.item`)) error(`缺少图标物品：${shop.icon.item}`)
     for (const entry of shop.entries) {
       for (const expression of [entry.visibility, entry.availability]) if (expression.trim()) {

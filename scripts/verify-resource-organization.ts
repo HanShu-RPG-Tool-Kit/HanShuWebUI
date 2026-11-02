@@ -13,7 +13,7 @@ const state=():FlowWorkspaceState=>({documents:[{key:'a',name:'apple.item',packa
 test('canonical paths are lossless and nested source paths fail explicitly',()=>{
  for(const type of RESOURCE_TYPES){const path=sourcePathOf({name:`test${type.ext}`});assert.doesNotThrow(()=>assertCanonicalSourcePath(path))}
  assert.throws(()=>assertCanonicalSourcePath('src/items/nested/apple.item'),/非规范资源路径/)
- assert.throws(()=>assertCanonicalSourcePath('src/script/unknown/a.py'),/非规范资源路径/)
+ assert.throws(()=>assertCanonicalSourcePath('src/script/unknown/a.js'),/非规范资源路径/)
 })
 test('category formats and import conversion are distinct',()=>{
  assert.deepEqual(categoryExtensions('items'),['.item']);assert(packageAcceptsImportFile('items','a.itemstack'));assert(!categoryExtensions('items').includes('.itemstack'))
@@ -37,9 +37,9 @@ test('real builtin and library views do not block empty or populated folder move
 })
 
 test('script subtree moves with builtin views check nested destination name collisions',()=>{
- const s=withLibraryTables(withBuiltinScripts({documents:[{key:'a',name:'same.py',package:'script',folderId:'nested',source:''},{key:'b',name:'same.py',package:'script',folderId:sectionFolderKey('script','kit'),source:''}],folders:[{key:'f',name:'Folder',parentId:sectionFolderKey('script','common'),package:'script'},{key:'nested',name:'Nested',parentId:'f',package:'script'}],activeKey:null}))
+ const s=withLibraryTables(withBuiltinScripts({documents:[{key:'a',name:'same.js',package:'script',folderId:'nested',source:''},{key:'b',name:'same.js',package:'script',folderId:sectionFolderKey('script','kit'),source:''}],folders:[{key:'f',name:'Folder',parentId:sectionFolderKey('script','common'),package:'script'},{key:'nested',name:'Nested',parentId:'f',package:'script'}],activeKey:null}))
  assert.throws(()=>moveFlowEntry(s,{kind:'folder',key:'f'},'script',sectionFolderKey('script','kit')),/同名/)
- assert.doesNotThrow(()=>requireAvailableName(s,'same.py','script',sectionFolderKey('script','actor')))
+ assert.doesNotThrow(()=>requireAvailableName(s,'same.js','script',sectionFolderKey('script','actor')))
  const moved=moveFlowEntry(s,{kind:'folder',key:'f'},'script',sectionFolderKey('script','actor'))
  assert.equal(scriptTypeInFolder(moved,moved.documents.find(doc=>doc.key==='a')!.folderId??null),'actor')
  assert.equal(scriptTypeInFolder(moved,moved.documents.find(doc=>doc.key==='b')!.folderId??null),'kit')
@@ -88,10 +88,10 @@ test('rename/delete relocate placements without changing virtual folders',()=>{
  assert.deepEqual(moved.folders,org.folders)
 })
 test('ambiguous bare names fail while canonical lookup remains exact',()=>{
- const files=[createSourceFile('same.py','','common'),createSourceFile('same.py','','kit')]
+ const files=[createSourceFile('same.js','','common'),createSourceFile('same.js','','kit')]
  const w={packages:[createProject('test',files)],activeScriptId:null,activeAssetId:null}
- assert.throws(()=>findScriptByName(w,'same.py'),/不唯一/)
- assert.equal(findScriptByName(w,'src/script/kit/same.py')?.script.srcKind,'kit')
+ assert.throws(()=>findScriptByName(w,'same.js'),/不唯一/)
+ assert.equal(findScriptByName(w,'src/script/kit/same.js')?.script.srcKind,'kit')
  assert.deepEqual(parseOrganization(null),emptyOrganization())
 })
 console.log(`${checks} resource organization checks passed`)

@@ -10,7 +10,7 @@ export function isSkinSemanticEdit(edit: FileEdit): boolean {
   return edit.op === 'skin-entry-patch' || edit.op === 'skin-library-command'
 }
 const skinConflictMessage = '皮肤操作需要在皮肤库中处理：请先确认或放弃原操作，刷新后重新选择对象。不能将操作请求作为整个索引文件覆盖。'
-const textPath = /\.(hs|py|md|json|lang|ref|voice|char|item|kit|progress|hflow|nav|tts|ttsservice|txt)$/i
+const textPath = /\.(hs|js|md|json|lang|ref|voice|char|item|kit|progress|hflow|nav|tts|ttsservice|txt)$/i
 async function textOf(path: string, data: FileEdit['data']): Promise<string | undefined> {
   if (typeof data === 'string') return data
   if (data === undefined || !textPath.test(path)) return undefined

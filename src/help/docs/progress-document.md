@@ -7,7 +7,7 @@
 - 文档 `id` 是设计文档标识，不表示引擎可识别的任务 ID。`goals` 是扁平目标列表，每项含内部 `id`、脚本类型 `kind` 与实例参数 `config`。Goal 展示语义属类型定义，实例不覆盖标题或描述。
 - `config` 只保存显式填写的参数。缺键表示沿用定义默认值；显式等于默认值、空文本、零、false 仍保留。恢复默认＝删除对应键。
 - `completion` 支持 `all` / `any` / `custom`。自定义用 `completionGraph`；切到全部或任一时保留该图但不参与判断。空目标列表提示待完善。
-- Goal 类型及参数字段唯一来自「脚本 → 目标定义」。目录从 `@goal` / `@config(field(...))` 解析；表单不执行 Python。文件头三引号 JSON（`labels` / `params.*.widget` / `localize`）只供 WebUI。参数控件由可注册的 `goalWidgets` 解析（内置 `text` / `number` / `slider` / `select` / `bool`）；未知控件本阶段回退文本框。
+- Goal 类型及参数字段唯一来自「脚本 → 目标定义」。目录从文件级 `@goal(id)` 与 `@config(field(...))` 元数据解析；表单不执行 JavaScript。文件头 `/* JSON */` 注释（`labels` / `params.*.widget` / `localize`）只供 WebUI。参数控件由可注册的 `goalWidgets` 解析（内置 `text` / `number` / `slider` / `select` / `bool`）；未知控件本阶段回退文本框。
 - 没有脚本时显示空目录。定义删除后目标仍保留类型与参数。未声明的旧参数保留在文件中。
 - `visibility` 与 `acceptance` **相互独立**；各列表内全部满足才通过，任一方为空则该方直接满足。**承接只要求 `acceptance`，不要求 `visibility`。** 任务状态 `before_accept / after_accept / active / succeeded / ended`；对话 `before / after`；求值 `expr` 仅 `true`。可见性还可写 `repeat`（`satisfied` / `unsatisfied`，`target` 为空）。**可承接数组不得出现 `repeat`**。引擎求值未实现。
 - `abandonable` 与 `autoStartWhenAcceptable` 为布尔；新建显式写出，后者缺省 false。

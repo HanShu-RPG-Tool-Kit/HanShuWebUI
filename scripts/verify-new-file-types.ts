@@ -15,6 +15,7 @@
  */
 
 import assert from 'node:assert/strict'
+import {transformDialect} from '../src/monaco/javascript/dialect'
 import { readFileSync } from 'node:fs'
 import {
   MANUAL_FILE_EXTENSIONS,
@@ -100,11 +101,11 @@ for (const ext of MANUAL_FILE_EXTENSIONS) {
     `MANUAL_FILE_EXTENSIONS 里的 ${ext} 在注册表里没有条目`,
   )
 }
-// `.py` 按 SCRIPT_TYPES 各一条（磁盘上每种类型一个目录）
-assert.equal(NEW_FILE_TYPES.filter((item) => item.ext === '.py').length, 6)
-assert.equal(type('py').srcKind, 'common', '通用脚本使用 common 类型')
-assert.equal(type('py-goal').srcKind, 'goal')
-assert.notEqual(type('py').icon, type('py-goal').icon, '两种 .py 的图标必须能区分')
+// `.js` 按 SCRIPT_TYPES 各一条（磁盘上每种类型一个目录）
+assert.equal(NEW_FILE_TYPES.filter((item) => item.ext === '.js').length, 6)
+assert.equal(type('js').srcKind, 'common', '通用脚本使用 common 类型')
+assert.equal(type('js-goal').srcKind, 'goal')
+assert.notEqual(type('js').icon, type('js-goal').icon, '两种 .js 的图标必须能区分')
 
 // id 唯一 + 分组 id 都存在
 assert.equal(new Set(NEW_FILE_TYPES.map((item) => item.id)).size, NEW_FILE_TYPES.length, 'id 不能重复')
@@ -132,7 +133,7 @@ for (const item of NEW_FILE_TYPES) {
 }
 // 资源树是靠 sourceIconKind(file) 选图标的：注册表里每种类型的图标必须与它一致，
 // 否则"菜单里认得出、树里认不出"（`.quest` 等曾经就退化成通用文件图标；
-// 而 `.py` 的目标定义光看后缀根本分不开，得靠 srcKind）。
+// 而 `.js` 的目标定义光看后缀根本分不开，得靠 srcKind）。
 // 例外：单/多进度都是 `.quest`，菜单用 progress/hflow 区分作者态，树里统一 quest。
 for (const item of NEW_FILE_TYPES) {
   const name = newFileName(item, item.defaultBase)
@@ -151,7 +152,7 @@ assert.equal(fileIconKind('a.entity'), 'entity')
 assert.equal(fileIconKind('a.ttsservice'), 'ttsservice')
 assert.equal(fileIconKind('a.tts'), 'tts')
 assert.notEqual(fileIconKind('a.tts'), fileIconKind('a.ttsservice'), '方案与服务定义必须是两个图标')
-assert.notEqual(sourceIconKind({ name: 'a.py' }), sourceIconKind({ name: 'a.py', srcKind: 'goal' }))
+assert.notEqual(sourceIconKind({ name: 'a.js' }), sourceIconKind({ name: 'a.js', srcKind: 'goal' }))
 assert.equal(type('progress').ext, '.quest')
 assert.equal(type('hflow').ext, '.quest')
 assert.notEqual(type('progress').icon, type('hflow').icon, '单/多进度在新建菜单里必须能区分')
@@ -380,20 +381,12 @@ assert.ok(charSeed.includes('name:林砚//'), '角色卡的示例槽应带上文
 // `.md`：有意义的骨架，不是空文件
 assert.ok(seedOf('md', '设定').startsWith('# 设定\n'))
 
-// 两种 `.py`：只写注释，且**不能**凭空产生目标定义
-//
-// 这里只做文本判据、不去 import `parseGoalDefinitionsFromSource`：那个模块
-// （`goalDefinitions.ts`）在顶层拉 `builtinGoals/index.ts`，而后者用了 Vite 专有的
-// `import.meta.glob` —— 在 tsx 下会当场炸（`verify-goal-definitions.ts` 因此改走 vite-node）。
-// 判据本身比解析器更严：出现 `@goal(` 就算失败。目标定义目录是拿正则扫**全文**的，
-// 注释里一句示例也会被当成一条定义，所以种子里干脆不该有这个形态。
-for (const id of ['py', 'py-goal']) {
-  const seed = seedOf(id, '示例')
-  assert.ok(seed.startsWith('# 示例\n'), `${id} 的骨架第一行应是标题注释`)
-  assert.ok(
-    !seed.includes('@goal('),
-    `${id} 的种子不该出现 @goal( —— 目标定义是扫全文的，注释里的示例也会被当成一条定义`,
-  )
+// Script templates must pass the same author gate used for PAK export.
+for (const id of ['js', 'js-goal']) {
+  const seed=seedOf(id,'示例'),result=transformDialect(seed)
+  assert.ok(seed.startsWith('// 示例\n'),`${id} must retain the title comment`)
+  assert.deepEqual(result.diagnostics,[],`${id} must be executable after dialect transformation`)
+  assert.equal(!!result.goal,id==='js-goal','only the goal template declares goal metadata')
 }
 
 // 单进度 `.quest`：往返一致（种子就是 `stringifyProgress(createProgress(…))`）

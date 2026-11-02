@@ -851,15 +851,15 @@ fn kit_script_reference_does_not_grant_lease_or_cascade_deletion() {
     let (engine, sid) = setup(
         dir.path(),
         &[
-            ("src/gift/a.kit", r#"{"script":[{"ref":"reward.py"},{"ref":"second"}]}"#),
-            ("src/script/kit/reward.py.py", "pass"),
+            ("src/gift/a.kit", r#"{"script":[{"ref":"reward.js"},{"ref":"second"}]}"#),
+            ("src/script/kit/reward.js.js", "pass"),
         ],
     );
     let facts = engine.resource_relations(&sid, "src/gift/a.kit").unwrap();
     assert!(facts.relations.iter().any(
-        |r| r.role == ResourceRelationRole::KitScript && r.to == "src/script/kit/reward.py.py"
+        |r| r.role == ResourceRelationRole::KitScript && r.to == "src/script/kit/reward.js.js"
     ));
-    assert!(facts.relations.iter().any(|r| r.role == ResourceRelationRole::KitScript && r.to == "src/script/kit/second.py"));
+    assert!(facts.relations.iter().any(|r| r.role == ResourceRelationRole::KitScript && r.to == "src/script/kit/second.js"));
     let plan = engine
         .plan_file_operations(
             &sid,
@@ -869,11 +869,11 @@ fn kit_script_reference_does_not_grant_lease_or_cascade_deletion() {
     assert!(plan
         .operations
         .iter()
-        .all(|op| op.path != "src/script/kit/reward.py.py"));
+        .all(|op| op.path != "src/script/kit/reward.js.js"));
     assert!(plan
         .lease_paths
         .iter()
-        .all(|path| path != "src/script/kit/reward.py.py"));
+        .all(|path| path != "src/script/kit/reward.js.js"));
 }
 
 #[test]
@@ -881,13 +881,13 @@ fn shop_script_reference_is_type_scoped_and_never_owned() {
     let dir = tempfile::tempdir().unwrap();
     let (engine, sid) = setup(dir.path(), &[
         ("src/shop/trader.shop", r#"{"script":[{"ref":"trade"},{"ref":"../bad"}]}"#),
-        ("src/script/shop/trade.py", "pass"),
-        ("src/script/kit/trade.py", "pass"),
+        ("src/script/shop/trade.js", "pass"),
+        ("src/script/kit/trade.js", "pass"),
     ]);
     let facts = engine.resource_relations(&sid, "src/shop/trader.shop").unwrap();
     let refs: Vec<_> = facts.relations.iter().filter(|r| r.role == ResourceRelationRole::ShopScript).collect();
     assert_eq!(refs.len(), 1);
-    assert_eq!(refs[0].to, "src/script/shop/trade.py");
+    assert_eq!(refs[0].to, "src/script/shop/trade.js");
     let plan = engine.plan_file_operations(&sid, &[request(FileOperationKind::Remove, "src/shop/trader.shop", None)]).unwrap();
     assert!(plan.operations.iter().all(|op| !op.path.starts_with("src/script/")));
     assert!(plan.lease_paths.iter().all(|path| !path.starts_with("src/script/")));
@@ -898,13 +898,13 @@ fn actor_script_reference_is_type_scoped_and_never_owned() {
     let dir = tempfile::tempdir().unwrap();
     let (engine, sid) = setup(dir.path(), &[
         ("src/actors/guard.actor", r#"{"scripts":["guard","../bad"]}"#),
-        ("src/script/actor/guard.py", "pass"),
-        ("src/script/kit/guard.py", "pass"),
+        ("src/script/actor/guard.js", "pass"),
+        ("src/script/kit/guard.js", "pass"),
     ]);
     let facts = engine.resource_relations(&sid, "src/actors/guard.actor").unwrap();
     let refs: Vec<_> = facts.relations.iter().filter(|r| r.role == ResourceRelationRole::ActorScript).collect();
     assert_eq!(refs.len(), 1);
-    assert_eq!(refs[0].to, "src/script/actor/guard.py");
+    assert_eq!(refs[0].to, "src/script/actor/guard.js");
     let plan = engine.plan_file_operations(&sid, &[request(FileOperationKind::Remove, "src/actors/guard.actor", None)]).unwrap();
     assert!(plan.operations.iter().all(|op| !op.path.starts_with("src/script/")));
     assert!(plan.lease_paths.iter().all(|path| !path.starts_with("src/script/")));

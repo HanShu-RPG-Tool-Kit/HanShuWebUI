@@ -83,14 +83,14 @@ export function readScriptLoadSource(source: string): { doc: ScriptLoadDocument 
   }
 }
 
-/** 工程＋有效内置脚本 id（无 .py），供启动列表候选与缺失校验。 */
+/** 工程＋有效内置脚本 id（无 .js），供启动列表候选与缺失校验。 */
 export function scriptLoadCandidateIds(
   type: ScriptLoadType,
   scripts: readonly { name: string; srcKind?: string | null }[],
 ): Set<string> {
   return new Set(
     scripts
-      .filter(script => script.srcKind === type && script.name.toLowerCase().endsWith('.py'))
+      .filter(script => script.srcKind === type && script.name.toLowerCase().endsWith('.js'))
       .map(script => script.name.slice(0, -3)),
   )
 }

@@ -207,7 +207,7 @@ export function ScriptLoadEditor({
           {doc.scripts.length === 0
             ? <p className="kit-empty">{scriptOptions.length
               ? '列表为空：不会自动挂载任何脚本。从资源树拖入，或从右上角添加。'
-              : `项目中还没有 ${type} 脚本。在 src/script/${type}/ 下新建 .py，或等待内置脚本后即可添加。`}</p>
+              : `项目中还没有 ${type} 脚本。在 src/script/${type}/ 下新建 .js，或等待内置脚本后即可添加。`}</p>
             : <ol className="kit-list actor-script-list">
               {doc.scripts.map((id, index) => {
                 const option = scriptOptions.find(item => item.ref === id)

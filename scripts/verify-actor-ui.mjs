@@ -8,7 +8,7 @@ import { loginProject } from './project-ui-helpers.mjs'
 const h = await harness({ web: true }); let browser
 try {
   const owner = await h.login(h.credential, 'actor setup')
-  await h.commit(owner.token, ['guard', 'watch'].map(id => ({ path: `src/script/actor/${id}.py`, content: '@hook("tick")\ndef on_tick(event, blackboard):\n    pass\n' })))
+  await h.commit(owner.token, ['guard', 'watch'].map(id => ({ path: `src/script/actor/${id}.js`, content: 'import ActorEvent from "mchhui.rpgtoolkit.feature.actor.hook.ActorEvent"\n@hook("tick")\nfunction on_tick(event: ActorEvent, blackboard: Blackboard): void {}\n' })))
   await h.release(owner.token)
   const account = await h.api(owner.token, '/api/subjects', 'POST', { name: 'actor author', kind: 'account', role: 'editor' })
   browser = await chromium.launch({ headless: true, ...(process.platform === 'win32' ? { channel: 'msedge' } : {}) })

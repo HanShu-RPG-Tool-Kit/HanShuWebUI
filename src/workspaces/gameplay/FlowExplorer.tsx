@@ -123,7 +123,7 @@ export function Icon({
   kind:
     | "folder"
     | "document"
-    | "python"
+    | "javascript"
     | "kit"
     | "item"
     | "item-table"
@@ -148,7 +148,7 @@ export function Icon({
   const paths: Record<typeof kind, string> = {
     folder: "M2 5h6l2 2h12v12H2z",
     document: "M5 2h9l5 5v15H5z M14 2v6h5 M8 12h8 M8 16h8",
-    python:
+    javascript:
       "M5 2h9l5 5v15H5z M14 2v6h5 M9 13c0 1.1.9 2 2 2h1 M14 13v2a2 2 0 01-2 2 M9 11v-1a2 2 0 012-2h1 M14 11c0-1.1-.9-2-2-2",
     kit: "M4 11h16v10H4z M2 7h20v4H2z M12 7v14 M8 15h8",
     item: "M4 7l8-4 8 4v10l-8 4-8-4z M4 7l8 4 8-4 M12 11v10",
@@ -1201,7 +1201,7 @@ export function FlowExplorer({
     if (documentMode) {
       const templateName =
         mode === "script"
-          ? "default.py"
+          ? "default.js"
           : mode === "progress" || mode === "flow"
             ? mode
             : mode === "level"
@@ -2185,11 +2185,11 @@ export function FlowExplorer({
           const scriptLoadDoc =
             row.entry.kind === "document" &&
             isScriptLoadDocumentKey(row.entry.key);
-          const pythonDoc =
+          const javascriptDoc =
             !!document &&
             !scriptLoadDoc &&
             (document.package === "script" ||
-              row.name.toLowerCase().endsWith(".py"));
+              row.name.toLowerCase().endsWith(".js"));
           const shopDoc = document?.package === "shop";
           const kitDoc =
             !!document &&
@@ -2249,8 +2249,8 @@ export function FlowExplorer({
                                       ? "progress"
                                       : multiQuestDoc
                                         ? "quest"
-                                        : pythonDoc
-                                          ? "python"
+                                        : javascriptDoc
+                                          ? "javascript"
                                           : folder
                                             ? "folder"
                                             : "document";
@@ -2322,7 +2322,7 @@ export function FlowExplorer({
                   // 脚本／内置／物品／礼包都要能 copy 到编辑器落点（启动列表、礼包脚本等）；
                   // 仅 move 时落点若设 dropEffect=copy，浏览器会禁止投放。
                   event.dataTransfer.effectAllowed =
-                    itemDoc || kitDoc || builtinDoc || pythonDoc
+                    itemDoc || kitDoc || builtinDoc || javascriptDoc
                       ? "copyMove"
                       : "move";
                   event.dataTransfer.setData(
@@ -2462,7 +2462,7 @@ export function FlowExplorer({
             在「地图」下新建或拖入
             .level（模板里包含区域与静态导航器）；「动态导航器」下新建或拖入
             .nav；「任务」下新建或拖入 .quest（单进度 /
-            多进度）；「脚本」下新建或拖入 .py；「物品库」下新建 .item 或拖入
+            多进度）；「脚本」下新建或拖入 .js；「物品库」下新建 .item 或拖入
             .item / .itemstack；「商店」下新建或拖入 .shop；「礼包」下新建或拖入
             .kit；「演员」下新建或拖入 .actor；「声誉」下新建或拖入 .rep。
           </p>
