@@ -2,8 +2,6 @@ import {
   BOSSBAR_DEFAULTS,
   BOSSBAR_FORMAT,
   BOSSBAR_LIMITS,
-  BOSSBAR_LONG_MAX,
-  BOSSBAR_LONG_MIN,
   BOSSBAR_NAME_PATTERN,
   BOSSBAR_V1_VERSION,
   BOSSBAR_VERSION,
@@ -12,7 +10,6 @@ import {
   defaultLayout,
   normalizeName,
   normalizeTemplateId,
-  parseLong,
   type BossbarAnimation,
   type BossbarBarComponent,
   type BossbarBox,
@@ -414,16 +411,6 @@ export function validateBossbarSemantics(
     if (!BOSSBAR_NAME_PATTERN.test(name)) {
       diagnostics.push(bossbarDiagnostic('name', path, '变量名不合法'))
       continue
-    }
-    if (variable.type === 'long') {
-      const parsed = parseLong(variable.default)
-      if (parsed === null) {
-        diagnostics.push(
-          bossbarDiagnostic('long', path + '.default', 'long 默认值必须是 int64 范围内的十进制字符串'),
-        )
-      } else if (parsed < BOSSBAR_LONG_MIN || parsed > BOSSBAR_LONG_MAX) {
-        diagnostics.push(bossbarDiagnostic('long', path + '.default', 'long 默认值超出 int64 范围'))
-      }
     }
     if (variable.type === 'string') {
       const length = [...variable.default].length

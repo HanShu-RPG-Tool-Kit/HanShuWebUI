@@ -3,11 +3,11 @@ import { deflateSync, gzipSync } from 'node:zlib'
 import { readFile } from 'node:fs/promises'
 import { createBossbar, parseBossbarDocument, stringifyBossbar, upgradeBossbarV1 } from '../src/workspaces/audiovisual/bossbar/parse'
 import { decodeBase64, encodeBase64, pngInfo, validatePngPixels } from '../src/workspaces/audiovisual/bossbar/png'
-import { BOSSBAR_DEFAULT_TEXTURE, BOSSBAR_LIMITS, longValue, type BossbarDocument, type BossbarProgress } from '../src/workspaces/audiovisual/bossbar/protocol'
+import { BOSSBAR_DEFAULT_TEXTURE, BOSSBAR_LIMITS, BOSSBAR_VARIABLE_TYPES, type BossbarDocument, type BossbarProgress } from '../src/workspaces/audiovisual/bossbar/protocol'
 import { clampProgress, resolveProgress } from '../src/workspaces/audiovisual/bossbar/rules/range'
 import { formatRunValue } from '../src/workspaces/audiovisual/bossbar/rules/formatRun'
 import { removeVariable, renameVariable, variableReferences } from '../src/workspaces/audiovisual/bossbar/document'
-import { estimateSnapshotBytes } from '../src/workspaces/audiovisual/bossbar/rules/values'
+import { estimateSnapshotBytes, resolveValues } from '../src/workspaces/audiovisual/bossbar/rules/values'
 
 // Tests build PNG containers independently, with Node's zlib and a bitwise CRC.
 function chunk(type: string, data: Uint8Array): Buffer {
@@ -128,6 +128,7 @@ assert.equal(pngInfo(png(Uint8Array.of(0, 1, 2, 3, 255)))?.width, 1)
 console.log('PASS PNG integrity, legal color/depth/Adam7 and bounded decompression')
 
 const base = createBossbar('simplified-test')
+assert.deepEqual(BOSSBAR_VARIABLE_TYPES, ['double', 'bool', 'string'])
 assert.equal(base.priority, 0)
 assert.equal(upgradeBossbarV1({ format: 'hanshu.bossbar', version: 1, id: 'legacy' }).priority, 0)
 assert.equal(upgradeBossbarV1({ format: 'hanshu.bossbar', version: 1, id: ' Legacy ' }).id, ' Legacy ', 'explicit migration preserves the original ID for diagnosis')
@@ -149,7 +150,7 @@ if (defaulted.ok) assert.equal(defaulted.document.priority, 0)
 
 const withProgress = (progress: BossbarProgress): BossbarDocument => ({
   ...base,
-  variables: { hp: { type: 'double', default: 0.25 }, counter: { type: 'long', default: '9007199254740993' } },
+  variables: { hp: { type: 'double', default: 0.25 }, counter: { type: 'string', default: '9007199254740993', maxLength: 64 } },
   components: [...base.components, {
     id: 'bar', type: 'bar', box: { x: 0, y: 0, width: 100, height: 10 },
     progress, direction: 'left-to-right', smoothMs: 0, visible: true, opacity: 1,
@@ -163,7 +164,7 @@ for (const [input, expected] of [[-Number.MAX_VALUE, 0], [-1, 0], [0, 0], [0.35,
 const bound = withProgress({ var: 'hp' })
 assert.equal(resolveProgress({ var: 'hp' }, bound.variables, {}), 0.25, 'missing runtime value uses declared default')
 assert.equal(resolveProgress({ var: 'hp' }, bound.variables, { hp: { type: 'double', value: 2 } }), 1)
-assert.equal(resolveProgress({ var: 'hp' }, bound.variables, { hp: { type: 'long', value: '1' } }), 0.25)
+assert.equal(resolveProgress({ var: 'hp' }, bound.variables, { hp: { type: 'bool', value: true } }), 0.25)
 for (const reference of ['counter', 'missing']) {
   const result = parseBossbarDocument(JSON.stringify(withProgress({ var: reference })))
   assert.equal(result.ok, false)
@@ -188,13 +189,16 @@ const textDocument: BossbarDocument = {
 }
 const textResult = parseBossbarDocument(stringifyBossbar(textDocument))
 assert.equal(textResult.ok, true)
-if (textResult.ok) assert.deepEqual(textResult.document.variables.counter, { type: 'long', default: '9007199254740993' })
+if (textResult.ok) assert.deepEqual(textResult.document.variables.counter, { type: 'string', default: '9007199254740993', maxLength: 64 })
 const undeclaredText = { ...textDocument, components: [...bound.components, { ...textDocument.components[2], runs: [{ var: 'toString' }] }] }
 assert.equal(parseBossbarDocument(JSON.stringify(undeclaredText)).ok, false, 'prototype properties are not declared variables')
-for (const value of ['-9223372036854775808', '9007199254740993', '9223372036854775807']) {
-  assert.equal(formatRunValue(longValue(value)), value, 'long text retains every decimal digit')
+for (const value of ['-9223372036854775808', '9007199254740993', '9223372036854775807', '1234567890123456789012345678901234567890']) {
+  assert.equal(formatRunValue({ type: 'string', value }), value, 'numeric text retains every decimal digit')
+  assert.equal(resolveValues(textDocument, { counter: { type: 'string', value } }).values.counter.value, value)
 }
-assert.throws(() => longValue(9223372036854775808n))
+const unsupportedValue = resolveValues(bound, { hp: { type: 'long', value: '9007199254740993' } })
+assert.deepEqual(unsupportedValue.values.hp, { type: 'double', value: 0.25 }, 'unsupported numeric tags use the declared default without conversion')
+assert.ok(unsupportedValue.issues.some((issue) => issue.path === 'variables.hp' && issue.code === 'value_shape'))
 assert.equal(formatRunValue({ type: 'double', value: 0.35 }), '0.35')
 assert.equal(formatRunValue({ type: 'string', value: '1.2M（35.0%）' }), '1.2M（35.0%）')
 assert.equal(formatRunValue({ type: 'bool', value: true }), 'true')
@@ -216,7 +220,7 @@ const renamed = renameVariable(textDocument, 'hp', 'health')
 assert.equal(renamed.ok, true)
 if (renamed.ok) assert.equal(variableReferences(renamed.document, 'health')[0].role, 'progress')
 assert.equal(renameVariable(textDocument, 'hp', 'toString').ok, true, 'valid variable names may shadow prototype names')
-const removed = removeVariable(textDocument, 'counter', { long: '9007199254740993' })
+const removed = removeVariable(textDocument, 'counter', { string: '9007199254740993' })
 assert.equal(removed.ok, true)
 if (removed.ok) {
   const text = removed.document.components[2]

@@ -219,15 +219,15 @@ export function buildBossbarFixtures(): Record<string, unknown> {
     }
   })
 
-  const longExtreme: BossbarValueMap = {
+  const largeNumberValues: BossbarValueMap = {
     ...resolveValues(demo, DEMO_SCENARIOS[2].values as Record<string, unknown>).values,
   }
-  const longScene = buildScene({ document: demo, values: longExtreme, timeMs: 250, texture: demoTexture })
+  const largeNumberScene = buildScene({ document: demo, values: largeNumberValues, timeMs: 250, texture: demoTexture })
 
   const shieldBar = demo.components.find((component) => component.id === 'shield_fill')
   const shieldProgress =
     shieldBar && shieldBar.type === 'bar'
-      ? resolveProgress(shieldBar.progress, demo.variables, longExtreme)
+      ? resolveProgress(shieldBar.progress, demo.variables, largeNumberValues)
       : null
 
   return {
@@ -236,7 +236,7 @@ export function buildBossbarFixtures(): Record<string, unknown> {
     protocolVersion: 2,
     note:
       '期望值由 WebUI 实现冻结；Java 解析器对拍同一份数据。' +
-      '改实现必须重新生成并 review diff。long 在 JSON 里一律是十进制字符串。',
+      '改实现必须重新生成并 review diff。大整数和格式化数字由服务端使用 string 原样传递。',
     normalize,
     invalid,
     unsupportedVersion: parseExpectation(UNSUPPORTED_VERSION),
@@ -253,7 +253,7 @@ export function buildBossbarFixtures(): Record<string, unknown> {
       hints: validateBossbarSemantics(demo, demoTexture),
       snapshot: estimateSnapshotBytes(demo),
       shieldProgress,
-      longSceneCommands: longScene.commands.length,
+      largeNumberSceneCommands: largeNumberScene.commands.length,
     },
     textureProbe: (() => {
       const bytes = base64ToBytes(BOSSBAR_SAMPLE_TEXTURE)

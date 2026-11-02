@@ -85,6 +85,7 @@ assert.doesNotMatch(simulatedInput, /disabled/, 'viewer 的本机模拟输入可
 assert.match(html, /缺失变量/)
 assert.match(html, /类型不符/)
 assert.doesNotMatch(html, /blackboard|Map 键|服务端键|putDouble/)
+assert.doesNotMatch(html, /long（|int64|64 位整数/, '变量面板只列出 double、bool、string')
 console.log('通过：完整有限 double、缺失/错误类型回落及 viewer 本机模拟输入')
 
 const bound: BossbarDocument = {
@@ -92,7 +93,7 @@ const bound: BossbarDocument = {
   variables: {
     health: double,
     unrelated: { type: 'double', default: 999 },
-    counter: { type: 'long', default: '9007199254740993' },
+    counter: { type: 'string', default: '9007199254740993', maxLength: 64 },
     title: { type: 'string', default: '守卫', maxLength: 64 },
     enraged: { type: 'bool', default: false },
   },

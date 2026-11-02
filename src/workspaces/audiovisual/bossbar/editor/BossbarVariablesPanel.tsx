@@ -18,13 +18,12 @@ import { estimateSnapshotBytes } from '../rules/values'
  * 变量面板。
  *
  * 声明服务端变量名、类型和默认值，
- * 并给出本机模拟值。long 用十进制文本输入，不经过浏览器数值控件。
+ * 并给出本机模拟值。需要精确显示的数字使用 string。
  */
 
 const TYPE_OPTIONS = BOSSBAR_VARIABLE_TYPES.map((type) => ({ value: type, label: VARIABLE_TYPE_LABELS[type] }))
 
 function emptyVariable(type: BossbarVariableType): BossbarVariable {
-  if (type === 'long') return { type: 'long', default: '0' }
   if (type === 'double') return { type: 'double', default: 0 }
   if (type === 'bool') return { type: 'bool', default: false }
   return { type: 'string', default: '', maxLength: 64 }
@@ -165,15 +164,7 @@ function VariableRow({
 
   const simulationMode = variableSimulationMode(variable, value)
 
-  const simulatedText = value
-    ? value.type === 'long'
-      ? value.value
-      : value.type === 'double'
-        ? String(value.value)
-        : value.type === 'bool'
-          ? String(value.value)
-          : value.value
-    : ''
+  const simulatedText = value ? String(value.value) : ''
 
   return (
     <div className="bb-variable">
@@ -221,20 +212,6 @@ function VariableRow({
               { value: 'true', label: 'true' },
             ]}
             onCommit={(next) => replace({ default: next === 'true' } as Partial<BossbarVariable>)}
-          />
-        ) : variable.type === 'long' ? (
-          <TextField
-            mono
-            disabled={readOnly}
-            value={variable.default}
-            onCommit={(next) => {
-              const parsed = parseVariableInput(variable, next)
-              if (!parsed || parsed.type !== 'long') {
-                onProblems(['long 默认值必须是 int64 范围内的十进制字符串'])
-                return
-              }
-              replace({ default: parsed.value } as Partial<BossbarVariable>)
-            }}
           />
         ) : variable.type === 'double' ? (
           <NumberField
@@ -308,13 +285,11 @@ function VariableRow({
               disabled={readOnly}
               onClick={() => {
                 const replacement =
-                  variable.type === 'long'
-                    ? { long: '0' }
-                    : variable.type === 'double'
-                      ? { double: 0 }
-                      : variable.type === 'bool'
-                        ? { bool: false }
-                        : { string: '' }
+                  variable.type === 'double'
+                    ? { double: 0 }
+                    : variable.type === 'bool'
+                      ? { bool: false }
+                      : { string: '' }
                 const result = removeVariable(document, name, replacement)
                 if (!result.ok) {
                   onProblems(result.diagnostics.map((entry) => entry.message))

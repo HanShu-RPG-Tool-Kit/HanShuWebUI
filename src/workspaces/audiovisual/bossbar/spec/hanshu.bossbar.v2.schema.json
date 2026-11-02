@@ -89,23 +89,6 @@
             ],
             "properties": {
               "type": {
-                "const": "long"
-              },
-              "default": {
-                "type": "string",
-                "pattern": "^(?:0|-?[1-9][0-9]*)$"
-              }
-            }
-          },
-          {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-              "type",
-              "default"
-            ],
-            "properties": {
-              "type": {
                 "const": "double"
               },
               "default": {

@@ -4,7 +4,7 @@
  * 守四件事：
  * 1. schema 是唯一机器定义 —— 规范化文档必须通过它，非法输入必须被拒并定位到字段；
  * 2. TS 与 Java 共用的夹具没有漂移 —— 磁盘上的冻结结果必须与当前实现一致；
- * 3. 设计文档点名的规则（唯一显示区域、AABB 包含、单张 Base64 PNG、UV、long 精度、取帧）逐条成立；
+ * 3. 设计文档点名的规则（唯一显示区域、AABB 包含、单张 Base64 PNG、UV、数值字符串保真、取帧）逐条成立；
  * 4. 新建 / 升级 / 规范化往返 / 编译器产物都不丢信息，也不产出外部图片。
  *
  * 跑：`npm run test:bossbar`
@@ -183,33 +183,33 @@ assert.equal(uvResult.ok, false, 'UV 越界必须拒绝')
 if (!uvResult.ok) assert.ok(uvResult.diagnostics.some((entry) => entry.code === 'uv_out_of_bounds'))
 console.log('通过：单张 Base64 PNG、UV 边界与 Base64 规范化')
 
-// ---------------------------------------------------------------- 5. 文本变量与 long 精度
+// ---------------------------------------------------------------- 5. 文本变量与数字字符串保真
 
-const maximumLong = { type: 'long' as const, value: '9223372036854775807' }
-assert.equal(formatRunValue(maximumLong), '9223372036854775807')
-assert.equal(formatRunValue({ type: 'long', value: '9007199254740993' }), '9007199254740993', '2^53+1 不能丢位')
-assert.equal(formatRunValue({ type: 'long', value: '-9223372036854775808' }), '-9223372036854775808')
+const largeNumberText = { type: 'string' as const, value: '9223372036854775807' }
+assert.equal(formatRunValue(largeNumberText), '9223372036854775807')
+assert.equal(formatRunValue({ type: 'string', value: '9007199254740993' }), '9007199254740993', '2^53+1 不能丢位')
+assert.equal(formatRunValue({ type: 'string', value: '-9223372036854775808' }), '-9223372036854775808')
 assert.equal(formatRunValue({ type: 'double', value: 0.35 }), '0.35', 'double 原样转为文本')
 assert.equal(formatRunValue({ type: 'bool', value: true }), 'true')
 assert.equal(formatRunValue({ type: 'string', value: '420K（35%）' }), '420K（35%）', '服务端已格式化的字符串不变')
 
-const longDoc: BossbarDocument = {
-  ...createBossbar('long-text'),
-  variables: { counter: { type: 'long', default: '0' } },
+const numericTextDoc: BossbarDocument = {
+  ...createBossbar('numeric-text'),
+  variables: { counter: { type: 'string', default: '0', maxLength: 64 } },
 }
-longDoc.components.push({
+numericTextDoc.components.push({
   id: 'counter_text', type: 'text', box: { x: 0, y: 0, width: 500, height: 20 },
   visible: true, opacity: 1, runs: [{ text: '计数：' }, { var: 'counter' }],
   fontSize: 16, color: '#FFFFFFFF', align: 'left', verticalAlign: 'middle', shadow: false,
 })
-assert.equal(parseBossbarDocument(stringifyBossbar(longDoc)).ok, true)
-const longScene = buildScene({
-  document: longDoc, values: resolveValues(longDoc, { counter: maximumLong }).values,
+assert.equal(parseBossbarDocument(stringifyBossbar(numericTextDoc)).ok, true)
+const numericTextScene = buildScene({
+  document: numericTextDoc, values: resolveValues(numericTextDoc, { counter: largeNumberText }).values,
   timeMs: 0, texture: { width: 1, height: 1 },
 })
-assert.equal(longScene.commands[0].kind, 'text')
-assert.equal(longScene.commands[0].kind === 'text' && longScene.commands[0].text, '计数：9223372036854775807')
-console.log('通过：字面量和变量直接拼接，long 全精度，服务端格式文本原样显示')
+assert.equal(numericTextScene.commands[0].kind, 'text')
+assert.equal(numericTextScene.commands[0].kind === 'text' && numericTextScene.commands[0].text, '计数：9223372036854775807')
+console.log('通过：字面量和变量直接拼接，数字字符串原样显示，服务端格式文本原样显示')
 
 // ---------------------------------------------------------------- 6. 值与动画
 
@@ -220,13 +220,13 @@ const demoValues = resolveValues(demo, {
   targetName: { type: 'string', value: '史蒂夫' },
   enraged: { type: 'bool', value: false },
   shieldProgress: { type: 'double', value: 0.12 },
-  counter: { type: 'long', value: '9007199254740993' },
+  counter: { type: 'string', value: '9007199254740993' },
 })
 assert.equal(demoValues.values.healthProgress.value, 0.35, 'progress 值透传')
 assert.equal(demoValues.issues.length, 0, '完整输入没有诊断')
 
 const brokenValues = resolveValues(demo, {
-  healthProgress: { type: 'long', value: '5' },
+  healthProgress: { type: 'string', value: '5' },
   bossName: { type: 'string', value: 'x'.repeat(65) },
   enraged: { type: 'double', value: 1 },
 })

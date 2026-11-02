@@ -16,7 +16,7 @@
 | `priority` | int32，省略时为 0；数值越大，多条排列时越靠上 |
 | `texture` | 唯一 PNG 的纯 Base64，不带 data URL 前缀或空白 |
 | `layout` | 顶部居中布局，`scale` 为 0.1–4，`safeMargin` 为 0–1024 GUI 像素 |
-| `variables` | 服务端变量的名称、四种类型和默认值 |
+| `variables` | 服务端变量的名称、类型和默认值 |
 | `components` | 一个 `display_region`，加任意数量的 `background`、`bar`、`text` |
 
 作者输入必须提供 `format/version/id/texture/layout/variables/components`，`variables` 可以为空对象。`priority` 可省略，`layout:{}` 会补齐顶部居中、scale=0.5、safeMargin=12。规范编译输出显式写出 priority 和各字段默认值。未知字段、未知版本和旧版 v2 草稿中的已删除字段都给出诊断，保留原始草稿。v1 文档通过显式升级生成 v2，模板 ID 保持原值。
@@ -29,9 +29,9 @@
 
 数值条只接收服务端已经算好的进度，`progress` 为有限数值或 `{"var":"变量名"}`。变量引用必须指向 `double`。绘制时把进度夹紧到 `[0,1]`，模板不保存 value/min/max 范围，也不计算血量比例。四个方向、主条平滑和尾条仍是客户端的显示效果；纹理先映射到完整 box，再按进度裁切，剩余血量不会压缩图案。
 
-文本的 `runs` 只有两种形状：`{"text":"字面文本","color":"#RRGGBBAA"}`、`{"var":"变量名","color":"#RRGGBBAA"}`，颜色可省略。变量按原值转为文本：string 原样使用，long 保留完整十进制字符串，double 使用数值字符串，bool 显示 `true/false`。模板不含比例片段、数字格式、精度或本地化规则。千分位、百分号、缩写和译文需要由服务端准备为 string 后发送。
+文本的 `runs` 只有两种形状：`{"text":"字面文本","color":"#RRGGBBAA"}`、`{"var":"变量名","color":"#RRGGBBAA"}`，颜色可省略。变量按原值转为文本：string 原样使用，double 使用数值字符串，bool 显示 `true/false`。模板不含比例片段、数字格式、精度或本地化规则。大整数、千分位、百分号、缩写和译文由服务端准备为 string 后发送。例如 `"9007199254740993"` 及更长的整数文本都会保留每一位数字。
 
-变量名就是包中 `values` 的键，不另设字段别名。变量仍支持 long、double、bool、string。JSON 中 long 使用 int64 范围内的十进制字符串，double 必须有限，string 的 `maxLength` 为 1–256 Unicode 码点。缺失、类型不匹配或超长时，客户端使用声明默认值并记录原因。bool 不作为数值使用。变量名和组件 ID 满足 `[A-Za-z][A-Za-z0-9_]{0,63}`，各自在声明范围内唯一。
+变量名就是包中 `values` 的键，不另设字段别名。变量仅支持 double、bool、string。double 必须有限，string 的 `maxLength` 为 1–256 Unicode 码点。缺失、不支持的类型、类型不匹配或超长时，客户端使用声明默认值并记录原因，不把字符串或其他类型隐式转换为 double。bool 不作为数值使用。变量名和组件 ID 满足 `[A-Za-z][A-Za-z0-9_]{0,63}`，各自在声明范围内唯一。
 
 下面的片段可直接看出服务端和模板各自提供什么。服务端先准备 `healthProgress:0.35` 和 `healthText:"42万 / 120万（35%）"`，模板只绑定进度和显示字符串。
 
@@ -72,7 +72,7 @@
 | `REMOVE` | instanceId、reason |
 | `REPLACE_ALL` | sampleTick、当前允许该玩家观看的实例集合 |
 
-`values` 携带 long/double/bool/string 类型，JSON 里的 long 仍为十进制字符串。每次 UPSERT 是完整变量快照，未声明字段忽略，缺失字段按客户端声明回退。包不包含纹理、组件、客户端布局或优先级；优先级来自本地模板。模板不可用时保留对应原版血条，不能隐藏整个原版 BossBar 层。
+`values` 携带 double/bool/string 类型。需要显示的大整数和格式化数字使用 string。每次 UPSERT 是完整变量快照，未声明字段忽略，缺失字段按客户端声明回退。包不包含纹理、组件、客户端布局或优先级；优先级来自本地模板。模板不可用时保留对应原版血条，不能隐藏整个原版 BossBar 层。
 
 单条 UPSERT 最多 32KiB，变量声明按 30KiB 最坏快照预算校验。每个玩家最多保留 16 个实例，每实例更新默认最多 10 次/秒；首次出现、显隐和移除立即发送。REPLACE_ALL 最多 512KiB，按不超过 32KiB、最多 32 片组装，片段携带 batchId/partIndex/partCount，2 秒超时。客户端只采纳当前连接的新序号，整批验证后一次替换集合，离开追踪、切世界、退出或实例移除时清理对应状态。
 
@@ -96,4 +96,4 @@
 
 `npm run test:bossbar` 检查协议、PNG、进度夹紧、原值文本、优先级边界、图集与帧工具、保存拦截及实际 PAK 内容。集成检查必须确认 server 包没有模板，client/combined 字节相同，模拟值没有进入产物。浏览器检查覆盖设计/JSON 往返、撤销、变量模拟、图集替换、逐帧、保存重开、只读和双窗口冲突。
 
-WebUI 运行后保留可操作页面，等待用户验收。游戏阶段再实现变量包发送、追踪生命周期、客户端资源加载和多条排列，并以实际 Minecraft 客户端检查；本次简化不修改 Mod 代码。
+游戏验收使用实际 Minecraft 客户端，检查变量包发送、追踪生命周期、客户端资源加载、多条排列、重生和原版回退。

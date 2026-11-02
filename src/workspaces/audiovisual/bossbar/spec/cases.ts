@@ -13,7 +13,7 @@ export const DEMO_EMBER_GUARD = {
     bossName: { type: 'string', default: '首领', maxLength: 64 },
     targetName: { type: 'string', default: '无', maxLength: 64 },
     enraged: { type: 'bool', default: false },
-    counter: { type: 'long', default: '9007199254740993' },
+    counter: { type: 'string', default: '9007199254740993', maxLength: 64 },
   },
   components: [
     { id: 'region', type: 'display_region', box: { x: -384, y: -36, width: 768, height: 72 } },
@@ -55,22 +55,22 @@ export const DEMO_SCENARIOS = [
   { name: 'full', values: {
     healthProgress: { type: 'double', value: 1 }, shieldProgress: { type: 'double', value: 0.4 },
     healthText: { type: 'string', value: '1.2M（100.0%）' }, bossName: { type: 'string', value: '赤焰守卫' },
-    targetName: { type: 'string', value: '无' }, enraged: { type: 'bool', value: false }, counter: { type: 'long', value: '9007199254740993' },
+    targetName: { type: 'string', value: '无' }, enraged: { type: 'bool', value: false }, counter: { type: 'string', value: '9007199254740993' },
   } },
   { name: 'injured', values: {
     healthProgress: { type: 'double', value: 0.35 }, shieldProgress: { type: 'double', value: 0.12 },
     healthText: { type: 'string', value: '420K（35.0%）' }, bossName: { type: 'string', value: '赤焰守卫' },
-    targetName: { type: 'string', value: '史蒂夫' }, enraged: { type: 'bool', value: false }, counter: { type: 'long', value: '9007199254740993' },
+    targetName: { type: 'string', value: '史蒂夫' }, enraged: { type: 'bool', value: false }, counter: { type: 'string', value: '9007199254740993' },
   } },
-  { name: 'enraged-long-extreme', values: {
+  { name: 'enraged-large-number-text', values: {
     healthProgress: { type: 'double', value: 0.25 }, shieldProgress: { type: 'double', value: 1 },
     healthText: { type: 'string', value: '300K（25.0%）' }, bossName: { type: 'string', value: '赤焰守卫' },
-    targetName: { type: 'string', value: '史蒂夫' }, enraged: { type: 'bool', value: true }, counter: { type: 'long', value: '9223372036854775807' },
+    targetName: { type: 'string', value: '史蒂夫' }, enraged: { type: 'bool', value: true }, counter: { type: 'string', value: '9223372036854775807' },
   } },
   { name: 'empty', values: {
     healthProgress: { type: 'double', value: 0 }, shieldProgress: { type: 'double', value: 0 },
     healthText: { type: 'string', value: '0（0.0%）' }, bossName: { type: 'string', value: '赤焰守卫' },
-    targetName: { type: 'string', value: '无' }, enraged: { type: 'bool', value: false }, counter: { type: 'long', value: '-9223372036854775808' },
+    targetName: { type: 'string', value: '无' }, enraged: { type: 'bool', value: false }, counter: { type: 'string', value: '-9223372036854775808' },
   } },
 ] as const
 
@@ -171,7 +171,7 @@ export const INVALID_CASES: { name: string, path: string, input: unknown }[] = [
   } }) },
   { name: 'bar-non-stretch', path: 'components[1].fill.fit', input: withComponents({ ...bar, fill: { kind: 'texture', fit: 'contain', uv: { x: 0, y: 0, width: 1, height: 1 } } }) },
   { name: 'progress-reference-missing', path: 'components[1].progress.var', input: withComponents({ ...bar, progress: { var: 'nope' } }) },
-  { name: 'progress-long-reference', path: 'components[1].progress.var', input: { ...withComponents({ ...bar, progress: { var: 'big' } }), variables: { big: { type: 'long', default: '1' } } } },
+  { name: 'progress-string-reference', path: 'components[1].progress.var', input: { ...withComponents({ ...bar, progress: { var: 'big' } }), variables: { big: { type: 'string', default: '1', maxLength: 64 } } } },
   { name: 'progress-typed-literal', path: 'components[1].progress', input: withComponents({ ...bar, progress: { type: 'double', value: 0.5 } }) },
   { name: 'legacy-range', path: 'components[1].range', input: withComponents({ ...bar, range: { value: { type: 'double', value: 50 }, min: { type: 'double', value: 0 }, max: { type: 'double', value: 100 } } }) },
   { name: 'legacy-ratio-run', path: 'components[1].runs[0].ratio', input: withComponents({ ...text, runs: [{ ratio: {} }] }) },
@@ -179,10 +179,9 @@ export const INVALID_CASES: { name: string, path: string, input: unknown }[] = [
   { name: 'legacy-text-digits', path: 'components[1].runs[0].digits', input: withComponents({ ...text, runs: [{ text: 'x', digits: 2 }] }) },
   { name: 'text-reference-missing', path: 'components[1].runs[0].var', input: withComponents({ ...text, runs: [{ var: 'nope' }] }) },
   { name: 'visibility-type', path: 'components[1].visible.var', input: { ...withComponents({ ...background, visible: { var: 'name' } }), variables: { name: { type: 'string', default: '' } } } },
-  { name: 'long-default-out-of-range', path: 'variables.big.default', input: { ...MINIMAL_V2, variables: { big: { type: 'long', default: '9223372036854775808' } } } },
-  { name: 'long-default-leading-zero', path: 'variables.big.default', input: { ...MINIMAL_V2, variables: { big: { type: 'long', default: '007' } } } },
+  { name: 'unsupported-long-declaration', path: 'variables.big.type', input: { ...MINIMAL_V2, variables: { big: { type: 'long', default: '1' } } } },
   { name: 'string-default-too-long', path: 'variables.short.default', input: { ...MINIMAL_V2, variables: { short: { type: 'string', default: 'abcdef', maxLength: 3 } } } },
-  { name: 'legacy-variable-key', path: 'variables.big.key', input: { ...MINIMAL_V2, variables: { big: { type: 'long', default: '0', key: 'old_map_key' } } } },
+  { name: 'legacy-variable-key', path: 'variables.big.key', input: { ...MINIMAL_V2, variables: { big: { type: 'double', default: 0, key: 'old_map_key' } } } },
   { name: 'snapshot-budget-overflow', path: 'variables', input: { ...MINIMAL_V2, variables: Object.fromEntries(Array.from({ length: 64 }, (_, index) => ['v' + index, { type: 'string', default: '', maxLength: 256 }])) } },
   { name: 'bad-color', path: 'components[1].paint.color', input: withComponents({ ...background, paint: { kind: 'solid', color: '#FFF' } }) },
   { name: 'missing-runs', path: 'components[1].runs', input: withComponents({ id: 't', type: 'text', box: text.box }) },
@@ -198,9 +197,9 @@ export const PROGRESS_CASES = [
 ]
 
 export const TEXT_VALUE_CASES: { value: BossbarValue; expect: string }[] = [
-  { value: { type: 'long', value: '9007199254740993' }, expect: '9007199254740993' },
-  { value: { type: 'long', value: '-9223372036854775808' }, expect: '-9223372036854775808' },
-  { value: { type: 'long', value: '9223372036854775807' }, expect: '9223372036854775807' },
+  { value: { type: 'string', value: '9007199254740993' }, expect: '9007199254740993' },
+  { value: { type: 'string', value: '-9223372036854775808' }, expect: '-9223372036854775808' },
+  { value: { type: 'string', value: '9223372036854775807' }, expect: '9223372036854775807' },
   { value: { type: 'double', value: 0.35 }, expect: '0.35' },
   { value: { type: 'bool', value: true }, expect: 'true' },
   { value: { type: 'string', value: '服务端已本地化：1.2M（35%）' }, expect: '服务端已本地化：1.2M（35%）' },
@@ -324,7 +323,7 @@ export const NORMALIZE_CASES: { name: string, input: unknown }[] = [
   { name: 'minimal-v2', input: MINIMAL_V2 }, { name: 'demo-ember-guard', input: DEMO_EMBER_GUARD },
   { name: 'defaults-filled', input: {
     format: 'hanshu.bossbar', version: 2, id: 'hanshu:defaults', texture: ' ' + BOSSBAR_TEST_TEXTURE_16 + '\n', layout: {},
-    variables: { note: { type: 'string', default: 'x' }, big: { type: 'long', default: '0' } },
+    variables: { note: { type: 'string', default: 'x' }, big: { type: 'string', default: '0', maxLength: 64 } },
     components: [
       { id: 'region', type: 'display_region', box: { x: -10, y: -10, width: 100, height: 40 } },
       { ...background, paint: { kind: 'solid', color: '#11223344' } },

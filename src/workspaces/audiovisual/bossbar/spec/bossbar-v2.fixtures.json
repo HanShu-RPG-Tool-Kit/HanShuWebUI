@@ -2,7 +2,7 @@
   "format": "hanshu.bossbar.fixtures",
   "specVersion": 2,
   "protocolVersion": 2,
-  "note": "期望值由 WebUI 实现冻结；Java 解析器对拍同一份数据。改实现必须重新生成并 review diff。long 在 JSON 里一律是十进制字符串。",
+  "note": "期望值由 WebUI 实现冻结；Java 解析器对拍同一份数据。改实现必须重新生成并 review diff。大整数和格式化数字由服务端使用 string 原样传递。",
   "normalize": [
     {
       "name": "minimal-v2",
@@ -102,8 +102,9 @@
             "default": false
           },
           "counter": {
-            "type": "long",
-            "default": "9007199254740993"
+            "type": "string",
+            "default": "9007199254740993",
+            "maxLength": 64
           }
         },
         "components": [
@@ -334,8 +335,9 @@
               "maxLength": 64
             },
             "counter": {
-              "type": "long",
-              "default": "9007199254740993"
+              "type": "string",
+              "default": "9007199254740993",
+              "maxLength": 64
             },
             "enraged": {
               "type": "bool",
@@ -583,7 +585,7 @@
             }
           ]
         },
-        "canonical": "{\n  \"format\": \"hanshu.bossbar\",\n  \"version\": 2,\n  \"id\": \"hanshu:ember_guard\",\n  \"priority\": 0,\n  \"texture\": \"iVBORw0KGgoAAAANSUhEUgAAAAQAAAACCAYAAAB/qH1jAAAAJ0lEQVR4nGNQFhD7/1ZF5///zZ7/t0yL+s/wP4Dh//8TQAwEDEAAADbPEjL7vUAnAAAAAElFTkSuQmCC\",\n  \"layout\": {\n    \"dock\": \"top-center\",\n    \"scale\": 0.5,\n    \"safeMargin\": 12\n  },\n  \"variables\": {\n    \"bossName\": {\n      \"type\": \"string\",\n      \"default\": \"首领\",\n      \"maxLength\": 64\n    },\n    \"counter\": {\n      \"type\": \"long\",\n      \"default\": \"9007199254740993\"\n    },\n    \"enraged\": {\n      \"type\": \"bool\",\n      \"default\": false\n    },\n    \"healthProgress\": {\n      \"type\": \"double\",\n      \"default\": 0\n    },\n    \"healthText\": {\n      \"type\": \"string\",\n      \"default\": \"0（0%）\",\n      \"maxLength\": 64\n    },\n    \"shieldProgress\": {\n      \"type\": \"double\",\n      \"default\": 0\n    },\n    \"targetName\": {\n      \"type\": \"string\",\n      \"default\": \"无\",\n      \"maxLength\": 64\n    }\n  },\n  \"components\": [\n    {\n      \"id\": \"region\",\n      \"type\": \"display_region\",\n      \"box\": {\n        \"x\": -384,\n        \"y\": -36,\n        \"width\": 768,\n        \"height\": 72\n      }\n    },\n    {\n      \"id\": \"track\",\n      \"type\": \"background\",\n      \"box\": {\n        \"x\": -288,\n        \"y\": -8,\n        \"width\": 636,\n        \"height\": 20\n      },\n      \"visible\": true,\n      \"opacity\": 1,\n      \"paint\": {\n        \"kind\": \"texture\",\n        \"uv\": {\n          \"x\": 0,\n          \"y\": 0,\n          \"width\": 1,\n          \"height\": 1\n        },\n        \"fit\": \"stretch\"\n      }\n    },\n    {\n      \"id\": \"emblem\",\n      \"type\": \"background\",\n      \"box\": {\n        \"x\": -364,\n        \"y\": -32,\n        \"width\": 60,\n        \"height\": 60\n      },\n      \"visible\": true,\n      \"opacity\": 1,\n      \"paint\": {\n        \"kind\": \"texture\",\n        \"uv\": {\n          \"x\": 3,\n          \"y\": 0,\n          \"width\": 1,\n          \"height\": 1\n        },\n        \"fit\": \"contain\"\n      }\n    },\n    {\n      \"id\": \"health_fill\",\n      \"type\": \"bar\",\n      \"box\": {\n        \"x\": -284,\n        \"y\": -4,\n        \"width\": 628,\n        \"height\": 12\n      },\n      \"visible\": true,\n      \"opacity\": 1,\n      \"progress\": {\n        \"var\": \"healthProgress\"\n      },\n      \"direction\": \"left-to-right\",\n      \"fill\": {\n        \"kind\": \"texture\",\n        \"uv\": {\n          \"x\": 1,\n          \"y\": 0,\n          \"width\": 1,\n          \"height\": 1\n        },\n        \"fit\": \"stretch\"\n      },\n      \"trail\": {\n        \"paint\": {\n          \"kind\": \"texture\",\n          \"uv\": {\n            \"x\": 2,\n            \"y\": 0,\n            \"width\": 1,\n            \"height\": 1\n          },\n          \"fit\": \"stretch\"\n        },\n        \"delayMs\": 250,\n        \"durationMs\": 350\n      },\n      \"smoothMs\": 120\n    },\n    {\n      \"id\": \"shield_fill\",\n      \"type\": \"bar\",\n      \"box\": {\n        \"x\": -284,\n        \"y\": 16,\n        \"width\": 628,\n        \"height\": 4\n      },\n      \"visible\": true,\n      \"opacity\": 1,\n      \"progress\": {\n        \"var\": \"shieldProgress\"\n      },\n      \"direction\": \"left-to-right\",\n      \"fill\": {\n        \"kind\": \"texture\",\n        \"uv\": {\n          \"x\": 2,\n          \"y\": 1,\n          \"width\": 1,\n          \"height\": 1\n        },\n        \"fit\": \"stretch\"\n      },\n      \"smoothMs\": 120\n    },\n    {\n      \"id\": \"title\",\n      \"type\": \"text\",\n      \"box\": {\n        \"x\": -284,\n        \"y\": -36,\n        \"width\": 628,\n        \"height\": 24\n      },\n      \"visible\": true,\n      \"opacity\": 1,\n      \"runs\": [\n        {\n          \"var\": \"bossName\"\n        },\n        {\n          \"text\": \"  目标：\"\n        },\n        {\n          \"var\": \"targetName\"\n        }\n      ],\n      \"fontSize\": 18,\n      \"color\": \"#FFFFFFFF\",\n      \"align\": \"center\",\n      \"verticalAlign\": \"middle\",\n      \"shadow\": true\n    },\n    {\n      \"id\": \"health_text\",\n      \"type\": \"text\",\n      \"box\": {\n        \"x\": -284,\n        \"y\": -9,\n        \"width\": 628,\n        \"height\": 22\n      },\n      \"visible\": true,\n      \"opacity\": 1,\n      \"runs\": [\n        {\n          \"var\": \"healthText\"\n        }\n      ],\n      \"fontSize\": 14,\n      \"color\": \"#FFFFFFFF\",\n      \"align\": \"center\",\n      \"verticalAlign\": \"middle\",\n      \"shadow\": true\n    },\n    {\n      \"id\": \"rage_flame\",\n      \"type\": \"background\",\n      \"box\": {\n        \"x\": -276,\n        \"y\": 23,\n        \"width\": 608,\n        \"height\": 8\n      },\n      \"visible\": {\n        \"var\": \"enraged\"\n      },\n      \"opacity\": 1,\n      \"paint\": {\n        \"kind\": \"texture\",\n        \"uv\": {\n          \"x\": 0,\n          \"y\": 1,\n          \"width\": 1,\n          \"height\": 1\n        },\n        \"fit\": \"stretch\",\n        \"animation\": {\n          \"mode\": \"loop\",\n          \"phaseMs\": 0,\n          \"frames\": [\n            {\n              \"uv\": {\n                \"x\": 0,\n                \"y\": 1,\n                \"width\": 1,\n                \"height\": 1\n              },\n              \"durationMs\": 100\n            },\n            {\n              \"uv\": {\n                \"x\": 1,\n                \"y\": 1,\n                \"width\": 1,\n                \"height\": 1\n              },\n              \"durationMs\": 100\n            }\n          ]\n        }\n      }\n    }\n  ]\n}\n"
+        "canonical": "{\n  \"format\": \"hanshu.bossbar\",\n  \"version\": 2,\n  \"id\": \"hanshu:ember_guard\",\n  \"priority\": 0,\n  \"texture\": \"iVBORw0KGgoAAAANSUhEUgAAAAQAAAACCAYAAAB/qH1jAAAAJ0lEQVR4nGNQFhD7/1ZF5///zZ7/t0yL+s/wP4Dh//8TQAwEDEAAADbPEjL7vUAnAAAAAElFTkSuQmCC\",\n  \"layout\": {\n    \"dock\": \"top-center\",\n    \"scale\": 0.5,\n    \"safeMargin\": 12\n  },\n  \"variables\": {\n    \"bossName\": {\n      \"type\": \"string\",\n      \"default\": \"首领\",\n      \"maxLength\": 64\n    },\n    \"counter\": {\n      \"type\": \"string\",\n      \"default\": \"9007199254740993\",\n      \"maxLength\": 64\n    },\n    \"enraged\": {\n      \"type\": \"bool\",\n      \"default\": false\n    },\n    \"healthProgress\": {\n      \"type\": \"double\",\n      \"default\": 0\n    },\n    \"healthText\": {\n      \"type\": \"string\",\n      \"default\": \"0（0%）\",\n      \"maxLength\": 64\n    },\n    \"shieldProgress\": {\n      \"type\": \"double\",\n      \"default\": 0\n    },\n    \"targetName\": {\n      \"type\": \"string\",\n      \"default\": \"无\",\n      \"maxLength\": 64\n    }\n  },\n  \"components\": [\n    {\n      \"id\": \"region\",\n      \"type\": \"display_region\",\n      \"box\": {\n        \"x\": -384,\n        \"y\": -36,\n        \"width\": 768,\n        \"height\": 72\n      }\n    },\n    {\n      \"id\": \"track\",\n      \"type\": \"background\",\n      \"box\": {\n        \"x\": -288,\n        \"y\": -8,\n        \"width\": 636,\n        \"height\": 20\n      },\n      \"visible\": true,\n      \"opacity\": 1,\n      \"paint\": {\n        \"kind\": \"texture\",\n        \"uv\": {\n          \"x\": 0,\n          \"y\": 0,\n          \"width\": 1,\n          \"height\": 1\n        },\n        \"fit\": \"stretch\"\n      }\n    },\n    {\n      \"id\": \"emblem\",\n      \"type\": \"background\",\n      \"box\": {\n        \"x\": -364,\n        \"y\": -32,\n        \"width\": 60,\n        \"height\": 60\n      },\n      \"visible\": true,\n      \"opacity\": 1,\n      \"paint\": {\n        \"kind\": \"texture\",\n        \"uv\": {\n          \"x\": 3,\n          \"y\": 0,\n          \"width\": 1,\n          \"height\": 1\n        },\n        \"fit\": \"contain\"\n      }\n    },\n    {\n      \"id\": \"health_fill\",\n      \"type\": \"bar\",\n      \"box\": {\n        \"x\": -284,\n        \"y\": -4,\n        \"width\": 628,\n        \"height\": 12\n      },\n      \"visible\": true,\n      \"opacity\": 1,\n      \"progress\": {\n        \"var\": \"healthProgress\"\n      },\n      \"direction\": \"left-to-right\",\n      \"fill\": {\n        \"kind\": \"texture\",\n        \"uv\": {\n          \"x\": 1,\n          \"y\": 0,\n          \"width\": 1,\n          \"height\": 1\n        },\n        \"fit\": \"stretch\"\n      },\n      \"trail\": {\n        \"paint\": {\n          \"kind\": \"texture\",\n          \"uv\": {\n            \"x\": 2,\n            \"y\": 0,\n            \"width\": 1,\n            \"height\": 1\n          },\n          \"fit\": \"stretch\"\n        },\n        \"delayMs\": 250,\n        \"durationMs\": 350\n      },\n      \"smoothMs\": 120\n    },\n    {\n      \"id\": \"shield_fill\",\n      \"type\": \"bar\",\n      \"box\": {\n        \"x\": -284,\n        \"y\": 16,\n        \"width\": 628,\n        \"height\": 4\n      },\n      \"visible\": true,\n      \"opacity\": 1,\n      \"progress\": {\n        \"var\": \"shieldProgress\"\n      },\n      \"direction\": \"left-to-right\",\n      \"fill\": {\n        \"kind\": \"texture\",\n        \"uv\": {\n          \"x\": 2,\n          \"y\": 1,\n          \"width\": 1,\n          \"height\": 1\n        },\n        \"fit\": \"stretch\"\n      },\n      \"smoothMs\": 120\n    },\n    {\n      \"id\": \"title\",\n      \"type\": \"text\",\n      \"box\": {\n        \"x\": -284,\n        \"y\": -36,\n        \"width\": 628,\n        \"height\": 24\n      },\n      \"visible\": true,\n      \"opacity\": 1,\n      \"runs\": [\n        {\n          \"var\": \"bossName\"\n        },\n        {\n          \"text\": \"  目标：\"\n        },\n        {\n          \"var\": \"targetName\"\n        }\n      ],\n      \"fontSize\": 18,\n      \"color\": \"#FFFFFFFF\",\n      \"align\": \"center\",\n      \"verticalAlign\": \"middle\",\n      \"shadow\": true\n    },\n    {\n      \"id\": \"health_text\",\n      \"type\": \"text\",\n      \"box\": {\n        \"x\": -284,\n        \"y\": -9,\n        \"width\": 628,\n        \"height\": 22\n      },\n      \"visible\": true,\n      \"opacity\": 1,\n      \"runs\": [\n        {\n          \"var\": \"healthText\"\n        }\n      ],\n      \"fontSize\": 14,\n      \"color\": \"#FFFFFFFF\",\n      \"align\": \"center\",\n      \"verticalAlign\": \"middle\",\n      \"shadow\": true\n    },\n    {\n      \"id\": \"rage_flame\",\n      \"type\": \"background\",\n      \"box\": {\n        \"x\": -276,\n        \"y\": 23,\n        \"width\": 608,\n        \"height\": 8\n      },\n      \"visible\": {\n        \"var\": \"enraged\"\n      },\n      \"opacity\": 1,\n      \"paint\": {\n        \"kind\": \"texture\",\n        \"uv\": {\n          \"x\": 0,\n          \"y\": 1,\n          \"width\": 1,\n          \"height\": 1\n        },\n        \"fit\": \"stretch\",\n        \"animation\": {\n          \"mode\": \"loop\",\n          \"phaseMs\": 0,\n          \"frames\": [\n            {\n              \"uv\": {\n                \"x\": 0,\n                \"y\": 1,\n                \"width\": 1,\n                \"height\": 1\n              },\n              \"durationMs\": 100\n            },\n            {\n              \"uv\": {\n                \"x\": 1,\n                \"y\": 1,\n                \"width\": 1,\n                \"height\": 1\n              },\n              \"durationMs\": 100\n            }\n          ]\n        }\n      }\n    }\n  ]\n}\n"
       }
     },
     {
@@ -600,8 +602,9 @@
             "default": "x"
           },
           "big": {
-            "type": "long",
-            "default": "0"
+            "type": "string",
+            "default": "0",
+            "maxLength": 64
           }
         },
         "components": [
@@ -699,8 +702,9 @@
           },
           "variables": {
             "big": {
-              "type": "long",
-              "default": "0"
+              "type": "string",
+              "default": "0",
+              "maxLength": 64
             },
             "note": {
               "type": "string",
@@ -809,7 +813,7 @@
             }
           ]
         },
-        "canonical": "{\n  \"format\": \"hanshu.bossbar\",\n  \"version\": 2,\n  \"id\": \"hanshu:defaults\",\n  \"priority\": 0,\n  \"texture\": \"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAEklEQVR42mNgGAWjYBSMAggAAAQQAAGvRYgsAAAAAElFTkSuQmCC\",\n  \"layout\": {\n    \"dock\": \"top-center\",\n    \"scale\": 0.5,\n    \"safeMargin\": 12\n  },\n  \"variables\": {\n    \"big\": {\n      \"type\": \"long\",\n      \"default\": \"0\"\n    },\n    \"note\": {\n      \"type\": \"string\",\n      \"default\": \"x\",\n      \"maxLength\": 256\n    }\n  },\n  \"components\": [\n    {\n      \"id\": \"region\",\n      \"type\": \"display_region\",\n      \"box\": {\n        \"x\": -10,\n        \"y\": -10,\n        \"width\": 100,\n        \"height\": 40\n      }\n    },\n    {\n      \"id\": \"bg\",\n      \"type\": \"background\",\n      \"box\": {\n        \"x\": 0,\n        \"y\": 0,\n        \"width\": 10,\n        \"height\": 10\n      },\n      \"visible\": true,\n      \"opacity\": 1,\n      \"paint\": {\n        \"kind\": \"solid\",\n        \"color\": \"#11223344\"\n      }\n    },\n    {\n      \"id\": \"nine\",\n      \"type\": \"background\",\n      \"box\": {\n        \"x\": 0,\n        \"y\": 0,\n        \"width\": 10,\n        \"height\": 10\n      },\n      \"visible\": true,\n      \"opacity\": 1,\n      \"paint\": {\n        \"kind\": \"texture\",\n        \"uv\": {\n          \"x\": 0,\n          \"y\": 0,\n          \"width\": 16,\n          \"height\": 16\n        },\n        \"fit\": \"nine-slice\",\n        \"insets\": [\n          8,\n          8,\n          8,\n          8\n        ]\n      }\n    },\n    {\n      \"id\": \"bar\",\n      \"type\": \"bar\",\n      \"box\": {\n        \"x\": 0,\n        \"y\": 0,\n        \"width\": 10,\n        \"height\": 10\n      },\n      \"visible\": true,\n      \"opacity\": 1,\n      \"progress\": 0.25,\n      \"direction\": \"left-to-right\",\n      \"fill\": {\n        \"kind\": \"solid\",\n        \"color\": \"#FFFFFFFF\"\n      },\n      \"smoothMs\": 120\n    },\n    {\n      \"id\": \"text\",\n      \"type\": \"text\",\n      \"box\": {\n        \"x\": 0,\n        \"y\": 0,\n        \"width\": 10,\n        \"height\": 10\n      },\n      \"visible\": true,\n      \"opacity\": 1,\n      \"runs\": [\n        {\n          \"text\": \"a\"\n        },\n        {\n          \"var\": \"note\"\n        }\n      ],\n      \"fontSize\": 16,\n      \"color\": \"#FFFFFFFF\",\n      \"align\": \"left\",\n      \"verticalAlign\": \"middle\",\n      \"shadow\": false\n    }\n  ]\n}\n"
+        "canonical": "{\n  \"format\": \"hanshu.bossbar\",\n  \"version\": 2,\n  \"id\": \"hanshu:defaults\",\n  \"priority\": 0,\n  \"texture\": \"iVBORw0KGgoAAAANSUhEUgAAABAAAAAQCAYAAAAf8/9hAAAAEklEQVR42mNgGAWjYBSMAggAAAQQAAGvRYgsAAAAAElFTkSuQmCC\",\n  \"layout\": {\n    \"dock\": \"top-center\",\n    \"scale\": 0.5,\n    \"safeMargin\": 12\n  },\n  \"variables\": {\n    \"big\": {\n      \"type\": \"string\",\n      \"default\": \"0\",\n      \"maxLength\": 64\n    },\n    \"note\": {\n      \"type\": \"string\",\n      \"default\": \"x\",\n      \"maxLength\": 256\n    }\n  },\n  \"components\": [\n    {\n      \"id\": \"region\",\n      \"type\": \"display_region\",\n      \"box\": {\n        \"x\": -10,\n        \"y\": -10,\n        \"width\": 100,\n        \"height\": 40\n      }\n    },\n    {\n      \"id\": \"bg\",\n      \"type\": \"background\",\n      \"box\": {\n        \"x\": 0,\n        \"y\": 0,\n        \"width\": 10,\n        \"height\": 10\n      },\n      \"visible\": true,\n      \"opacity\": 1,\n      \"paint\": {\n        \"kind\": \"solid\",\n        \"color\": \"#11223344\"\n      }\n    },\n    {\n      \"id\": \"nine\",\n      \"type\": \"background\",\n      \"box\": {\n        \"x\": 0,\n        \"y\": 0,\n        \"width\": 10,\n        \"height\": 10\n      },\n      \"visible\": true,\n      \"opacity\": 1,\n      \"paint\": {\n        \"kind\": \"texture\",\n        \"uv\": {\n          \"x\": 0,\n          \"y\": 0,\n          \"width\": 16,\n          \"height\": 16\n        },\n        \"fit\": \"nine-slice\",\n        \"insets\": [\n          8,\n          8,\n          8,\n          8\n        ]\n      }\n    },\n    {\n      \"id\": \"bar\",\n      \"type\": \"bar\",\n      \"box\": {\n        \"x\": 0,\n        \"y\": 0,\n        \"width\": 10,\n        \"height\": 10\n      },\n      \"visible\": true,\n      \"opacity\": 1,\n      \"progress\": 0.25,\n      \"direction\": \"left-to-right\",\n      \"fill\": {\n        \"kind\": \"solid\",\n        \"color\": \"#FFFFFFFF\"\n      },\n      \"smoothMs\": 120\n    },\n    {\n      \"id\": \"text\",\n      \"type\": \"text\",\n      \"box\": {\n        \"x\": 0,\n        \"y\": 0,\n        \"width\": 10,\n        \"height\": 10\n      },\n      \"visible\": true,\n      \"opacity\": 1,\n      \"runs\": [\n        {\n          \"text\": \"a\"\n        },\n        {\n          \"var\": \"note\"\n        }\n      ],\n      \"fontSize\": 16,\n      \"color\": \"#FFFFFFFF\",\n      \"align\": \"left\",\n      \"verticalAlign\": \"middle\",\n      \"shadow\": false\n    }\n  ]\n}\n"
       }
     }
   ],
@@ -1987,7 +1991,7 @@
       }
     },
     {
-      "name": "progress-long-reference",
+      "name": "progress-string-reference",
       "expectedPath": "components[1].progress.var",
       "input": {
         "format": "hanshu.bossbar",
@@ -2001,8 +2005,9 @@
         },
         "variables": {
           "big": {
-            "type": "long",
-            "default": "1"
+            "type": "string",
+            "default": "1",
+            "maxLength": 64
           }
         },
         "components": [
@@ -2436,8 +2441,8 @@
       }
     },
     {
-      "name": "long-default-out-of-range",
-      "expectedPath": "variables.big.default",
+      "name": "unsupported-long-declaration",
+      "expectedPath": "variables.big.type",
       "input": {
         "format": "hanshu.bossbar",
         "version": 2,
@@ -2451,7 +2456,7 @@
         "variables": {
           "big": {
             "type": "long",
-            "default": "9223372036854775808"
+            "default": "1"
           }
         },
         "components": [
@@ -2470,52 +2475,12 @@
       "expect": {
         "ok": false,
         "paths": [
+          "variables.big.type",
           "variables.big.default"
         ],
         "codes": [
-          "long"
-        ]
-      }
-    },
-    {
-      "name": "long-default-leading-zero",
-      "expectedPath": "variables.big.default",
-      "input": {
-        "format": "hanshu.bossbar",
-        "version": 2,
-        "id": "hanshu:minimal",
-        "texture": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=",
-        "layout": {
-          "dock": "top-center",
-          "scale": 1,
-          "safeMargin": 8
-        },
-        "variables": {
-          "big": {
-            "type": "long",
-            "default": "007"
-          }
-        },
-        "components": [
-          {
-            "id": "region",
-            "type": "display_region",
-            "box": {
-              "x": 0,
-              "y": 0,
-              "width": 320,
-              "height": 40
-            }
-          }
-        ]
-      },
-      "expect": {
-        "ok": false,
-        "paths": [
-          "variables.big.default"
-        ],
-        "codes": [
-          "pattern"
+          "const",
+          "type"
         ]
       }
     },
@@ -2577,8 +2542,8 @@
         },
         "variables": {
           "big": {
-            "type": "long",
-            "default": "0",
+            "type": "double",
+            "default": 0,
             "key": "old_map_key"
           }
         },
@@ -3197,8 +3162,9 @@
           "maxLength": 64
         },
         "counter": {
-          "type": "long",
-          "default": "9007199254740993"
+          "type": "string",
+          "default": "9007199254740993",
+          "maxLength": 64
         },
         "enraged": {
           "type": "bool",
@@ -3451,10 +3417,10 @@
       "height": 2,
       "byteLength": 96
     },
-    "canonical": "{\n  \"format\": \"hanshu.bossbar\",\n  \"version\": 2,\n  \"id\": \"hanshu:ember_guard\",\n  \"priority\": 0,\n  \"texture\": \"iVBORw0KGgoAAAANSUhEUgAAAAQAAAACCAYAAAB/qH1jAAAAJ0lEQVR4nGNQFhD7/1ZF5///zZ7/t0yL+s/wP4Dh//8TQAwEDEAAADbPEjL7vUAnAAAAAElFTkSuQmCC\",\n  \"layout\": {\n    \"dock\": \"top-center\",\n    \"scale\": 0.5,\n    \"safeMargin\": 12\n  },\n  \"variables\": {\n    \"bossName\": {\n      \"type\": \"string\",\n      \"default\": \"首领\",\n      \"maxLength\": 64\n    },\n    \"counter\": {\n      \"type\": \"long\",\n      \"default\": \"9007199254740993\"\n    },\n    \"enraged\": {\n      \"type\": \"bool\",\n      \"default\": false\n    },\n    \"healthProgress\": {\n      \"type\": \"double\",\n      \"default\": 0\n    },\n    \"healthText\": {\n      \"type\": \"string\",\n      \"default\": \"0（0%）\",\n      \"maxLength\": 64\n    },\n    \"shieldProgress\": {\n      \"type\": \"double\",\n      \"default\": 0\n    },\n    \"targetName\": {\n      \"type\": \"string\",\n      \"default\": \"无\",\n      \"maxLength\": 64\n    }\n  },\n  \"components\": [\n    {\n      \"id\": \"region\",\n      \"type\": \"display_region\",\n      \"box\": {\n        \"x\": -384,\n        \"y\": -36,\n        \"width\": 768,\n        \"height\": 72\n      }\n    },\n    {\n      \"id\": \"track\",\n      \"type\": \"background\",\n      \"box\": {\n        \"x\": -288,\n        \"y\": -8,\n        \"width\": 636,\n        \"height\": 20\n      },\n      \"visible\": true,\n      \"opacity\": 1,\n      \"paint\": {\n        \"kind\": \"texture\",\n        \"uv\": {\n          \"x\": 0,\n          \"y\": 0,\n          \"width\": 1,\n          \"height\": 1\n        },\n        \"fit\": \"stretch\"\n      }\n    },\n    {\n      \"id\": \"emblem\",\n      \"type\": \"background\",\n      \"box\": {\n        \"x\": -364,\n        \"y\": -32,\n        \"width\": 60,\n        \"height\": 60\n      },\n      \"visible\": true,\n      \"opacity\": 1,\n      \"paint\": {\n        \"kind\": \"texture\",\n        \"uv\": {\n          \"x\": 3,\n          \"y\": 0,\n          \"width\": 1,\n          \"height\": 1\n        },\n        \"fit\": \"contain\"\n      }\n    },\n    {\n      \"id\": \"health_fill\",\n      \"type\": \"bar\",\n      \"box\": {\n        \"x\": -284,\n        \"y\": -4,\n        \"width\": 628,\n        \"height\": 12\n      },\n      \"visible\": true,\n      \"opacity\": 1,\n      \"progress\": {\n        \"var\": \"healthProgress\"\n      },\n      \"direction\": \"left-to-right\",\n      \"fill\": {\n        \"kind\": \"texture\",\n        \"uv\": {\n          \"x\": 1,\n          \"y\": 0,\n          \"width\": 1,\n          \"height\": 1\n        },\n        \"fit\": \"stretch\"\n      },\n      \"trail\": {\n        \"paint\": {\n          \"kind\": \"texture\",\n          \"uv\": {\n            \"x\": 2,\n            \"y\": 0,\n            \"width\": 1,\n            \"height\": 1\n          },\n          \"fit\": \"stretch\"\n        },\n        \"delayMs\": 250,\n        \"durationMs\": 350\n      },\n      \"smoothMs\": 120\n    },\n    {\n      \"id\": \"shield_fill\",\n      \"type\": \"bar\",\n      \"box\": {\n        \"x\": -284,\n        \"y\": 16,\n        \"width\": 628,\n        \"height\": 4\n      },\n      \"visible\": true,\n      \"opacity\": 1,\n      \"progress\": {\n        \"var\": \"shieldProgress\"\n      },\n      \"direction\": \"left-to-right\",\n      \"fill\": {\n        \"kind\": \"texture\",\n        \"uv\": {\n          \"x\": 2,\n          \"y\": 1,\n          \"width\": 1,\n          \"height\": 1\n        },\n        \"fit\": \"stretch\"\n      },\n      \"smoothMs\": 120\n    },\n    {\n      \"id\": \"title\",\n      \"type\": \"text\",\n      \"box\": {\n        \"x\": -284,\n        \"y\": -36,\n        \"width\": 628,\n        \"height\": 24\n      },\n      \"visible\": true,\n      \"opacity\": 1,\n      \"runs\": [\n        {\n          \"var\": \"bossName\"\n        },\n        {\n          \"text\": \"  目标：\"\n        },\n        {\n          \"var\": \"targetName\"\n        }\n      ],\n      \"fontSize\": 18,\n      \"color\": \"#FFFFFFFF\",\n      \"align\": \"center\",\n      \"verticalAlign\": \"middle\",\n      \"shadow\": true\n    },\n    {\n      \"id\": \"health_text\",\n      \"type\": \"text\",\n      \"box\": {\n        \"x\": -284,\n        \"y\": -9,\n        \"width\": 628,\n        \"height\": 22\n      },\n      \"visible\": true,\n      \"opacity\": 1,\n      \"runs\": [\n        {\n          \"var\": \"healthText\"\n        }\n      ],\n      \"fontSize\": 14,\n      \"color\": \"#FFFFFFFF\",\n      \"align\": \"center\",\n      \"verticalAlign\": \"middle\",\n      \"shadow\": true\n    },\n    {\n      \"id\": \"rage_flame\",\n      \"type\": \"background\",\n      \"box\": {\n        \"x\": -276,\n        \"y\": 23,\n        \"width\": 608,\n        \"height\": 8\n      },\n      \"visible\": {\n        \"var\": \"enraged\"\n      },\n      \"opacity\": 1,\n      \"paint\": {\n        \"kind\": \"texture\",\n        \"uv\": {\n          \"x\": 0,\n          \"y\": 1,\n          \"width\": 1,\n          \"height\": 1\n        },\n        \"fit\": \"stretch\",\n        \"animation\": {\n          \"mode\": \"loop\",\n          \"phaseMs\": 0,\n          \"frames\": [\n            {\n              \"uv\": {\n                \"x\": 0,\n                \"y\": 1,\n                \"width\": 1,\n                \"height\": 1\n              },\n              \"durationMs\": 100\n            },\n            {\n              \"uv\": {\n                \"x\": 1,\n                \"y\": 1,\n                \"width\": 1,\n                \"height\": 1\n              },\n              \"durationMs\": 100\n            }\n          ]\n        }\n      }\n    }\n  ]\n}\n",
+    "canonical": "{\n  \"format\": \"hanshu.bossbar\",\n  \"version\": 2,\n  \"id\": \"hanshu:ember_guard\",\n  \"priority\": 0,\n  \"texture\": \"iVBORw0KGgoAAAANSUhEUgAAAAQAAAACCAYAAAB/qH1jAAAAJ0lEQVR4nGNQFhD7/1ZF5///zZ7/t0yL+s/wP4Dh//8TQAwEDEAAADbPEjL7vUAnAAAAAElFTkSuQmCC\",\n  \"layout\": {\n    \"dock\": \"top-center\",\n    \"scale\": 0.5,\n    \"safeMargin\": 12\n  },\n  \"variables\": {\n    \"bossName\": {\n      \"type\": \"string\",\n      \"default\": \"首领\",\n      \"maxLength\": 64\n    },\n    \"counter\": {\n      \"type\": \"string\",\n      \"default\": \"9007199254740993\",\n      \"maxLength\": 64\n    },\n    \"enraged\": {\n      \"type\": \"bool\",\n      \"default\": false\n    },\n    \"healthProgress\": {\n      \"type\": \"double\",\n      \"default\": 0\n    },\n    \"healthText\": {\n      \"type\": \"string\",\n      \"default\": \"0（0%）\",\n      \"maxLength\": 64\n    },\n    \"shieldProgress\": {\n      \"type\": \"double\",\n      \"default\": 0\n    },\n    \"targetName\": {\n      \"type\": \"string\",\n      \"default\": \"无\",\n      \"maxLength\": 64\n    }\n  },\n  \"components\": [\n    {\n      \"id\": \"region\",\n      \"type\": \"display_region\",\n      \"box\": {\n        \"x\": -384,\n        \"y\": -36,\n        \"width\": 768,\n        \"height\": 72\n      }\n    },\n    {\n      \"id\": \"track\",\n      \"type\": \"background\",\n      \"box\": {\n        \"x\": -288,\n        \"y\": -8,\n        \"width\": 636,\n        \"height\": 20\n      },\n      \"visible\": true,\n      \"opacity\": 1,\n      \"paint\": {\n        \"kind\": \"texture\",\n        \"uv\": {\n          \"x\": 0,\n          \"y\": 0,\n          \"width\": 1,\n          \"height\": 1\n        },\n        \"fit\": \"stretch\"\n      }\n    },\n    {\n      \"id\": \"emblem\",\n      \"type\": \"background\",\n      \"box\": {\n        \"x\": -364,\n        \"y\": -32,\n        \"width\": 60,\n        \"height\": 60\n      },\n      \"visible\": true,\n      \"opacity\": 1,\n      \"paint\": {\n        \"kind\": \"texture\",\n        \"uv\": {\n          \"x\": 3,\n          \"y\": 0,\n          \"width\": 1,\n          \"height\": 1\n        },\n        \"fit\": \"contain\"\n      }\n    },\n    {\n      \"id\": \"health_fill\",\n      \"type\": \"bar\",\n      \"box\": {\n        \"x\": -284,\n        \"y\": -4,\n        \"width\": 628,\n        \"height\": 12\n      },\n      \"visible\": true,\n      \"opacity\": 1,\n      \"progress\": {\n        \"var\": \"healthProgress\"\n      },\n      \"direction\": \"left-to-right\",\n      \"fill\": {\n        \"kind\": \"texture\",\n        \"uv\": {\n          \"x\": 1,\n          \"y\": 0,\n          \"width\": 1,\n          \"height\": 1\n        },\n        \"fit\": \"stretch\"\n      },\n      \"trail\": {\n        \"paint\": {\n          \"kind\": \"texture\",\n          \"uv\": {\n            \"x\": 2,\n            \"y\": 0,\n            \"width\": 1,\n            \"height\": 1\n          },\n          \"fit\": \"stretch\"\n        },\n        \"delayMs\": 250,\n        \"durationMs\": 350\n      },\n      \"smoothMs\": 120\n    },\n    {\n      \"id\": \"shield_fill\",\n      \"type\": \"bar\",\n      \"box\": {\n        \"x\": -284,\n        \"y\": 16,\n        \"width\": 628,\n        \"height\": 4\n      },\n      \"visible\": true,\n      \"opacity\": 1,\n      \"progress\": {\n        \"var\": \"shieldProgress\"\n      },\n      \"direction\": \"left-to-right\",\n      \"fill\": {\n        \"kind\": \"texture\",\n        \"uv\": {\n          \"x\": 2,\n          \"y\": 1,\n          \"width\": 1,\n          \"height\": 1\n        },\n        \"fit\": \"stretch\"\n      },\n      \"smoothMs\": 120\n    },\n    {\n      \"id\": \"title\",\n      \"type\": \"text\",\n      \"box\": {\n        \"x\": -284,\n        \"y\": -36,\n        \"width\": 628,\n        \"height\": 24\n      },\n      \"visible\": true,\n      \"opacity\": 1,\n      \"runs\": [\n        {\n          \"var\": \"bossName\"\n        },\n        {\n          \"text\": \"  目标：\"\n        },\n        {\n          \"var\": \"targetName\"\n        }\n      ],\n      \"fontSize\": 18,\n      \"color\": \"#FFFFFFFF\",\n      \"align\": \"center\",\n      \"verticalAlign\": \"middle\",\n      \"shadow\": true\n    },\n    {\n      \"id\": \"health_text\",\n      \"type\": \"text\",\n      \"box\": {\n        \"x\": -284,\n        \"y\": -9,\n        \"width\": 628,\n        \"height\": 22\n      },\n      \"visible\": true,\n      \"opacity\": 1,\n      \"runs\": [\n        {\n          \"var\": \"healthText\"\n        }\n      ],\n      \"fontSize\": 14,\n      \"color\": \"#FFFFFFFF\",\n      \"align\": \"center\",\n      \"verticalAlign\": \"middle\",\n      \"shadow\": true\n    },\n    {\n      \"id\": \"rage_flame\",\n      \"type\": \"background\",\n      \"box\": {\n        \"x\": -276,\n        \"y\": 23,\n        \"width\": 608,\n        \"height\": 8\n      },\n      \"visible\": {\n        \"var\": \"enraged\"\n      },\n      \"opacity\": 1,\n      \"paint\": {\n        \"kind\": \"texture\",\n        \"uv\": {\n          \"x\": 0,\n          \"y\": 1,\n          \"width\": 1,\n          \"height\": 1\n        },\n        \"fit\": \"stretch\",\n        \"animation\": {\n          \"mode\": \"loop\",\n          \"phaseMs\": 0,\n          \"frames\": [\n            {\n              \"uv\": {\n                \"x\": 0,\n                \"y\": 1,\n                \"width\": 1,\n                \"height\": 1\n              },\n              \"durationMs\": 100\n            },\n            {\n              \"uv\": {\n                \"x\": 1,\n                \"y\": 1,\n                \"width\": 1,\n                \"height\": 1\n              },\n              \"durationMs\": 100\n            }\n          ]\n        }\n      }\n    }\n  ]\n}\n",
     "hints": [],
     "snapshot": {
-      "worstBytes": 949,
+      "worstBytes": 1185,
       "perValue": [
         {
           "name": "bossName",
@@ -3462,7 +3428,7 @@
         },
         {
           "name": "counter",
-          "bytes": 33
+          "bytes": 269
         },
         {
           "name": "enraged",
@@ -3487,7 +3453,7 @@
       ]
     },
     "shieldProgress": 1,
-    "longSceneCommands": 7
+    "largeNumberSceneCommands": 7
   },
   "textureProbe": {
     "source": "BOSSBAR_SAMPLE_TEXTURE",
@@ -3506,7 +3472,7 @@
   "textValues": [
     {
       "value": {
-        "type": "long",
+        "type": "string",
         "value": "9007199254740993"
       },
       "text": "9007199254740993",
@@ -3514,7 +3480,7 @@
     },
     {
       "value": {
-        "type": "long",
+        "type": "string",
         "value": "-9223372036854775808"
       },
       "text": "-9223372036854775808",
@@ -3522,7 +3488,7 @@
     },
     {
       "value": {
-        "type": "long",
+        "type": "string",
         "value": "9223372036854775807"
       },
       "text": "9223372036854775807",
@@ -4464,7 +4430,7 @@
           "value": false
         },
         "counter": {
-          "type": "long",
+          "type": "string",
           "value": "9007199254740993"
         }
       },
@@ -4626,7 +4592,7 @@
           "value": false
         },
         "counter": {
-          "type": "long",
+          "type": "string",
           "value": "9007199254740993"
         }
       },
@@ -4761,7 +4727,7 @@
       ]
     },
     {
-      "name": "enraged-long-extreme",
+      "name": "enraged-large-number-text",
       "values": {
         "healthProgress": {
           "type": "double",
@@ -4788,7 +4754,7 @@
           "value": true
         },
         "counter": {
-          "type": "long",
+          "type": "string",
           "value": "9223372036854775807"
         }
       },
@@ -4968,7 +4934,7 @@
           "value": false
         },
         "counter": {
-          "type": "long",
+          "type": "string",
           "value": "-9223372036854775808"
         }
       },

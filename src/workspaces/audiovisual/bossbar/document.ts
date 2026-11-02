@@ -332,7 +332,7 @@ export function renameVariable<T extends WithComponents & { variables: Record<st
 export function removeVariable<T extends WithComponents & { variables: Record<string, BossbarVariable> }>(
   document: T,
   name: string,
-  replacement?: { long?: string; double?: number; bool?: boolean; string?: string },
+  replacement?: { double?: number; bool?: boolean; string?: string },
 ): EditResult<T> {
   const references = variableReferences(document, name)
   if (references.length && replacement === undefined) {
@@ -351,8 +351,7 @@ export function removeVariable<T extends WithComponents & { variables: Record<st
       kind: 'constant',
       double: replacement?.double ?? 0,
       bool: replacement?.bool ?? false,
-      text: document.variables[name]?.type === 'long' ? replacement?.long ?? '0'
-        : document.variables[name]?.type === 'double' ? String(replacement?.double ?? 0)
+      text: document.variables[name]?.type === 'double' ? String(replacement?.double ?? 0)
           : document.variables[name]?.type === 'bool' ? String(replacement?.bool ?? false) : replacement?.string ?? '',
     })
   }

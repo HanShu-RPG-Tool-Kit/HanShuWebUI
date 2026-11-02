@@ -8,7 +8,6 @@ import {
   BOSSBAR_FORMAT,
   BOSSBAR_ID_MAX_LENGTH,
   BOSSBAR_LIMITS,
-  BOSSBAR_LONG_PATTERN,
   BOSSBAR_NAME_PATTERN,
   BOSSBAR_TEXT_ALIGNS,
   BOSSBAR_TEXT_VERTICAL_ALIGNS,
@@ -24,11 +23,10 @@ import {
  * 因此默认值字段也列为 required —— 两端不能再各写一套默认值。
  *
  * schema 只覆盖结构；显示区域唯一性、AABB 包含、UV 越界、PNG 结构、
- * long 默认值范围与进度变量类型等由 parse.ts 的语义校验负责。
+ * 进度变量类型与字符串默认值长度等由 parse.ts 的语义校验负责。
  */
 
 const namePattern = BOSSBAR_NAME_PATTERN.source
-const longPattern = BOSSBAR_LONG_PATTERN.source
 
 const box = {
   type: 'object',
@@ -296,22 +294,12 @@ const textComponent = {
   },
 } as const
 
-const longVariable = {
-  type: 'object',
-  additionalProperties: false,
-  required: ['type', 'default'],
-  properties: {
-    type: { const: BOSSBAR_VARIABLE_TYPES[0] },
-    default: { type: 'string', pattern: longPattern },
-  },
-} as const
-
 const doubleVariable = {
   type: 'object',
   additionalProperties: false,
   required: ['type', 'default'],
   properties: {
-    type: { const: BOSSBAR_VARIABLE_TYPES[1] },
+    type: { const: BOSSBAR_VARIABLE_TYPES[0] },
     default: { type: 'number' },
   },
 } as const
@@ -321,7 +309,7 @@ const boolVariable = {
   additionalProperties: false,
   required: ['type', 'default'],
   properties: {
-    type: { const: BOSSBAR_VARIABLE_TYPES[2] },
+    type: { const: BOSSBAR_VARIABLE_TYPES[1] },
     default: { type: 'boolean' },
   },
 } as const
@@ -331,7 +319,7 @@ const stringVariable = {
   additionalProperties: false,
   required: ['type', 'default', 'maxLength'],
   properties: {
-    type: { const: BOSSBAR_VARIABLE_TYPES[3] },
+    type: { const: BOSSBAR_VARIABLE_TYPES[2] },
     default: { type: 'string', maxLength: BOSSBAR_LIMITS.stringMaxLength },
     maxLength: {
       type: 'integer',
@@ -392,7 +380,7 @@ export const BOSSBAR_V2_SCHEMA = {
       type: 'object',
       maxProperties: BOSSBAR_LIMITS.variables,
       propertyNames: { pattern: namePattern },
-      additionalProperties: { oneOf: [longVariable, doubleVariable, boolVariable, stringVariable] },
+      additionalProperties: { oneOf: [doubleVariable, boolVariable, stringVariable] },
     },
     components: {
       type: 'array',

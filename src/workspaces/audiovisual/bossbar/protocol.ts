@@ -2,11 +2,11 @@
  * BossBar v2 协议：纯数据模型、限制与默认值。
  *
  * 本轮约定（见 src/help/docs/bossbar-design.md）：
- * - 变量来自服务端数据包，类型为 long/double/bool/string；
+ * - 变量来自服务端数据包，类型为 double/bool/string；
  * - 条只接收 double 进度，文本只接收原值，不在客户端计算范围或格式化数字；
  * - 每份文档必须且只能内嵌一张 Base64 PNG 图集，组件用 UV 指定区域，动画只切换 UV；
  * - 编辑画布无限，输出由唯一的 `display_region` 组件（AABB）决定；
- * - JSON 里的 long 一律用十进制字符串，禁止先过 Number。
+ * - 大整数和格式化数字由服务端以 string 传递，客户端原样显示。
  *
  * 这里是协议的唯一定义处；schema.ts 是它的机器可校验形式，
  * 两者由 scripts/generate-bossbar-spec.ts 与 scripts/verify-bossbar.ts 对拍。
@@ -22,11 +22,6 @@ export const BOSSBAR_NAME_PATTERN = /^[A-Za-z][A-Za-z0-9_]{0,63}$/
 export const BOSSBAR_ID_MAX_LENGTH = 128
 /** 颜色统一写作 #RRGGBBAA */
 export const BOSSBAR_COLOR_PATTERN = /^#[0-9A-Fa-f]{8}$/
-
-/** long 的十进制表示：可带负号，不允许前导零 */
-export const BOSSBAR_LONG_PATTERN = /^(?:0|-?[1-9][0-9]*)$/
-export const BOSSBAR_LONG_MIN = -(BigInt(2) ** BigInt(63))
-export const BOSSBAR_LONG_MAX = BigInt(2) ** BigInt(63) - BigInt(1)
 
 /** 新建空文档使用的透明 1×1 PNG（68 字节） */
 export const BOSSBAR_DEFAULT_TEXTURE =
@@ -114,7 +109,7 @@ export type BossbarTextAlign = (typeof BOSSBAR_TEXT_ALIGNS)[number]
 export const BOSSBAR_TEXT_VERTICAL_ALIGNS = ['top', 'middle', 'bottom'] as const
 export type BossbarTextVerticalAlign = (typeof BOSSBAR_TEXT_VERTICAL_ALIGNS)[number]
 
-export const BOSSBAR_VARIABLE_TYPES = ['long', 'double', 'bool', 'string'] as const
+export const BOSSBAR_VARIABLE_TYPES = ['double', 'bool', 'string'] as const
 export type BossbarVariableType = (typeof BOSSBAR_VARIABLE_TYPES)[number]
 
 /** 默认值表：解析补齐、保存显式输出都由它驱动 */
@@ -153,20 +148,17 @@ export type BossbarLayout = {
   safeMargin: number
 }
 
-/** 值携带明确类型标签；JSON 里的 long 是十进制字符串 */
-export type BossbarLongValue = { type: 'long'; value: string }
+/** 值携带明确类型标签；需要精确显示的数字使用 string。 */
 export type BossbarDoubleValue = { type: 'double'; value: number }
 export type BossbarBoolValue = { type: 'bool'; value: boolean }
 export type BossbarStringValue = { type: 'string'; value: string }
 export type BossbarValue =
-  | BossbarLongValue
   | BossbarDoubleValue
   | BossbarBoolValue
   | BossbarStringValue
 export type BossbarValueMap = Record<string, BossbarValue>
 
 export type BossbarVariable =
-  | { type: 'long'; default: string }
   | { type: 'double'; default: number }
   | { type: 'bool'; default: boolean }
   | { type: 'string'; default: string; maxLength: number }
@@ -316,33 +308,6 @@ export function defaultLayout(): BossbarLayout {
   }
 }
 
-// ------------------------------------------------------------------ long 支持
-
-/** 解析十进制 long；超出 int64 或不规范返回 null */
-export function parseLong(text: unknown): bigint | null {
-  if (typeof text !== 'string') return null
-  if (!BOSSBAR_LONG_PATTERN.test(text)) return null
-  let value: bigint
-  try {
-    value = BigInt(text)
-  } catch {
-    return null
-  }
-  if (value < BOSSBAR_LONG_MIN || value > BOSSBAR_LONG_MAX) return null
-  return value
-}
-
-/** 规范十进制表示（去掉 "-0"、前导零由解析规则排除） */
-export function canonicalLong(value: bigint): string {
-  return value.toString(10)
-}
-
-export function longValue(value: string | bigint): BossbarLongValue {
-  const parsed = typeof value === 'bigint' ? value : parseLong(value)
-  if (parsed === null || parsed < BOSSBAR_LONG_MIN || parsed > BOSSBAR_LONG_MAX) throw new Error('非法 long：' + String(value))
-  return { type: 'long', value: canonicalLong(parsed) }
-}
-
 export function doubleValue(value: number): BossbarDoubleValue {
   if (!Number.isFinite(value)) throw new Error('非法 double：' + String(value))
   return { type: 'double', value }
@@ -359,8 +324,6 @@ export function stringValue(value: string): BossbarStringValue {
 /** 声明的默认值，以带类型标签的值表示 */
 export function defaultValueOf(variable: BossbarVariable): BossbarValue {
   switch (variable.type) {
-    case 'long':
-      return longValue(variable.default)
     case 'double':
       return doubleValue(variable.default)
     case 'bool':
@@ -373,7 +336,6 @@ export function defaultValueOf(variable: BossbarVariable): BossbarValue {
 /** 类型化值是否符合声明类型与长度限制（同时检查模板 maxLength） */
 export function isValueCompatible(variable: BossbarVariable, value: BossbarValue): boolean {
   if (variable.type !== value.type) return false
-  if (variable.type === 'long') return parseLong(value.value) !== null
   if (variable.type === 'double') return Number.isFinite(value.value)
   if (variable.type === 'bool') return typeof value.value === 'boolean'
   const text = (value as BossbarStringValue).value

@@ -15,7 +15,7 @@ import {
  * 变量取值。
  *
  * 输入是服务端发来的带类型标签的值。缺失、类型不符、
- * long 超范围、字符串超长一律回落到声明默认值，并发出一条诊断（调用方负责限频）。
+ * 非有限数值、字符串超长一律回落到声明默认值，并发出一条诊断（调用方负责限频）。
  * 客户端只按声明读取，不做隐式类型转换。
  */
 
@@ -43,7 +43,7 @@ export function coerceValue(
   if (!isTypedValue(raw)) {
     return {
       value: fallback,
-      issue: bossbarDiagnostic('value_shape', '', '不是带类型标签的值，使用默认值', 'warning'),
+      issue: bossbarDiagnostic('value_shape', '', '值必须使用 double/bool/string 类型和对应的 value，使用默认值', 'warning'),
     }
   }
   if (!isValueCompatible(variable, raw)) {
@@ -81,7 +81,7 @@ export function resolveValues(
   return { values, issues }
 }
 
-/** 单实例最坏快照大小估算：按声明 maxLength 与 long 定点宽度计算 */
+/** 单实例最坏快照大小估算：按声明 maxLength 和数值、布尔值编码宽度计算 */
 export function estimateSnapshotBytes(document: BossbarDocument): {
   worstBytes: number
   perValue: { name: string; bytes: number }[]
@@ -91,7 +91,6 @@ export function estimateSnapshotBytes(document: BossbarDocument): {
     const nameBytes = new TextEncoder().encode(name).length
     let valueBytes = 0
     if (variable.type === 'string') valueBytes = variable.maxLength * 4
-    else if (variable.type === 'long') valueBytes = 20
     else if (variable.type === 'double') valueBytes = 8
     else valueBytes = 1
     perValue.push({ name, bytes: nameBytes + valueBytes + 6 })

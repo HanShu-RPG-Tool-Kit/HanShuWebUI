@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   defaultValueOf,
   isValueCompatible,
-  parseLong,
   type BossbarDocument,
   type BossbarValue,
   type BossbarValueMap,
@@ -268,11 +267,6 @@ export function parseVariableInput(
 ): BossbarValue | null {
   const trimmed = raw.trim()
   switch (variable.type) {
-    case 'long': {
-      const parsed = parseLong(trimmed)
-      if (parsed === null) return null
-      return { type: 'long', value: parsed.toString(10) }
-    }
     case 'double': {
       if (!/^[+-]?(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$/.test(trimmed)) return null
       const value = Number(trimmed)
@@ -281,17 +275,17 @@ export function parseVariableInput(
     }
     case 'bool':
       return trimmed === 'true' ? { type: 'bool', value: true } : trimmed === 'false' ? { type: 'bool', value: false } : null
-    default: {
+    case 'string': {
       if ([...raw].length > variable.maxLength) return null
       return { type: 'string', value: raw }
     }
+    default:
+      return null
   }
 }
 
 export function defaultValueText(variable: BossbarVariable): string {
   switch (variable.type) {
-    case 'long':
-      return variable.default
     case 'double':
       return String(variable.default)
     case 'bool':
@@ -302,7 +296,6 @@ export function defaultValueText(variable: BossbarVariable): string {
 }
 
 export const VARIABLE_TYPE_LABELS: Record<BossbarVariableType, string> = {
-  long: 'long（64 位整数）',
   double: 'double（浮点）',
   bool: 'bool',
   string: 'string',
