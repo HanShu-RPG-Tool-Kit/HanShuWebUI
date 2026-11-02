@@ -3,14 +3,17 @@ import type {ScriptType} from '../../scriptResources/types'
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import Editor, { type EditorProps, type OnMount } from '@monaco-editor/react'
 import { notify } from '../../activity/activityStore'
-import { attachJavaScript } from './javascriptLanguage'
+import { attachJavaScript, captureJavaScriptDiagnostics } from './javascriptLanguage'
 import { registerJavaImportAction, type ImportRequest } from './javaImportAction'
 import { JavaImportDialog } from './JavaImportDialog'
-import { isControlConnected, subscribeControlHub } from '../../gameDevServer/controlHub'
+import { getControlHubSnapshot, isControlConnected, subscribeControlHub } from '../../gameDevServer/controlHub'
+import {LanguageDiagnosticsDialog, type LanguageDiagnosticsRequest} from './LanguageDiagnosticsDialog'
+import {recordLanguageDiagnostic} from './diagnostics'
 
 /** Shared JavaScript editor; host globals and services belong to its project/type profile. */
 export function JavaScriptEditor({ onMount, scriptType='common', ...props }: EditorProps & {scriptType?:ScriptType}) {
   const [javaImport, setJavaImport] = useState<{ request: ImportRequest; monaco: typeof import('monaco-editor') } | null>(null)
+  const [diagnostics, setDiagnostics] = useState<LanguageDiagnosticsRequest | null>(null)
   const project=useSyncExternalStore(subscribeProjectSession,getProjectSession).binding?.handle.client
   const rebind=useRef<()=>void>(()=>{})
   useEffect(()=>{rebind.current()},[scriptType,project])
@@ -23,13 +26,34 @@ export function JavaScriptEditor({ onMount, scriptType='common', ...props }: Edi
     const attach = () => {
       binding?.dispose()
       const model = editor.getModel()
-      binding = model ? attachJavaScript(monaco, model, error => {
-        notify(`JavaScript 补全：${error instanceof Error ? error.message : String(error)}`, { kind: 'warning' })
-      },latest.current) : undefined
+      try {
+        binding = model ? attachJavaScript(monaco, model, error => {
+          notify(`JavaScript 补全：${error instanceof Error ? error.message : String(error)}`, { kind: 'warning' })
+        },latest.current) : undefined
+      } catch (error) {
+        recordLanguageDiagnostic('editor', 'attach-error', error)
+        notify(`JavaScript 语言服务启动失败：${String(error)}`, {kind:'warning'})
+      }
     }
     rebind.current=attach
     attach()
     const importAction = registerJavaImportAction(editor, monaco, request => setJavaImport({ request, monaco }))
+    const openDiagnostics = () => {
+      const model=editor.getModel();if(!model||model.isDisposed())return
+      setDiagnostics({name:model.uri.path.split('/').at(-1)??'script.js',report:captureJavaScriptDiagnostics(model,editor.getPosition(),editor.getSelection()),password:getControlHubSnapshot().prefs.password})
+    }
+    const diagnosticAction = editor.addAction({
+      id:'hanshu.javascript.exportDiagnostics',label:'导出语言服务诊断…',
+      contextMenuGroupId:'navigation',contextMenuOrder:4,
+      precondition:'editorLangId == hanshu-javascript',
+      run:openDiagnostics,
+    })
+    const diagnosticButton=document.createElement('button')
+    diagnosticButton.type='button';diagnosticButton.className='javascript-diagnostics-button';diagnosticButton.textContent='诊断'
+    diagnosticButton.title='导出语言服务诊断';diagnosticButton.setAttribute('aria-label','导出语言服务诊断')
+    diagnosticButton.onmousedown=event=>event.stopPropagation();diagnosticButton.onclick=openDiagnostics
+    const diagnosticWidget={getId:()=> 'hanshu.javascript.diagnostics',getDomNode:()=>diagnosticButton,getPosition:()=>({preference:monaco.editor.OverlayWidgetPositionPreference.TOP_RIGHT_CORNER})}
+    editor.addOverlayWidget(diagnosticWidget)
     const listener = editor.onDidChangeModel(attach)
     const stopControl = subscribeControlHub(() => {
       if (!isControlConnected()) {
@@ -37,8 +61,8 @@ export function JavaScriptEditor({ onMount, scriptType='common', ...props }: Edi
         editor.trigger('hanshu-javascript', 'closeParameterHints', {})
       }
     })
-    cleanup.current = () => { rebind.current=()=>{};stopControl(); importAction.dispose(); listener.dispose(); binding?.dispose() }
+    cleanup.current = () => { rebind.current=()=>{};stopControl(); editor.removeOverlayWidget(diagnosticWidget); diagnosticButton.onclick=null; diagnosticAction.dispose(); importAction.dispose(); listener.dispose(); binding?.dispose() }
     onMount?.(editor, monaco)
   }
-  return <><Editor {...props} language="javascript" onMount={mount} />{javaImport && <JavaImportDialog request={javaImport.request} monaco={javaImport.monaco} close={() => setJavaImport(null)} />}</>
+  return <><Editor {...props} language="javascript" onMount={mount} />{javaImport && <JavaImportDialog request={javaImport.request} monaco={javaImport.monaco} close={() => setJavaImport(null)} />}{diagnostics && <LanguageDiagnosticsDialog request={diagnostics} close={() => setDiagnostics(null)} />}</>
 }

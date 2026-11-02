@@ -35,6 +35,7 @@ self.onmessage=({data})=>{
  try{
   let result:unknown
   if(method==='files'){for(const [name,text] of Object.entries(params as Record<string,string|null>))if(text===null)files.delete(name);else files.set(name,{text:name.startsWith('/common/')||name.startsWith('/common-edit/')?commonModule(text):text,version:(files.get(name)?.version??0)+1});result=true}
+  else if(method==='snapshot')result={typescriptVersion:ts.version,compilerOptions:host.getCompilationSettings(),files:[...files].map(([name,file])=>({name,version:file.version,characters:file.text.length,...name.startsWith('/lib.')?{builtin:true}:{text:file.text}}))}
   else{
    const file=params.file,pos=offset(file,params.line??1,params.column??1)
    if(method==='diagnostics')result=[...service.getSyntacticDiagnostics(file),...service.getSemanticDiagnostics(file)].map(d=>({message:ts.flattenDiagnosticMessageText(d.messageText,'\n'),start:point(file,d.start??0),end:point(file,(d.start??0)+(d.length??1)),error:d.category===ts.DiagnosticCategory.Error}))

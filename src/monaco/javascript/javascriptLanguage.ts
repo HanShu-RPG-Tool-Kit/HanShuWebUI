@@ -1,11 +1,12 @@
 import type * as Monaco from 'monaco-editor'
 import {getProjectSession,subscribeProjectSession} from '../../project/projectSession'
-import {controlRequest,isControlConnected,subscribeControlHub,subscribeControlNotify,controlConnectionGeneration} from '../../gameDevServer/controlHub'
+import {controlRequest,getControlHubSnapshot,isControlConnected,subscribeControlHub,subscribeControlNotify,controlConnectionGeneration} from '../../gameDevServer/controlHub'
 import {effectiveBuiltinScripts,type ScriptType} from '../../scriptResources'
 import {transformDialect} from './dialect'
 import {TsserverClient} from './tsserverClient'
 import {buildJavaFiles,type JavaStub,type StubResponse,javaModule} from './stubs'
 import {javascriptProfile} from './profiles'
+import {diagnosticValue,languageDiagnosticHistory,recordLanguageDiagnostic} from './diagnostics'
 type M=typeof Monaco
 const services=new Map<string,{service:JavaScriptLanguage;refs:number}>(),projects=new WeakMap<object,number>();let projectSeq=0
 const LANGUAGE='hanshu-javascript'
@@ -20,31 +21,50 @@ export function attachJavaScript(monaco:M,model:Monaco.editor.ITextModel,report:
  return {dispose(){detach();if(--shared.refs===0){shared.service.dispose();services.delete(key)}}}
 }
 export async function refreshJavaScriptImports(model:Monaco.editor.ITextModel){await Promise.all([...services.values()].map(s=>s.service.refreshImports(model)))}
+export async function captureJavaScriptDiagnostics(model:Monaco.editor.ITextModel,position:Monaco.Position|null,selection:Monaco.Selection|null){
+ const shared=[...services.values()].find(entry=>entry.service.documents.has(model.uri.toString()))
+ try{if(shared)return await shared.service.captureDiagnostics(model,position,selection)}catch(error){recordLanguageDiagnostic('export','capture-error',error)}
+ const source=model.isDisposed()?null:model.getValue()
+ return {format:'hanshu.javascript-language-diagnostics',version:1,capturedAt:new Date().toISOString(),document:{uri:model.uri.with({query:'',fragment:''}).toString(),position,selection,source,editorTransform:source===null?null:transformDialect(source,'editor'),runtimeTransform:source===null?null:transformDialect(source)},service:{unavailable:true,reason:'No active language service snapshot; inspect lifecycle history'},history:languageDiagnosticHistory()}
+}
+let languageSequence=0
 export class JavaScriptLanguage {
+ private readonly diagnosticId=`language-${++languageSequence}`
  readonly client=new TsserverClient();readonly documents=new Map<string,{model:Monaco.editor.ITextModel;file:string;source:string;refs:number;listener:Monaco.IDisposable;timer?:ReturnType<typeof setTimeout>}>()
  private disposables:(()=>void)[]=[];private classes=new Map<string,JavaStub>();private javaFiles:Record<string,string>={};private projectFiles:Record<string,string>={};private runtime='';private disposed=false;private hooks:string[]=[];private sequence=0;private generation=0;private queued:Promise<unknown>=Promise.resolve()
  private profile:ReturnType<typeof javascriptProfile>;private connected=false;private hookRevision=-1;private hookRuntime='';private hookClasses=new Map<string,string>();private project=getProjectSession().binding?.handle.client
  private monaco:M; private report:(e:unknown)=>void; private type:ScriptType
+ private missingClasses=new Set<string>()
  constructor(monaco:M,report:(e:unknown)=>void,type:ScriptType='common'){
-  this.monaco=monaco;this.report=error=>{if(!this.disposed)report(error)};this.type=type
+  this.monaco=monaco;this.report=error=>{recordLanguageDiagnostic(this.diagnosticId,'error',error);if(!this.disposed)report(error)};this.type=type
+  recordLanguageDiagnostic(this.diagnosticId,'created',{type,worker:this.client.diagnosticId})
   register(monaco);this.profile=javascriptProfile(type)
   void this.client.writeFiles({'/host.d.ts':this.profile.source,...buildJavaFiles([])}).catch(this.report)
-  const completion=monaco.languages.registerCompletionItemProvider(LANGUAGE,{triggerCharacters:['.','"',"'"],provideCompletionItems:(model,position)=>this.provide<Monaco.languages.CompletionList>(model,{suggestions:[]},async()=>{
+  const completion=monaco.languages.registerCompletionItemProvider(LANGUAGE,{triggerCharacters:['.','"',"'"],provideCompletionItems:(model,position)=>this.provide<Monaco.languages.CompletionList>('completion',model,position,{suggestions:[]},async()=>{
    const doc=this.documents.get(model.uri.toString());if(!doc)return {suggestions:[]}
    const word=model.getWordUntilPosition(position),range=new monaco.Range(position.lineNumber,word.startColumn,position.lineNumber,word.endColumn)
    if(/@hook\(\s*["'][^"']*$/.test(model.getLineContent(position.lineNumber).slice(0,position.column-1)))return {suggestions:this.hooks.map(h=>({label:h,insertText:h,kind:monaco.languages.CompletionItemKind.Event,range}))}
    await this.update(doc);await this.hydrate(doc,position);const values=await this.client.request('completion',{file:doc.file,line:position.lineNumber,column:position.column})
    return {suggestions:values.map((e:{name:string;insertText?:string;sortText:string;kind:string})=>({label:e.name,insertText:e.insertText??e.name,sortText:e.sortText,kind:e.kind==='method'||e.kind==='function'?monaco.languages.CompletionItemKind.Function:monaco.languages.CompletionItemKind.Property,range}))}
   })})
-  const hover=monaco.languages.registerHoverProvider(LANGUAGE,{provideHover:(model,position)=>this.provide<Monaco.languages.Hover|null>(model,null,async()=>{const doc=this.documents.get(model.uri.toString());if(!doc)return null;await this.update(doc);await this.hydrate(doc,position);const h=await this.client.request('hover',{file:doc.file,line:position.lineNumber,column:position.column});return h?{contents:[{value:'```javascript\n'+h.text+'\n```'},{value:h.documentation}]}:null})})
-  const signatures=monaco.languages.registerSignatureHelpProvider(LANGUAGE,{signatureHelpTriggerCharacters:['(',','],signatureHelpRetriggerCharacters:[')'],provideSignatureHelp:(model,position)=>this.provide<Monaco.languages.SignatureHelpResult|null>(model,null,async()=>{const doc=this.documents.get(model.uri.toString());if(!doc)return null;await this.update(doc);await this.hydrate(doc,position);const value=await this.client.request('signature',{file:doc.file,line:position.lineNumber,column:position.column});return value?{value,dispose(){}}:null})})
+  const hover=monaco.languages.registerHoverProvider(LANGUAGE,{provideHover:(model,position)=>this.provide<Monaco.languages.Hover|null>('hover',model,position,null,async()=>{const doc=this.documents.get(model.uri.toString());if(!doc)return null;await this.update(doc);await this.hydrate(doc,position);const h=await this.client.request('hover',{file:doc.file,line:position.lineNumber,column:position.column});return h?{contents:[{value:'```javascript\n'+h.text+'\n```'},{value:h.documentation}]}:null})})
+  const signatures=monaco.languages.registerSignatureHelpProvider(LANGUAGE,{signatureHelpTriggerCharacters:['(',','],signatureHelpRetriggerCharacters:[')'],provideSignatureHelp:(model,position)=>this.provide<Monaco.languages.SignatureHelpResult|null>('signature',model,position,null,async()=>{const doc=this.documents.get(model.uri.toString());if(!doc)return null;await this.update(doc);await this.hydrate(doc,position);const value=await this.client.request('signature',{file:doc.file,line:position.lineNumber,column:position.column});return value?{value,dispose(){}}:null})})
   this.disposables.push(()=>completion.dispose(),()=>hover.dispose(),()=>signatures.dispose())
   const sync=()=>{void this.syncProject().catch(this.report)},connection=()=>{void this.reconnect().catch(this.report)}
   this.disposables.push(subscribeProjectSession(sync),subscribeControlHub(connection),subscribeControlNotify(note=>{if(note.method===`javascript.${type}Hooks.changed`)void this.loadHooks().catch(this.report)}))
   sync();connection()
  }
- private async provide<T>(model:Monaco.editor.ITextModel,empty:T,request:()=>Promise<T>):Promise<T>{
-  try{return await request()}catch(error){if(this.disposed||model.isDisposed()||!this.documents.has(model.uri.toString()))return empty;throw error}
+ private async provide<T>(kind:string,model:Monaco.editor.ITextModel,position:Monaco.Position,empty:T,request:()=>Promise<T>):Promise<T>{
+  if(model.isDisposed()||!this.documents.has(model.uri.toString()))return empty
+  const started=Date.now(),context={kind,uri:model.uri.with({query:'',fragment:''}).toString(),position,version:model.getVersionId()}
+  recordLanguageDiagnostic(this.diagnosticId,'provider-start',context)
+  try{const result=await request();recordLanguageDiagnostic(this.diagnosticId,'provider-result',{...context,durationMs:Date.now()-started,result});return result}
+  catch(error){recordLanguageDiagnostic(this.diagnosticId,'provider-error',{...context,durationMs:Date.now()-started,error:diagnosticValue(error)});if(this.disposed||model.isDisposed()||!this.documents.has(model.uri.toString()))return empty;throw error}
+ }
+ private async requestControl(method:string,params:unknown){
+  const started=Date.now();recordLanguageDiagnostic(this.diagnosticId,'control-request',{method,params})
+  try{const result=await controlRequest(method,params),r=(result&&typeof result==='object'?result:{}) as Partial<StubResponse>&{revision?:number;hooks?:unknown[]};recordLanguageDiagnostic(this.diagnosticId,'control-response',{method,durationMs:Date.now()-started,schemaVersion:r.schemaVersion,runtimeId:r.runtimeId,classes:Array.isArray(r.classes)?r.classes.map(c=>c?.name):undefined,missing:r.missing,revision:r.revision,hookCount:Array.isArray(r.hooks)?r.hooks.length:undefined});return result}
+  catch(error){recordLanguageDiagnostic(this.diagnosticId,'control-error',{method,durationMs:Date.now()-started,error:diagnosticValue(error)});throw error}
  }
  private async syncProject(){
   if(this.disposed||getProjectSession().binding?.handle.client!==this.project)return
@@ -57,7 +77,8 @@ export class JavaScriptLanguage {
  }
  private async reconnect(){
   const generation=controlConnectionGeneration(),connected=isControlConnected();if(this.generation===generation&&this.connected===connected)return;this.generation=generation;this.connected=connected
-  this.classes.clear();this.runtime='';this.hooks=[];this.hookClasses.clear();this.hookRevision=-1;this.hookRuntime='';await this.publishJava()
+  recordLanguageDiagnostic(this.diagnosticId,'connection',{generation,connected})
+  this.classes.clear();this.missingClasses.clear();this.runtime='';this.hooks=[];this.hookClasses.clear();this.hookRevision=-1;this.hookRuntime='';await this.publishJava()
   if(this.disposed)return
   if(!isControlConnected()){for(const doc of this.documents.values()){await this.update(doc);this.monaco.editor.setModelMarkers(doc.model,'hanshu-tsserver',[])}return}
   await this.fetchClasses(this.profile.requiredClasses);await this.loadHooks()
@@ -65,7 +86,7 @@ export class JavaScriptLanguage {
  }
  private async loadHooks(){
   if(!isControlConnected()||!['actor','player'].includes(this.type))return
-  const generation=controlConnectionGeneration(),r=await controlRequest(`javascript.${this.type}Hooks`,{}) as {schemaVersion:number;runtimeId:string;revision:number;hooks:{id:string;cancellable:boolean;eventClass?:string}[]}
+  const generation=controlConnectionGeneration(),r=await this.requestControl(`javascript.${this.type}Hooks`,{}) as {schemaVersion:number;runtimeId:string;revision:number;hooks:{id:string;cancellable:boolean;eventClass?:string}[]}
   if(this.disposed||generation!==controlConnectionGeneration())return
   if(r.schemaVersion!==1||typeof r.runtimeId!=='string'||!Number.isSafeInteger(r.revision)||!Array.isArray(r.hooks)||r.hooks.some(h=>typeof h.id!=='string'||typeof h.cancellable!=='boolean'))throw Error('不兼容的 hook 注册表')
   if(this.hookRuntime===r.runtimeId&&this.hookRevision>=r.revision)return
@@ -88,10 +109,10 @@ export class JavaScriptLanguage {
   if(!isControlConnected()||this.disposed)return
   const generation=controlConnectionGeneration(),missing=names.filter(n=>!this.classes.has(n))
   if(!missing.length&&this.runtime)return
-  for(let i=0;i<Math.max(1,missing.length);i+=24){const r=await controlRequest('javascript.stubs',{classes:missing.slice(i,i+24)}) as StubResponse
+  for(let i=0;i<Math.max(1,missing.length);i+=24){const r=await this.requestControl('javascript.stubs',{classes:missing.slice(i,i+24)}) as StubResponse
    if(this.disposed||generation!==controlConnectionGeneration())return
    if(r.schemaVersion!==1||!Array.isArray(r.classes)||typeof r.runtimeId!=='string')throw Error('不兼容的 JavaScript 类型库协议')
-   if(this.runtime&&this.runtime!==r.runtimeId)this.classes.clear();this.runtime=r.runtimeId;for(const c of r.classes)this.classes.set(c.name,c)
+   if(this.runtime&&this.runtime!==r.runtimeId){this.classes.clear();this.missingClasses.clear()}this.runtime=r.runtimeId;for(const c of r.classes){this.classes.set(c.name,c);this.missingClasses.delete(c.name)}for(const name of r.missing??[])this.missingClasses.add(name)
   }await this.publishJava()
  }
  async refreshImports(model:Monaco.editor.ITextModel){if(!this.documents.has(model.uri.toString()))return;const result=transformDialect(model.getValue()),names=[...result.imports,...result.hooks.map(h=>this.hookClasses.get(h.hook)).filter((n):n is string=>!!n)];this.queued=this.queued.catch(()=>{}).then(()=>this.fetchClasses([...this.profile.requiredClasses,...names]));await this.queued}
@@ -99,6 +120,7 @@ export class JavaScriptLanguage {
   const existing=this.documents.get(model.uri.toString());if(existing){existing.refs++;return ()=>this.detach(model)}
   const file=`/${this.type==='common'?'common-edit':'documents'}/${++this.sequence}.ts`,doc={model,file,source:'',refs:1,listener:null! as Monaco.IDisposable,timer:undefined as ReturnType<typeof setTimeout>|undefined};this.documents.set(model.uri.toString(),doc)
   const sync=()=>{clearTimeout(doc.timer);void this.update(doc).catch(this.report);doc.timer=setTimeout(()=>{void this.refreshImports(model).then(()=>this.diagnose(doc)).catch(this.report)},250)}
+  recordLanguageDiagnostic(this.diagnosticId,'attach',{uri:model.uri.with({query:'',fragment:''}).toString(),file,version:model.getVersionId()})
   doc.listener=model.onDidChangeContent(sync);sync()
   return ()=>this.detach(model)
  }
@@ -118,5 +140,14 @@ export class JavaScriptLanguage {
   if(this.disposed||doc.model.isDisposed()||version!==doc.model.getVersionId())return
   this.monaco.editor.setModelMarkers(doc.model,'hanshu-tsserver',diagnostics.map((d:{message:string;start:{line:number;column:number};end:{line:number;column:number};error:boolean})=>({message:d.message,severity:d.error?this.monaco.MarkerSeverity.Error:this.monaco.MarkerSeverity.Warning,startLineNumber:d.start.line,startColumn:Math.min(d.start.column,doc.model.getLineMaxColumn(d.start.line)),endLineNumber:d.end.line,endColumn:Math.min(d.end.column,doc.model.getLineMaxColumn(d.end.line)),source:'TypeScript'})))
  }
- dispose(){this.disposed=true;for(const d of this.documents.values()){clearTimeout(d.timer);d.listener.dispose()}this.documents.clear();for(const dispose of this.disposables)dispose();this.client.dispose()}
+ async captureDiagnostics(model:Monaco.editor.ITextModel,position:Monaco.Position|null,selection:Monaco.Selection|null){
+  const doc=this.documents.get(model.uri.toString());if(!doc||model.isDisposed())throw Error('当前脚本已关闭，请重新打开后导出')
+  const hub=getControlHubSnapshot(),source=model.getValue()
+  const report={format:'hanshu.javascript-language-diagnostics',version:1,capturedAt:new Date().toISOString(),environment:{mode:import.meta.env.MODE,userAgent:navigator.userAgent,language:navigator.language,online:navigator.onLine,pagePath:location.pathname},document:{uri:model.uri.with({query:'',fragment:''}).toString(),scriptType:this.type,version:model.getVersionId(),position,selection,source,editorTransform:transformDialect(source,'editor'),runtimeTransform:transformDialect(source),lastSubmittedVirtualSource:doc.source,virtualFile:doc.file},markers:this.monaco.editor.getModelMarkers({resource:model.uri}).map(m=>({owner:m.owner,source:m.source,code:m.code,message:m.message,severity:m.severity,startLineNumber:m.startLineNumber,startColumn:m.startColumn,endLineNumber:m.endLineNumber,endColumn:m.endColumn})),service:{id:this.diagnosticId,disposed:this.disposed,projectBound:!!this.project,connected:isControlConnected(),generation:controlConnectionGeneration(),runtimeId:this.runtime,hookRuntimeId:this.hookRuntime,hookRevision:this.hookRevision,hooks:this.hooks,hookClasses:Object.fromEntries(this.hookClasses),loadedClasses:[...this.classes.keys()],missingClasses:[...this.missingClasses],openDocuments:[...this.documents.values()].map(d=>({uri:d.model.uri.with({query:'',fragment:''}).toString(),file:d.file,version:d.model.getVersionId()}))},control:{phase:hub.phase,healthOk:hub.health?.ok??null,statusOk:hub.status?.ok??null},worker:this.client.diagnosticSnapshot(),actualWorker:null as unknown,history:languageDiagnosticHistory()}
+  // Export remains available if the Worker is unresponsive; never await import hydration here.
+  try{report.actualWorker=await this.client.request('snapshot',{},1500)}catch(error){report.actualWorker={unavailable:true,error:diagnosticValue(error)}}
+  report.history=languageDiagnosticHistory()
+  return report
+ }
+ dispose(){this.disposed=true;recordLanguageDiagnostic(this.diagnosticId,'disposed');for(const d of this.documents.values()){clearTimeout(d.timer);d.listener.dispose()}this.documents.clear();for(const dispose of this.disposables)dispose();this.client.dispose()}
 }

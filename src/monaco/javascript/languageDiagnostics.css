@@ -1,0 +1,11 @@
+.javascript-diagnostics-dialog { box-sizing: border-box; width: min(600px, calc(100vw - 48px)); max-height: calc(100vh - 64px); overflow: auto; padding: 18px; border: 1px solid var(--fl-border, #555); border-radius: 8px; color: var(--fl-fg, #ddd); background: var(--fl-bg, #252526); }
+.javascript-diagnostics-dialog::backdrop { background: #0007; }
+.javascript-diagnostics-dialog header, .javascript-diagnostics-dialog footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.javascript-diagnostics-dialog p, .javascript-diagnostics-dialog footer { font-size: 13px; line-height: 1.6; }
+.javascript-diagnostics-dialog label { display: grid; gap: 8px; font-size: 13px; }
+.javascript-diagnostics-dialog textarea { box-sizing: border-box; width: 100%; resize: vertical; min-height: 110px; padding: 10px; color: inherit; background: var(--fl-input-bg, #333); border: 1px solid var(--fl-border, #666); border-radius: 4px; font: inherit; }
+.javascript-diagnostics-dialog footer { margin-top: 16px; }
+.javascript-diagnostics-dialog button { color: inherit; background: var(--fl-input-bg, #333); border: 1px solid var(--fl-border, #666); border-radius: 4px; padding: 5px 10px; cursor: pointer; white-space: nowrap; }
+.javascript-diagnostics-dialog button:disabled { opacity: .5; cursor: default; }
+.javascript-diagnostics-button { margin: 6px 16px 0 0; padding: 3px 8px; border: 1px solid var(--fl-border, #555); border-radius: 4px; color: var(--fl-fg, #ccc); background: var(--fl-bg, #252526); font: 12px sans-serif; cursor: pointer; }
+.javascript-diagnostics-button:hover { background: var(--fl-hover, #3c4658); }
