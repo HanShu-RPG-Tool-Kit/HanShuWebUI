@@ -3,6 +3,7 @@ import {createElement} from 'react'
 import {createRoot, type Root} from 'react-dom/client'
 import type * as Monaco from 'monaco-editor'
 import {JavaScriptEditor} from '../src/monaco/javascript/JavaScriptEditor'
+import {JavaLibraryDialog} from '../src/monaco/javascript/JavaLibraryDialog'
 import {updateGameDevServerPrefs} from '../src/gameDevServer/controlHub'
 import type {ScriptType} from '../src/scriptResources/types'
 export * as monaco from 'monaco-editor'
@@ -16,3 +17,4 @@ export function mount(options:{source?:string;scriptType?:ScriptType;readOnly?:b
   })
 }
 export function unmount(){root?.unmount();root=null}
+export function mountLibraryDialog(){const dialogRoot=createRoot(document.getElementById('dialog')!);dialogRoot.render(createElement(JavaLibraryDialog,{close:()=>dialogRoot.unmount()}))}

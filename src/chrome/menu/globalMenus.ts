@@ -45,6 +45,7 @@ export const globalMenuContribution: MenuContribution = {
       label: '编辑',
       items: [
         cmd('game-dev-server', '游戏开发服务器', 'app'),
+        cmd('sync-java-library', '同步游戏类型库…', 'app'),
       ],
     },
     {

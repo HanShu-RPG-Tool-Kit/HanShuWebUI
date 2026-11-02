@@ -1,3 +1,4 @@
+import {JavaLibraryDialog} from './monaco/javascript/JavaLibraryDialog'
 import {
   Fragment,
   useCallback,
@@ -90,6 +91,7 @@ function App() {
   const [historyOpen, setHistoryOpen] = useState(false)
   const closeHistory = useCallback(() => setHistoryOpen(false), [])
   const [gameDevOpen, setGameDevOpen] = useState(false)
+  const [javaLibraryOpen,setJavaLibraryOpen]=useState(false)
   const closeGameDev = useCallback(() => setGameDevOpen(false), [])
 
   useEffect(() => {
@@ -211,6 +213,7 @@ function App() {
           openProjectUi,
           openHistory: () => setHistoryOpen(true),
           openGameDev: () => setGameDevOpen(true),
+          openJavaLibrary: () => setJavaLibraryOpen(true),
           openHelp: (topic) => setHelpTopicId(topic),
           changeUiScale,
           quit: () => {
@@ -307,6 +310,7 @@ function App() {
       <ProjectConnectionBar />
       {historyOpen && <ProjectHistory client={getProjectClient()} onClose={closeHistory} />}
       {gameDevOpen && <GameDevServerPanel onClose={closeGameDev} />}
+      {javaLibraryOpen && <JavaLibraryDialog close={()=>setJavaLibraryOpen(false)} />}
       <div className="app-body">
         <div
           className={`app-workspace-pane${

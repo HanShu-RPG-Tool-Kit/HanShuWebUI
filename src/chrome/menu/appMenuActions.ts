@@ -14,6 +14,7 @@ export type AppMenuHandlers = {
   openProjectUi: (kind: ProjectUiAction) => void
   openHistory: () => void
   openGameDev: () => void
+  openJavaLibrary?: () => void
   openHelp: (topic: HelpTopicId) => void
   changeUiScale: (scale: UiScale) => void
   quit: () => void
@@ -22,6 +23,9 @@ export type AppMenuHandlers = {
 /** 处理 run:'app' 的菜单项；返回 true 表示已消费 */
 export function runAppMenuAction(id: string, handlers: AppMenuHandlers): boolean {
   switch (id) {
+    case 'sync-java-library':
+      handlers.openJavaLibrary?.()
+      return true
     case 'open-project':
       handlers.openProjectUi('open')
       return true
