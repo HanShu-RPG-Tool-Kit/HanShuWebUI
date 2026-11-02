@@ -35,6 +35,8 @@ function on_tick(event: PlayerEvent, board: Blackboard): void {
 
 ## Java 类导入
 
+按 **Alt+/** 手动打开补全列表（原有 Ctrl+Space 仍可用）。悬浮和调用参数提示显示类型；重载方法的参数提示保留各个签名，可用提示框的上下箭头切换，并随当前参数更新提示。
+
 右键「导入 Java 类…」或 Ctrl+Alt+J，通过 `javascript.classes.search` 搜索游戏公开类。可选别名自动避让已有名称；确认后插入方言 import，一次撤销可恢复。操作重新核验工程、连接、文档版本和只读状态，不会把迟到搜索结果写进已切换的文档。
 
 ## 反馈语言服务问题

@@ -38,6 +38,12 @@ export function JavaScriptEditor({ onMount, beforeMount, scriptType='common', ..
     rebind.current=attach
     attach()
     const importAction = registerJavaImportAction(editor, monaco, request => setJavaImport({ request, monaco }))
+    const completionAction = editor.addAction({
+      id:'hanshu.javascript.triggerSuggest',label:'显示脚本补全',
+      keybindings:[monaco.KeyMod.Alt | monaco.KeyCode.Slash],
+      precondition:'editorTextFocus && !editorReadonly && editorLangId == hanshu-javascript',
+      run:()=>editor.trigger('hanshu-javascript','editor.action.triggerSuggest',{}),
+    })
     const openDiagnostics = () => {
       const model=editor.getModel();if(!model||model.isDisposed())return
       setDiagnostics({name:model.uri.path.split('/').at(-1)??'script.js',report:captureJavaScriptDiagnostics(model,editor.getPosition(),editor.getSelection()),password:getControlHubSnapshot().prefs.password})
@@ -61,7 +67,7 @@ export function JavaScriptEditor({ onMount, beforeMount, scriptType='common', ..
         editor.trigger('hanshu-javascript', 'closeParameterHints', {})
       }
     })
-    cleanup.current = () => { rebind.current=()=>{};stopControl(); editor.removeOverlayWidget(diagnosticWidget); diagnosticButton.onclick=null; diagnosticAction.dispose(); importAction.dispose(); listener.dispose(); binding?.dispose() }
+    cleanup.current = () => { rebind.current=()=>{};stopControl(); editor.removeOverlayWidget(diagnosticWidget); diagnosticButton.onclick=null; diagnosticAction.dispose(); completionAction.dispose(); importAction.dispose(); listener.dispose(); binding?.dispose() }
     onMount?.(editor, monaco)
   }
   return <><Editor {...props} language={JAVASCRIPT_LANGUAGE_ID} beforeMount={monaco=>{registerJavaScriptLanguage(monaco);beforeMount?.(monaco)}} onMount={mount} />{javaImport && <JavaImportDialog request={javaImport.request} monaco={javaImport.monaco} close={() => setJavaImport(null)} />}{diagnostics && <LanguageDiagnosticsDialog request={diagnostics} close={() => setDiagnostics(null)} />}</>

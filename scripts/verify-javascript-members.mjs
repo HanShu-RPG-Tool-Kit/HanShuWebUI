@@ -84,8 +84,9 @@ try{
    const source=`import ServerPlayer from "net.minecraft.server.level.ServerPlayer"\nfunction inspect(player: ServerPlayer): void {\n    player.${prefix}${suffix}\n}`
    window.memberEditor.getModel().setValue(source)
    window.memberEditor.setPosition({lineNumber:3,column:`    player.${prefix}`.length+1})
-   window.memberEditor.focus();window.memberEditor.trigger('test','editor.action.triggerSuggest',{})
+   window.memberEditor.focus()
   },{prefix,suffix})
+  await page.keyboard.press('Alt+/')
   await page.locator('.suggest-widget.visible .monaco-list-row.focused').waitFor({state:'visible'})
   const icon=await page.locator('.suggest-widget.visible .monaco-list-row.focused .suggest-icon').getAttribute('class')
   await page.keyboard.press('Tab')
@@ -112,13 +113,20 @@ try{
   try{
    await client.writeFiles({'/host.d.ts':'declare const callbacks:{run:(value:number)=>void;flag:boolean};','/test.ts':'callbacks.'})
    const entries=await client.request('completion',{file:'/test.ts',line:1,column:11})
+   await client.writeFiles({'/overloads.ts':'declare function choose(value: string): string;\ndeclare function choose(value: number, radix: number): number;\nchoose(1, '})
+   const overloads=await client.request('signature',{file:'/overloads.ts',line:3,column:11})
    const redacted=JSON.parse(stringifyLanguageDiagnostics({document:{source:'import X from "mchhui.rpgtoolkit.X"'},typeText:'jvm_mchhui_d_rpgtoolkit',error:{message:'password=mchhui'}},'','mchhui'))
-   return {entries,redacted}
+   return {entries,redacted,overloads}
   }finally{client.dispose()}
  })
  assert.equal(callable.entries.find(entry=>entry.name==='run').callable,true)
  assert.equal(callable.entries.find(entry=>entry.name==='run').parameterCount,1)
  assert.equal(callable.entries.find(entry=>entry.name==='flag').callable,false)
+ assert.equal(callable.overloads.signatures.length,2)
+ assert(callable.overloads.signatures[0].label.includes('value: string'))
+ assert(callable.overloads.signatures[1].label.includes('radix: number'))
+ assert.equal(callable.overloads.activeSignature,1)
+ assert.equal(callable.overloads.activeParameter,1)
  assert(callable.redacted.document.source.includes('mchhui.rpgtoolkit'))
  assert(callable.redacted.typeText.includes('mchhui'))
  assert(!callable.redacted.error.message.includes('mchhui'))
