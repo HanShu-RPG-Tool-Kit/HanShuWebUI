@@ -95,6 +95,7 @@ import {
   ALLOWED_EXTENSIONS_LABEL,
   MANUAL_FILE_EXTENSIONS_LABEL,
   isManualFileName,
+  isStageplayExplorerSource,
   registerAsset,
   removeAssetMeta,
   removeAssetFolder,
@@ -2873,6 +2874,13 @@ export const StageplayWorkspace = forwardRef<
     createSource: (source, content) => {
       const checked = normalizeAgentSource(source)
       if ('error' in checked) return checked.error
+      if (!isStageplayExplorerSource({ name: checked.name })) {
+        return {
+          ok: false,
+          error: `剧本工作区不能新建「${checked.name}」`,
+          hint: '脚本与游戏性类型请到游戏性工作区创建；此处只建 .hs / .char / meta 资料',
+        }
+      }
       if (findScriptByName(workspaceRef.current, checked.name)) {
         return {
           ok: false,

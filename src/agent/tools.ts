@@ -125,7 +125,7 @@ export const AGENT_TOOLS = [
     function: {
       name: 'create_source',
       description:
-        '新建一个源文件（.hs/.md/.char/.js）。同名文件已存在会**失败**，绝不覆盖 —— 覆盖请用 write_source。语言文本不能走这里（用 write_lang）。',
+        '新建一个剧本类源文件（.hs/.md/.char）。同名文件已存在会**失败**，绝不覆盖 —— 覆盖请用 write_source。脚本与游戏性类型请到游戏性工作区创建。语言文本不能走这里（用 write_lang）。',
       parameters: {
         type: 'object',
         properties: {
@@ -142,7 +142,7 @@ export const AGENT_TOOLS = [
     function: {
       name: 'write_source',
       description:
-        '覆盖一个**已存在**的源文件（.hs/.md/.char/.js）。文件不存在会**失败** —— 新建请用 create_source。改稿优先用 edit_source 做局部替换。语言文本不能走这里（用 write_lang）。',
+        '覆盖一个**已存在**的源文件（.hs/.md/.char 等剧本可见文件）。文件不存在会**失败** —— 新建请用 create_source。改稿优先用 edit_source 做局部替换。语言文本不能走这里（用 write_lang）。',
       parameters: {
         type: 'object',
         properties: {

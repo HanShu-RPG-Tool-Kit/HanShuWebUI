@@ -1221,7 +1221,7 @@ function PackageNode({
    * 源文件按 `src/<kind>/` 分组、创作资料归 `meta/`。
    *
    * 剧本资源树只建 `STAGEPLAY_WORKSPACE_GROUP_ORDER` 的桶，并经
-   * `isStageplayExplorerSource` 再收窄（脚本仅通用）。游戏性 / 视听文件不在此展示；
+   * `isStageplayExplorerSource` 过滤。脚本与游戏性 / 视听文件不在此展示；
    * 它们由对应工作区新建与管理。不变式：**剧本菜单能建的类型，树里一定找得到**
    * （见 `stageplayNewFileTypes` 与 verify-new-file-types）。
    */

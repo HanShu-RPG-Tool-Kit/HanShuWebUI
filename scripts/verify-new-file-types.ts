@@ -20,7 +20,6 @@ import { readFileSync } from 'node:fs'
 import {
   MANUAL_FILE_EXTENSIONS,
   SOURCE_KIND_ORDER,
-  STAGEPLAY_SCRIPT_TYPES,
   STAGEPLAY_WORKSPACE_GROUP_ORDER,
   WORKSPACE_GROUP_ORDER,
   isStageplayExplorerSource,
@@ -204,14 +203,13 @@ assert.deepEqual(
 )
 assert.deepEqual(
   [...STAGEPLAY_WORKSPACE_GROUP_ORDER],
-  ['hanshu', 'character', 'script', 'meta'],
-  '剧本资源树只含 hanshu / character / script / meta',
+  ['hanshu', 'character', 'meta'],
+  '剧本资源树只含 hanshu / character / meta',
 )
-assert.deepEqual([...STAGEPLAY_SCRIPT_TYPES], ['common'], '剧本工作区脚本仅通用')
 assert.deepEqual(
   [...STAGEPLAY_NEW_FILE_TYPE_IDS],
-  ['hs', 'char', 'js', 'md', 'tts', 'ttsservice'],
-  '剧本新建类型必须钉死这六种',
+  ['hs', 'char', 'md', 'tts', 'ttsservice'],
+  '剧本新建类型必须钉死这五种',
 )
 
 const ALL_KIND_GROUPS = new Set<string>([...WORKSPACE_GROUP_ORDER, 'root'])
@@ -259,8 +257,13 @@ assert.equal(
 )
 assert.equal(
   isStageplayExplorerSource({ name: '公共库.js', srcKind: 'common' }),
-  true,
-  '通用脚本应出现在剧本树',
+  false,
+  '通用脚本也不得出现在剧本树',
+)
+assert.equal(
+  isStageplayNewFileType(type('js')),
+  false,
+  '剧本新建菜单不得包含通用脚本',
 )
 
 /*

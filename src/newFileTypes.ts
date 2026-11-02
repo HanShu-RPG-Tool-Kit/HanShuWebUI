@@ -24,7 +24,7 @@ import {
  *    `NewFileSeedContext` 现取现给 —— 让一张纯数据表去拉这些，等于把「新建文件」
  *    和配音 / 进度两个工作区焊在一起，测试也就再跑不起来了。
  * 4. **剧本工作区只消费剧本子集**。全表仍是工程级真相；剧本资源树 / 「+」菜单经
- *    `stageplayNewFileTypes*` 过滤，不在剧本里新建或展示游戏性 / 视听类型。
+ *    `stageplayNewFileTypes*` 过滤，不在剧本里新建或展示脚本 / 游戏性 / 视听类型。
  */
 
 import {
@@ -482,13 +482,12 @@ export function findNewFileType(id: string): NewFileType | null {
 
 /**
  * 剧本工作区允许新建的类型 id。
- * 与 `STAGEPLAY_WORKSPACE_GROUP_ORDER` / `STAGEPLAY_SCRIPT_TYPES` 对齐：
- * `.hs` / `.char` / 通用脚本 / `meta` 资料；不含游戏性、视听及其专属脚本。
+ * 与 `STAGEPLAY_WORKSPACE_GROUP_ORDER` 对齐：`.hs` / `.char` / `meta` 资料。
+ * 全部脚本（含通用）与游戏性 / 视听类型不在此列。
  */
 export const STAGEPLAY_NEW_FILE_TYPE_IDS = [
   "hs",
   "char",
-  "js",
   "md",
   "tts",
   "ttsservice",
