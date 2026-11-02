@@ -28,6 +28,21 @@ const host:ts.LanguageServiceHost={
  readDirectory:()=>[...files.keys()],directoryExists:()=>true,
 }
 const service=ts.createLanguageService(host)
+function completionEntries(file:string,pos:number){
+ const program=service.getProgram(),source=program?.getSourceFile(file),checker=program?.getTypeChecker()
+ let receiver:ts.Expression|undefined
+ if(source)source.forEachChild(function visit(node){
+  if(node.getFullStart()>pos||node.end<pos)return
+  if(ts.isPropertyAccessExpression(node)&&pos>=node.expression.end&&pos<=node.end)receiver=node.expression
+  node.forEachChild(visit)
+ })
+ const receiverType=receiver&&checker?checker.getTypeAtLocation(receiver):undefined
+ return service.getCompletionsAtPosition(file,pos,{includeCompletionsForModuleExports:false,includeCompletionsWithInsertText:true})?.entries.map(entry=>{
+  const symbol=receiverType&&checker?checker.getPropertyOfType(receiverType,entry.name):undefined
+  const signatures=symbol&&checker&&receiver?checker.getTypeOfSymbolAtLocation(symbol,receiver).getCallSignatures():[]
+  return {name:entry.name,kind:entry.kind,insertText:entry.insertText,sortText:entry.sortText,callable:signatures.length>0||entry.kind===ts.ScriptElementKind.memberFunctionElement||entry.kind===ts.ScriptElementKind.functionElement,member:!!receiver,parameterCount:signatures.length?Math.max(...signatures.map(signature=>signature.getParameters().length)):undefined}
+ })??[]
+}
 function point(file:string,offset:number){const s=ts.createSourceFile(file,files.get(file)?.text??'',ts.ScriptTarget.ES5);const p=s.getLineAndCharacterOfPosition(offset);return {line:p.line+1,column:p.character+1}}
 function offset(file:string,line:number,column:number){const source=files.get(file)?.text??'',lines=source.split('\n');return lines.slice(0,line-1).reduce((n,l)=>n+l.length+1,0)+Math.min(column-1,lines[line-1]?.length??0)}
 self.onmessage=({data})=>{
@@ -38,13 +53,14 @@ self.onmessage=({data})=>{
   else if(method==='snapshot')result={typescriptVersion:ts.version,compilerOptions:host.getCompilationSettings(),files:[...files].map(([name,file])=>({name,version:file.version,characters:file.text.length,...name.startsWith('/lib.')?{builtin:true}:{text:file.text}}))}
   else{
    const file=params.file,pos=offset(file,params.line??1,params.column??1)
-   if(method==='diagnostics')result=[...service.getSyntacticDiagnostics(file),...service.getSemanticDiagnostics(file)].map(d=>({message:ts.flattenDiagnosticMessageText(d.messageText,'\n'),start:point(file,d.start??0),end:point(file,(d.start??0)+(d.length??1)),error:d.category===ts.DiagnosticCategory.Error}))
-   else if(method==='completion')result=service.getCompletionsAtPosition(file,pos,{includeCompletionsForModuleExports:false,includeCompletionsWithInsertText:true})?.entries.map(e=>({name:e.name,kind:e.kind,insertText:e.insertText,sortText:e.sortText}))??[]
+   if(method==='diagnostics')result=[...service.getSyntacticDiagnostics(file),...service.getSemanticDiagnostics(file)].map(d=>({code:d.code,message:ts.flattenDiagnosticMessageText(d.messageText,'\n'),start:point(file,d.start??0),end:point(file,(d.start??0)+(d.length??1)),error:d.category===ts.DiagnosticCategory.Error}))
+   else if(method==='completion')result=completionEntries(file,pos)
    else if(method==='hover'){const h=service.getQuickInfoAtPosition(file,pos);result=h?{text:ts.displayPartsToString(h.displayParts),documentation:ts.displayPartsToString(h.documentation)}:null}
    else if(method==='types'){
     const names=new Set<string>()
-    for(const p of (params.positions as number[])){
-     const at=offset(file,params.line,p),h=service.getQuickInfoAtPosition(file,at)
+    const locations=(params.locations??(params.positions as number[]).map(column=>({line:params.line,column}))) as {line:number;column:number}[]
+    for(const location of locations){
+     const at=offset(file,location.line,location.column),h=service.getQuickInfoAtPosition(file,at)
      for(const name of ts.displayPartsToString(h?.displayParts).match(/jvm_[A-Za-z0-9_]+/g)??[])names.add(name)
      for(const d of service.getTypeDefinitionAtPosition(file,at)??[])if(d.fileName.startsWith('/java/'))names.add(d.fileName.slice(6,-5))
     }result=[...names]

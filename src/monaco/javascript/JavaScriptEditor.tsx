@@ -3,7 +3,7 @@ import type {ScriptType} from '../../scriptResources/types'
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import Editor, { type EditorProps, type OnMount } from '@monaco-editor/react'
 import { notify } from '../../activity/activityStore'
-import { attachJavaScript, captureJavaScriptDiagnostics } from './javascriptLanguage'
+import { attachJavaScript, captureJavaScriptDiagnostics, JAVASCRIPT_LANGUAGE_ID, registerJavaScriptLanguage } from './javascriptLanguage'
 import { registerJavaImportAction, type ImportRequest } from './javaImportAction'
 import { JavaImportDialog } from './JavaImportDialog'
 import { getControlHubSnapshot, isControlConnected, subscribeControlHub } from '../../gameDevServer/controlHub'
@@ -11,7 +11,7 @@ import {LanguageDiagnosticsDialog, type LanguageDiagnosticsRequest} from './Lang
 import {recordLanguageDiagnostic} from './diagnostics'
 
 /** Shared JavaScript editor; host globals and services belong to its project/type profile. */
-export function JavaScriptEditor({ onMount, scriptType='common', ...props }: EditorProps & {scriptType?:ScriptType}) {
+export function JavaScriptEditor({ onMount, beforeMount, scriptType='common', ...props }: EditorProps & {scriptType?:ScriptType}) {
   const [javaImport, setJavaImport] = useState<{ request: ImportRequest; monaco: typeof import('monaco-editor') } | null>(null)
   const [diagnostics, setDiagnostics] = useState<LanguageDiagnosticsRequest | null>(null)
   const project=useSyncExternalStore(subscribeProjectSession,getProjectSession).binding?.handle.client
@@ -64,5 +64,5 @@ export function JavaScriptEditor({ onMount, scriptType='common', ...props }: Edi
     cleanup.current = () => { rebind.current=()=>{};stopControl(); editor.removeOverlayWidget(diagnosticWidget); diagnosticButton.onclick=null; diagnosticAction.dispose(); importAction.dispose(); listener.dispose(); binding?.dispose() }
     onMount?.(editor, monaco)
   }
-  return <><Editor {...props} language="javascript" onMount={mount} />{javaImport && <JavaImportDialog request={javaImport.request} monaco={javaImport.monaco} close={() => setJavaImport(null)} />}{diagnostics && <LanguageDiagnosticsDialog request={diagnostics} close={() => setDiagnostics(null)} />}</>
+  return <><Editor {...props} language={JAVASCRIPT_LANGUAGE_ID} beforeMount={monaco=>{registerJavaScriptLanguage(monaco);beforeMount?.(monaco)}} onMount={mount} />{javaImport && <JavaImportDialog request={javaImport.request} monaco={javaImport.monaco} close={() => setJavaImport(null)} />}{diagnostics && <LanguageDiagnosticsDialog request={diagnostics} close={() => setDiagnostics(null)} />}</>
 }

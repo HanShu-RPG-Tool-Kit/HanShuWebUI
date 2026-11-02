@@ -31,6 +31,8 @@ function on_tick(event: PlayerEvent, board: Blackboard): void {
 
 通用脚本按 id 发布独立虚拟模块，`require fx from "effects"` 的类型来自该模块的 exports。其他宿主不能互相 require。类型检查不是运行时授权，工程保存依旧经 S 的原有文件事务。
 
+补全列表区分方法与字段：接受无参方法 `level` 会插入 `level()`；有参方法会把光标放入括号并显示参数提示；字段保持字段名，已有调用括号不会重复插入。诊断发现未加载的 Java 接收者类型时会按需请求类型库，类型更新后重新检查，避免空占位声明留下误报。普通 JS 检查器的延迟结果不会覆盖方言脚本自己的诊断。
+
 ## Java 类导入
 
 右键「导入 Java 类…」或 Ctrl+Alt+J，通过 `javascript.classes.search` 搜索游戏公开类。可选别名自动避让已有名称；确认后插入方言 import，一次撤销可恢复。操作重新核验工程、连接、文档版本和只读状态，不会把迟到搜索结果写进已切换的文档。
@@ -52,3 +54,5 @@ function on_tick(event: PlayerEvent, board: Blackboard): void {
 `test:javascript-dialect` 验证同行变换、红线与跨仓契约；`test:javascript-builtins` 验证全部内置目标；`test:javascript-language` 以真实浏览器 Worker 验证成员与返回类型、common 导出、诊断行号和多文档隔离。这些自动化不等于已在原生 Minecraft 客户端完成全部玩法验收。
 
 `test:javascript-diagnostics` 验证真实编辑器下载、只读/离线导出、Worker 超时与崩溃证据、凭据脱敏和资源释放。
+
+`test:javascript-members` 验证玩家模板无内置 JS 误报、Java 方法/字段按需加载、真实补全接受与括号/光标行为，以及未知成员仍正确报错。

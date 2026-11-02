@@ -21,13 +21,13 @@ export function languageDiagnosticHistory() { return events.map(entry => ({...en
 
 /** Explicit allowlists at collection sites omit account/connection preferences; redact URL credentials too. */
 export function stringifyLanguageDiagnostics(report: unknown, description: string, connectionPassword = '') {
-  let text = JSON.stringify({...report as Record<string, unknown>, description}, null, 2)
+  const escapedSecret=connectionPassword.length>=4?connectionPassword:null
+  let text = JSON.stringify({...report as Record<string, unknown>, description}, (key,value)=>{
+    // A password may equal a Java package segment (e.g. "mchhui"). Never rewrite source/type names.
+    return escapedSecret&&typeof value==='string'&&['message','stack','error'].includes(key)?value.split(escapedSecret).join('[redacted]'):value
+  }, 2)
   text = text.replace(/([?&](?:password|token|secret|authorization|api_key)=)[^&\s"<>\\]*/gi, '$1[redacted]')
     .replace(/Bearer\s+[A-Za-z0-9._~+/-]+/gi, 'Bearer [redacted]')
-  if (connectionPassword.length >= 4) {
-    const escaped = JSON.stringify(connectionPassword).slice(1, -1)
-    text = text.split(escaped).join('[redacted]')
-  }
   return text + '\n'
 }
 
