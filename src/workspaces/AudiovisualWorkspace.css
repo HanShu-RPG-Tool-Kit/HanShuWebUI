@@ -16,11 +16,16 @@
   --av-danger: #e87d7d;
   --av-s: var(--app-ui-scale, 1.25);
   --av-font: calc(14px * var(--av-s));
+  /* 资源树与页条读游戏性的 --fl-* 标杆；这里只把视听同值接上 */
   --fl-s: var(--av-s);
   --fl-font-sm: calc(14px * var(--av-s));
-  --fl-hover: var(--av-hover);
-  --fl-head: var(--bg-title);
+  --fl-panel: var(--av-panel);
   --fl-panel-2: var(--av-panel-2);
+  --fl-head: var(--bg-title);
+  --fl-hover: var(--av-hover);
+  --fl-active: var(--av-active);
+  --fl-danger: var(--av-danger);
+  --fl-faint: #888888;
   color-scheme: dark;
 }
 
@@ -41,18 +46,6 @@
   min-width: 0;
   min-height: 0;
   background: var(--border);
-}
-
-.panel-dock-band > .av-library {
-  flex: 1 1 auto;
-  width: auto;
-  max-width: none;
-  max-height: none;
-  height: auto;
-  min-width: 0;
-  min-height: 0;
-  align-self: stretch;
-  border: 0;
 }
 
 .panel-dock-main > .av-main {
@@ -82,205 +75,6 @@
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
-}
-
-.av-library {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  overflow: hidden;
-  background: var(--av-panel);
-  color: var(--text);
-}
-
-.av-explorer-heading {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-  padding: 6px 8px;
-  background: var(--bg-title);
-  border-bottom: 1px solid var(--border);
-  user-select: none;
-}
-
-.av-explorer-heading.is-draggable {
-  cursor: grab;
-}
-
-.av-explorer-heading.is-draggable:active {
-  cursor: grabbing;
-}
-
-.av-explorer-heading strong {
-  flex: 1;
-  min-width: 0;
-  font-size: 0.95em;
-  font-weight: 600;
-}
-
-.av-explorer-tools {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.av-explorer-tools button {
-  border: 1px solid var(--border-soft);
-  background: var(--av-panel-2);
-  color: inherit;
-  min-width: 26px;
-  height: 26px;
-  padding: 0 6px;
-  cursor: pointer;
-}
-
-.av-explorer-tools button:hover:not(:disabled) {
-  background: var(--av-hover);
-}
-
-.av-explorer-tools button:disabled {
-  opacity: 0.55;
-  cursor: default;
-}
-
-.av-explorer-body {
-  display: flex;
-  flex-direction: column;
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: auto;
-}
-
-.av-category-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  text-align: left;
-  padding: 8px 10px 4px;
-  cursor: pointer;
-  font-weight: 600;
-}
-
-.av-category-row:hover {
-  background: var(--av-hover);
-}
-
-.av-twist {
-  width: 1em;
-  text-align: center;
-  color: var(--text-dim);
-}
-
-.av-category-name {
-  flex: 1;
-  min-width: 0;
-}
-
-.av-category-count {
-  color: var(--text-dim);
-  font-weight: 500;
-  font-size: 0.9em;
-}
-
-.av-explorer-list {
-  list-style: none;
-  margin: 0;
-  padding: 0 6px 8px 18px;
-}
-
-.av-explorer-empty {
-  padding: 12px 8px;
-  color: var(--text-dim);
-  line-height: 1.5;
-}
-
-.av-explorer-row {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  align-items: center;
-  gap: 4px;
-  border-radius: 0;
-  margin-bottom: 2px;
-}
-
-.av-explorer-row:hover {
-  background: var(--av-hover);
-}
-
-.av-explorer-row.is-active {
-  background: var(--av-active);
-}
-
-.av-explorer-row.is-detached .av-explorer-name {
-  opacity: 0.65;
-  text-decoration: line-through;
-}
-
-.av-explorer-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
-  width: 100%;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  text-align: left;
-  padding: 6px 8px;
-  cursor: pointer;
-}
-
-.av-explorer-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.av-explorer-rename {
-  flex: 1;
-  min-width: 0;
-  border: 1px solid var(--accent);
-  background: var(--av-panel-2);
-  color: inherit;
-  padding: 2px 6px;
-}
-
-.av-explorer-error {
-  grid-column: 1 / -1;
-  margin: 0 8px 6px;
-  color: var(--av-danger);
-  font-size: 0.9em;
-}
-
-.av-explorer-delete {
-  display: none;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  background: transparent;
-  color: var(--text-dim);
-  min-width: 22px;
-  height: 22px;
-  padding: 0 6px;
-  margin-right: 4px;
-  cursor: pointer;
-  font-size: 13px;
-  line-height: 1;
-}
-
-.av-explorer-row:hover .av-explorer-delete,
-.av-explorer-row:focus-within .av-explorer-delete {
-  display: inline-flex;
-}
-
-.av-explorer-delete:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.08);
-  color: var(--av-danger);
 }
 
 .av-editor-pane {

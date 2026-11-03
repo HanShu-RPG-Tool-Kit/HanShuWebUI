@@ -9,7 +9,7 @@ import {
 } from '../src/project/explorerOrganization'
 
 const organization = (name: string): ExplorerOrganization => ({
-  version: 1, folders: [{ key: 'folder', name, package: 'items', parentId: null }], placements: {},
+  version: 2, folders: [{ key: 'folder', name, category: 'items', parentId: null }], placements: {},
 })
 const before = organization('Original'), remote = organization('Peer'), local = organization('Local draft')
 const workspace = (explorer: ExplorerOrganization): Workspace => ({

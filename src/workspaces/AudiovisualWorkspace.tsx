@@ -18,6 +18,14 @@ import {
 } from '../newFileTypes'
 import { notify } from '../activity'
 import { ServiceError } from '../collab/protocol'
+import {
+  commitOrganization,
+  organizationEdits,
+  placeSource,
+  relocatedExplorer,
+  withExplorer,
+} from '../explorerShell'
+import { emptyOrganization } from '../project/explorerOrganization'
 import { FilePresenceBar } from '../project/FilePresenceBar'
 import { setBoundProject } from '../project/bindingBus'
 import { saveProjectToDirectory } from '../project/projectFs'
@@ -39,6 +47,7 @@ import {
 import { HANSHU_THEME_ID, registerHanshuLanguage } from '../monaco/hanshuLanguage'
 import { useEditorFontSize } from './gameplay/editorFont'
 import { AudiovisualExplorer } from './audiovisual/AudiovisualExplorer'
+import { audiovisualSources } from './audiovisual/explorerCategories'
 import { BossbarDesignView } from './audiovisual/bossbar/editor/BossbarDesignView'
 import { createBossbar, parseBossbar, stringifyBossbar } from './audiovisual/bossbar'
 import './AudiovisualWorkspace.css'
@@ -141,6 +150,10 @@ export function AudiovisualWorkspace({
     () => (session.workspace.packages[0]?.scripts ?? []).filter(isBossbar),
     [session.workspace],
   )
+  const explorerFiles = useMemo(
+    () => audiovisualSources(session.workspace.packages[0]?.scripts ?? []),
+    [session.workspace],
+  )
   const fileById = useMemo(() => new Map(files.map((file) => [file.id, file])), [files])
 
   useEffect(() => {
@@ -218,7 +231,7 @@ export function AudiovisualWorkspace({
     [client, viewerOnly],
   )
 
-  const createBossbarFile = useCallback(() => {
+  const createBossbarFile = useCallback((folderKey: string | null = null) => {
     if (structureReadOnly) return
     const type = findNewFileType('bossbar')
     if (!type) return
@@ -247,6 +260,12 @@ export function AudiovisualWorkspace({
       },
     })
     openFile(script.id)
+    // 未保存的新文件也可先登记归属；其他窗口在源文件提交前只看到空文件夹
+    if (folderKey) {
+      void commitOrganization(placeSource(pkg.explorer ?? emptyOrganization(), sourcePathOf(script), folderKey)).catch(
+        (error) => notify('文件夹归属未提交', { kind: 'error', detail: String(error) }),
+      )
+    }
   }, [openFile, structureReadOnly])
 
   const renameFile = useCallback(
@@ -271,9 +290,16 @@ export function AudiovisualWorkspace({
       ) {
         return `「${nextName}」已经存在`
       }
+      const command = { path: sourcePathOf(current), destination: sourcePathOf({ name: nextName }) }
+      const relocated = relocatedExplorer(live.workspace, [command])
       const onServer = Boolean(binding?.handle.client.entry(sourcePathOf(current)))
       if (!onServer || !binding) {
         setProjectSession({ workspace: replaceScript(live.workspace, id, { name: nextName }) })
+        if (relocated && binding) {
+          void commitOrganization(relocated).catch((error) =>
+            notify('文件夹归属未提交', { kind: 'error', detail: String(error) }),
+          )
+        }
         return null
       }
       try {
@@ -284,18 +310,12 @@ export function AudiovisualWorkspace({
       structuralPendingRef.current = true
       setBusy(true)
       void binding.handle.client
-        .sourceCommands([
-          {
-            path: sourcePathOf(current),
-            destination: sourcePathOf({ name: nextName }),
-            content: current.content,
-          },
-        ])
+        .sourceCommands([{ ...command, content: current.content }], organizationEdits(relocated))
         .then(() => {
           if (getProjectSession().binding?.handle.client !== binding.handle.client) return
-          setProjectSession({
-            workspace: replaceScript(getProjectSession().workspace, id, { name: nextName }),
-          })
+          const renamed = replaceScript(getProjectSession().workspace, id, { name: nextName })
+          const placed = relocatedExplorer(renamed, [command])
+          setProjectSession({ workspace: placed ? withExplorer(renamed, placed) : renamed })
         })
         .catch((error) => {
           notify(
@@ -314,41 +334,51 @@ export function AudiovisualWorkspace({
     [structureReadOnly],
   )
 
-  const deleteFile = useCallback(
-    (id: string) => {
+  const deleteFiles = useCallback(
+    (ids: string[]) => {
       if (structureReadOnly) return
       const live = getProjectSession()
       const binding = live.binding
-      const current = live.workspace.packages[0]?.scripts.find((script) => script.id === id)
-      if (!current) return
+      const targets = (live.workspace.packages[0]?.scripts ?? []).filter((script) => ids.includes(script.id))
+      if (!targets.length) return
       void confirmDialog({
-        title: '删除 BOSS 血条',
-        message: `删除「${current.name}」？此操作提交后不可从本窗口撤销。`,
+        title: '删除视听资源',
+        message:
+          targets.length === 1
+            ? `删除「${targets[0]!.name}」？此操作提交后不可从本窗口撤销。`
+            : `删除 ${targets.length} 个资源？此操作提交后不可从本窗口撤销。`,
         confirmLabel: '删除',
         danger: true,
       }).then((ok) => {
         if (!ok) return
-        const onServer = Boolean(binding?.handle.client.entry(sourcePathOf(current)))
+        const removed = new Set(targets.map((script) => script.id))
+        const commands = targets.map((script) => ({ path: sourcePathOf(script), destination: null }))
         const removeLocal = () => {
           const latest = getProjectSession()
           const pkg = latest.workspace.packages[0]
           if (!pkg) return
-          setProjectSession({
-            workspace: withScripts(
-              latest.workspace,
-              pkg.scripts.filter((script) => script.id !== id),
-            ),
-          })
-          closePages([id])
+          const remaining = withScripts(latest.workspace, pkg.scripts.filter((script) => !removed.has(script.id)))
+          const placed = relocatedExplorer(remaining, commands)
+          setProjectSession({ workspace: placed ? withExplorer(remaining, placed) : remaining })
+          closePages([...removed])
         }
-        if (!onServer || !binding) {
+        const serverCommands = binding
+          ? commands.filter((command) => binding.handle.client.entry(command.path))
+          : []
+        if (!binding || !serverCommands.length) {
+          const relocated = relocatedExplorer(live.workspace, commands)
           removeLocal()
+          if (relocated && binding) {
+            void commitOrganization(relocated).catch((error) =>
+              notify('文件夹归属未提交', { kind: 'error', detail: String(error) }),
+            )
+          }
           return
         }
         structuralPendingRef.current = true
         setBusy(true)
         void binding.handle.client
-          .sourceCommands([{ path: sourcePathOf(current), destination: null }])
+          .sourceCommands(serverCommands, organizationEdits(relocatedExplorer(live.workspace, commands)))
           .then(() => {
             if (getProjectSession().binding?.handle.client !== binding.handle.client) return
             removeLocal()
@@ -447,16 +477,25 @@ export function AudiovisualWorkspace({
       minSize: 180,
       render: (dock) => (
         <AudiovisualExplorer
-          files={files}
+          files={explorerFiles}
+          organization={projectBound ? (project?.explorer ?? emptyOrganization()) : null}
           activeId={ui.activeKey}
           readOnly={structureReadOnly || !projectBound}
           onOpen={openFile}
-          onCreate={createBossbarFile}
+          onCreate={(category, folderKey) => {
+            if (category === 'bossbar') createBossbarFile(folderKey)
+          }}
           onRename={renameFile}
-          onDelete={deleteFile}
-          placement={dock.placement}
-          onTitlePointerDown={dock.onTitlePointerDown}
-          onRedock={dock.onRedock}
+          onDelete={deleteFiles}
+          onOrganize={(next, label) => {
+            void commitOrganization(next).catch((error) =>
+              notify(
+                error instanceof ServiceError && error.code === 'commit_uncertain' ? `${label}结果待确认` : `${label}未提交`,
+                { kind: 'error', detail: String(error) },
+              ),
+            )
+          }}
+          dock={dock}
         />
       ),
     },

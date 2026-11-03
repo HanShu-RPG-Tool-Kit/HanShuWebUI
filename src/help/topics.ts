@@ -1,6 +1,7 @@
 import actorGuide from './docs/actor-guide.md?raw'
 import reputationGuide from './docs/reputation-guide.md?raw'
 import resourceOrganization from './docs/resource-organization.md?raw'
+import explorerShell from './docs/explorer-shell.md?raw'
 import javascriptLanguage from './docs/javascript-language.md?raw'
 import scriptResources from './docs/script-resources.md?raw'
 import entityGuide from './docs/entity-guide.md?raw'
@@ -76,6 +77,7 @@ export type HelpTopicId =
   | 'skin-library'
   | 'export-pak'
   | 'resource-organization'
+  | 'explorer-shell'
   | 'about'
 
 /** 受众：导航全部展示；文档索引用文案区分 */
@@ -94,6 +96,7 @@ export type HelpTopic = {
 
 export const HELP_TOPICS: HelpTopic[] = [
   {id:'resource-organization',title:'资源分类与共享组织',group:'开始',audience:'both',inDocs:true,body:resourceOrganization},
+  {id:'explorer-shell',title:'通用资源管理器底座',group:'开始',audience:'dev',inDocs:true,body:explorerShell},
   {id:'node-editor',title:'通用节点编辑器接入规范',group:'开始',audience:'dev',inDocs:true,body:nodeEditor},
   { id:'collaboration-guide',title:'连接与协作',group:'开始',audience:'user',inDocs:true,body:collaborationGuide },
   { id:'collaboration-service',title:'工程服务与多人协作',group:'开始',audience:'both',inDocs:true,body:collaborationService },

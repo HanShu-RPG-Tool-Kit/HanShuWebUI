@@ -78,6 +78,7 @@ import {
   ensurePackageSections,
   folderPath,
   folderSectionId,
+  gameplayFolders,
   isBuiltinScriptFolder,
   isEntityDocument,
   isItemDocument,
@@ -260,7 +261,7 @@ export function GameplayWorkspace({
   const pendingSeedsRef = useRef(new Map<string, Record<string, string>>());
   const migratedKeysRef = useRef(new Set<string>());
   const documents = useMemo(() => {
-    const folders = session.workspace.packages[0]?.explorer?.folders ?? [];
+    const folders = gameplayFolders(session.workspace.packages[0]?.explorer);
     const folderKeys = new Set(folders.map((folder) => folder.key));
     return sourcesToProgressDocuments(
       session.workspace.packages[0]?.scripts ?? [],
@@ -296,7 +297,7 @@ export function GameplayWorkspace({
     () =>
       ensurePackageSections({
         documents,
-        folders: session.workspace.packages[0]?.explorer?.folders ?? [],
+        folders: gameplayFolders(session.workspace.packages[0]?.explorer),
         openKeys: ui.openKeys ?? [],
         activeKey: ui.activeKey ?? null,
         pinnedKeys: ui.pinnedKeys ?? [],
@@ -459,7 +460,7 @@ export function GameplayWorkspace({
           projected,
           ensurePackageSections({
             ...next,
-            folders: appliedOrganization.folders,
+            folders: gameplayFolders(appliedOrganization),
           }).folders,
         );
         setProjectSession({

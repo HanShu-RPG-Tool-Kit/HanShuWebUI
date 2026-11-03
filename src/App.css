@@ -2650,12 +2650,7 @@ body.is-resizing .stageplay-workspace .split-handle { background: var(--accent);
 .stageplay-workspace .tab-action:hover { background: var(--sw-hover); border-color: var(--border-soft); color: var(--text-bright); }
 .stageplay-workspace .tab-action.on { background: rgba(74, 108, 247, 0.16); border-color: var(--border-soft); color: #9db4f0; }
 
-/* 资源管理器 */
-.stageplay-workspace .explorer { border-right: 0; }
-.stageplay-workspace .explorer-header { height: calc(26px * var(--sw-s)); box-sizing: content-box; padding: 0 6px 0 8px; background: var(--sw-head); border-bottom: 1px solid var(--border); color: var(--text); font-size: var(--sw-font-sm); }
-.stageplay-workspace .explorer-actions button { height: calc(20px * var(--sw-s)); padding: 0 8px; border: 1px solid var(--border-soft); border-radius: 0; background: var(--sw-panel-2); color: var(--text-dim); font-size: var(--sw-font-xs); }
-.stageplay-workspace .explorer-actions button:hover { background: var(--sw-hover); color: var(--text-bright); }
-.stageplay-workspace .explorer-tree { padding: 2px 0 8px; }
+/* 资源管理器：主树由通用壳（explorerShell.css，游戏性同款观感）绘制；以下只服务 assets/ 附加件与右键菜单 */
 .stageplay-workspace .explorer-row:hover { background: var(--sw-hover); }
 .stageplay-workspace .explorer-file-row.active { background: var(--sw-active); }
 .stageplay-workspace .explorer-file-row.active .explorer-label { color: var(--text-bright); }
@@ -2663,10 +2658,7 @@ body.is-resizing .stageplay-workspace .split-handle { background: var(--accent);
 .stageplay-workspace .explorer-asset-row .explorer-label { font-size: var(--sw-font-sm); }
 .stageplay-workspace .explorer-twist { width: 14px; font-size: var(--sw-font-xs); color: #9a9aa5; }
 .stageplay-workspace .explorer-file-row { padding-left: 18px; }
-.stageplay-workspace .explorer-kind-row { padding: 2px 8px 2px 18px; font-size: var(--sw-font-xs); color: var(--text-dim); }
 .stageplay-workspace .explorer-icon { width: calc(16px * var(--sw-s)); height: calc(16px * var(--sw-s)); }
-.stageplay-workspace .explorer-kind-row .explorer-icon { width: calc(13px * var(--sw-s)); height: calc(13px * var(--sw-s)); }
-.stageplay-workspace .explorer-pkg-path { font-size: var(--sw-font-xs); color: #888888; opacity: 1; }
 .stageplay-workspace .explorer-count { font-size: var(--sw-font-xs); color: #888888; }
 .stageplay-workspace .explorer-empty { font-size: var(--sw-font-xs); color: #888888; }
 .stageplay-workspace .explorer-row-actions button,

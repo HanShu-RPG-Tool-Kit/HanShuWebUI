@@ -129,6 +129,7 @@
     "test:resource-lifecycle": "node scripts/run-verification.mjs scripts/verify-resource-lifecycle.ts",
     "test:resource-lifecycle:ui": "node scripts/verify-resource-lifecycle-ui.mjs",
     "test:resource-organization:ui": "node scripts/verify-resource-organization-ui.mjs",
+    "test:explorer-shell:ui": "node scripts/verify-explorer-shell-ui.mjs",
     "test:javascript-builtins": "node scripts/run-verification.mjs scripts/verify-javascript-builtins.ts",
     "test:javascript-dialect": "node scripts/run-verification.mjs scripts/verify-javascript-dialect.ts && node scripts/run-verification.mjs scripts/verify-javascript-contract.ts",
     "test:javascript-language": "node scripts/verify-javascript-language.mjs",

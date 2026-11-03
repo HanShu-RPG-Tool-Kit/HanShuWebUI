@@ -1,0 +1,407 @@
+/*
+ * 通用资源管理器外观，默认即游戏性资源树（`flow-library`）的观感：同一组 Blender 式方角深灰、
+ * 同一选中蓝、同一 `--fl-s` 缩放与行高。工作区一般不需要再换肤；确需时只改 --xs-* 变量，不覆盖结构类名。
+ * 在游戏性 / 视听根上会读到 `--fl-*`，在剧本等未定义处退回同值。
+ */
+.explorer-shell {
+  --xs-s: var(--fl-s, var(--app-ui-scale, 1.25));
+  --xs-font-sm: calc(14px * var(--xs-s));
+  --xs-font-xs: calc(12px * var(--xs-s));
+  --xs-icon: calc(16px * var(--xs-s));
+  --xs-row-h: calc(24px * var(--xs-s));
+  --xs-panel: var(--fl-panel, #303030);
+  --xs-panel-2: var(--fl-panel-2, #232323);
+  --xs-head: var(--fl-head, #383838);
+  --xs-hover: var(--fl-hover, #3d3d3d);
+  --xs-active: var(--fl-active, #3a5278);
+  --xs-danger: var(--fl-danger, #e87d7d);
+  --xs-faint: var(--fl-faint, #888888);
+  --xs-border: var(--border, #1a1a1a);
+  --xs-border-soft: var(--border-soft, #404040);
+  --xs-accent: var(--accent, #4772b3);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--xs-panel);
+  color: var(--text, #e6e6e6);
+  font-family: -apple-system, 'PingFang SC', 'Segoe UI', sans-serif;
+  font-size: var(--xs-font-sm);
+}
+
+.panel-dock-band > .explorer-shell {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  min-height: 0;
+  align-self: stretch;
+  border: 0;
+}
+
+.explorer-shell-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-shrink: 0;
+  height: calc(26px * var(--xs-s));
+  box-sizing: content-box;
+  padding: 0 6px 0 8px;
+  background: var(--xs-head);
+  border-bottom: 1px solid var(--xs-border);
+  user-select: none;
+}
+
+.explorer-shell-heading.is-draggable {
+  cursor: grab;
+  touch-action: none;
+}
+
+body.is-panel-dragging .explorer-shell-heading.is-draggable {
+  cursor: grabbing;
+}
+
+.explorer-shell-heading strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--xs-font-sm);
+  font-weight: 400;
+  color: var(--text, #e6e6e6);
+}
+
+.explorer-shell-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.explorer-shell-tools > button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(20px * var(--xs-s));
+  height: calc(20px * var(--xs-s));
+  margin: 0;
+  padding: 2px;
+  border: 1px solid var(--xs-border-soft);
+  border-radius: 0;
+  background: var(--xs-panel-2);
+  color: var(--text-dim, #b0b0b0);
+  font: inherit;
+  font-size: var(--xs-font-xs);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.explorer-shell-tools > button.panel-dock-redock {
+  width: auto;
+  padding: 0 6px;
+}
+
+.explorer-shell-tools > button:hover:not(:disabled) {
+  background: var(--xs-hover);
+  color: var(--text-bright, #ffffff);
+}
+
+.explorer-shell-tools > button:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.explorer-shell .explorer-shell-tools .explorer-icon {
+  width: calc(14px * var(--xs-s));
+  height: calc(14px * var(--xs-s));
+  color: var(--text-dim, #b0b0b0);
+}
+
+.explorer-shell-search {
+  flex-shrink: 0;
+  margin: 6px 8px;
+  width: calc(100% - 16px);
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 4px 6px;
+  border: 1px solid var(--xs-border-soft);
+  border-radius: 0;
+  background: var(--xs-panel-2);
+  color: inherit;
+  font: inherit;
+  font-size: var(--xs-font-sm);
+}
+
+.explorer-shell-search::placeholder {
+  color: var(--xs-faint);
+}
+
+.explorer-shell-search:focus {
+  outline: none;
+  border-color: var(--xs-accent);
+}
+
+.explorer-shell-tree {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 0 12px;
+}
+
+.explorer-shell-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: var(--xs-row-h);
+  padding-right: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+  font-size: var(--xs-font-sm);
+}
+
+.explorer-shell-row .explorer-icon {
+  width: var(--xs-icon);
+  height: var(--xs-icon);
+  flex-shrink: 0;
+  /* 与游戏性 `.flow-resource-icon` 同一默认色；下面按 kind 覆盖 */
+  color: #9db4d4;
+}
+
+/*
+ * 图标配色对齐游戏性资源树（GameplayWorkspace.css 的 `.flow-resource-row .is-*`）。
+ * 视听 `av-*` / bossbar 按同类职责落到同一组柔和色，避免全树同一蓝灰。
+ */
+.explorer-shell-row .explorer-icon.is-folder,
+.explorer-shell-row .explorer-icon.is-group,
+.explorer-shell-row .explorer-icon.is-new-folder,
+.explorer-shell-row .explorer-icon.is-av-decoration { color: #d4b47d; }
+.explorer-shell-row .explorer-icon.is-package { color: #d4a85a; }
+.explorer-shell-row .explorer-icon.is-hanshu,
+.explorer-shell-row .explorer-icon.is-quest,
+.explorer-shell-row .explorer-icon.is-hflow,
+.explorer-shell-row .explorer-icon.is-av-ui { color: #8eb0d4; }
+.explorer-shell-row .explorer-icon.is-character,
+.explorer-shell-row .explorer-icon.is-actor,
+.explorer-shell-row .explorer-icon.is-av-appearance { color: #c49bb8; }
+.explorer-shell-row .explorer-icon.is-javascript,
+.explorer-shell-row .explorer-icon.is-goal,
+.explorer-shell-row .explorer-icon.is-script-kit,
+.explorer-shell-row .explorer-icon.is-script-shop,
+.explorer-shell-row .explorer-icon.is-script-actor,
+.explorer-shell-row .explorer-icon.is-script-player,
+.explorer-shell-row .explorer-icon.is-av-action { color: #7eb8a2; }
+.explorer-shell-row .explorer-icon.is-progress,
+.explorer-shell-row .explorer-icon.is-bossbar { color: #c9a86c; }
+.explorer-shell-row .explorer-icon.is-level,
+.explorer-shell-row .explorer-icon.is-av-skybox { color: #8eb0d4; }
+.explorer-shell-row .explorer-icon.is-nav { color: #7a9ec4; }
+.explorer-shell-row .explorer-icon.is-item,
+.explorer-shell-row .explorer-icon.is-av-prop { color: #9ab87e; }
+.explorer-shell-row .explorer-icon.is-entity { color: #7aaf9a; }
+.explorer-shell-row .explorer-icon.is-reputation,
+.explorer-shell-row .explorer-icon.is-av-cutscene { color: #c9a66b; }
+.explorer-shell-row .explorer-icon.is-kit,
+.explorer-shell-row .explorer-icon.is-av-expression { color: #c48a9a; }
+.explorer-shell-row .explorer-icon.is-shop,
+.explorer-shell-row .explorer-icon.is-tts,
+.explorer-shell-row .explorer-icon.is-av-sfx { color: #c49a78; }
+.explorer-shell-row .explorer-icon.is-markdown,
+.explorer-shell-row .explorer-icon.is-file,
+.explorer-shell-row .explorer-icon.is-ttsservice,
+.explorer-shell-row .explorer-icon.is-av-fog,
+.explorer-shell-row .explorer-icon.is-collapse,
+.explorer-shell-row .explorer-icon.is-new-file { color: #9a9aa5; }
+.explorer-shell-row .explorer-icon.is-lang,
+.explorer-shell-row .explorer-icon.is-av-localization { color: #7aaf9a; }
+.explorer-shell-row .explorer-icon.is-voice,
+.explorer-shell-row .explorer-icon.is-av-voiceover { color: #c48a9a; }
+.explorer-shell-row .explorer-icon.is-image,
+.explorer-shell-row .explorer-icon.is-av-particle { color: #b48ec4; }
+.explorer-shell-row .explorer-icon.is-audio,
+.explorer-shell-row .explorer-icon.is-av-bgm { color: #c4b06a; }
+.explorer-shell-row .explorer-icon.is-json { color: #c9a66b; }
+
+.explorer-shell-row:hover {
+  background: var(--xs-hover);
+}
+
+.explorer-shell-row.selected {
+  background: var(--xs-active);
+  color: var(--text-bright, #ffffff);
+}
+
+.explorer-shell-row.is-open:not(.selected) {
+  color: #9db4f0;
+}
+
+.explorer-shell-row.drop-target {
+  background: rgba(71, 114, 179, 0.28);
+  outline: 1px solid var(--xs-accent);
+  outline-offset: -1px;
+}
+
+.explorer-shell-row:focus-visible {
+  outline: 1px solid var(--xs-accent);
+  outline-offset: -1px;
+}
+
+.explorer-shell-row.is-detached .explorer-shell-name {
+  opacity: 0.65;
+  text-decoration: line-through;
+}
+
+.explorer-shell-twist {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  flex-shrink: 0;
+  color: #9a9aa5;
+  font-size: var(--xs-font-xs);
+}
+
+.explorer-shell-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.explorer-shell-count {
+  flex-shrink: 0;
+  color: var(--xs-faint);
+  font-size: var(--xs-font-xs);
+}
+
+.explorer-shell-edit {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.explorer-shell-input {
+  min-width: 0;
+  box-sizing: border-box;
+  border: 1px solid var(--xs-accent);
+  border-radius: 0;
+  background: var(--xs-panel-2);
+  color: inherit;
+  padding: 2px 6px;
+  font: inherit;
+  font-size: var(--xs-font-sm);
+}
+
+.explorer-shell-input:focus {
+  outline: none;
+}
+
+.explorer-shell-new {
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+
+.explorer-shell-error {
+  color: var(--xs-danger);
+  font-size: var(--xs-font-xs);
+  white-space: normal;
+}
+
+.explorer-shell-empty {
+  margin: 0;
+  padding: 6px 12px 6px 28px;
+  color: var(--xs-faint);
+  line-height: 1.7;
+  font-size: var(--xs-font-xs);
+}
+
+.explorer-shell-footer {
+  flex-shrink: 0;
+  padding: 4px 8px;
+  border-top: 1px solid var(--xs-border);
+  background: var(--xs-head);
+  color: var(--xs-faint);
+  font-size: var(--xs-font-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- 剧本：工程行、`+剧` 与 `assets/` 真实目录附加件，用同一行高 / 选中色 ---- */
+.explorer-shell-tools > button.stageplay-explorer-new {
+  width: auto;
+  padding: 0 8px;
+}
+
+.stageplay-explorer-project {
+  cursor: default;
+}
+
+.stageplay-explorer-project .explorer-shell-name {
+  font-weight: 600;
+}
+
+.stageplay-explorer-noproject {
+  padding-left: 12px;
+}
+
+.stageplay-explorer-assets .explorer-files {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.stageplay-explorer-assets .explorer-assets-row,
+.stageplay-explorer-assets .explorer-asset-files {
+  padding-left: 0;
+}
+
+.stageplay-explorer-assets .explorer-row {
+  display: flex;
+  align-items: center;
+  height: auto;
+  min-height: var(--xs-row-h);
+  padding-right: 4px;
+  font-size: var(--xs-font-sm);
+}
+
+.stageplay-explorer-assets .explorer-row:hover {
+  background: var(--xs-hover);
+}
+
+.stageplay-explorer-assets .explorer-file-row.active {
+  background: var(--xs-active);
+}
+
+.stageplay-explorer-assets .explorer-file-row.active .explorer-label {
+  color: var(--text-bright, #ffffff);
+}
+
+.stageplay-explorer-assets .explorer-twist {
+  width: 18px;
+  height: var(--xs-row-h);
+  color: #9a9aa5;
+  font-size: var(--xs-font-xs);
+}
+
+.stageplay-explorer-assets .explorer-label {
+  gap: 4px;
+  font-size: var(--xs-font-sm);
+}
+
+.stageplay-explorer-assets .explorer-icon {
+  width: var(--xs-icon);
+  height: var(--xs-icon);
+}
+
+.stageplay-explorer-assets .explorer-count,
+.stageplay-explorer-assets .explorer-empty {
+  color: var(--xs-faint);
+  font-size: var(--xs-font-xs);
+}
+
+.stageplay-explorer-assets .is-drop-target > .explorer-row {
+  background: rgba(71, 114, 179, 0.28);
+  outline: 1px solid var(--xs-accent);
+  outline-offset: -1px;
+}

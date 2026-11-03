@@ -171,9 +171,9 @@ assert.notEqual(type('progress').icon, type('hflow').icon, '单/多进度在新�
  * 不变式：
  * 1. `WORKSPACE_GROUP_ORDER` 仍覆盖全部源类型（工程级目录真相 / 其它护栏）。
  * 2. 剧本可建类型 ⊆ 剧本树可见（`isStageplayExplorerSource`）。
- * 3. Explorer 分桶用 `STAGEPLAY_WORKSPACE_GROUP_ORDER`，菜单用 `stageplayNewFileTypes*`。
+ * 3. 剧本分类适配器用 `STAGEPLAY_WORKSPACE_GROUP_ORDER`，菜单用 `stageplayNewFileTypes*`。
  *
- * 为什么断言常量而不是 import Explorer：顶层 `import './explorer-newfile.css'`，
+ * 为什么断言常量而不是 import 菜单组件：`explorerMenus.tsx` 顶层 import 了 `explorer-newfile.css`，
  * tsx 会 `Unknown file extension ".css"`。
  */
 assert.deepEqual(
@@ -267,31 +267,43 @@ assert.equal(
 )
 
 /*
- * 源码级护栏：Explorer 必须按剧本分组建桶与过滤，且新建菜单走 stageplay 子集。
+ * 源码级护栏：剧本资源树（CategoryExplorer 适配器 + 类型菜单）必须按剧本分组建分类与过滤，
+ * 且新建菜单走 stageplay 子集。
  */
-const explorerSource = stripComments(
-  readFileSync(new URL('../src/Explorer.tsx', import.meta.url), 'utf8'),
+const readSource = (path: string) => stripComments(readFileSync(new URL(path, import.meta.url), 'utf8'))
+const categorySource = readSource('../src/workspaces/stageplay/explorerCategories.ts')
+const explorerSource = readSource('../src/workspaces/stageplay/explorerMenus.tsx')
+const stageplayExplorerSource = readSource('../src/workspaces/stageplay/StageplayExplorer.tsx')
+assert.ok(
+  /STAGEPLAY_WORKSPACE_GROUP_ORDER/.test(categorySource),
+  'explorerCategories.ts 应按 STAGEPLAY_WORKSPACE_GROUP_ORDER 排剧本分类',
 )
 assert.ok(
-  /STAGEPLAY_WORKSPACE_GROUP_ORDER/.test(explorerSource),
-  'Explorer.tsx 应按 STAGEPLAY_WORKSPACE_GROUP_ORDER 给剧本资源树建桶',
-)
-assert.ok(
-  /isStageplayExplorerSource/.test(explorerSource),
-  'Explorer.tsx 应按 isStageplayExplorerSource 过滤剧本树',
+  /isStageplayExplorerSource/.test(categorySource),
+  'explorerCategories.ts 应按 isStageplayExplorerSource 过滤剧本树',
 )
 assert.ok(
   /stageplayNewFileTypesByGroup/.test(explorerSource),
-  'Explorer.tsx 新建菜单应使用 stageplayNewFileTypesByGroup',
+  '剧本新建菜单应使用 stageplayNewFileTypesByGroup',
 )
 assert.ok(
-  !/\bWORKSPACE_GROUP_ORDER\b/.test(explorerSource),
-  'Explorer.tsx 不应再按全量 WORKSPACE_GROUP_ORDER 建剧本树桶',
+  /stageplayNewFileTypes\(\)/.test(categorySource),
+  '分类入口的类型过滤只能在剧本类型子集里挑',
 )
 assert.ok(
-  !/\bnewFileTypesByGroup\s*\(\s*\)/.test(explorerSource),
-  'Explorer.tsx 不应再调用无过滤的 newFileTypesByGroup()',
+  /<CategoryExplorer\b/.test(stageplayExplorerSource) && /StageplayAssetsAddon/.test(stageplayExplorerSource),
+  '剧本资源树应基于 CategoryExplorer，并保留 assets 附加件',
 )
+for (const [name, source] of [['explorerCategories.ts', categorySource], ['explorerMenus.tsx', explorerSource]] as const) {
+  assert.ok(
+    !/\bWORKSPACE_GROUP_ORDER\b/.test(source),
+    `${name} 不应再按全量 WORKSPACE_GROUP_ORDER 建剧本树分类`,
+  )
+  assert.ok(
+    !/\bnewFileTypesByGroup\s*\(\s*\)/.test(source),
+    `${name} 不应再调用无过滤的 newFileTypesByGroup()`,
+  )
+}
 
 // ===== 2c. 菜单能滚：滚轮不能被"关菜单"或"穿透去滚树"吃掉 =====
 
@@ -302,7 +314,7 @@ assert.ok(
  *    `scroll` 不冒泡，但捕获阶段照样会经过 window，于是"滚轮一碰菜单，菜单瞬间消失"。
  * 2. 菜单不溢出时滚轮会穿透去滚背后的资源树 —— 树一滚，同一条监听又把菜单关掉。
  *
- * 两条判据都只能读源码：`Explorer.tsx` 顶层 import 了 `./explorer-newfile.css`，
+ * 两条判据都只能读源码：`explorerMenus.tsx` 顶层 import 了 `explorer-newfile.css`，
  * tsx 直接 import 会 `Unknown file extension ".css"`（见上面 2b 的说明）。
  */
 const scrollHandlerAt = explorerSource.indexOf('const onScroll = (event: Event) =>')
