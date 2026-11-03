@@ -41,8 +41,9 @@ export function categoryExtensions(id:GameplayCategoryId):string[]{
  * `icon` 对应 `explorerIcons` 的 kind；尚无原生格式的分类 `types` / `imports` 为空，仅作顶层占位。
  */
 export const AUDIOVISUAL_CATEGORIES = {
-  bossbar:{name:'BOSS血条',icon:'bossbar',types:['bossbar'],imports:['.bossbar']},
   ui:{name:'用户界面',icon:'av-ui',types:[],imports:[]},
+  bossbar:{name:'BOSS血条',icon:'bossbar',types:['bossbar'],imports:['.bossbar']},
+  overhead:{name:'头顶标记',icon:'av-overhead',types:[],imports:[]},
   appearance:{name:'人类外观组件',icon:'av-appearance',types:[],imports:[]},
   action:{name:'人类动作',icon:'av-action',types:[],imports:[]},
   expression:{name:'人类表情',icon:'av-expression',types:[],imports:[]},

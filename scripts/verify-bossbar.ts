@@ -438,9 +438,13 @@ assert.equal(sourcePathOf({ name: 'demo.bossbar' }), 'src/bossbars/demo.bossbar'
 assert.equal(AUDIOVISUAL_CATEGORIES.bossbar.name, 'BOSS血条')
 assert.equal(AUDIOVISUAL_CATEGORIES.bossbar.icon, 'bossbar')
 assert.equal(AUDIOVISUAL_CATEGORIES.ui.name, '用户界面')
+assert.equal(AUDIOVISUAL_CATEGORIES.overhead.name, '头顶标记')
+assert.equal(AUDIOVISUAL_CATEGORIES.overhead.icon, 'av-overhead')
 assert.equal(AUDIOVISUAL_CATEGORIES.voiceover.name, '配音')
 assert.deepEqual(AUDIOVISUAL_CATEGORIES.ui.types, [])
-assert.equal(AUDIOVISUAL_CATEGORY_ORDER.length, 15)
+assert.deepEqual(AUDIOVISUAL_CATEGORIES.overhead.types, [])
+assert.deepEqual(AUDIOVISUAL_CATEGORY_ORDER.slice(0, 3), ['ui', 'bossbar', 'overhead'])
+assert.equal(AUDIOVISUAL_CATEGORY_ORDER.length, 16)
 for (const id of AUDIOVISUAL_CATEGORY_ORDER) {
   assert.ok(
     (EXPLORER_ICON_KINDS as readonly string[]).includes(AUDIOVISUAL_CATEGORIES[id].icon),

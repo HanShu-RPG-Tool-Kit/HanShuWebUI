@@ -51,6 +51,7 @@ export const EXPLORER_ICON_KINDS = [
   'shop',
   'bossbar',
   'av-ui',
+  'av-overhead',
   'av-appearance',
   'av-action',
   'av-expression',
@@ -113,6 +114,8 @@ const PATHS: Record<ExplorerIconKind, string> = {
   bossbar: 'M3 10h18v4H3z M5 12h2 M10 12h4 M17 12h2 M12 6v2 M12 16v2',
   // 视听顶层分类（与文件类型图标区分；占位分类也有专属形状）
   'av-ui': 'M3 4h18v14H3z M3 8h18 M7 12h4 M7 15h6',
+  // 头顶标记：头像轮廓 + 上方感叹号（RPG NPC !/? 一类）
+  'av-overhead': 'M12 14a3.5 3.5 0 100-7 3.5 3.5 0 000 7z M6.5 21v-1.5a5.5 5.5 0 0111 0V21 M12 2v3.5 M12 7h.01',
   'av-appearance': 'M12 11a4 4 0 100-8 4 4 0 000 8z M5 21v-2a5 5 0 015-5h4a5 5 0 015 5v2 M9 14l-2 4 M15 14l2 4',
   'av-action': 'M13 3l2 4h4l-3 3 1 4-4-2-4 2 1-4-3-3h4z M6 14l-2 7 M18 14l2 7 M10 21h4',
   'av-expression': 'M12 21a9 9 0 100-18 9 9 0 000 18z M8.5 10h.01 M15.5 10h.01 M8.5 15c1.2 1.5 2.8 2 3.5 2s2.3-.5 3.5-2',

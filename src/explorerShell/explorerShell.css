@@ -191,7 +191,8 @@ body.is-panel-dragging .explorer-shell-heading.is-draggable {
 .explorer-shell-row .explorer-icon.is-script-player,
 .explorer-shell-row .explorer-icon.is-av-action { color: #7eb8a2; }
 .explorer-shell-row .explorer-icon.is-progress,
-.explorer-shell-row .explorer-icon.is-bossbar { color: #c9a86c; }
+.explorer-shell-row .explorer-icon.is-bossbar,
+.explorer-shell-row .explorer-icon.is-av-overhead { color: #c9a86c; }
 .explorer-shell-row .explorer-icon.is-level,
 .explorer-shell-row .explorer-icon.is-av-skybox { color: #8eb0d4; }
 .explorer-shell-row .explorer-icon.is-nav { color: #7a9ec4; }
