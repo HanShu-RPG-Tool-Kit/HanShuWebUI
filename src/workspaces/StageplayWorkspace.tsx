@@ -11,7 +11,12 @@ import {
   useState,
 } from 'react'
 import Editor, { type OnMount } from '@monaco-editor/react'
-import { Explorer } from '../Explorer'
+import { StageplayExplorer } from './stageplay/StageplayExplorer'
+import { commitOrganization, placeSource, relocatedExplorer, withExplorer } from '../explorerShell'
+import { emptyOrganization } from '../project/explorerOrganization'
+import { sourcePathKnownToServer } from '../project/projectFs'
+import { notify } from '../activity'
+import { ServiceError } from '../collab/protocol'
 import { PanelDock, resetPanelDock, type DockPanelSpec } from '../ui/PanelDock'
 import { EditorDock, resetEditorDock } from '../ui/EditorDock'
 import {
@@ -119,7 +124,6 @@ import {
   registerProjectEditorFlush,
 } from '../project/editorFlush'
 import { exportProjectPack } from '../project/exportActions'
-import { openProjectUi } from '../project/projectUi'
 import {
   createBlankOggBlob,
   isVoiceRefPath,
@@ -138,7 +142,6 @@ import {
 } from '../workspaceMove'
 import {
   deleteAssetBlob,
-  deletePackageAssetBlobs,
   getAssetBlob,
   putAssetBlob,
 } from '../assets/idb'
@@ -534,6 +537,8 @@ export const StageplayWorkspace = forwardRef<
    * 那是资源树的知识。
    */
   const [newFileMenuRequest, setNewFileMenuRequest] = useState(0)
+  /** 新建后请求资源树对该文件进入行内改名 */
+  const [renameRequest, setRenameRequest] = useState<{ id: string; seq: number } | null>(null)
 
   // 录音棚跟其他栏目一样进停靠布局，开关仍然走查看菜单。
   const studioOpen = view.studio
@@ -1932,20 +1937,17 @@ export const StageplayWorkspace = forwardRef<
     selectEditorPage(neighbor)
   }
 
-  const handleNewPackage = () => {
-    openProjectUi('open')
-  }
-
   /**
    * 选类型后立即创建。省略 base 时分配不重名的默认名。
    *
-   * 失败只返回原因，不弹窗：资源树把它画在包上，文件还没建出来。
-   * 已经建成的文件改名走 handleCommitCreatedName，不再等回车确认。
+   * 失败只返回原因，不弹窗。folderKey 非空时把新文件登记到该共享虚拟文件夹（只改归属，不改磁盘路径）。
+   * 已经建成的文件改名走资源树行内改名（`handleShellRename`）。
    */
   const handleNewFile = (
     packageId: string,
     typeId: NewFileTypeId,
     base?: string,
+    folderKey: string | null = null,
   ): NewFileCreateResult => {
     const type = findNewFileType(typeId)
     if (!type) return { ok: false, error: `不认识的文件类型「${typeId}」` }
@@ -2001,7 +2003,25 @@ export const StageplayWorkspace = forwardRef<
      */
     loadEditorContent(script.id, script.content, script.updatedAt)
     setRoles(createDefaultRoles())
+    // 未保存的新文件也可先登记归属；其他窗口在源文件提交前只看到空文件夹
+    if (folderKey && projectRef.current) {
+      void commitOrganization(placeSource(pkg.explorer ?? emptyOrganization(), sourcePathOf(script), folderKey)).catch(
+        (error) => notify('文件夹归属未提交', { kind: 'error', detail: String(error) }),
+      )
+    }
     return { ok: true, scriptId: script.id, base: resolved.trim() }
+  }
+
+  /** 资源树新建：创建后让树对新文件进入行内改名。 */
+  const handleExplorerCreate = (typeId: NewFileTypeId, folderKey: string | null) => {
+    const pkg = workspaceRef.current.packages[0]
+    if (!pkg) return
+    const result = handleNewFile(pkg.id, typeId, undefined, folderKey)
+    if (!result.ok) {
+      notify('新建未完成', { kind: 'error', detail: result.error })
+      return
+    }
+    setRenameRequest((previous) => ({ id: result.scriptId, seq: (previous?.seq ?? 0) + 1 }))
   }
 
   /**
@@ -2038,26 +2058,18 @@ export const StageplayWorkspace = forwardRef<
     }
   }
 
-  const handleTogglePackage = (packageId: string) => {
-    commitWorkspace({
-      ...workspaceRef.current,
-      packages: workspaceRef.current.packages.map((pkg) =>
-        pkg.id === packageId ? { ...pkg, collapsed: !pkg.collapsed } : pkg,
-      ),
-    })
-  }
-
   const handleToggleAssets = (packageId: string) => {
     commitWorkspace(toggleAssetsCollapsed(workspaceRef.current, packageId))
   }
 
-  const handleRenamePackage = (packageId: string) => {
+  /** 只改 project.json 里的工程名称；目录与 C/S 身份不变。 */
+  const handleRenameProject = (packageId: string) => {
     const pkg = workspaceRef.current.packages.find((item) => item.id === packageId)
     if (!pkg) return
     const previous = pkg.name
     void promptDialog({
-      title: '重命名包',
-      message: '输入新的包名。',
+      title: '重命名工程',
+      message: '输入新的工程名称。工程目录不会改名。',
       defaultValue: previous,
       validate: (value) => (value.trim() ? null : '名字不能为空'),
     }).then((name) => {
@@ -2097,6 +2109,9 @@ export const StageplayWorkspace = forwardRef<
 
     const assetMoves = renamed.kind === 'moved' ? renamed.moves : []
     const bound = projectRef.current
+    const command = { path: sourcePathOf(hit.script), destination: sourcePathOf({ name: newName, srcKind: hit.script.srcKind }) }
+    // S 认识的源文件由 sourceCommands 在同一事务里搬迁归属；新文件只有本窗口投影，需单独提交组织
+    const serverKnown = Boolean(bound && sourcePathKnownToServer(bound.handle.client, command.path))
     setProjectBusy(true)
     try {
       if (bound) await renameSourceOnDisk(bound.handle, oldName, newName, hit.script.content, assetMoves, hit.script.srcKind, hit.script.srcKind)
@@ -2129,7 +2144,13 @@ export const StageplayWorkspace = forwardRef<
         ),
       })),
     }
-    commitWorkspace(nextWorkspace)
+    const placed = relocatedExplorer(nextWorkspace, [command])
+    commitWorkspace(placed && serverKnown ? withExplorer(nextWorkspace, placed) : nextWorkspace)
+    if (placed && !serverKnown && bound) {
+      void commitOrganization(placed).catch((error) =>
+        notify('文件夹归属未提交', { kind: 'error', detail: String(error) }),
+      )
+    }
     return {
       ok: true,
       moves: assetMoves.length,
@@ -2140,16 +2161,13 @@ export const StageplayWorkspace = forwardRef<
   }
 
   /**
-   * 收下创建后的改名。没改名直接成功，不删文件。
-   * 已有旧路径才经 applyScriptRename 走改名管线；
-   * 服务端没见过的新文件由 renameSourceOnDisk 直接返回，不发 sourceCommand。
+   * 资源树行内改名（F2 / 双击 / 创建后立即改名）。同步校验名字，返回错误则输入框保留；
+   * 通过后经 applyScriptRename 提交，失败只提示，不删文件。没改名直接收下。
    */
-  const handleCommitCreatedName = async (
-    scriptId: string,
-    base: string,
-  ): Promise<{ ok: true } | { ok: false; error: string }> => {
+  const handleShellRename = (scriptId: string, base: string): string | null => {
     const hit = findScript(workspaceRef.current, scriptId)
-    if (!hit) return { ok: false, error: '文件不存在' }
+    if (!hit) return '文件不存在'
+    if (!isManualFileName(hit.script.name)) return '语言表和配音映射跟着剧本名走，不能单独改名'
     const ext = getExtension(hit.script.name)
     const type =
       NEW_FILE_TYPES.find(
@@ -2157,96 +2175,26 @@ export const StageplayWorkspace = forwardRef<
           item.ext === ext &&
           (item.srcKind ?? undefined) === (hit.script.srcKind ?? undefined),
       ) ?? NEW_FILE_TYPES.find((item) => item.ext === ext)
-    if (!type) return { ok: false, error: '不认识的文件类型' }
+    if (!type) return '不认识的文件类型'
     const baseError = validateNewFileBase(type, base)
-    if (baseError) return { ok: false, error: baseError }
+    if (baseError) return baseError
     const normalized = normalizeResourceName(newFileName(type, base))
     if (!normalized || !isManualFileName(normalized)) {
-      return { ok: false, error: `文件名无效。新建允许的后缀：${MANUAL_FILE_EXTENSIONS_LABEL}` }
+      return `文件名无效。新建允许的后缀：${MANUAL_FILE_EXTENSIONS_LABEL}`
     }
-    if (normalized === hit.script.name) return { ok: true }
+    if (normalized === hit.script.name) return null
     const duplicate = hit.pkg.scripts.some(
       (item) =>
         item.id !== scriptId &&
         resourceNameKey(sourcePathOf(item)) ===
           resourceNameKey(sourcePathOf({ name: normalized, srcKind: hit.script.srcKind })),
     )
-    if (duplicate) return { ok: false, error: `「${normalized}」已经存在` }
-    const renamed = await applyScriptRename(scriptId, normalized)
-    return renamed.ok ? { ok: true } : { ok: false, error: renamed.error }
-  }
-
-  const handleRenameScript = async (scriptId: string) => {
-    const hit = findScript(workspaceRef.current, scriptId)
-    if (!hit) return
-    const ext = getExtension(hit.script.name)
-    const type =
-      NEW_FILE_TYPES.find(
-        (item) =>
-          item.ext === ext &&
-          (item.srcKind ?? undefined) === (hit.script.srcKind ?? undefined),
-      ) ?? NEW_FILE_TYPES.find((item) => item.ext === ext)
-    if (!type) {
-      await alertDialog('不认识的文件类型，不能改名')
-      return
-    }
-    const currentBase = hit.script.name.toLowerCase().endsWith(type.ext)
-      ? hit.script.name.slice(0, -type.ext.length)
-      : hit.script.name
-    const name = await promptDialog({
-      title: '重命名',
-      message: '只改文件名。类型和后缀由分类决定，不能在这里改。',
-      defaultValue: currentBase,
-      validate: (value) => validateNewFileBase(type, value),
+    if (duplicate) return `「${normalized}」已经存在`
+    if (projectBusy) return '工程操作进行中，请稍候'
+    void applyScriptRename(scriptId, normalized).then((result) => {
+      if (!result.ok) notify('改名未执行', { kind: 'error', detail: result.error })
     })
-    if (name == null) return
-    const normalized = normalizeResourceName(newFileName(type, name))
-    if (!normalized || !isManualFileName(normalized) || normalized === hit.script.name) return
-    const result = await applyScriptRename(scriptId, normalized)
-    if (!result.ok) await alertDialog(`改名未执行：${result.error}`)
-  }
-
-  const handleDeletePackage = (packageId: string) => {
-    const pkg = workspaceRef.current.packages.find((item) => item.id === packageId)
-    if (!pkg) return
-    void confirmDialog({
-      title: '删除包',
-      message: `删除包「${pkg.name}」及其全部剧本与 assets？`,
-      danger: true,
-    }).then((ok) => {
-      if (!ok) return
-      const current = workspaceRef.current.packages.find((item) => item.id === packageId)
-      if (!current) return
-      const wasActiveScript = current.scripts.some((script) => script.id === activeIdRef.current)
-      const wasActiveAsset = current.assets.some((asset) => asset.id === workspaceRef.current.activeAssetId)
-      const remaining = workspaceRef.current.packages.filter((item) => item.id !== packageId)
-      const next: Workspace = {
-        packages: remaining,
-        activeScriptId: wasActiveScript
-          ? retainOpenScript(
-              { packages: remaining, activeScriptId: null, activeAssetId: null },
-              new Set(current.scripts.map((script) => script.id)),
-            )
-          : workspaceRef.current.activeScriptId,
-        activeAssetId: wasActiveAsset ? null : workspaceRef.current.activeAssetId,
-      }
-      commitWorkspace(next)
-      void deletePackageAssetBlobs(packageId)
-      if (wasActiveScript || wasActiveAsset) {
-        const opened = findScript(next, next.activeScriptId)
-        if (opened && !next.activeAssetId) {
-          loadEditorContent(opened.script.id, opened.script.content, opened.script.updatedAt)
-          setRoles(createDefaultRoles())
-        } else if (!next.activeAssetId) {
-          const fallback = openPagesRef.current.find((page) => editorPageExists(next, page))
-          if (fallback) selectEditorPage(fallback)
-          else {
-            loadEditorContent(null, '')
-            setRoles(createDefaultRoles())
-          }
-        }
-      }
-    })
+    return null
   }
 
   /**
@@ -2261,6 +2209,8 @@ export const StageplayWorkspace = forwardRef<
     const sourceName = hit.script.name
     if (projectBusy) return null
     const bound = projectRef.current
+    const command = { path: sourcePathOf(hit.script), destination: null }
+    const serverKnown = Boolean(bound && !hit.script.detached && sourcePathKnownToServer(bound.handle.client, command.path))
     setProjectBusy(true)
     try {
       if (bound&&!hit.script.detached) await removeSourceFromDisk(bound.handle, sourceName, hit.script.srcKind)
@@ -2292,7 +2242,13 @@ export const StageplayWorkspace = forwardRef<
       activeScriptId,
       activeAssetId: cleaned.workspace.activeAssetId,
     }
-    commitWorkspace(next)
+    const placed = relocatedExplorer(next, [command])
+    commitWorkspace(placed && serverKnown ? withExplorer(next, placed) : next)
+    if (placed && !serverKnown && bound) {
+      void commitOrganization(placed).catch((error) =>
+        notify('文件夹归属未提交', { kind: 'error', detail: String(error) }),
+      )
+    }
 
     if (scriptId === bufferOwnerRef.current || scriptId === activeIdRef.current) {
       const opened = findScript(next, activeScriptId)
@@ -2310,11 +2266,19 @@ export const StageplayWorkspace = forwardRef<
     } finally { setProjectBusy(false) }
   }
 
-  const handleDeleteScript = async (scriptId: string) => {
-    const hit = findScript(workspaceRef.current, scriptId)
-    if (!hit) return
-    if (!(await confirmDialog({ message: `删除剧本「${hit.script.name}」及其各语言的译文 / 配音？`, danger: true }))) return
-    await deleteScriptWithAssets(scriptId)
+  const handleDeleteScripts = async (scriptIds: string[]) => {
+    const hits = scriptIds.flatMap((id) => {
+      const hit = findScript(workspaceRef.current, id)
+      return hit ? [hit] : []
+    })
+    if (!hits.length) return
+    const message = hits.length === 1
+      ? `删除「${hits[0]!.script.name}」及其各语言的译文 / 配音？`
+      : `删除 ${hits.length} 个剧本资源及其各语言的译文 / 配音？`
+    if (!(await confirmDialog({ message, danger: true }))) return
+    for (const hit of hits) {
+      if (!(await deleteScriptWithAssets(hit.script.id))) break
+    }
   }
 
   const handleDeleteAsset = (assetId: string) => {
@@ -2537,9 +2501,12 @@ export const StageplayWorkspace = forwardRef<
       case 'save':
         persistNow()
         return
-      case 'new-package':
-        void alertDialog('请使用「新建工程…」创建本地工程文件夹；不再支持仅存在于浏览器缓存的包。')
+      case 'rename-project': {
+        const id = workspaceRef.current.packages[0]?.id
+        if (id) handleRenameProject(id)
+        else void alertDialog('请先打开工程。')
         return
+      }
       case 'new-script':
         setNewFileMenuRequest((count) => count + 1)
         return
@@ -3357,24 +3324,31 @@ export const StageplayWorkspace = forwardRef<
       defaultPlacement: 'left' as const,
       defaultSize: 280,
       render: (dock) => (
-          <Explorer
-            workspace={workspace}
+          <StageplayExplorer
+            project={workspace.packages[0] ?? null}
+            organization={project && workspace.packages[0] ? (workspace.packages[0].explorer ?? emptyOrganization()) : null}
+            readOnly={!workspace.packages[0] || serviceSession.binding?.handle.client.snapshot.role === 'viewer'}
             activeScriptId={workspace.activeScriptId}
             activeAssetId={workspace.activeAssetId}
-            boundPackageId={project?.manifest.id ?? null}
-            boundFolderName={project?.folderName ?? null}
+            newFileMenuRequest={newFileMenuRequest}
+            renameRequest={renameRequest}
             onOpenScript={openScript}
             onOpenAsset={openAsset}
-            onTogglePackage={handleTogglePackage}
+            onCreate={handleExplorerCreate}
+            onRename={handleShellRename}
+            onDelete={(ids) => {
+              void handleDeleteScripts(ids)
+            }}
+            onOrganize={(next, label) => {
+              void commitOrganization(next).catch((error) =>
+                notify(
+                  error instanceof ServiceError && error.code === 'commit_uncertain' ? `${label}结果待确认` : `${label}未提交`,
+                  { kind: 'error', detail: String(error) },
+                ),
+              )
+            }}
+            onRenameProject={handleRenameProject}
             onToggleAssets={handleToggleAssets}
-            onNewPackage={handleNewPackage}
-            onNewFile={handleNewFile}
-            onCommitCreatedName={handleCommitCreatedName}
-            newFileMenuRequest={newFileMenuRequest}
-            onRenamePackage={handleRenamePackage}
-            onRenameScript={handleRenameScript}
-            onDeletePackage={handleDeletePackage}
-            onDeleteScript={handleDeleteScript}
             onDeleteAsset={handleDeleteAsset}
             onNewAssetFolder={handleNewAssetFolder}
             onDeleteAssetFolder={handleDeleteAssetFolder}
@@ -3385,9 +3359,7 @@ export const StageplayWorkspace = forwardRef<
               void handleGeneratePlaceholderVoice(scriptId)
             }}
             onDropIntoFolder={handleDropIntoFolder}
-            placement={dock.placement}
-            onTitlePointerDown={dock.onTitlePointerDown}
-            onRedock={dock.onRedock}
+            dock={dock}
           />
       ),
     },

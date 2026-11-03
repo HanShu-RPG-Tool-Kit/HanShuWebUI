@@ -7,7 +7,7 @@
 | 概念 | 职责 | 定义位置 |
 | --- | --- | --- |
 | 资源类型 | 文件格式、扩展名、约定保存目录 | `src/resourceTypes.ts` 的 `RESOURCE_TYPES` |
-| 业务分类 | 可以包含哪些资源类型；允许哪些导入转换格式 | 同文件 `GAMEPLAY_CATEGORIES` |
+| 业务分类 | 可以包含哪些资源类型；允许哪些导入转换格式 | 同文件 `GAMEPLAY_CATEGORIES` / `AUDIOVISUAL_CATEGORIES` / `STAGEPLAY_CATEGORIES`，经 `src/project/organizationDomains.ts` 注册 |
 | 物理目录 | 工程读写、服务端版本与 PAK 路径的依据 | `sourcePathOf` / `sourceRelativePath` |
 | 视图项目 | 共享整理文件夹、筛选分组、内置脚本、资源库表视图、脚本启动列表入口 | 各自有明确语义，不能据图标推断落盘行为；启动列表虚入口映射固定 `load.json` |
 
@@ -17,9 +17,9 @@
 
 普通源资源保持扁平，例如 `src/items/宝刀.item`、`src/quest/序章.quest`。脚本有真实类型目录：`src/script/<common|goal|kit|shop|actor|player>/<名字>.js`。创作资料使用 `meta/docs`、`meta/voice` 等约定目录。读取工程时校验完整路径，无法由源文件模型往返表示的嵌套路径明确报错，绝不丢掉父目录后另存到分类根。
 
-剧本工作区只展示并新建**剧本类**源资源：`src/hanshu/`、`src/character/` 与 `meta/`（文档、配音方案与服务）。全部脚本（含通用 / 玩家 / goal / kit / shop / actor）以及任务、地图、商店、物品、礼包、演员、声誉、BOSS 血条由游戏性或视听工作区管理；剧本资源树不列出它们，新建菜单也不提供对应类型。它不展示游戏性的共享整理树。
+剧本工作区只展示并新建**剧本类**源资源：`src/hanshu/`、`src/character/` 与 `meta/`（文档、配音方案与服务）。全部脚本（含通用 / 玩家 / goal / kit / shop / actor）以及任务、地图、商店、物品、礼包、演员、声誉、BOSS 血条由游戏性或视听工作区管理；剧本资源树不列出它们，新建菜单也不提供对应类型，也不显示其他工作区的文件夹。分类取自 `STAGEPLAY_CATEGORIES`；`assets/` 真实目录由临时附加件展示，见[通用资源管理器底座](#explorer-shell)。
 
-游戏性里用户创建的文件夹是**共享虚拟文件夹**。新建、移动、重命名和删除整理文件夹不会创建或搬动磁盘目录。`assets/` 文件夹则是真实目录。脚本的内置类型分类是真实目录，跨类型移动脚本会改变工程路径与运行时类型；不得把它误解成普通整理操作。
+剧本、游戏性与视听效果三个工作区里用户创建的文件夹，语义完全一致：都是**共享虚拟文件夹**，只整理归属。新建、移动、重命名和删除整理文件夹不会创建或搬动磁盘目录，源文件路径（`sourcePathOf`）不变；例如放进「汉书剧本 / 第一章」的剧本仍保存在 `src/hanshu/序章.hs`。剧本 `assets/` 下的文件夹则是真实目录，不是虚拟文件夹。脚本的内置类型分类是真实目录，跨类型移动脚本会改变工程路径与运行时类型；不得把它误解成普通整理操作。
 
 任务的单／多进度是按正文 `format` 分组的虚拟视图，不是目录。分类根的两组显示尚未归入整理文件夹的任务；已整理任务显示在其文件夹内，避免同一资源在树中出现两个相同身份的行。物品／实体表视图、内置脚本页面也不作为源文件保存。通用／玩家分类下的「通用启动列表」「玩家启动列表」是固定虚入口，正文落在 `src/script/<common|player>/load.json`，详见[脚本资源](#script-resources)。
 
@@ -29,13 +29,15 @@
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "folders": [
-    {"key": "唯一文件夹标识", "name": "装备", "package": "items", "parentId": null}
+    {"key": "唯一文件夹标识", "name": "装备", "category": "items", "parentId": null}
   ],
   "placements": {"src/items/宝刀.item": "唯一文件夹标识"}
 }
 ```
+
+`category` 是文件夹所属业务分类，必须是已注册组织域中允许文件夹的分类：游戏性分类、剧本分类（`hanshu` / `character` / `meta`）、有原生格式的视听分类。旧工程的 `version: 1` 用 `package` 字段表示同一含义，读取兼容；组织被修改后统一写回 v2。不同工作区的文件夹共存于同一文件，各工作区只替换自己域的文件夹。
 
 `placements` 使用规范工程相对路径，不使用客户端源文件 ID，也不修改物品／实体等运行时 ID。文件夹父链允许指向可整理的固定分类键，例如 `section:script:kit`、`section:level:templates` 和 `section:level:dynamic-nav`。固定分类定义由资源管理器与元数据校验共用；静态导航器等只读视图不能作为共享父文件夹。文档直接位于固定分类时不额外保存归属，仅用户创建的整理文件夹和其归属写入共享元数据。不接受循环、跨分类父链、同级重名、缺失父级或与脚本真实类型矛盾的归属。暂未保存的文件可以先登记归属；其他客户端在源文件提交前只会看到空文件夹。
 
@@ -60,12 +62,12 @@
 
 ## 视听效果
 
-视听效果工作区分类在 `AUDIOVISUAL_CATEGORIES`，与 `GAMEPLAY_CATEGORIES` 并列。当前仅 **BOSS血条**：原生格式 `.bossbar`，物理目录 `src/bossbars/`，导出到 PAK 的 `bossbars/`。不要把视听分类塞进游戏性分类表。详见[视听效果工作区](#audiovisual-workspace)。
+视听效果工作区分类在 `AUDIOVISUAL_CATEGORIES`，与 `GAMEPLAY_CATEGORIES` 并列。顶层顺序为用户界面、**BOSS血条**、头顶标记，其后为人类外观组件、人类动作、人类表情、过场动画、物品、建筑装饰、粒子、雾、天空盒、背景音乐、音效、文本本地化、配音；各分类带专属资源树图标。目前仅 **BOSS血条** 有原生格式：`.bossbar`，物理目录 `src/bossbars/`，导出到 PAK 的 `bossbars/`。其余分类为占位，`types` / `imports` 为空，待后续接入资源类型。有原生格式的视听分类支持共享虚拟文件夹；占位分类不能建文件夹，协议校验会拒绝。不要把视听分类塞进游戏性分类表。详见[视听效果工作区](#audiovisual-workspace)。
 
 ## 新增资源类型
 
 1. 在 `RESOURCE_TYPES` 声明扩展名、物理目录和业务分类。
-2. 在对应工作区分类表（`GAMEPLAY_CATEGORIES` / `AUDIOVISUAL_CATEGORIES`）的 `types` / `imports` 分别声明原生格式与转换输入。
+2. 在对应工作区分类表（`GAMEPLAY_CATEGORIES` / `AUDIOVISUAL_CATEGORIES` / `STAGEPLAY_CATEGORIES`）的 `types` / `imports` 分别声明原生格式与转换输入。一个资源类型只能属于一个分类。
 3. 接入新建 seed、编辑器和编译器；新类型需要专门内容校验时由对应解析器处理。
 4. 通过 `sourcePathOf` 构建路径，禁止重新拼一套分类目录或按裸名字建立跨类型索引。
 5. 若增加的是视图，明确它是否属于共享组织、是否筛选资源、是否只读，不能伪装成能落盘的新文件类型。

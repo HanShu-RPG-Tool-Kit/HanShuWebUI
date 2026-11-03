@@ -4,6 +4,8 @@ import {resourceBaseError} from '../../resourceNames'
 import {GAMEPLAY_CATEGORIES, RESOURCE_TYPES, categoryExtensions, resourceNameKey} from '../../resourceTypes'
 import {scriptTypeFromSection,type ScriptType} from '../../scriptResources/types'
 import { randomId } from '../../project/crypto'
+import { domainFolders, type ExplorerOrganization } from '../../project/explorerOrganization'
+import { GAMEPLAY_DOMAIN } from '../../project/organizationDomains'
 import { stampDocument, type FlowFolder, type FlowPackageId, type FlowWorkspaceState } from './storage'
 import {
   isQuestFileName,
@@ -45,6 +47,10 @@ export {
 export type FlowEntry =
   | { kind: 'package'; package: FlowPackageId }
   | { kind: 'folder' | 'document'; key: string }
+
+/** 共享组织里属于游戏性分类的文件夹；视听等其他域的文件夹不进入本树。 */
+export const gameplayFolders = (value?: ExplorerOrganization): FlowFolder[] =>
+  domainFolders(value, GAMEPLAY_DOMAIN) as FlowFolder[]
 
 export const FLOW_PACKAGE_ORDER = Object.keys(GAMEPLAY_CATEGORIES) as FlowPackageId[]
 export const FLOW_PACKAGE_NAMES = Object.fromEntries(Object.entries(GAMEPLAY_CATEGORIES).map(([id,def])=>[id,def.name])) as Record<FlowPackageId,string>
@@ -192,9 +198,9 @@ export function ensurePackageSections(state: FlowWorkspaceState): FlowWorkspaceS
     if (!parsed) return folder
     const def = sectionDefs(parsed.package).find((item) => item.id === parsed.sectionId)!
     const parentId = def.parentId ? sectionFolderKey(parsed.package, def.parentId) : null
-    if (folder.name === def.name && folder.parentId === parentId && folder.package === parsed.package) return folder
+    if (folder.name === def.name && folder.parentId === parentId && folder.category === parsed.package) return folder
     changed = true
-    return { ...folder, name: def.name, parentId, package: parsed.package }
+    return { ...folder, name: def.name, parentId, category: parsed.package }
   })
   for (const pkg of FLOW_PACKAGE_ORDER) {
     for (const section of sectionDefs(pkg)) {
@@ -203,7 +209,7 @@ export function ensurePackageSections(state: FlowWorkspaceState): FlowWorkspaceS
       if (byKey.has(key)) continue
       changed = true
       const parentId = section.parentId ? sectionFolderKey(pkg, section.parentId) : null
-      folders.push({ key, name: section.name, parentId, package: pkg })
+      folders.push({ key, name: section.name, parentId, category: pkg })
     }
   }
   return changed ? { ...state, folders } : state
@@ -216,7 +222,7 @@ export function entryPackage(state: FlowWorkspaceState, entry: FlowEntry): FlowP
   if (entry.kind === 'folder') {
     if (isQuestViewKey(entry.key)) return 'quest'
     if (isLevelStaticViewKey(entry.key) || isLevelStaticKey(entry.key)) return 'level'
-    return state.folders.find((folder) => folder.key === entry.key)?.package ?? 'quest'
+    return state.folders.find((folder) => folder.key === entry.key)?.category ?? 'quest'
   }
   if (isLevelStaticKey(entry.key)) return 'level'
   return state.documents.find((document) => document.key === entry.key)?.package ?? 'quest'
@@ -270,14 +276,14 @@ export function requireAvailableName(
   requireFolder(state, parent)
   if (parent !== null) {
     const folder = state.folders.find((item) => item.key === parent)
-    if (!folder || folder.package !== pkg) throw new Error('目标文件夹不在当前分类中。')
+    if (!folder || folder.category !== pkg) throw new Error('目标文件夹不在当前分类中。')
   }
   const same = (other: string) => resourceNameKey(other) === resourceNameKey(name)
   if (kind === 'document' && pkg === 'level' && name.includes('$')) {
     throw new Error('地图资源名不能包含 $（导出 ID 用它分隔模板与子项）。')
   }
   if (kind === 'folder') {
-    if (state.folders.some((folder) => folder.key !== except && folder.package === pkg && folder.parentId === parent && same(folder.name))) {
+    if (state.folders.some((folder) => folder.key !== except && folder.category === pkg && folder.parentId === parent && same(folder.name))) {
       throw new Error('此位置已有同名文件夹。')
     }
     return
@@ -302,7 +308,7 @@ export function uniqueDocumentName(state: FlowWorkspaceState, name: string, pkg:
 export function addFlowFolder(state: FlowWorkspaceState, value: string, pkg: FlowPackageId, parentId: string | null) {
   const name = resourceName(value)
   requireAvailableName(state, name, pkg, parentId, undefined, 'folder')
-  const folder = { key: randomId(), name, parentId, package: pkg }
+  const folder: FlowFolder = { key: randomId(), name, parentId, category: pkg }
   return { state: { ...state, folders: [...state.folders, folder] }, folder }
 }
 
@@ -317,7 +323,7 @@ export function renameFlowEntry(state: FlowWorkspaceState, entry: FlowEntry, val
   if (!item) throw new Error('资源不存在。')
   const ext = entry.kind === 'document' ? documentExtOf(item as { package: FlowPackageId; name: string }) : false
   const name = resourceName(value, ext)
-  const pkg = item.package
+  const pkg = 'category' in item ? item.category : item.package
   const parent = entry.kind === 'folder' ? state.folders.find((folder) => folder.key === entry.key)!.parentId : state.documents.find((document) => document.key === entry.key)!.folderId ?? null
   requireAvailableName(state, name, pkg, parent, entry.key, entry.kind === 'folder' ? 'folder' : 'document')
   return entry.kind === 'folder'
@@ -335,7 +341,7 @@ export function canMoveFlowEntry(state: FlowWorkspaceState, entry: FlowEntry, pk
   if (parent !== null && isBuiltinScriptFolder(parent)) return false
   if (parent !== null) {
     const folder = state.folders.find((item) => item.key === parent)
-    if (!folder || folder.package !== pkg) return false
+    if (!folder || folder.category !== pkg) return false
   }
   if (entry.kind === 'document') {
     const document = state.documents.find((item) => item.key === entry.key)
@@ -352,7 +358,7 @@ export function canMoveFlowEntry(state: FlowWorkspaceState, entry: FlowEntry, pk
     if (isScriptDocument(document)) return packageAllowsScripts(pkg)
     return packageAllowsFlows(pkg)
   }
-  if (!state.folders.some((folder) => folder.key === entry.key && folder.package === pkg)) return false
+  if (!state.folders.some((folder) => folder.key === entry.key && folder.category === pkg)) return false
   let ancestor = parent
   while (ancestor !== null) {
     if (ancestor === entry.key) return false
@@ -375,7 +381,7 @@ function folderSubtreeKeys(state: FlowWorkspaceState, folderKey: string): Set<st
 function retargetPackageSubtree(state: FlowWorkspaceState, folderKeys: ReadonlySet<string>, pkg: FlowPackageId): FlowWorkspaceState {
   return {
     ...state,
-    folders: state.folders.map((folder) => folderKeys.has(folder.key) ? { ...folder, package: pkg } : folder),
+    folders: state.folders.map((folder) => folderKeys.has(folder.key) ? { ...folder, category: pkg } : folder),
     documents: state.documents.map((document) => document.folderId && folderKeys.has(document.folderId) ? { ...document, package: pkg } : document),
   }
 }
@@ -402,7 +408,7 @@ export function moveFlowEntry(state: FlowWorkspaceState, entry: FlowEntry, pkg: 
     const movedFolderKeys = folderSubtreeKeys(state, entry.key)
     const next = {
       ...state,
-      folders: state.folders.map((folder) => folder.key === entry.key ? { ...folder, parentId: parent, package: pkg } : folder),
+      folders: state.folders.map((folder) => folder.key === entry.key ? { ...folder, parentId: parent, category: pkg } : folder),
     }
     const moved = retargetPackageSubtree(next, movedFolderKeys, pkg)
     for (const doc of moved.documents) {

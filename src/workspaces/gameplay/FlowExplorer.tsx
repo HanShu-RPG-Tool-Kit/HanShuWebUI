@@ -14,6 +14,7 @@ import {
   type NodeMenuItem,
 } from "../../nodeEditor/ContextMenu";
 import { droppedFiles, shouldAcceptDrop } from "../../drag/dragPayload";
+import { ExplorerShellFrame, ExplorerTreeRow } from "../../explorerShell";
 import {
   FLOW_PACKAGE_NAMES,
   FLOW_PACKAGE_ORDER,
@@ -647,7 +648,7 @@ export function FlowExplorer({
     if (query) {
       for (const pkg of FLOW_PACKAGE_ORDER) {
         state.folders
-          .filter((f) => f.package === pkg)
+          .filter((f) => f.category === pkg)
           .forEach((f) => {
             if (
               folderPath(state, pkg, f.key).toLocaleLowerCase().includes(query)
@@ -831,7 +832,7 @@ export function FlowExplorer({
         pkg,
       );
       for (const folder of state.folders
-        .filter((f) => f.package === pkg && f.parentId === parent)
+        .filter((f) => f.category === pkg && f.parentId === parent)
         .sort((a, b) => compareFolders(pkg, a, b))) {
         const entry: FlowEntry = { kind: "folder", key: folder.key },
           id = entryId(entry);
@@ -1599,11 +1600,11 @@ export function FlowExplorer({
       parent: null as string | null,
     }));
     const folders = state.folders
-      .filter((f) => canMoveFlowEntry(state, edit.entry, f.package, f.key))
+      .filter((f) => canMoveFlowEntry(state, edit.entry, f.category, f.key))
       .map((f) => ({
-        key: `${f.package}:${f.key}`,
-        label: folderPath(state, f.package, f.key),
-        pkg: f.package,
+        key: `${f.category}:${f.key}`,
+        label: folderPath(state, f.category, f.key),
+        pkg: f.category,
         parent: f.key,
       }));
     return [...roots, ...folders];
@@ -2043,40 +2044,15 @@ export function FlowExplorer({
     (!allowsQuest && !newDocumentMode);
 
   return (
-    <aside className="flow-library" aria-label="故事流程资源管理器">
-      <div
-        className={`flow-explorer-heading${onTitlePointerDown ? " is-draggable" : ""}`}
-        onPointerDown={(event) => {
-          if (
-            event.target instanceof Element &&
-            event.target.closest("button, input, label, a, textarea, select")
-          )
-            return;
-          onTitlePointerDown?.(event);
-        }}
-      >
-        <strong
-          title={
-            onTitlePointerDown
-              ? placement === "float"
-                ? "拖动标题可停靠到边缘；松手在中间则保持弹层"
-                : "拖动标题可停靠到左、右、上、下，拖到中间变成弹层"
-              : "资源管理器"
-          }
-        >
-          资源管理器
-        </strong>
-        <div className="flow-explorer-tools">
-          {onRedock && (
-            <button
-              type="button"
-              className="panel-dock-redock"
-              title="停靠回上次的边缘"
-              onClick={onRedock}
-            >
-              停靠
-            </button>
-          )}
+    <ExplorerShellFrame
+      label="故事流程资源管理器"
+      classes={{
+        root: "flow-library",
+        heading: "flow-explorer-heading",
+        tools: "flow-explorer-tools",
+      }}
+      dock={{ placement, onTitlePointerDown, onRedock }}
+      tools={
           <div className="flow-explorer-actions">
             <button
               type="button"
@@ -2140,8 +2116,8 @@ export function FlowExplorer({
               <Icon kind="collapse" />
             </button>
           </div>
-        </div>
-      </div>
+      }
+    >
       <input
         className="flow-search"
         placeholder="筛选资源…"
@@ -2256,18 +2232,33 @@ export function FlowExplorer({
                                             : "document";
           return (
             <div key={id} role="none">
-              <div
-                ref={(element) => {
+              <ExplorerTreeRow
+                rowRef={(element) => {
                   if (element) elements.current.set(id, element);
                   else elements.current.delete(id);
                 }}
-                className={`flow-resource-row${isSelected ? " selected" : ""}${row.entry.kind === "document" && row.entry.key === state.activeKey ? " is-open" : ""}${dropTarget === id ? " drop-target" : ""}${builtinFolder || builtinDoc || itemTableDoc || scriptLoadDoc || questView || staticRow ? " is-builtin" : ""}`}
-                role="treeitem"
-                aria-level={row.depth + 1}
-                aria-selected={isSelected}
-                aria-expanded={
-                  folder ? !!search || expanded.has(id) : undefined
-                }
+                depth={row.depth}
+                indent={TREE_INDENT}
+                expanded={folder ? !!search || expanded.has(id) : undefined}
+                classes={{
+                  row: "flow-resource-row",
+                  twist: "flow-resource-twist",
+                }}
+                state={{
+                  selected: isSelected,
+                  open:
+                    row.entry.kind === "document" &&
+                    row.entry.key === state.activeKey,
+                  dropTarget: dropTarget === id,
+                  builtin:
+                    builtinFolder ||
+                    builtinDoc ||
+                    itemTableDoc ||
+                    scriptLoadDoc ||
+                    questView ||
+                    staticRow,
+                }}
+                icon={<Icon kind={iconKind} />}
                 aria-disabled={disabled}
                 tabIndex={
                   isFocused ||
@@ -2276,7 +2267,6 @@ export function FlowExplorer({
                     ? 0
                     : -1
                 }
-                style={{ paddingLeft: 6 + row.depth * TREE_INDENT }}
                 title={
                   builtinDoc ||
                   builtinFolder ||
@@ -2354,10 +2344,6 @@ export function FlowExplorer({
                 onDragLeave={() => setDropTarget(null)}
                 onDrop={(event) => onRowDrop(event, row)}
               >
-                <span className="flow-resource-twist" aria-hidden>
-                  {folder ? (!!search || expanded.has(id) ? "▾" : "▸") : ""}
-                </span>
-                <Icon kind={iconKind} />
                 {renamingCreated && created ? (
                   <form
                     className="flow-resource-new"
@@ -2421,7 +2407,7 @@ export function FlowExplorer({
                 ) : (
                   <span className="flow-resource-name">{row.name}</span>
                 )}
-              </div>
+              </ExplorerTreeRow>
               {isEditing && edit.mode === "folder" && (
                 <form
                   className="flow-resource-new"
@@ -2559,6 +2545,6 @@ export function FlowExplorer({
           onClose={() => setNewMenu(null)}
         />
       )}
-    </aside>
+    </ExplorerShellFrame>
   );
 }

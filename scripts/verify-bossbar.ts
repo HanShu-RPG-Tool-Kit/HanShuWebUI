@@ -46,7 +46,8 @@ import {
 } from '../src/workspaces/audiovisual/bossbar/document'
 import { base64ToBytes, decodeBase64, encodeBase64, normalizeBase64, pngInfo } from '../src/workspaces/audiovisual/bossbar/png'
 import { bossbarCompiler } from '../src/export/compile/compilers/bossbar'
-import { resourceTypeForExtension, AUDIOVISUAL_CATEGORIES } from '../src/resourceTypes'
+import { resourceTypeForExtension, AUDIOVISUAL_CATEGORIES, AUDIOVISUAL_CATEGORY_ORDER } from '../src/resourceTypes'
+import { EXPLORER_ICON_KINDS } from '../src/explorerIcons'
 import { sourcePathOf } from '../src/workspace'
 import { findNewFileType } from '../src/newFileTypes'
 
@@ -435,6 +436,21 @@ console.log('通过：编译器产出唯一 client 文档、无外部图片')
 assert.equal(resourceTypeForExtension('.bossbar')?.directory, 'src/bossbars')
 assert.equal(sourcePathOf({ name: 'demo.bossbar' }), 'src/bossbars/demo.bossbar')
 assert.equal(AUDIOVISUAL_CATEGORIES.bossbar.name, 'BOSS血条')
+assert.equal(AUDIOVISUAL_CATEGORIES.bossbar.icon, 'bossbar')
+assert.equal(AUDIOVISUAL_CATEGORIES.ui.name, '用户界面')
+assert.equal(AUDIOVISUAL_CATEGORIES.overhead.name, '头顶标记')
+assert.equal(AUDIOVISUAL_CATEGORIES.overhead.icon, 'av-overhead')
+assert.equal(AUDIOVISUAL_CATEGORIES.voiceover.name, '配音')
+assert.deepEqual(AUDIOVISUAL_CATEGORIES.ui.types, [])
+assert.deepEqual(AUDIOVISUAL_CATEGORIES.overhead.types, [])
+assert.deepEqual(AUDIOVISUAL_CATEGORY_ORDER.slice(0, 3), ['ui', 'bossbar', 'overhead'])
+assert.equal(AUDIOVISUAL_CATEGORY_ORDER.length, 16)
+for (const id of AUDIOVISUAL_CATEGORY_ORDER) {
+  assert.ok(
+    (EXPLORER_ICON_KINDS as readonly string[]).includes(AUDIOVISUAL_CATEGORIES[id].icon),
+    `视听分类 ${id} 的图标未登记`,
+  )
+}
 assert.equal(findNewFileType('bossbar')?.ext, '.bossbar')
 const seed = findNewFileType('bossbar')!.seed('demo', {
   goalDefinitions: [],

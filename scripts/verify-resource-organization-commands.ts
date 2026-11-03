@@ -12,7 +12,7 @@ const otherSource = 'src/items/pear.item'
 const language = 'assets/zh_cn/lang_item/apple.lang'
 const nextLanguage = 'assets/zh_cn/lang_item/renamed.lang'
 const organization: ExplorerOrganization = {
-  version: 1, folders: [{ key: 'folder', name: 'Food', package: 'items', parentId: null }],
+  version: 2, folders: [{ key: 'folder', name: 'Food', category: 'items', parentId: null }],
   placements: { [source]: 'folder', [otherSource]: 'folder' },
 }
 

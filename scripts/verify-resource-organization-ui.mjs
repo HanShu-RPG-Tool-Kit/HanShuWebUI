@@ -7,20 +7,31 @@ import {loginProject,submission,closeCollaboration} from './project-ui-helpers.m
 import {until} from './progress-collaboration-helpers.mjs'
 const row=(page,name)=>page.locator('.app-workspace-pane.active [role=treeitem]').filter({has:page.locator(`.flow-resource-name:text-is(${JSON.stringify(name)})`)})
 const metadataRead=url=>url.pathname==='/api/files/content'&&url.searchParams.get('path')==='meta/explorer.json'
+/** 游戏性 F2 / 双击改名已改为 promptDialog（标题「重命名」），不再是行内 input。 */
+async function renamePrompt(page){
+ const dialog=page.getByRole('dialog',{name:'重命名',exact:true})
+ await dialog.waitFor()
+ return dialog.locator('input')
+}
 async function expand(page,name){const target=row(page,name);await target.waitFor();if(await target.getAttribute('aria-expanded')!=='true')await target.click()}
 async function committed(page,action){
  const response=page.waitForResponse(r=>new URL(r.url()).pathname==='/api/files/commit'&&r.request().method()==='POST')
  await action();const receipt=await(await response).json();assert.equal(receipt.status,'committed',JSON.stringify(receipt));return receipt
 }
+/** 组织提交 HTTP 返回后，游戏性仍可能短暂 busy（禁用右键菜单）；等「新建文件夹」可点再继续。 */
+async function waitExplorerReady(page){
+ const button=page.locator('.app-workspace-pane.active').getByRole('button',{name:'新建文件夹',exact:true})
+ await until(async()=>(await button.count())>0&&!(await button.isDisabled()),'gameplay explorer still busy after organization commit')
+}
 async function newFolder(page,parent,name){
  await row(page,parent).click();await page.locator('.app-workspace-pane.active').getByRole('button',{name:'新建文件夹',exact:true}).click()
  const input=page.getByRole('textbox',{name:'新文件夹名称',exact:true});await input.fill(name)
- await committed(page,()=>input.press('Enter'));await row(page,name).waitFor()
+ await committed(page,()=>input.press('Enter'));await row(page,name).waitFor();await waitExplorerReady(page)
 }
 async function renameFolder(page,before,after){
  await row(page,before).click();await page.keyboard.press('F2')
- const input=page.getByRole('textbox',{name:'资源名称',exact:true});await input.fill(after)
- await committed(page,()=>input.press('Enter'));await row(page,after).waitFor()
+ const input=await renamePrompt(page);await input.fill(after)
+ await committed(page,()=>input.press('Enter'));await row(page,after).waitFor();await waitExplorerReady(page)
 }
 // Delay a real S snapshot after it was fetched, preserving the original response/version.
 async function holdMetadata(page,expectedFolder){
@@ -48,14 +59,13 @@ try{
 
  for(const [page,name]of [[a,'author A'],[b,'author B']]){await loginProject(page,h.base,account.credential,name);await page.getByRole('tab',{name:'游戏性',exact:true}).click()}
  await a.getByRole('tab',{name:'剧本',exact:true}).click()
- for(const kind of ['common','kit'])assert.equal(await a.locator(`.app-workspace-pane.active .explorer-kind-row[title="src/script/${kind}"]`).count(),1)
- assert.equal(await a.locator('.app-workspace-pane.active button[title^="src/script/common/shared.js"]').count(),1)
- assert.equal(await a.locator('.app-workspace-pane.active button[title^="src/script/kit/shared.js"]').count(),1)
+ for(const name of ['汉书剧本','角色卡','创作资料'])assert.equal(await a.locator(`.app-workspace-pane.active .stageplay-explorer [role=treeitem][title="${name}"]`).count(),1)
+ assert.equal(await a.locator('.app-workspace-pane.active .stageplay-explorer [title^="src/script/"]').count(),0,'scripts belong to the gameplay tree')
  await a.getByRole('tab',{name:'游戏性',exact:true}).click()
  const folder=page=>page.locator('.app-workspace-pane.active [role=treeitem][title="共享章节"]')
  await folder(a).waitFor();await folder(b).waitFor()
  await folder(a).click();await a.keyboard.press('F2')
- const input=a.locator('.flow-resource-row input');await input.fill('共同章节');await input.press('Enter')
+ const input=await renamePrompt(a);await input.fill('共同章节');await input.press('Enter')
  await b.locator('.app-workspace-pane.active [role=treeitem][title="共同章节"]').waitFor({timeout:20000})
  let meta=JSON.parse(await readFile(join(h.root,'meta/explorer.json'),'utf8'))
  assert.equal(meta.folders[0].name,'共同章节');assert.equal(meta.placements['src/quest/example.quest'],'shared-folder')
@@ -72,7 +82,7 @@ try{
  const parentB=b.locator('.app-workspace-pane.active [role=treeitem][title="共同章节"]');if(await parentB.getAttribute('aria-expanded')!=='true')await parentB.click()
  // Rename a real source through the tree: its path placement and owned language file move atomically.
  const source=a.locator('.app-workspace-pane.active [role=treeitem][title="example.quest"]')
- assert.equal(await source.count(),1,'organized task must have exactly one tree identity');await source.click();await a.keyboard.press('F2');const rename=a.getByRole('textbox',{name:'资源名称',exact:true});await rename.fill('renamed');await rename.press('Enter')
+ assert.equal(await source.count(),1,'organized task must have exactly one tree identity');await source.click();await a.keyboard.press('F2');const rename=await renamePrompt(a);await rename.fill('renamed');await rename.press('Enter')
  await b.locator('.app-workspace-pane.active [role=treeitem][title="renamed.quest"]').waitFor({timeout:20000})
  meta=JSON.parse(await readFile(join(h.root,'meta/explorer.json'),'utf8'));assert.equal(meta.placements['src/quest/renamed.quest'],'shared-folder');assert(!meta.placements['src/quest/example.quest'])
  assert((await h.files(owner.token)).entries.some(e=>e.path==='assets/zh_cn/lang_quest/renamed.lang'))
@@ -134,7 +144,7 @@ try{
  try{
   await renameFolder(b,'远端归档','对端保留版本');await conflictRead.wait()
   await row(a,'远端归档').click();await a.keyboard.press('F2')
-  const staleName=a.getByRole('textbox',{name:'资源名称',exact:true});await staleName.fill('本机冲突版本')
+  const staleName=await renamePrompt(a);await staleName.fill('本机冲突版本')
   const rejected=a.waitForResponse(r=>new URL(r.url()).pathname==='/api/files/commit'&&r.request().method()==='POST')
   await staleName.press('Enter');const rejection=await(await rejected).json()
   assert.equal(rejection.status,'rejected');assert.equal(rejection.error.code,'conflict')

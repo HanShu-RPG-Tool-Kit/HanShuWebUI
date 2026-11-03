@@ -89,7 +89,7 @@ export const WORKSPACE_GROUP_ORDER = [...SOURCE_KIND_ORDER, 'meta'] as const
 /** 是否属于剧本资源树应展示的源文件 */
 export function isStageplayExplorerSource(file: {
   name: string
-  srcKind?: ScriptType
+  srcKind?: string | null
 }): boolean {
   const kind = sourceKindOf(file.name, file.srcKind)
   if (kind === 'root') return true
@@ -237,8 +237,9 @@ export type Project = {
   /** 持久化字段名仍为 scripts，含义是全部源文件 */
   scripts: SourceFile[]
   assets: AssetFile[]
-  /** 显式文件夹（可为空），如 assets/voice/zh */
+  /** 共享资源组织投影（`meta/explorer.json`）：各域的虚拟文件夹与放置 */
   explorer?: ExplorerOrganization
+  /** 显式 assets 真实目录（可为空），如 assets/voice/zh */
   assetFolders: string[]
 }
 
@@ -246,6 +247,10 @@ export type Project = {
 export type ScriptPackage = Project
 
 export type Workspace = {
+  /**
+   * 历史字段名。一个窗口只绑定一个工程，界面只展示 `packages[0]`；
+   * 没有「工程内多包」。保留数组是为了不打断旧草稿、会话与协作通道的读取。
+   */
   packages: Project[]
   activeScriptId: string | null
   /** 当前选中的资产（与脚本互斥展示） */

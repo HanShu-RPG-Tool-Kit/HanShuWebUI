@@ -50,10 +50,28 @@ export const EXPLORER_ICON_KINDS = [
   'kit',
   'shop',
   'bossbar',
+  'av-ui',
+  'av-overhead',
+  'av-appearance',
+  'av-action',
+  'av-expression',
+  'av-cutscene',
+  'av-prop',
+  'av-decoration',
+  'av-particle',
+  'av-fog',
+  'av-skybox',
+  'av-bgm',
+  'av-sfx',
+  'av-localization',
+  'av-voiceover',
   'image',
   'audio',
   'json',
   'file',
+  'new-file',
+  'new-folder',
+  'collapse',
 ] as const
 
 export type ExplorerIconKind = (typeof EXPLORER_ICON_KINDS)[number]
@@ -94,10 +112,31 @@ const PATHS: Record<ExplorerIconKind, string> = {
   shop: 'M3 10h18L19 3H5z M5 10v11h14V10 M9 21v-7h6v7',
   // BOSS 血条：扁长条 + 刻度，与商店（摊位）/ 物品（宝石）区分
   bossbar: 'M3 10h18v4H3z M5 12h2 M10 12h4 M17 12h2 M12 6v2 M12 16v2',
+  // 视听顶层分类（与文件类型图标区分；占位分类也有专属形状）
+  'av-ui': 'M3 4h18v14H3z M3 8h18 M7 12h4 M7 15h6',
+  // 头顶标记：头像轮廓 + 上方感叹号（RPG NPC !/? 一类）
+  'av-overhead': 'M12 14a3.5 3.5 0 100-7 3.5 3.5 0 000 7z M6.5 21v-1.5a5.5 5.5 0 0111 0V21 M12 2v3.5 M12 7h.01',
+  'av-appearance': 'M12 11a4 4 0 100-8 4 4 0 000 8z M5 21v-2a5 5 0 015-5h4a5 5 0 015 5v2 M9 14l-2 4 M15 14l2 4',
+  'av-action': 'M13 3l2 4h4l-3 3 1 4-4-2-4 2 1-4-3-3h4z M6 14l-2 7 M18 14l2 7 M10 21h4',
+  'av-expression': 'M12 21a9 9 0 100-18 9 9 0 000 18z M8.5 10h.01 M15.5 10h.01 M8.5 15c1.2 1.5 2.8 2 3.5 2s2.3-.5 3.5-2',
+  'av-cutscene': 'M4 6h12v12H4z M16 8l4-2v12l-4-2z M7 10h2 M7 14h4',
+  'av-prop': 'M12 3l8 4v10l-8 4-8-4V7z M4 7l8 4 8-4 M12 11v10',
+  'av-decoration': 'M4 21V9l8-6 8 6v12 M10 21v-6h4v6 M8 12h2 M14 12h2',
+  'av-particle': 'M12 3v3 M12 18v3 M3 12h3 M18 12h3 M5.6 5.6l2.1 2.1 M16.3 16.3l2.1 2.1 M18.4 5.6l-2.1 2.1 M7.7 16.3l-2.1 2.1 M12 12l.01.01',
+  'av-fog': 'M3 10c2-2 4-2 6 0s4 2 6 0 4-2 6 0 M3 15c2-2 4-2 6 0s4 2 6 0 4-2 6 0 M5 20h14',
+  'av-skybox': 'M3 14c0-5 4-9 9-9s9 4 9 9 M3 14h18 M7 14c0 2.5 2.2 4.5 5 4.5s5-2 5-4.5',
+  'av-bgm': 'M9 18V5l10-2v13 M9 18a3 3 0 11-6 0 3 3 0 016 0z M19 16a3 3 0 11-6 0 3 3 0 016 0z M14 8l5-1',
+  'av-sfx': 'M4 10h4l5-4v12l-5-4H4z M16 9l2 2-2 2 M19 7l3 3-3 3',
+  'av-localization': 'M12 21a9 9 0 100-18 9 9 0 000 18z M3 12h18 M12 3c2.5 2.5 3.8 5.5 3.8 9s-1.3 6.5-3.8 9c-2.5-2.5-3.8-5.5-3.8-9S9.5 5.5 12 3z',
+  'av-voiceover': 'M12 3a3 3 0 00-3 3v6a3 3 0 006 0V6a3 3 0 00-3-3z M5 11a7 7 0 0014 0 M12 18v3',
   image: 'M3 4h18v16H3z M3 16l5-5 4 4 3-3 6 6 M15.5 9.5a1.5 1.5 0 100-3 1.5 1.5 0 000 3z',
   audio: 'M9 18V5l12-2v13 M9 18a3 3 0 11-6 0 3 3 0 016 0z M21 16a3 3 0 11-6 0 3 3 0 016 0z',
   json: 'M8 3H7a2 2 0 00-2 2v4a2 2 0 01-2 2 2 2 0 012 2v4a2 2 0 002 2h1 M16 3h1a2 2 0 012 2v4a2 2 0 002 2 2 2 0 00-2 2v4a2 2 0 01-2 2h-1',
   file: 'M5 2h9l5 5v15H5z M14 2v6h5',
+  // 资源管理器标题栏工具按钮（与游戏性 `Icon` 的 new / folder / collapse 同形）
+  'new-file': 'M5 2h9l5 5v5 M5 2v20h7 M14 2v6h5 M18 14v8 M14 18h8',
+  'new-folder': 'M2 5h6l2 2h12v12H2z M12 10v6 M9 13h6',
+  collapse: 'M4 3h16v14 M2 7h14v14H2z M5 14h8',
 }
 
 /**

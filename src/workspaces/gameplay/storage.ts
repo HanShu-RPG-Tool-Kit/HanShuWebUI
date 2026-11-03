@@ -16,7 +16,7 @@ export type FlowDocument = {
   createdAt?: string
   updatedAt?: string
 }
-export type FlowFolder = { key: string; name: string; parentId: string | null; package: FlowPackageId }
+export type FlowFolder = { key: string; name: string; parentId: string | null; category: FlowPackageId }
 export type FlowSplitDirection = 'horizontal' | 'vertical'
 
 /** 编辑组：一条页条及其当前页。 */
@@ -75,7 +75,8 @@ function readState(raw: string): FlowWorkspaceState {
   if (new Set(documents.map((d) => d.key)).size !== documents.length) throw new Error('草稿标识重复')
   const folders = state.folders ?? []
   if (!Array.isArray(folders) || !folders.every((f) => isObject(f) && typeof f.key === 'string' && typeof f.name === 'string' && (f.parentId === null || typeof f.parentId === 'string'))) throw new Error('文件夹结构不正确')
-  const typedFolders = (folders as FlowFolder[]).map((folder) => ({ ...folder, package: readPackage(folder.package) }))
+  // 旧草稿的文件夹分类字段叫 package
+  const typedFolders = (folders as Array<FlowFolder & { package?: unknown }>).map(({ package: legacy, ...folder }) => ({ ...folder, category: readPackage(folder.category ?? legacy) }))
   const parents = new Map(typedFolders.map((f) => [f.key, f.parentId]))
   if (parents.size !== folders.length || documents.some((d) => parents.has(d.key))) throw new Error('资源标识重复')
   for (const folder of typedFolders) {
@@ -89,14 +90,14 @@ function readState(raw: string): FlowWorkspaceState {
   for (const folder of typedFolders) {
     if (folder.parentId !== null) {
       const parent = typedFolders.find((item) => item.key === folder.parentId)
-      if (!parent || parent.package !== folder.package) throw new Error('文件夹分类不一致')
+      if (!parent || parent.category !== folder.category) throw new Error('文件夹分类不一致')
     }
   }
   if (documents.some((d) => d.folderId !== undefined && d.folderId !== null && (typeof d.folderId !== 'string' || !parents.has(d.folderId)))) throw new Error('流程所在文件夹不存在')
   if (documents.some((d) => {
     if (d.folderId === undefined || d.folderId === null) return false
     const folder = typedFolders.find((item) => item.key === d.folderId)
-    return !folder || folder.package !== d.package
+    return !folder || folder.category !== d.package
   })) throw new Error('流程分类与文件夹不一致')
   const activeKey = documents.some((d) => d.key === state.activeKey) ? state.activeKey as string : documents[0]?.key ?? null
   const docKeys = new Set(documents.map((document) => document.key))

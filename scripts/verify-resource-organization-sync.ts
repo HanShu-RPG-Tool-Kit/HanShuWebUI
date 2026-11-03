@@ -13,8 +13,8 @@ import { synchronizeProject } from '../src/project/syncProject'
 const path = EXPLORER_ORGANIZATION_PATH
 const sourcePath = 'src/items/apple.item'
 const organization = (name: string): ExplorerOrganization => ({
-  version: 1,
-  folders: [{ key: 'folder', name, package: 'items', parentId: null }],
+  version: 2,
+  folders: [{ key: 'folder', name, category: 'items', parentId: null }],
   placements: { [sourcePath]: 'folder' },
 })
 const original = organization('Original')
