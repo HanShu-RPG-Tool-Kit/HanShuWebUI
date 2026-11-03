@@ -8,6 +8,7 @@ import {
   type BossbarInspection,
 } from '../parse'
 import {
+  isDisplayRegion,
   isPaintable,
   type BossbarBox,
   type BossbarDiagnostic,
@@ -402,6 +403,28 @@ export function BossbarDesignView({
                 const index = document.components.findIndex((component) => component.id === id)
                 if (index < 0) return
                 applyDocument(moveComponent(document, id, index + direction))
+              }}
+              onMoveTo={(id, targetId, place) => {
+                if (id === targetId) return
+                const paintables = document.components.filter((component) => !isDisplayRegion(component))
+                const visual = [...paintables].reverse()
+                const from = visual.findIndex((component) => component.id === id)
+                const to = visual.findIndex((component) => component.id === targetId)
+                if (from < 0 || to < 0) return
+                let insert = place === 'after' ? to + 1 : to
+                if (from < insert) insert -= 1
+                if (insert === from) return
+                const nextVisual = [...visual]
+                const [moved] = nextVisual.splice(from, 1)
+                nextVisual.splice(insert, 0, moved)
+                const nextPaintables = nextVisual.reverse()
+                let index = 0
+                applyDocument({
+                  ...document,
+                  components: document.components.map((component) =>
+                    isDisplayRegion(component) ? component : nextPaintables[index++],
+                  ),
+                })
               }}
               onDuplicate={(id) => {
                 const result = duplicateComponent(document, id)

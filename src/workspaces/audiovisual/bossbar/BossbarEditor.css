@@ -178,6 +178,32 @@
   opacity: 0.45;
 }
 
+.bb-layer.is-sortable {
+  cursor: grab;
+  touch-action: none;
+}
+
+.bb-layer-list.is-reordering .bb-layer {
+  transition: transform 0.16s ease;
+  will-change: transform;
+}
+
+.bb-layer.is-placeholder {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.bb-layer-ghost {
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.38);
+  background: var(--av-active, #3a5278);
+  cursor: grabbing;
+  transition: none;
+}
+
+.bb-layer-list.is-reordering .bb-layer.is-placeholder {
+  transition: transform 0.16s ease;
+}
+
 .bb-layer-region {
   border: 1px dashed rgba(120, 180, 255, 0.5);
   margin-bottom: 4px;
@@ -473,17 +499,32 @@
 }
 
 .bb-atlas-view {
-  flex: 1 1 auto;
-  min-height: 160px;
+  flex: 0 0 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+.bb-atlas-view .bb-section-body {
+  flex: 0 0 auto;
+  min-height: 0;
   display: flex;
   flex-direction: column;
 }
 
-.bb-atlas-view .bb-section-body {
-  flex: 1 1 auto;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
+.bb-atlas-view-sash {
+  flex: 0 0 8px;
+  height: 8px;
+  margin: 2px -10px -10px;
+  cursor: ns-resize;
+  touch-action: none;
+  background: transparent;
+}
+
+.bb-atlas-view-sash:hover,
+.bb-atlas-view-sash[data-active='true'] {
+  background: rgba(80, 140, 220, 0.28);
 }
 
 .bb-section {
@@ -978,7 +1019,7 @@
 /* 图集面板 */
 
 .bb-atlas-canvas-wrap {
-  flex: 1 1 auto;
+  flex: 0 0 auto;
   min-height: 120px;
   max-height: none;
   overflow: auto;

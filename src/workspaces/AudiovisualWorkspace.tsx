@@ -145,6 +145,7 @@ export function AudiovisualWorkspace({
   const [busy, setBusy] = useState(false)
   const structuralPendingRef = useRef(false)
   const saveAttemptRef = useRef(0)
+  const tabsHydratedRef = useRef(false)
 
   const files = useMemo(
     () => (session.workspace.packages[0]?.scripts ?? []).filter(isBossbar),
@@ -157,6 +158,9 @@ export function AudiovisualWorkspace({
   const fileById = useMemo(() => new Map(files.map((file) => [file.id, file])), [files])
 
   useEffect(() => {
+    const hydrated = session.workspace.packages.length > 0
+    if (!hydrated && !tabsHydratedRef.current) return
+    if (hydrated) tabsHydratedRef.current = true
     const known = new Set(files.map((file) => file.id))
     setUi((previous) => {
       const openKeys = previous.openKeys.filter((key) => known.has(key))
@@ -180,7 +184,7 @@ export function AudiovisualWorkspace({
       saveUi(next)
       return next
     })
-  }, [files])
+  }, [files, session.workspace.packages.length])
 
   const updateUi = useCallback((change: UiState | ((previous: UiState) => UiState)) => {
     setUi((previous) => {

@@ -76,6 +76,9 @@ export function BossbarAtlasPanel({
   const [draft, setDraft] = useState<BossbarUv | null>(null)
   const [spaceHeld, setSpaceHeld] = useState(false)
   const [panning, setPanning] = useState(false)
+  const [stageHeight, setStageHeight] = useState(220)
+  const [stageResizing, setStageResizing] = useState(false)
+  const stageDragRef = useRef<{ pointerId: number; startY: number; startH: number } | null>(null)
   zoomRef.current = zoom
   spaceHeldRef.current = spaceHeld
   const viewWidth = Math.max(16, textureSize.width * zoom)
@@ -336,6 +339,7 @@ export function BossbarAtlasPanel({
         <div
           className="bb-atlas-canvas-wrap"
           ref={wrapRef}
+          style={{ height: stageHeight }}
           data-panning={panning ? 'true' : undefined}
           data-space={spaceHeld && !panning ? 'pan' : undefined}
           data-uv={target && !readOnly && !spaceHeld && !panning ? 'true' : undefined}
@@ -384,6 +388,43 @@ export function BossbarAtlasPanel({
             框选：{draft.x},{draft.y} {draft.width}×{draft.height}
           </p>
         )}
+        <div
+          className="bb-atlas-view-sash"
+          data-active={stageResizing ? "true" : undefined}
+          title="拖动调整图集高度"
+          onPointerDown={(event) => {
+            if (event.button !== 0) return
+            event.preventDefault()
+            event.stopPropagation()
+            stageDragRef.current = {
+              pointerId: event.pointerId,
+              startY: event.clientY,
+              startH: stageHeight,
+            }
+            setStageResizing(true)
+            try {
+              event.currentTarget.setPointerCapture(event.pointerId)
+            } catch {
+              /* capture is optional */
+            }
+          }}
+          onPointerMove={(event) => {
+            const drag = stageDragRef.current
+            if (!drag || drag.pointerId !== event.pointerId) return
+            const next = drag.startH + (event.clientY - drag.startY)
+            setStageHeight(Math.max(120, Math.min(960, Math.round(next))))
+          }}
+          onPointerUp={(event) => {
+            if (stageDragRef.current?.pointerId !== event.pointerId) return
+            stageDragRef.current = null
+            setStageResizing(false)
+          }}
+          onPointerCancel={(event) => {
+            if (stageDragRef.current?.pointerId !== event.pointerId) return
+            stageDragRef.current = null
+            setStageResizing(false)
+          }}
+        />
       </Section>
 
       <Section title="替换图集">
