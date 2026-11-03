@@ -2501,9 +2501,12 @@ export const StageplayWorkspace = forwardRef<
       case 'save':
         persistNow()
         return
-      case 'new-package':
-        void alertDialog('请使用「新建工程…」创建本地工程文件夹；不再支持仅存在于浏览器缓存的包。')
+      case 'rename-project': {
+        const id = workspaceRef.current.packages[0]?.id
+        if (id) handleRenameProject(id)
+        else void alertDialog('请先打开工程。')
         return
+      }
       case 'new-script':
         setNewFileMenuRequest((count) => count + 1)
         return
@@ -3323,8 +3326,6 @@ export const StageplayWorkspace = forwardRef<
       render: (dock) => (
           <StageplayExplorer
             project={workspace.packages[0] ?? null}
-            boundPackageId={project?.manifest.id ?? null}
-            boundFolderName={project?.folderName ?? null}
             organization={project && workspace.packages[0] ? (workspace.packages[0].explorer ?? emptyOrganization()) : null}
             readOnly={!workspace.packages[0] || serviceSession.binding?.handle.client.snapshot.role === 'viewer'}
             activeScriptId={workspace.activeScriptId}

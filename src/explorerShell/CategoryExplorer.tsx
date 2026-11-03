@@ -39,7 +39,8 @@ type Row = {
   icon: ShellFile['icon']
   expanded?: boolean
   file?: ShellFile
-  count?: number | null
+  /** 分类下当前可见资源数；仅用于空态，不在行尾展示（与游戏性一致）。 */
+  fileCount?: number
 }
 
 type Edit =
@@ -176,10 +177,10 @@ export function CategoryExplorer({
     for (const category of categories) {
       const node: TreeNode = { kind: 'category', category: category.id }
       const open = Boolean(query) || expanded.has(nodeId(node))
-      const count = category.extensions.length
+      const fileCount = category.extensions.length
         ? files.filter(file => file.category === category.id && matches(file)).length
-        : null
-      result.push({ node, depth: 0, name: category.name, icon: category.icon, expanded: open, count })
+        : 0
+      result.push({ node, depth: 0, name: category.name, icon: category.icon, expanded: open, fileCount })
       if (open) walk(category, null, 1)
     }
     return result
@@ -582,7 +583,7 @@ export function CategoryExplorer({
           const draggable = canOrganize && category.folders && row.node.kind !== 'category' && !renaming
           const placeholder = row.node.kind === 'category' && row.expanded && !category.extensions.length && !query
           const empty = row.node.kind === 'category' && row.expanded && category.extensions.length > 0 && !query &&
-            row.count === 0 && !folders.some(folder => folder.category === category.id)
+            (row.fileCount ?? 0) === 0 && !folders.some(folder => folder.category === category.id)
           return (
             <div key={id} role="none" className={row.node.kind === 'category' ? 'explorer-shell-category' : undefined}>
               <ExplorerTreeRow
@@ -652,9 +653,6 @@ export function CategoryExplorer({
                   editInput(row.node.kind === 'file' ? '重命名资源' : '重命名文件夹')
                 ) : (
                   <span className="explorer-shell-name">{row.name}</span>
-                )}
-                {row.node.kind === 'category' && (
-                  <span className="explorer-shell-count">{row.count ?? '—'}</span>
                 )}
               </ExplorerTreeRow>
               {newFolderHere && editRow(row.depth + 1)}

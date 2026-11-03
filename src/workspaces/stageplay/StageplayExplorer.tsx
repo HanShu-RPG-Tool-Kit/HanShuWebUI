@@ -2,13 +2,11 @@ import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEven
 import { CategoryExplorer, type CreateAnchor, type ExplorerDockProps } from "../../explorerShell";
 import { ExplorerTreeRow } from "../../explorerShell/ExplorerTreeRow";
 import { endDrag, writeDragPayload, type DragSource } from "../../drag/dragPayload";
-import { useFolderDropTarget } from "../../drag/useFolderDropTarget";
 import { assetFileName } from "../../assets/paths";
 import { ExplorerIcon, sourceIconKind } from "../../explorerIcons";
 import type { NewFileType, NewFileTypeId } from "../../newFileTypes";
 import type { NodeMenuItem } from "../../nodeEditor/ContextMenu";
 import type { ExplorerOrganization } from "../../project/explorerOrganization";
-import { packageLocationLabel, packageLocationTitle } from "../../project/projectLabel";
 import { openProjectUi } from "../../project/projectUi";
 import { chooseDialog } from "../../ui/dialogs";
 import { isVoiceMapFile, sourcePathOf, type Project } from "../../workspace";
@@ -39,15 +37,13 @@ type TypeMenu = {
 };
 
 /**
- * 剧本资源管理器：通用分类壳 + 工程行 + `+剧` 类型菜单 + `assets/` 真实目录附加件。
+ * 剧本资源管理器：通用分类壳 + `+剧` 类型菜单 + `assets/` 真实目录附加件。
  *
- * 分类（汉书剧本 / 角色卡 / 创作资料）下的文件夹是 `meta/explorer.json` 共享虚拟文件夹，与游戏性、视听同一协议；
- * 磁盘路径不随文件夹变化。所有写入交回剧本工作区经 ProjectClient 提交。
+ * 与游戏性 / 视听一样，树顶直接是分类，不挂工程名行（工程名在顶栏；重命名走「文件 → 重命名工程」）。
+ * 分类下的文件夹是 `meta/explorer.json` 共享虚拟文件夹；磁盘路径不随文件夹变化。
  */
 export function StageplayExplorer({
   project,
-  boundPackageId,
-  boundFolderName,
   organization,
   readOnly,
   activeScriptId,
@@ -71,8 +67,6 @@ export function StageplayExplorer({
   dock,
 }: {
   project: Project | null;
-  boundPackageId: string | null;
-  boundFolderName: string | null;
   /** null = 未打开工程，不能整理 */
   organization: ExplorerOrganization | null;
   readOnly: boolean;
@@ -198,46 +192,23 @@ export function StageplayExplorer({
             action: () => openTypeMenuAt(anchor),
           },
           { label: "导入资源…", disabled: readOnly, hint: "导入到 assets/", action: () => requestImport("assets") },
+          {
+            label: "重命名工程",
+            disabled: readOnly,
+            hint: "修改 project.json 里的工程名称；不改目录",
+            action: () => onRenameProject(project.id),
+          },
         ]
       : [
           { label: "创建工程…", action: () => openProjectUi("create") },
           { label: "打开工程…", action: () => openProjectUi("open") },
         ];
 
-  const projectRow = project ? (
-    <ProjectRow
-      project={project}
-      locationLabel={packageLocationLabel({ packageId: project.id, boundPackageId })}
-      locationTitle={packageLocationTitle({ packageId: project.id, boundPackageId, boundFolderName })}
-      readOnly={readOnly}
-      onRename={() => onRenameProject(project.id)}
-      onImportAssets={(list) => onImportAssets(project.id, list, "assets")}
-      onDropPayload={(source) => onDropIntoFolder(project.id, "assets", source)}
-      onContextMenu={(event) =>
-        showContext(event, [
-          {
-            id: "new-file",
-            label: "新建文件…",
-            disabled: readOnly,
-            hint: "选剧本类型后立即创建，可再改名",
-            onSelect: () => openTypeMenuAt({ x: event.clientX, y: event.clientY }),
-          },
-          { id: "import", label: "导入资源…", hint: "导入到 assets", onSelect: () => requestImport("assets") },
-          {
-            id: "rename",
-            label: "重命名工程",
-            hint: "修改 project.json 里的工程名称；不改目录",
-            separatorBefore: true,
-            onSelect: () => onRenameProject(project.id),
-          },
-        ])
-      }
-    />
-  ) : (
+  const emptyProjectHint = !project ? (
     <p className="explorer-shell-empty stageplay-explorer-noproject" title="尚未打开工程，右键可创建或打开工程">
       尚未打开工程，右键可创建或打开工程
     </p>
-  );
+  ) : null;
 
   const addons = project ? (
     <>
@@ -311,7 +282,7 @@ export function StageplayExplorer({
         addons={addons}
         slots={{
           rootClass: "stageplay-explorer",
-          prepend: projectRow,
+          prepend: emptyProjectHint,
           blankMenuItems,
           tools: (
             <button
@@ -360,50 +331,6 @@ export function StageplayExplorer({
   );
 }
 
-/** 工程行：一个窗口只绑定一个工程，没有多包 / 删除包。外部文件拖到这里导入 `assets/`。 */
-function ProjectRow({
-  project,
-  locationLabel,
-  locationTitle,
-  readOnly,
-  onRename,
-  onImportAssets,
-  onDropPayload,
-  onContextMenu,
-}: {
-  project: Project;
-  locationLabel: string;
-  locationTitle: string;
-  readOnly: boolean;
-  onRename: () => void;
-  onImportAssets: (files: File[]) => void;
-  onDropPayload: (source: DragSource) => void;
-  onContextMenu: (event: ReactMouseEvent) => void;
-}) {
-  const drop = useFolderDropTarget({ onFiles: onImportAssets, onPayload: onDropPayload });
-  return (
-    <div
-      className={`explorer-shell-row stageplay-explorer-project${drop.active ? " drop-target" : ""}`}
-      style={{ paddingLeft: 6 }}
-      title={`工程：${project.name} · 双击重命名；可拖入文件到工程 assets/`}
-      {...drop.handlers}
-      onDoubleClick={() => {
-        if (!readOnly) onRename();
-      }}
-      onContextMenu={onContextMenu}
-    >
-      <span className="explorer-shell-twist" aria-hidden />
-      <ExplorerIcon kind="package" />
-      <span className="explorer-shell-name">{project.name}</span>
-      {locationLabel && (
-        <span className="explorer-shell-count" title={locationTitle}>
-          {locationLabel}
-        </span>
-      )}
-    </div>
-  );
-}
-
 /** 不属于剧本分类、留在工程根的旧文件：只读列出，可打开 / 删除（配音映射可生成空白 ogg）。 */
 function LooseFiles({
   files,
@@ -435,7 +362,6 @@ function LooseFiles({
         onClick={() => setOpen((value) => !value)}
       >
         <span className="explorer-shell-name">工程根（未归类）</span>
-        <span className="explorer-shell-count">{files.length}</span>
       </ExplorerTreeRow>
       {open &&
         files.map((script) => (

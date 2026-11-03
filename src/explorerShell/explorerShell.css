@@ -267,12 +267,6 @@ body.is-panel-dragging .explorer-shell-heading.is-draggable {
   text-overflow: ellipsis;
 }
 
-.explorer-shell-count {
-  flex-shrink: 0;
-  color: var(--xs-faint);
-  font-size: var(--xs-font-xs);
-}
-
 .explorer-shell-edit {
   display: flex;
   flex-direction: column;
@@ -327,18 +321,10 @@ body.is-panel-dragging .explorer-shell-heading.is-draggable {
   text-overflow: ellipsis;
 }
 
-/* ---- 剧本：工程行、`+剧` 与 `assets/` 真实目录附加件，用同一行高 / 选中色 ---- */
+/* ---- 剧本：`+剧` 与 `assets/` 真实目录附加件，用同一行高 / 选中色 ---- */
 .explorer-shell-tools > button.stageplay-explorer-new {
   width: auto;
   padding: 0 8px;
-}
-
-.stageplay-explorer-project {
-  cursor: default;
-}
-
-.stageplay-explorer-project .explorer-shell-name {
-  font-weight: 600;
 }
 
 .stageplay-explorer-noproject {
