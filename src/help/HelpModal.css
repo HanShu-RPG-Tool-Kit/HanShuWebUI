@@ -98,12 +98,66 @@
 .help-nav {
   display: flex;
   flex-direction: column;
-  flex: 0 0 calc(200px * var(--help-s));
-  gap: 14px;
-  padding: 16px 10px;
+  flex: 0 0 calc(240px * var(--help-s));
+  min-width: 0;
   border-right: 1px solid #151515;
   background: var(--help-nav-bg);
+  overflow: hidden;
+}
+
+.help-nav-search {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: none;
+  padding: 12px 10px 8px;
+  border-bottom: 1px solid #151515;
+}
+
+.help-nav-search input {
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+  padding: calc(6px * var(--help-s)) 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 0;
+  background: #191918;
+  color: var(--help-strong);
+  font: inherit;
+  font-size: calc(12.5px * var(--help-s));
+}
+
+.help-nav-search input::placeholder {
+  color: var(--help-dim);
+  opacity: 0.8;
+}
+
+.help-nav-search input:focus {
+  outline: none;
+  border-color: rgba(143, 176, 230, 0.55);
+}
+
+.help-nav-search-meta {
+  padding: 0 2px;
+  color: var(--help-dim);
+  font-size: calc(11px * var(--help-s));
+}
+
+.help-nav-list {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  gap: 14px;
+  min-height: 0;
+  padding: 12px 10px 16px;
   overflow: auto;
+}
+
+.help-nav-empty {
+  margin: 8px 10px;
+  color: var(--help-dim);
+  font-size: calc(12.5px * var(--help-s));
+  line-height: 1.5;
 }
 
 .help-nav-heading {
@@ -116,7 +170,9 @@
 
 .help-nav-item {
   appearance: none;
-  display: block;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   width: 100%;
   margin: 0;
   padding: calc(6px * var(--help-s)) 10px;
@@ -128,6 +184,20 @@
   font-size: calc(13px * var(--help-s));
   text-align: left;
   cursor: pointer;
+}
+
+.help-nav-item-title {
+  display: block;
+}
+
+.help-nav-item-snippet {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--help-dim);
+  font-size: calc(11px * var(--help-s));
+  line-height: 1.4;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .help-nav-item:hover {
@@ -341,15 +411,21 @@
 
   .help-nav {
     flex: none;
-    flex-direction: row;
-    flex-wrap: wrap;
-    gap: 4px;
+    max-height: 42vh;
     border-right: 0;
     border-bottom: 1px solid #151515;
   }
 
+  .help-nav-list {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
   .help-nav-heading,
-  .help-toc {
+  .help-toc,
+  .help-nav-item-snippet,
+  .help-nav-search-meta {
     display: none;
   }
 
