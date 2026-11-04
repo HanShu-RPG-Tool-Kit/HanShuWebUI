@@ -1,4 +1,3 @@
-import Editor from '@monaco-editor/react'
 import {
   useCallback,
   useEffect,
@@ -44,8 +43,6 @@ import {
   type SourceFile,
   type Workspace,
 } from '../workspace'
-import { HANSHU_THEME_ID, registerHanshuLanguage } from '../monaco/hanshuLanguage'
-import { useEditorFontSize } from './gameplay/editorFont'
 import { AudiovisualExplorer } from './audiovisual/AudiovisualExplorer'
 import { audiovisualSources } from './audiovisual/explorerCategories'
 import { BossbarDesignView } from './audiovisual/bossbar/editor/BossbarDesignView'
@@ -57,40 +54,25 @@ const EDITOR_DOCK_KEY = 'hanshu.audiovisualEditorDock.v1'
 const UI_KEY = 'hanshu.audiovisualUi.v1'
 const BOSSBAR_EXT = '.bossbar'
 
-type ViewMode = 'design' | 'json'
-
 type UiState = {
   openKeys: string[]
   activeKey: string | null
   pinnedKeys: string[]
-  /** 每个文件记住上次用的视图；默认设计视图 */
-  modes: Record<string, ViewMode>
 }
 
 function loadUi(): UiState {
   try {
     const raw = localStorage.getItem(UI_KEY)
-    if (!raw) return { openKeys: [], activeKey: null, pinnedKeys: [], modes: {} }
+    if (!raw) return { openKeys: [], activeKey: null, pinnedKeys: [] }
     const parsed = JSON.parse(raw) as Partial<UiState>
     return {
       openKeys: Array.isArray(parsed.openKeys) ? parsed.openKeys.filter((item): item is string => typeof item === 'string') : [],
       activeKey: typeof parsed.activeKey === 'string' ? parsed.activeKey : null,
       pinnedKeys: Array.isArray(parsed.pinnedKeys) ? parsed.pinnedKeys.filter((item): item is string => typeof item === 'string') : [],
-      modes: sanitizeModes(parsed.modes),
     }
   } catch {
-    return { openKeys: [], activeKey: null, pinnedKeys: [], modes: {} }
+    return { openKeys: [], activeKey: null, pinnedKeys: [] }
   }
-}
-
-function sanitizeModes(raw: unknown): Record<string, ViewMode> {
-  if (!raw || typeof raw !== 'object') return {}
-  const source = raw as Record<string, unknown>
-  const modes: Record<string, ViewMode> = {}
-  for (const [key, value] of Object.entries(source)) {
-    if (value === 'design' || value === 'json') modes[key] = value
-  }
-  return modes
 }
 
 function saveUi(state: UiState) {
@@ -140,7 +122,6 @@ export function AudiovisualWorkspace({
   /** 新建 / 改名 / 删除要可写连接；正文草稿允许本机先改（与剧本源码编辑一致）。 */
   const structureReadOnly = !client?.writable
   const viewerOnly = client?.snapshot.role === 'viewer'
-  const editorFontSize = useEditorFontSize()
   const [ui, setUi] = useState(loadUi)
   const [busy, setBusy] = useState(false)
   const structuralPendingRef = useRef(false)
@@ -169,15 +150,11 @@ export function AudiovisualWorkspace({
         previous.activeKey && openKeys.includes(previous.activeKey)
           ? previous.activeKey
           : (openKeys[0] ?? null)
-      const modes = Object.fromEntries(
-        Object.entries(previous.modes).filter(([key]) => known.has(key)),
-      ) as Record<string, ViewMode>
-      const next = { openKeys, activeKey, pinnedKeys, modes }
+      const next = { openKeys, activeKey, pinnedKeys }
       if (
         next.openKeys.join('\0') === previous.openKeys.join('\0') &&
         next.activeKey === previous.activeKey &&
-        next.pinnedKeys.join('\0') === previous.pinnedKeys.join('\0') &&
-        Object.keys(next.modes).join('\0') === Object.keys(previous.modes).join('\0')
+        next.pinnedKeys.join('\0') === previous.pinnedKeys.join('\0')
       ) {
         return previous
       }
@@ -217,7 +194,7 @@ export function AudiovisualWorkspace({
             : previous.activeKey && openKeys.includes(previous.activeKey)
               ? previous.activeKey
               : (openKeys[0] ?? null)
-        return { openKeys, activeKey, pinnedKeys, modes: previous.modes }
+        return { openKeys, activeKey, pinnedKeys }
       })
     },
     [updateUi],
@@ -566,26 +543,7 @@ export function AudiovisualWorkspace({
                         资源已从工程移除，草稿仅保留在本机；普通保存不会重新创建它。
                       </p>
                     )}
-                    <div className="av-view-switch" role="tablist" aria-label="编辑视图">
-                      {(['design', 'json'] as const).map((mode) => (
-                        <button
-                          key={mode}
-                          type="button"
-                          role="tab"
-                          aria-selected={(ui.modes[file.id] ?? 'design') === mode}
-                          className={(ui.modes[file.id] ?? 'design') === mode ? 'is-active' : undefined}
-                          onClick={() =>
-                            updateUi((previous) => ({
-                              ...previous,
-                              modes: { ...previous.modes, [file.id]: mode },
-                            }))
-                          }
-                        >
-                          {mode === 'design' ? '设计' : 'JSON'}
-                        </button>
-                      ))}
-                    </div>
-                      <div className="av-design-host" style={{ display: (ui.modes[file.id] ?? 'design') === 'design' ? 'flex' : 'none' }}>
+                    <div className="av-design-host">
                         <BossbarDesignView
                           key={`${project?.id ?? 'unbound'}:${file.id}`}
                           fileId={file.id}
@@ -593,35 +551,9 @@ export function AudiovisualWorkspace({
                           content={file.content}
                           readOnly={viewerOnly || Boolean(file.detached)}
                           projectId={project?.id ?? 'unbound'}
-                          packageId={project?.id ?? null}
-                          assets={project?.assets ?? []}
-                          active={active && ui.activeKey === file.id && (ui.modes[file.id] ?? 'design') === 'design'}
+                          active={active && ui.activeKey === file.id}
                           onChange={(content) => {
                             if (!viewerOnly && !file.detached) changeSource(file.id, content)
-                          }}
-                        />
-                      </div>
-                      <div className="av-json-editor" aria-label=".bossbar JSON" style={{ display: (ui.modes[file.id] ?? 'design') === 'json' ? 'flex' : 'none' }}>
-                        <Editor
-                          key={`${project?.id ?? 'unbound'}:${file.id}`}
-                          height="100%"
-                          language="json"
-                          theme={HANSHU_THEME_ID}
-                          value={file.content}
-                          path={`audiovisual-bossbar://${project?.id ?? 'unbound'}/${file.id}`}
-                          beforeMount={registerHanshuLanguage}
-                          onChange={(value) => {
-                            if (!viewerOnly && !file.detached) changeSource(file.id, value ?? '')
-                          }}
-                          options={{
-                            fontSize: editorFontSize,
-                            mouseWheelZoom: true,
-                            minimap: { enabled: false },
-                            wordWrap: 'on',
-                            automaticLayout: true,
-                            scrollBeyondLastLine: false,
-                            padding: { top: 8 },
-                            readOnly: viewerOnly || Boolean(file.detached),
                           }}
                         />
                       </div>

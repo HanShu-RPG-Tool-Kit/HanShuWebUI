@@ -13,6 +13,7 @@ import {
   type BossbarBox,
   type BossbarDiagnostic,
   type BossbarDocument,
+  type BossbarUv,
   type BossbarValueMap,
   type BossbarVariable,
 } from '../protocol'
@@ -47,9 +48,10 @@ import { BossbarLayersPanel } from './BossbarLayersPanel'
 import { BossbarInspector, type BossbarPaintSlot } from './BossbarInspector'
 import { BossbarVariablesPanel } from './BossbarVariablesPanel'
 import { BossbarAtlasPanel, type BossbarUvTarget } from './BossbarAtlasPanel'
+import { BossbarUvPickerPanel } from './BossbarUvPickerPanel'
 import { BossbarSimulationControls } from './BossbarSimulationControls'
 import { Button } from './BossbarEditorUi'
-import { useBossbarTexture, useReferenceImage } from './useBossbarImages'
+import { useBossbarTexture } from './useBossbarImages'
 import { updatePaintUv } from './editorPaint'
 import '../BossbarEditor.css'
 import { PanelDock, type DockPanelSpec } from '../../../../ui/PanelDock'
@@ -77,14 +79,44 @@ const ALIGN_LABELS: Record<AlignAction, string> = {
 const BOSSBAR_DOCK_KEY = 'hanshu.panelDock.bossbar'
 const BOSSBAR_FLOAT = { x: 48, y: 48, w: 500, h: 300 }
 
+function sameUvTarget(left: BossbarUvTarget | null, right: BossbarUvTarget | null) {
+  if (left === right) return true
+  if (!left || !right) return false
+  return left.componentId === right.componentId && left.slot === right.slot && left.frameIndex === right.frameIndex
+}
+
+function documentWithUv(document: BossbarDocument, target: BossbarUvTarget, uv: BossbarUv): BossbarDocument {
+  const component = document.components.find((entry) => entry.id === target.componentId)
+  if (!component) return document
+  if (target.slot === 'paint' && component.type === 'background' && component.paint.kind === 'texture') {
+    return updateComponent(document, component.id, {
+      paint: updatePaintUv(component.paint, uv, target.frameIndex),
+    } as Partial<typeof component>)
+  }
+  if (component.type === 'bar') {
+    if (target.slot === 'fill' && component.fill.kind === 'texture') {
+      return updateComponent(document, component.id, {
+        fill: updatePaintUv(component.fill, uv, target.frameIndex),
+      } as Partial<typeof component>)
+    }
+    if (target.slot === 'trail' && component.trail && component.trail.paint.kind === 'texture') {
+      return updateComponent(document, component.id, {
+        trail: {
+          ...component.trail,
+          paint: updatePaintUv(component.trail.paint, uv, target.frameIndex),
+        },
+      } as Partial<typeof component>)
+    }
+  }
+  return document
+}
+
 export function BossbarDesignView({
   fileId,
   fileName,
   content,
   readOnly,
   projectId,
-  packageId,
-  assets,
   active,
   onChange,
 }: {
@@ -93,8 +125,6 @@ export function BossbarDesignView({
   content: string
   readOnly: boolean
   projectId: string
-  packageId: string | null
-  assets: readonly { path: string; mime: string }[]
   active: boolean
   onChange: (content: string) => void
 }) {
@@ -132,6 +162,12 @@ export function BossbarDesignView({
   const draftRef = useRef<Record<string, BossbarBox> | null>(null)
   const [problems, setProblems] = useState<string[]>([])
   const [uvTarget, setUvTarget] = useState<BossbarUvTarget | null>(null)
+  const [uvDraft, setUvDraft] = useState<BossbarUv | null>(null)
+  const uvTargetRef = useRef(uvTarget)
+  const uvDraftRef = useRef(uvDraft)
+  uvTargetRef.current = uvTarget
+  uvDraftRef.current = uvDraft
+
   const [values, setValues] = useState<BossbarValueMap>(() =>
     document ? defaultsForVariables(document) : {},
   )
@@ -167,8 +203,6 @@ export function BossbarDesignView({
 
   const textureContext = projectId + ':' + fileId
   const texture = useBossbarTexture(document?.texture ?? '', textureContext)
-  const referenceImage = useReferenceImage(packageId, view.referenceAsset, textureContext)
-
   const animationRef = useRef<ReturnType<typeof evaluateBars>['state'] | null>(null)
   const bars = useMemo<Record<string, BossbarBarView>>(() => {
     if (!document) return {}
@@ -193,14 +227,18 @@ export function BossbarDesignView({
 
   const effectiveDocument = useMemo<BossbarDocument | null>(() => {
     if (!document) return null
-    if (!draftBoxes) return document
-    return {
-      ...document,
-      components: document.components.map((component) =>
-        draftBoxes[component.id] ? { ...component, box: draftBoxes[component.id] } : component,
-      ),
+    let next = document
+    if (draftBoxes) {
+      next = {
+        ...next,
+        components: next.components.map((component) =>
+          draftBoxes[component.id] ? { ...component, box: draftBoxes[component.id] } : component,
+        ),
+      }
     }
-  }, [document, draftBoxes])
+    if (uvTarget && uvDraft) next = documentWithUv(next, uvTarget, uvDraft)
+    return next
+  }, [document, draftBoxes, uvDraft, uvTarget])
 
   const applyDocument = useCallback(
     (next: BossbarDocument, options: { history?: boolean } = {}) => {
@@ -218,6 +256,30 @@ export function BossbarDesignView({
     },
     [content, editable, history, onChange],
   )
+
+  const applyUv = useCallback((target: BossbarUvTarget, uv: BossbarUv) => {
+    if (!document) return
+    applyDocument(documentWithUv(document, target, uv))
+  }, [applyDocument, document])
+
+  const commitUvSession = useCallback(() => {
+    const current = uvTargetRef.current
+    const draft = uvDraftRef.current
+    if (current && draft) applyUv(current, draft)
+    uvDraftRef.current = null
+    setUvDraft(null)
+  }, [applyUv])
+
+  const requestUvTarget = useCallback((next: BossbarUvTarget | null) => {
+    if (sameUvTarget(uvTargetRef.current, next)) return
+    commitUvSession()
+    setUvTarget(next)
+  }, [commitUvSession])
+
+  const closeUvPicker = useCallback(() => {
+    commitUvSession()
+    setUvTarget(null)
+  }, [commitUvSession])
 
   const handleBoxes = useCallback(
     (changes: Record<string, BossbarBox>, done: boolean) => {
@@ -294,6 +356,7 @@ export function BossbarDesignView({
         return
       }
       const meta = event.metaKey || event.ctrlKey
+      if (uvTarget && meta && (event.key.toLowerCase() === 'z' || event.key.toLowerCase() === 'y')) return
       if (meta && event.key.toLowerCase() === 'z') {
         event.preventDefault()
         const restored = event.shiftKey ? history.redo() : history.undo()
@@ -334,16 +397,11 @@ export function BossbarDesignView({
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [active, duplicateSelected, history, nudge, onChange, readOnly, removeSelected, selection])
+  }, [active, duplicateSelected, history, nudge, onChange, readOnly, removeSelected, selection, uvTarget])
 
   const scenarios = useMemo(
     () => (document ? [...buildScenarios(document), ...edgeCaseScenarios(document)] : []),
     [document],
-  )
-
-  const referenceAssets = useMemo(
-    () => assets.filter((asset) => /.(png|jpg|jpeg)$/i.test(asset.path)).map((asset) => asset.path),
-    [assets],
   )
 
   if (!document && inspection.status !== 'v1') {
@@ -498,7 +556,7 @@ export function BossbarDesignView({
                     onFocusRegion={() => setFitRequest((request) => request + 1)}
                     onPickUv={(slot, frameIndex) => {
                       if (selection.length !== 1) return
-                      setUvTarget({ componentId: selection[0], slot, frameIndex })
+                      requestUvTarget({ componentId: selection[0], slot, frameIndex })
                     }}
                   />
                 )}
@@ -536,48 +594,13 @@ export function BossbarDesignView({
                 onRedock={dock.onRedock}
               />
               <BossbarAtlasPanel
-                document={document}
-                textureImage={texture.image}
+                document={effectiveDocument ?? document}
                 textureSize={texture.size}
                 target={uvTarget}
                 readOnly={!editable}
                 onProblems={setProblems}
-                onClearTarget={() => setUvTarget(null)}
                 onTextureChange={(base64) => {
                   applyDocument({ ...document, texture: base64 })
-                }}
-                onUvChange={(uv) => {
-                  if (!uvTarget) return
-                  const component = document.components.find((entry) => entry.id === uvTarget.componentId)
-                  if (!component) return
-                  if (uvTarget.slot === 'paint' && component.type === 'background' && component.paint.kind === 'texture') {
-                    applyDocument(
-                      updateComponent(document, component.id, {
-                        paint: updatePaintUv(component.paint, uv, uvTarget.frameIndex),
-                      } as Partial<typeof component>),
-                    )
-                    return
-                  }
-                  if (component.type === 'bar') {
-                    if (uvTarget.slot === 'fill' && component.fill.kind === 'texture') {
-                      applyDocument(
-                        updateComponent(document, component.id, {
-                          fill: updatePaintUv(component.fill, uv, uvTarget.frameIndex),
-                        } as Partial<typeof component>),
-                      )
-                      return
-                    }
-                    if (uvTarget.slot === 'trail' && component.trail && component.trail.paint.kind === 'texture') {
-                      applyDocument(
-                        updateComponent(document, component.id, {
-                          trail: {
-                            ...component.trail,
-                            paint: updatePaintUv(component.trail.paint, uv, uvTarget.frameIndex),
-                          },
-                        } as Partial<typeof component>),
-                      )
-                    }
-                  }
                 }}
               />
             </aside>
@@ -615,7 +638,7 @@ export function BossbarDesignView({
           {!sourceValid && (
             <div className="bb-banner">
               <strong>源码当前无效</strong>
-              <span>显示上次有效预览，请修复 JSON 后继续编辑。</span>
+              <span>显示上次有效预览（只读）。本页不能改源码，请在工程里修复文件后再打开。</span>
               {inspection.status === 'invalid' && <ul>{inspection.diagnostics.slice(0, 8).map((diagnostic) =>
                 <li key={diagnostic.path + diagnostic.code}>{describeDiagnostic(diagnostic)}</li>,
               )}</ul>}
@@ -736,7 +759,6 @@ export function BossbarDesignView({
                 locked={view.locked}
                 hidden={view.hidden}
                 selection={selection}
-                reference={{ image: referenceImage, opacity: view.referenceOpacity }}
                 onSelectionChange={setSelection}
                 onBoxesChange={handleBoxes}
                 onViewChange={(next) =>
@@ -766,47 +788,30 @@ export function BossbarDesignView({
               />
             </div>
           </PanelDock>
-          <footer className="bb-design-footer">
-            <label className="bb-footer-field">
-              <span>参考底图</span>
-              <select
-                className="bb-input"
-                value={view.referenceAsset ?? ''}
-                onChange={(event) => setView({ referenceAsset: event.target.value || null })}
-              >
-                <option value="">无</option>
-                {referenceAssets.map((path) => (
-                  <option key={path} value={path}>
-                    {path}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {view.referenceAsset && <label className="bb-footer-field">
-              <span>透明度</span>
-              <input
-                type="range"
-                min={0}
-                max={1}
-                step={0.05}
-                value={view.referenceOpacity}
-                onChange={(event) => setView({ referenceOpacity: Number(event.target.value) })}
-              />
-            </label>}
-            <span className="bb-footer-sep" />
-            <Button
-              disabled={!editable}
-              onClick={() => applyDocument({ ...document, variables: document.variables })}
+          {uvTarget && (
+            <div
+              className="bb-uv-picker-backdrop"
+              onPointerDown={(event) => {
+                if (event.button !== 0 || event.target !== event.currentTarget) return
+                closeUvPicker()
+              }}
             >
-              整理 JSON
-            </Button>
-          </footer>
+              <BossbarUvPickerPanel
+                document={document}
+                textureSize={texture.size}
+                target={uvTarget}
+                readOnly={!editable}
+                onPreview={setUvDraft}
+                onClose={closeUvPicker}
+              />
+            </div>
+          )}
         </>
       )}
       {inspection.status === 'unsupported' && (
         <div className="bb-banner bb-banner-error">
           <strong>不支持的协议版本</strong>
-          <span>请在 JSON 视图检查版本。</span>
+          <span>无法在设计视图中打开此版本。</span>
         </div>
       )}
     </div>

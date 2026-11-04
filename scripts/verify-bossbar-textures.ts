@@ -201,7 +201,6 @@ try {
   const globals = globalThis as typeof globalThis & {
     __bossbarHooks: Runtime
     __bossbarTextures: object
-    __bossbarAsset: (...args: unknown[]) => unknown
   }
   globals.__bossbarTextures = { loadBossbarTexture, releaseBossbarTexture, textureSizeOf: () => ({ width: 1, height: 1 }) }
   const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -211,19 +210,15 @@ try {
     plugins: [{ name: 'controlled-hooks', setup(builder) {
       builder.onResolve({ filter: /^react$/ }, () => ({ path: 'react', namespace: 'test' }))
       builder.onResolve({ filter: /render\/texture$/ }, () => ({ path: 'texture', namespace: 'test' }))
-      builder.onResolve({ filter: /assets\/idb$/ }, () => ({ path: 'asset', namespace: 'test' }))
       builder.onLoad({ filter: /.*/, namespace: 'test' }, ({ path }) => ({ loader: 'js', contents:
         path === 'react'
           ? ['useState', 'useRef', 'useMemo', 'useEffect'].map((name) => `export const ${name}=(...args)=>globalThis.__bossbarHooks.${name}(...args);`).join('\n')
-          : path === 'texture'
-            ? 'export const {loadBossbarTexture,releaseBossbarTexture,textureSizeOf}=globalThis.__bossbarTextures'
-            : 'export const getAssetBlob=(...args)=>globalThis.__bossbarAsset(...args)',
+          : 'export const {loadBossbarTexture,releaseBossbarTexture,textureSizeOf}=globalThis.__bossbarTextures',
       }))
     } }],
   })
   const module = { exports: {} as {
     useBossbarTexture: typeof import('../src/workspaces/audiovisual/bossbar/editor/useBossbarImages').useBossbarTexture
-    useReferenceImage: typeof import('../src/workspaces/audiovisual/bossbar/editor/useBossbarImages').useReferenceImage
   } }
   new Function('module', 'exports', bundled.outputFiles[0].text)(module, module.exports)
 
@@ -265,41 +260,8 @@ try {
   clearTextureCache()
   console.log('通过：慢解码后命中缓存、切换工程/文档、卸载与过期引用释放')
 
-  class ReferenceImage {
-    src = ''
-    onload: (() => void) | null = null
-    onerror: (() => void) | null = null
-  }
-  const referenceImages: ReferenceImage[] = []
-  globalThis.Image = class extends ReferenceImage {
-    constructor() { super(); referenceImages.push(this) }
-  } as unknown as typeof Image
-  const assetA = deferred<Blob>()
-  const assetB = deferred<Blob>()
-  const assets = [assetA, assetB]
-  globals.__bossbarAsset = () => assets.shift()!.promise
-  const references = hooks()
-  globals.__bossbarHooks = references
-  references.render(() => module.exports.useReferenceImage('project', 'assets/reference.png', 'doc-a'))
-  references.commit()
-  references.render(() => module.exports.useReferenceImage('project', 'assets/reference.png', 'doc-b'))
-  references.commit()
-  assetB.resolve(new Blob(['b']))
-  await flush()
-  assert.equal(referenceImages.length, 1)
-  referenceImages[0].onload?.()
-  assert.equal(references.render(() => module.exports.useReferenceImage('project', 'assets/reference.png', 'doc-b')), referenceImages[0])
-  assetA.resolve(new Blob(['a']))
-  await flush()
-  assert.equal(referenceImages.length, 1, 'an old document asset read never starts an image load')
-  assert.equal(references.render(() => module.exports.useReferenceImage('other-project', 'assets/reference.png', 'doc-b')), null)
-  references.unmount()
-  assert.equal(referenceImages[0].src, '')
-  assert.equal(referenceImages[0].onload, null)
   delete (globals as Partial<typeof globals>).__bossbarHooks
   delete (globals as Partial<typeof globals>).__bossbarTextures
-  delete (globals as Partial<typeof globals>).__bossbarAsset
-  console.log('通过：参考底图的过期工程/文档请求失效与卸载清理')
   console.log('PASS verify-bossbar-textures')
 } finally {
   clearTextureCache()

@@ -12,8 +12,8 @@ import {
 /**
  * 编辑器本机状态与撤销栈。
  *
- * 相机、网格、参考底图、临时锁定/隐藏和面板布局只保存在当前工程/文档的本机状态里，
- * 不写进 .bossbar，也不是共享工程数据。
+ * Camera, grid, temp lock/hide and panel layout stay in local editor state.
+ * They are not written into .bossbar and are not shared project data.
  */
 
 export type BossbarInspectorTab = 'component' | 'variables'
@@ -29,9 +29,6 @@ export type BossbarEditorViewState = {
   locked: string[]
   /** 本机临时隐藏（不影响游戏显隐） */
   hidden: string[]
-  /** 预览底图：工程内 assets/ 路径，仅本机参考 */
-  referenceAsset: string | null
-  referenceOpacity: number
   playbackSpeed: number
   inspectorTab: BossbarInspectorTab
 }
@@ -45,8 +42,6 @@ export const DEFAULT_EDITOR_VIEW: BossbarEditorViewState = {
   showRulers: true,
   locked: [],
   hidden: [],
-  referenceAsset: null,
-  referenceOpacity: 0.35,
   playbackSpeed: 1,
   inspectorTab: 'component',
 }
@@ -68,8 +63,6 @@ function editorViewState(input: Partial<BossbarEditorViewState>): BossbarEditorV
     showRulers: typeof input.showRulers === 'boolean' ? input.showRulers : true,
     locked: Array.isArray(input.locked) ? input.locked.filter((id): id is string => typeof id === 'string') : [],
     hidden: Array.isArray(input.hidden) ? input.hidden.filter((id): id is string => typeof id === 'string') : [],
-    referenceAsset: typeof input.referenceAsset === 'string' ? input.referenceAsset : null,
-    referenceOpacity: Math.max(0, Math.min(1, finite(input.referenceOpacity, 0.35))),
     playbackSpeed: Math.max(0.1, Math.min(2, finite(input.playbackSpeed, 1))),
     inspectorTab: input.inspectorTab === 'variables' ? 'variables' : 'component',
   }

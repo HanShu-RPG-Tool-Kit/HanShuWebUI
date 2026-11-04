@@ -1,6 +1,7 @@
 /* BossBar 设计视图：沿用视听工作区的配色变量，只补本视图需要的布局与控件。 */
 
 .bb-design {
+  position: relative;
   --bb-s: var(--av-s, var(--app-ui-scale, 1.25));
   --bb-font: calc(12.5px * var(--bb-s) / 1.1);
   --bb-font-control: calc(12px * var(--bb-s) / 1.1);
@@ -344,6 +345,7 @@
   position: absolute;
   inset: 0;
   touch-action: none;
+  overscroll-behavior: none;
 }
 
 .bb-stage-surface[data-space='pan'] {
@@ -1016,80 +1018,230 @@
   font-size: var(--bb-font-xs);
 }
 
-/* 图集面板 */
+/* Atlas preview and UV picker */
 
-.bb-atlas-canvas-wrap {
+.bb-atlas-preview {
+  position: relative;
   flex: 0 0 auto;
   min-height: 120px;
-  max-height: none;
-  overflow: auto;
+  overflow: hidden;
   border: 1px solid var(--border, #1a1a1a);
   background: #101418;
+  user-select: none;
+}
+
+.bb-atlas-preview-image {
+  position: absolute;
+  display: block;
+  image-rendering: pixelated;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+
+.bb-atlas-uv {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid #6cf;
+  background: rgba(80, 160, 255, 0.22);
+  pointer-events: none;
+}
+
+.bb-uv-picker-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 4000;
+  background: rgb(12 14 18 / 46%);
+}
+
+.bb-uv-picker {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
   display: flex;
+  flex-direction: column;
+  width: min(720px, calc(100% - 48px));
+  height: min(540px, calc(100% - 48px));
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border, #1a1a1a);
+  background: var(--av-panel, #303030);
+  box-shadow: 0 18px 48px rgb(0 0 0 / 36%);
+}
+
+.bb-uv-picker.is-moved {
+  transform: none;
+}
+
+.bb-uv-picker-header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  min-height: calc(28px * var(--bb-s));
+  padding: 0 10px;
+  background: var(--bg-title);
+  border-bottom: 1px solid var(--border, #1a1a1a);
+  color: var(--text);
+  font-size: var(--bb-font-title);
+  cursor: move;
+  user-select: none;
+  touch-action: none;
+}
+
+.bb-uv-picker-header strong {
+  flex: 1 1 auto;
+  font-weight: 600;
+}
+
+.bb-uv-picker-header .bb-button {
+  cursor: pointer;
+}
+
+.bb-uv-picker-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border, #1a1a1a);
+  font-size: var(--bb-font-label);
+}
+
+.bb-uv-picker-target {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #cfe4ff;
+}
+
+.bb-uv-picker-spacer {
+  flex: 1 1 auto;
+}
+
+.bb-uv-picker-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 160px;
+  overflow: hidden;
+  background: #101418;
   touch-action: none;
   overscroll-behavior: none;
-  cursor: default;
   user-select: none;
-  -webkit-user-select: none;
+  cursor: default;
 }
 
-.bb-atlas-canvas-wrap[data-space='pan'] {
-  cursor: grab;
-}
-
-.bb-atlas-canvas-wrap[data-panning='true'] {
+.bb-uv-picker-stage[data-panning='true'] {
   cursor: grabbing;
 }
 
-.bb-atlas-canvas-wrap[data-uv='true'] {
-  cursor: crosshair;
+.bb-uv-ruler {
+  position: absolute;
+  z-index: 2;
+  background: rgba(16, 20, 24, 0.88);
+  color: #9ab;
+  font-size: 10px;
+  pointer-events: none;
 }
 
-.bb-atlas-canvas {
-  display: block;
-  flex: 0 0 auto;
-  margin-inline: auto;
-  image-rendering: pixelated;
-  cursor: inherit;
-  -webkit-user-drag: none;
-  user-select: none;
+.bb-uv-ruler-x {
+  left: 22px;
+  right: 0;
+  top: 0;
+  height: 22px;
 }
 
-.bb-atlas-target {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 6px;
-  font-size: var(--bb-font-label);
-  color: #cfe4ff;
-  background: rgba(60, 100, 160, 0.22);
-  border-radius: 0;
-  padding: 4px 6px;
+.bb-uv-ruler-y {
+  left: 0;
+  top: 22px;
+  bottom: 0;
+  width: 22px;
 }
 
-.bb-atlas-target code {
-  font-family: var(--bb-mono);
+.bb-uv-tick {
+  position: absolute;
+  transform: translate(-50%, 4px);
+  white-space: nowrap;
 }
 
-.bb-uv-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
+.bb-uv-ruler-y .bb-uv-tick {
+  transform: translate(2px, -50%);
 }
 
-.bb-uv-grid .bb-row {
-  min-width: 0;
-  gap: 4px;
+.bb-uv-world {
+  position: absolute;
+  z-index: 1;
 }
 
-.bb-uv-grid .bb-row-label {
-  flex-basis: 2em;
-}
-
-.bb-uv-grid .bb-number,
-.bb-uv-grid .bb-row input[type='number'] {
+.bb-uv-texture {
+  position: absolute;
+  inset: 0;
   width: 100%;
-  flex: 1 1 auto;
+  height: 100%;
+  image-rendering: pixelated;
+  pointer-events: none;
+  -webkit-user-drag: none;
+}
+
+.bb-uv-grid-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, rgba(255, 255, 255, 0.14) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.14) 1px, transparent 1px);
+}
+
+.bb-uv-rect {
+  position: absolute;
+  box-sizing: border-box;
+  border: 1px solid #8cf;
+  background: rgba(80, 160, 255, 0.16);
+  cursor: move;
+}
+
+.bb-uv-rect.is-original {
+  z-index: 0;
+  border: 1px dashed rgba(255, 210, 80, 0.95);
+  background: transparent;
+  pointer-events: none;
+  cursor: default;
+}
+
+.bb-uv-rect.is-current {
+  z-index: 1;
+}
+
+.bb-uv-handle {
+  position: absolute;
+  width: 8px;
+  height: 8px;
+  background: #8cf;
+  border: 1px solid #012;
+  box-sizing: border-box;
+}
+
+.bb-uv-handle[data-handle='nw'] { left: -4px; top: -4px; cursor: nwse-resize; }
+.bb-uv-handle[data-handle='n'] { left: 50%; top: -4px; margin-left: -4px; cursor: ns-resize; }
+.bb-uv-handle[data-handle='ne'] { right: -4px; top: -4px; cursor: nesw-resize; }
+.bb-uv-handle[data-handle='e'] { right: -4px; top: 50%; margin-top: -4px; cursor: ew-resize; }
+.bb-uv-handle[data-handle='se'] { right: -4px; bottom: -4px; cursor: nwse-resize; }
+.bb-uv-handle[data-handle='s'] { left: 50%; bottom: -4px; margin-left: -4px; cursor: ns-resize; }
+.bb-uv-handle[data-handle='sw'] { left: -4px; bottom: -4px; cursor: nesw-resize; }
+.bb-uv-handle[data-handle='w'] { left: -4px; top: 50%; margin-top: -4px; cursor: ew-resize; }
+
+.bb-uv-hud {
+  position: absolute;
+  z-index: 3;
+  right: 8px;
+  bottom: 8px;
+  padding: 2px 6px;
+  background: rgba(16, 20, 24, 0.82);
+  color: #def;
+  font-size: 11px;
+  pointer-events: none;
 }
 
 /* 编辑视口内的模拟控制 */
@@ -1177,41 +1329,3 @@
   margin: 0;
 }
 
-/* 页脚 */
-
-.bb-design-footer {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
-  padding: 5px 10px;
-  border-top: 1px solid var(--border, #1a1a1a);
-  background: var(--av-panel, #303030);
-  font-size: var(--bb-font-xs);
-}
-
-.bb-footer-field {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--text-dim, #b0b0b0);
-}
-
-.bb-footer-field select {
-  max-width: 220px;
-  flex: 0 0 auto;
-}
-
-.bb-footer-field input[type='range'] {
-  width: 90px;
-}
-
-.bb-footer-sep {
-  width: 1px;
-  height: 16px;
-  background: var(--border-soft, #404040);
-}
-
-.bb-footer-spacer {
-  flex: 1 1 auto;
-}
