@@ -323,8 +323,8 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
     polygonOffsetUnits: 1,
   })
   const solid = (color: number) => new MeshBasicMaterial({ color, depthWrite: false })
-  const areaMaterial = fill(0xc5d4e4, 0.18)
-  const selectedMaterial = fill(0xffe2b0, 0.3)
+  const areaMaterial = fill(0xc5d4e4, 0.07)
+  const selectedMaterial = fill(0xffe2b0, 0.13)
   const ghostMaterial = new MeshBasicMaterial({
     color: 0xb7c6d6,
     transparent: true,

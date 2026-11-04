@@ -67,3 +67,13 @@ assert.throws(() => readEffectPresets(' '.repeat(262145)))
 assert.ok(referencedEffects(recipe.effects).has('post/rpgtoolkit:color_grade'))
 assert.throws(() => readRegionEffects({ environment: { effects: { post: { parameters: { filters: ['rpgtoolkit_editor:alias'] } } } } }, region.areas, 'author aliases'))
 console.log('PASS custom GLSL templates, typed Chinese parameter metadata, bounded project recipes, safe resource paths and private alias isolation')
+
+const multipass = createEffectResource('post')
+multipass.manifest.targets = { scratch: { scale: .5 } }
+multipass.manifest.passes = [{ entry: 'first', output: 'scratch' }, { entry: 'process', inputs: ['scratch'] }]
+assert.doesNotThrow(()=>validateEffectResource(multipass))
+for(const passes of [[], [{entry:'process',output:'scratch'}], [{entry:'first',inputs:['scratch'],output:'scratch'},{entry:'process'}], [{entry:'first'},{entry:'process'}]]){
+  assert.throws(()=>validateEffectResource({...multipass,manifest:{...multipass.manifest,passes}}))
+}
+assert.throws(()=>validateEffectResource({...multipass,kind:'sky'}))
+console.log('PASS visual pipeline validates buffer scales, references, read/write isolation and final output')

@@ -1,7 +1,7 @@
 import generated from './regionEffectControls.generated.json'
 import type { LevelArea, LevelRegion } from './levelDoc'
 
-export type EffectField = { key: string; label: string; type: string; default: unknown; min?: number; max?: number; step?: number; integer?: boolean; opaque?: boolean; unit?: string; optional?: boolean; choices?: { value: string; label: string }[] }
+export type EffectField = { key: string; label: string; hint?: string; type: string; default: unknown; min?: number; max?: number; step?: number; integer?: boolean; opaque?: boolean; unit?: string; optional?: boolean; choices?: { value: string; label: string }[] }
 export type ShaderChoice = { kind: string; id: string; label: string; params: EffectField[]; error?: string }
 export type EffectControls = { v: number; fog: { key: string; label: string; fields: EffectField[] }[]; policy: EffectField[]; clouds: EffectField[]; lights: EffectField[]; shaders: ShaderChoice[]; sounds: { id: string; label: string }[] }
 export const REGION_EFFECT_CONTROLS = generated as EffectControls

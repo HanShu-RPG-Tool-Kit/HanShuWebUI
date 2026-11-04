@@ -1,4 +1,5 @@
 import { cloneEffectValue, colorWithAlpha, effectColor, type EffectField } from './regionEffects'
+import { EffectTexturePicker } from './EffectTexturePicker'
 
 export function EffectValue({ field, value, disabled, onChange }: { field: EffectField; value: unknown; disabled?: boolean; onChange: (value: unknown) => void }) {
   const current = value ?? field.default
@@ -17,6 +18,8 @@ export function EffectValue({ field, value, disabled, onChange }: { field: Effec
       : color ? <div className="region-effect-color"><input type="color" aria-label={field.label} value={color.hex} disabled={disabled || !available} onChange={e => onChange(colorWithAlpha(e.target.value, rgbOnly ? 1 : color.alpha))} /><span>{!available ? '跟随默认' : color.hex.toUpperCase()}</span>{!rgbOnly && <label>透明度<input type="range" aria-label={`${field.label}透明度`} min="0" max="1" step="0.01" value={color.alpha} disabled={disabled || !available} onChange={e => onChange(colorWithAlpha(color.hex, Number(e.target.value)))} /></label>}</div>
       : field.type.startsWith('vec') ? <div className="region-effect-vector">{Array.from({ length: Number(field.type.slice(3)) }, (_, i) => <label key={i}>{['X', 'Y', 'Z', 'W'][i]}<input aria-label={`${field.label} ${['X', 'Y', 'Z', 'W'][i]}`} type="number" step={field.step ?? .01} value={Number((current as number[])[i])} disabled={disabled || !available} onChange={e => { const next = [...current as number[]]; next[i] = e.target.value === '' ? NaN : Number(e.target.value); onChange(next) }} /></label>)}</div>
       : field.type === 'number' ? <div className="region-effect-number">{bounded && <input type="range" aria-label={`${field.label}滑块`} min={logarithmic ? 0 : field.min} max={logarithmic ? 1000 : field.max} step={logarithmic ? 1 : field.step ?? .01} value={finite ? sliderValue : 0} disabled={disabled || !available} onChange={e => { const v = fromSlider(Number(e.target.value)), step = field.step ?? .01; onChange(Number((Math.round(v / step) * step).toFixed(6))) }} />}<input type="number" aria-label={field.label} min={field.min} max={field.max} step={field.step ?? 'any'} value={finite ? n : ''} disabled={disabled || !available} onChange={e => onChange(e.target.value === '' ? '' : Number(e.target.value))} /></div>
+      : field.type === 'texture' ? <EffectTexturePicker label={field.label} value={String(current)} disabled={disabled || !available} onChange={onChange}/>
       : <input type="text" aria-label={field.label} value={String(current)} disabled={disabled || !available} onChange={e => onChange(e.target.value)} />}
+    {field.hint && <p className="region-field-hint">{field.hint}</p>}
   </div>
 }

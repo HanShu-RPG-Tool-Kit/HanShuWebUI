@@ -42,7 +42,7 @@ export function RegionEffectAssets({ effects, areas, disabled, online, request, 
           const game = await controlRequest('level.effects.source', { kind: seed.kind, id: seed.id }) as EffectResource
           snapshot.resource = { ...game, id: `project:${game.id.split(':')[1]}` }
           if (live) { setEditing({ resource: snapshot.resource, target: request!.target }); setMessage('已复制游戏资源。请保存工程副本后应用，原资源不变。') }
-        } else if (live) setEditing({ resource: snapshot.resource, snapshot })
+        } else if (live) setEditing({ resource: snapshot.resource, snapshot, target: request!.target })
       } catch (error) { if (live) setMessage((error as Error).message) } finally { if (live) setBusy(false) }
     }
     void open(); return () => { live = false }
