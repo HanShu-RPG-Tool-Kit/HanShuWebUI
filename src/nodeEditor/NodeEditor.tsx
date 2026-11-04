@@ -359,7 +359,7 @@ const EditorSurface=forwardRef<NodeEditorApi,NodeEditorProps>(function EditorSur
         isValidConnection={valid} connectionMode={ConnectionMode.Loose} connectOnClick connectionRadius={22} connectionLineComponent={ConnectionPreview}
         nodesDraggable={!disabled} nodesConnectable={!disabled&&features.connections!==false} elementsSelectable={features.selection!==false&&props.active!==false}
         selectionOnDrag={features.selection!==false&&!disabled} selectionMode={SelectionMode.Partial} selectionKeyCode={null} multiSelectionKeyCode="Shift"
-        panOnDrag={interaction.panOnDrag??[2]} panOnScroll={false} zoomOnScroll={interaction.zoomOnScroll??true} zoomOnDoubleClick={false} zoomOnPinch minZoom={interaction.minZoom??MIN_CANVAS_ZOOM} maxZoom={interaction.maxZoom??MAX_CANVAS_ZOOM}
+        panOnDrag={interaction.panOnDrag??[2]} panActivationKeyCode={null} panOnScroll={false} zoomOnScroll={interaction.zoomOnScroll??true} zoomOnDoubleClick={false} zoomOnPinch minZoom={interaction.minZoom??MIN_CANVAS_ZOOM} maxZoom={interaction.maxZoom??MAX_CANVAS_ZOOM}
         deleteKeyCode={null} autoPanOnNodeDrag={false} autoPanOnConnect={false}
         onMoveStart={()=>setMenu(null)} onMove={(_event,viewport)=>props.onViewportChange?.(viewport)} onlyRenderVisibleElements={props.nodes.length>300}>
         <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="#3c3c3c"/>
