@@ -8,12 +8,15 @@ import {
   DISPLAY_Y_MAX,
   DISPLAY_Y_MIN,
   areaDisplaySpan,
+  creationHeight,
   resizeRect,
   translateArea,
   yFromHandle,
 } from '../src/workspaces/gameplay/levelVolumeEdit.ts'
 
 const camera = new PerspectiveCamera(40, 1, 0.05, 20000)
+assert.deepEqual(creationHeight(80.75), [80, 83], 'new volumes start at the drawing block row with four inclusive rows')
+assert.deepEqual(creationHeight(-0.25), [-1, 2], 'negative drawing heights use floor, not truncation')
 const indoor = createLevelDocument()
 indoor.regions.push({ id: 'room', areas: [{ kind: 'rect', x: [0, 8], z: [0, 8], y: [60, 68] }], custom_data: {} })
 const indoorOrbit = initialDocumentOrbit(indoor)

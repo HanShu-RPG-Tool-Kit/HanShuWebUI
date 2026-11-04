@@ -22,6 +22,12 @@ const HANDLE_Y_MAX = 256
 
 export type LevelTool = 'select' | 'rect' | 'circle' | 'polygon' | 'landmark'
 
+/** Four inclusive block rows from the drawing plane, matching the native workbench. */
+export function creationHeight(planeY: number): [number, number] {
+  const bottom = Math.floor(planeY)
+  return [bottom, bottom + 3]
+}
+
 export type LevelSelection =
   | { kind: 'region'; id: string; area: number }
   | { kind: 'landmark'; id: string }

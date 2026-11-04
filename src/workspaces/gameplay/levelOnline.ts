@@ -9,7 +9,7 @@ export const LEVEL_EDIT_END = 'level.edit.end'
 export const LEVEL_EDIT_STATUS = 'level.edit.status'
 export const LEVEL_EDIT_CHANGED = 'level.edit.changed'
 export const LEVEL_EDIT_CANCEL = 'level.edit.cancel'
-export type NativeEditorAction = 'save' | 'undo' | 'redo' | 'effect_new'
+export type NativeEditorAction = 'save' | 'undo' | 'redo' | 'effect_new' | 'roam' | 'play' | 'apply_test' | 'open'
 
 export const LEVEL_ONLINE_VERSION = 1
 export const LEVEL_ONLINE_HEARTBEAT_MS = 2500
@@ -46,6 +46,11 @@ export type LevelOnlineMeta = {
   handles: LevelOnlineHandle[]
   window: LevelOnlineBox | null
   viewport: LevelOnlineViewport | null
+  navigationMode?: 'edit' | 'observe' | 'play' | 'menu'
+  testWorldStatus?: string
+  testWorldBusy?: boolean
+  testWorldWritable?: boolean
+  testWorldTemplate?: string
 }
 
 export type LevelOnlineSnapshot = {
@@ -217,15 +222,19 @@ function readHandle(value: unknown): LevelOnlineHandle | null {
 }
 
 /** Read-only status. A document payload on status is ignored by the caller. */
-export function readLevelOnlineStatus(value: unknown): Pick<LevelOnlineMeta, 'handles' | 'window' | 'viewport'> | null {
+export function readLevelOnlineStatus(value: unknown): Omit<LevelOnlineMeta, 'sessionId' | 'documentId' | 'revision'> | null {
   if (!isRecord(value)) return null
   const handleSource = Array.isArray(value.handles) ? value.handles : Array.isArray(value.visibleHandles) ? value.visibleHandles : null
   const handles = handleSource ? handleSource.map(readHandle).filter((item): item is LevelOnlineHandle => !!item) : null
   const window = readBox(value.window) ?? readBox(value.mainWindow)
     ?? (finiteNumber(value.windowWidth) && finiteNumber(value.windowHeight) ? readBox({ width: value.windowWidth, height: value.windowHeight }) : null)
   const viewport = readViewport(value.viewport) ?? readViewport(value.embeddedViewport)
-  if (!handles && !window && !viewport) return null
-  return { handles: handles ?? [], window, viewport }
+  if (!handles && !window && !viewport && typeof value.navigationMode !== 'string') return null
+  return { handles: handles ?? [], window, viewport,
+    ...(typeof value.navigationMode === 'string' && ['edit','observe','play','menu'].includes(value.navigationMode) ? { navigationMode: value.navigationMode as LevelOnlineMeta['navigationMode'] } : {}),
+    ...(typeof value.testWorldStatus === 'string' ? { testWorldStatus: value.testWorldStatus, testWorldBusy: value.testWorldBusy === true, testWorldWritable: value.testWorldWritable === true } : {}),
+    ...(typeof value.testWorldTemplate === 'string' ? { testWorldTemplate: value.testWorldTemplate } : {}),
+  }
 }
 
 function payloadBytes(value: unknown): number {
@@ -316,6 +325,11 @@ export function createLevelOnlineSession(options: {
       handles: meta && meta.sessionId === session.sessionId ? meta.handles : [],
       window: meta && meta.sessionId === session.sessionId ? meta.window : null,
       viewport: meta && meta.sessionId === session.sessionId ? meta.viewport : null,
+      navigationMode: meta?.navigationMode,
+      testWorldStatus: meta?.testWorldStatus,
+      testWorldBusy: meta?.testWorldBusy,
+      testWorldWritable: meta?.testWorldWritable,
+      testWorldTemplate: meta?.testWorldTemplate,
     })
   }
 
@@ -330,6 +344,11 @@ export function createLevelOnlineSession(options: {
       handles: view.handles,
       window: view.window,
       viewport: view.viewport,
+      navigationMode: view.navigationMode,
+      testWorldStatus: view.testWorldStatus,
+      testWorldBusy: view.testWorldBusy,
+      testWorldWritable: view.testWorldWritable,
+      testWorldTemplate: view.testWorldTemplate,
     })
   }
 
