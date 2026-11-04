@@ -9,7 +9,7 @@ import { readEffectResource, readEffectText, saveEffectPresets, type EffectResou
 import { EffectResourceEditor } from './EffectResourceEditor'
 import type { LevelArea } from './levelDoc'
 
-export type EffectEditRequest = { sequence: number; kind: EffectResourceKind; id?: string }
+export type EffectEditRequest = { sequence: number; kind: EffectResourceKind; id?: string; target?: 'sky' | 'post' }
 export function RegionEffectAssets({ effects, areas, disabled, online, request, onChange, onResource, onPending, onPreview, onStop }: {
   effects: RegionEffectSections; areas: LevelArea[]; disabled?: boolean; online?: boolean; request: EffectEditRequest | null
   onChange: (effects: RegionEffectSections) => void; onResource: (resource: EffectResource) => void; onPending: (dirty: boolean) => void
@@ -18,7 +18,7 @@ export function RegionEffectAssets({ effects, areas, disabled, online, request, 
   const client = useProjectSession().binding?.handle.client
   const [library, setLibrary] = useState<{ presets: EffectPreset[]; text: string | null; version: string | null } | null>(null)
   const [title, setTitle] = useState(''), [selected, setSelected] = useState(''), [busy, setBusy] = useState(false), [message, setMessage] = useState('')
-  const [editing, setEditing] = useState<{ resource: EffectResource; snapshot?: EffectResourceSnapshot } | null>(null)
+  const [editing, setEditing] = useState<{ resource: EffectResource; snapshot?: EffectResourceSnapshot; target?: 'sky' | 'post' } | null>(null)
   const refs = useRef({ effects, areas, onChange, onResource, onPreview, onPending }); refs.current = { effects, areas, onChange, onResource, onPreview, onPending }
   const writable = !disabled && !!client?.writable
   async function refresh() {
@@ -33,7 +33,7 @@ export function RegionEffectAssets({ effects, areas, disabled, online, request, 
     let live = true
     async function open() {
       const seed = { ...createEffectResource(request!.kind), ...(request!.id ? { id: request!.id } : {}) }
-      if (!request!.id) { setEditing({ resource: seed }); return }
+      if (!request!.id) { setEditing({ resource: seed, target: request!.target }); return }
       setBusy(true); setMessage('')
       try {
         if (!client) throw Error('请先打开工程')
@@ -41,7 +41,7 @@ export function RegionEffectAssets({ effects, areas, disabled, online, request, 
         if (!snapshot.versions.some(Boolean) && isControlConnected()) {
           const game = await controlRequest('level.effects.source', { kind: seed.kind, id: seed.id }) as EffectResource
           snapshot.resource = { ...game, id: `project:${game.id.split(':')[1]}` }
-          if (live) { setEditing({ resource: snapshot.resource }); setMessage('已复制游戏资源。请保存工程副本后应用，原资源不变。') }
+          if (live) { setEditing({ resource: snapshot.resource, target: request!.target }); setMessage('已复制游戏资源。请保存工程副本后应用，原资源不变。') }
         } else if (live) setEditing({ resource: snapshot.resource, snapshot })
       } catch (error) { if (live) setMessage((error as Error).message) } finally { if (live) setBusy(false) }
     }
@@ -50,8 +50,8 @@ export function RegionEffectAssets({ effects, areas, disabled, online, request, 
   const withResource = (resource: EffectResource) => {
     let next = cloneEffectValue(refs.current.effects)
     if (resource.kind === 'transition') {
-      const kind = next.environment?.effects.post ? 'post' : 'sky'
-      next = toggleChannel(next, kind, true); next.environment!.effects[kind]!.parameters.transition = { shader: resource.id, params: {} }
+      const kind = editing?.target ?? 'post'
+      next = toggleChannel(next, kind, true); const p = next.environment!.effects[kind]!.parameters; const old = p.transition as import('./regionEffects').ShaderRef | undefined; if (!old || fullShader(old).shader !== resource.id) p.transition = { shader: resource.id, params: {} }
     } else {
       next = toggleChannel(next, resource.kind, true)
       const p = next.environment!.effects[resource.kind]!.parameters, key = resource.kind === 'sky' ? 'layers' : 'filters'

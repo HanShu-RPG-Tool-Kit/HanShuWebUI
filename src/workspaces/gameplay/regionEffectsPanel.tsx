@@ -23,7 +23,7 @@ export function RegionEffectsPanel(props: Props) {
   const source = effectFingerprint(props.region)
   const [resourceRequest, setResourceRequest] = useState<EffectEditRequest | null>(null)
   const customResources = useRef<EffectResource[]>([])
-  const editResource = (kind: EffectEditRequest['kind'], id?: string) => setResourceRequest({ sequence: Date.now(), kind, id })
+  const editResource = (kind: EffectEditRequest['kind'], id?: string) => setResourceRequest({ sequence: Date.now(), kind, id, target: channel === 'sky' ? 'sky' : 'post' })
   useEffect(() => { if (props.resourceEpoch) editResource('post') }, [props.resourceEpoch])
   const [draft, setDraft] = useState<RegionEffectSections>(() => cloneEffectValue(effectSections(props.region)))
   const [baseline, setBaseline] = useState(source)
