@@ -28,7 +28,7 @@ export function initialDocumentOrbit(doc: LevelDocument): OrbitState {
   const span = Math.max(bounds.maxX - bounds.minX, bounds.maxZ - bounds.minZ, bounded ? maxY - minY : 0, 16)
   return {
     target: new Vector3((bounds.minX + bounds.maxX) / 2, bounded ? (minY + maxY) / 2 : 0, (bounds.minZ + bounds.maxZ) / 2),
-    radius: Math.min(8000, Math.max(8, span * 1.35)), theta: 0.6, phi: 0.22,
+    radius: Math.min(8000, Math.max(8, span * 1.35)), theta: 0.6, phi: 0.72,
   }
 }
 

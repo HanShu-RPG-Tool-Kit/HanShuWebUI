@@ -23,6 +23,7 @@ const TOOLS: { id: LevelTool; label: string }[] = [
   { id: 'select', label: '选择' }, { id: 'rect', label: '矩形' }, { id: 'circle', label: '圆' },
   { id: 'polygon', label: '多边形' }, { id: 'landmark', label: '地标' },
 ]
+const TOOL_KEYS = ['V', 'B', 'C', 'P', 'L']
 export type { LevelDocumentIdentity }
 
 export function LevelEditor({ doc, disabled, onChange, identity, onHistoryReady, onSaveGuardReady, onPendingChange, onFocusModeChange, historyActions, onSaveRequested }: {
@@ -67,7 +68,7 @@ export function LevelEditor({ doc, disabled, onChange, identity, onHistoryReady,
   const [maximized, setMaximized] = useState(false)
   const [openRegions, setOpenRegions] = useState(() => new Set(doc.regions.map(r => r.id)))
   const [snapStep, setSnapStep] = useState<1 | 0.1>(1)
-  const [viewCommand, setViewCommand] = useState<LevelViewCommand>({ sequence: 0, kind: 'top' })
+  const [viewCommand, setViewCommand] = useState<LevelViewCommand>({ sequence: 0, kind: 'perspective' })
   const [viewportHint, setViewportHint] = useState<string | null>(null)
   const [pending, setPending] = useState(false)
   const [message, setMessage] = useState('')
@@ -306,16 +307,19 @@ export function LevelEditor({ doc, disabled, onChange, identity, onHistoryReady,
       event.preventDefault(); event.stopPropagation(); undo(key === 'y' || event.shiftKey)
     } else if (event.key === 'Escape') { setDraftPoints([]); setTool('select') }
     else if (key === 'f' && mode === 'volumes') { event.preventDefault(); setView('focus') }
+    else if (mode === 'volumes' && !disabled && !pending && !event.ctrlKey && !event.metaKey && !event.altKey && TOOL_KEYS.includes(key.toUpperCase())) {
+      event.preventDefault(); setTool(TOOLS[TOOL_KEYS.indexOf(key.toUpperCase())].id); setDraftPoints([])
+    }
     else if (!disabled && (event.key === 'Delete' || event.key === 'Backspace') && selection) { event.preventDefault(); remove('volume') }
   }
   const selectionText = region && selection?.kind === 'region' ? `${region.id} / 体积 ${selection.area + 1} · 共 ${region.areas.length} 个`
     : landmark ? `地标 ${landmark.id}` : '未选中对象'
   const hint = pending ? '有未完成编辑 · 应用或放弃后继续'
     : disabled ? '只读 · 可浏览与检查'
-    : mode === 'stream' ? (onlineMeta?.window ? 'WASD 移动 · Q/E 升降 · 右拖转向 · 中拖平移 · F 对准' : '等待游戏连接…')
+    : mode === 'stream' ? (onlineMeta?.window ? '中键环绕 · Shift＋中键平移 · 右键＋WASD 飞行 · F 对准选中' : '等待游戏连接…')
     : viewportHint || (tool === 'rect' || tool === 'circle' ? '点击起点、再点终点；也可左键拖出范围 · Esc 取消'
       : tool === 'polygon' ? '左键逐点添加，Enter 完成 · Esc 取消'
-        : `拖内部移动 · 拖边角调整大小 · WASD/QE 移动镜头 · 右拖环绕 · 中拖平移 · F 对准${hover ? ` · X ${hover[0]} Y ${hover[1]} Z ${hover[2]}` : ''}`)
+        : `左键选中 · 金色中心移动 · 边角缩放 · 绿色调整高度${hover ? ` · X ${hover[0]} Y ${hover[1]} Z ${hover[2]}` : ''}`)
 
   return <div className="level-editor" data-focus={focusMode} data-tree={treeOpen} data-inspector={inspectorOpen} data-maximized={maximized} tabIndex={0} onKeyDown={onKeyDown}>
     <div className="level-toolbar" role="toolbar" aria-label="地图工具">
@@ -325,13 +329,24 @@ export function LevelEditor({ doc, disabled, onChange, identity, onHistoryReady,
         <button type="button" className={wandActive ? 'is-active' : ''} aria-pressed={wandActive} disabled={mode === 'stream' || wandBusy || (!wandActive && (disabled || pending))} onClick={() => { void toggleWand() }}>{wandBusy ? '绑定中…' : '魔杖圈选'}</button>
       </div>
       <div className="level-toolbar-group">
-        {mode !== 'stream' && TOOLS.map(item => <button key={item.id} type="button" aria-pressed={tool === item.id} className={tool === item.id ? 'is-active' : ''} disabled={disabled || pending} onClick={() => { setTool(item.id); setDraftPoints([]) }}>{item.label}</button>)}
+        {mode !== 'stream' && TOOLS.map((item, index) => <button key={item.id} type="button" title={`${item.label} · ${TOOL_KEYS[index]}`} aria-keyshortcuts={TOOL_KEYS[index]} aria-pressed={tool === item.id} className={tool === item.id ? 'is-active' : ''} disabled={disabled || pending} onClick={() => { setTool(item.id); setDraftPoints([]) }}>{item.label}</button>)}
       </div>
       <div className="level-toolbar-group">
         <button type="button" aria-label="撤销地图编辑" onMouseDown={event => event.preventDefault()} disabled={disabled || !(historyActions ? historyActions.canUndo : history.undo.length)} onClick={() => undo(false)}>撤销</button>
         <button type="button" aria-label="重做地图编辑" onMouseDown={event => event.preventDefault()} disabled={disabled || !(historyActions ? historyActions.canRedo : history.redo.length)} onClick={() => undo(true)}>重做</button>
       </div>
       <div className="level-view-actions">
+        <details className="level-navigation-help" onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector('summary')?.focus() } }}>
+          <summary>操作指南</summary>
+          <div role="note" aria-label="视口操作指南">
+            <strong>选取与调整</strong>
+            <p>左键选中区域。拖金色中心移动，拖边角改大小，拖绿色控制点调整高度。</p>
+            <strong>观察与移动</strong>
+            <dl><dt>中键拖动</dt><dd>围绕焦点环绕</dd><dt>Shift＋中键</dt><dd>平移画面</dd><dt>滚轮</dt><dd>拉近 / 拉远</dd><dt>F</dt><dd>对准选中，保留方向</dd><dt>右键＋WASD</dt><dd>飞行；Q/E 升降</dd></dl>
+            <p>飞行时 Shift 加速，滚轮调速；松开右键停止。Esc 取消当前操作。</p>
+            <small>离线 3D 与游戏工作台使用同一套视角规则。</small>
+          </div>
+        </details>
         <button type="button" aria-pressed={treeOpen && !maximized} onClick={() => { setTreeOpen(!treeOpen || maximized); setMaximized(false) }}>对象</button>
         <button type="button" aria-pressed={inspectorOpen && !maximized} onClick={() => { if (flushFields().ok) { setInspectorOpen(!inspectorOpen || maximized); setMaximized(false) } }}>属性</button>
         <button type="button" aria-pressed={maximized} onClick={() => { if (flushFields().ok) setMaximized(!maximized) }}>{maximized ? '还原视口' : '最大化视口'}</button>

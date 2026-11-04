@@ -41,6 +41,7 @@ export function handleActionText(handle?: string, edge?: string): string {
   if (handle === 'y' && edge === 'min') return '拖底面'
   if (handle === 'y') return '拖顶面'
   if (handle === 'landmark-y') return '拖地标高度'
+  if (handle === 'landmark-move') return '拖地标位置'
   if (handle === 'radius') return '拖半径'
   if (handle === 'vertex') return '拖顶点'
   if (edge === 'minX') return '拖 X 最小面'
@@ -58,6 +59,7 @@ export function hoverCursorClass(pick?: string, handle?: string, edge?: string):
   if (edge === 'minZ' || edge === 'maxZ') return 'is-hover-z'
   if (handle === 'rect') return 'is-hover-corner'
   if (handle === 'radius') return 'is-hover-radius'
-  if (pick === 'area' || pick === 'landmark' || handle === 'move') return 'is-hover-move'
+  if (handle === 'move' || handle === 'landmark-move') return 'is-hover-move'
+  if (pick === 'area' || pick === 'landmark') return 'is-hover-select'
   return 'is-hover-handle'
 }

@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path'
 import { chromium } from 'playwright'
 import { harness } from './collaboration-harness.mjs'
 import { loginProject, closeCollaboration } from './project-ui-helpers.mjs'
-import { INTERACTIVE_STREAM_BODY, RPIN_BUTTON_DOWN, RPIN_BUTTON_UP, RPIN_KEY_DOWN, RPIN_KEY_UP, RPIN_MOVE, encodeRpin, devtoolStreamEndpoints, pictureLetterbox } from '../src/workspaces/gameplay/streamInput.ts'
+import { INTERACTIVE_STREAM_BODY, RPIN_BUTTON_DOWN, RPIN_BUTTON_UP, encodeRpin, devtoolStreamEndpoints } from '../src/workspaces/gameplay/streamInput.ts'
 
 const target = process.env.REGION_MCT_TARGET, wrapper = process.env.REGION_MCT_WRAPPER
 assert.ok(target && wrapper, 'Explicit isolated native test target and maintained wrapper required')
@@ -46,8 +46,14 @@ async function scrollNativeTo(text: string, type?: string) {
   for(let attempt=0;attempt<35;attempt++){
     const s=await state(),w=s.widgets.find((w:any)=>w.text===text&&(!type||w.type===type));assert.ok(w,'scroll target exists: '+text)
     const viewport=s.widgets.find((w:any)=>w.text==='世界视口'),apply=s.widgets.find((w:any)=>w.text==='应用属性');assert.ok(viewport&&apply)
-    if(w.y>=134&&w.y+w.height<=s.window.guiHeight-91)return
-    await native('mct_scroll',{screenToken:s.screenToken,x:Math.round(apply.x+apply.width/2),y:Math.round(viewport.y+viewport.height/2),dx:0,dy:Math.max(-10,Math.min(10,Math.round((170-w.y)/24)))})
+    if(w.y>=110&&w.y+w.height<=s.window.guiHeight-80)return
+    try {
+      await native('mct_scroll',{screenToken:s.screenToken,x:Math.round(apply.x+apply.width/2),y:Math.round(viewport.y+viewport.height/2),dx:0,dy:Math.max(-10,Math.min(10,Math.round((170-w.y)/24)))})
+    } catch (error) {
+      if (!String(error).includes('stale_token')) throw error
+      // A newly acknowledged draft can rebuild the panel after state was read.
+      // Re-observe both the target and scroll pane; never replay stale coordinates.
+    }
   }
   throw Error('Unable to scroll field into view: '+text)
 }
@@ -112,7 +118,6 @@ try {
   }
   pass('map wand right-click opens native standalone workbench with no Axiom dependency')
   await press('矩形 B')
-  let view = await widget('世界视口')
   assert.ok((await dragWidget('世界视口', 120, 70)).pressHandled)
   await until(async () => (await state()).widgets.some((w: any) => w.text.endsWith('/ 1')), 'standalone rectangle created')
   await press('对准 F'); await state()
@@ -121,11 +126,24 @@ try {
   pass('native rectangle creation uses world geometry and exposes a draggable finite upper face')
   let top = await widget('控制点 Y 上界')
   const localY = top.s.widgets.filter((w: any) => w.type === 'edit_box')[2].text
-  await dragWidget('控制点 Y 上界', 0, -25)
+  await dragWidget('控制点 Y 上界', 0, -Math.max(25,Math.round(top.s.window.guiHeight/360*25)))
   const localChanged = await until(async () => { const fields = (await state()).widgets.filter((w: any) => w.type === 'edit_box'); return fields[2]?.text && fields[2].text !== localY ? fields[2].text : false }, 'local Y drag changes actual property')
   await press('撤销'); await until(async () => (await state()).widgets.filter((w: any) => w.type === 'edit_box')[2]?.text === localY, 'local undo')
   await press('重做'); await until(async () => (await state()).widgets.filter((w: any) => w.type === 'edit_box')[2]?.text === localChanged, 'local redo')
   pass('standalone projected height control accepts native drag and local undo/redo')
+  const nameInput = (await state()).widgets.find((w: any) => w.type === 'edit_box')
+  await native('mct_act', { action: 'set_text', select: { text: nameInput.text, type: 'edit_box' }, text: '123456' })
+  let editState = await state(), editBox = editState.widgets.find((w: any) => w.type === 'edit_box' && w.text === '123456')
+  await native('mct_drag', { screenToken: editState.screenToken, x: editBox.x + 11, y: editBox.y + 10, dx: 12, dy: 0 })
+  await native('mct_act', { action: 'key', key: 259 })
+  assert.ok((await state()).widgets.some((w: any) => w.type === 'edit_box' && w.text === '1456'), 'mouse drag selects the displayed digits, with native text inset')
+  await native('mct_act', { action: 'key', key: 268 })
+  await native('mct_act', { action: 'key', key: 262, modifiers: 1 })
+  await native('mct_act', { action: 'key', key: 259 })
+  assert.ok((await state()).widgets.some((w: any) => w.type === 'edit_box' && w.text === '456'), 'keyboard selection continues from the same native caret')
+  await capture('native-text-selection')
+  await press('重载属性')
+  pass('native inset input keeps mouse drag selection, caret and keyboard selection aligned')
   await press('关闭'); assert.equal((await state()).screen, null)
   assert.deepEqual((await native('mct_server_state')).players, playerBefore, 'world camera never moves the server player')
   await stopInput()
@@ -145,6 +163,11 @@ try {
     } as any
   })
   page.on('pageerror', error => report.pageErrors.push(error.message))
+  page.on('response', async response => {
+    if (!response.url().includes('/api/files/commit')) return
+    const receipt = await response.json().catch(() => null)
+    if (receipt?.error) (report.saveErrors ??= []).push(receipt.error)
+  })
   page.on('websocket', socket => {
     for (const event of ['framesent', 'framereceived'] as const) socket.on(event, frame => {
       try {
@@ -183,6 +206,34 @@ try {
   await press('对准 F')
   await until(async () => (await state()).widgets.some((w: any) => w.text === '控制点 Y 上界' && w.visible), 'bound upper face')
   pass('browser interactive stream opens the same independent world workbench, retaining browser inspector')
+  if(process.env.REGION_STREAM_MATRIX){
+    const lease=await stream.getAttribute('data-edit-session'),revision=await stream.getAttribute('data-edit-revision')
+    const source=(await state()).window
+    report.streamSettings=[]
+    async function quality(value:number){await field('串流画面质量').focus();await page.keyboard.press('Home');for(let i=50;i<value;i++)await page.keyboard.press('ArrowRight')}
+    await page.getByText('画质与帧率',{exact:true}).click()
+    for(const config of [{maxWidth:1280,fps:30,jpegQuality:.62},{maxWidth:1280,fps:60,jpegQuality:.62},{maxWidth:1920,fps:60,jpegQuality:.85},{maxWidth:0,fps:60,jpegQuality:.9}]){
+      await field('串流画面宽度').selectOption(String(config.maxWidth));await field('串流目标帧率').selectOption(String(config.fps))
+      await quality(Math.round(config.jpegQuality*100))
+      await button('应用串流设置').click();await button('应用串流设置').waitFor()
+      const expected=Math.min(config.maxWidth||source.framebufferWidth,source.framebufferWidth)
+      await until(async()=>Number(await stream.getAttribute('data-frame-width'))===expected,'configured decoded frame width '+expected)
+      assert.equal(await stream.getAttribute('data-edit-session'),lease);assert.equal(await stream.getAttribute('data-edit-revision'),revision)
+      const start=performance.now();await page.waitForTimeout(5000)
+      const metrics=await page.evaluate(()=>{const now=performance.now();const times=((window as any).__nativeFrameTimes as number[]).filter(t=>t>=now-4000);return {frames:times.length,fps:(times.length-1)*1000/(times.at(-1)!-times[0])}})
+      const status=await fetch(endpoints.status,{headers}).then(r=>r.json())
+      assert.equal(status.maxWidth,config.maxWidth);assert.equal(status.fps,config.fps);assert.equal(status.jpegQuality,config.jpegQuality)
+      assert.ok(metrics.frames>=12,'frames continue after quality change')
+      report.streamSettings.push({...config,width:status.width,height:status.height,observedFps:metrics.fps,seconds:(performance.now()-start)/1000})
+    }
+    await field('串流画面宽度').selectOption('1920');await field('串流目标帧率').selectOption('60');await quality(85);await button('应用串流设置').click();await button('应用串流设置').waitFor()
+    await page.screenshot({path:join(artifacts,'stream-quality-settings.png')})
+    await page.getByText('画质与帧率',{exact:true}).click()
+    assert.equal(await readFile(join(h.root,path),'utf8'),initialText)
+    await capture('high-contrast-region-outline')
+    pass('stream resolution, FPS and quality reconfigure live without replacing the author lease or writing the level')
+  }
+
 
   // Existing runtime effects must be authored through the visual inspector and rendered by the real client.
   await page.getByRole('tab', { name: '环境与音乐', exact: true }).click()
@@ -240,6 +291,7 @@ try {
   await dragWidget('控制点 Y 上界', 0, -26)
   let after = await until(async () => { const v = Number(await field('Y 最大').inputValue()); return v !== before ? v : false }, 'native Y drag reaches C sidebar')
   await confirmedNativeCommit(heightCommitIndex)
+  after = Number(await field('Y 最大').inputValue())
   assert.equal(await readFile(join(h.root, path), 'utf8'), effectBaselineText)
   pass('native height drag updates browser sidebar through same draft without implicit disk save')
   await press('撤销'); await until(async () => Number(await field('Y 最大').inputValue()) === before, 'native undo shared with C')
@@ -254,7 +306,9 @@ try {
     return stream.evaluate(e => ({ handles: JSON.parse((e as HTMLElement).dataset.editHandles || '[]'), window: JSON.parse((e as HTMLElement).dataset.editWindow || 'null') }))
   }
   async function centeredHandles() {
-    return until(async () => { const m = await streamHandles(); const h = m.handles.find((h: any) => h.id === 'maxY'); return h && Math.abs(h.screenX - m.window.width / 2) < 3 ? m : false }, 'stream metadata reflects the newly focused camera')
+    const { s, w } = await widget('世界视口')
+    const centerX = (w.x + w.width / 2) * s.window.width / s.window.guiWidth
+    return until(async () => { const m = await streamHandles(); const h = m.handles.find((h: any) => h.id === 'move' || h.id === 'center'); return h && Math.abs(h.screenX - centerX) < 3 ? { ...m, centerX } : false }, 'focus centers the selection in the unobscured native viewport')
   }
   async function confirmedNativeCommit(previousCount: number) {
     const commit = await until(async () => report.authorCommits[previousCount], 'native commit notification received')
@@ -269,8 +323,11 @@ try {
   }, 'stream projection catches up after effect inspector resize and acknowledged height undo/redo')
   let upper = projected.handles.find((h: any) => h.id === 'maxY')
   let point = await streamPoint(upper.screenX, upper.screenY, projected.window)
-  await stream.focus(); await page.mouse.move(point.x, point.y); await page.mouse.down(); await page.mouse.move(point.x, point.y - 24, { steps: 12 }); await page.mouse.up()
-  const browserY = await until(async () => { const v = Number(await field('Y 最大').inputValue()); return v !== after ? v : false }, 'real browser height drag')
+  const browserHeightCommitIndex = report.authorCommits.length
+  await stream.focus(); await page.mouse.move(point.x, point.y); await page.mouse.down(); await page.mouse.move(point.x, point.y - 48, { steps: 12 }); await page.mouse.up()
+  await confirmedNativeCommit(browserHeightCommitIndex)
+  const browserY = Number(await field('Y 最大').inputValue())
+  assert.notEqual(browserY, after, 'real browser height drag commits a changed upper bound')
   after = browserY
   await until(async () => (await state()).widgets.filter((w: any) => w.type === 'edit_box').some((w: any) => w.text === String(after)), 'browser gesture acknowledged natively')
   pass('actual browser pointer drags native height handle through production stream input')
@@ -320,11 +377,19 @@ try {
   bodyPoint=await streamPoint(bodyTarget.x,bodyTarget.y,freshBody.window)
   const bodyCommits = report.authorCommits.length
   await page.mouse.move(bodyPoint.x, bodyPoint.y); await page.mouse.down(); await page.mouse.move(bodyPoint.x + 48, bodyPoint.y + 24, { steps: 12 }); await page.mouse.up()
+  await native('mct_state', { afterFrames: 20 })
+  assert.equal(report.authorCommits.length, bodyCommits, 'body drag selects without authoring geometry')
+  assert.equal(Number(await field('X 最小').inputValue()), 82)
+  pass('dragging the visible body selects without accidental geometry edits')
+  const moveMeta = await streamHandles(), moveHandle = moveMeta.handles.find((h:any) => h.id === 'move' || h.id === 'center')
+  assert.ok(moveHandle)
+  const movePoint = await streamPoint(moveHandle.screenX, moveHandle.screenY, moveMeta.window)
+  await page.mouse.move(movePoint.x, movePoint.y); await page.mouse.down(); await page.mouse.move(movePoint.x + 48, movePoint.y + 24, { steps: 12 }); await page.mouse.up()
   await confirmedNativeCommit(bodyCommits)
-  await until(async () => await field('X 最小').count() === 1 && Number(await field('X 最小').inputValue()) !== 82, 'first drag selects and commits movement of the rendered volume')
+  await until(async () => Number(await field('X 最小').inputValue()) !== 82, 'explicit move handle translates the volume')
   await button('撤销地图编辑').click(); await page.locator('.level-tree-volume').first().click()
   await until(async () => Number(await field('X 最小').inputValue()) === 82, 'body drag undo restores original coordinates')
-  pass('first browser drag selects and moves a volume by its visible body')
+  pass('explicit center handle moves a selected volume with one shared undo')
   await press('对准 F'); await native('mct_state', { afterFrames: 20 })
   const resizeMeta = await centeredHandles()
   const edge = resizeMeta.handles.find((h: any) => h.id === 'maxX')
@@ -360,17 +425,48 @@ try {
   await until(async () => await field('X 最大').count() === 1 && Number(await field('X 最大').inputValue()) === 93, 'circle creation undo restores the prior selection')
   pass('browser two-point circle supports preview cancellation and one shared undo')
   await press('对准 F'); await native('mct_state', { afterFrames: 20 })
+  const navigationBaseline = await centeredHandles()
+  const navigationRevision = await stream.getAttribute('data-edit-revision')
+  const navigationView = await widget('世界视口')
+  const navigationPoint = await streamPoint((navigationView.w.x + navigationView.w.width / 2) * navigationView.s.window.scale, (navigationView.w.y + navigationView.w.height / 2) * navigationView.s.window.scale, navigationView.s.window)
+  async function middleDrag(dx: number, dy: number, shift = false) {
+    await page.mouse.move(navigationPoint.x, navigationPoint.y)
+    if (shift) await page.keyboard.down('Shift')
+    try { await page.mouse.down({ button: 'middle' }); await page.mouse.move(navigationPoint.x + dx, navigationPoint.y + dy, { steps: 8 }); await page.mouse.up({ button: 'middle' }) }
+    finally { if (shift) await page.keyboard.up('Shift') }
+    await native('mct_state', { afterFrames: 15 })
+  }
+  const originalCorner = navigationBaseline.handles.find((h: any) => h.id === 'maxXmaxZ')
+  await middleDrag(32, 10)
+  await until(async () => { const h = (await streamHandles()).handles.find((h: any) => h.id === 'maxXmaxZ'); return h && Math.hypot(h.screenX-originalCorner.screenX, h.screenY-originalCorner.screenY) > 3 }, 'native middle drag orbits the selected volume')
+  const orbitCenter = (await streamHandles()).handles.find((h: any) => h.id === 'move' || h.id === 'center')
+  assert.ok(Math.abs(orbitCenter.screenX-navigationBaseline.centerX)<3, 'orbit keeps its selected pivot centered in the unobscured viewport')
+  await middleDrag(-32, -10)
+  const panBaseline = await centeredHandles()
+  await middleDrag(24, 12, true)
+  await until(async () => { const h = (await streamHandles()).handles.find((h: any) => h.id === 'maxY'); return h && h.screenX > panBaseline.handles.find((h:any)=>h.id==='maxY').screenX + 8 }, 'Shift middle drag pans the native view with the pointer')
+  await middleDrag(-24, -12, true)
+  await centeredHandles()
+  assert.equal(await stream.getAttribute('data-edit-revision'), navigationRevision, 'camera navigation creates no author transaction')
+  const tabViewBefore = (await widget('世界视口')).w
+  await press('环境与音乐'); const tabViewAfter = (await widget('世界视口')).w
+  assert.deepEqual([tabViewAfter.x,tabViewAfter.y,tabViewAfter.width,tabViewAfter.height], [tabViewBefore.x,tabViewBefore.y,tabViewBefore.width,tabViewBefore.height], 'inspector tabs preserve viewport bounds')
+  await press('范围与高度')
+  pass('native MMB orbit, Shift MMB pan and inspector tabs preserve geometry and viewport bounds')
   const freeBefore = (await centeredHandles()).handles.find((h: any) => h.id === 'maxY')
   const freePose = (await native('mct_server_state')).players
   await stream.focus(); await page.keyboard.down('d'); await native('mct_state', { afterFrames: 15 }); await page.keyboard.up('d')
-  await until(async () => { const h = (await streamHandles()).handles.find((h: any) => h.id === 'maxY'); return h && h.screenX < freeBefore.screenX - 1 }, 'D moves the camera without a held mouse button')
+  const freeAfter = (await streamHandles()).handles.find((h:any) => h.id === 'maxY')
+  assert.ok(Math.abs(freeAfter.screenX-freeBefore.screenX)<1, 'unheld D cannot move the camera')
   assert.deepEqual((await native('mct_server_state')).players, freePose)
-  pass('browser WASD moves the world camera without holding a mouse button')
-  const beforeRise = await until(async () => { const m = await streamHandles(); const h = m.handles.find((h: any) => h.id === 'maxY'); return h && h.screenX < freeBefore.screenX - 1 ? h : false }, 'movement metadata settled')
-  await page.keyboard.down('e'); await native('mct_state', { afterFrames: 15 }); await page.keyboard.up('e')
-  await until(async () => { const h = (await streamHandles()).handles.find((h: any) => h.id === 'maxY'); return h && h.screenY > beforeRise.screenY + 1 }, 'E raises only the detached camera')
+  pass('navigation keys outside RMB fly mode do not move the camera or player')
+  const riseCanvas=await widget('世界视口')
+  const risePoint=await streamPoint((riseCanvas.w.x+riseCanvas.w.width/2)*riseCanvas.s.window.scale,(riseCanvas.w.y+riseCanvas.w.height/2)*riseCanvas.s.window.scale,riseCanvas.s.window)
+  await page.mouse.move(risePoint.x,risePoint.y);await page.mouse.down({button:'right'})
+  await page.keyboard.down('e'); await native('mct_state', { afterFrames: 15 }); await page.keyboard.up('e'); await page.mouse.up({button:'right'})
+  await until(async () => { const h = (await streamHandles()).handles.find((h:any) => h.id === 'maxY'); return h && h.screenY > freeBefore.screenY + 1 }, 'RMB plus E raises only the detached camera')
   assert.deepEqual((await native('mct_server_state')).players, freePose)
-  pass('browser E raises the editor camera without moving the player')
+  pass('RMB plus E raises the editor camera without moving the player')
   await press('对准 F'); await native('mct_state', { afterFrames: 20 })
   // Observe real presentation, including browser decode and draw, while moving only the editor camera.
   const serverPose = (await native('mct_server_state')).players.map((p: any) => ({ uuid: p.uuid, x: p.x, y: p.y, z: p.z }))
@@ -497,11 +593,38 @@ try {
   const offline = field('三维体积视图'); await offline.focus()
   const orbitBefore = await offline.getAttribute('data-orbit'), diskBeforeNavigation = await readFile(join(h.root, path), 'utf8')
   await page.keyboard.down('d'); await page.waitForTimeout(160); await page.keyboard.up('d')
-  await until(async () => await offline.getAttribute('data-orbit') !== orbitBefore, 'offline WASD camera moves')
-  const stoppedOrbit = await offline.getAttribute('data-orbit'); await page.waitForTimeout(120)
-  assert.equal(await offline.getAttribute('data-orbit'), stoppedOrbit)
+  assert.equal(await offline.getAttribute('data-orbit'), orbitBefore, 'offline keys need RMB fly mode')
+  const navBox=await offline.boundingBox();assert.ok(navBox)
+  await page.mouse.move(navBox.x+navBox.width*.5,navBox.y+navBox.height*.5);await page.mouse.down({button:'right'})
+  await page.keyboard.down('d'); await page.waitForTimeout(180)
+  await until(async () => await offline.getAttribute('data-orbit') !== orbitBefore, 'offline RMB plus D moves camera')
+  await page.mouse.up({button:'right'})
+  const stoppedOrbit = await offline.getAttribute('data-orbit'); await page.waitForTimeout(180)
+  assert.equal(await offline.getAttribute('data-orbit'), stoppedOrbit, 'releasing RMB stops held movement keys')
+  await page.keyboard.up('d')
+  await page.mouse.down({button:'middle'});await page.mouse.move(navBox.x+navBox.width*.5+35,navBox.y+navBox.height*.5+15,{steps:8});await page.mouse.up({button:'middle'})
+  const afterOrbit=(await offline.getAttribute('data-orbit'))!.split(' ').map(Number)
+  const beforeOrbit=stoppedOrbit!.split(' ').map(Number)
+  assert.deepEqual(afterOrbit.slice(3),beforeOrbit.slice(3),'orbit preserves focus')
+  assert.notEqual(afterOrbit[1],beforeOrbit[1],'middle drag changes orbit angle')
+  await page.keyboard.down('Shift');await page.mouse.down({button:'middle'});await page.mouse.move(navBox.x+navBox.width*.5+65,navBox.y+navBox.height*.5+30,{steps:8});await page.mouse.up({button:'middle'});await page.keyboard.up('Shift')
+  const afterPan=(await offline.getAttribute('data-orbit'))!.split(' ').map(Number)
+  assert.notDeepEqual(afterPan.slice(3),afterOrbit.slice(3),'Shift-middle pans focus')
+  assert.equal(afterPan[1],afterOrbit[1])
+  await page.keyboard.press('f')
+  const afterFocus=(await offline.getAttribute('data-orbit'))!.split(' ').map(Number)
+  assert.equal(afterFocus[1],afterPan[1]);assert.equal(afterFocus[2],afterPan[2])
+  // A shallow/below-horizon view must not snap back to the old downward-only range on F.
+  await page.mouse.move(navBox.x+navBox.width*.5,navBox.y+navBox.height*.7)
+  await page.mouse.down({button:'middle'});await page.mouse.move(navBox.x+navBox.width*.5,navBox.y+navBox.height*.2,{steps:12});await page.mouse.up({button:'middle'})
+  const upwardOrbit=(await offline.getAttribute('data-orbit'))!.split(' ').map(Number)
+  assert.ok(upwardOrbit[2]>1.45,'navigation reaches the full pitch range')
+  await page.keyboard.press('f')
+  assert.equal((await offline.getAttribute('data-orbit'))!.split(' ').map(Number)[2],upwardOrbit[2],'F preserves a below-horizon view')
+  await page.mouse.move(navBox.x+navBox.width*.5,navBox.y+navBox.height*.2)
+  await page.mouse.down({button:'middle'});await page.mouse.move(navBox.x+navBox.width*.5,navBox.y+navBox.height*.7,{steps:12});await page.mouse.up({button:'middle'})
   assert.equal(await readFile(join(h.root, path), 'utf8'), diskBeforeNavigation)
-  pass('offline WASD moves only the simulated camera and stops on key release')
+  pass('offline orbit, pan, RMB fly, release and focus obey one navigation model without file writes')
   await button('矩形').click()
   const offBox = await offline.boundingBox(); assert.ok(offBox)
   await page.mouse.click(offBox.x + offBox.width * .35, offBox.y + offBox.height * .4)
@@ -516,7 +639,7 @@ try {
   await button('游戏内').click()
   await until(async () => (await state()).screen?.class.endsWith('RegionEditScreen'), 'custom effect native session')
   await page.getByRole('tab', { name: '环境与音乐', exact: true }).click()
-  await press('环境与音乐'); await press('制作效果 / 网页资源编辑')
+  await press('环境与音乐'); await scrollNativeTo('制作效果 / 网页资源编辑'); await press('制作效果 / 网页资源编辑')
   const author = page.getByRole('dialog', { name: '自定义着色器效果', exact: true }); await author.waitFor()
   await author.getByLabel('着色器资源ID', { exact: true }).fill('project:forest_tint')
   await author.getByLabel('着色器显示名称', { exact: true }).fill('森林染色')
