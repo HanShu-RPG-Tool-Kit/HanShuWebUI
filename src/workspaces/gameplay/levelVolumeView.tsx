@@ -1,4 +1,7 @@
 import { useEffect, useRef } from 'react'
+import { LineSegments2 } from 'three/addons/lines/LineSegments2.js'
+import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js'
+import { LineMaterial } from 'three/addons/lines/LineMaterial.js'
 import {
   AxesHelper,
   Fog,
@@ -102,7 +105,7 @@ type PickData = {
   regionId?: string
   index?: number
   landmarkId?: string
-  handle?: 'rect' | 'radius' | 'vertex' | 'y' | 'landmark-y' | 'move'
+  handle?: 'rect' | 'radius' | 'vertex' | 'y' | 'landmark-y' | 'landmark-move' | 'move'
   edge?: string
   vertex?: number
   sharedGeometry?: boolean
@@ -114,7 +117,7 @@ type PickData = {
 }
 
 type OrbitGesture = {
-  kind: 'orbit'
+  kind: 'orbit' | 'fly'
   x: number
   y: number
   theta: number
@@ -228,7 +231,7 @@ type VolumeApi = {
 }
 
 const AFFORDANCE_CLASSES = [
-  'is-hover-move', 'is-hover-x', 'is-hover-z', 'is-hover-y', 'is-hover-corner', 'is-hover-radius', 'is-hover-handle',
+  'is-hover-select', 'is-hover-move', 'is-hover-x', 'is-hover-z', 'is-hover-y', 'is-hover-corner', 'is-hover-radius', 'is-hover-handle',
   'is-active-move', 'is-active-x', 'is-active-z', 'is-active-y', 'is-active-corner', 'is-active-radius',
 ]
 
@@ -293,6 +296,7 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
   const camera = new PerspectiveCamera(40, 1, 0.05, 20000)
   const orbit = { target: new Vector3(32, 0, 32), radius: 86, theta: 0.6, phi: 0.72 }
   const cameraKeys = new Set<string>()
+  let flySpeed = 12
   let navigationFrame = 0, navigationTime = 0
   let clickPlacing = false
   let creationPress: { x: number; y: number } | null = null
@@ -322,13 +326,13 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
     polygonOffsetFactor: 1,
     polygonOffsetUnits: 1,
   })
-  const solid = (color: number) => new MeshBasicMaterial({ color, depthWrite: false })
+  const solid = (color: number) => new MeshBasicMaterial({ color, depthWrite: false, transparent:true })
   const areaMaterial = fill(0xc5d4e4, 0.07)
   const selectedMaterial = fill(0xffe2b0, 0.13)
   const ghostMaterial = new MeshBasicMaterial({
     color: 0xb7c6d6,
     transparent: true,
-    opacity: 0.045,
+    opacity: 0.02,
     side: DoubleSide,
     depthWrite: false,
   })
@@ -340,9 +344,11 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
   const cornerHandleMaterial = solid(0xf4f7fb)
   const moveHandleMaterial = solid(0xf0c27a)
   const radiusHandleMaterial = solid(0xe8a23a)
-  const edgeMaterial = new LineBasicMaterial({ color: 0xd7e2ee })
-  const selectedEdgeMaterial = new LineBasicMaterial({ color: 0xfff1cc })
-  const ghostEdgeMaterial = new LineBasicMaterial({ color: 0x9eb0c4, transparent: true, opacity: 0.55 })
+  const edgeMaterial = new LineMaterial({ color: 0xb8d5e5, linewidth:1.8, transparent:true, depthWrite:false })
+  const selectedEdgeMaterial = new LineMaterial({ color: 0xffdf70, linewidth:3.2, transparent:true, depthTest:false, depthWrite:false })
+  const edgeHalo = new LineMaterial({ color:0x080e14,linewidth:4.5,transparent:true,depthWrite:false })
+  const selectedHalo = new LineMaterial({ color:0x080e14,linewidth:6.5,transparent:true,depthTest:false,depthWrite:false })
+  const ghostEdgeMaterial = new LineBasicMaterial({ color: 0x9eb0c4, transparent: true, opacity: 0.16 })
   const draftMaterial = new LineBasicMaterial({ color: 0xe8b45a })
   const handleGeometry = new BoxGeometry(0.7, 0.7, 0.7)
   const markerGeometry = new SphereGeometry(0.5, 16, 12)
@@ -360,6 +366,8 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
     radiusHandleMaterial,
     edgeMaterial,
     selectedEdgeMaterial,
+    edgeHalo,
+    selectedHalo,
     ghostEdgeMaterial,
     draftMaterial,
   ]
@@ -421,6 +429,7 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
   function paintFrame() {
     // Renderer viewport/scissor coordinates are CSS pixels; it applies DPR itself.
     renderer.getSize(drawingSize)
+    for(const material of [edgeMaterial,selectedEdgeMaterial,edgeHalo,selectedHalo])material.resolution.copy(drawingSize)
     renderer.setScissorTest(false)
     renderer.setViewport(0, 0, drawingSize.x, drawingSize.y)
     renderer.render(scene, camera)
@@ -549,7 +558,7 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
     orbit.target.copy(next.target)
     orbit.radius = next.radius
     orbit.theta = next.theta
-    orbit.phi = Math.min(1.45, Math.max(0.12, next.phi))
+    orbit.phi = next.phi
     render()
     setHint(focusHint())
   }
@@ -692,7 +701,8 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
     activePointer = null
     host.classList.remove('is-orbit', 'is-pan')
     clearAffordance()
-    if (clearPreview && current && current.kind !== 'orbit' && current.kind !== 'pan') {
+    stopNavigation()
+    if (clearPreview && current && current.kind !== 'orbit' && current.kind !== 'fly' && current.kind !== 'pan') {
       getProps().onPreview(null)
       setHint(null)
     }
@@ -752,7 +762,8 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
     suppressLostCapture = true
     releasePointer(id)
     suppressLostCapture = false
-    if (current.kind === 'orbit' || current.kind === 'pan') return
+    stopNavigation()
+    if (current.kind === 'orbit' || current.kind === 'fly' || current.kind === 'pan') return
     if (getProps().disabled) {
       getProps().onPreview(null)
       return
@@ -764,16 +775,18 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
 
   function onPointerDown(event: PointerEvent) {
     host.focus({ preventScroll: true })
-    if (event.button === 2) {
+    if (event.button === 2 || event.button === 1 && !event.shiftKey) {
       event.preventDefault()
+      cancelGesture()
       clearAffordance()
       setHint(null)
       host.classList.add('is-orbit')
-      arm(event, { kind: 'orbit', x: event.clientX, y: event.clientY, theta: orbit.theta, phi: orbit.phi })
+      arm(event, { kind: event.button === 2 ? 'fly' : 'orbit', x: event.clientX, y: event.clientY, theta: orbit.theta, phi: orbit.phi })
       return
     }
     if (event.button === 1) {
       event.preventDefault()
+      cancelGesture()
       placeCamera()
       clearAffordance()
       setHint(null)
@@ -782,6 +795,7 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
       return
     }
     if (event.button !== 0) return
+    if (gesture && (gesture.kind === 'orbit' || gesture.kind === 'fly' || gesture.kind === 'pan')) return
     host.focus({ preventScroll: true })
     const props = getProps()
     if (props.disabled) {
@@ -928,7 +942,7 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
       props.onSelection({ kind: 'landmark', id: data.landmarkId })
       return
     }
-    if (data.pick === 'landmark' && data.landmarkId) {
+    if (data.pick === 'handle' && data.handle === 'landmark-move' && data.landmarkId) {
       const point = props.base.landmarks.find((item) => item.id === data.landmarkId)
       if (!point) return
       const hit = horizontalHit(event.clientX, event.clientY, point.param.y) ?? picked.point
@@ -944,19 +958,11 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
       props.onSelection({ kind: 'landmark', id: point.id })
       return
     }
+    if (data.pick === 'landmark' && data.landmarkId) {
+      props.onSelection({ kind: 'landmark', id: data.landmarkId })
+      return
+    }
     if (data.pick === 'area' && data.regionId !== undefined && data.index !== undefined) {
-      const area = areaOf(props.base, data.regionId, data.index)
-      if (!area) return
-      const hit = horizontalHit(event.clientX, event.clientY, picked.point.y) ?? picked.point
-      arm(event, {
-        kind: 'move-area',
-        regionId: data.regionId,
-        index: data.index,
-        area,
-        grabX: hit.x,
-        grabZ: hit.z,
-        planeY: picked.point.y,
-      })
       props.onSelection({ kind: 'region', id: data.regionId, area: data.index })
     }
   }
@@ -971,7 +977,7 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
   }
 
   function selectionFromPick(data: PickData): LevelSelection {
-    if (data.landmarkId && (data.pick === 'landmark' || data.handle === 'landmark-y')) {
+    if (data.landmarkId) {
       return { kind: 'landmark', id: data.landmarkId }
     }
     if (data.regionId !== undefined && data.index !== undefined) {
@@ -995,9 +1001,16 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
     getProps().onHover(ground ? [snapAbsolute(ground.x, step), snapAbsolute(ground.y, step), snapAbsolute(ground.z, step)] : null)
     const current = gesture
     if (current && matchesPointer(event)) {
-      if (current.kind === 'orbit') {
-        orbit.theta = current.theta - (event.clientX - current.x) * 0.005
-        orbit.phi = Math.min(1.45, Math.max(0.12, current.phi - (event.clientY - current.y) * 0.005))
+      if (current.kind === 'orbit' || current.kind === 'fly') {
+        placeCamera()
+        const position = camera.position.clone()
+        orbit.theta -= (event.clientX - current.x) * 0.005
+        orbit.phi = Math.min(Math.PI - .01, Math.max(.01, orbit.phi - (event.clientY - current.y) * 0.005))
+        if (current.kind === 'fly') {
+          placeCamera()
+          orbit.target.add(position.sub(camera.position))
+        }
+        current.x = event.clientX; current.y = event.clientY
         setHint(null)
         render()
         return
@@ -1088,6 +1101,8 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
 
   function onPointerUp(event: PointerEvent) {
     if (!gesture || !matchesPointer(event)) return
+    const button = gesture.kind === 'fly' ? 2 : gesture.kind === 'orbit' || gesture.kind === 'pan' ? 1 : 0
+    if (event.button !== button) return
     finishPointer(event)
   }
 
@@ -1122,7 +1137,7 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
   function onHostKey(event: KeyboardEvent) {
     if (!event.metaKey && !event.ctrlKey && !event.altKey && /^(Key[WASDQE]|Space|ShiftLeft|ShiftRight)$/.test(event.code)) {
       event.preventDefault(); event.stopPropagation()
-      if (gesture && !event.code.startsWith('Shift')) cancelGesture()
+      if (gesture?.kind !== 'fly') return
       cameraKeys.add(event.code)
       if (!navigationFrame) { navigationTime = performance.now(); navigationFrame = requestAnimationFrame(navigate) }
       return
@@ -1144,10 +1159,10 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
 
   function navigate(now: number) {
     navigationFrame = 0
-    if (disposed || document.activeElement !== host || document.hidden || !cameraKeys.size) { stopNavigation(); return }
+    if (disposed || gesture?.kind !== 'fly' || document.activeElement !== host || document.hidden || !cameraKeys.size) { stopNavigation(); return }
     const dt = Math.min(.05, (now - navigationTime) / 1000); navigationTime = now
     const right = new Vector3(Math.cos(orbit.theta), 0, -Math.sin(orbit.theta))
-    const forward = new Vector3(-Math.sin(orbit.theta), 0, -Math.cos(orbit.theta))
+    const forward = camera.getWorldDirection(new Vector3())
     const direction = new Vector3()
     if (cameraKeys.has('KeyW')) direction.add(forward)
     if (cameraKeys.has('KeyS')) direction.sub(forward)
@@ -1156,7 +1171,7 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
     if (cameraKeys.has('KeyQ')) direction.y -= 1
     if (cameraKeys.has('KeyE') || cameraKeys.has('Space')) direction.y += 1
     const boost = cameraKeys.has('ShiftLeft') || cameraKeys.has('ShiftRight') ? 3 : 1
-    orbit.target.add(direction.normalize().multiplyScalar(Math.max(4, Math.min(300, orbit.radius * .6)) * dt * boost))
+    orbit.target.add(direction.normalize().multiplyScalar(flySpeed * dt * boost))
     render()
     navigationFrame = requestAnimationFrame(navigate)
   }
@@ -1164,7 +1179,9 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
   function onWheel(event: WheelEvent) {
     event.preventDefault()
     const factor = Math.exp(event.deltaY * 0.0012)
-    orbit.radius = Math.min(8000, Math.max(2, orbit.radius * factor))
+    if (gesture?.kind === 'fly') { flySpeed = Math.min(256, Math.max(1, flySpeed / factor)); setHint(`飞行速度 ${Math.round(flySpeed)} · 松开右键停止`); return }
+    if (gesture) return
+    orbit.radius = Math.min(8000, Math.max(.25, orbit.radius * factor))
     render()
   }
 
@@ -1222,11 +1239,15 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
     data.regionId = regionId
     data.index = index
     data.sharedMaterial = true
-    const edges = new LineSegments(new EdgesGeometry(geometry), selected ? selectedEdgeMaterial : edgeMaterial)
-    edges.raycast = () => {}
-    edges.renderOrder = 3
-    ;(edges.userData as PickData).sharedMaterial = true
-    mesh.add(edges)
+    const boundary=new EdgesGeometry(geometry)
+    for(const [index,material] of (selected?[selectedHalo,selectedEdgeMaterial]:[edgeHalo,edgeMaterial]).entries()){
+      const edges=new LineSegments2(new LineSegmentsGeometry().fromEdgesGeometry(boundary),material)
+      edges.raycast=()=>{}
+      edges.renderOrder=(selected?5:3)+index
+      ;(edges.userData as PickData).sharedMaterial=true
+      mesh.add(edges)
+    }
+    boundary.dispose()
     contentRoot.add(mesh)
     if (handles && selected) addAreaHandles(regionId, index, area, bandY)
   }
@@ -1291,6 +1312,7 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
     vertex?: number,
   ) {
     const mesh = new Mesh(handleGeometry, materialForHandle(handle, edge))
+    mesh.renderOrder=20
     mesh.position.set(x, y, z)
     const data = mesh.userData as PickData
     data.pick = 'handle'
@@ -1327,7 +1349,14 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
     data.baseSize = 1
     contentRoot.add(mesh)
     if (!handles || !selected) return
+    const move = new Mesh(handleGeometry, moveHandleMaterial)
+    move.renderOrder = 20
+    move.position.set(x + 1, y, z)
+    Object.assign(move.userData, { pick: 'handle', handle: 'landmark-move', landmarkId: id,
+      sharedGeometry: true, sharedMaterial: true, pixelTarget: HANDLE_TARGET_PX, baseSize: .7 })
+    handleRoot.add(move)
     const knob = new Mesh(handleGeometry, yHandleMaterial)
+    knob.renderOrder=20
     knob.position.set(x, decimalAdd(y, LANDMARK_Y_AXIS), z)
     const knobData = knob.userData as PickData
     knobData.pick = 'handle'

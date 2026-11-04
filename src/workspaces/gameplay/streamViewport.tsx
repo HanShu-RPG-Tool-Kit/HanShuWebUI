@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { getControlHubSnapshot } from '../../gameDevServer/controlHub'
 import { levelStreamChord, type LevelOnlineMeta, type NativeEditorAction } from './levelOnline'
+import { loadStreamSettings, saveStreamSettings, streamStartBody, STREAM_WIDTHS, STREAM_RATES, type StreamSettings } from './streamSettings'
 
 export type StreamEditorBridge = {
   /** Resolve before the picture session starts. Rejection skips /stream/start. */
@@ -16,7 +17,7 @@ export type StreamEditorBridge = {
   shortcut?: (action: NativeEditorAction) => Promise<void>
 }
 import {
-  INTERACTIVE_STREAM_BODY,
+  RPSF_HEADER_SIZE,
   RPIN_BUTTON_DOWN,
   RPIN_BUTTON_UP,
   RPIN_CHAR,
@@ -53,19 +54,37 @@ export function StreamViewport({ editor, meta }: { editor?: StreamEditorBridge; 
   editorRef.current = editor
   const [phase, setPhase] = useState<StreamPhase>('connecting')
   const [error, setError] = useState('')
+  const [settings,setSettings]=useState(loadStreamSettings)
+  const initialSettings=useRef(settings)
+  const sessionRef=useRef<ReturnType<typeof openInteractiveSession>|null>(null)
+  const [configuring,setConfiguring]=useState(false),[configError,setConfigError]=useState('')
+  const [metrics,setMetrics]=useState({width:0,height:0,fps:0})
 
   useEffect(() => {
     const host = hostRef.current
     const canvas = canvasRef.current
     if (!host || !canvas) return undefined
-    const session = openInteractiveSession(host, canvas, () => editorRef.current, (next, message) => {
+    const session = openInteractiveSession(host, canvas, () => editorRef.current, initialSettings.current, setMetrics, (next, message) => {
       setPhase(next)
       setError(message)
     })
-    return () => session.stop()
+    sessionRef.current=session
+    return () => {sessionRef.current=null;session.stop()}
   }, [])
 
   return (
+    <div className="level-stream-shell">
+    <div className="level-stream-quality">
+      <span role="status" aria-label="串流实际画质">{metrics.width?`${metrics.width} × ${metrics.height} · ${metrics.fps} FPS`:'等待画面'}</span>
+      <details><summary>画质与帧率</summary><div className="level-stream-settings">
+        <label>画面宽度<select aria-label="串流画面宽度" value={settings.maxWidth} disabled={configuring} onChange={e=>setSettings(v=>({...v,maxWidth:Number(e.target.value)}))}>{STREAM_WIDTHS.map(w=><option key={w} value={w}>{w===0?'原画 · 跟随游戏窗口':w+' 像素宽'}</option>)}</select></label>
+        <label>目标帧率<select aria-label="串流目标帧率" value={settings.fps} disabled={configuring} onChange={e=>setSettings(v=>({...v,fps:Number(e.target.value)}))}>{STREAM_RATES.map(f=><option key={f} value={f}>{f} FPS</option>)}</select></label>
+        <label>画面质量 <output>{Math.round(settings.jpegQuality*100)}%</output><input type="range" aria-label="串流画面质量" min="50" max="95" step="1" value={Math.round(settings.jpegQuality*100)} disabled={configuring} onChange={e=>setSettings(v=>({...v,jpegQuality:Number(e.target.value)/100}))}/></label>
+        <p>保持游戏画面比例，不放大源画面。原画保留窗口的清晰度；降低宽度或质量可减少编码与传输开销。上方显示实际收到的帧率。</p>
+        <button type="button" disabled={configuring||phase!=='live'} onClick={async()=>{const session=sessionRef.current;if(!session)return;setConfiguring(true);setConfigError('');try{await session.configure(settings);saveStreamSettings(settings)}catch(e){setConfigError(e instanceof Error?e.message:'设置未应用')}finally{setConfiguring(false)}}}>{configuring?'正在应用…':'应用串流设置'}</button>
+        {configError&&<p role="alert">{configError}</p>}
+      </div></details>
+    </div>
     <div
       ref={hostRef}
       className="level-stream"
@@ -83,6 +102,7 @@ export function StreamViewport({ editor, meta }: { editor?: StreamEditorBridge; 
       {phase === 'connecting' && <p className="level-stream-loading" role="status">正在等待游戏画面…</p>}
       {error && <p className="level-stream-error" role="status">{error}</p>}
     </div>
+    </div>
   )
 }
 
@@ -90,6 +110,8 @@ function openInteractiveSession(
   host: HTMLDivElement,
   canvas: HTMLCanvasElement,
   editorOf: () => StreamEditorBridge | undefined,
+  settings: StreamSettings,
+  onMetrics: (metrics:{width:number;height:number;fps:number})=>void,
   onPhase: (phase: StreamPhase, message: string) => void,
 ) {
   const prefs = getControlHubSnapshot().prefs
@@ -111,9 +133,12 @@ function openInteractiveSession(
   let raf = 0
   let painting = false
   let statusTimer = 0
+  let metricsTimer = 0
   let editorHeld = false
   let aim: StreamPointerAim | null = null
   let seenPointer: Event | null = null
+  let measuredAt=performance.now(),drawn=0,firstFrame=true
+  const context=canvas.getContext('2d',{alpha:false,desynchronized:true})
 
   const report = (phase: StreamPhase, message: string) => {
     if (alive) onPhase(phase, message)
@@ -175,12 +200,12 @@ function openInteractiveSession(
     const pixelHeight = Math.max(1, Math.round(height * dpr))
     if (canvas.width !== pixelWidth) canvas.width = pixelWidth
     if (canvas.height !== pixelHeight) canvas.height = pixelHeight
-    const context = canvas.getContext('2d')
     if (!context) return
     context.setTransform(dpr, 0, 0, dpr, 0, 0)
     context.fillStyle = '#121314'
     context.fillRect(0, 0, width, height)
     const box = pictureLetterbox(width, height, image.width, image.height)
+    context.imageSmoothingEnabled = false
     context.drawImage(image, box.x, box.y, box.width, box.height)
   }
 
@@ -198,8 +223,7 @@ function openInteractiveSession(
             report('error', publicError(error, secret))
             return null
           }
-          const jpeg = new ArrayBuffer(parsed.payload.byteLength)
-          new Uint8Array(jpeg).set(parsed.payload)
+          const jpeg = new Uint8Array(buffer,RPSF_HEADER_SIZE,parsed.payload.byteLength)
           const image = await createImageBitmap(new Blob([jpeg], { type: 'image/jpeg' }))
           if (image.width !== parsed.width || image.height !== parsed.height) {
             image.close()
@@ -215,6 +239,9 @@ function openInteractiveSession(
           bitmap = next
           paint(next)
           host.dataset.frame = '1'
+          host.dataset.frameWidth=String(next.width);host.dataset.frameHeight=String(next.height)
+          drawn++
+          if(firstFrame){onMetrics({width:next.width,height:next.height,fps:0});firstFrame=false;drawn=0;measuredAt=performance.now()}
           report('live', '')
         },
       })
@@ -517,7 +544,7 @@ function openInteractiveSession(
       response = await fetch(endpoints.start, {
         method: 'POST',
         headers: authHeaders(true),
-        body: JSON.stringify(INTERACTIVE_STREAM_BODY),
+        body: JSON.stringify(streamStartBody(settings)),
         // Keep the start acknowledgement observable after unmount, so an accepted start is stopped.
         signal: AbortSignal.timeout(6000),
       })
@@ -563,6 +590,11 @@ function openInteractiveSession(
     input.onerror = () => { if (alive && !ended) report('error', '云游戏会话失败') }
     input.onclose = failSocket
     input.onopen = () => flushNow(true)
+    metricsTimer=window.setInterval(()=>{
+      if(!alive||!frameSize)return
+      const now=performance.now(),fps=Math.round(drawn*1000/Math.max(1,now-measuredAt))
+      onMetrics({...frameSize,fps});host.dataset.fps=String(fps);drawn=0;measuredAt=now
+    },1000)
     statusTimer = window.setInterval(() => {
       void fetch(endpoints.status, { headers: authHeaders(false), signal: AbortSignal.timeout(2000) })
         .then((item) => item.ok ? item.json() : null)
@@ -578,6 +610,7 @@ function openInteractiveSession(
     if (ended) return
     ended = true
     window.clearInterval(statusTimer)
+    window.clearInterval(metricsTimer)
     releaseInputs(true)
     unlockPointer()
     frames?.close()
@@ -627,6 +660,17 @@ function openInteractiveSession(
   })
 
   return {
+    configure(next: StreamSettings) {
+      return enqueueSession(async()=>{
+        if(!alive||ended||!started)throw Error('请先连接游戏串流')
+        releaseInputs(true);editorOf()?.cancel?.()
+        const response=await fetch(endpoints.configure,{method:'POST',headers:authHeaders(true),body:JSON.stringify(next),signal:AbortSignal.timeout(6000)})
+        if(response.status===404)throw Error('当前模组不支持实时画质设置，请更新模组；当前画面仍可使用')
+        if(!response.ok)throw Error('串流设置未应用，保留当前画面')
+        if(!alive||ended)return
+        slot.take();drawn=0;measuredAt=performance.now()
+      })
+    },
     stop() {
       host.removeEventListener('keydown', onKeyDown)
       host.removeEventListener('keyup', onKeyUp)

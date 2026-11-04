@@ -8,6 +8,7 @@
   cursor: grabbing;
 }
 
+.level-volume.is-hover-select { cursor: pointer; }
 .level-volume.is-hover-move {
   cursor: grab;
 }

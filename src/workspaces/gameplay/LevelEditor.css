@@ -173,7 +173,7 @@
   align-items: center;
   gap: 6px 10px;
   min-width: 0;
-  padding: 3px 8px;
+  padding: 6px 8px;
   background: var(--level-rail);
   border-bottom: 1px solid var(--level-line);
 }
@@ -191,6 +191,15 @@
 }
 
 .level-view-actions { margin-left: auto; }
+.level-toolbar-group { border-left: 1px solid var(--level-line); padding-left: 10px; }
+.level-navigation-help { position: relative; }
+.level-navigation-help > summary { padding: 5px 8px; cursor: pointer; color: var(--level-warm); }
+.level-navigation-help > div { position: absolute; right: 0; top: calc(100% + 8px); z-index: 12; width: 296px; max-width: 75vw; padding: 16px; background: #22272c; border: 1px solid #667078; box-shadow: 0 8px 24px #0008; line-height: 1.6; color: #dce3e8; font-size: 13px; }
+.level-navigation-help p { margin: 6px 0 14px; }
+.level-navigation-help dl { display: grid; grid-template-columns: 1fr 1.3fr; gap: 6px 12px; margin: 8px 0; }
+.level-navigation-help dt { color: #edc783; }
+.level-navigation-help dd { margin: 0; }
+.level-navigation-help small { color: #aab6c0; }
 
 .level-mode-switch {
   gap: 0;
@@ -203,8 +212,9 @@
 .level-view-actions button,
 .gameplay-workspace .level-editor .level-toolbar button,
 .gameplay-workspace .level-editor .level-tools button {
-  border-color: var(--border-soft, #454a54);
-  background: var(--fl-panel-2, #2a2c2e);
+  min-height: 28px;
+  border-color: transparent;
+  background: transparent;
 }
 
 .level-toolbar button.is-active,
@@ -212,9 +222,9 @@
 .level-mode-switch button.is-active,
 .gameplay-workspace .level-editor .level-toolbar button.is-active,
 .gameplay-workspace .level-editor .level-tools button.is-active {
-  border-color: #7aa2d4;
-  background: #2a3d55;
-  color: #d6e4f5;
+  border-color: #736245;
+  background: #393329;
+  color: #f0d7a4;
   box-shadow: inset 0 -2px 0 var(--level-warm);
 }
 
@@ -450,6 +460,8 @@
   width: 100%;
   height: 100%;
 }
+
+.level-stream canvas { image-rendering: pixelated; }
 
 .level-volume[data-tool="rect"],
 .level-volume[data-tool="circle"],
@@ -846,3 +858,12 @@
 }
 
 .level-stream-loading { position:absolute; left:12px; bottom:12px; margin:0; color:#bac4d0; pointer-events:none; }
+
+.level-stream-shell { display:flex; flex:1; min-width:0; min-height:0; flex-direction:column; position:relative }
+.level-stream-quality { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:6px 10px; background:#202a32; color:#c8d7df; border-bottom:1px solid #4a5c69; font-size:12px; flex:none; z-index:8 }
+.level-stream-quality summary { cursor:pointer; color:#eed6a5; padding:3px 6px }
+.level-stream-settings { position:absolute; top:34px; right:8px; width:min(320px,calc(100% - 16px)); box-sizing:border-box; padding:16px; background:#1c2933; border:1px solid #698494; box-shadow:0 8px 28px #0008; display:grid; gap:12px; border-radius:4px; z-index:9 }
+.level-stream-settings label { display:flex; flex-direction:column; gap:6px; font-size:13px }
+.level-stream-settings select,.level-stream-settings input { width:100%; min-width:0 }
+.level-stream-settings p { font-size:12px; line-height:1.6; color:#b3c4cf; margin:0 }
+.level-stream-settings button { min-height:32px }

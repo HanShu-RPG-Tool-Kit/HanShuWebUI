@@ -1,3 +1,4 @@
+import { normalizeStreamSettings, streamStartBody } from '../src/workspaces/gameplay/streamSettings.ts'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { readEntityStreamFrame } from '../src/workspaces/gameplay/entitySnapshot.ts'
@@ -180,9 +181,9 @@ assert.throws(() => readStreamScreen({}))
 assert.deepEqual(INTERACTIVE_STREAM_BODY, {
   mode: 'interactive',
   picture: 'jpeg',
-  maxWidth: 1280,
-  fps: 30,
-  jpegQuality: 0.62,
+  maxWidth: 1920,
+  fps: 60,
+  jpegQuality: 0.85,
 })
 
 const endpoints = devtoolStreamEndpoints({ host: '127.0.0.1', port: 9, password: 'unit-test-secret' })
@@ -253,3 +254,9 @@ assert.equal(viewport.includes('mchhui'), false)
 assert.equal(volume.includes('readEntityStreamFrame'), false)
 
 console.log('PASS stream input: mapping, RPIN barriers, letterbox, format 3')
+
+assert.deepEqual(normalizeStreamSettings(null),{maxWidth:1920,fps:60,jpegQuality:.85})
+assert.deepEqual(normalizeStreamSettings({maxWidth:999999,fps:-20,jpegQuality:NaN}),{maxWidth:1920,fps:60,jpegQuality:.85})
+assert.deepEqual(streamStartBody({maxWidth:0,fps:120,jpegQuality:.95}),{mode:'interactive',picture:'jpeg',maxWidth:0,fps:120,jpegQuality:.95})
+assert.equal(normalizeStreamSettings({maxWidth:2560,fps:60,jpegQuality:8}).jpegQuality,.95)
+console.log('PASS stream settings: original size, bounded quality, target cadence and corrupt preferences')

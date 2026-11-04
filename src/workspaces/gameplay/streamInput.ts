@@ -1,4 +1,5 @@
 import { httpBase } from '../../gameDevServer/protocol'
+import { DEFAULT_STREAM_SETTINGS, streamStartBody } from './streamSettings'
 
 /** RPSF。format=3 是交互 JPEG，不经过实体预览 format=2。 */
 export const RPSF_MAGIC = 0x52505346
@@ -24,13 +25,7 @@ export const GLFW_MOD_SUPER = 0x0008
 export const GLFW_MOD_CAPS_LOCK = 0x0010
 export const GLFW_MOD_NUM_LOCK = 0x0020
 
-export const INTERACTIVE_STREAM_BODY = {
-  mode: 'interactive',
-  picture: 'jpeg',
-  maxWidth: 1280,
-  fps: 30,
-  jpegQuality: 0.62,
-} as const
+export const INTERACTIVE_STREAM_BODY = streamStartBody(DEFAULT_STREAM_SETTINGS)
 
 type RpinHead = { flags: number; mods: number; seq: number }
 
@@ -487,6 +482,7 @@ export function devtoolStreamEndpoints(prefs: { host: string; port: number; pass
   const query = new URLSearchParams({ password: prefs.password })
   return {
     start: `${base}/stream/start`,
+    configure: `${base}/stream/configure`,
     stop: `${base}/stream/stop`,
     status: `${base}/status`,
     frames: `ws://${prefs.host}:${prefs.port}/ws/stream?${query}`,
