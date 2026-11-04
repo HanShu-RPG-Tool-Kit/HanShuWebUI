@@ -41,7 +41,7 @@ import GoalLabels from "mchhui.rpgtoolkit.feature.goal.GoalLabels"
 import GoalInstance from "mchhui.rpgtoolkit.feature.goal.GoalInstance"
 import GoalDeliverContext from "mchhui.rpgtoolkit.feature.goal.GoalDeliverContext"
 
-@goal("core:item_rpgtk_type_hold", {requires_delivery: true})
+@goal("core:item_rpgtk_type_hold")
 @config(field("count", "int", 1), field("target", "string"), field("consume", "bool", true))
 @state(field("have", "int", 0), field("delivered", "int", 0))
 

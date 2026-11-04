@@ -76,7 +76,7 @@ export function NodeFormView({ flow, nodeId, kind, active = false, disabled = fa
       {progressIdentifierIssue(flow, nodeId, node.identifier) && <p className="progress-inline-warning" role="alert">{progressIdentifierIssue(flow, nodeId, node.identifier)}</p>}
       {authorText('进行时日志', node.runningLog, (next, field) => { next.progress[nodeId].runningLog = field }, true)}
       {authorText('完成时日志', node.completedLog, (next, field) => { next.progress[nodeId].completedLog = field }, true)}
-      <SubmissionField value={node.submission} progress required={node.goals.some(goal => definitions.find(item => item.kind === goal.kind)?.requiresDelivery)} disabled={disabled} onChange={submission => update(next => {
+      <SubmissionField value={node.submission} progress disabled={disabled} onChange={submission => update(next => {
         if (submission) next.progress[nodeId].submission = submission
         else delete next.progress[nodeId].submission
       })} />
@@ -152,7 +152,7 @@ export function NodeFormView({ flow, nodeId, kind, active = false, disabled = fa
       })} />)}</div>
       {definition && !definition.fields.length && <p className="progress-node-empty">此目标无需配置参数</p>}
       {definition?.error && <p className="progress-inline-warning" role="alert">{definition.error}</p>}
-      <SubmissionField value={node.submission} required={definition?.requiresDelivery} disabled={disabled} onChange={submission => update(next => {
+      <SubmissionField value={node.submission} disabled={disabled} onChange={submission => update(next => {
         if (submission) next.objectives![nodeId].submission = submission
         else delete next.objectives![nodeId].submission
       })} />

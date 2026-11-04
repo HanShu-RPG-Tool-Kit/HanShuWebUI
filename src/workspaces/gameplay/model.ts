@@ -430,7 +430,7 @@ export function parseFlow(source: string): ProgressFlow {
   return v as ProgressFlow
 }
 
-export function validateFlow(flow: ProgressFlow, definitions: readonly { kind: string; requiresDelivery?: boolean; error?: string }[] = []): FlowIssue[] {
+export function validateFlow(flow: ProgressFlow, definitions: readonly { kind: string; error?: string }[] = []): FlowIssue[] {
   const issues: FlowIssue[] = []
   const error = (path: string, message: string) => issues.push({ severity: 'error', path, message })
   const warning = (path: string, message: string) => issues.push({ severity: 'warning', path, message })
@@ -500,7 +500,6 @@ export function validateFlow(flow: ProgressFlow, definitions: readonly { kind: s
       const issue = flowSubmissionIssue(node.submission)
       if (issue) error(`progress.${id}.submission`, issue)
     }
-    if (!node.submission && node.goals.some(goal => definitions.find(definition => definition.kind === goal.kind)?.requiresDelivery)) error(`progress.${id}.submission`, '进度含需要交付的 goal，请在进度节点上配置统一提交方式。')
     const seen = new Set<string>()
     node.goals.forEach((goal, index) => {
       const definition = definitions.find(item => item.kind === goal.kind)
@@ -523,7 +522,6 @@ export function validateFlow(flow: ProgressFlow, definitions: readonly { kind: s
     if (issue) error(`objectives.${id}.identifier`, issue)
     const definition = definitions.find(item => item.kind === node.goal.kind)
     if (definition?.error) error(`objectives.${id}.goal`, definition.error)
-    if (definition?.requiresDelivery && !node.submission) error(`objectives.${id}.submission`, '此目标定义需要交付，请显式配置提交方式。')
     if (node.submission) {
       const issue = flowSubmissionIssue(node.submission)
       if (issue) error(`objectives.${id}.submission`, issue)

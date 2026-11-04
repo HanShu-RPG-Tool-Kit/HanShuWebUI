@@ -36,8 +36,6 @@ export type GoalDefinition = {
   /** WebUI 预览模板；非运行时权威 */
   localize?: Record<string, string>
   fields: GoalConfigField[]
-  /** Literal JavaScript declaration, not presentation metadata. */
-  requiresDelivery?: boolean
   /** 来源脚本文档 key；内置种子可为 null */
   sourceKey: string | null
   sourceName: string
@@ -77,7 +75,7 @@ export function parseGoalDefinitionsFromSource(source: string, meta: { sourceKey
     ...(field.defaultValue !== null ? {default: field.defaultValue} : {}),
   }))
   return [applyGoalHeaderMeta({
-    kind: goal.id, label: goal.id, fields, requiresDelivery: goal.requiresDelivery, ...meta,
+    kind: goal.id, label: goal.id, fields, ...meta,
     ...(result.diagnostics.length ? {error:result.diagnostics.map(d => `第 ${d.line} 行：${d.message}`).join('；')} : {}),
   }, parseGoalHeaderMeta(source))]
 }
