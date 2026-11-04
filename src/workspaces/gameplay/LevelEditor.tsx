@@ -316,10 +316,10 @@ export function LevelEditor({ doc, disabled, onChange, identity, onHistoryReady,
     : landmark ? `地标 ${landmark.id}` : '未选中对象'
   const hint = pending ? '有未完成编辑 · 应用或放弃后继续'
     : disabled ? '只读 · 可浏览与检查'
-    : mode === 'stream' ? (onlineMeta?.window ? '中键环绕 · Shift＋中键平移 · 右键＋WASD 飞行 · F 对准选中' : '等待游戏连接…')
+    : mode === 'stream' ? (onlineMeta?.window ? 'G 自由观察 · Esc释放鼠标 · 应用到测试世界后进入游戏试玩' : '等待游戏连接…')
     : viewportHint || (tool === 'rect' || tool === 'circle' ? '点击起点、再点终点；也可左键拖出范围 · Esc 取消'
       : tool === 'polygon' ? '左键逐点添加，Enter 完成 · Esc 取消'
-        : `左键选中 · 金色中心移动 · 边角缩放 · 绿色调整高度${hover ? ` · X ${hover[0]} Y ${hover[1]} Z ${hover[2]}` : ''}`)
+        : `G 自由观察 · Esc释放鼠标 · 左键选中 · 拖控制点调整${hover ? ` · X ${hover[0]} Y ${hover[1]} Z ${hover[2]}` : ''}`)
 
   return <div className="level-editor" data-focus={focusMode} data-tree={treeOpen} data-inspector={inspectorOpen} data-maximized={maximized} tabIndex={0} onKeyDown={onKeyDown}>
     <div className="level-toolbar" role="toolbar" aria-label="地图工具">
@@ -342,9 +342,9 @@ export function LevelEditor({ doc, disabled, onChange, identity, onHistoryReady,
             <strong>选取与调整</strong>
             <p>左键选中区域。拖金色中心移动，拖边角改大小，拖绿色控制点调整高度。</p>
             <strong>观察与移动</strong>
-            <dl><dt>中键拖动</dt><dd>围绕焦点环绕</dd><dt>Shift＋中键</dt><dd>平移画面</dd><dt>滚轮</dt><dd>拉近 / 拉远</dd><dt>F</dt><dd>对准选中，保留方向</dd><dt>右键＋WASD</dt><dd>飞行；Q/E 升降</dd></dl>
-            <p>飞行时 Shift 加速，滚轮调速；松开右键停止。Esc 取消当前操作。</p>
-            <small>离线 3D 与游戏工作台使用同一套视角规则。</small>
+            <dl><dt>G 自由观察</dt><dd>鼠标直接转向，WASD移动，空格/Shift升降</dd><dt>Esc</dt><dd>释放鼠标，回到面板与控制点编辑</dd><dt>中键 / Shift＋中键</dt><dd>环绕 / 平移画面</dd><dt>滚轮 / F</dt><dd>缩放 / 对准选中</dd></dl>
+            <p>自由观察时 Ctrl 加速，滚轮调速。Q/E 不用于镜头升降。</p>
+            <small>观察镜头不移动玩家。应用到测试世界后，进入游戏试玩，使用原版键位走入区域检查效果；保存工程和预览不会自动应用。</small>
           </div>
         </details>
         <button type="button" aria-pressed={treeOpen && !maximized} onClick={() => { setTreeOpen(!treeOpen || maximized); setMaximized(false) }}>对象</button>
@@ -389,7 +389,7 @@ export function LevelEditor({ doc, disabled, onChange, identity, onHistoryReady,
       }} /> : <LevelVolumeView base={base} shown={shown} tool={tool} selection={selection} draftPoints={draftPoints}
         effectAudition={effectAudition}
         disabled={disabled || pending} resetToken={String(gestureEpoch)} snapStep={snapStep} viewCommand={viewCommand} onViewportHint={setViewportHint}
-        onHover={setHover} onPreview={setPreview} onCommit={commit} onSelection={selectObject} onDraftPoints={setDraftPoints} />}
+        onHover={setHover} onPreview={setPreview} onCommit={commit} onSelection={selectObject} onCreated={() => setTool('select')} onDraftPoints={setDraftPoints} />}
       {issues.length > 0 && <ul className="level-issues">{issues.map(issue => <li key={issue}>{issue}</li>)}</ul>}
     </div>
     {inspectorOpen && !maximized && <aside className="level-inspector" aria-label="对象属性">

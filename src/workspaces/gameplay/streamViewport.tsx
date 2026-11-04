@@ -59,6 +59,7 @@ export function StreamViewport({ editor, meta }: { editor?: StreamEditorBridge; 
   const sessionRef=useRef<ReturnType<typeof openInteractiveSession>|null>(null)
   const [configuring,setConfiguring]=useState(false),[configError,setConfigError]=useState('')
   const [metrics,setMetrics]=useState({width:0,height:0,fps:0})
+  useEffect(() => { sessionRef.current?.navigation(meta?.navigationMode ?? 'edit') }, [meta?.navigationMode])
 
   useEffect(() => {
     const host = hostRef.current
@@ -74,6 +75,12 @@ export function StreamViewport({ editor, meta }: { editor?: StreamEditorBridge; 
 
   return (
     <div className="level-stream-shell">
+    {meta?.navigationMode && <div className="level-stream-quality level-stream-workbench" aria-label="游戏操作与测试世界">
+      <button type="button" disabled={phase!=='live'} onClick={()=>void editorRef.current?.shortcut?.(meta.navigationMode==='edit'?'roam':'open').catch(error=>setConfigError(String(error)))}>{meta.navigationMode==='edit'?'自由观察 G':'返回编辑'}</button>
+      <button type="button" disabled={phase!=='live'||meta.testWorldBusy||!meta.testWorldWritable||meta.navigationMode!=='edit'} onClick={()=>void editorRef.current?.shortcut?.('apply_test').catch(error=>setConfigError(String(error)))}>应用到测试世界</button>
+      <button type="button" disabled={phase!=='live'||meta.testWorldBusy||meta.navigationMode!=='edit'} onClick={()=>void editorRef.current?.shortcut?.('play').catch(error=>setConfigError(String(error)))}>进入游戏试玩</button>
+      <span role="status" aria-label="测试世界状态">{meta.testWorldStatus}</span>
+    </div>}
     <div className="level-stream-quality">
       <span role="status" aria-label="串流实际画质">{metrics.width?`${metrics.width} × ${metrics.height} · ${metrics.fps} FPS`:'等待画面'}</span>
       <details><summary>画质与帧率</summary><div className="level-stream-settings">
@@ -97,8 +104,12 @@ export function StreamViewport({ editor, meta }: { editor?: StreamEditorBridge; 
       data-edit-handles={meta ? JSON.stringify(meta.handles) : undefined}
       data-edit-window={meta?.window ? JSON.stringify(meta.window) : undefined}
       data-edit-viewport={meta?.viewport ? JSON.stringify(meta.viewport) : undefined}
+      data-navigation={meta?.navigationMode ?? 'edit'}
+      data-test-template={meta?.testWorldTemplate}
     >
       <canvas ref={canvasRef} />
+      {meta?.navigationMode==='observe' && <p className="level-stream-loading">鼠标转向 · WASD移动 · 空格/Shift升降 · Esc释放鼠标</p>}
+      {meta?.navigationMode==='play' && <p className="level-stream-loading">点击画面开始试玩 · 原版移动和鼠标视角 · Esc释放鼠标 · 返回编辑继续修改</p>}
       {phase === 'connecting' && <p className="level-stream-loading" role="status">正在等待游戏画面…</p>}
       {error && <p className="level-stream-error" role="status">{error}</p>}
     </div>
@@ -135,6 +146,7 @@ function openInteractiveSession(
   let statusTimer = 0
   let metricsTimer = 0
   let editorHeld = false
+  let navigationMode: 'edit' | 'observe' | 'play' | 'menu' = 'edit'
   let aim: StreamPointerAim | null = null
   let seenPointer: Event | null = null
   let measuredAt=performance.now(),drawn=0,firstFrame=true
@@ -342,7 +354,19 @@ function openInteractiveSession(
 
   function onKeyDown(event: KeyboardEvent) {
     if (!alive) return
-    const chord = levelStreamChord(event)
+    if (event.code==='Escape' && pointerLocked()) {
+      event.preventDefault(); event.stopPropagation(); releaseInputs(true)
+      // A vanilla inventory may have opened before the next status sample.
+      // Gameplay Escape is ignored by the native executor only when no GUI is open.
+      if (navigationMode!=='observe') {
+        batch.push({type:RPIN_KEY_DOWN,flags:0,mods:0,key:256,scancode:1})
+        batch.push({type:RPIN_KEY_UP,flags:0,mods:0,key:256,scancode:1})
+        flushNow(true)
+      }
+      unlockPointer(); return
+    }
+    const chord = navigationMode === 'edit' ? levelStreamChord(event) : null
+    if (event.code==='KeyG' && navigationMode==='edit' && !event.ctrlKey && !event.metaKey && !event.altKey) lockPointer()
     if (chord && editorOf()?.shortcut) {
       event.preventDefault(); event.stopPropagation()
       if (!event.repeat) void editorOf()?.shortcut?.(chord === 'save' ? 'save' : chord === 'redo' ? 'redo' : 'undo').catch(error => report('error', publicError(error, secret)))
@@ -386,7 +410,7 @@ function openInteractiveSession(
 
   function onKeyUp(event: KeyboardEvent) {
     if (!alive) return
-    const chord = levelStreamChord(event)
+    const chord = navigationMode === 'edit' ? levelStreamChord(event) : null
     if (chord === 'save') return
     if (chord) {
       event.preventDefault()
@@ -411,6 +435,7 @@ function openInteractiveSession(
     const target = event.target
     if (!pointerLocked() && isFormFieldTarget(target instanceof Element ? target : null)) return
     host.focus({ preventScroll: true })
+    if ((navigationMode==='observe'||navigationMode==='play') && !pointerLocked()) { event.preventDefault(); event.stopPropagation(); lockPointer(); return }
     try { host.setPointerCapture(event.pointerId) } catch { /* 指针可能已经松开。 */ }
     const locked = pointerLocked()
     if (event.button === 1 || event.button === 2) lockPointer()
@@ -458,7 +483,7 @@ function openInteractiveSession(
     buttons.delete(button)
     batch.push({ type: RPIN_BUTTON_UP, flags: 0, mods: eventMods(event), button, x: point.x, y: point.y })
     flushNow(true)
-    if (buttons.size === 0) unlockPointer()
+    if (buttons.size === 0 && navigationMode!=='observe' && navigationMode!=='play') unlockPointer()
   }
 
   function releaseHeldButtons() {
@@ -487,7 +512,14 @@ function openInteractiveSession(
   function onPointerLockChange() {
     const locked = pointerLocked()
     host.classList.toggle('is-locked', locked)
-    if (!locked) releaseHeldButtons()
+    if (!locked) {
+      releaseInputs(true)
+      if (navigationMode==='observe') {
+        batch.push({type:RPIN_KEY_DOWN,flags:0,mods:0,key:256,scancode:1})
+        batch.push({type:RPIN_KEY_UP,flags:0,mods:0,key:256,scancode:1})
+        flushNow(true)
+      }
+    }
   }
 
   function onWheel(event: WheelEvent) {
@@ -660,6 +692,14 @@ function openInteractiveSession(
   })
 
   return {
+    navigation(mode: 'edit' | 'observe' | 'play' | 'menu') {
+      if (mode===navigationMode) return
+      navigationMode=mode
+      releaseInputs(true)
+      host.focus({preventScroll:true})
+      if (mode==='observe') lockPointer()
+      else unlockPointer()
+    },
     configure(next: StreamSettings) {
       return enqueueSession(async()=>{
         if(!alive||ended||!started)throw Error('请先连接游戏串流')

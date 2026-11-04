@@ -115,7 +115,7 @@ export function GameDevServerPanel({ onClose }: { onClose: () => void }) {
     setPort(String(snap.prefs.port))
     setPassword(snap.prefs.password)
     setAutoConnect(snap.prefs.autoConnect)
-  }, [snap.prefs])
+  }, [snap.prefs.host, snap.prefs.port, snap.prefs.password, snap.prefs.autoConnect])
 
   useEffect(() => {
     const previous =

@@ -56,6 +56,7 @@ import {
   type SnapStep,
 } from './levelGeometry'
 import {
+  creationHeight,
   movePolygonVertex,
   resizeCircle,
   resizeRect,
@@ -93,6 +94,7 @@ export type LevelVolumeProps = {
   onPreview: (doc: LevelDocument | null) => void
   onCommit: (doc: LevelDocument) => void
   onSelection: (selection: LevelSelection) => void
+  onCreated: () => void
   onDraftPoints: (points: [number, number][]) => void
   /** 默认 1。Alt 同样把步进收成 0.1。 */
   snapStep?: SnapStep
@@ -296,6 +298,7 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
   const camera = new PerspectiveCamera(40, 1, 0.05, 20000)
   const orbit = { target: new Vector3(32, 0, 32), radius: 86, theta: 0.6, phi: 0.72 }
   const cameraKeys = new Set<string>()
+  let freeLook = false
   let flySpeed = 12
   let navigationFrame = 0, navigationTime = 0
   let clickPlacing = false
@@ -588,10 +591,12 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
     return doc.regions.find((region) => region.id === regionId)?.areas[index] ?? null
   }
 
-  function finishNewRegion(next: LevelDocument, regionId: string | null) {
-    if (regionId) return
-    const created = next.regions.at(-1)
-    if (created) getProps().onSelection({ kind: 'region', id: created.id, area: 0 })
+  function finishCreatedArea(next: LevelDocument, regionId: string | null) {
+    const created = regionId ? next.regions.find(region => region.id === regionId) : next.regions.at(-1)
+    if (created) {
+      getProps().onSelection({ kind: 'region', id: created.id, area: created.areas.length - 1 })
+      getProps().onCreated()
+    }
   }
 
   function sameDocument(next: LevelDocument, base: LevelDocument): boolean {
@@ -610,7 +615,17 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
     }
     props.onPreview(null)
     props.onCommit(next)
-    if (created) finishNewRegion(next, created.regionId)
+    if (created) finishCreatedArea(next, created.regionId)
+  }
+
+  function finishPolygon() {
+    const props = getProps()
+    if (props.disabled || props.draftPoints.length < 3) return
+    const area = polygonFromPoints(props.draftPoints, creationHeight(editingBandAuthorY(props.base)), { authored: true })
+    if (!area) return
+    const regionId = regionIdForNew()
+    props.onDraftPoints([])
+    previewOrCommit(addArea(props.base, regionId, area), true, { regionId })
   }
 
   function documentFromGesture(current: Gesture, clientX: number, clientY: number, step: SnapStep): LevelDocument | null {
@@ -620,8 +635,8 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
       if (!hit) return null
       const drag = { worldFaces: true as const, step }
       const area = current.kind === 'rect'
-        ? rectFromDrag(current.x, current.z, hit.x, hit.z, 'all', drag)
-        : circleFromDrag(current.x, current.z, hit.x, hit.z, 'all', drag)
+        ? rectFromDrag(current.x, current.z, hit.x, hit.z, creationHeight(current.planeY), drag)
+        : circleFromDrag(current.x, current.z, hit.x, hit.z, creationHeight(current.planeY), drag)
       return area ? addArea(base, current.regionId, area) : base
     }
     if (current.kind === 'move-area') {
@@ -774,6 +789,7 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
   }
 
   function onPointerDown(event: PointerEvent) {
+    if (freeLook) { event.preventDefault(); return }
     host.focus({ preventScroll: true })
     if (event.button === 2 || event.button === 1 && !event.shiftKey) {
       event.preventDefault()
@@ -814,13 +830,7 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
       const points = props.draftPoints
       const first = points[0]
       if (first && points.length >= 3 && Math.hypot(authored[0] - first[0], authored[1] - first[1]) <= 1) {
-        const area = polygonFromPoints(points, 'all', { authored: true })
-        if (!area) return
-        const regionId = regionIdForNew()
-        const next = addArea(props.base, regionId, area)
-        props.onDraftPoints([])
-        props.onCommit(next)
-        finishNewRegion(next, regionId)
+        finishPolygon()
       } else {
         props.onDraftPoints([...points, authored])
       }
@@ -843,6 +853,7 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
       const placed = addLandmark(props.base, hit.x, hit.z, planeY)
       props.onCommit(placed.doc)
       props.onSelection({ kind: 'landmark', id: placed.id })
+      props.onCreated()
       return
     }
     const picked = pickObject(event.clientX, event.clientY)
@@ -996,6 +1007,12 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
   }
 
   function onPointerMove(event: PointerEvent) {
+    if (freeLook) {
+      const position = camera.position.clone()
+      orbit.theta -= event.movementX * .005
+      orbit.phi = Math.min(Math.PI-.01,Math.max(.01,orbit.phi-event.movementY*.005))
+      placeCamera(); orbit.target.add(position.sub(camera.position)); render(); return
+    }
     const step = stepFor(event.altKey)
     const ground = horizontalHit(event.clientX, event.clientY, 0)
     getProps().onHover(ground ? [snapAbsolute(ground.x, step), snapAbsolute(ground.y, step), snapAbsolute(ground.z, step)] : null)
@@ -1118,6 +1135,7 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
   }
 
   function onBlur() {
+    if (document.pointerLockElement === host) document.exitPointerLock()
     stopNavigation()
     if (gesture) cancelGesture()
   }
@@ -1128,6 +1146,7 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
   }
 
   function onEscape(event: KeyboardEvent) {
+    if (event.key === 'Escape' && freeLook) { event.preventDefault(); event.stopPropagation(); document.exitPointerLock(); return }
     if (event.key !== 'Escape' || !gesture) return
     event.preventDefault()
     event.stopPropagation()
@@ -1135,9 +1154,21 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
   }
 
   function onHostKey(event: KeyboardEvent) {
-    if (!event.metaKey && !event.ctrlKey && !event.altKey && /^(Key[WASDQE]|Space|ShiftLeft|ShiftRight)$/.test(event.code)) {
+    if (event.code === 'KeyG' && !event.ctrlKey && !event.metaKey && !event.altKey) {
       event.preventDefault(); event.stopPropagation()
-      if (gesture?.kind !== 'fly') return
+      if (event.repeat) return
+      if (freeLook) document.exitPointerLock()
+      else { cancelGesture(); void host.requestPointerLock().catch(() => setHint('请点击视口后按 G，允许鼠标跟随')) }
+      return
+    }
+    if (event.key === 'Enter' && getProps().tool === 'polygon') {
+      event.preventDefault(); event.stopPropagation()
+      finishPolygon()
+      return
+    }
+    if (!event.metaKey && !event.altKey && /^(Key[WASD]|Space|ShiftLeft|ShiftRight|ControlLeft|ControlRight)$/.test(event.code)) {
+      event.preventDefault(); event.stopPropagation()
+      if (!freeLook && gesture?.kind !== 'fly') return
       cameraKeys.add(event.code)
       if (!navigationFrame) { navigationTime = performance.now(); navigationFrame = requestAnimationFrame(navigate) }
       return
@@ -1152,6 +1183,13 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
     cameraKeys.clear(); cancelAnimationFrame(navigationFrame); navigationFrame = 0
   }
 
+  function onPointerLockChange() {
+    freeLook = document.pointerLockElement === host
+    host.dataset.navigation = freeLook ? 'observe' : 'edit'
+    stopNavigation()
+    setHint(freeLook ? '鼠标转向 · WASD移动 · 空格/Shift升降 · Ctrl加速 · Esc释放鼠标' : null)
+  }
+
   function onHostKeyUp(event: KeyboardEvent) {
     cameraKeys.delete(event.code)
     if (!cameraKeys.size) stopNavigation()
@@ -1159,7 +1197,7 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
 
   function navigate(now: number) {
     navigationFrame = 0
-    if (disposed || gesture?.kind !== 'fly' || document.activeElement !== host || document.hidden || !cameraKeys.size) { stopNavigation(); return }
+    if (disposed || !freeLook && gesture?.kind !== 'fly' || document.activeElement !== host || document.hidden || !cameraKeys.size) { stopNavigation(); return }
     const dt = Math.min(.05, (now - navigationTime) / 1000); navigationTime = now
     const right = new Vector3(Math.cos(orbit.theta), 0, -Math.sin(orbit.theta))
     const forward = camera.getWorldDirection(new Vector3())
@@ -1168,9 +1206,9 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
     if (cameraKeys.has('KeyS')) direction.sub(forward)
     if (cameraKeys.has('KeyD')) direction.add(right)
     if (cameraKeys.has('KeyA')) direction.sub(right)
-    if (cameraKeys.has('KeyQ')) direction.y -= 1
-    if (cameraKeys.has('KeyE') || cameraKeys.has('Space')) direction.y += 1
-    const boost = cameraKeys.has('ShiftLeft') || cameraKeys.has('ShiftRight') ? 3 : 1
+    if (cameraKeys.has('ShiftLeft') || cameraKeys.has('ShiftRight')) direction.y -= 1
+    if (cameraKeys.has('Space')) direction.y += 1
+    const boost = cameraKeys.has('ControlLeft') || cameraKeys.has('ControlRight') ? 3 : 1
     orbit.target.add(direction.normalize().multiplyScalar(flySpeed * dt * boost))
     render()
     navigationFrame = requestAnimationFrame(navigate)
@@ -1179,7 +1217,7 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
   function onWheel(event: WheelEvent) {
     event.preventDefault()
     const factor = Math.exp(event.deltaY * 0.0012)
-    if (gesture?.kind === 'fly') { flySpeed = Math.min(256, Math.max(1, flySpeed / factor)); setHint(`飞行速度 ${Math.round(flySpeed)} · 松开右键停止`); return }
+    if (freeLook || gesture?.kind === 'fly') { flySpeed = Math.min(256, Math.max(1, flySpeed / factor)); setHint(`观察速度 ${Math.round(flySpeed)} · Esc释放鼠标`); return }
     if (gesture) return
     orbit.radius = Math.min(8000, Math.max(.25, orbit.radius * factor))
     render()
@@ -1395,6 +1433,8 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
     cancelGesture()
     stopNavigation()
     host.removeEventListener('pointerdown', onPointerDown)
+    if (document.pointerLockElement === host) document.exitPointerLock()
+    document.removeEventListener('pointerlockchange', onPointerLockChange)
     host.removeEventListener('pointermove', onPointerMove)
     host.removeEventListener('pointerup', onPointerUp)
     host.removeEventListener('pointercancel', onPointerCancel)
@@ -1423,6 +1463,7 @@ function mountLevelVolume(host: HTMLDivElement, getProps: () => LevelVolumeProps
 
   const observer = new ResizeObserver(() => resize())
   host.addEventListener('pointerdown', onPointerDown)
+  document.addEventListener('pointerlockchange', onPointerLockChange)
   host.addEventListener('pointermove', onPointerMove)
   host.addEventListener('pointerup', onPointerUp)
   host.addEventListener('pointercancel', onPointerCancel)

@@ -860,6 +860,10 @@
 .level-stream-loading { position:absolute; left:12px; bottom:12px; margin:0; color:#bac4d0; pointer-events:none; }
 
 .level-stream-shell { display:flex; flex:1; min-width:0; min-height:0; flex-direction:column; position:relative }
+.level-stream-workbench { flex-wrap:wrap; justify-content:flex-start!important; gap:6px!important }
+.level-stream-workbench button { border:1px solid #57636d; padding:4px 8px; color:inherit; background:#2a3035; cursor:pointer }
+.level-stream-workbench button:disabled { opacity:.45; cursor:default }
+.level-stream-workbench [role=status] { flex:1; min-width:140px; text-align:right }
 .level-stream-quality { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:6px 10px; background:#202a32; color:#c8d7df; border-bottom:1px solid #4a5c69; font-size:12px; flex:none; z-index:8 }
 .level-stream-quality summary { cursor:pointer; color:#eed6a5; padding:3px 6px }
 .level-stream-settings { position:absolute; top:34px; right:8px; width:min(320px,calc(100% - 16px)); box-sizing:border-box; padding:16px; background:#1c2933; border:1px solid #698494; box-shadow:0 8px 28px #0008; display:grid; gap:12px; border-radius:4px; z-index:9 }
