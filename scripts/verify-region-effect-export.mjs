@@ -2,6 +2,8 @@ import assert from 'node:assert/strict'
 import { chromium } from 'playwright'
 import { createServer } from 'vite'
 import JSZip from 'jszip'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { resolve } from 'node:path'
 
 const server = await createServer({ server: { host: '127.0.0.1', port: 0 }, optimizeDeps: { include: ['jszip'] } })
 let browser
@@ -14,10 +16,10 @@ try {
     const { createEffectResource, effectResourcePaths } = await import('/src/workspaces/gameplay/effectResources.ts')
     const { buildProjectPackZip } = await import('/src/export/projectPack.ts')
     const { exportPaks } = await import('/src/export/pack/exportPaks.ts')
-    const pkg = createProject('effect-export'), source = createEffectResource('post'), paths = effectResourcePaths(source.kind, source.id)
+    const pkg = createProject('effect-export'), source = createEffectResource('post'); source.id = 'project:published_tint'; source.manifest.description = 'PAK森林滤镜'; const paths = effectResourcePaths(source.kind, source.id)
     pkg.regionEffectPresets = JSON.stringify({ v: 1, presets: [] })
     source.manifest.params.image = { type: 'texture', label: '纹理', default: 'project:textures/sky/test.png' }
-    for (const [path, body] of [[paths[0],JSON.stringify(source.manifest)],[paths[1],source.source],['assets/project/textures/sky/test.png','image-bytes'],['assets/project/rpgtoolkit/effects/include/common.glsl','float author_value(){return 1.;}']]) {
+    for (const [path, body] of [[paths[0],JSON.stringify(source.manifest)],[paths[1],source.source],['assets/project/textures/sky/test.png',Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4////fwAJ+wP9KobjigAAAABJRU5ErkJggg=='),c=>c.charCodeAt(0))],['assets/project/rpgtoolkit/effects/include/common.glsl','float author_value(){return 1.;}']]) {
       const blob = new Blob([body]); pkg.assets.push({ id: path, path, mime: 'application/octet-stream', size: blob.size, updatedAt: 0 }); await putAssetBlob(pkg.id, path, blob)
     }
     const ws = { packages: [pkg], activePackageId: pkg.id, activeScriptId: null }
@@ -31,6 +33,7 @@ try {
     for (const path of [...result.paths, 'assets/project/textures/sky/test.png', 'assets/project/rpgtoolkit/effects/include/common.glsl']) assert.equal(!!zip.file(path), pack.target !== 'server', `${pack.target}: ${path}`)
     assert.ok(!zip.file('meta/region-effect-presets.json'))
   }
+  const artifacts = resolve('node_modules/.cache/region-effect-export'); await mkdir(artifacts,{recursive:true}); await writeFile(artifacts+'/published-client.pak',Uint8Array.from(result.packs.find(p=>p.target==='client').bytes))
   const project = await JSZip.loadAsync(Uint8Array.from(result.project))
   assert.ok(Object.keys(project.files).some(p => p.endsWith('/meta/region-effect-presets.json')))
   for (const path of result.paths) assert.ok(Object.keys(project.files).some(p => p.endsWith('/'+path)))
