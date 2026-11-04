@@ -27,7 +27,8 @@
               "value": "cave",
               "label": "洞穴"
             }
-          ]
+          ],
+          "hint": "均匀雾覆盖视野；低空雾集中在基准高度以下；分层雾围绕基准高度；洞穴雾根据天光出现。"
         },
         {
           "key": "distance_mode",
@@ -43,7 +44,8 @@
               "value": "render_distance",
               "label": "渲染距离倍数"
             }
-          ]
+          ],
+          "hint": "方块距离保持固定范围；视距倍数随玩家的渲染距离变化。"
         },
         {
           "key": "start",
@@ -53,7 +55,8 @@
           "min": 0,
           "max": 4096,
           "step": 0.1,
-          "unit": "格"
+          "unit": "格",
+          "hint": "从镜头向外多远开始起雾。近处需要清晰时增大这个距离。"
         },
         {
           "key": "end",
@@ -63,7 +66,8 @@
           "min": 0.01,
           "max": 4096,
           "step": 0.1,
-          "unit": "格"
+          "unit": "格",
+          "hint": "远处逐渐被雾遮住的位置，必须大于开始距离。"
         },
         {
           "key": "density",
@@ -72,7 +76,8 @@
           "default": 1,
           "min": 0.05,
           "max": 16,
-          "step": 0.05
+          "step": 0.05,
+          "hint": "数值越大，雾越浓。先调整开始与遮蔽距离，再微调浓度。"
         },
         {
           "key": "strength",
@@ -81,7 +86,8 @@
           "default": 1,
           "min": 0,
           "max": 1,
-          "step": 0.01
+          "step": 0.01,
+          "hint": "0 表示不产生这个效果，1 表示完整应用。"
         },
         {
           "key": "blend",
@@ -103,19 +109,22 @@
           "key": "volumetric",
           "label": "体积光散射",
           "type": "boolean",
-          "default": false
+          "default": false,
+          "hint": "让光在雾中散射，可看到光束与雾的纹理。"
         },
         {
           "key": "affect_sky",
           "label": "影响天空",
           "type": "boolean",
-          "default": false
+          "default": false,
+          "hint": "将雾叠加到天空背景；未设置时跟随体积雾模式。"
         },
         {
           "key": "affect_clouds",
           "label": "影响云",
           "type": "boolean",
-          "default": false
+          "default": false,
+          "hint": "让云层也受到雾影响。"
         }
       ]
     },
@@ -128,14 +137,16 @@
           "label": "白天雾色",
           "type": "color",
           "default": "#A9C4D0",
-          "optional": true
+          "optional": true,
+          "hint": "点击色块选色。未覆盖雾色时使用环境默认颜色。"
         },
         {
           "key": "night_color",
           "label": "夜晚雾色",
           "type": "color",
           "default": "#23344A",
-          "optional": true
+          "optional": true,
+          "hint": "夜晚逐渐使用这个颜色，白天仍使用白天雾色。"
         },
         {
           "key": "color_strength",
@@ -144,21 +155,24 @@
           "default": 1,
           "min": 0,
           "max": 1,
-          "step": 0.01
+          "step": 0.01,
+          "hint": "控制指定颜色对原雾色的影响程度。"
         },
         {
           "key": "albedo",
           "label": "散射颜色",
           "type": "color",
           "default": "#FFFFFF",
-          "opaque": true
+          "opaque": true,
+          "hint": "雾散射出的颜色，白色保持光源原有颜色。"
         },
         {
           "key": "emission",
           "label": "自发光颜色",
           "type": "color",
           "default": "#000000",
-          "opaque": true
+          "opaque": true,
+          "hint": "雾自身发出的颜色；黑色表示不发光。"
         },
         {
           "key": "emission_strength",
@@ -167,7 +181,8 @@
           "default": 0,
           "min": 0,
           "max": 100,
-          "step": 0.05
+          "step": 0.05,
+          "hint": "自发光亮度；0 时没有自发光。"
         },
         {
           "key": "ambient",
@@ -176,7 +191,8 @@
           "default": 0.8,
           "min": 0,
           "max": 2,
-          "step": 0.01
+          "step": 0.01,
+          "hint": "没有直射阳光的地方，雾仍然有多亮。"
         },
         {
           "key": "sun_scattering",
@@ -185,7 +201,8 @@
           "default": 0.35,
           "min": 0,
           "max": 2,
-          "step": 0.01
+          "step": 0.01,
+          "hint": "阳光照亮雾的程度。"
         },
         {
           "key": "anisotropy",
@@ -194,7 +211,8 @@
           "default": 0.35,
           "min": -0.8,
           "max": 0.8,
-          "step": 0.01
+          "step": 0.01,
+          "hint": "正值加强朝向光源的散射，负值加强背向光源的散射。"
         },
         {
           "key": "extinction",
@@ -204,7 +222,8 @@
           "min": 0,
           "max": 10000000000.0,
           "step": 0.001,
-          "optional": true
+          "optional": true,
+          "hint": "数值越大，光在雾中衰减越快。与平均自由程二选一；通常不必手动覆盖。"
         },
         {
           "key": "mean_free_path",
@@ -215,7 +234,8 @@
           "max": 100000,
           "step": 0.1,
           "unit": "格",
-          "optional": true
+          "optional": true,
+          "hint": "光在雾中平均能走多远；越小越浓。与消光系数二选一。"
         }
       ]
     },
@@ -241,7 +261,8 @@
           "min": 0.1,
           "max": 4096,
           "step": 0.1,
-          "unit": "格"
+          "unit": "格",
+          "hint": "雾从浓到淡跨越的高度，越大过渡越柔和。"
         },
         {
           "key": "cave_sky_light",
@@ -250,7 +271,8 @@
           "default": 8,
           "min": 1,
           "max": 15,
-          "step": 1
+          "step": 1,
+          "hint": "低于这个天光等级时出现洞穴雾。"
         },
         {
           "key": "noise_amount",
@@ -259,7 +281,8 @@
           "default": 0.35,
           "min": 0,
           "max": 1,
-          "step": 0.01
+          "step": 0.01,
+          "hint": "0 为平滑雾，增大会产生团块和不均匀纹理。"
         },
         {
           "key": "noise_scale",
@@ -268,7 +291,8 @@
           "default": 0.05,
           "min": 0.001,
           "max": 2,
-          "step": 0.001
+          "step": 0.001,
+          "hint": "数值越大，纹理团块越细小。"
         },
         {
           "key": "coverage",
@@ -277,7 +301,8 @@
           "default": 0.55,
           "min": 0,
           "max": 1,
-          "step": 0.01
+          "step": 0.01,
+          "hint": "雾纹理填满空间的比例。"
         },
         {
           "key": "noise_softness",
@@ -305,7 +330,8 @@
           "min": 0.1,
           "max": 128,
           "step": 0.1,
-          "unit": "格"
+          "unit": "格",
+          "hint": "靠近选区边界时逐渐淡出的距离。"
         },
         {
           "key": "near_fade",
@@ -315,7 +341,8 @@
           "min": 0.01,
           "max": 128,
           "step": 0.1,
-          "unit": "格"
+          "unit": "格",
+          "hint": "靠近镜头时逐渐淡出，避免挡住眼前。"
         },
         {
           "key": "grounded",
@@ -345,7 +372,8 @@
           "default": 0.2,
           "min": -8,
           "max": 8,
-          "step": 0.05
+          "step": 0.05,
+          "hint": "正值沿 X 轴移动，负值反向；0 表示不沿此轴流动。"
         },
         {
           "key": "wind_y",
@@ -354,7 +382,8 @@
           "default": 0,
           "min": -8,
           "max": 8,
-          "step": 0.05
+          "step": 0.05,
+          "hint": "正值向上流动，负值向下。"
         },
         {
           "key": "wind_z",
@@ -363,7 +392,8 @@
           "default": 0.1,
           "min": -8,
           "max": 8,
-          "step": 0.05
+          "step": 0.05,
+          "hint": "正值沿 Z 轴移动，负值反向；0 表示不沿此轴流动。"
         },
         {
           "key": "turbulence",
@@ -410,7 +440,8 @@
           "min": 20,
           "max": 72000,
           "step": 1,
-          "unit": "tick"
+          "unit": "tick",
+          "hint": "一次明暗呼吸的周期，20 tick 等于 1 秒。"
         }
       ]
     }
@@ -465,7 +496,8 @@
           "max": 1,
           "key": "threshold",
           "label": "亮部阈值",
-          "step": 0.01
+          "step": 0.01,
+          "hint": "只让亮度超过阈值的部分产生效果。"
         },
         {
           "type": "number",
@@ -543,7 +575,8 @@
           "max": 4,
           "key": "exposure",
           "label": "曝光",
-          "step": 0.01
+          "step": 0.01,
+          "hint": "正值提亮，负值压暗；0 保持原亮度。"
         },
         {
           "type": "number",
@@ -552,7 +585,8 @@
           "max": 2,
           "key": "contrast",
           "label": "对比度",
-          "step": 0.01
+          "step": 0.01,
+          "hint": "提高明暗反差，低值让画面更柔和。"
         },
         {
           "type": "number",
@@ -561,7 +595,8 @@
           "max": 2,
           "key": "saturation",
           "label": "饱和度",
-          "step": 0.01
+          "step": 0.01,
+          "hint": "0 为灰度，1 为原色，超过 1 更鲜艳。"
         },
         {
           "type": "number",
@@ -570,7 +605,8 @@
           "max": 1,
           "key": "temperature",
           "label": "冷暖色温",
-          "step": 0.01
+          "step": 0.01,
+          "hint": "调整画面偏冷或偏暖，0 保持原色温。"
         },
         {
           "type": "number",
@@ -632,7 +668,8 @@
           "type": "color",
           "default": "#000000",
           "key": "color",
-          "label": "颜色"
+          "label": "颜色",
+          "hint": "点击色块选择颜色。"
         },
         {
           "type": "number",
@@ -700,7 +737,8 @@
           "type": "color",
           "default": "#000000",
           "key": "color",
-          "label": "颜色"
+          "label": "颜色",
+          "hint": "点击色块选择颜色。"
         }
       ]
     },
@@ -728,7 +766,8 @@
           "type": "color",
           "default": "#ffffff",
           "key": "color",
-          "label": "颜色"
+          "label": "颜色",
+          "hint": "点击色块选择颜色。"
         },
         {
           "type": "number",
@@ -737,7 +776,8 @@
           "max": 2,
           "key": "contrast",
           "label": "对比度",
-          "step": 0.01
+          "step": 0.01,
+          "hint": "提高明暗反差，低值让画面更柔和。"
         }
       ]
     },
@@ -827,7 +867,8 @@
           "type": "color",
           "default": "#000000",
           "key": "color",
-          "label": "颜色"
+          "label": "颜色",
+          "hint": "点击色块选择颜色。"
         }
       ]
     },
@@ -1137,7 +1178,8 @@
           "type": "color",
           "default": "#000000",
           "key": "color",
-          "label": "颜色"
+          "label": "颜色",
+          "hint": "点击色块选择颜色。"
         },
         {
           "type": "color",
@@ -1159,7 +1201,8 @@
           "max": 1,
           "key": "density",
           "label": "星星密度",
-          "step": 0.01
+          "step": 0.01,
+          "hint": "数值越大，可见元素越密集。"
         },
         {
           "type": "number",
@@ -1192,7 +1235,8 @@
           "type": "color",
           "default": "#ffffff",
           "key": "color",
-          "label": "颜色"
+          "label": "颜色",
+          "hint": "点击色块选择颜色。"
         },
         {
           "type": "boolean",
@@ -1268,7 +1312,8 @@
           "type": "color",
           "default": "#000000",
           "key": "color",
-          "label": "颜色"
+          "label": "颜色",
+          "hint": "点击色块选择颜色。"
         },
         {
           "type": "number",
@@ -1356,7 +1401,8 @@
       "integer": true,
       "min": -2147483648,
       "max": 2147483647,
-      "step": 1
+      "step": 1,
+      "hint": "区域重叠时优先使用数值较大的效果。"
     },
     {
       "key": "transition_ticks",
@@ -1367,7 +1413,8 @@
       "min": 0,
       "max": 1200,
       "step": 1,
-      "unit": "tick"
+      "unit": "tick",
+      "hint": "进入或离开时平滑切换，20 tick 等于 1 秒；0 立即切换。"
     },
     {
       "key": "on_exit",
@@ -1383,7 +1430,8 @@
           "value": "retain",
           "label": "保留环境"
         }
-      ]
+      ],
+      "hint": "恢复环境适合普通区域；保留会让效果延续到离开之后。"
     }
   ],
   "clouds": [
@@ -1401,7 +1449,8 @@
       "default": 1,
       "min": 0,
       "max": 1,
-      "step": 0.01
+      "step": 0.01,
+      "hint": "0 完全不可见，1 完全可见。"
     },
     {
       "key": "height",
@@ -1427,14 +1476,16 @@
       ],
       "min": -30000000,
       "max": 30000000,
-      "step": 0.1
+      "step": 0.1,
+      "hint": "灯光在世界中的 X、Y、Z 坐标。新灯光默认放在区域中心。"
     },
     {
       "key": "color",
       "label": "灯光颜色",
       "type": "color",
       "default": "#FFFFFF",
-      "opaque": true
+      "opaque": true,
+      "hint": "点击色块选择颜色。"
     },
     {
       "key": "intensity",
@@ -1453,7 +1504,8 @@
       "min": 0.1,
       "max": 256,
       "step": 0.1,
-      "unit": "格"
+      "unit": "格",
+      "hint": "光源能照到的距离，单位为方块。"
     },
     {
       "key": "direction",
@@ -1467,7 +1519,8 @@
       "min": -1,
       "max": 1,
       "step": 0.01,
-      "optional": true
+      "optional": true,
+      "hint": "不覆盖时为点光源；覆盖后成为聚光灯，例如 0、-1、0 朝下。"
     },
     {
       "key": "inner_angle",

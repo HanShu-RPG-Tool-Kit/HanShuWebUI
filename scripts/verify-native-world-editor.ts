@@ -42,6 +42,15 @@ async function widget(text: string, type?: string) {
   const s = await state(); const found = s.widgets.filter((w: any) => w.visible && w.text === text && (!type || w.type === type))
   assert.equal(found.length, 1, `one native widget ${text}: ${JSON.stringify(s.widgets)}`); return { s, w: found[0] }
 }
+async function scrollNativeTo(text: string, type?: string) {
+  for(let attempt=0;attempt<35;attempt++){
+    const s=await state(),w=s.widgets.find((w:any)=>w.text===text&&(!type||w.type===type));assert.ok(w,'scroll target exists: '+text)
+    const viewport=s.widgets.find((w:any)=>w.text==='世界视口'),apply=s.widgets.find((w:any)=>w.text==='应用属性');assert.ok(viewport&&apply)
+    if(w.y>=134&&w.y+w.height<=s.window.guiHeight-91)return
+    await native('mct_scroll',{screenToken:s.screenToken,x:Math.round(apply.x+apply.width/2),y:Math.round(viewport.y+viewport.height/2),dx:0,dy:Math.max(-10,Math.min(10,Math.round((170-w.y)/24)))})
+  }
+  throw Error('Unable to scroll field into view: '+text)
+}
 async function press(text: string) { return native('mct_act', { action: 'press', select: { text }, settleFrames: 4 }) }
 async function readyPress(text:string) { await until(async () => (await state()).widgets.some((w:any)=>w.type==='button'&&w.text===text&&w.active&&w.visible), 'native action ready: '+text); return press(text) }
 async function deleteNative() { await until(async () => (await state()).widgets.some((w: any) => w.type === 'button' && w.text.includes('删除') && w.active), 'native delete available after draft acknowledgement'); return native('mct_act', { action: 'press', select: { textContains: '删除', type: 'button' }, settleFrames: 4 }) }
@@ -201,9 +210,9 @@ try {
   pass('browser authors fog/sky/post/music together and previews real render channels and client music without publishing')
   await press('环境与音乐'); await press('画面滤镜')
   await until(async () => (await state()).widgets.some((w: any) => w.type === 'edit_box' && w.text === '-0.6'), 'native typed effect control receives C exposure')
-  await set('-0.6', '0.75'); await press('应用属性')
+  await scrollNativeTo('-0.6','edit_box'); await set('-0.6', '0.75'); await press('应用属性')
   await until(async () => await page.getByRole('tab', { name: /画面滤镜/ }).click().then(() => page.getByLabel('曝光', { exact: true }).inputValue()) === '0.75', 'native exposure commit reaches Web effect form')
-  await press('环境雾'); await press('雾的范围 ▾'); await press('颜色与光照')
+  await press('环境雾'); await scrollNativeTo('白天雾色 · 更换颜色')
   await press('白天雾色 · 更换颜色')
   const red = (await state()).widgets.find((w: any) => w.text.startsWith('红色分量 ')); assert.ok(red)
   await dragWidget(red.text, -24, 0); await press('‹ 返回参数'); await press('应用属性')
@@ -368,9 +377,14 @@ try {
   const canvas = await widget('世界视口'); const c = canvas.w
   point = await streamPoint((c.x + c.width / 2) * canvas.s.window.scale, (c.y + c.height / 2) * canvas.s.window.scale, canvas.s.window)
   projected = await centeredHandles(); const beforeX = projected.handles.find((h: any) => h.id === 'maxY').screenX
-  await page.mouse.move(point.x, point.y); await page.mouse.down({ button: 'right' }); await page.keyboard.down('d')
-  await native('mct_state', { afterFrames: 45 }); await page.keyboard.up('d'); await page.mouse.up({ button: 'right' })
-  await until(async () => { const h = (await streamHandles()).handles.find((h: any) => h.id === 'maxY'); return h && h.screenX < beforeX - 1 }, 'D moves camera right, world handle moves left')
+  await page.mouse.move(point.x, point.y); await page.mouse.down({ button: 'right' })
+  await native('mct_state',{afterFrames:8})
+  const pressOnly=(await streamHandles()).handles.find((h:any)=>h.id==='maxY');assert.ok(pressOnly)
+  assert.ok(Math.abs(pressOnly.screenX-beforeX)<3,'RMB press without motion must not rotate the camera')
+  pass('browser RMB camera takeover does not replay earlier absolute pointer motion')
+  await page.keyboard.down('d')
+  try { await until(async () => { const h = (await streamHandles()).handles.find((h: any) => h.id === 'maxY'); return h && h.screenX < beforeX - 1 }, 'D moves camera right, world handle moves left') }
+  finally { await page.keyboard.up('d'); await page.mouse.up({ button: 'right' }) }
   assert.deepEqual((await native('mct_server_state')).players.map((p: any) => ({ uuid: p.uuid, x: p.x, y: p.y, z: p.z })), serverPose)
   pass('browser RMB and D move detached camera in expected direction without moving server player')
   // Reframe independently: after movement the following turn can legitimately move the handle outside the viewport.
@@ -507,7 +521,7 @@ try {
   await author.getByLabel('着色器资源ID', { exact: true }).fill('project:forest_tint')
   await author.getByLabel('着色器显示名称', { exact: true }).fill('森林染色')
   await author.getByRole('tab', { name: '参数与控件', exact: true }).click()
-  await author.getByLabel('中文标签 amount', { exact: true }).fill('林地染色强度')
+  await author.getByText('定义这个控件', {exact:true}).nth(1).click(); await author.getByLabel('中文标签 amount', { exact: true }).fill('林地染色强度')
   await author.getByRole('button', { name: '编译并预览', exact: true }).click()
   await author.getByText('编译通过，正在游戏画面中预览；工程文件尚需显式保存。', { exact: true }).waitFor()
   await until(async () => report.effectsPreview?.active && report.effectsPreview.compiledSources === 1, 'custom source is compiled and used by game render channels')
@@ -533,15 +547,25 @@ try {
   assert.ok(!JSON.stringify(customDoc).includes('rpgtoolkit_editor:'))
   pass('native resource action opens Web GLSL authoring; valid GPU preview, failed compile recovery and paired resource save work without author alias leakage')
   await readyPress('画面滤镜')
-  const effectGroup = (await state()).widgets.find((w:any)=>w.type==='button'&&w.text.endsWith(' ▾')&&w.text.includes(' · '));assert.ok(effectGroup)
-  await readyPress(effectGroup.text)
-  const customGroup = (await state()).widgets.find((w:any)=>w.type==='button'&&w.text.endsWith(' · 森林染色'));assert.ok(customGroup)
-  await readyPress(customGroup.text)
-  if (!(await state()).widgets.some((w:any)=>w.type==='edit_box'&&w.text==='0.65')) { const s=await state(),buttons=s.widgets.filter((w:any)=>w.type==='button'&&w.text==='›'&&w.x>s.window.guiWidth/2);assert.equal(buttons.length,1);await native('mct_press',{screenToken:s.screenToken,widgetId:buttons[0].id}) }
+  await scrollNativeTo('0.65','edit_box')
   await set('0.65','0.7'); await readyPress('应用属性')
   await until(async () => await field('林地染色强度').inputValue()==='0.7', 'native Chinese custom shader parameter commits to Web')
   await readyPress('保存'); await until(async () => JSON.parse(await readFile(join(h.root,path),'utf8')).regions[0].environment.effects.post.parameters.filters.some((f:any)=>f.shader==='project:forest_tint'&&f.params.amount===.7), 'native custom parameter saved through S')
   await capture('native-custom-effect-workbench')
+  await page.getByRole('tab',{name:/环境雾/}).click()
+  await page.getByText('雾中灯光',{exact:false}).first().click()
+  await button('＋ 添加灯光').click()
+  await field('灯光位置 X').fill('731.125');await field('灯光位置 Y').fill('92.5');await field('灯光位置 Z').fill('-142.75')
+  await button('应用效果').click();await readyPress('环境雾')
+  await scrollNativeTo('731.125','edit_box');await set('731.125','732.25')
+  await set('92.5','93.75');await set('-142.75','-141.5')
+  await readyPress('应用属性')
+  await until(async()=>await field('灯光位置 X').inputValue()==='732.25'&&await field('灯光位置 Y').inputValue()==='93.75'&&await field('灯光位置 Z').inputValue()==='-141.5','sequential native vector edits preserve every component')
+  await readyPress('保存')
+  await until(async()=>JSON.parse(await readFile(join(h.root,path),'utf8')).regions[0].environment.effects.fog.parameters.lights?.some((v:any)=>JSON.stringify(v.position)==='[732.25,93.75,-141.5]'),'vector saved through S')
+  await capture('native-continuous-scroll-light-controls')
+  pass('continuous native scrolling reaches deep light controls and sequential XYZ edits survive shared save')
+
   await button('离线 3D').click(); await field('三维体积视图').waitFor(); await readyPress('关闭')
   pass('custom resources remain available to the same Web properties and native workbench; stop and close restore gameplay')
   assert.deepEqual(report.pageErrors, []); report.ok = true

@@ -248,7 +248,7 @@ try {
     await locator.evaluate((node) => node.blur())
   }
   function resourceFilter() {
-    return page.getByLabel('筛选资源', { exact: true })
+    return page.getByRole('region', { name: '游戏性工作区', exact: true, includeHidden: true }).getByLabel('筛选资源', { exact: true })
   }
   async function ensureExplorer() {
     // Focus hides the dock band with display:none; the input stays in the DOM.

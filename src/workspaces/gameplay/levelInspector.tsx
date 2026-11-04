@@ -171,9 +171,10 @@ function RegionPanel({
         <p className="level-kicker">{areaShapeLabel(area.kind)} · 体积 {index + 1}</p>
         <h2 title={region.id}>{region.id}</h2>
       </header>
-      <RenameField id={region.id} label="区域 id" disabled={disabled} onRename={onRename} onDraft={onDraft} onApplied={onApplied} kind="region" />
       <div className="region-inspector-tabs" role="tablist" aria-label="区域属性分类"><button type="button" role="tab" aria-selected={tab === 'geometry'} onClick={() => setTab('geometry')}>范围与高度</button><button type="button" role="tab" aria-selected={tab === 'effects'} onClick={() => setTab('effects')}>环境与音乐</button></div>
-      <div hidden={tab !== 'geometry'}>
+      <div className="region-geometry-scroll" hidden={tab !== 'geometry'}>
+      <RenameField id={region.id} label="区域 id" disabled={disabled} onRename={onRename} onDraft={onDraft} onApplied={onApplied} kind="region" />
+
       <section className="level-group">
         <h3>范围 <span className="level-unit">方块</span></h3>
         <GeometryFields area={area} texts={texts} disabled={disabled} onEdit={edit} onBlur={blur} />
@@ -197,8 +198,6 @@ function RegionPanel({
           </div>
         )}
       </section>
-      </div>
-      <div hidden={tab !== 'effects'}><RegionEffectsPanel resourceEpoch={resourceEpoch} region={region} disabled={disabled} onChange={effects => onEffects?.(effects)} onDraft={onDraft} onAudition={onAudition} online={effectsOnline} channel={view?.channel} onChannel={view?.setChannel} /></div>
       <ExtensionDataEditor
         custom={region.custom_data}
         disabled={disabled}
@@ -222,6 +221,8 @@ function RegionPanel({
           </>
         )}
       </section>
+      </div>
+      <div className="region-effects-body" hidden={tab !== 'effects'}><RegionEffectsPanel resourceEpoch={resourceEpoch} region={region} disabled={disabled} onChange={effects => onEffects?.(effects)} onDraft={onDraft} onAudition={onAudition} online={effectsOnline} channel={view?.channel} onChannel={view?.setChannel} /></div>
     </>
   )
 }

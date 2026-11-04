@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { LevelRegion } from './levelDoc'
 import type { LevelDraftRecord } from './levelLayoutModel'
 import { controlRequest, isControlConnected } from '../../gameDevServer/controlHub'
@@ -117,11 +117,12 @@ export function RegionEffectsPanel(props: Props) {
   }
   const p = channel === 'music' ? draft.music as unknown as Record<string, unknown> | undefined : draft.environment?.effects[channel]?.parameters
   return <section className="region-effects" aria-label="区域效果">
-    <div className="region-effects-intro"><strong>让这个区域有自己的氛围</strong><p>效果作用于整个区域，包括其中的所有体积。</p></div>
+    <p className="region-effects-intro">效果应用于整个区域的所有体积</p>
     <div className="region-effect-tabs" role="tablist" aria-label="区域效果分类">{CHANNELS.map(kind => <button key={kind} type="button" role="tab" aria-selected={channel === kind} onClick={() => { setChannel(kind); props.onChannel?.(kind) }}>
       <span aria-hidden="true">{glyphs[kind]}</span><span>{EFFECT_NAMES[kind]}</span><small>{enabled(kind) ? '已配置' : '未启用'}</small>
     </button>)}</div>
     <div className="region-effect-title"><h3>{EFFECT_NAMES[channel]}</h3><label className="region-effect-enable"><input type="checkbox" aria-label={`启用${EFFECT_NAMES[channel]}`} checked={enabled(channel)} disabled={props.disabled} onChange={e => { enable(channel, e.target.checked); if (channel === 'music' && !e.target.checked) setAudio(false) }} />启用</label></div>
+    <div className="region-effects-scroll">
     {!enabled(channel) && <div className="region-effect-empty"><span aria-hidden="true">{glyphs[channel]}</span><p>{channel === 'fog' ? '用颜色、距离和流动纹理塑造空间。' : channel === 'sky' ? '叠加天空图层，调整云、日月和星空。' : channel === 'post' ? '组合调色、晕影、泛光等画面效果。' : '玩家进入区域后，按优先级选择背景音乐。'}</p><button type="button" disabled={props.disabled} onClick={() => setDraft(toggleChannel(draft, channel, true))}>添加{EFFECT_NAMES[channel]}</button></div>}
     {p && channel === 'fog' && <>
       <div className="region-effect-presets" aria-label="雾效预设">{[
@@ -149,21 +150,35 @@ export function RegionEffectsPanel(props: Props) {
     </>}
     {draft.environment && <details className="region-effect-group region-effect-policy"><summary>进入、离开与优先级</summary>{controls.policy.map(field => <EffectValue key={field.key} field={field} value={(draft.environment as unknown as Record<string, unknown>)[field.key]} disabled={props.disabled} onChange={value => update(next => { const env = next.environment as unknown as Record<string, unknown>; if (value === undefined) delete env[field.key]; else env[field.key] = value })} />)}<p className="level-hint">20 tick = 1 秒。各环境通道独立比较优先级，音乐使用自己的优先级。</p></details>}
     {(issue || conflict) && <p className="level-field-error" role="alert">{issue || '区域效果已从另一端更新。当前输入保留，请重载效果后继续。'}</p>}
-    <div className="region-effects-actions"><button type="button" disabled={props.disabled || !!issue || conflict || !pending} onClick={apply}>应用效果</button><button type="button" disabled={props.disabled || !pending && !conflict} onClick={() => { setDraft(cloneEffectValue(effectSections(props.region))); setBaseline(source); setConflict(false); setAudio(false); setStatus(''); refs.current.onDraft('effects', null) }}>重载效果</button></div>
-    <div className="region-effects-preview"><button type="button" aria-pressed={previewing} disabled={!!issue || conflict || props.disabled} onClick={() => { setPreviewing(!previewing); if (previewing) setAudio(false) }}>{previewing ? '■ 停止预览并恢复' : props.online ? '▶ 在游戏画面中预览' : '▶ 在离线场景中预览'}</button><p>{previewing ? props.online ? '正在预览选中区域 · 未发布到服务器' : '离线示意预览 · 游戏着色器请在线确认' : '预览只影响当前客户端，不移动玩家。'}</p></div>
     <RegionEffectAssets effects={draft} areas={props.region.areas} disabled={props.disabled} online={props.online} request={resourceRequest} onChange={setDraft} onStop={() => { setPreviewing(false); void refs.current.onAudition?.(null, false).catch(() => {}) }}
       onResource={resource => { customResources.current = [...customResources.current.filter(r => r.kind !== resource.kind || r.id !== resource.id), resource]; setControls(previous => ({ ...previous, shaders: [...previous.shaders.filter(s => s.kind !== resource.kind || s.id !== resource.id), effectResourceChoice(resource)] })) }}
       onPending={dirty => refs.current.onDraft('effect-resource', dirty ? { order: 5, pending: true, message: '着色器窗口有未保存资源，请先保存资源或明确关闭窗口', reduce: null } : null)}
       onPreview={async (effects, sources) => { if (!props.online || !refs.current.onAudition) throw Error('请连接游戏并开启在线视口'); await refs.current.onAudition(effects, false, sources) }} />
     {status && <p className="level-hint" role="status">{status}</p>}
     <div className="region-effect-library-state"><span>{resources ? '来自当前游戏资源库' : '内置效果库'}</span><button type="button" onClick={() => { void loadResources() }}>刷新资源</button></div>
+    </div>
+    <div className="region-effects-actions"><button type="button" disabled={props.disabled || !!issue || conflict || !pending} onClick={apply}>应用效果</button><button type="button" disabled={props.disabled || !pending && !conflict} onClick={() => { setDraft(cloneEffectValue(effectSections(props.region))); setBaseline(source); setConflict(false); setAudio(false); setStatus(''); refs.current.onDraft('effects', null) }}>重载效果</button></div>
+    <div className="region-effects-preview"><button type="button" aria-pressed={previewing} disabled={!!issue || conflict || props.disabled} onClick={() => { setPreviewing(!previewing); if (previewing) setAudio(false) }}>{previewing ? '■ 停止预览并恢复' : props.online ? '▶ 在游戏画面中预览' : '▶ 在离线场景中预览'}</button><p>{previewing ? props.online ? '正在预览选中区域 · 未发布到服务器' : '离线示意预览 · 游戏着色器请在线确认' : '预览只影响当前客户端，不移动玩家。'}</p></div>
   </section>
 }
 
 
 function FogDistancePreview({ parameters: p }: { parameters: Record<string, unknown> }) {
-  const color = effectColor(p.color)?.hex ?? '#A9C4D0', density = Number(p.density ?? 1)
-  return <div className="region-fog-distance" aria-label="雾距离示意" style={{ '--fog-color': color, '--fog-opacity': Math.min(1, density / 2) } as CSSProperties}><div className="region-distance-landscape"><i /><i /><i /><span /></div><div className="region-distance-labels"><span>镜头</span><span>开始 {String(p.start ?? 0)}</span><span>遮蔽 {String(p.end ?? (p.distance_mode === 'render_distance' ? 1 : 96))}</span></div><small>距离与染色示意</small></div>
+  const relative = p.distance_mode === 'render_distance', unit = relative ? '倍视距' : '格'
+  const start = Number(p.start ?? 0), end = Number(p.end ?? (relative ? 1 : 96))
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return null
+  const extent = Math.max(relative ? 1 : 128, end * 1.2), position = (n: number) => 18 + Math.max(0,n) / extent * 264
+  return <figure className="region-fog-distance" aria-label="雾距离示意">
+    <figcaption>距离范围 <span>{unit}</span></figcaption>
+    <svg viewBox="0 0 300 66" role="img" aria-label={`从 ${start} 到 ${end} ${unit}逐渐遮蔽`}>
+      <path d="M18 44H282" stroke="#697e8c" />
+      <path d={`M${position(start)} 44L${position(end)} 12V44Z`} fill={effectColor(p.color)?.hex ?? '#A9C4D0'} opacity=".5" />
+      <circle cx={position(start)} cy="44" r="4" fill="#e4bf79"/><circle cx={position(end)} cy="12" r="4" fill="#8bd5cd"/>
+      <text x="18" y="61" fill="#bac7d1">镜头 0</text><text x="282" y="61" textAnchor="end" fill="#bac7d1">{Number(extent.toFixed(2))}</text>
+    </svg>
+    <div><span>开始 <b>{start}</b></span><span>完全遮蔽 <b>{end}</b></span></div>
+    <small>范围示意；空间雾、光照与纹理请在场景中预览。</small>
+  </figure>
 }
 
 function ShaderStack({ kind, parameters, controls, disabled, onChange, onEdit }: { kind: 'sky' | 'post'; parameters: Record<string, unknown>; controls: EffectControls; disabled?: boolean; onChange: (key: string, value: unknown) => void; onEdit: (kind: 'sky' | 'post', id?: string) => void }) {
@@ -185,11 +200,8 @@ function ShaderStack({ kind, parameters, controls, disabled, onChange, onEdit }:
     })}
     <button type="button" disabled={disabled} onClick={() => onEdit(kind)}>＋ 制作自定义{kind === 'sky' ? '天空' : '滤镜'}</button>
     <button type="button" className="region-add-effect" disabled={disabled || list.length >= 8} onClick={() => setAdding(!adding)}>＋ 添加{kind === 'sky' ? '天空图层' : '画面滤镜'} <small>{list.length}/8</small></button>
-    {adding && <div className="region-shader-picker" aria-label={kind === 'sky' ? '选择天空图层' : '选择画面滤镜'}>{controls.shaders.filter(s => s.kind === kind && (s.id !== 'rpgtoolkit:vanilla' || list.length === 0)).map(s => <button type="button" key={s.id} disabled={disabled || list.length >= 8 || !!s.error} onClick={() => { onChange(key, [...list, { shader: s.id, params: {} }]); setAdding(false) }}><EffectThumbnail shader={s.id} /><span>{s.label}</span></button>)}</div>}
+    {adding && <div className="region-shader-picker" aria-label={kind === 'sky' ? '选择天空图层' : '选择画面滤镜'}>{controls.shaders.filter(s => s.kind === kind && (s.id !== 'rpgtoolkit:vanilla' || list.length === 0)).map(s => <button type="button" key={s.id} aria-label={s.label} disabled={disabled || list.length >= 8 || !!s.error} onClick={() => { onChange(key, [...list, { shader: s.id, params: {} }]); setAdding(false) }}><span>{s.label}</span><small>{s.params.slice(0,3).map(p=>p.label).join(' · ') || '使用游戏默认表现'}</small></button>)}</div>}
   </div>
-}
-function EffectThumbnail({ shader }: { shader: string }) {
-  return <span className={`region-effect-thumbnail effect-${shader.split(':').pop()}`} aria-hidden="true"><i /><b /></span>
 }
 function Transition({ value, controls, disabled, onChange, inheritedTicks, onEdit }: { value?: ShaderRef; controls: EffectControls; disabled?: boolean; onChange: (value: ShaderRef | undefined) => void; inheritedTicks: number; onEdit: (kind: 'transition', id?: string) => void }) {
   const data = value ? fullShader(value) : undefined, info = value ? shaderInfo('transition', value, controls) : undefined
