@@ -62,6 +62,7 @@ npm run test:level-custom
 npm run test:stream-input
 npm run test:region-effects
 npm run test:region-effects:ui
+npm run test:region-effects:export
 ```
 
 `test:region-editor:ui`使用真实S和模拟门户，覆盖布局、表单、中文扩展、删除、撤销及保存。它不能证明游戏渲染或操控。`test:world-editor:native`（另两个native入口同义）使用独立无Axiom客户端、维护中的MinecraftTestMCP与真实门户：魔杖右键、原生选区/高度/属性、浏览器实际鼠标与键盘、镜头不移动玩家、双端历史、S保存和离线预览。

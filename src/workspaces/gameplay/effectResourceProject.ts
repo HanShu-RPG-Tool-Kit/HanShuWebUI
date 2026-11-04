@@ -10,7 +10,8 @@ export async function readEffectText(client: ProjectClient, path: string): Promi
 }
 export async function readEffectResource(client: ProjectClient, seed: EffectResource): Promise<EffectResourceSnapshot> {
   const [manifest, source] = await Promise.all(effectResourcePaths(seed.kind, seed.id).map(path => readEffectText(client, path)))
-  return { resource: { ...seed, manifest: manifest.text === null ? seed.manifest : JSON.parse(manifest.text), source: source.text ?? seed.source }, versions: [manifest.version, source.version], originals: [manifest.text, source.text] }
+  const resource = { ...seed, manifest: manifest.text === null ? seed.manifest : JSON.parse(manifest.text), source: source.text ?? seed.source }; validateEffectResource(resource)
+  return { resource, versions: [manifest.version, source.version], originals: [manifest.text, source.text] }
 }
 export async function saveEffectResource(client: ProjectClient, snapshot: EffectResourceSnapshot, editorOwner?: string): Promise<void> {
   validateEffectResource(snapshot.resource)

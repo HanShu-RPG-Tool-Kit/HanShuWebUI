@@ -140,6 +140,7 @@ try {
     for (const event of ['framesent', 'framereceived'] as const) socket.on(event, frame => {
       try {
         const message = JSON.parse(String(frame.payload))
+        if (event === 'framereceived' && Array.isArray(message.result?.shaders)) report.shaderLibrary = message.result.shaders
         if (event === 'framereceived' && message.result?.effectsPreview) report.effectsPreview = message.result.effectsPreview
         if (typeof message.method !== 'string' || !message.method.startsWith('level.edit.')) return
         const p = message.params || {}
@@ -182,6 +183,7 @@ try {
   await page.getByRole('tab', { name: /天空与云/ }).click(); await page.getByLabel('启用天空与云', { exact: true }).check()
   await page.getByRole('button', { name: /添加天空图层/ }).click(); await button('渐变天空').click()
   await page.getByRole('tab', { name: /画面滤镜/ }).click(); await page.getByLabel('启用画面滤镜', { exact: true }).check()
+  if (process.env.REGION_EXPECT_PAK_EFFECT) { await page.getByRole('button', { name: /添加画面滤镜/ }).click(); await button('PAK森林滤镜').click() }
   await page.getByLabel('曝光', { exact: true }).fill('-0.6'); await page.getByLabel('曝光', { exact: true }).blur()
   await page.getByRole('tab', { name: /区域音乐/ }).click(); await page.getByLabel('启用区域音乐', { exact: true }).check()
   await page.getByLabel('音乐优先级', { exact: true }).fill('12'); await page.getByLabel('音乐优先级', { exact: true }).blur()
@@ -190,6 +192,7 @@ try {
   await button('▶ 在游戏画面中预览').click()
   await until(async () => report.effectsPreview?.active && report.effectsPreview.skySource === 'editor_preview' && report.effectsPreview.postSource === 'editor_preview', 'actual sky/post render channel preview')
   await button('▶ 在游戏客户端试听').click(); await until(async () => report.effectsPreview?.music, 'real client music audition')
+  if (process.env.REGION_EXPECT_PAK_EFFECT) { await button('刷新资源').click(); const entry=await until(async()=>report.shaderLibrary?.find((r:any)=>r.id==='project:published_tint'),'published client PAK resource is exposed by game library'); assert.ok(!entry.error,entry.error); report.publishedPakEffect=entry;pass('exported client PAK mounts namespaced GLSL and textures; actual game filter renders without GPU errors') }
   report.musicAudition = { ...report.effectsPreview }
   await capture('region-effects-real-render-preview')
   assert.equal(await readFile(join(h.root, path), 'utf8'), initialText)

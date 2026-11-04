@@ -20,4 +20,3 @@ export function EffectValue({ field, value, disabled, onChange }: { field: Effec
       : <input type="text" aria-label={field.label} value={String(current)} disabled={disabled || !available} onChange={e => onChange(e.target.value)} />}
   </div>
 }
-
