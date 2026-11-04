@@ -4,7 +4,7 @@
  *
  * 例：`main.quest` → `assets/zh_cn/lang_quest/main.lang`
  * `{ "name": "驿站任务", "description": "……" }`
- * `spot.nav` → `assets/zh_cn/lang_nav/spot.lang`（键 `label`）
+ * `spot.nav` → `assets/zh_cn/lang_nav/spot.lang`（键 `display_name`）
  * `starter.kit` → `assets/zh_cn/lang_kit/starter.lang`（键 `name` / `feedback.*`）
  */
 
@@ -12,7 +12,6 @@ import { text, type FlowText, type ProgressFlow } from './model'
 import type { ProgressDocument } from './progressDoc'
 import type { KitDocument } from './kit'
 import type { NavigationPoint } from './navigationPoint'
-import { NAV_DISPLAY_NAME } from './navigationPoint'
 
 export const PROGRESS_NAME_KEY = 'name'
 export const PROGRESS_DESCRIPTION_KEY = 'description'
@@ -176,21 +175,19 @@ export function flowNodeLocaleKeyMoves(
   return moves
 }
 
-/** 把 `.nav` 的 display_name 收成固定语义键 */
+/**
+ * `.nav` 不再携带 custom_data。显示名只活在 `lang_nav` 的 `display_name`，
+ * 由新建文件时的 `defaultNavLocaleSeeds` 写入，这里不再改文档。
+ */
 export function ensureNavLocaleKeys(point: NavigationPoint): {
   point: NavigationPoint
   seeds: Record<string, string>
 } {
-  const seeds: Record<string, string> = {}
-  const current = point.custom_data[NAV_DISPLAY_NAME]
-  const value = typeof current === 'string' ? current : ''
-  const next = takePlainAsSeed(value, NAV_LABEL_KEY, seeds)
-  if (next === value && current === next) return { point, seeds }
-  return { point: { ...point, custom_data: { ...point.custom_data, [NAV_DISPLAY_NAME]: next } }, seeds }
+  return { point, seeds: {} }
 }
 
-export function defaultNavLocaleSeeds(label = '新导航点'): Record<string, string> {
-  return { [NAV_LABEL_KEY]: label.trim() || '新导航点' }
+export function defaultNavLocaleSeeds(label = '新导航器'): Record<string, string> {
+  return { [NAV_LABEL_KEY]: label.trim() || '新导航器' }
 }
 
 /**

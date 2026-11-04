@@ -2,29 +2,29 @@ import { isObject } from './model'
 import { parseJsonValue } from '../../utils/strictJson'
 
 /**
- * WebUI 的导航点草稿（v3 / RPGToolKit Level 模型）。
+ * 动态导航器（`.nav`）。只记录要追踪的地标，坐标在地图模板的地标里。
  *
- * 形状与引擎 `NavigationPoint` 一致，只是 `level` 允许暂时为空（新建时还没选模板）：
- *   { level, type, param, custom_data }
+ *   { id, level, track: { type: "landmark", ref: "<模板>$<地标>" } }
  *
- * - 不再有 `dimension`：维度由「哪个维度绑了哪个模板」决定，导航点只声明 level。
- * - 不再有 `public` / `radius` / 到达判定：到没到由给导航的 RPG 流程自己判断。
- * - `display_*` 是内置 custom_data 键，只是显示提示，不是授权。
+ * 新建时 level / ref 可以先空着。出现坐标、`param` 或旧版字段则整份拒绝。
  */
-export type NavTypeId = 'rpgtoolkit:pos'
+export type NavigationTrack = {
+  type: 'landmark'
+  ref: string
+}
 
 export type NavigationPoint = {
-  /** 所属地图模板的 ID（= `.level` 文件名去掉后缀）；空串表示尚未选择 */
+  /** 建议与文件名（去掉 .nav）一致；空串表示尚未命名 */
+  id: string
+  /** 所属地图模板 ID；空串表示尚未选择 */
   level: string
-  type: NavTypeId
-  param: { x: number; y: number; z: number }
-  custom_data: Record<string, unknown>
+  track: NavigationTrack
 }
 
+export type NavTypeId = 'rpgtoolkit:pos'
+
 export const NAV_TYPE_POS: NavTypeId = 'rpgtoolkit:pos'
-export const NAV_TYPE_LABELS: Record<NavTypeId, string> = {
-  'rpgtoolkit:pos': '固定坐标',
-}
+export const NAV_TRACK_LANDMARK = 'landmark'
 
 export const NAV_DISPLAY_NAME = 'rpgtoolkit:display_name'
 export const NAV_DISPLAY_ICON = 'rpgtoolkit:display_icon'
@@ -34,104 +34,63 @@ export const NAV_DISPLAY_MIN_DISTANCE = 'rpgtoolkit:display_min_distance'
 export const NAV_LABEL_MAX = 160
 export const NAV_COORD_ABS_MAX = 30_000_000
 
-const TYPE_IDS = new Set<string>([NAV_TYPE_POS])
 const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/
-const IDENTIFIER_RE = /^[a-z0-9_.-]+:[a-z0-9_./-]+$/i
 const LEVEL_ID_RE = /^[^$\\/:*?"<>|\u0000-\u001f]+$/
 
-/** 旧版 `.nav` 字段：出现任意一个就明确拒绝，避免静默丢字段。 */
-const LEGACY_KEYS = ['dimension', 'label', 'radius', 'public', 'entity_tag', 'entity_uuid', 'scan_radius', 'x', 'y', 'z'] as const
+/** 旧版 `.nav` 字段：出现任意一个就明确拒绝。 */
+const LEGACY_KEYS = ['dimension', 'label', 'radius', 'public', 'entity_tag', 'entity_uuid', 'scan_radius'] as const
+/** 坐标权威字段。导航器只存 track.ref。 */
+const COORD_KEYS = ['type', 'param', 'custom_data', 'x', 'y', 'z'] as const
 
-export function createNavigationPoint(level = ''): NavigationPoint {
-  return {
-    level,
-    type: NAV_TYPE_POS,
-    param: { x: 0, y: 64, z: 0 },
-    custom_data: { [NAV_DISPLAY_NAME]: 'display_name' },
-  }
+export function createNavigationPoint(level = '', id = ''): NavigationPoint {
+  return { id, level, track: { type: 'landmark', ref: '' } }
 }
 
 export function stringifyNavigationPoint(point: NavigationPoint): string {
   return `${JSON.stringify(toEngineObject(point), null, 2)}\n`
 }
 
-/** 写出与引擎一致的 JSON（无 WebUI 私有字段）。 */
 export function toEngineObject(point: NavigationPoint): Record<string, unknown> {
-  const custom: Record<string, unknown> = {}
-  const name = typeof point.custom_data[NAV_DISPLAY_NAME] === 'string' ? String(point.custom_data[NAV_DISPLAY_NAME]) : ''
-  if (name.trim()) custom[NAV_DISPLAY_NAME] = name.trim().slice(0, NAV_LABEL_MAX)
-  const icon = typeof point.custom_data[NAV_DISPLAY_ICON] === 'string' ? String(point.custom_data[NAV_DISPLAY_ICON]).trim() : ''
-  if (icon) custom[NAV_DISPLAY_ICON] = icon
-  for (const key of [NAV_DISPLAY_MIN_DISTANCE, NAV_DISPLAY_MAX_DISTANCE] as const) {
-    const value = point.custom_data[key]
-    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) custom[key] = value
-  }
-  for (const [key, value] of Object.entries(point.custom_data)) {
-    if (key in custom || key === NAV_DISPLAY_NAME || key === NAV_DISPLAY_ICON || key === NAV_DISPLAY_MIN_DISTANCE || key === NAV_DISPLAY_MAX_DISTANCE) continue
-    custom[key] = value
-  }
   return {
+    id: point.id.trim(),
     level: point.level.trim(),
-    type: point.type,
-    param: { x: point.param.x, y: point.param.y, z: point.param.z },
-    custom_data: custom,
+    track: { type: NAV_TRACK_LANDMARK, ref: point.track.ref.trim() },
   }
 }
 
 export function parseNavigationPoint(source: string): NavigationPoint {
   const raw = parseJsonValue(source)
-  if (!isObject(raw)) throw new Error('导航点必须是 JSON 对象')
+  if (!isObject(raw)) throw new Error('导航器必须是 JSON 对象')
   return fromEngineObject(raw)
 }
 
 export function fromEngineObject(raw: Record<string, unknown>): NavigationPoint {
   const legacy = LEGACY_KEYS.filter((key) => key in raw)
   if (legacy.length) {
-    throw new Error(`旧版 .nav 已不再支持（发现 ${legacy.join(' / ')}）。v3 导航点只有 level / type / param / custom_data，请重新创建。`)
+    throw new Error(`旧版 .nav 已不再支持（发现 ${legacy.join(' / ')}）。导航器只有 id / level / track，请重新创建或运行迁移。`)
   }
-
+  const coords = COORD_KEYS.filter((key) => key in raw)
+  if (coords.length) {
+    throw new Error(`导航器不能保存坐标（发现 ${coords.join(' / ')}）。改用 track.ref 指向地标。`)
+  }
   for (const key of Object.keys(raw)) {
-    if (!['level', 'type', 'param', 'custom_data'].includes(key)) throw new Error(`未知导航点字段：${key}`)
+    if (!['id', 'level', 'track'].includes(key)) throw new Error(`未知导航器字段：${key}`)
   }
-
-  if (typeof raw.level !== 'string') throw new Error('导航点需要字符串字段 level')
+  const id = raw.id === undefined ? '' : raw.id
+  if (typeof id !== 'string') throw new Error('导航器 id 应为字符串')
+  if (id.trim() && !partOk(id.trim())) throw new Error(`id 不是合法的导航器 ID：${id}`)
+  if (typeof raw.level !== 'string') throw new Error('导航器需要字符串字段 level')
   const level = raw.level.trim()
-  if (level && (!LEVEL_ID_RE.test(level) || level === '.' || level === '..')) throw new Error(`level 不是合法的模板 ID：${raw.level}`)
-
-  if (typeof raw.type !== 'string' || !TYPE_IDS.has(raw.type)) {
-    throw new Error(`未知导航点类型：${String(raw.type)}（本轮只支持 ${NAV_TYPE_POS}）`)
+  if (level && !partOk(level)) throw new Error(`level 不是合法的模板 ID：${raw.level}`)
+  if (!isObject(raw.track)) throw new Error('导航器需要 track 对象')
+  for (const key of Object.keys(raw.track)) {
+    if (!['type', 'ref'].includes(key)) throw new Error(`未知 track 字段：${key}`)
   }
-  const type = raw.type as NavTypeId
-
-  if (!isObject(raw.param)) throw new Error('导航点需要 param 对象')
-  if (type === NAV_TYPE_POS) {
-    const param = raw.param
-    for (const key of Object.keys(param)) if (!['x', 'y', 'z'].includes(key)) throw new Error(`未知 pos 参数：${key}`)
-    const x = requireCoord(param.x, 'param.x')
-    const y = requireCoord(param.y, 'param.y')
-    const z = requireCoord(param.z, 'param.z')
-    return { level, type, param: { x, y, z }, custom_data: readCustomData(raw.custom_data) }
+  if (raw.track.type !== NAV_TRACK_LANDMARK) {
+    throw new Error(`track.type 只能是 ${NAV_TRACK_LANDMARK}`)
   }
-
-  throw new Error(`未知导航点类型：${type}`)
-}
-
-function readCustomData(value: unknown): Record<string, unknown> {
-  if (value === undefined) return {}
-  if (!isObject(value)) throw new Error('custom_data 必须是 JSON 对象')
-  const data: Record<string, unknown> = { ...value }
-  if (data[NAV_DISPLAY_NAME] !== undefined && typeof data[NAV_DISPLAY_NAME] !== 'string') {
-    throw new Error(`${NAV_DISPLAY_NAME} 必须是字符串`)
-  }
-  if (data[NAV_DISPLAY_ICON] !== undefined && typeof data[NAV_DISPLAY_ICON] !== 'string') {
-    throw new Error(`${NAV_DISPLAY_ICON} 必须是字符串`)
-  }
-  for (const key of [NAV_DISPLAY_MIN_DISTANCE, NAV_DISPLAY_MAX_DISTANCE]) {
-    if (data[key] !== undefined && (typeof data[key] !== 'number' || !Number.isFinite(data[key]) || (data[key] as number) < 0)) {
-      throw new Error(`${key} 必须是 ≥ 0 的有限数字`)
-    }
-  }
-  return data
+  if (typeof raw.track.ref !== 'string') throw new Error('track.ref 应为字符串')
+  return { id: id.trim(), level, track: { type: 'landmark', ref: raw.track.ref.trim() } }
 }
 
 export function readNavigationSource(source: string): { point: NavigationPoint; error: string } {
@@ -144,52 +103,40 @@ export function readNavigationSource(source: string): { point: NavigationPoint; 
 
 export function validateNavigationPoint(point: NavigationPoint): string[] {
   const issues: string[] = []
+  if (point.id.trim() && !partOk(point.id.trim())) issues.push('id 不是合法的导航器 ID')
   if (!point.level.trim()) issues.push('请选择所属地图模板（level）')
-  else if (!LEVEL_ID_RE.test(point.level.trim()) || point.level.trim() === '.' || point.level.trim() === '..') issues.push('level 不是合法的模板 ID')
-  if (!TYPE_IDS.has(point.type)) issues.push(`未知导航点类型：${point.type}`)
-  if (point.type === NAV_TYPE_POS) {
-    for (const [name, value] of [['x', point.param.x], ['y', point.param.y], ['z', point.param.z]] as const) {
-      if (!Number.isFinite(value) || Math.abs(value) > NAV_COORD_ABS_MAX) issues.push(`${name} 须为有限数且绝对值 ≤ ${NAV_COORD_ABS_MAX}`)
+  else if (!partOk(point.level.trim())) issues.push('level 不是合法的模板 ID')
+  if (point.track.type !== NAV_TRACK_LANDMARK) issues.push(`track.type 只能是 ${NAV_TRACK_LANDMARK}`)
+  const ref = point.track.ref.trim()
+  if (!ref) issues.push('请选择要追踪的地标（track.ref）')
+  else {
+    const dollar = ref.indexOf('$')
+    const prefix = dollar > 0 ? ref.slice(0, dollar) : ''
+    const local = dollar > 0 ? ref.slice(dollar + 1) : ''
+    if (dollar <= 0 || dollar !== ref.lastIndexOf('$') || !partOk(prefix) || !partOk(local)) {
+      issues.push('track.ref 必须是 <模板>$<地标>')
+    } else if (point.level.trim() && point.level.indexOf(':') < 0 && prefix !== point.level.trim()) {
+      issues.push(`track.ref 的模板前缀必须是 ${point.level.trim()}`)
     }
   }
-  const displayName = point.custom_data[NAV_DISPLAY_NAME]
-  if (displayName !== undefined && (typeof displayName !== 'string' || displayName.length > NAV_LABEL_MAX)) {
-    issues.push(`display_name 必须是 ≤ ${NAV_LABEL_MAX} 的字符串`)
-  }
-  const icon = point.custom_data[NAV_DISPLAY_ICON]
-  if (icon !== undefined && (typeof icon !== 'string' || (icon.trim() !== '' && !IDENTIFIER_RE.test(icon.trim())))) {
-    issues.push('display_icon 须为 namespace:path')
-  }
-  const min = point.custom_data[NAV_DISPLAY_MIN_DISTANCE]
-  const max = point.custom_data[NAV_DISPLAY_MAX_DISTANCE]
-  for (const [name, value] of [['display_min_distance', min], ['display_max_distance', max]] as const) {
-    if (value !== undefined && (typeof value !== 'number' || !Number.isFinite(value) || value < 0)) {
-      issues.push(`${name} 须为 ≥ 0 的有限数`)
-    }
-  }
-  if (typeof min === 'number' && typeof max === 'number' && max > 0 && min > max) issues.push('display_min_distance 不能大于 display_max_distance')
   return issues
 }
 
 export function summarizeNavigationPoint(point: NavigationPoint): string[] {
   const lines = [
     point.level.trim() || '（未选择模板）',
-    NAV_TYPE_LABELS[point.type] ?? point.type,
-    `坐标：${point.param.x}, ${point.param.y}, ${point.param.z}`,
+    point.track.ref.trim() || '（未选择地标）',
   ]
   const issues = validateNavigationPoint(point)
   if (issues.length) lines.push(`问题：${issues.join('；')}`)
   return lines
 }
 
-/** UUID 校验留给以后的 entity 类型；当前 pos 不消费。 */
+/** UUID 校验留给以后的实体引用；当前地标 ref 不消费。 */
 export function isUuid(value: string): boolean {
   return UUID_RE.test(value.trim())
 }
 
-function requireCoord(value: unknown, name: string): number {
-  if (typeof value !== 'number' || !Number.isFinite(value) || Math.abs(value) > NAV_COORD_ABS_MAX) {
-    throw new Error(`${name} 须为有限数且绝对值 ≤ ${NAV_COORD_ABS_MAX}`)
-  }
-  return value
+function partOk(part: string): boolean {
+  return part.length > 0 && part.length <= 64 && part !== '.' && part !== '..' && LEVEL_ID_RE.test(part)
 }

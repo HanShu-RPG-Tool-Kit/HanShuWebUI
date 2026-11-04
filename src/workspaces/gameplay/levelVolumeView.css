@@ -1,0 +1,50 @@
+.level-volume[data-tool="rect"],
+.level-volume[data-tool="circle"],
+.level-volume[data-tool="polygon"],
+.level-volume[data-tool="landmark"] { cursor: crosshair; }
+
+.level-volume.is-orbit,
+.level-volume.is-pan {
+  cursor: grabbing;
+}
+
+.level-volume.is-hover-move {
+  cursor: grab;
+}
+
+.level-volume.is-active-move {
+  cursor: grabbing;
+}
+
+.level-volume.is-hover-x,
+.level-volume.is-active-x,
+.level-volume.is-hover-radius,
+.level-volume.is-active-radius {
+  cursor: ew-resize;
+}
+
+.level-volume.is-hover-z,
+.level-volume.is-active-z,
+.level-volume.is-hover-y,
+.level-volume.is-active-y {
+  cursor: ns-resize;
+}
+
+.level-volume.is-hover-corner,
+.level-volume.is-active-corner {
+  cursor: nwse-resize;
+}
+
+.level-volume.is-read-only {
+  cursor: default;
+}
+
+.level-volume.is-read-only.is-hover-move,
+.level-volume.is-read-only.is-hover-x,
+.level-volume.is-read-only.is-hover-z,
+.level-volume.is-read-only.is-hover-y,
+.level-volume.is-read-only.is-hover-corner,
+.level-volume.is-read-only.is-hover-radius,
+.level-volume.is-read-only.is-hover-handle {
+  cursor: pointer;
+}

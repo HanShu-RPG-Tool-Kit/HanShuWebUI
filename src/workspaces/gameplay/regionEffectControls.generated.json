@@ -1,0 +1,1534 @@
+{
+  "v": 1,
+  "fog": [
+    {
+      "key": "distance",
+      "label": "雾的范围",
+      "fields": [
+        {
+          "key": "mode",
+          "label": "雾的分布",
+          "type": "choice",
+          "default": "uniform",
+          "choices": [
+            {
+              "value": "uniform",
+              "label": "均匀"
+            },
+            {
+              "value": "height",
+              "label": "低空"
+            },
+            {
+              "value": "layer",
+              "label": "分层"
+            },
+            {
+              "value": "cave",
+              "label": "洞穴"
+            }
+          ]
+        },
+        {
+          "key": "distance_mode",
+          "label": "距离单位",
+          "type": "choice",
+          "default": "blocks",
+          "choices": [
+            {
+              "value": "blocks",
+              "label": "方块"
+            },
+            {
+              "value": "render_distance",
+              "label": "渲染距离倍数"
+            }
+          ]
+        },
+        {
+          "key": "start",
+          "label": "开始距离",
+          "type": "number",
+          "default": 0,
+          "min": 0,
+          "max": 4096,
+          "step": 0.1,
+          "unit": "格"
+        },
+        {
+          "key": "end",
+          "label": "完全遮蔽距离",
+          "type": "number",
+          "default": 96,
+          "min": 0.01,
+          "max": 4096,
+          "step": 0.1,
+          "unit": "格"
+        },
+        {
+          "key": "density",
+          "label": "浓度",
+          "type": "number",
+          "default": 1,
+          "min": 0.05,
+          "max": 16,
+          "step": 0.05
+        },
+        {
+          "key": "strength",
+          "label": "整体强度",
+          "type": "number",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        {
+          "key": "blend",
+          "label": "与原版雾混合",
+          "type": "choice",
+          "default": "thicken",
+          "choices": [
+            {
+              "value": "thicken",
+              "label": "加浓"
+            },
+            {
+              "value": "replace",
+              "label": "替换"
+            }
+          ]
+        },
+        {
+          "key": "volumetric",
+          "label": "体积光散射",
+          "type": "boolean",
+          "default": false
+        },
+        {
+          "key": "affect_sky",
+          "label": "影响天空",
+          "type": "boolean",
+          "default": false
+        },
+        {
+          "key": "affect_clouds",
+          "label": "影响云",
+          "type": "boolean",
+          "default": false
+        }
+      ]
+    },
+    {
+      "key": "color",
+      "label": "颜色与光照",
+      "fields": [
+        {
+          "key": "color",
+          "label": "白天雾色",
+          "type": "color",
+          "default": "#A9C4D0",
+          "optional": true
+        },
+        {
+          "key": "night_color",
+          "label": "夜晚雾色",
+          "type": "color",
+          "default": "#23344A",
+          "optional": true
+        },
+        {
+          "key": "color_strength",
+          "label": "染色强度",
+          "type": "number",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        {
+          "key": "albedo",
+          "label": "散射颜色",
+          "type": "color",
+          "default": "#FFFFFF",
+          "opaque": true
+        },
+        {
+          "key": "emission",
+          "label": "自发光颜色",
+          "type": "color",
+          "default": "#000000",
+          "opaque": true
+        },
+        {
+          "key": "emission_strength",
+          "label": "自发光强度",
+          "type": "number",
+          "default": 0,
+          "min": 0,
+          "max": 100,
+          "step": 0.05
+        },
+        {
+          "key": "ambient",
+          "label": "环境光",
+          "type": "number",
+          "default": 0.8,
+          "min": 0,
+          "max": 2,
+          "step": 0.01
+        },
+        {
+          "key": "sun_scattering",
+          "label": "阳光散射",
+          "type": "number",
+          "default": 0.35,
+          "min": 0,
+          "max": 2,
+          "step": 0.01
+        },
+        {
+          "key": "anisotropy",
+          "label": "前向散射",
+          "type": "number",
+          "default": 0.35,
+          "min": -0.8,
+          "max": 0.8,
+          "step": 0.01
+        },
+        {
+          "key": "extinction",
+          "label": "消光系数",
+          "type": "number",
+          "default": 0.03125,
+          "min": 0,
+          "max": 10000000000.0,
+          "step": 0.001,
+          "optional": true
+        },
+        {
+          "key": "mean_free_path",
+          "label": "平均自由程",
+          "type": "number",
+          "default": 32,
+          "min": 0.1,
+          "max": 100000,
+          "step": 0.1,
+          "unit": "格",
+          "optional": true
+        }
+      ]
+    },
+    {
+      "key": "shape",
+      "label": "高度与纹理",
+      "fields": [
+        {
+          "key": "height",
+          "label": "基准高度",
+          "type": "number",
+          "default": 64,
+          "min": -30000000,
+          "max": 30000000,
+          "step": 0.1,
+          "unit": "Y"
+        },
+        {
+          "key": "height_range",
+          "label": "高度过渡",
+          "type": "number",
+          "default": 32,
+          "min": 0.1,
+          "max": 4096,
+          "step": 0.1,
+          "unit": "格"
+        },
+        {
+          "key": "cave_sky_light",
+          "label": "洞穴天光阈值",
+          "type": "number",
+          "default": 8,
+          "min": 1,
+          "max": 15,
+          "step": 1
+        },
+        {
+          "key": "noise_amount",
+          "label": "噪声强度",
+          "type": "number",
+          "default": 0.35,
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        {
+          "key": "noise_scale",
+          "label": "噪声频率",
+          "type": "number",
+          "default": 0.05,
+          "min": 0.001,
+          "max": 2,
+          "step": 0.001
+        },
+        {
+          "key": "coverage",
+          "label": "覆盖率",
+          "type": "number",
+          "default": 0.55,
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        {
+          "key": "noise_softness",
+          "label": "噪声柔和度",
+          "type": "number",
+          "default": 0.25,
+          "min": 0.01,
+          "max": 1,
+          "step": 0.01
+        },
+        {
+          "key": "detail_strength",
+          "label": "细节强度",
+          "type": "number",
+          "default": 0.2,
+          "min": 0,
+          "max": 1,
+          "step": 0.01
+        },
+        {
+          "key": "edge_fade",
+          "label": "边缘淡出距离",
+          "type": "number",
+          "default": 6,
+          "min": 0.1,
+          "max": 128,
+          "step": 0.1,
+          "unit": "格"
+        },
+        {
+          "key": "near_fade",
+          "label": "近处淡出距离",
+          "type": "number",
+          "default": 8,
+          "min": 0.01,
+          "max": 128,
+          "step": 0.1,
+          "unit": "格"
+        },
+        {
+          "key": "grounded",
+          "label": "贴地雾",
+          "type": "boolean",
+          "default": false
+        },
+        {
+          "key": "vertical_scale",
+          "label": "垂直纹理比例",
+          "type": "number",
+          "default": 1,
+          "min": 0.1,
+          "max": 8,
+          "step": 0.05
+        }
+      ]
+    },
+    {
+      "key": "motion",
+      "label": "流动与天气",
+      "fields": [
+        {
+          "key": "wind_x",
+          "label": "东西风速",
+          "type": "number",
+          "default": 0.2,
+          "min": -8,
+          "max": 8,
+          "step": 0.05
+        },
+        {
+          "key": "wind_y",
+          "label": "垂直风速",
+          "type": "number",
+          "default": 0,
+          "min": -8,
+          "max": 8,
+          "step": 0.05
+        },
+        {
+          "key": "wind_z",
+          "label": "南北风速",
+          "type": "number",
+          "default": 0.1,
+          "min": -8,
+          "max": 8,
+          "step": 0.05
+        },
+        {
+          "key": "turbulence",
+          "label": "湍流强度",
+          "type": "number",
+          "default": 0,
+          "min": 0,
+          "max": 32,
+          "step": 0.1
+        },
+        {
+          "key": "turbulence_speed",
+          "label": "湍流速度",
+          "type": "number",
+          "default": 0.1,
+          "min": 0,
+          "max": 4,
+          "step": 0.01
+        },
+        {
+          "key": "rain_density",
+          "label": "雨天浓度倍数",
+          "type": "number",
+          "default": 1,
+          "min": 1,
+          "max": 8,
+          "step": 0.05
+        },
+        {
+          "key": "pulse_amount",
+          "label": "呼吸幅度",
+          "type": "number",
+          "default": 0,
+          "min": 0,
+          "max": 0.95,
+          "step": 0.01
+        },
+        {
+          "key": "pulse_ticks",
+          "label": "呼吸周期",
+          "type": "number",
+          "default": 200,
+          "integer": true,
+          "min": 20,
+          "max": 72000,
+          "step": 1,
+          "unit": "tick"
+        }
+      ]
+    }
+  ],
+  "shaders": [
+    {
+      "kind": "sky",
+      "id": "rpgtoolkit:vanilla",
+      "label": "原版天空",
+      "params": [
+        {
+          "type": "color",
+          "default": "#ffffff",
+          "key": "sky_tint",
+          "label": "天空染色"
+        },
+        {
+          "type": "color",
+          "default": "#ffffff",
+          "key": "sunrise_tint",
+          "label": "朝霞染色"
+        },
+        {
+          "type": "number",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "key": "sun_moon",
+          "label": "日月可见度",
+          "step": 0.01
+        },
+        {
+          "type": "number",
+          "default": 1,
+          "min": 0,
+          "max": 4,
+          "key": "stars",
+          "label": "原版星星亮度",
+          "step": 0.01
+        }
+      ]
+    },
+    {
+      "kind": "post",
+      "id": "rpgtoolkit:bloom",
+      "label": "泛光",
+      "params": [
+        {
+          "type": "number",
+          "default": 0.9,
+          "min": 0,
+          "max": 1,
+          "key": "threshold",
+          "label": "亮部阈值",
+          "step": 0.01
+        },
+        {
+          "type": "number",
+          "default": 0.9,
+          "min": 0,
+          "max": 4,
+          "key": "intensity",
+          "label": "强度",
+          "step": 0.01
+        },
+        {
+          "type": "number",
+          "default": 2,
+          "min": 0.25,
+          "max": 4,
+          "key": "radius",
+          "label": "半径",
+          "step": 0.01
+        },
+        {
+          "type": "color",
+          "default": "#ffffff",
+          "key": "tint",
+          "label": "染色"
+        }
+      ]
+    },
+    {
+      "kind": "post",
+      "id": "rpgtoolkit:blur",
+      "label": "景物模糊",
+      "params": [
+        {
+          "type": "number",
+          "default": 8,
+          "min": 0,
+          "max": 32,
+          "key": "radius",
+          "label": "半径",
+          "step": 0.01
+        }
+      ]
+    },
+    {
+      "kind": "post",
+      "id": "rpgtoolkit:chromatic_aberration",
+      "label": "色差",
+      "params": [
+        {
+          "type": "number",
+          "default": 0.008,
+          "min": 0,
+          "max": 0.05,
+          "key": "amount",
+          "label": "作用强度",
+          "step": 0.001
+        },
+        {
+          "type": "boolean",
+          "default": true,
+          "key": "radial",
+          "label": "径向分离"
+        }
+      ]
+    },
+    {
+      "kind": "post",
+      "id": "rpgtoolkit:color_grade",
+      "label": "画面调色",
+      "params": [
+        {
+          "type": "number",
+          "default": -0.25,
+          "min": -4,
+          "max": 4,
+          "key": "exposure",
+          "label": "曝光",
+          "step": 0.01
+        },
+        {
+          "type": "number",
+          "default": 1.25,
+          "min": 0,
+          "max": 2,
+          "key": "contrast",
+          "label": "对比度",
+          "step": 0.01
+        },
+        {
+          "type": "number",
+          "default": 1.2,
+          "min": 0,
+          "max": 2,
+          "key": "saturation",
+          "label": "饱和度",
+          "step": 0.01
+        },
+        {
+          "type": "number",
+          "default": 0.3,
+          "min": -1,
+          "max": 1,
+          "key": "temperature",
+          "label": "冷暖色温",
+          "step": 0.01
+        },
+        {
+          "type": "number",
+          "default": 0,
+          "min": -1,
+          "max": 1,
+          "key": "tint",
+          "label": "染色",
+          "step": 0.01
+        },
+        {
+          "type": "color",
+          "default": "#ffffff",
+          "key": "color_filter",
+          "label": "色彩滤镜"
+        }
+      ]
+    },
+    {
+      "kind": "post",
+      "id": "rpgtoolkit:distortion",
+      "label": "热浪扭曲",
+      "params": [
+        {
+          "type": "number",
+          "default": 0.006,
+          "min": 0,
+          "max": 0.05,
+          "key": "amount",
+          "label": "作用强度",
+          "step": 0.001
+        },
+        {
+          "type": "number",
+          "default": 8,
+          "min": 0.5,
+          "max": 64,
+          "key": "scale",
+          "label": "纹理比例",
+          "step": 0.01
+        },
+        {
+          "type": "number",
+          "default": 1,
+          "min": 0,
+          "max": 8,
+          "key": "speed",
+          "label": "速度",
+          "step": 0.01
+        }
+      ]
+    },
+    {
+      "kind": "post",
+      "id": "rpgtoolkit:fade",
+      "label": "颜色覆盖",
+      "params": [
+        {
+          "type": "color",
+          "default": "#000000",
+          "key": "color",
+          "label": "颜色"
+        },
+        {
+          "type": "number",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "key": "amount",
+          "label": "作用强度",
+          "step": 0.01
+        }
+      ]
+    },
+    {
+      "kind": "post",
+      "id": "rpgtoolkit:film_grain",
+      "label": "胶片颗粒",
+      "params": [
+        {
+          "type": "number",
+          "default": 0.25,
+          "min": 0,
+          "max": 1,
+          "key": "intensity",
+          "label": "强度",
+          "step": 0.01
+        },
+        {
+          "type": "number",
+          "default": 1.5,
+          "min": 0.5,
+          "max": 4,
+          "key": "size",
+          "label": "大小",
+          "step": 0.01
+        },
+        {
+          "type": "boolean",
+          "default": true,
+          "key": "animated",
+          "label": "动态颗粒"
+        },
+        {
+          "type": "boolean",
+          "default": false,
+          "key": "colored",
+          "label": "彩色颗粒"
+        }
+      ]
+    },
+    {
+      "kind": "post",
+      "id": "rpgtoolkit:letterbox",
+      "label": "电影黑边",
+      "params": [
+        {
+          "type": "number",
+          "default": 2.39,
+          "min": 1,
+          "max": 4,
+          "key": "aspect",
+          "label": "画幅比例",
+          "step": 0.01
+        },
+        {
+          "type": "color",
+          "default": "#000000",
+          "key": "color",
+          "label": "颜色"
+        }
+      ]
+    },
+    {
+      "kind": "post",
+      "id": "rpgtoolkit:lut",
+      "label": "色彩查找表",
+      "params": [
+        {
+          "type": "texture",
+          "default": "rpgtoolkit:textures/effect/lut_film.png",
+          "filter": "linear",
+          "wrap": "clamp",
+          "key": "image",
+          "label": "贴图资源"
+        }
+      ]
+    },
+    {
+      "kind": "post",
+      "id": "rpgtoolkit:monochrome",
+      "label": "单色滤镜",
+      "params": [
+        {
+          "type": "color",
+          "default": "#ffffff",
+          "key": "color",
+          "label": "颜色"
+        },
+        {
+          "type": "number",
+          "default": 1,
+          "min": 0,
+          "max": 2,
+          "key": "contrast",
+          "label": "对比度",
+          "step": 0.01
+        }
+      ]
+    },
+    {
+      "kind": "post",
+      "id": "rpgtoolkit:pixelate",
+      "label": "像素化",
+      "params": [
+        {
+          "type": "number",
+          "default": 6,
+          "min": 1,
+          "max": 64,
+          "key": "size",
+          "label": "大小",
+          "step": 0.01
+        },
+        {
+          "type": "number",
+          "default": 0,
+          "min": 0,
+          "max": 32,
+          "key": "posterize",
+          "label": "色阶数量",
+          "step": 0.01
+        }
+      ]
+    },
+    {
+      "kind": "post",
+      "id": "rpgtoolkit:sharpen",
+      "label": "锐化",
+      "params": [
+        {
+          "type": "number",
+          "default": 1,
+          "min": 0,
+          "max": 2,
+          "key": "amount",
+          "label": "作用强度",
+          "step": 0.01
+        }
+      ]
+    },
+    {
+      "kind": "post",
+      "id": "rpgtoolkit:vignette",
+      "label": "晕影",
+      "params": [
+        {
+          "type": "number",
+          "default": 0.6,
+          "min": 0,
+          "max": 1,
+          "key": "intensity",
+          "label": "强度",
+          "step": 0.01
+        },
+        {
+          "type": "number",
+          "default": 0.7,
+          "min": 0,
+          "max": 1.5,
+          "key": "radius",
+          "label": "半径",
+          "step": 0.01
+        },
+        {
+          "type": "number",
+          "default": 0.5,
+          "min": 0.01,
+          "max": 1,
+          "key": "softness",
+          "label": "柔和度",
+          "step": 0.01
+        },
+        {
+          "type": "number",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "key": "roundness",
+          "label": "圆形程度",
+          "step": 0.01
+        },
+        {
+          "type": "color",
+          "default": "#000000",
+          "key": "color",
+          "label": "颜色"
+        }
+      ]
+    },
+    {
+      "kind": "sky",
+      "id": "rpgtoolkit:aurora",
+      "label": "极光",
+      "params": [
+        {
+          "type": "color",
+          "default": "#3dffa8",
+          "key": "color_a",
+          "label": "起始颜色"
+        },
+        {
+          "type": "color",
+          "default": "#6a5cff",
+          "key": "color_b",
+          "label": "结束颜色"
+        },
+        {
+          "type": "number",
+          "default": 1.5,
+          "min": 0,
+          "max": 4,
+          "key": "intensity",
+          "label": "强度",
+          "step": 0.01
+        },
+        {
+          "type": "number",
+          "default": 0.45,
+          "min": 0,
+          "max": 1,
+          "key": "height",
+          "label": "高度",
+          "step": 0.01
+        },
+        {
+          "type": "number",
+          "default": 1,
+          "min": 0,
+          "max": 8,
+          "key": "speed",
+          "label": "速度",
+          "step": 0.01
+        },
+        {
+          "type": "number",
+          "default": 1,
+          "min": 0.25,
+          "max": 4,
+          "key": "scale",
+          "label": "纹理比例",
+          "step": 0.01
+        },
+        {
+          "type": "number",
+          "default": 0,
+          "min": -180,
+          "max": 180,
+          "key": "rotation",
+          "label": "旋转角度",
+          "step": 0.01
+        },
+        {
+          "type": "boolean",
+          "default": true,
+          "key": "night_only",
+          "label": "仅夜间显示"
+        }
+      ]
+    },
+    {
+      "kind": "sky",
+      "id": "rpgtoolkit:celestials",
+      "label": "日月光晕",
+      "params": [
+        {
+          "type": "color",
+          "default": "#fff4d6",
+          "key": "sun_color",
+          "label": "太阳颜色"
+        },
+        {
+          "type": "number",
+          "default": 1.4,
+          "min": 0,
+          "max": 8,
+          "key": "sun_size",
+          "label": "太阳大小",
+          "step": 0.01
+        },
+        {
+          "type": "number",
+          "default": 1,
+          "min": 0,
+          "max": 2,
+          "key": "sun_glow",
+          "label": "日晕强度",
+          "step": 0.01
+        },
+        {
+          "type": "color",
+          "default": "#dfe8ff",
+          "key": "moon_color",
+          "label": "月亮颜色"
+        },
+        {
+          "type": "number",
+          "default": 1.5,
+          "min": 0,
+          "max": 8,
+          "key": "moon_size",
+          "label": "月亮大小",
+          "step": 0.01
+        },
+        {
+          "type": "number",
+          "default": 0.8,
+          "min": 0,
+          "max": 2,
+          "key": "moon_glow",
+          "label": "月晕强度",
+          "step": 0.01
+        },
+        {
+          "type": "boolean",
+          "default": true,
+          "key": "moon_phases",
+          "label": "显示月相"
+        },
+        {
+          "type": "number",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "key": "moon_shadow",
+          "label": "月影强度",
+          "step": 0.01
+        }
+      ]
+    },
+    {
+      "kind": "sky",
+      "id": "rpgtoolkit:cubemap",
+      "label": "六面天空盒",
+      "params": [
+        {
+          "type": "texture",
+          "default": "rpgtoolkit:textures/effect/cubemap_sample.png",
+          "filter": "linear",
+          "wrap": "clamp",
+          "key": "image",
+          "label": "贴图资源"
+        },
+        {
+          "type": "number",
+          "default": 0,
+          "min": -180,
+          "max": 180,
+          "key": "rotation",
+          "label": "旋转角度",
+          "step": 0.01
+        },
+        {
+          "type": "number",
+          "default": 0,
+          "min": -30,
+          "max": 30,
+          "key": "spin",
+          "label": "旋转速度",
+          "step": 0.01
+        },
+        {
+          "type": "color",
+          "default": "#ffffff",
+          "key": "tint",
+          "label": "染色"
+        },
+        {
+          "type": "number",
+          "default": 0.5,
+          "min": 0,
+          "max": 1,
+          "key": "fog_blend",
+          "label": "地平线融雾",
+          "step": 0.01
+        },
+        {
+          "type": "color",
+          "default": "#ffffff",
+          "key": "night_tint",
+          "label": "夜晚染色"
+        }
+      ]
+    },
+    {
+      "kind": "sky",
+      "id": "rpgtoolkit:gradient",
+      "label": "渐变天空",
+      "params": [
+        {
+          "type": "color",
+          "default": "#1c2a6e",
+          "key": "zenith",
+          "label": "天顶颜色"
+        },
+        {
+          "type": "color",
+          "default": "#ff9a5c",
+          "key": "horizon",
+          "label": "地平线颜色"
+        },
+        {
+          "type": "color",
+          "default": "#2a1830",
+          "key": "ground",
+          "label": "下半球颜色"
+        },
+        {
+          "type": "number",
+          "default": 0.7,
+          "min": 0.1,
+          "max": 8,
+          "key": "exponent",
+          "label": "渐变曲线",
+          "step": 0.01
+        },
+        {
+          "type": "number",
+          "default": 0.5,
+          "min": 0,
+          "max": 1,
+          "key": "fog_blend",
+          "label": "地平线融雾",
+          "step": 0.01
+        },
+        {
+          "type": "color",
+          "default": "#5a6494",
+          "key": "night_tint",
+          "label": "夜晚染色"
+        }
+      ]
+    },
+    {
+      "kind": "sky",
+      "id": "rpgtoolkit:panorama",
+      "label": "全景天空",
+      "params": [
+        {
+          "type": "texture",
+          "default": "rpgtoolkit:textures/effect/panorama_sample.png",
+          "filter": "linear",
+          "wrap": "repeat",
+          "key": "image",
+          "label": "贴图资源"
+        },
+        {
+          "type": "number",
+          "default": 0,
+          "min": -180,
+          "max": 180,
+          "key": "rotation",
+          "label": "旋转角度",
+          "step": 0.01
+        },
+        {
+          "type": "number",
+          "default": 0,
+          "min": -30,
+          "max": 30,
+          "key": "spin",
+          "label": "旋转速度",
+          "step": 0.01
+        },
+        {
+          "type": "color",
+          "default": "#ffffff",
+          "key": "tint",
+          "label": "染色"
+        },
+        {
+          "type": "number",
+          "default": 0.5,
+          "min": 0,
+          "max": 1,
+          "key": "fog_blend",
+          "label": "地平线融雾",
+          "step": 0.01
+        },
+        {
+          "type": "color",
+          "default": "#ffffff",
+          "key": "night_tint",
+          "label": "夜晚染色"
+        }
+      ]
+    },
+    {
+      "kind": "sky",
+      "id": "rpgtoolkit:solid",
+      "label": "纯色天空",
+      "params": [
+        {
+          "type": "color",
+          "default": "#000000",
+          "key": "color",
+          "label": "颜色"
+        },
+        {
+          "type": "color",
+          "default": "#ffffff",
+          "key": "night_tint",
+          "label": "夜晚染色"
+        }
+      ]
+    },
+    {
+      "kind": "sky",
+      "id": "rpgtoolkit:stars",
+      "label": "星空与银河",
+      "params": [
+        {
+          "type": "number",
+          "default": 0.75,
+          "min": 0,
+          "max": 1,
+          "key": "density",
+          "label": "星星密度",
+          "step": 0.01
+        },
+        {
+          "type": "number",
+          "default": 1.5,
+          "min": 0,
+          "max": 4,
+          "key": "brightness",
+          "label": "亮度",
+          "step": 0.01
+        },
+        {
+          "type": "number",
+          "default": 1.2,
+          "min": 0.25,
+          "max": 4,
+          "key": "size",
+          "label": "大小",
+          "step": 0.01
+        },
+        {
+          "type": "number",
+          "default": 0.4,
+          "min": 0,
+          "max": 1,
+          "key": "twinkle",
+          "label": "闪烁强度",
+          "step": 0.01
+        },
+        {
+          "type": "color",
+          "default": "#ffffff",
+          "key": "color",
+          "label": "颜色"
+        },
+        {
+          "type": "boolean",
+          "default": true,
+          "key": "follow_sky",
+          "label": "跟随昼夜旋转"
+        },
+        {
+          "type": "number",
+          "default": 1,
+          "min": 0,
+          "max": 1,
+          "key": "day_fade",
+          "label": "白天淡出",
+          "step": 0.01
+        },
+        {
+          "type": "number",
+          "default": 0.8,
+          "min": 0,
+          "max": 2,
+          "key": "milky_way",
+          "label": "银河亮度",
+          "step": 0.01
+        }
+      ]
+    },
+    {
+      "kind": "transition",
+      "id": "rpgtoolkit:circle",
+      "label": "圆形展开",
+      "params": [
+        {
+          "type": "vec2",
+          "default": [
+            0.5,
+            0.5
+          ],
+          "min": 0,
+          "max": 1,
+          "key": "center",
+          "label": "中心位置"
+        },
+        {
+          "type": "number",
+          "default": 0.05,
+          "min": 0,
+          "max": 1,
+          "key": "softness",
+          "label": "柔和度",
+          "step": 0.01
+        },
+        {
+          "type": "boolean",
+          "default": false,
+          "key": "invert",
+          "label": "反向展开"
+        }
+      ]
+    },
+    {
+      "kind": "transition",
+      "id": "rpgtoolkit:crossfade",
+      "label": "交叉淡化",
+      "params": []
+    },
+    {
+      "kind": "transition",
+      "id": "rpgtoolkit:dip",
+      "label": "淡入颜色再显现",
+      "params": [
+        {
+          "type": "color",
+          "default": "#000000",
+          "key": "color",
+          "label": "颜色"
+        },
+        {
+          "type": "number",
+          "default": 0.1,
+          "min": 0,
+          "max": 0.9,
+          "key": "hold",
+          "label": "停留比例",
+          "step": 0.01
+        }
+      ]
+    },
+    {
+      "kind": "transition",
+      "id": "rpgtoolkit:dissolve",
+      "label": "噪声溶解",
+      "params": [
+        {
+          "type": "number",
+          "default": 8,
+          "min": 1,
+          "max": 64,
+          "key": "scale",
+          "label": "纹理比例",
+          "step": 0.01
+        },
+        {
+          "type": "number",
+          "default": 0.1,
+          "min": 0,
+          "max": 1,
+          "key": "softness",
+          "label": "柔和度",
+          "step": 0.01
+        },
+        {
+          "type": "color",
+          "default": "#ffe0a0",
+          "key": "edge_color",
+          "label": "边缘颜色"
+        },
+        {
+          "type": "number",
+          "default": 0.04,
+          "min": 0,
+          "max": 0.2,
+          "key": "edge_width",
+          "label": "边缘宽度",
+          "step": 0.01
+        }
+      ]
+    },
+    {
+      "kind": "transition",
+      "id": "rpgtoolkit:wipe",
+      "label": "方向擦除",
+      "params": [
+        {
+          "type": "number",
+          "default": 0,
+          "min": 0,
+          "max": 360,
+          "key": "angle",
+          "label": "方向角度",
+          "step": 0.01
+        },
+        {
+          "type": "number",
+          "default": 0.1,
+          "min": 0,
+          "max": 1,
+          "key": "softness",
+          "label": "柔和度",
+          "step": 0.01
+        }
+      ]
+    }
+  ],
+  "policy": [
+    {
+      "key": "priority",
+      "label": "环境优先级",
+      "type": "number",
+      "default": 0,
+      "integer": true,
+      "min": -2147483648,
+      "max": 2147483647,
+      "step": 1
+    },
+    {
+      "key": "transition_ticks",
+      "label": "过渡时长",
+      "type": "number",
+      "default": 40,
+      "integer": true,
+      "min": 0,
+      "max": 1200,
+      "step": 1,
+      "unit": "tick"
+    },
+    {
+      "key": "on_exit",
+      "label": "离开区域后",
+      "type": "choice",
+      "default": "restore",
+      "choices": [
+        {
+          "value": "restore",
+          "label": "恢复原环境"
+        },
+        {
+          "value": "retain",
+          "label": "保留环境"
+        }
+      ]
+    }
+  ],
+  "clouds": [
+    {
+      "key": "tint",
+      "label": "云层染色",
+      "type": "color",
+      "default": "#FFFFFF",
+      "opaque": true
+    },
+    {
+      "key": "opacity",
+      "label": "云层可见度",
+      "type": "number",
+      "default": 1,
+      "min": 0,
+      "max": 1,
+      "step": 0.01
+    },
+    {
+      "key": "height",
+      "label": "云层高度",
+      "type": "number",
+      "default": 192,
+      "min": -2048,
+      "max": 4096,
+      "step": 1,
+      "unit": "Y",
+      "optional": true
+    }
+  ],
+  "lights": [
+    {
+      "key": "position",
+      "label": "灯光位置",
+      "type": "vec3",
+      "default": [
+        0,
+        64,
+        0
+      ],
+      "min": -30000000,
+      "max": 30000000,
+      "step": 0.1
+    },
+    {
+      "key": "color",
+      "label": "灯光颜色",
+      "type": "color",
+      "default": "#FFFFFF",
+      "opaque": true
+    },
+    {
+      "key": "intensity",
+      "label": "灯光强度",
+      "type": "number",
+      "default": 10,
+      "min": 0,
+      "max": 10000,
+      "step": 0.1
+    },
+    {
+      "key": "range",
+      "label": "照射范围",
+      "type": "number",
+      "default": 16,
+      "min": 0.1,
+      "max": 256,
+      "step": 0.1,
+      "unit": "格"
+    },
+    {
+      "key": "direction",
+      "label": "聚光方向",
+      "type": "vec3",
+      "default": [
+        0,
+        -1,
+        0
+      ],
+      "min": -1,
+      "max": 1,
+      "step": 0.01,
+      "optional": true
+    },
+    {
+      "key": "inner_angle",
+      "label": "内锥角",
+      "type": "number",
+      "default": 20,
+      "min": 0,
+      "max": 89,
+      "step": 0.1,
+      "unit": "°"
+    },
+    {
+      "key": "outer_angle",
+      "label": "外锥角",
+      "type": "number",
+      "default": 35,
+      "min": 0.1,
+      "max": 89.9,
+      "step": 0.1,
+      "unit": "°"
+    },
+    {
+      "key": "shadows",
+      "label": "遮挡阴影",
+      "type": "boolean",
+      "default": true
+    },
+    {
+      "key": "shadow_bias",
+      "label": "阴影偏移",
+      "type": "number",
+      "default": 0.08,
+      "min": 0,
+      "max": 1,
+      "step": 0.01
+    }
+  ],
+  "sounds": [
+    {
+      "id": "minecraft:music.overworld.forest",
+      "label": "森林"
+    },
+    {
+      "id": "minecraft:music.overworld.meadow",
+      "label": "草甸"
+    },
+    {
+      "id": "minecraft:music.overworld.desert",
+      "label": "沙漠"
+    },
+    {
+      "id": "minecraft:music.overworld.swamp",
+      "label": "沼泽"
+    },
+    {
+      "id": "minecraft:music.overworld.cherry_grove",
+      "label": "樱花林"
+    },
+    {
+      "id": "minecraft:music.overworld.deep_dark",
+      "label": "深暗之域"
+    }
+  ]
+}

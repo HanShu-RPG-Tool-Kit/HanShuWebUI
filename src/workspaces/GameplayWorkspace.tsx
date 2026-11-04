@@ -145,6 +145,8 @@ import {
 } from "./gameplay/navigationPoint";
 import {
   createLevelDocument,
+  levelChildExportId,
+  levelTemplateId,
   parseLevelDocument,
   readLevelSource,
   stringifyLevelDocument,
@@ -185,6 +187,7 @@ import { KitEditor } from "./gameplay/KitEditor";
 import { ProgressCollaborativeEditor } from "./gameplay/ProgressCollaborativeEditor";
 import { progressEditorSession } from "./gameplay/progressEditRegistry";
 import { NavigationEditor } from "./gameplay/NavigationEditor";
+import { LevelEditor } from "./gameplay/LevelEditor";
 import { EntityLibraryTable } from "./gameplay/EntityLibraryTable";
 import { ItemLibraryTable } from "./gameplay/ItemLibraryTable";
 import { useEditorFontSize } from "./gameplay/editorFont";
@@ -627,7 +630,18 @@ export function GameplayWorkspace({
   const [progressSourceKey, setProgressSourceKey] = useState<string | null>(
     null,
   );
-  const [history, setHistory] = useState(() => new Map<string, History>());
+  const [history, setHistoryState] = useState(() => new Map<string, History>());
+  const sourceHistoryRef = useRef(history);
+  sourceHistoryRef.current = history;
+  const setHistory = (change: Map<string, History> | ((previous: Map<string, History>) => Map<string, History>)) => {
+    const next = typeof change === "function" ? change(sourceHistoryRef.current) : change;
+    sourceHistoryRef.current = next;
+    setHistoryState(next);
+  };
+  const levelHistoryActions = useRef(new Map<string, (redo: boolean) => void>());
+  const levelSaveGuards = useRef(new Map<string, () => { ok: boolean; message?: string }>());
+  const [levelFocusModes, setLevelFocusModes] = useState(() => new Map<string, boolean>());
+  useEffect(() => { setHistory(new Map()); }, [client?.snapshot.projectId]);
   const fileInput = useRef<HTMLInputElement>(null);
   const importFolder = useRef<{
     folderId: string | null;
@@ -760,6 +774,20 @@ export function GameplayWorkspace({
         .sort((a, b) => a.label.localeCompare(b.label, "zh-CN")),
     [state.documents],
   );
+  const landmarkOptions = useMemo(() => {
+    const options: { level: string; ref: string; label: string }[] = [];
+    for (const document of state.documents) {
+      if (!isLevelDocument(document)) continue;
+      const level = levelTemplateId(document.name);
+      const parsedLevel = readLevelSource(document.source);
+      if (!parsedLevel.doc) continue;
+      for (const point of parsedLevel.doc.landmarks) {
+        const ref = levelChildExportId(level, point.id);
+        options.push({ level, ref, label: `${point.id}（${ref}）` });
+      }
+    }
+    return options;
+  }, [state.documents]);
   const parsed = useMemo(() => {
     if (
       !doc ||
@@ -1064,9 +1092,9 @@ export function GameplayWorkspace({
   function changeSource(source: string, group = false, key = doc?.key) {
     if (!key || isBuiltinScriptDocumentKey(key) || isItemLibraryTableKey(key))
       return;
-    const current = state.documents.find((item) => item.key === key);
+    const current = stateRef.current.documents.find((item) => item.key === key);
     if (!current || source === current.source || readOnly) return;
-    const previous = history.get(key);
+    const previous = sourceHistoryRef.current.get(key);
     const entry: History = previous
       ? { ...previous, past: [...previous.past], future: [] }
       : { past: [], future: [], lastEdit: 0 };
@@ -1074,12 +1102,14 @@ export function GameplayWorkspace({
       entry.past = [...entry.past.slice(-49), current.source];
     entry.lastEdit = group ? Date.now() : 0;
     setHistory((items) => new Map(items).set(key, entry));
-    setState((previous) => ({
-      ...previous,
-      documents: previous.documents.map((item) =>
+    const nextState = {
+      ...stateRef.current,
+      documents: stateRef.current.documents.map((item) =>
         item.key === key ? stampDocument({ ...item, source }) : item,
       ),
-    }));
+    };
+    setState(nextState);
+    if (!structuralPendingRef.current) stateRef.current = nextState;
   }
   useEffect(() => {
     ensureItemEditNotifyStarted();
@@ -1229,6 +1259,11 @@ export function GameplayWorkspace({
   function undo(redo = false) {
     if (!doc || locked || readOnly || (progressDoc && !progressEditable))
       return;
+    const levelUndo = levelHistoryActions.current.get(`${focusedGroup}:${doc.key}`);
+    if (levelUndo) {
+      levelUndo(redo);
+      return;
+    }
     if (progressDoc && progressPath) {
       const current = progressEditorSession(client, progressPath);
       if (current) {
@@ -1236,7 +1271,14 @@ export function GameplayWorkspace({
         return;
       }
     }
-    const previous = history.get(doc.key);
+    undoSource(redo, doc.key);
+  }
+  /** One source history survives editor tab unmounts. LevelEditor handles its field guard before calling here. */
+  function undoSource(redo: boolean, key: string) {
+    if (locked || readOnly) return;
+    const document = stateRef.current.documents.find((item) => item.key === key);
+    if (!document) return;
+    const previous = sourceHistoryRef.current.get(key);
     if (!previous) return;
     const entry = {
       ...previous,
@@ -1245,15 +1287,17 @@ export function GameplayWorkspace({
     };
     const source = (redo ? entry.future : entry.past).pop();
     if (source === undefined) return;
-    (redo ? entry.past : entry.future).push(doc.source);
+    (redo ? entry.past : entry.future).push(document.source);
     entry.lastEdit = 0;
-    setHistory((items) => new Map(items).set(doc.key, entry));
-    setState((previous) => ({
-      ...previous,
-      documents: previous.documents.map((item) =>
-        item.key === doc.key ? { ...item, source } : item,
+    setHistory((items) => new Map(items).set(key, entry));
+    const nextState = {
+      ...stateRef.current,
+      documents: stateRef.current.documents.map((item) =>
+        item.key === key ? { ...item, source } : item,
       ),
-    }));
+    };
+    setState(nextState);
+    if (!structuralPendingRef.current) stateRef.current = nextState;
     setSelection({ kind: "flow" });
   }
   /** 编辑组操作；焦点页一旦变化就清空画布选区，避免选区落到别的文档上。 */
@@ -1263,11 +1307,22 @@ export function GameplayWorkspace({
     if (locked || busy) return;
     const predicted = change(state);
     if (predicted === state) return;
+    if (!canLeaveLevelEditor()) return;
     setState(change);
     if (
       readGroup(predicted, focusedGroupId(predicted)).activeKey !== focusedKey
     )
       setSelection({ kind: "flow" });
+  }
+  function canLeaveLevelEditor() {
+    for (const guard of levelSaveGuards.current.values()) {
+      const result = guard();
+      if (!result.ok) {
+        setNotice(result.message || "请先应用或放弃地图属性中的未完成编辑。");
+        return false;
+      }
+    }
+    return true;
   }
   function selectDocument(key: string, group: GroupId = focusedGroup) {
     updateGroups((previous) => openInGroup(previous, group, key));
@@ -1322,7 +1377,7 @@ export function GameplayWorkspace({
         templateName === "multi-quest"
         ? "新建多进度任务.quest"
         : "新建单进度任务.quest";
-    if (ext === ".nav") return "新建导航点.nav";
+    if (ext === ".nav") return "新建导航器.nav";
     if (ext === ".level") return "新建地图.level";
     if (ext === ".entity") return "新建实体.entity";
     if (ext === ".item") return "新建物品.item";
@@ -1425,7 +1480,7 @@ export function GameplayWorkspace({
                         key: randomId(),
                         name,
                         source: stringifyNavigationPoint(
-                          createNavigationPoint(levelId),
+                          createNavigationPoint(levelId, title),
                         ),
                         package: packageId,
                         folderId,
@@ -1551,7 +1606,7 @@ export function GameplayWorkspace({
             : pkg === "quest"
               ? "请放入 .quest 或 JSON 任务文档。"
               : pkg === "level"
-                ? "请放入 .level 地图模板或 .nav 动态导航点。"
+                ? "请放入 .level 地图模板或 .nav 动态导航器。"
                 : pkg === "entities"
                   ? "请放入 .entity 实体模板。"
                   : pkg === "items"
@@ -1789,7 +1844,7 @@ export function GameplayWorkspace({
               : isLevelDocument(item)
                 ? "已下载地图模板。"
                 : isNavigationDocument(item)
-                  ? "已下载动态导航点。"
+                  ? "已下载动态导航器。"
                   : "已下载脚本。",
       );
       return;
@@ -1922,6 +1977,17 @@ export function GameplayWorkspace({
       focused.closest(".gameplay-workspace")
     )
       focused.blur();
+    await new Promise<void>((resolve) =>
+      queueMicrotask(() => queueMicrotask(resolve)),
+    );
+    for (const guard of levelSaveGuards.current.values()) {
+      const result = guard();
+      if (!result.ok) {
+        setNotice(result.message || "请先应用或取消地图属性中的未完成编辑。");
+        return;
+      }
+    }
+    // 守卫可将其他有效字段合并为一次地图草稿；再读最新工作区快照。
     await new Promise<void>((resolve) =>
       queueMicrotask(() => queueMicrotask(resolve)),
     );
@@ -2060,7 +2126,7 @@ export function GameplayWorkspace({
         void saveDraft();
       }
       const target = event.target as HTMLElement;
-      if (target.closest('input, textarea, select, [contenteditable="true"]'))
+      if (target.closest('input, textarea, select, [contenteditable="true"], .level-stream'))
         return;
       if (
         (event.ctrlKey || event.metaKey) &&
@@ -2313,7 +2379,7 @@ export function GameplayWorkspace({
       );
     }
     if (paneLevel) {
-      const rows = (paneLevelParsed?.doc?.navigation ?? []).map((point) => ({
+      const rows = (paneLevelParsed?.doc?.landmarks ?? []).map((point) => ({
         id: point.id,
         key:
           typeof point.custom_data[NAV_DISPLAY_NAME] === "string"
@@ -2327,36 +2393,75 @@ export function GameplayWorkspace({
               地图模板 JSON 无法解析：{paneLevelParsed.error}
             </p>
           )}
-          <div className="flow-script-editor">
-            <Editor
-              height="100%"
-              language="json"
-              theme={HANSHU_THEME_ID}
-              value={paneDoc.source}
-              path={`progress-level://g${group}/${paneDoc.key}/${paneDoc.name}`}
-              beforeMount={registerHanshuLanguage}
-              onChange={(value) => {
-                if (!disabledPane) changeSource(value ?? "", true, paneDoc.key);
+          {paneLevelParsed?.doc ? (
+            <LevelEditor
+              onSaveRequested={saveDraft}
+              key={`${client?.snapshot.projectId ?? "local"}:${paneDoc.key}`}
+              onPendingChange={(pending) => {
+                if (!client) return;
+                const owner = `level-fields:${client.snapshot.session.id}:${group}:${paneDoc.key}`;
+                client.transactions.setEditorDirty(owner, pending ? [sourcePathOf({ name: paneDoc.name })] : []);
               }}
-              options={{
-                fontSize: editorFontSize,
-                mouseWheelZoom: true,
-                minimap: { enabled: false },
-                wordWrap: "on",
-                automaticLayout: true,
-                scrollBeyondLastLine: false,
-                padding: { top: 8 },
-                readOnly: disabledPane,
+              onSaveGuardReady={(guard) => {
+                const key = `${group}:${paneDoc.key}`;
+                if (guard) levelSaveGuards.current.set(key, guard);
+                else levelSaveGuards.current.delete(key);
+              }}
+              onFocusModeChange={(focus) => {
+                const key = `${group}:${paneDoc.key}`;
+                setLevelFocusModes((previous) => previous.get(key) === focus
+                  ? previous
+                  : new Map(previous).set(key, focus));
+              }}
+              onHistoryReady={(action) => {
+                const key = `${group}:${paneDoc.key}`;
+                if (action) levelHistoryActions.current.set(key, action);
+                else levelHistoryActions.current.delete(key);
+              }}
+              historyActions={{
+                undo: (redo) => undoSource(redo, paneDoc.key),
+                canUndo: (history.get(paneDoc.key)?.past.length ?? 0) > 0,
+                canRedo: (history.get(paneDoc.key)?.future.length ?? 0) > 0,
+              }}
+              doc={paneLevelParsed.doc}
+              disabled={disabledPane}
+              identity={client?.snapshot.projectId && client.snapshot.session.id ? {
+                projectId: client.snapshot.projectId,
+                clientId: client.snapshot.session.id,
+                resourceId: paneDoc.key.startsWith("source:") ? paneDoc.key : `source:${sourcePathOf({ name: paneDoc.name })}`,
+              } : null}
+              onChange={(source) => {
+                if (!disabledPane) changeSource(source, false, paneDoc.key);
               }}
             />
-          </div>
+          ) : (
+            <div className="flow-script-editor">
+              <Editor
+                height="100%"
+                language="json"
+                theme={HANSHU_THEME_ID}
+                value={paneDoc.source}
+                path={`progress-level://g${group}/${paneDoc.key}/${paneDoc.name}`}
+                beforeMount={registerHanshuLanguage}
+                options={{
+                  fontSize: editorFontSize,
+                  mouseWheelZoom: true,
+                  minimap: { enabled: false },
+                  wordWrap: "on",
+                  automaticLayout: true,
+                  scrollBeyondLastLine: false,
+                  padding: { top: 8 },
+                  readOnly: true,
+                  domReadOnly: true,
+                }}
+              />
+            </div>
+          )}
           {paneDoc.key === focusedKey && rows.length > 0 && (
-            <div className="flow-level-locale">
-              <h3>本地化文本</h3>
+            <details className="flow-level-locale">
+              <summary>地标本地化 <span>{rows.length}</span></summary>
               <p className="flow-hint">
-                静态导航点的 display_name
-                是语义键；在这里写当前语言的译文，键本身留在 JSON 的{" "}
-                <code>rpgtoolkit:display_name</code>。
+                在这里填写当前语言的显示名称。每个名称对应属性面板中的「名称文本键」。
               </p>
               {rows.map((row) => (
                 <label key={row.id} className="flow-level-locale-row">
@@ -2373,12 +2478,12 @@ export function GameplayWorkspace({
                     <em>
                       {row.key
                         ? `「${row.key}」不是语义键`
-                        : "在 JSON 里给该导航点写 display_name 键"}
+                        : "请先在地标属性中填写名称文本键"}
                     </em>
                   )}
                 </label>
               ))}
-            </div>
+            </details>
           )}
         </div>
       );
@@ -2428,6 +2533,7 @@ export function GameplayWorkspace({
             }
             setText={paneDoc.key === focusedKey ? setLocaleText : undefined}
             levelOptions={levelOptions}
+            landmarkOptions={landmarkOptions}
             onChange={(source) => {
               if (!disabledPane) changeSource(source, true, paneDoc.key);
             }}
@@ -2781,6 +2887,7 @@ export function GameplayWorkspace({
     {
       id: "explorer",
       title: "资源管理器",
+      visible: !(levelDoc && doc && (levelFocusModes.get(`${focusedGroup}:${doc.key}`) ?? true)),
       defaultPlacement: "left",
       defaultSize: 280,
       minSize: 180,
@@ -2891,6 +2998,7 @@ export function GameplayWorkspace({
               onActivate={(id) => selectDocument(id)}
               onClose={(id) => closeGameplayPages([id])}
               onCloseMany={closeGameplayPages}
+              beforeChange={canLeaveLevelEditor}
               enableTabMenu
               initialPinnedIds={[...(state.pinnedKeys ?? []), ...(state.split?.group.pinnedKeys ?? [])]}
               onPinnedChange={syncPagePins}
@@ -2928,7 +3036,7 @@ export function GameplayWorkspace({
               <h2>设计一个任务</h2>
               <p>
                 在左侧「地图」分类新建
-                .level（模板内包含区域与静态导航器）；「动态导航器」可新建
+                .level（模板内包含区域与地标）；「导航器」可新建
                 .nav；「任务」可新建
                 .quest（单进度表单或多进度树图）；「脚本」可新建
                 .js；「物品库」可新建 .item 或拖入 .itemstack；「礼包」可新建
@@ -2985,7 +3093,7 @@ export function GameplayWorkspace({
                     : levelDoc
                       ? "地图模板 · .level"
                       : navigationDoc
-                        ? "动态导航点 · .nav"
+                        ? "导航器 · .nav"
                         : progressDoc
                           ? "单进度任务 · .quest"
                           : multiQuestDoc

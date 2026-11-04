@@ -28,6 +28,7 @@ import gameDevServer from './docs/game-dev-server.md?raw'
 import gameplayWorkspace from './docs/gameplay-workspace.md?raw'
 import audiovisualWorkspace from './docs/audiovisual-workspace.md?raw'
 import levelGuide from './docs/level-guide.md?raw'
+import regionEditorDevelopment from './docs/region-editor-development.md?raw'
 import progressFlowModel from './docs/progress-flow-model.md?raw'
 import progressNodeGraph from './docs/progress-node-graph.md?raw'
 import progressDocument from './docs/progress-document.md?raw'
@@ -68,6 +69,7 @@ export type HelpTopicId =
   | 'gameplay-workspace'
   | 'audiovisual-workspace'
   | 'level-guide'
+  | 'region-editor-development'
   | 'progress-flow-model'
   | 'progress-node-graph'
   | 'progress-document'
@@ -224,6 +226,14 @@ export const HELP_TOPICS: HelpTopic[] = [
     audience: 'both',
     inDocs: true,
     body: levelGuide,
+  },
+  {
+    id: 'region-editor-development',
+    title: '区域编辑器开发与验收',
+    group: '地图',
+    audience: 'dev',
+    inDocs: true,
+    body: regionEditorDevelopment,
   },
   {
     id: 'progress-flow-model',

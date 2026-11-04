@@ -222,6 +222,7 @@ export function GameDevServerPanel({ onClose }: { onClose: () => void }) {
 
             <div className={`gds-phase phase-${snap.phase}`}>
               <strong>{phaseLabel(snap.phase)}</strong>
+              <span>游戏门户：{snap.prefs.host}:{snap.prefs.port}</span>
               {snap.health ? (
                 <span>
                   门户 HTTP 正常

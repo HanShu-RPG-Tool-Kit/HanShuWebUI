@@ -47,8 +47,11 @@ export const localeAssetsPass: PackagePass = {
     }
     const owners = new Map<string, LocaleExportOwner>()
     for (const source of pkg.scripts) {
-      const artifacts = sourceArtifacts.get(normalizeSourcePath(source.name))
-      if (!artifacts?.length || !rules.has(sourceExtension(source.name))) continue
+      const ext = sourceExtension(source.name)
+      if (!rules.has(ext)) continue
+      const artifacts = sourceArtifacts.get(normalizeSourcePath(source.name)) ?? []
+      // `.nav` 编译结果是空列表（坐标在地标里）。语言表仍属于这份作者文件。
+      if (!artifacts.length && ext !== 'nav') continue
       owners.set(sourceLogicalPath(source.name), { source, artifacts, index: ctx.index })
     }
     const out: CompileArtifact[] = []

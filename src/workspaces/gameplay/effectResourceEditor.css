@@ -1,0 +1,35 @@
+.effect-author-backdrop { position:fixed; inset:0; z-index:1000; background:#070c13c9; display:grid; place-items:center; padding:24px }
+.effect-author { position:relative; display:flex; flex-direction:column; width:min(1180px,96vw); height:min(880px,94vh); min-width:0; min-height:0; background:#19222c; color:#dce6ed; border:1px solid #4a626f; box-shadow:0 16px 90px #0009; border-radius:5px; font:13px/1.5 'Segoe UI','Microsoft YaHei',sans-serif }
+.effect-author > header { display:flex; justify-content:space-between; align-items:center; padding:16px 20px; background:#22303b; border-bottom:1px solid #364955 }
+.effect-author header p { margin:0; color:#8cb3be; font-size:11px; letter-spacing:1px }
+.effect-author h2 { margin:3px 0 0; font-size:20px; font-weight:600 }
+.effect-author > header button { border:0; background:transparent; font-size:24px!important }
+.effect-author-settings { display:grid; grid-template-columns:140px 1fr 1fr; gap:14px; padding:14px 20px 8px }
+.effect-author label { display:flex; flex-direction:column; gap:5px; color:#a9bdca; font-size:12px }
+.effect-author :is(input,select,button,textarea) { font-size:13px; line-height:1.5; border-radius:3px; color:#dce6ed; background:#131d26; border:1px solid #3b505f }
+.effect-author button { padding:6px 12px }
+.effect-author-paths { display:flex; flex-wrap:wrap; gap:3px 18px; padding:0 20px 12px; color:#7e9aab; font-size:10px }
+.effect-author-paths code { overflow-wrap:anywhere }
+.effect-author > nav { display:flex; gap:5px; padding:0 20px 8px; border-bottom:1px solid #354753 }
+.effect-author nav button[aria-selected="true"] { color:#ffe0a3; background:#423c2b; border-color:#9a8153 }
+.effect-author > main { display:flex; flex:1; min-height:0; flex-direction:column; overflow:auto; background:#111923 }
+.effect-author-code { flex:1; min-height:160px; padding:6px }
+.effect-author-hint { font-size:11px; line-height:1.6; color:#98adbd; margin:0; padding:9px 18px; border-top:1px solid #263946 }
+.effect-author-params { padding:16px 20px; display:grid; grid-template-columns:1fr 1fr; align-content:start; gap:14px; overflow:auto }
+.effect-author-params > section { padding:14px; border:1px solid #3b4d59; background:#1d2934 }
+.effect-author-param-head { display:grid; grid-template-columns:1fr 1fr 110px; gap:8px }
+.effect-author-param-head :is(input,select) { width:100%; min-width:0 }
+.effect-author .region-effect-value { margin:12px 0 }
+.effect-author .region-effect-color input[type="color"] { width:48px; height:30px; flex:0 0 48px; padding:2px }
+.effect-author .region-effect-number input[type="range"] { flex:1; width:0; padding:0 }
+.effect-author .region-effect-number input[type="number"] { width:85px; flex:0 0 85px }
+.effect-author-range { display:flex; gap:10px; margin:12px 0 }
+.effect-author-range label { flex:1; min-width:0 }
+.effect-author-error,.effect-author-status { white-space:pre-wrap; overflow:auto; max-height:140px; margin:0; padding:10px 20px; font:12px/1.6 Consolas,'Microsoft YaHei',monospace; background:#2d2228; color:#f4b0ad; border-top:1px solid #634148 }
+.effect-author-status { color:#a7d5c9; background:#1b2d2d; border-color:#365651 }
+.effect-author > footer { display:flex; align-items:center; gap:7px; padding:12px 20px; border-top:1px solid #3b4d59; background:#1f2b36 }
+.effect-author footer > span { margin-right:auto; color:#92aab9; font-size:11px }
+.effect-author footer button:nth-last-child(2) { background:#32515b; border-color:#7da6b0 }
+.effect-author-confirm { position:absolute; inset:0; display:flex; flex-wrap:wrap; justify-content:center; align-content:center; gap:12px; background:#111b25f5 }
+.effect-author-confirm p { flex:0 0 100%; text-align:center; font-size:16px }
+@media(max-width:900px){.effect-author-backdrop{padding:8px}.effect-author-settings{grid-template-columns:110px 1fr}.effect-author-settings label:last-child{grid-column:1/-1}.effect-author-params{grid-template-columns:1fr}.effect-author>nav{flex-wrap:wrap}.effect-author>footer{flex-wrap:wrap}.effect-author footer>span{flex-basis:100%}}

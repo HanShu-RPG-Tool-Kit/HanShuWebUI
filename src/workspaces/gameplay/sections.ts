@@ -15,8 +15,6 @@ export const FLOW_PACKAGE_SECTIONS: Partial<Record<FlowPackageId, FlowSectionDef
   script: SCRIPT_TYPES.map(type=>({id:scriptSection(type),name:SCRIPT_TYPE_NAMES[type]})),
   level: [
     { id: 'templates', name: '地图模板' },
-    { id: 'navigator', name: '导航器' },
-    { id: 'static-nav', name: '静态导航器', parentId: 'navigator', virtual: true },
-    { id: 'dynamic-nav', name: '动态导航器', parentId: 'navigator' },
+    { id: 'dynamic-nav', name: '导航器' },
   ],
 }

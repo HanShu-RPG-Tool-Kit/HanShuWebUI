@@ -42,7 +42,7 @@ try {
    'hero.char':'name:12345678',
    'task.quest':simpleQuest,
    'tree.quest':multiQuest,
-   'point.nav':stringifyNavigationPoint(createNavigationPoint('导航')),
+   'point.nav':(()=>{const point=createNavigationPoint('导航','point');point.track.ref='导航$gate';return stringifyNavigationPoint(point)})(),
    'panel.widget':JSON.stringify({keys:['title']}),
   }))pkg.scripts.push({id:name,name,content,updatedAt:0})
   async function asset(path,content,refTarget){const blob=new Blob([typeof content==='string'?content:JSON.stringify(content)]);pkg.assets.push({id:path,path,size:blob.size,mime:'application/octet-stream',updatedAt:0,...(refTarget?{refTarget}:{})});await putAssetBlob(pkg.id,path,blob)}

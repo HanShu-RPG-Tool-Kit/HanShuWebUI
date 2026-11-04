@@ -116,10 +116,16 @@ export async function fetchDevToolHealth(
   port: number,
   password: string,
 ): Promise<DevToolHealth> {
-  const res = await fetch(healthUrl(host, port), {
-    cache: 'no-store',
-    headers: { 'X-DevTool-Password': password },
-  })
+  let res: Response
+  try {
+    res = await fetch(healthUrl(host, port), {
+      cache: 'no-store',
+      headers: { 'X-DevTool-Password': password },
+      signal: AbortSignal.timeout(4000),
+    })
+  } catch {
+    throw new Error(`无法访问游戏门户 ${httpBase(host, port)}。请启动带 RPGToolKit 的客户端，并核对游戏日志中的端口；WebUI 网页端口与游戏门户端口分别配置。`)
+  }
   return readJsonOrThrow(res)
 }
 
@@ -131,6 +137,7 @@ export async function fetchControlStatus(
   const res = await fetch(controlStatusUrl(host, port, password), {
     cache: 'no-store',
     headers: { 'X-DevTool-Password': password },
+    signal: AbortSignal.timeout(4000),
   })
   return readJsonOrThrow(res)
 }

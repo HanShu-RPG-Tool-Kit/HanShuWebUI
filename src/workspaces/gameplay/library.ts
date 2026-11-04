@@ -67,7 +67,7 @@ export const packageAllowsKits = (id: FlowPackageId) => id === 'gift'
 /** @deprecated 使用 packageAllowsQuest */
 export const packageAllowsProgress = (id: FlowPackageId) => id === 'quest'
 export const packageAllowsQuest = (id: FlowPackageId) => id === 'quest'
-/** 地图分类：模板、静态导航视图与动态导航目录都在这里。 */
+/** 地图分类：地图模板与导航器都在这里。 */
 export const packageAllowsLevel = (id: FlowPackageId) => id === 'level'
 export const packageAllowsEntities = (id: FlowPackageId) => id === 'entities'
 export const packageAllowsItems = (id: FlowPackageId) => id === 'items'
@@ -88,23 +88,6 @@ export const isEntityLibraryTableKey = (key:string) => key === ENTITY_LIBRARY_TA
 export const isLibraryTableKey = (key:string) => key === ITEM_LIBRARY_TABLE_KEY || isEntityLibraryTableKey(key)
 export const isItemLibraryTableKey = (key: string) => key === ITEM_LIBRARY_TABLE_KEY
 
-/** 静态导航器：模板内声明的导航点的只读视图（不是目录）。 */
-export const LEVEL_STATIC_VIEW_KEY = 'level-view:static-nav'
-export const isLevelStaticViewKey = (key: string) => key === LEVEL_STATIC_VIEW_KEY
-export const levelStaticTemplateKey = (documentKey: string) => `level-static:template:${documentKey}`
-export const levelStaticPointKey = (documentKey: string, navId: string) => `level-static:point:${documentKey}:${navId}`
-export function parseLevelStaticPointKey(key: string): { documentKey: string; navId: string } | null {
-  if (!key.startsWith('level-static:point:')) return null
-  const rest = key.slice('level-static:point:'.length)
-  const colon = rest.indexOf(':')
-  if (colon <= 0) return null
-  return { documentKey: rest.slice(0, colon), navId: rest.slice(colon + 1) }
-}
-export function parseLevelStaticTemplateKey(key: string): string | null {
-  return key.startsWith('level-static:template:') ? key.slice('level-static:template:'.length) : null
-}
-export const isLevelStaticKey = (key: string) => key.startsWith('level-static:')
-
 export const isScriptDocument = (document: { key?: string; package: FlowPackageId; name: string }) => {
   if (document.key && isScriptLoadDocumentKey(document.key)) return false
   return document.package === 'script' || document.name.toLowerCase().endsWith('.js')
@@ -122,10 +105,10 @@ export const isMultiQuestDocument = (document: { package: FlowPackageId; name: s
   isQuestDocument(document) && questAuthorKindOf(document) === 'multi'
 /** @deprecated 使用 isSimpleQuestDocument */
 export const isProgressDocument = isSimpleQuestDocument
-/** 地图模板：一个 `.level` 文件包含 regions + 静态导航器。 */
+/** 地图模板：一个 `.level` 文件包含区域与地标。 */
 export const isLevelDocument = (document: { package: FlowPackageId; name: string }) =>
   document.package === 'level' && document.name.toLowerCase().endsWith('.level')
-/** 动态导航器：独立 `.nav` 文件，编译时原样注入 level 字段。 */
+/** 动态导航器：独立 `.nav` 文件，只追踪所属模板的地标引用。 */
 export const isNavigationDocument = (document: { package: FlowPackageId; name: string }) =>
   document.name.toLowerCase().endsWith('.nav')
 export const isEntityDocument = (document: {key?:string;package: FlowPackageId;name:string}) => !isLibraryTableKey(document.key??'') && (document.package === 'entities' || document.name.toLowerCase().endsWith('.entity'))
@@ -159,7 +142,7 @@ export function scriptTypeInFolder(state:Pick<FlowWorkspaceState,'folders'>,pare
 }
 /** 资源树只读项：内置二级分类、虚拟内置文件夹与脚本、物品库表视图、脚本启动列表入口 */
 export const isReadonlyExplorerKey = (key: string) =>
-  isSectionFolder(key) || isQuestViewKey(key) || isBuiltinScriptFolder(key) || isBuiltinScriptDocumentKey(key) || isLibraryTableKey(key) || isScriptLoadDocumentKey(key) || isLevelStaticViewKey(key) || isLevelStaticKey(key)
+  isSectionFolder(key) || isQuestViewKey(key) || isBuiltinScriptFolder(key) || isBuiltinScriptDocumentKey(key) || isLibraryTableKey(key) || isScriptLoadDocumentKey(key)
 
 export function sectionDefs(pkg: FlowPackageId): FlowSectionDef[] {
   return FLOW_PACKAGE_SECTIONS[pkg] ?? []
@@ -212,7 +195,18 @@ export function ensurePackageSections(state: FlowWorkspaceState): FlowWorkspaceS
       folders.push({ key, name: section.name, parentId, category: pkg })
     }
   }
-  return changed ? { ...state, folders } : state
+  const obsolete = new Set([sectionFolderKey('level', 'navigator'), sectionFolderKey('level', 'static-nav')])
+  const navigatorKey = sectionFolderKey('level', 'dynamic-nav')
+  const keptFolders = folders.flatMap((folder) => {
+    if (obsolete.has(folder.key)) { changed = true; return [] }
+    if (folder.parentId && obsolete.has(folder.parentId)) { changed = true; return [{ ...folder, parentId: navigatorKey }] }
+    return [folder]
+  })
+  const documents = state.documents.map((document) => {
+    if (document.folderId && obsolete.has(document.folderId)) { changed = true; return { ...document, folderId: navigatorKey } }
+    return document
+  })
+  return changed ? { ...state, folders: keptFolders, documents } : state
 }
 
 export const entryId = (entry: FlowEntry) => entry.kind === 'package' ? `package:${entry.package}` : `${entry.kind}:${entry.key}`
@@ -221,27 +215,15 @@ export function entryPackage(state: FlowWorkspaceState, entry: FlowEntry): FlowP
   if (entry.kind === 'package') return entry.package
   if (entry.kind === 'folder') {
     if (isQuestViewKey(entry.key)) return 'quest'
-    if (isLevelStaticViewKey(entry.key) || isLevelStaticKey(entry.key)) return 'level'
     return state.folders.find((folder) => folder.key === entry.key)?.category ?? 'quest'
   }
-  if (isLevelStaticKey(entry.key)) return 'level'
   return state.documents.find((document) => document.key === entry.key)?.package ?? 'quest'
 }
 
 export function entryFolder(state: FlowWorkspaceState, entry: FlowEntry): string | null {
   if (entry.kind === 'package') return null
   if (entry.kind === 'folder') {
-    if (isLevelStaticViewKey(entry.key)) return sectionFolderKey('level', 'navigator')
-    if (isLevelStaticKey(entry.key)) {
-      const point = parseLevelStaticPointKey(entry.key)
-      if (point) return levelStaticTemplateKey(point.documentKey)
-      return LEVEL_STATIC_VIEW_KEY
-    }
     return entry.key
-  }
-  if (isLevelStaticKey(entry.key)) {
-    const point = parseLevelStaticPointKey(entry.key)
-    return point ? levelStaticTemplateKey(point.documentKey) : LEVEL_STATIC_VIEW_KEY
   }
   return state.documents.find((document) => document.key === entry.key)?.folderId ?? null
 }
@@ -391,7 +373,7 @@ export function moveFlowEntry(state: FlowWorkspaceState, entry: FlowEntry, pkg: 
   if (entry.kind === 'document') {
     const document = state.documents.find((item) => item.key === entry.key)
     if (document && isLevelDocument(document) && !(pkg === 'level' && folderSectionId(state, parent) === 'templates')) throw new Error('地图模板只能放在「地图模板」分类中。')
-    if (document && isNavigationDocument(document) && !(pkg === 'level' && folderSectionId(state, parent) === 'dynamic-nav')) throw new Error('动态导航点只能放在「动态导航器」分类中。')
+    if (document && isNavigationDocument(document) && !(pkg === 'level' && folderSectionId(state, parent) === 'dynamic-nav')) throw new Error('导航器只能放在「导航器」分类中。')
     if (document && isKitDocument(document) && !packageAllowsKits(pkg)) throw new Error('礼包只能放在「礼包」分类中。')
     if (document && isShopDocument(document) && !packageAllowsShops(pkg)) throw new Error('商店只能放在「商店」分类中。')
     if (document && isActorDocument(document) && !packageAllowsActors(pkg)) throw new Error('演员只能放在「演员」分类中。')
