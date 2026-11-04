@@ -1,0 +1,848 @@
+/* Spatial editor: viewport is the primary surface. Panels stay quieter than the canvas. */
+.level-editor {
+  --level-canvas: #121314;
+  --level-panel: #1b1d1f;
+  --level-rail: #232628;
+  --level-line: var(--border, #1f2227);
+  --level-warm: #e8b45a;
+  --level-x: #e07070;
+  --level-y: #7dca8a;
+  --level-z: #6aa2e0;
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr) 340px;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "toolbar toolbar toolbar"
+    "list stage inspector"
+    "status status status";
+  position: relative;
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--level-canvas);
+  color: var(--text, #e8e8e8);
+  color-scheme: dark;
+  font-size: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.level-editor[data-focus="true"] {
+  min-width: 0;
+}
+
+.level-toolbar { grid-area: toolbar; }
+.level-wand-card {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  flex: 0 0 auto;
+  padding: 12px 16px;
+  background: var(--level-panel);
+  border-bottom: 1px solid var(--level-line);
+  color: var(--muted, #b5bdc6);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.level-wand-card strong { color: var(--level-warm); font-weight: 600; }
+.level-wand-card code { color: var(--text, #e8e8e8); user-select: all; }
+.level-wand-card button { align-self: flex-start; }
+.level-list { grid-area: list; }
+.level-stage { grid-area: stage; }
+.level-inspector { grid-area: inspector; }
+.level-editor-status { grid-area: status; }
+.level-editor > .level-pending-banner { grid-area: banner; }
+
+.level-editor:has(> .level-pending-banner) {
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "toolbar toolbar toolbar"
+    "banner banner banner"
+    "list stage inspector"
+    "status status status";
+}
+
+.level-editor[data-tree="false"] {
+  grid-template-columns: minmax(0, 1fr) 340px;
+  grid-template-areas:
+    "toolbar toolbar"
+    "stage inspector"
+    "status status";
+}
+
+.level-editor[data-tree="false"]:has(> .level-pending-banner) {
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "toolbar toolbar"
+    "banner banner"
+    "stage inspector"
+    "status status";
+}
+
+.level-editor[data-inspector="false"] {
+  grid-template-columns: 180px minmax(0, 1fr);
+  grid-template-areas:
+    "toolbar toolbar"
+    "list stage"
+    "status status";
+}
+
+.level-editor[data-inspector="false"]:has(> .level-pending-banner) {
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "toolbar toolbar"
+    "banner banner"
+    "list stage"
+    "status status";
+}
+
+.level-editor[data-tree="false"][data-inspector="false"],
+.level-editor[data-maximized="true"] {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas:
+    "toolbar"
+    "stage"
+    "status";
+}
+
+.level-editor[data-tree="false"][data-inspector="false"]:has(> .level-pending-banner),
+.level-editor[data-maximized="true"]:has(> .level-pending-banner) {
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    "toolbar"
+    "banner"
+    "stage"
+    "status";
+}
+
+.level-editor[data-tree="false"] > .level-list,
+.level-editor[data-inspector="false"] > .level-inspector,
+.level-editor[data-maximized="true"] > .level-list,
+.level-editor[data-maximized="true"] > .level-inspector {
+  display: none;
+}
+
+.level-editor button,
+.gameplay-workspace .level-editor button {
+  width: auto;
+  max-width: 100%;
+  margin: 0;
+  padding: 2px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--fl-radius, 0);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: 1.35;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.level-editor button:hover:not(:disabled),
+.gameplay-workspace .level-editor button:hover:not(:disabled) {
+  background: var(--fl-hover, #3a3d40);
+  color: var(--text-bright, var(--text, #f2f2f2));
+}
+
+.level-editor button:disabled,
+.gameplay-workspace .level-editor button:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
+.level-editor:focus-visible {
+  outline: 2px solid var(--level-warm);
+  outline-offset: -2px;
+}
+
+.level-editor button:focus-visible,
+.level-editor input:focus-visible,
+.level-editor select:focus-visible,
+.level-editor textarea:focus-visible,
+.level-editor summary:focus-visible {
+  outline: 2px solid var(--level-warm);
+  outline-offset: 1px;
+}
+
+.level-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  min-width: 0;
+  padding: 3px 8px;
+  background: var(--level-rail);
+  border-bottom: 1px solid var(--level-line);
+}
+
+.level-toolbar-group,
+.level-mode-switch,
+.level-view-actions,
+.level-toolbar .level-tools,
+.level-stage > .level-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.level-view-actions { margin-left: auto; }
+
+.level-mode-switch {
+  gap: 0;
+  padding: 2px;
+  background: #17191b;
+}
+
+.level-toolbar button,
+.level-tools button,
+.level-view-actions button,
+.gameplay-workspace .level-editor .level-toolbar button,
+.gameplay-workspace .level-editor .level-tools button {
+  border-color: var(--border-soft, #454a54);
+  background: var(--fl-panel-2, #2a2c2e);
+}
+
+.level-toolbar button.is-active,
+.level-tools button.is-active,
+.level-mode-switch button.is-active,
+.gameplay-workspace .level-editor .level-toolbar button.is-active,
+.gameplay-workspace .level-editor .level-tools button.is-active {
+  border-color: #7aa2d4;
+  background: #2a3d55;
+  color: #d6e4f5;
+  box-shadow: inset 0 -2px 0 var(--level-warm);
+}
+
+.level-mode-switch button {
+  border-color: transparent;
+  background: transparent;
+}
+
+.level-toolbar label,
+.level-view-actions label,
+.gameplay-workspace .level-editor .level-tools label {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
+  color: var(--text-dim, var(--fl-faint, #9aa0a6));
+  white-space: nowrap;
+}
+
+.level-toolbar select,
+.level-editor .level-toolbar select,
+.gameplay-workspace .level-editor .level-toolbar select,
+.gameplay-workspace .level-editor .level-tools select {
+  width: auto;
+  max-width: 7.5em;
+  min-width: 3.5em;
+  padding: 2px 4px;
+  font: inherit;
+}
+
+.level-stage > .level-tools {
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--level-line);
+  background: #1a1c1e;
+}
+
+.level-tools > span {
+  margin-left: auto;
+  color: var(--fl-faint, #888);
+}
+
+.level-panel-head {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  min-width: 0;
+  min-height: 1.9em;
+  padding: 2px 4px 2px 8px;
+  background: #202326;
+  border-bottom: 1px solid var(--level-line);
+}
+
+.level-panel-head h2,
+.level-inspector-head h2 {
+  min-width: 0;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-size: 1em;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.level-panel-head button,
+.gameplay-workspace .level-editor .level-panel-head button {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 1.75em;
+  min-width: 1.75em;
+  height: 1.75em;
+  padding: 0;
+  text-align: center;
+}
+
+.level-list,
+.level-inspector {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--level-panel);
+}
+
+.level-list { border-right: 1px solid var(--level-line); }
+.level-inspector { border-left: 1px solid var(--level-line); }
+
+.level-tree-scroll,
+.level-inspector-scroll {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+}
+
+.level-tree-scroll { overflow-x: hidden; padding: 4px 0 8px; }
+.level-inspector-scroll { padding: 6px 8px 12px; }
+
+.level-tree-list { min-width: 0; }
+.level-tree-region { min-width: 0; }
+
+.level-tree-row {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.level-tree-twist,
+.gameplay-workspace .level-editor .level-tree-twist {
+  display: inline-flex;
+  flex: 0 0 1.6em;
+  align-items: center;
+  justify-content: center;
+  width: 1.6em;
+  min-width: 1.6em;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--fl-faint, #888);
+  text-align: center;
+}
+
+.level-tree-row > button:not(.level-tree-twist),
+.level-tree-volume,
+.level-tree-landmark,
+.gameplay-workspace .level-editor .level-tree-row > button:not(.level-tree-twist),
+.gameplay-workspace .level-editor .level-tree-volume,
+.gameplay-workspace .level-editor .level-tree-landmark {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 3px 6px;
+  border: 0;
+  border-left: 2px solid transparent;
+  background: transparent;
+  text-align: left;
+}
+
+.level-tree-volume { padding-left: 1.7em; }
+
+.level-tree-id {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.level-tree-list small,
+.level-tree-row small,
+.level-tree-volume small {
+  flex: 0 0 auto;
+  color: var(--fl-faint, #888);
+  font-size: 0.86em;
+}
+
+.level-tree-list h3 {
+  margin: 10px 8px 3px;
+  color: var(--text-dim, var(--fl-faint, #9aa0a6));
+  font-size: 0.86em;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.level-tree-list > p,
+.level-hint,
+.level-empty p {
+  margin: 8px;
+  color: var(--text-dim, var(--fl-faint, #9aa0a6));
+  line-height: 1.45;
+}
+
+.level-empty p:first-child { margin-bottom: 2px; color: var(--text, #e8e8e8); }
+
+.level-tree-list button.is-selected,
+.level-tree-volume.is-selected,
+.level-tree-landmark.is-selected,
+.level-list button.is-selected,
+.gameplay-workspace .level-editor .level-tree-list button.is-selected {
+  border-left-color: var(--level-warm);
+  background: rgba(232, 180, 90, 0.16);
+  color: #f6e7c8;
+}
+
+.level-shape {
+  display: block;
+  flex: 0 0 auto;
+  overflow: visible;
+  color: var(--text-dim, #b7bdc4);
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.25;
+  stroke-linejoin: round;
+}
+
+.level-shape.is-rect { color: var(--level-z); }
+.level-shape.is-circle { color: var(--level-y); }
+.level-shape.is-polygon { color: var(--level-warm); }
+.level-shape.is-landmark { color: var(--level-x); fill: currentColor; stroke: none; }
+
+.level-stage {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.level-volume,
+.level-stream {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--level-canvas);
+  touch-action: none;
+  user-select: none;
+  outline: none;
+}
+
+.level-volume canvas,
+.level-stream canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.level-volume[data-tool="rect"],
+.level-volume[data-tool="circle"],
+.level-volume[data-tool="polygon"],
+.level-volume[data-tool="landmark"] { cursor: crosshair; }
+
+.level-volume.is-orbit,
+.level-volume.is-pan,
+.level-stream:active { cursor: grabbing; }
+
+.level-stream.is-locked,
+.level-stream.is-locked:active { cursor: none; }
+
+.level-volume:focus-visible,
+.level-stream:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px #7aa2d4;
+}
+
+.level-stream-error {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  left: 12px;
+  margin: 0;
+  color: #e8a0a6;
+}
+
+.level-issues {
+  flex: 0 0 auto;
+  max-height: 4.6em;
+  margin: 0;
+  padding: 4px 10px;
+  overflow: auto;
+  background: #1c1416;
+  color: #e8a0a6;
+}
+
+.level-pending-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 4px 8px;
+  background: #2a2418;
+  color: var(--fl-warn, #d4b06a);
+  border-bottom: 1px solid #5a4a2c;
+}
+
+.level-pending-banner p { min-width: 0; margin: 0; }
+
+.level-discard,
+.level-pending-banner button,
+.gameplay-workspace .level-editor .level-discard,
+.gameplay-workspace .level-editor .level-pending-banner button {
+  display: flex;
+  width: fit-content;
+  max-width: 100%;
+  margin-left: auto;
+  border-color: var(--border-soft, #454a54);
+  background: var(--fl-panel-2, #2a2c2e);
+  color: var(--text, #e8e8e8);
+  white-space: nowrap;
+}
+
+.level-editor-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  min-height: 1.7em;
+  padding: 2px 8px;
+  overflow: hidden;
+  background: var(--level-rail);
+  border-top: 1px solid var(--level-line);
+  color: var(--text-dim, var(--fl-faint, #9aa0a6));
+}
+
+.level-status-selection,
+.level-status-hint {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.level-status-selection { color: var(--text, #e8e8e8); }
+.level-status-hint { margin-left: auto; }
+
+.level-editor-status code,
+.level-editor-status .level-status-selection,
+.level-editor-status .level-status-hint {
+  font-family: inherit;
+  font-size: .86em;
+}
+
+.level-inspector-head { min-width: 0; margin: 0 0 6px; }
+.level-kicker {
+  margin: 0 0 2px;
+  color: var(--text-dim, var(--fl-faint, #9aa0a6));
+  font-size: 0.86em;
+}
+
+.level-group {
+  min-width: 0;
+  margin: 0;
+  padding: 8px 0 2px;
+  border: 0;
+  border-top: 1px solid #2c3034;
+}
+
+.level-inspector-scroll > .level-group:first-of-type { border-top: 0; padding-top: 2px; }
+
+.level-group h3 {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 6px;
+  font-size: 0.95em;
+  font-weight: 600;
+}
+
+.level-unit {
+  color: var(--fl-faint, #888);
+  font-size: 0.84em;
+  font-weight: 400;
+}
+
+.level-line,
+.level-pair label,
+.level-inspector fieldset {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  margin: 6px 0;
+}
+
+.level-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 6px 8px;
+  min-width: 0;
+}
+
+.level-choice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0 0 6px;
+}
+
+.level-choice label {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 4px;
+  width: auto;
+  margin: 0;
+}
+
+.level-inspector input,
+.level-inspector textarea,
+.level-inspector select,
+.gameplay-workspace .level-editor .level-inspector :is(input, textarea, select) {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 2px 6px;
+  border: 1px solid var(--border-soft, #454a54);
+  border-radius: var(--fl-radius, 0);
+  background: #232425;
+  color: inherit;
+  font: inherit;
+}
+
+.level-inspector textarea { min-height: 4.5em; resize: vertical; }
+
+.level-editor input[type="radio"],
+.level-editor input[type="checkbox"],
+.gameplay-workspace .level-editor input[type="radio"],
+.gameplay-workspace .level-editor input[type="checkbox"] {
+  width: auto;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+}
+
+.level-axes,
+.level-bound-grid {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, 1fr);
+  gap: 4px 6px;
+  align-items: center;
+  min-width: 0;
+}
+
+.level-axes-xyz {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.level-axis-line {
+  display: grid;
+  grid-template-columns: 1.4em minmax(0, 1fr);
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+}
+
+.level-axis-caption {
+  color: var(--text-dim, var(--fl-faint, #9aa0a6));
+  font-size: 0.84em;
+  text-align: center;
+}
+
+.level-axes > .axis-x,
+.level-axes > .axis-y,
+.level-axes > .axis-z,
+.level-bound-grid > .axis-x,
+.level-bound-grid > .axis-y,
+.level-bound-grid > .axis-z,
+.level-axis-line > span:first-child {
+  font-weight: 700;
+  line-height: 1;
+  text-align: center;
+}
+
+.axis-x { color: var(--level-x); }
+.axis-y { color: var(--level-y); }
+.axis-z { color: var(--level-z); }
+
+.level-poly {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.level-poly > .level-axes { grid-template-columns: 1.6em minmax(0, 1fr) minmax(0, 1fr); }
+
+.level-field-error,
+.level-inspector em {
+  margin: 4px 0 0;
+  color: var(--fl-danger, #e87d7d);
+  font-style: normal;
+}
+
+.level-group.level-danger {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #6a3a3a;
+}
+
+.level-extension-data { border-top: 1px solid var(--level-line); padding-top: 8px; margin-top: 10px; }
+.level-extension-data > summary { display: flex; align-items: center; gap: 6px; cursor: pointer; color: var(--fl-faint, #9aa0a6); }
+.level-extension-data > summary::before { content: '▸'; }
+.level-extension-data[open] > summary::before { content: '▾'; }
+.level-extension-data > summary small { margin-left: auto; font-size: .82em; }
+.level-extension-data > .level-hint { margin: 6px 0; font-size: .86em; }
+
+.level-danger button,
+.gameplay-workspace .level-editor .level-danger button {
+  display: flex;
+  width: 100%;
+  border-color: #8a4a4a;
+  background: transparent;
+  color: var(--fl-danger, #e87d7d);
+  white-space: normal;
+}
+
+.level-danger button:hover:not(:disabled),
+.gameplay-workspace .level-editor .level-danger button:hover:not(:disabled) {
+  background: rgba(232, 125, 125, 0.12);
+  color: #ffc4c4;
+}
+
+.level-danger details { margin-top: 8px; }
+
+.level-danger summary {
+  width: fit-content;
+  color: var(--fl-danger, #e87d7d);
+  cursor: pointer;
+}
+
+.level-danger details p {
+  margin: 6px 0;
+  color: var(--text-dim, var(--fl-faint, #9aa0a6));
+  line-height: 1.45;
+}
+
+.level-geometry-summary {
+  margin: 2px 0;
+  color: var(--fl-faint, #888);
+}
+
+@media (max-width: 899px) {
+  .level-editor,
+  .level-editor[data-tree="false"],
+  .level-editor[data-inspector="false"],
+  .level-editor[data-tree="false"][data-inspector="false"],
+  .level-editor[data-maximized="true"],
+  .level-editor[data-focus="true"] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "toolbar"
+      "stage"
+      "status";
+  }
+
+  .level-editor:has(> .level-pending-banner),
+  .level-editor[data-tree="false"]:has(> .level-pending-banner),
+  .level-editor[data-inspector="false"]:has(> .level-pending-banner),
+  .level-editor[data-tree="false"][data-inspector="false"]:has(> .level-pending-banner),
+  .level-editor[data-maximized="true"]:has(> .level-pending-banner) {
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "toolbar"
+      "banner"
+      "stage"
+      "status";
+  }
+
+  .level-editor > .level-list,
+  .level-editor > .level-inspector {
+    position: absolute;
+    z-index: 3;
+    top: 0;
+    bottom: 0;
+    grid-area: stage;
+    width: clamp(132px, 42%, 180px);
+    max-width: 100%;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  }
+
+  .level-editor > .level-list { left: 0; }
+  .level-editor > .level-inspector {
+    right: 0;
+    left: auto;
+    width: clamp(160px, 70%, 260px);
+  }
+}
+
+/* Dock splits can be narrow inside a wide browser. Match the editor pane, too. */
+@container level-workspace (max-width: 899px) {
+  .level-editor,
+  .level-editor[data-tree="false"],
+  .level-editor[data-inspector="false"],
+  .level-editor[data-tree="false"][data-inspector="false"],
+  .level-editor[data-maximized="true"],
+  .level-editor[data-focus="true"] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "toolbar"
+      "stage"
+      "status";
+  }
+
+  .level-editor:has(> .level-pending-banner),
+  .level-editor[data-tree="false"]:has(> .level-pending-banner),
+  .level-editor[data-inspector="false"]:has(> .level-pending-banner),
+  .level-editor[data-tree="false"][data-inspector="false"]:has(> .level-pending-banner),
+  .level-editor[data-maximized="true"]:has(> .level-pending-banner) {
+    grid-template-rows: auto auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "toolbar"
+      "banner"
+      "stage"
+      "status";
+  }
+
+  .level-editor > .level-list,
+  .level-editor > .level-inspector {
+    position: absolute;
+    z-index: 3;
+    top: 0;
+    bottom: 0;
+    grid-area: stage;
+    width: clamp(132px, 42%, 180px);
+    max-width: 100%;
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+  }
+
+  .level-editor > .level-list { left: 0; }
+  .level-editor > .level-inspector {
+    right: 0;
+    left: auto;
+    width: clamp(160px, 70%, 260px);
+  }
+}
+
+.level-stream-loading { position:absolute; left:12px; bottom:12px; margin:0; color:#bac4d0; pointer-events:none; }

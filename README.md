@@ -75,6 +75,8 @@ npm run lint
 
 浏览器测试使用隔离的测试工程与上下文，不使用用户浏览器数据。Windows 默认使用已安装的 Edge，其他平台须安装 Playwright Chromium。
 
+地图与区域的用法见[地图模板与导航](src/help/docs/level-guide.md)；本轮实现范围、原计划修正与配套 Mod 的 PR 复验入口见[区域编辑器开发与验收](src/help/docs/region-editor-development.md)。原生流程使用 `npm run test:region-editor:native` 和 `npm run test:map-wand:native`，均需显式准备独立的游戏测试实例，不能指向正式世界。
+
 协议 TypeScript 类型由 Rust 模型生成：修改模型后运行 `npm run generate:protocol`。
 
 协作面板「修改 → 放弃冲突修改并同步修改」会先查未知回执，再去掉冲突文件／字段，提交其余可提交修改，刷新服务器状态。断线、临时锁定或结果仍未知时保留对应草稿，并明确报告尚未完成。

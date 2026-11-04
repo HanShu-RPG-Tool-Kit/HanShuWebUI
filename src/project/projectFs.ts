@@ -236,6 +236,7 @@ async function readPackageFromDirectory(
     assetsCollapsed: Boolean(manifest.assetsCollapsed),
     scripts,
     explorer: parseOrganization(await root.client.text(EXPLORER_ORGANIZATION_PATH)),
+    regionEffectPresets: await root.client.text('meta/region-effect-presets.json') ?? undefined,
     assets,
     assetFolders,
   }
@@ -357,6 +358,11 @@ export async function refreshServiceProject(binding: BoundProject, current: Work
   const organizationRaw = organizationDirty || !organizationEntry ? null
     : await (await client.readSnapshot(EXPLORER_ORGANIZATION_PATH, false, organizationEntry.version)).file.text()
   const explorer = organizationDirty ? undefined : parseOrganization(organizationRaw)
+  const effectsPresetPath = 'meta/region-effect-presets.json'
+  const effectsPresetEntry = client.entry(effectsPresetPath)
+  const effectsPresetVersion = effectsPresetEntry?.version ?? null
+  const effectsPresetText = client.transactions.hasDraft(effectsPresetPath) ? undefined : effectsPresetEntry
+    ? await (await client.readSnapshot(effectsPresetPath, false, effectsPresetVersion!)).file.text() : null
   const live = getProjectSession()
   if (live.binding?.handle.client !== client) return current
   const latest = live.workspace
@@ -366,6 +372,14 @@ export async function refreshServiceProject(binding: BoundProject, current: Work
     && serializeOrganization(latestPkg.explorer ?? emptyOrganization()) === organizationBefore
     && (client.entry(EXPLORER_ORGANIZATION_PATH)?.version ?? null) === organizationVersion
     && (client.baseline.get(EXPLORER_ORGANIZATION_PATH) ?? null) === organizationBaseline
+  const adoptEffectsPresets = effectsPresetText !== undefined && !client.transactions.hasDraft(effectsPresetPath)
+    && latestPkg.regionEffectPresets === pkg.regionEffectPresets && (client.entry(effectsPresetPath)?.version ?? null) === effectsPresetVersion
+  const mergedEffectsPresets = adoptEffectsPresets ? effectsPresetText ?? undefined : latestPkg.regionEffectPresets
+  if (adoptEffectsPresets) {
+    if (effectsPresetVersion && effectsPresetText !== null) {
+      client.texts.set(effectsPresetPath, effectsPresetText!); client.baseline.set(effectsPresetPath, effectsPresetVersion); client.originals.set(effectsPresetPath, { version: effectsPresetVersion, data: effectsPresetText! })
+    } else { client.texts.delete(effectsPresetPath); client.baseline.delete(effectsPresetPath); client.originals.delete(effectsPresetPath) }
+  }
   const mergedExplorer = adoptOrganization ? explorer : latestPkg.explorer
   if (adoptOrganization) {
     // The projection, original bytes and CAS version are accepted together, after all awaits.
@@ -395,7 +409,7 @@ export async function refreshServiceProject(binding: BoundProject, current: Work
   }
   const result = merged.filter(s => kept.some(k => k.id === s.id) || !pkg.scripts.some(p => p.id === s.id && p.content === s.content))
   if (staged.length || assetChanges || result.length !== pkg.scripts.length) client.remoteEpoch++
-  const packages = latest.packages.map(p => p.id === pkg.id ? { ...p, explorer:mergedExplorer, scripts: result, assets: latestPkg.assets === pkg.assets ? assets : latestPkg.assets } : p)
+  const packages = latest.packages.map(p => p.id === pkg.id ? { ...p, explorer:mergedExplorer, regionEffectPresets:mergedEffectsPresets, scripts: result, assets: latestPkg.assets === pkg.assets ? assets : latestPkg.assets } : p)
   const activeScriptId = latest.activeScriptId === null
     ? null
     : result.some(s => s.id === latest.activeScriptId) ? latest.activeScriptId : result[0]?.id ?? null

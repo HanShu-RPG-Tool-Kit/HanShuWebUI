@@ -35,6 +35,7 @@ export async function buildProjectPackZip(
     }
 
     if(pkg.explorer){zip.file(`${root}/${EXPLORER_ORGANIZATION_PATH}`,serializeOrganization(pkg.explorer));fileCount++}
+    if(pkg.regionEffectPresets!==undefined){zip.file(`${root}/meta/region-effect-presets.json`,pkg.regionEffectPresets);fileCount++}
     for (const script of pkg.scripts) {
       // 工程结构：源文件进 `src/<kind>/`（`xx.hs` → `src/hanshu/xx.hs`）
       zip.file(`${root}/${sourcePathOf(script)}`, script.content)

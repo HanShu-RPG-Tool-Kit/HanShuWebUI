@@ -49,10 +49,10 @@ export const localeAssetsPass: PackagePass = {
     }
     const owners = new Map<string, LocaleExportOwner>()
     for (const source of pkg.scripts) {
-      const artifacts = sourceArtifacts.get(normalizeSourcePath(source.name))
-      if (!artifacts?.length) continue
       // catalog.json 的译文走 lang_quest/catalog.lang（与磁盘后缀解耦）
       if (isQuestCatalogFileName(source.name)) {
+        const artifacts = sourceArtifacts.get(normalizeSourcePath(source.name))
+        if (!artifacts?.length) continue
         if (!rules.has('quest')) continue
         owners.set(sourceLogicalPath(QUEST_CATALOG_LOCALE_NAME), {
           source: { ...source, name: QUEST_CATALOG_LOCALE_NAME },
@@ -61,7 +61,11 @@ export const localeAssetsPass: PackagePass = {
         })
         continue
       }
-      if (!rules.has(sourceExtension(source.name))) continue
+      const ext = sourceExtension(source.name)
+      if (!rules.has(ext)) continue
+      const artifacts = sourceArtifacts.get(normalizeSourcePath(source.name)) ?? []
+      // `.nav` 编译结果是空列表（坐标在地标里）。语言表仍属于这份作者文件。
+      if (!artifacts.length && ext !== 'nav') continue
       owners.set(sourceLogicalPath(source.name), { source, artifacts, index: ctx.index })
     }
     const out: CompileArtifact[] = []

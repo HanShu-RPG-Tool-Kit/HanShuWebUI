@@ -1,0 +1,139 @@
+.level-custom-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.level-custom-row,
+.level-custom-add,
+.level-custom-node > summary {
+  display: grid;
+  grid-template-columns: minmax(4.2rem, 0.8fr) auto minmax(0, 1.5fr) auto;
+  gap: 4px;
+  align-items: center;
+  min-width: 0;
+  min-height: 26px;
+}
+
+.level-custom-add {
+  grid-template-columns: minmax(4.2rem, 0.9fr) auto minmax(0, 1.2fr) auto auto;
+}
+
+/* A nested inspector row has too little room for four columns. Keep the value
+   and its remove action on their own line so their hit targets never overlap. */
+.level-custom-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: 'key kind' 'value remove';
+}
+
+.level-custom-row > .level-custom-key { grid-area: key; }
+.level-custom-row > .level-custom-kind { grid-area: kind; }
+.level-custom-row > input,
+.level-custom-row > .level-custom-switch,
+.level-custom-row > .level-custom-null,
+.level-custom-row > .level-custom-summary { grid-area: value; }
+.level-custom-row > .level-custom-remove { grid-area: remove; }
+
+.level-custom-branch {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 4px;
+  align-items: start;
+  min-width: 0;
+}
+
+.level-custom-node {
+  min-width: 0;
+  border-left: 1px solid var(--level-line, rgba(255, 255, 255, 0.14));
+  padding-left: 6px;
+}
+
+.level-custom-node > summary {
+  cursor: pointer;
+  list-style: none;
+  grid-template-columns: auto minmax(4.2rem, 0.8fr) auto minmax(0, 1fr);
+}
+
+.level-custom-node > summary::-webkit-details-marker { display: none; }
+
+.level-custom-node > summary::before {
+  content: '▸';
+  width: 1em;
+  color: var(--text-dim, #9aa0a6);
+}
+
+.level-custom-node[open] > summary::before { content: '▾'; }
+
+.level-custom-children {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 2px 0 4px;
+}
+
+.level-custom-key,
+.level-custom-kind,
+.level-custom-summary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.level-custom-key { font-weight: 600; }
+
+.level-custom-kind,
+.level-custom-summary { color: var(--text-dim, #9aa0a6); font-size: 0.84em; }
+
+.level-custom-null {
+  justify-self: start;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-dim, #9aa0a6);
+  font-size: 0.84em;
+  line-height: 1.7;
+}
+
+.level-custom-switch {
+  justify-self: start;
+  width: auto;
+  min-width: 2.6rem;
+  border-radius: 999px;
+}
+
+.level-custom-switch[aria-checked="true"] {
+  background: var(--level-accent, #3d7ea6);
+  color: #fff;
+}
+
+.level-custom-remove,
+.level-custom-add > button,
+.level-custom-json-actions > button {
+  width: auto;
+  white-space: nowrap;
+}
+
+.level-custom-tree :focus-visible {
+  outline: 2px solid var(--level-accent, #6cb6ff);
+  outline-offset: 1px;
+}
+
+.level-custom-json { margin-top: 6px; }
+
+.level-custom-json > summary { cursor: pointer; }
+
+.level-custom-json textarea {
+  width: 100%;
+  margin-top: 4px;
+  font-family: ui-monospace, Consolas, monospace;
+}
+
+.level-custom-json-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  margin-top: 4px;
+}

@@ -1,0 +1,182 @@
+{
+  "tags": [
+    "redesign-acceptance"
+  ],
+  "regions": [
+    {
+      "id": "room",
+      "areas": [
+        {
+          "x": [
+            72.25,
+            93.95
+          ],
+          "z": [
+            -158.25,
+            -140.25
+          ],
+          "y": [
+            59.25,
+            71.75
+          ]
+        },
+        {
+          "shape": "circle",
+          "center": [
+            80.25,
+            -150.25
+          ],
+          "radius": 2.5,
+          "y": [
+            61.25,
+            64.75
+          ]
+        },
+        {
+          "x": [
+            78.25,
+            83.75
+          ],
+          "z": [
+            -151.25,
+            -145.25
+          ],
+          "y": [
+            65.25,
+            67.75
+          ]
+        }
+      ],
+      "custom_data": {
+        "acceptance": "preserve-region-extra",
+        "priority": 3,
+        "enabled": true,
+        "nested": {
+          "keep": [
+            "a",
+            2
+          ]
+        }
+      }
+    },
+    {
+      "id": "round",
+      "areas": [
+        {
+          "shape": "circle",
+          "center": [
+            97.25,
+            -151.25
+          ],
+          "radius": 8.5,
+          "y": [
+            60,
+            72
+          ]
+        }
+      ]
+    },
+    {
+      "id": "polygon",
+      "areas": [
+        {
+          "shape": "polygon",
+          "points": [
+            [
+              78.25,
+              -133.25
+            ],
+            [
+              87.25,
+              -133.25
+            ],
+            [
+              81.25,
+              -122.75
+            ]
+          ],
+          "y": [
+            59.25,
+            66.5
+          ]
+        }
+      ]
+    },
+    {
+      "id": "single_block",
+      "areas": [
+        {
+          "x": [
+            92,
+            92
+          ],
+          "z": [
+            -140,
+            -140
+          ],
+          "y": [
+            64,
+            64
+          ]
+        }
+      ]
+    },
+    {
+      "id": "unbounded",
+      "areas": [
+        {
+          "x": [
+            110,
+            116
+          ],
+          "z": [
+            -150,
+            -146
+          ],
+          "y": "all"
+        }
+      ]
+    },
+    {
+      "id": "long_named_upper_balcony_trigger_volume_01",
+      "areas": [
+        {
+          "x": [
+            104.25,
+            109.75
+          ],
+          "z": [
+            -132.25,
+            -126.25
+          ],
+          "y": [
+            70.25,
+            73.75
+          ]
+        }
+      ]
+    }
+  ],
+  "landmarks": [
+    {
+      "id": "target",
+      "kind": "rpgtoolkit:pos",
+      "param": {
+        "x": 90.25,
+        "y": 68.5,
+        "z": -140.25
+      },
+      "custom_data": {
+        "rpgtoolkit:display_max_distance": 256,
+        "acceptance": {
+          "keep": true
+        }
+      }
+    }
+  ],
+  "custom_data": {
+    "acceptance": {
+      "preserve": true
+    }
+  }
+}

@@ -1,0 +1,101 @@
+.level-editor .region-inspector-tabs { display:flex; gap:4px; padding:0 0 10px; border-bottom:1px solid var(--level-line); margin-bottom:14px }
+.level-editor .region-inspector-tabs button { flex:1; border:0; border-bottom:2px solid transparent; border-radius:2px; background:transparent; color:var(--muted,#a3adb8); padding:9px }
+.level-editor .region-inspector-tabs button[aria-selected="true"] { border-color:var(--level-warm); background:#292c30; color:#f3dfbb }
+.level-editor .region-effects { min-width:0; padding-bottom:12px; font-size:13px; line-height:1.5 }
+.gameplay-workspace .level-editor .region-effects :is(button,input,select,textarea) { font-size:12px; line-height:1.4 }
+.gameplay-workspace .level-editor .region-effects :is(input[type="number"],input[type="text"],input[type="search"],select) { min-height:29px }
+.gameplay-workspace .level-editor .region-effects input[type="color"] { width:48px; flex:0 0 48px; min-height:30px; padding:2px }
+.gameplay-workspace .level-editor .region-effects input[type="range"] { width:0; min-width:0; min-height:18px; height:18px; padding:0; flex:1; background:transparent; border:0 }
+.level-editor .region-effects .level-hint { font-size:12px; line-height:1.6 }
+.region-effects-intro strong { font-size:13px; font-weight:600; color:#ecdfc7 }
+.region-effects-intro p,.region-effects-preview p { font-size:11px; color:#a9b4bf; line-height:1.6; margin:5px 0 12px }
+.region-effect-tabs { display:grid; grid-template-columns:1fr 1fr; gap:5px; margin:12px 0 18px; position:sticky; top:0; z-index:2; background:var(--level-panel); padding:5px 0 }
+.level-editor .region-effect-tabs button { display:grid; grid-template-columns:22px 1fr; gap:2px 5px; text-align:left; padding:9px 7px; border:1px solid #343a40; border-radius:3px; background:#22262a }
+.region-effect-tabs button > span:first-child { grid-row:1/3; align-self:center; color:#9eacb9; font-size:22px }
+.region-effect-tabs small { color:#8e9ca9; font-size:10px }
+.level-editor .region-effect-tabs button[aria-selected="true"] { background:#34302a; border-color:#997a48; color:#ffe2af }
+.region-effect-tabs button[aria-selected="true"] > span:first-child { color:#e8b45a }
+.region-effect-title { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:12px }
+.region-effect-title h3 { margin:0; font-size:14px }
+.region-effect-enable { display:flex; gap:6px; align-items:center; font-size:12px }
+.region-effect-enable input,.region-effect-value input[type="checkbox"] { width:14px; height:14px; accent-color:#dfb365; margin:0 }
+.region-effect-empty { padding:18px 8px 22px; text-align:center; border-top:1px solid #30363c; border-bottom:1px solid #30363c; margin-bottom:14px }
+.region-effect-empty > span { font-size:36px; color:#8299a8 }
+.region-effect-empty p { font-size:12px; color:#b5bdc5; line-height:1.7 }
+.region-effect-presets { display:flex; gap:4px; flex-wrap:wrap; margin-bottom:13px }
+.level-editor .region-effect-presets button { font-size:10px; padding:5px 6px; display:flex; align-items:center; gap:4px }
+.region-effect-presets i { width:10px; height:10px; border-radius:50%; border:1px solid #ffffff40 }
+.region-effect-scope { display:flex; flex-direction:column; gap:5px; font-size:11px; color:#b8c3cc; margin:10px 0 }
+.region-effect-group { border-top:1px solid #343a40; margin-top:12px; padding:0 0 10px }
+.region-effect-group > summary { padding:12px 0; cursor:pointer; font-size:12px; color:#e2d8c5; font-weight:600 }
+.region-effect-group > summary small { color:#9cabb9; font-size:10px; float:right }
+.region-effect-value { margin:0 0 12px; min-width:0 }
+.region-effect-value-label { display:flex; align-items:center; justify-content:space-between; min-height:22px; margin-bottom:3px; gap:4px }
+.region-effect-value-label label { display:flex; align-items:center; gap:5px; font-size:11px; color:#bdc7d0 }
+.region-effect-value-label small { font-size:10px; color:#7c8e9d; font-weight:400 }
+.level-editor .region-effect-value-label > button { background:transparent; border:0; padding:0 3px; color:#8e9ca9; font-size:14px; min-height:18px }
+.region-effect-number { display:flex; align-items:center; gap:8px; min-width:0 }
+.level-editor .region-effect-number > input[type="number"] { width:74px; flex:0 0 74px; padding:5px 6px; font-size:12px }
+.region-effect-number input[type="range"] { width:0; flex:1; accent-color:#dfb365; height:16px; min-width:0; cursor:ew-resize; background:transparent; padding:0 }
+.region-effect-number input[type="number"]:only-child { width:100%; flex:1 }
+.region-effect-value > select,.region-effect-value > input { width:100%; min-width:0; font-size:12px }
+.region-effect-scope select { min-width:0; width:100%; font-size:11px; padding:7px 5px }
+.region-effect-switch { display:flex; align-items:center; gap:8px; color:#d4dbe1; font-size:11px }
+.region-effect-color { display:flex; align-items:center; flex-wrap:wrap; gap:7px }
+.level-editor .region-effect-color input[type="color"] { width:46px; height:28px; padding:2px; background:#13171a; border-color:#4a555e; cursor:pointer }
+.region-effect-color > span { font-size:11px; color:#d2d9de; font-variant-numeric:tabular-nums }
+.region-effect-color > label { flex:1 0 100%; display:flex; align-items:center; gap:8px; font-size:10px; color:#8697a7 }
+.region-effect-color input[type="range"] { flex:1; min-width:0; height:15px; padding:0; accent-color:#c3b28e }
+.region-effect-vector { display:flex; gap:5px }
+.region-effect-vector label { flex:1; width:0; font-size:10px; color:#a8b6c0; display:flex; flex-direction:column; gap:4px }
+.region-effect-vector input { min-width:0; width:100%; padding:5px 3px!important; font-size:11px!important }
+.region-fog-distance { position:relative; height:100px; overflow:hidden; margin:12px 0; background:#18242c; border:1px solid #3e4b53; border-radius:3px }
+.region-distance-landscape { height:74px; position:relative; overflow:hidden; background:linear-gradient(0deg,#132329,#849aa4); }
+.region-distance-landscape::after { content:""; position:absolute; inset:0; background:linear-gradient(90deg,transparent 3%,var(--fog-color) 95%); opacity:var(--fog-opacity) }
+.region-distance-landscape i { position:absolute; bottom:-6px; width:65px; height:55px; background:#293a3c; clip-path:polygon(0 100%,50% 0,100% 100%); }
+.region-distance-landscape i:nth-child(1) { left:10px }
+.region-distance-landscape i:nth-child(2) { left:85px; width:45px; height:40px }
+.region-distance-landscape i:nth-child(3) { right:12px; width:27px; height:23px }
+.region-fog-distance > small { position:absolute; top:5px; right:5px; font-size:9px; padding:2px 4px; background:#182129a8; color:#d5e0e7 }
+.region-distance-labels { position:absolute; bottom:0; left:0; right:0; height:25px; display:flex; justify-content:space-between; align-items:center; padding:0 5px; color:#c1cbd2; font-size:9px; background:#171c20 }
+.region-shader-entry { border:1px solid #3b4248; border-left:2px solid #7b8e9c; background:#1f2326; padding:0 9px 7px; margin:9px 0 }
+.region-shader-entry > summary { display:flex; align-items:center; gap:7px; cursor:pointer; padding:10px 0; font-size:12px; font-weight:600; color:#e4e5df }
+.region-shader-entry > summary > span { color:#bca16b; font-size:11px }
+.region-shader-entry summary small { margin-left:auto; color:#7e909f; font-size:9px; font-weight:400 }
+.region-shader-order { display:flex; gap:3px; padding:0 0 10px }
+.level-editor .region-shader-order button { padding:3px 6px; font-size:10px; color:#b1bdc7 }
+.region-shader-order button:last-child { margin-left:auto }
+.region-add-effect { width:100%; border-style:dashed!important; background:transparent!important; margin:4px 0 10px }
+.region-add-effect small { color:#8495a3; margin-left:5px }
+.region-shader-picker { display:grid; grid-template-columns:1fr 1fr; gap:5px; padding:0 0 10px }
+.level-editor .region-shader-picker > button { display:flex; flex-direction:column; padding:0 0 6px; gap:6px; border-color:#414d58; overflow:hidden; font-size:10px; background:#252d33 }
+.region-effect-thumbnail { width:100%; height:42px; position:relative; overflow:hidden; display:block; background:linear-gradient(#536982 0%,#a5b5b5 60%,#304639 61%); }
+.region-effect-thumbnail i { position:absolute; width:62px; height:25px; background:#33483c; bottom:0; left:12%; clip-path:polygon(0 100%,40% 5%,100% 100%) }
+.region-effect-thumbnail b { position:absolute; width:10px; height:10px; border-radius:50%; background:#fff2c0; right:20%; top:6px }
+.region-effect-thumbnail.effect-gradient { background:linear-gradient(#1c2a6e,#ff9a5c,#2a1830) }
+.region-effect-thumbnail.effect-solid { background:#253149 }
+.region-effect-thumbnail.effect-stars,.region-effect-thumbnail.effect-aurora { background:radial-gradient(ellipse at 35% 80%,#66b6b8,#1d274f 50%,#080d26) }
+.region-effect-thumbnail.effect-monochrome { filter:grayscale(1) }
+.region-effect-thumbnail.effect-color_grade { filter:saturate(1.5) sepia(.3) }
+.region-effect-thumbnail.effect-blur i { filter:blur(3px) }
+.region-effect-thumbnail.effect-bloom b { box-shadow:0 0 12px 6px #fffac5 }
+.region-effect-thumbnail.effect-letterbox { border-top:8px solid #070a0b; border-bottom:8px solid #070a0b }
+.region-effect-thumbnail.effect-vignette::after { content:""; position:absolute; inset:0; background:radial-gradient(ellipse,transparent 15%,#070c15 100%) }
+.region-effect-thumbnail.effect-fade::after { content:""; position:absolute; inset:0; background:#161d3799 }
+.region-effect-thumbnail.effect-pixelate { image-rendering:pixelated; background:repeating-conic-gradient(#5f777a 0 25%,#364d45 0 50%) 0 0/14px 14px }
+.region-music-picker > label { display:flex; flex-direction:column; gap:5px; font-size:11px; color:#b8c4ce; margin:10px 0 }
+.region-music-picker input { width:100%; min-width:0; font-size:11px!important }
+.region-music-options { max-height:180px; overflow:auto; display:flex; flex-direction:column; gap:3px }
+.level-editor .region-music-options button { display:flex; flex-direction:column; align-items:flex-start; text-align:left; padding:7px; font-size:11px; overflow:hidden; min-height:35px }
+.region-music-options button small { font-size:9px; color:#8298a9; overflow-wrap:anywhere; margin-top:3px }
+.level-editor .region-music-options button[aria-selected="true"] { border-color:#b19158; background:#343128; color:#ffe1a4 }
+.region-music-play { width:100%; margin:5px 0 }
+.region-effects-actions { display:flex; gap:5px; border-top:1px solid #3d444b; padding-top:12px; margin-top:10px }
+.region-effects-actions > button { flex:1; font-size:11px }
+.level-editor .region-effects-actions > button:first-child { background:#574a31; border-color:#977b47; color:#ffebc9 }
+.region-effects-preview { margin-top:12px; padding:10px 0; border-bottom:1px solid #353b41 }
+.region-effects-preview > button { width:100%; font-size:11px }
+.level-editor .region-effects-preview > button[aria-pressed="true"] { border-color:#82b7b0; color:#bfe5df; background:#263c3a }
+.region-effects-preview p { margin:7px 0 0; font-size:10px }
+.region-effect-library-state { display:flex; justify-content:space-between; align-items:center; font-size:9px; color:#7e909e; margin-top:8px }
+.level-editor .region-effect-library-state button { background:transparent; border:0; padding:3px; font-size:10px; color:#a3b4c1 }

@@ -493,11 +493,13 @@ assert.equal(entityDoc.entity.id, 'minecraft:pig', '.entity 种子使用构造�
 assert.deepEqual(entityDoc.entity.data, { type: 'compound', value: {} })
 assert.equal(sourceKindOf(newFileName(type('entity'), '新实体')), 'entities')
 assert.equal(sourcePathOf({ name: newFileName(type('entity'), '新实体') }), 'src/entities/新实体.entity')
-// `.nav`：v3 形状；新建时还没选模板，所以校验会提示 level，而不是当成坏文档
+// `.nav`：只引用地标；新建时还没选模板和地标，校验提示这两项，而不是当成坏文档
 const navPoint = parseNavigationPoint(seedOf('nav'))
 assert.equal(navPoint.level, '')
-assert.equal(navPoint.type, 'rpgtoolkit:pos')
+assert.equal(navPoint.track.type, 'landmark')
+assert.equal(navPoint.track.ref, '')
 assert.ok(validateNavigationPoint(navPoint).some((item) => item.includes('地图模板')))
+assert.ok(validateNavigationPoint(navPoint).some((item) => item.includes('地标')))
 
 // `.level`：空模板可原样往返；路径落在 src/level
 const levelSeed = seedOf('level')

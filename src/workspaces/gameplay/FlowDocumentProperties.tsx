@@ -60,7 +60,7 @@ export function FlowDocumentProperties({ doc, onSave, onCancel }: {
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)) }
   }
 
-  const title = doc.package === 'actor' ? '演员模板属性' : doc.package === 'reputation' ? '声誉阵营属性' : doc.package === 'shop' ? '商店属性' : item ? '物品属性' : kit ? '礼包属性' : level ? '地图模板属性' : navigation ? '动态导航点属性' : progress ? '进度属性' : script ? '脚本属性' : '流程属性'
+  const title = doc.package === 'actor' ? '演员模板属性' : doc.package === 'reputation' ? '声誉阵营属性' : doc.package === 'shop' ? '商店属性' : item ? '物品属性' : kit ? '礼包属性' : level ? '地图模板属性' : navigation ? '动态导航器属性' : progress ? '进度属性' : script ? '脚本属性' : '流程属性'
 
   return createPortal(<dialog ref={dialog} className="flow-alert-dialog flow-properties-dialog" aria-labelledby={titleId} onCancel={(event) => { event.preventDefault(); onCancel() }}>
     <header><strong id={titleId}>{title}</strong></header>
@@ -71,9 +71,9 @@ export function FlowDocumentProperties({ doc, onSave, onCancel }: {
       ) : kit ? (
         <p className="flow-hint">礼包以 `.kit`（JSON）写入工程目录；内容在主区表单中修改。</p>
       ) : level ? (
-        <p className="flow-hint">地图模板以 `.level`（JSON）写入 `src/level/`；区域与静态导航点都在模板正文里，编译时拆成多个运行时文件。</p>
+        <p className="flow-hint">地图模板以 `.level`（JSON）写入 `src/level/`；区域与地标都在模板正文里，编译时拆成多个运行时文件。</p>
       ) : navigation ? (
-        <p className="flow-hint">动态导航点以 `.nav`（JSON）写入 `src/navigator/`；内容在主区表单中修改。</p>
+        <p className="flow-hint">导航器以 `.nav`（JSON）写入 `src/navigator/`；内容在主区表单中修改。</p>
       ) : progress ? (
         <p className="flow-hint">单进度任务以 `.quest`（JSON，`hanshu.progress`）写入工程目录；内容在主区表单中修改。</p>
       ) : script ? (

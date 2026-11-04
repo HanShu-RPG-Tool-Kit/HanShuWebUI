@@ -57,9 +57,9 @@ const specDir = resolve(here, '../src/workspaces/audiovisual/bossbar/spec')
 
 // ---------------------------------------------------------------- 1. 冻结夹具
 
-const schemaOnDisk = await readFile(resolve(specDir, 'hanshu.bossbar.v2.schema.json'), 'utf8')
+const schemaOnDisk = (await readFile(resolve(specDir, 'hanshu.bossbar.v2.schema.json'), 'utf8')).replace(/\r\n/g, '\n')
 assert.equal(schemaOnDisk, bossbarSchemaFile(), 'schema 文件与实现不一致：运行 npm run generate:bossbar-spec')
-const fixturesOnDisk = await readFile(resolve(specDir, 'bossbar-v2.fixtures.json'), 'utf8')
+const fixturesOnDisk = (await readFile(resolve(specDir, 'bossbar-v2.fixtures.json'), 'utf8')).replace(/\r\n/g, '\n')
 assert.equal(
   fixturesOnDisk,
   bossbarFixtureFile(),

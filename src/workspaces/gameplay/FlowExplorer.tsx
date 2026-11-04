@@ -36,13 +36,6 @@ import {
   QUEST_CATALOG_LABEL,
   QUEST_CATALOG_PATH,
   isLevelDocument,
-  isLevelStaticKey,
-  isLevelStaticViewKey,
-  LEVEL_STATIC_VIEW_KEY,
-  levelStaticPointKey,
-  levelStaticTemplateKey,
-  parseLevelStaticPointKey,
-  parseLevelStaticTemplateKey,
   isMultiQuestDocument,
   isNavigationDocument,
   isQuestDocument,
@@ -91,7 +84,6 @@ import {
   supportsGameplayViewSource,
 } from "./draftResources";
 import type { FlowPackageId, FlowWorkspaceState } from "./storage";
-import { readLevelSource } from "./levelDoc";
 import { resourceBaseError } from "../../resourceNames";
 import { alertDialog, promptDialog } from "../../ui/dialogs";
 
@@ -205,9 +197,7 @@ const defaultFocus = packageEntry("quest");
 const QUEST_VIEW_KEYS = [QUEST_VIEW_SIMPLE, QUEST_VIEW_MULTI] as const;
 const isProtectedFolderKey = (key: string) =>
   isSectionFolder(key) ||
-  isQuestViewKey(key) ||
-  isLevelStaticViewKey(key) ||
-  isLevelStaticKey(key);
+  isQuestViewKey(key);
 const sectionIconKind = (key: string): Parameters<typeof Icon>[0]["kind"] => {
   const parsed = parseSectionFolderKey(key);
   if (parsed?.package === "level")
@@ -278,37 +268,13 @@ const entryName = (state: FlowWorkspaceState, entry: FlowEntry) =>
     ? FLOW_PACKAGE_NAMES[entry.package]
     : entry.kind === "folder"
       ? (QUEST_VIEW_NAMES[entry.key] ??
-        (isLevelStaticViewKey(entry.key) ? "静态导航器" : null) ??
-        staticTemplateName(state, entry.key) ??
         state.folders.find((f) => f.key === entry.key)?.name ??
         "")
-      : (staticPointName(entry.key) ??
-        staticTemplateName(state, entry.key) ??
-        state.documents.find((d) => d.key === entry.key)?.name ??
+      : (state.documents.find((d) => d.key === entry.key)?.name ??
         "");
 
-/** 静态导航视图里的虚拟模板节点；真实文档 key 藏在节点 key 里。 */
-function staticTemplateName(
-  state: FlowWorkspaceState,
-  key: string,
-): string | null {
-  const documentKey = parseLevelStaticTemplateKey(key);
-  if (!documentKey) return null;
-  const name = state.documents.find(
-    (document) => document.key === documentKey,
-  )?.name;
-  return name ? name.replace(/\.level$/i, "") : null;
-}
-
-function staticPointName(key: string): string | null {
-  return parseLevelStaticPointKey(key)?.navId ?? null;
-}
-
-/** 点击静态导航器里的行时，真正要打开的 `.level` 文档。 */
 function documentKeyOfEntry(entry: FlowEntry): string | null {
   if (entry.kind !== "document") return null;
-  const point = parseLevelStaticPointKey(entry.key);
-  if (point) return point.documentKey;
   return entry.key;
 }
 
@@ -532,7 +498,7 @@ export function FlowExplorer({
         ? "新建物品"
         : allowsLevel
           ? levelCreateMode === "navigation"
-            ? "新建动态导航点"
+            ? "新建导航器"
             : "新建地图模板"
           : allowsShops
             ? "新建商店"
@@ -549,7 +515,7 @@ export function FlowExplorer({
         ? "导入物品"
         : allowsLevel
           ? levelCreateMode === "navigation"
-            ? "导入动态导航点"
+            ? "导入导航器"
             : "导入地图模板"
           : allowsShops
             ? "导入商店"
@@ -619,15 +585,12 @@ export function FlowExplorer({
             const key = id.slice("folder:".length);
             return (
               isQuestViewKey(key) ||
-              isLevelStaticViewKey(key) ||
-              isLevelStaticKey(key) ||
               state.folders.some((folder) => folder.key === key)
             );
           }
           if (id.startsWith("document:")) {
             const key = id.slice("document:".length);
             return (
-              isLevelStaticKey(key) ||
               state.documents.some((document) => document.key === key)
             );
           }
@@ -668,23 +631,6 @@ export function FlowExplorer({
               visible.add(`folder:${f.key}`);
               includeParents(pkg, f.parentId);
             }
-            // 静态导航点不在 state.documents 里，搜索时也要把「导航器」父节点带出来
-            if (
-              pkg === "level" &&
-              f.key === sectionFolderKey("level", "navigator")
-            ) {
-              const hit = state.documents
-                .filter((d) => isLevelDocument(d))
-                .some((d) =>
-                  readLevelSource(d.source).doc?.navigation.some((point) =>
-                    point.id.toLocaleLowerCase().includes(query),
-                  ),
-                );
-              if (hit) {
-                visible.add(`folder:${f.key}`);
-                includeParents(pkg, f.parentId);
-              }
-            }
           });
         state.documents
           .filter((d) => d.package === pkg)
@@ -715,80 +661,11 @@ export function FlowExplorer({
           result.push({ entry, name: doc.name, depth, parent, pkg });
       }
     };
-    /** 静态导航器是视图：模板内声明的导航点按模板分组列出，不是目录。 */
-    const pushStaticNav = (depth: number) => {
-      const staticEntry: FlowEntry = {
-        kind: "folder",
-        key: LEVEL_STATIC_VIEW_KEY,
-      };
-      const staticId = entryId(staticEntry);
-      const templates = state.documents
-        .filter((document) => isLevelDocument(document))
-        .map((document) => ({
-          document,
-          name: document.name.replace(/\.level$/i, ""),
-          points: readLevelSource(document.source).doc?.navigation ?? [],
-        }))
-        .filter((item) => item.points.length > 0)
-        .sort((a, b) =>
-          a.name.localeCompare(b.name, "zh-CN", { numeric: true }),
-        );
-      const matchingTemplates = templates.filter(
-        (item) =>
-          !query ||
-          item.name.toLocaleLowerCase().includes(query) ||
-          item.points.some((point) =>
-            point.id.toLocaleLowerCase().includes(query),
-          ),
-      );
-      if (query && !matchingTemplates.length) return;
-      result.push({
-        entry: staticEntry,
-        name: "静态导航器",
-        depth,
-        parent: sectionFolderKey("level", "navigator"),
-        pkg: "level",
-      });
-      if (query || expanded.has(staticId)) {
-        for (const item of matchingTemplates) {
-          const templateEntry: FlowEntry = {
-            kind: "folder",
-            key: levelStaticTemplateKey(item.document.key),
-          };
-          const templateId = entryId(templateEntry);
-          result.push({
-            entry: templateEntry,
-            name: item.name,
-            depth: depth + 1,
-            parent: LEVEL_STATIC_VIEW_KEY,
-            pkg: "level",
-          });
-          if (query || expanded.has(templateId)) {
-            for (const point of item.points) {
-              if (query && !point.id.toLocaleLowerCase().includes(query))
-                continue;
-              result.push({
-                entry: {
-                  kind: "document",
-                  key: levelStaticPointKey(item.document.key, point.id),
-                },
-                name: point.id,
-                depth: depth + 2,
-                parent: levelStaticTemplateKey(item.document.key),
-                pkg: "level",
-              });
-            }
-          }
-        }
-      }
-    };
     const visit = (
       pkg: FlowPackageId,
       parent: string | null,
       depth: number,
     ) => {
-      if (pkg === "level" && parent === sectionFolderKey("level", "navigator"))
-        pushStaticNav(depth);
       if (pkg === "quest" && parent === null) {
         // 任务分类虚入口固定在单／多进度视图之前
         const catalog = state.documents.find((d) => isQuestCatalogDocumentKey(d.key));
@@ -1169,24 +1046,12 @@ export function FlowExplorer({
       return;
     }
     if (mode === "navigation" && pkg !== "level") {
-      onNotice("动态导航点只能建在「地图 / 导航器 / 动态导航器」中。");
+      onNotice("导航器只能建在「地图 / 导航器」中。");
       return;
     }
     if (mode === "level" && pkg !== "level") {
       onNotice("地图模板只能建在「地图」分类中。");
       return;
-    }
-    if (mode === "folder" && pkg === "level") {
-      const section = folderSectionId(
-        state,
-        entry.kind === "folder" ? entry.key : entryFolder(state, entry),
-      );
-      if (section === "navigator" || section === "static-nav") {
-        onNotice(
-          "「导航器」只作分组，请在「地图模板」或「动态导航器」下建文件夹。",
-        );
-        return;
-      }
     }
     if (mode === "entity" && !packageAllowsEntities(pkg)) {
       onNotice("实体只能建在实体库中。");
@@ -1313,9 +1178,7 @@ export function FlowExplorer({
     const removableFolders = folders.filter((key) => {
       if (
         isSectionFolder(key) ||
-        isBuiltinScriptFolder(key) ||
-        isLevelStaticViewKey(key) ||
-        isLevelStaticKey(key)
+        isBuiltinScriptFolder(key)
       )
         return false;
       const remainingDocs = state.documents.some(
@@ -1640,9 +1503,7 @@ export function FlowExplorer({
           const removableFolders = selection.folders.filter((key) => {
             if (
               isSectionFolder(key) ||
-              isBuiltinScriptFolder(key) ||
-              isLevelStaticViewKey(key) ||
-              isLevelStaticKey(key)
+              isBuiltinScriptFolder(key)
             )
               return false;
             const remainingDocs = state.documents.some(
@@ -1685,31 +1546,6 @@ export function FlowExplorer({
         const entry = menu.entry,
           pkg = entryPackage(state, entry),
           folder = resolveCreateFolder(entryFolder(state, entry));
-        if (
-          (entry.kind === "folder" || entry.kind === "document") &&
-          (isLevelStaticViewKey(entry.key) || isLevelStaticKey(entry.key))
-        ) {
-          const documentKey =
-            entry.kind === "document" && isLevelStaticKey(entry.key)
-              ? (parseLevelStaticPointKey(entry.key)?.documentKey ?? null)
-              : null;
-          return [
-            ...(documentKey
-              ? [
-                  {
-                    label: "打开所属地图模板",
-                    action: () => onSelect(documentKey),
-                  },
-                ]
-              : []),
-            {
-              label: "静态导航器视图",
-              disabled: true,
-              hint: "模板内声明的导航点，不落独立文件；在所属地图模板里修改",
-              action: () => {},
-            },
-          ];
-        }
         if (entry.kind === "document") {
           const document = state.documents.find((d) => d.key === entry.key);
           const builtin = isBuiltinScriptDocumentKey(entry.key);
@@ -1747,7 +1583,7 @@ export function FlowExplorer({
                     : level
                       ? "打开地图模板"
                       : navigation
-                        ? "打开动态导航点"
+                        ? "打开动态导航器"
                         : quest
                           ? simpleQuest
                             ? "打开单进度任务"
@@ -1772,7 +1608,7 @@ export function FlowExplorer({
                   : level
                     ? "下载地图模板"
                     : navigation
-                      ? "下载动态导航点"
+                      ? "下载动态导航器"
                       : quest
                         ? "下载任务"
                         : script
@@ -1847,7 +1683,7 @@ export function FlowExplorer({
                   : level
                     ? "移除地图模板…"
                     : navigation
-                      ? "移除动态导航点…"
+                      ? "移除动态导航器…"
                       : quest
                         ? "移除任务…"
                         : script
@@ -2014,12 +1850,12 @@ export function FlowExplorer({
           if (sectionFolder) {
             const navSection = section === "dynamic-nav";
             items.unshift({
-              label: navSection ? "新建动态导航点" : "新建地图模板",
+              label: navSection ? "新建导航器" : "新建地图模板",
               action: () =>
                 startEdit(navSection ? "navigation" : "level", entry),
             });
             items.push({
-              label: navSection ? "导入动态导航点…" : "导入地图模板…",
+              label: navSection ? "导入导航器…" : "导入地图模板…",
               action: () => onImport(sectionFolder, pkg),
             });
           }
@@ -2235,9 +2071,6 @@ export function FlowExplorer({
           const multiQuestDoc = !!document && isMultiQuestDocument(document);
           const navigationDoc = !!document && isNavigationDocument(document);
           const levelDoc = !!document && isLevelDocument(document);
-          const rowKey = row.entry.kind === "package" ? "" : row.entry.key;
-          const staticRow =
-            isLevelStaticViewKey(rowKey) || isLevelStaticKey(rowKey);
           const itemTableDoc =
             row.entry.kind === "document" && isLibraryTableKey(row.entry.key);
           const entityDoc = !!document && document.package === "entities";
@@ -2257,13 +2090,7 @@ export function FlowExplorer({
               ? row.entry.package
               : section
                 ? sectionIconKind(row.entry.key)
-                : isLevelStaticViewKey(rowKey)
-                  ? "navigator"
-                  : isLevelStaticKey(rowKey)
-                    ? parseLevelStaticPointKey(rowKey)
-                      ? "navigator"
-                      : "level"
-                    : questViewIcon
+                : questViewIcon
                       ? questViewIcon
                       : itemTableDoc
                         ? "item-table"
@@ -2315,8 +2142,7 @@ export function FlowExplorer({
                     builtinDoc ||
                     itemTableDoc ||
                     scriptLoadDoc ||
-                    questView ||
-                    staticRow,
+                    questView,
                 }}
                 icon={<Icon kind={iconKind} />}
                 aria-disabled={disabled}
@@ -2332,8 +2158,7 @@ export function FlowExplorer({
                   builtinFolder ||
                   itemTableDoc ||
                   scriptLoadDoc ||
-                  questView ||
-                  staticRow
+                  questView
                     ? scriptLoadDoc
                       ? `${row.name}（固定入口）`
                       : `${row.name}（只读）`
@@ -2364,7 +2189,6 @@ export function FlowExplorer({
                   !builtinFolder &&
                   !itemTableDoc &&
                   !scriptLoadDoc &&
-                  !staticRow &&
                   multiCount <= 1
                 }
                 onDragStart={(event) => {
@@ -2432,7 +2256,7 @@ export function FlowExplorer({
                                   : created.mode === "level"
                                     ? "新地图模板名称"
                                     : created.mode === "navigation"
-                                      ? "新导航点名称"
+                                      ? "新导航器名称"
                                       : created.mode === "entity"
                                         ? "新实体名称"
                                         : created.mode === "item"
@@ -2516,7 +2340,7 @@ export function FlowExplorer({
         {!search && !hasAnyResource && !edit && (
           <p className="flow-explorer-empty">
             在「地图」下新建或拖入
-            .level（模板里包含区域与静态导航器）；「动态导航器」下新建或拖入
+            .level（模板里包含区域与地标）；「导航器」下新建或拖入
             .nav；「任务」下新建或拖入 .quest（单进度 /
             多进度）；「脚本」下新建或拖入 .js；「物品库」下新建 .item 或拖入
             .item / .itemstack；「商店」下新建或拖入 .shop；「礼包」下新建或拖入
@@ -2581,7 +2405,7 @@ export function FlowExplorer({
         {multiCount > 1 ? `已选 ${multiCount} 项 · ` : ""}
         {FLOW_PACKAGE_ORDER.length} 个分类 · {questDocCount} 个任务（
         {simpleQuestCount} 单进度 · {multiQuestCount} 多进度） · {levelDocCount}{" "}
-        个地图模板 · {navigationDocCount} 个动态导航点 · {scriptDocCount} 个脚本
+        个地图模板 · {navigationDocCount} 个导航器 · {scriptDocCount} 个脚本
         · {itemDocCount} 个物品 · {kitDocCount} 个礼包 · 拖入/粘贴导入 · Ctrl
         多选 · Delete 删除
       </div>
