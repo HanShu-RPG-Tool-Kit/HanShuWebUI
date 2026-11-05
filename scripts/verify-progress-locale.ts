@@ -12,11 +12,10 @@ import {
   flowNodeFieldKey,
   KIT_FEEDBACK_TITLE_KEY,
   KIT_NAME_KEY,
-  NAV_LABEL_KEY,
 } from '../src/workspaces/gameplay/progressLocale.ts'
 import { createProgress, createProgressLocaleSeeds, stringifyProgress } from '../src/workspaces/gameplay/progressDoc.ts'
 import { createKit, stringifyKit } from '../src/workspaces/gameplay/kit.ts'
-import { createNavigationPoint, NAV_DISPLAY_NAME, stringifyNavigationPoint } from '../src/workspaces/gameplay/navigationPoint.ts'
+import { createNavigationPoint } from '../src/workspaces/gameplay/navigationPoint.ts'
 import { normalizeTextMapKey, TextMap, type TextSink } from '../src/i18n/textMap.ts'
 import { textAssetPath } from '../src/i18n/localeLayout.ts'
 
@@ -108,14 +107,10 @@ const migratedPredicate = ensureFlowLocaleKeys(parseFlow(JSON.stringify({
 assert.equal(Object.hasOwn(migratedPredicate.flow.predicates![predicate.id]!, 'title'), false)
 assert.equal(Object.hasOwn(migratedPredicate.seeds, flowNodeFieldKey('predicates', predicate.id, 'title')), false)
 
-const nav = createNavigationPoint('demo:hub')
-assert.equal(nav.custom_data[NAV_DISPLAY_NAME], NAV_LABEL_KEY)
+const nav = createNavigationPoint('demo:hub', 'tower')
+nav.track.ref = 'demo$gate'
 assert.deepEqual(defaultNavLocaleSeeds('旧塔'), { display_name: '旧塔' })
-const legacyNav = { ...nav, custom_data: { ...nav.custom_data, [NAV_DISPLAY_NAME]: '明文旧塔' } }
-const migratedNav = ensureNavLocaleKeys(legacyNav)
-assert.equal(migratedNav.point.custom_data[NAV_DISPLAY_NAME], NAV_LABEL_KEY)
-assert.equal(migratedNav.seeds[NAV_LABEL_KEY], '明文旧塔')
-assert.equal(JSON.parse(stringifyNavigationPoint(migratedNav.point)).custom_data[NAV_DISPLAY_NAME], NAV_LABEL_KEY)
+assert.deepEqual(ensureNavLocaleKeys(nav), { point: nav, seeds: {} })
 
 const kit = createKit('新手礼包')
 assert.equal(kit.name, KIT_NAME_KEY)

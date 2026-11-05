@@ -117,7 +117,7 @@ registerLocaleExportRule({
 
 **任务编译（`questCompiler`）**：单/多进度 `.quest` 均编译为 `quest/<名>.questc`，平面 **shared**，正文为 `hanshu.questc` v1。资源身份来自文件名，正文不再携带根级任务 ID；节点各端口保存有序连接指针，不导出独立边表、布局或派生 order 字段。源文件顺序从布局实时计算，编译时固化为数组。单进度生成明确的成败结束节点及运行策略，不再携带 `extensions.hanshuSimpleQuest`。任务语言资产仍属 `.quest` 源文件，继续使用 `lang_quest` 路径。格式与加载校验见[流程模型](#progress-flow-model)的编译格式章节。验证：`npm run test:quest-compile`。
 
-**地图编译（`levelCompiler` / `navigationCompiler`）**：一个 `.level` 拆成 `levels/<模板>.json`、`regions/<模板>$<区域>.json`、`navigation_points/<模板>$<导航点>.json`，平面 **shared**；子对象的 `level` 字段由编译器写入。动态 `.nav` 输出 `navigation_points/<名称>.json`。模板子项与动态导航点共用目录，导出路径重复时 `levelArtifactPass` 报 error。详见[地图模板与导航](#level-guide)。
+**地图编译（`levelCompiler` / `navigationCompiler`）**：一个 `.level` 拆成 `levels/<模板>.json`、`regions/<模板>$<区域>.json`、`landmarks/<模板>$<地标>.json`，平面 **shared**；子对象的 `level` 字段由编译器写入。合法 `.nav` 只校验追踪引用，不写入 PAK；`lang_nav` 仍随该文件导出。`navigation_points/` 会被 `levelArtifactPass` 报「已废弃」。导出路径重复同样报 error。详见[地图模板与导航](#level-guide)。
 
 ### 源目录与 PAK 顶层
 

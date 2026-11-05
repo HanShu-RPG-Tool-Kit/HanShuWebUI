@@ -78,6 +78,7 @@ export function EditorDock({
   initialPinnedIds = [],
   onPinnedChange,
   onCloseMany,
+  beforeChange,
 }: {
   storageKey: string
   pages: readonly EditorDockPage[]
@@ -90,6 +91,8 @@ export function EditorDock({
   initialPinnedIds?: readonly string[]
   onPinnedChange?: (ids: string[]) => void
   onCloseMany?: (ids: string[], nextActiveId?: string) => void
+  /** Keep an editor's unapplied field draft mounted until it is applied or explicitly discarded. */
+  beforeChange?: () => boolean
 }) {
   const rootRef = useRef<HTMLDivElement>(null)
   const pageIds = pages.map((page) => page.id).join("\0")
@@ -109,6 +112,8 @@ export function EditorDock({
   const menuAnchor = useMemo(() => ({ current: menu?.anchor ?? null }), [menu?.anchor])
   const onActivateRef = useRef(onActivate)
   onActivateRef.current = onActivate
+  const beforeChangeRef = useRef(beforeChange)
+  beforeChangeRef.current = beforeChange
 
   useEffect(() => {
     setLayout((current) => syncEditorDock(current, pageIds.split("\0").filter(Boolean), activeRef.current))
@@ -126,6 +131,7 @@ export function EditorDock({
     const onReset = (event: Event) => {
       const key = (event as CustomEvent<{ storageKey?: string }>).detail?.storageKey
       if (key && key !== storageKey) return
+      if (beforeChangeRef.current?.() === false) return
       const ids = pageIds.split("\0").filter(Boolean)
       setLayout(createEditorDockState(ids, activeRef.current))
     }
@@ -187,6 +193,7 @@ export function EditorDock({
       if (session.origin && (hit.kind === "float" || (hit.kind === "tabs" && hit.targetId === session.fromId))) return
       const drop = dropFrom(hit, root, event.clientX, mover)
       const next = applyEditorDrop(layoutRef.current, { fromId: session.fromId, tabs: session.tabs }, drop)
+      if (beforeChangeRef.current?.() === false) return
       layoutRef.current = next
       setLayout(next)
       const opened = session.tabs[0]
@@ -206,6 +213,7 @@ export function EditorDock({
   function beginDrag(event: ReactPointerEvent, fromId: string, tabs: string[], whole: boolean, origin: EditorRect | null) {
     if (event.button !== 0) return
     if (event.target instanceof Element && event.target.closest(".flow-page-tab-close, .panel-dock-redock, input, textarea, select, a")) return
+    if (beforeChangeRef.current?.() === false) return
     event.preventDefault()
     dragRef.current = {
       pointerId: event.pointerId,
@@ -236,6 +244,7 @@ export function EditorDock({
   }
 
   function closeTabs(groupId: string, id: string, mode: 'one' | 'others' | 'right' | 'group') {
+    if (beforeChangeRef.current?.() === false) return
     const closing = editorDockCloseTargets(layoutRef.current, groupId, id, mode)
     if (!closing.length) return
     const next = closeEditorDockTabs(layoutRef.current, closing)
@@ -248,6 +257,7 @@ export function EditorDock({
   }
 
   function movePage(groupId: string, id: string, drop: EditorDrop) {
+    if (beforeChangeRef.current?.() === false) return
     const next = applyEditorDrop(layoutRef.current, { fromId: groupId, tabs: [id] }, drop)
     layoutRef.current = next; setLayout(next); onActivate(id)
   }

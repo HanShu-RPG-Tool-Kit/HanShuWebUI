@@ -1,0 +1,109 @@
+.level-editor .region-inspector-tabs { display:flex; gap:4px; padding:0 0 10px; border-bottom:1px solid var(--level-line); margin-bottom:14px }
+.level-editor .region-inspector-tabs button { flex:1; border:0; border-bottom:2px solid transparent; border-radius:2px; background:transparent; color:var(--muted,#a3adb8); padding:9px }
+.level-editor .region-inspector-tabs button[aria-selected="true"] { border-color:var(--level-warm); background:#292c30; color:#f3dfbb }
+.level-editor .region-effects { min-width:0; padding-bottom:12px; font-size:13px; line-height:1.5 }
+.gameplay-workspace .level-editor .region-effects :is(button,input,select,textarea) { font-size:12px; line-height:1.4 }
+.gameplay-workspace .level-editor .region-effects :is(input[type="number"],input[type="text"],input[type="search"],select) { min-height:29px }
+.gameplay-workspace .level-editor .region-effects input[type="color"] { width:48px; flex:0 0 48px; min-height:30px; padding:2px }
+.gameplay-workspace .level-editor .region-effects input[type="range"] { width:0; min-width:0; min-height:18px; height:18px; padding:0; flex:1; background:transparent; border:0 }
+.level-editor .region-effects .level-hint { font-size:12px; line-height:1.6 }
+.region-effects-intro strong { font-size:13px; font-weight:600; color:#ecdfc7 }
+.region-effects-intro p,.region-effects-preview p { font-size:13px; color:#a9b4bf; line-height:1.6; margin:5px 0 12px }
+.region-effect-tabs { display:grid; grid-template-columns:1fr 1fr; gap:5px; margin:12px 0 18px; position:sticky; top:0; z-index:2; background:var(--level-panel); padding:5px 0 }
+.level-editor .region-effect-tabs button { display:grid; grid-template-columns:22px 1fr; gap:2px 5px; text-align:left; padding:9px 7px; border:1px solid #343a40; border-radius:3px; background:#22262a }
+.region-effect-tabs button > span:first-child { grid-row:1/3; align-self:center; color:#9eacb9; font-size:22px }
+.region-effect-tabs small { color:#8e9ca9; font-size:12px }
+.level-editor .region-effect-tabs button[aria-selected="true"] { background:#34302a; border-color:#997a48; color:#ffe2af }
+.region-effect-tabs button[aria-selected="true"] > span:first-child { color:#e8b45a }
+.region-effect-title { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:12px }
+.region-effect-title h3 { margin:0; font-size:14px }
+.region-effect-enable { display:flex; gap:6px; align-items:center; font-size:12px }
+.region-effect-enable input,.region-effect-value input[type="checkbox"] { width:14px; height:14px; accent-color:#dfb365; margin:0 }
+.region-effect-empty { padding:18px 8px 22px; text-align:center; border-top:1px solid #30363c; border-bottom:1px solid #30363c; margin-bottom:14px }
+.region-effect-empty > span { font-size:36px; color:#8299a8 }
+.region-effect-empty p { font-size:12px; color:#b5bdc5; line-height:1.7 }
+.region-effect-presets { display:flex; gap:4px; flex-wrap:wrap; margin-bottom:13px }
+.level-editor .region-effect-presets button { font-size:12px; padding:5px 6px; display:flex; align-items:center; gap:4px }
+.region-effect-presets i { width:10px; height:10px; border-radius:50%; border:1px solid #ffffff40 }
+.region-effect-scope { display:flex; flex-direction:column; gap:5px; font-size:13px; color:#b8c3cc; margin:10px 0 }
+.region-effect-group { border-top:1px solid #343a40; margin-top:12px; padding:0 0 10px }
+.region-effect-group > summary { padding:12px 0; cursor:pointer; font-size:12px; color:#e2d8c5; font-weight:600 }
+.region-effect-group > summary small { color:#9cabb9; font-size:12px; float:right }
+.region-effect-value { margin:0 0 12px; min-width:0 }
+.region-effect-value-label { display:flex; align-items:center; justify-content:space-between; min-height:22px; margin-bottom:3px; gap:4px }
+.region-effect-value-label label { display:flex; align-items:center; gap:5px; font-size:13px; color:#bdc7d0 }
+.region-effect-value-label small { font-size:12px; color:#7c8e9d; font-weight:400 }
+.level-editor .region-effect-value-label > button { background:transparent; border:0; padding:0 3px; color:#8e9ca9; font-size:14px; min-height:18px }
+.region-effect-number { display:flex; align-items:center; gap:8px; min-width:0 }
+.level-editor .region-effect-number > input[type="number"] { width:74px; flex:0 0 74px; padding:5px 6px; font-size:12px }
+.region-effect-number input[type="range"] { width:0; flex:1; accent-color:#dfb365; height:16px; min-width:0; cursor:ew-resize; background:transparent; padding:0 }
+.region-effect-number input[type="number"]:only-child { width:100%; flex:1 }
+.region-effect-value > select,.region-effect-value > input { width:100%; min-width:0; font-size:12px }
+.region-effect-scope select { min-width:0; width:100%; font-size:13px; padding:7px 5px }
+.region-effect-switch { display:flex; align-items:center; gap:8px; color:#d4dbe1; font-size:13px }
+.region-effect-color { display:flex; align-items:center; flex-wrap:wrap; gap:7px }
+.level-editor .region-effect-color input[type="color"] { width:46px; height:28px; padding:2px; background:#13171a; border-color:#4a555e; cursor:pointer }
+.region-effect-color > span { font-size:13px; color:#d2d9de; font-variant-numeric:tabular-nums }
+.region-effect-color > label { flex:1 0 100%; display:flex; align-items:center; gap:8px; font-size:12px; color:#8697a7 }
+.region-effect-color input[type="range"] { flex:1; min-width:0; height:15px; padding:0; accent-color:#c3b28e }
+.region-effect-vector { display:flex; gap:5px }
+.region-effect-vector label { flex:1; width:0; font-size:12px; color:#a8b6c0; display:flex; flex-direction:column; gap:4px }
+.region-effect-vector input { min-width:0; width:100%; padding:5px 3px!important; font-size:13px!important }
+ .region-fog-distance { margin:16px 0; padding:12px; border:1px solid #40505c; background:#17222b; border-radius:4px }
+.region-fog-distance figcaption { display:flex; justify-content:space-between; color:#d8e2e9; font-size:13px }
+.region-fog-distance figcaption span { color:#a6b7c3; font-size:12px }
+.region-fog-distance svg { width:100%; display:block; margin:8px 0; font-size:13px }
+.region-fog-distance > div { display:flex; justify-content:space-between; gap:12px; color:#b9c8d3; font-size:12px }
+.region-fog-distance b { color:#ebd6aa; font-variant-numeric:tabular-nums }
+.region-fog-distance > small { display:block; margin-top:8px; color:#a3b6c3; font-size:12px; line-height:1.5 }
+.region-shader-entry { border:1px solid #3b4248; border-left:2px solid #7b8e9c; background:#1f2326; padding:0 9px 7px; margin:9px 0 }
+.region-shader-entry > summary { display:flex; align-items:center; gap:7px; cursor:pointer; padding:10px 0; font-size:12px; font-weight:600; color:#e4e5df }
+.region-shader-entry > summary > span { color:#bca16b; font-size:13px }
+.region-shader-entry summary small { margin-left:auto; color:#7e909f; font-size:12px; font-weight:400 }
+.region-shader-order { display:flex; gap:3px; padding:0 0 10px }
+.level-editor .region-shader-order button { padding:3px 6px; font-size:12px; color:#b1bdc7 }
+.region-shader-order button:last-child { margin-left:auto }
+.region-add-effect { width:100%; border-style:dashed!important; background:transparent!important; margin:4px 0 10px }
+.region-add-effect small { color:#8495a3; margin-left:5px }
+.region-shader-picker { display:grid; grid-template-columns:1fr 1fr; gap:5px; padding:0 0 10px }
+.level-editor .region-shader-picker > button { display:flex; flex-direction:column; padding:0 0 6px; gap:6px; border-color:#414d58; overflow:hidden; font-size:12px; background:#252d33 }
+.region-music-picker > label { display:flex; flex-direction:column; gap:5px; font-size:13px; color:#b8c4ce; margin:10px 0 }
+.region-music-picker input { width:100%; min-width:0; font-size:13px!important }
+.region-music-options { max-height:180px; overflow:auto; display:flex; flex-direction:column; gap:3px }
+.level-editor .region-music-options button { display:flex; flex-direction:column; align-items:flex-start; text-align:left; padding:7px; font-size:13px; overflow:hidden; min-height:35px }
+.region-music-options button small { font-size:12px; color:#8298a9; overflow-wrap:anywhere; margin-top:3px }
+.level-editor .region-music-options button[aria-selected="true"] { border-color:#b19158; background:#343128; color:#ffe1a4 }
+.region-music-play { width:100%; margin:5px 0 }
+.region-effects-actions { display:flex; gap:5px; border-top:1px solid #3d444b; padding-top:12px; margin-top:10px }
+.region-effects-actions > button { flex:1; font-size:13px }
+.level-editor .region-effects-actions > button:first-child { background:#574a31; border-color:#977b47; color:#ffebc9 }
+.region-effects-preview { margin-top:12px; padding:10px 0; border-bottom:1px solid #353b41 }
+.region-effects-preview > button { width:100%; font-size:13px }
+.level-editor .region-effects-preview > button[aria-pressed="true"] { border-color:#82b7b0; color:#bfe5df; background:#263c3a }
+.region-effects-preview p { margin:7px 0 0; font-size:12px }
+.region-effect-library-state { display:flex; justify-content:space-between; align-items:center; font-size:12px; color:#7e909e; margin-top:8px }
+.level-editor .region-effect-library-state button { background:transparent; border:0; padding:3px; font-size:12px; color:#a3b4c1 }
+
+.level-editor .region-shader-picker > button { text-align:left; align-items:flex-start; justify-content:flex-start; padding:10px; min-height:66px; gap:5px }
+.region-shader-picker > button small { color:#acbdc9; font-weight:400; font-size:12px; line-height:1.5 }
+.level-editor .region-effects :is(button,input,select):focus-visible { outline:2px solid #8bc9ce; outline-offset:2px }
+.level-editor .region-effect-group > summary { padding:14px 0; font-size:14px }
+.level-editor .region-effect-value-label label { font-size:13px }
+.level-editor .region-effect-value { margin-bottom:16px }
+.region-field-hint { color:#a9bac7; font-size:12px; line-height:1.65; margin:6px 0 0 }
+.level-inspector-scroll:has(> .region-inspector-tabs) { display:flex; flex-direction:column; overflow:hidden; padding:10px 12px 0; gap:0 }
+.level-inspector-scroll > .region-inspector-tabs { flex:0 0 auto; margin:8px 0; padding-bottom:4px }
+.region-geometry-scroll,.region-effects-body { flex:1; min-height:0; overflow:auto }
+.region-geometry-scroll[hidden],.region-effects-body[hidden] { display:none }
+.region-effects-body { overflow:hidden }
+.region-effects-body > .region-effects { display:flex; flex-direction:column; height:100%; min-height:0; padding:0; box-sizing:border-box }
+.region-effects-scroll { overflow:auto; min-height:0; flex:1; padding-right:6px; scrollbar-gutter:stable }
+.region-effects > .region-effects-intro { flex:none; font-size:12px; color:#a9bac7; margin:2px 0 6px }
+.region-effects > .region-effect-tabs { flex:none; margin:0 0 10px; position:static }
+.region-effects > .region-effect-title { flex:none; margin:0 0 8px }
+.region-effects > .region-effects-actions { flex:none; margin:0; padding:9px 0 0; background:var(--level-panel) }
+.region-effects > .region-effects-preview { flex:none; margin:0; padding:8px 0; border:0; background:var(--level-panel) }
+.region-effects > .region-effects-preview p { margin:4px 0 0; font-size:12px }
+.region-effects > .region-effects-actions button,.region-effects > .region-effects-preview button { min-height:32px }
+.effect-texture-picker select,.effect-texture-picker input { width:100%; min-width:0 }
+.effect-texture-picker summary { cursor:pointer; color:#a9bac7; font-size:12px; margin:8px 0 }

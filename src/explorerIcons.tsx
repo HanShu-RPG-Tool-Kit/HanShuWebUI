@@ -143,7 +143,7 @@ const PATHS: Record<ExplorerIconKind, string> = {
  * 后缀 → kind。
  *
  * **`.quest` / `.nav` / `.kit` 等曾经不在这张表里**，于是资源树把它们都画成
- * 通用文件图标 —— 补上之后，同一个包里的任务、导航点、礼包才一眼分得开。
+ * 通用文件图标 —— 补上之后，同一个包里的任务、导航器、礼包才一眼分得开。
  */
 const BY_EXT: Record<string, ExplorerIconKind> = {
   '.hs': 'hanshu',

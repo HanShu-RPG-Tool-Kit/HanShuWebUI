@@ -389,8 +389,9 @@ body.is-panel-dragging .flow-explorer-heading.is-draggable { cursor: grabbing; }
 .flow-script-readonly-bar button:hover { color: var(--text, #e8e8e8); background: #303134; }
 .flow-script-editor { flex: 1; min-height: 0; overflow: hidden; background: #1e1e1e; }
 
-/* ---- 地图模板：JSON + 静态导航点本地化 ---- */
-.flow-level-pane { padding: 0; gap: 0; height: 100%; }
+/* ---- 地图模板：三维体积 + 地标本地化 ---- */
+.flow-level-pane { padding: 0; gap: 0; height: 100%; min-height: 0; container: level-workspace / inline-size; }
+.flow-level-pane .level-editor { flex: 1; min-height: 0; }
 .flow-level-pane .flow-script-editor { margin: 10px 12px 0; }
 .flow-level-locale {
   flex: 0 1 auto; max-height: 38%; overflow: auto; margin: 8px 12px 12px;
@@ -402,6 +403,9 @@ body.is-panel-dragging .flow-explorer-heading.is-draggable { cursor: grabbing; }
 .flow-level-locale-row > span { flex: 0 0 24%; color: var(--text-muted, #9aa3b5); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .flow-level-locale-row > input { flex: 1; min-width: 0; height: 24px; }
 .flow-level-locale-row > em { flex: 1; color: var(--fl-faint, #7a8294); font-style: normal; }
+.flow-level-locale > summary { cursor: pointer; color: var(--text-muted, #9aa3b5); font-size: var(--fl-font-sm, 12px); }
+.flow-level-locale > summary > span { margin-left: 6px; font-variant-numeric: tabular-nums; opacity: .7; }
+.flow-level-locale[open] > summary { margin-bottom: 8px; }
 
 .flow-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px; text-align: center; background: var(--fl-panel); }
 .flow-empty h2, .flow-empty h3 { font-weight: 600; font-size: var(--fl-font-title); margin: 12px 0 6px; }

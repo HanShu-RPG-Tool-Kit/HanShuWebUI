@@ -12,6 +12,7 @@ import { identityCompiler } from './identity'
 import { entityCompiler } from './entity'
 import { itemCompiler } from './item'
 import { localeAssetsPass } from './localeAssets'
+import { regionEffectAssetsPass } from './regionEffectAssets'
 import { questCompiler } from './quest'
 import { scriptLoadCompiler } from './scriptLoad'
 import { displayTextReferences, displayTextRuntimeTranslations, type DisplayTextKind } from '../../../workspaces/gameplay/displayTextLocale'
@@ -44,7 +45,7 @@ export function ensureBuiltinCompilers(): void {
   for (const compiler of [hanshuCompiler, itemCompiler, entityCompiler, kitCompiler, shopCompiler, actorCompiler, bossbarCompiler, reputationCompiler, questCompiler, levelCompiler, navigationCompiler, scriptLoadCompiler, identityCompiler]) {
     if (!listFileCompilers().some((entry) => entry.id === compiler.id)) registerFileCompiler(compiler)
   }
-  for (const pass of [localeAssetsPass, activeSkinsPass, levelArtifactPass]) {
+  for (const pass of [localeAssetsPass, activeSkinsPass, levelArtifactPass, regionEffectAssetsPass]) {
     if (!listPackagePasses().some((entry) => entry.id === pass.id)) registerPackagePass(pass)
   }
   for (const rule of builtinLocaleRules) {

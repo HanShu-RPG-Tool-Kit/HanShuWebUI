@@ -115,7 +115,7 @@ export function GameDevServerPanel({ onClose }: { onClose: () => void }) {
     setPort(String(snap.prefs.port))
     setPassword(snap.prefs.password)
     setAutoConnect(snap.prefs.autoConnect)
-  }, [snap.prefs])
+  }, [snap.prefs.host, snap.prefs.port, snap.prefs.password, snap.prefs.autoConnect])
 
   useEffect(() => {
     const previous =
@@ -222,6 +222,7 @@ export function GameDevServerPanel({ onClose }: { onClose: () => void }) {
 
             <div className={`gds-phase phase-${snap.phase}`}>
               <strong>{phaseLabel(snap.phase)}</strong>
+              <span>游戏门户：{snap.prefs.host}:{snap.prefs.port}</span>
               {snap.health ? (
                 <span>
                   门户 HTTP 正常

@@ -239,7 +239,9 @@ export type Project = {
   assets: AssetFile[]
   /** 共享资源组织投影（`meta/explorer.json`）：各域的虚拟文件夹与放置 */
   explorer?: ExplorerOrganization
-  /** 显式 assets 真实目录（可为空），如 assets/voice/zh */
+  /** Shared author recipes; copied to project ZIP, never compiled into a PAK. */
+  regionEffectPresets?: string
+  /** 显式 assets 真实目录（可为空） */
   assetFolders: string[]
 }
 
