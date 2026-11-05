@@ -5,6 +5,7 @@ import {scriptType,type ScriptType} from './scriptResources/types'
 
 const SCRIPT_LOAD_TYPES = new Set(['common', 'player'])
 export const isScriptLoadFileName = (name: string) => name.trim().toLowerCase() === 'load.json'
+export const isQuestCatalogFileName = (name: string) => name.trim().toLowerCase() === 'catalog.json'
 import { isTextAssetName } from './i18n/textMap'
 import { defaultHsSeed } from './hanshu/defaultSeed'
 
@@ -72,6 +73,7 @@ export const FILE_PLANE: Record<string, FilePlane> = {
 /** 后缀默认平面；未列出则 `shared`（保守：两端都带上） */
 export function defaultPlaneForFile(name: string): FilePlane {
   if (isScriptLoadFileName(name)) return 'server'
+  if (isQuestCatalogFileName(name)) return 'shared'
   return FILE_PLANE[getExtension(name)] ?? 'shared'
 }
 
@@ -133,6 +135,7 @@ export function sourceRelativePath(
     if (!SCRIPT_LOAD_TYPES.has(kind)) throw new Error('启动列表仅用于 common / player 脚本类型')
     return `src/script/${kind}/load.json`
   }
+  if (isQuestCatalogFileName(name)) return 'src/quest/catalog.json'
   if (getExtension(name) === '.js') {
     const kind=scriptType(srcKind)
     return `src/script/${kind}/${name}`
@@ -158,6 +161,7 @@ export function sourceKindOf(
   if (getExtension(name) === '.js' || isScriptLoadFileName(name)) {
     return 'script'
   }
+  if (isQuestCatalogFileName(name)) return 'quest'
   const dir = fileDir(name)
   return dir ? dir.slice('src/'.length) : 'root'
 }

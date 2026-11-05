@@ -11,15 +11,12 @@ rust-version = "1.85"
 name = "hanshu_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
-[workspace]
-members = ["crates/skin-core", "crates/project-core", "crates/project-server"]
-
 [build-dependencies]
 tauri-build = { version = "2.6.3", features = [] }
 
 [dependencies]
-skin-core = { path = "crates/skin-core" }
-project-server = { path = "crates/project-server" }
+skin-core = { path = "../src-server/skin-core" }
+project-server = { path = "../src-server/project-server" }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"

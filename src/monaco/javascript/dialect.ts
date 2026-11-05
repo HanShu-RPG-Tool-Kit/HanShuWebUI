@@ -2,7 +2,7 @@ import {parse,tokenizer} from 'acorn'
 export type Hook={hook:string;function:string;line:number;cancellable:boolean|null;priority:string;receiveCancelled:boolean}
 export type GoalField={name:string;type:string;required:boolean;defaultValue:string|number|boolean|null}
 export type GoalSubscription={event:string;function:string;line:number;priority:string;receiveCancelled:boolean}
-export type GoalMetadata={id:string;line:number;configLine:number;stateLine:number;config:GoalField[];state:GoalField[];handlers:GoalSubscription[];requiresDelivery:boolean}
+export type GoalMetadata={id:string;line:number;configLine:number;stateLine:number;config:GoalField[];state:GoalField[];handlers:GoalSubscription[]}
 export type DialectDiagnostic={line:number;message:string}
 const ident='[A-Za-z_$][\\w$]*',typeName=`${ident}(?:\\.${ident})*(?:\\[\\])?`
 const declaration=new RegExp(`^(import|require)\\s+(${ident})\\s+from\\s+(["'])([^"'\\r\\n]+)\\3\\s*;?\\s*(?://.*)?$`)
@@ -105,8 +105,8 @@ export function transformDialect(source:string,mode:'runtime'|'editor'='runtime'
     if(phase>0&&phase<3&&kind!==(phase===1?'config':'state'))throw Error('Expected @goal → @config → @state in one block')
     if(kind==='goal'){
      if(phase!==0||business||hooks.length)throw Error('@goal must appear once after the prologue and before business code')
-     const args=split(body);if(args.length<1||args.length>2)throw Error('Invalid @goal arguments');const id=literal(args[0]);if(typeof id!=='string'||!id.trim())throw Error('Goal id must be a nonempty string')
-     goal={id,line,configLine:0,stateLine:0,config:[],state:[],handlers:[],requiresDelivery:booleanOption(options(args[1],['requires_delivery']),'requires_delivery',false)};phase=1
+     const args=split(body);if(args.length!==1)throw Error('Invalid @goal arguments');const id=literal(args[0]);if(typeof id!=='string'||!id.trim())throw Error('Goal id must be a nonempty string')
+     goal={id,line,configLine:0,stateLine:0,config:[],state:[],handlers:[]};phase=1
     }else if(kind==='config'||kind==='state'){
      if(!goal||phase!==(kind==='config'?1:2))throw Error('Expected @goal → @config → @state in one block')
      goal[kind]=fields(body);if(kind==='config'){goal.configLine=line;phase=2}else{goal.stateLine=line;phase=3}
@@ -163,7 +163,6 @@ export function transformDialect(source:string,mode:'runtime'|'editor'='runtime'
   if(phase!==3)error(goal.line,'Goal requires @goal, @config and @state in order')
   if(!goal.handlers.length)error(goal.line,'Goal requires at least one @subscribe handler')
   for(const [name,count] of [['update_state',1],['localize',2],['deliver',2]] as const){const fn=functions.get(name);if(name==='update_state'&&!fn)error(goal.line,'Goal requires update_state(instance)');if(fn&&fn.params.length!==count)error(fn.line,`${name} requires ${count} parameters`)}
-  if(functions.has('deliver')&&!goal.requiresDelivery)error(functions.get('deliver')!.line,'deliver requires requires_delivery: true')
  }
  return {source:mode==='editor'?editor.join('\n'):transformed,hooks,goal,diagnostics,imports:[...new Set(imports)]}
 }

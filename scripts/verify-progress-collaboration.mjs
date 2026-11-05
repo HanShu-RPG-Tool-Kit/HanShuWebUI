@@ -39,7 +39,7 @@ try {
   tokens.push(owner.token, a.token, b.token, v.token)
   await seedProgress(h, owner.token)
 
-  const graph = {nodes:[{id:'ref',type:'goal',goalId:'goal-counter'},{id:'output',type:'output'}],links:[{id:'wire',from:'ref',to:'output'}]}
+  const graph = {nodes:[{id:'ref',type:'goal',goalId:'goal-counter'},{id:'output',type:'output'}],links:[{id:'wire',from:'ref',fromPort:'output',to:'output',toPort:'input'}]}
   const graphAdd = apply([field('completion','all','custom'),effect({kind:'field',field:'completionGraph'},absent(),present(graph))])
   await send(v.token, graphAdd, 'rejected', 'forbidden')
   const custom = await send(a.token, graphAdd)

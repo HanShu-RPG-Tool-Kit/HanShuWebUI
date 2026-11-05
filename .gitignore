@@ -16,9 +16,11 @@ dist-ssr
 .env.*
 !.env.example
 
-# Tauri
+# Rust workspace / Tauri (target-dir is src-tauri/target via .cargo/config.toml)
+/target
 src-tauri/target
 src-tauri/gen/schemas
+
 
 # Editor directories and files
 .vscode/*
@@ -34,7 +36,6 @@ src-tauri/gen/schemas
 # Default directory project managed by the local Rust service
 .hanshu-project/
 **/.hanshu/service/
-demo-projects/**/.hanshu/
 
 # Generated verification screenshots and exports
 output/

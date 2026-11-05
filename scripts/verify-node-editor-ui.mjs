@@ -208,7 +208,7 @@ try{
  await page.mouse.move(innerGoalBefore.x+40,innerGoalBefore.y+12);await page.mouse.down();await page.mouse.move(innerGoalBefore.x+64,innerGoalBefore.y+36,{steps:5});await page.mouse.up();await page.waitForTimeout(100)
  const innerGoalAfter=await innerGoal.boundingBox();assert(Math.abs(innerGoalAfter.x-innerGoalBefore.x-24)<3,'nested node left drag moves inner node')
  const formAfterInnerDrag=await formNode.boundingBox();assert(Math.abs(formAfterInnerDrag.x-formBeforeInnerDrag.x)<2&&Math.abs(formAfterInnerDrag.y-formBeforeInnerDrag.y)<2,'inner drag leaves form in place')
- const innerSource=await innerGoal.locator('[data-flow-socket="out"]').boundingBox(),innerTarget=await nested.locator('[data-flow-socket="in"]').boundingBox()
+ const innerSource=await innerGoal.locator('[data-flow-socket="output"]').boundingBox(),innerTarget=await nested.locator('[data-flow-socket="input"]').boundingBox()
  await page.mouse.move(innerSource.x+innerSource.width/2,innerSource.y+innerSource.height/2);await page.mouse.down();await page.mouse.move(innerTarget.x+innerTarget.width/2,innerTarget.y+innerTarget.height/2,{steps:10});await page.mouse.up()
  await page.waitForFunction(id=>window.flow.progress[id].completionGraph.links.length===1,ids.p1)
  assert.equal(await nested.locator('[data-editor-edge]').count(),1,'inner connection reaches quest completion graph')

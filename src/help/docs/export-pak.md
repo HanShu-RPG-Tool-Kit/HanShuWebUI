@@ -128,7 +128,7 @@ registerLocaleExportRule({
 | `actors` | 演员模板（`.actor`）：脚本、标签、freezeAi、显示／掉落／对话／服务／声誉；仅 server 平面 |
 | `reputations` | 声誉阵营（`.rep`）：点数阈值、敌对关系与旗帜；仅 server 平面；译文在 `lang_rep` |
 | `script/<类型>` / `goal_scripts` | `common` / `kit` / `shop` / `actor` / `player` 脚本与单独的 goal 定义目录；内置脚本先入，工程同类型同名文件覆盖；`common`／`player` 另含有序启动列表 `load.json`（缺失引用为 warning）。启动列表只影响运行时挂载，**不裁剪**未启用脚本——全部 `.js` 仍导出 |
-| `hanshu` / `character` / `quest` / `level` / `navigator` / `gift` / `items` / `entities` | 其它源类型（旧工程 `progress` / `story` 目录仍可读） |
+| `hanshu` / `character` / `quest` / `level` / `navigator` / `gift` / `items` / `entities` | 其它源类型（旧工程 `progress` / `story` 目录仍可读）；`quest/catalog.json` 为任务 UI 分类表（缺失任务引用为 warning），译文归属 `lang_quest/catalog.lang` |
 
 脚本资源、内置覆盖与新建模板的完整约定见[脚本资源](#script-resources)。
 

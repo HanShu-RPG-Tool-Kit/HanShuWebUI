@@ -1,5 +1,5 @@
 // {{name}}
-// 跟踪只修改 st；有交付副作用时在 @goal 选项中声明 requires_delivery: true。
+// 跟踪只修改 st；外部要求交付时再调用 deliver（未实现则 no-op）。
 import PlayerTickPost from "net.neoforged.neoforge.event.tick.PlayerTickEvent$Post"
 import GoalInstance from "mchhui.rpgtoolkit.feature.goal.GoalInstance"
 

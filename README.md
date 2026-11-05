@@ -41,8 +41,8 @@ npm run dev
 ## 验证
 
 ```sh
-cargo test -p project-core --manifest-path src-tauri/Cargo.toml
-cargo build -p project-server --manifest-path src-tauri/Cargo.toml
+cargo test -p project-core
+cargo build -p project-server
 npm run check:protocol
 npm run test:project-boundary
 npm run test:local-projects
@@ -79,7 +79,7 @@ npm run lint
 协作面板「修改 → 放弃冲突修改并同步修改」会先查未知回执，再去掉冲突文件／字段，提交其余可提交修改，刷新服务器状态。断线、临时锁定或结果仍未知时保留对应草稿，并明确报告尚未完成。
 
 
-工程因事务归档报错时，可在 `src-tauri` 执行只读体检：
+工程因事务归档报错时，可在仓库根目录执行只读体检：
 
 ```powershell
 cargo run -p project-server -- --project "E:/projects/example" --archive-check

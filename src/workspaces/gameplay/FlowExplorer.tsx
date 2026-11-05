@@ -30,8 +30,11 @@ import {
   isFolderEmpty,
   isLibraryTableKey,
   isScriptLoadDocumentKey,
+  isQuestCatalogDocumentKey,
   scriptLoadLabel,
   scriptLoadTypeOfKey,
+  QUEST_CATALOG_LABEL,
+  QUEST_CATALOG_PATH,
   isLevelDocument,
   isLevelStaticKey,
   isLevelStaticViewKey,
@@ -778,6 +781,14 @@ export function FlowExplorer({
       if (pkg === "level" && parent === sectionFolderKey("level", "navigator"))
         pushStaticNav(depth);
       if (pkg === "quest" && parent === null) {
+        // 任务分类虚入口固定在单／多进度视图之前
+        const catalog = state.documents.find((d) => isQuestCatalogDocumentKey(d.key));
+        if (catalog) {
+          const catalogId = entryId({ kind: "document", key: catalog.key });
+          if (!query || visible.has(catalogId)) {
+            pushDocs([catalog], depth, null, pkg);
+          }
+        }
         for (const viewKey of QUEST_VIEW_KEYS) {
           const entry: FlowEntry = { kind: "folder", key: viewKey },
             id = entryId(entry);
@@ -787,6 +798,7 @@ export function FlowExplorer({
               (d) =>
                 d.package === "quest" &&
                 !d.folderId &&
+                !isQuestCatalogDocumentKey(d.key) &&
                 questAuthorKindOf(d) === kind,
             )
             .sort((a, b) =>
@@ -813,17 +825,17 @@ export function FlowExplorer({
         .filter((d) => {
           if (d.package !== pkg || (d.folderId ?? null) !== parent)
             return false;
-          // 任务根下 folderId 为 null 的文档只出现在对应视图里，不在分类根再列一遍
+          // 任务根下 folderId 为 null 的文档只出现在对应视图里；任务分类已在上方单独推入
           if (pkg === "quest" && parent === null) return false;
           return true;
         })
         .sort((a, b) => {
-          const aPinned = isLibraryTableKey(a.key) || isScriptLoadDocumentKey(a.key),
-            bPinned = isLibraryTableKey(b.key) || isScriptLoadDocumentKey(b.key);
+          const aPinned = isLibraryTableKey(a.key) || isScriptLoadDocumentKey(a.key) || isQuestCatalogDocumentKey(a.key),
+            bPinned = isLibraryTableKey(b.key) || isScriptLoadDocumentKey(b.key) || isQuestCatalogDocumentKey(b.key);
           if (aPinned !== bPinned) return aPinned ? -1 : 1;
           return a.name.localeCompare(b.name, "zh-CN", { numeric: true });
         });
-      const isPinnedDoc = (key: string) => isLibraryTableKey(key) || isScriptLoadDocumentKey(key);
+      const isPinnedDoc = (key: string) => isLibraryTableKey(key) || isScriptLoadDocumentKey(key) || isQuestCatalogDocumentKey(key);
       // 表视图／启动列表固定在同级文件夹之前（此前只在文档组内置顶，仍会被文件夹压到后面）
       pushDocs(
         docsHere.filter((d) => isPinnedDoc(d.key)),
@@ -1311,12 +1323,13 @@ export function FlowExplorer({
         !isBuiltinScriptDocumentKey(key) &&
         !isLibraryTableKey(key) &&
         !isScriptLoadDocumentKey(key) &&
+        !isQuestCatalogDocumentKey(key) &&
         !isLevelStaticKey(key),
     );
     if (!removableDocs.length && !removableFolders.length) {
       onNotice(
         documents.some(
-          (key) => isBuiltinScriptDocumentKey(key) || isLibraryTableKey(key) || isScriptLoadDocumentKey(key),
+          (key) => isBuiltinScriptDocumentKey(key) || isLibraryTableKey(key) || isScriptLoadDocumentKey(key) || isQuestCatalogDocumentKey(key),
         )
           ? "虚拟项为只读，不可删除。"
           : "请先移走文件夹中的资源，或一并选中其中的流程后再删除。",
@@ -1640,6 +1653,7 @@ export function FlowExplorer({
               !isBuiltinScriptDocumentKey(key) &&
               !isLibraryTableKey(key) &&
               !isScriptLoadDocumentKey(key) &&
+              !isQuestCatalogDocumentKey(key) &&
               !isLevelStaticKey(key),
           );
           const canRemove =
@@ -1694,6 +1708,7 @@ export function FlowExplorer({
           const scriptLoad = isScriptLoadDocumentKey(entry.key);
           const scriptLoadType = scriptLoadTypeOfKey(entry.key);
           const scriptLoadName = scriptLoadType ? scriptLoadLabel(scriptLoadType) : "启动列表";
+          const questCatalog = isQuestCatalogDocumentKey(entry.key);
           const script = document?.package === "script" && !scriptLoad;
           const shop = document?.package === "shop";
           const kit = document?.package === "gift";
@@ -1712,6 +1727,8 @@ export function FlowExplorer({
               ? "打开表视图"
               : scriptLoad
                 ? `打开${scriptLoadName}`
+              : questCatalog
+                ? `打开${QUEST_CATALOG_LABEL}`
               : entity
                 ? "打开实体"
                 : item
@@ -1735,6 +1752,8 @@ export function FlowExplorer({
             ? "下载商店"
             : scriptLoad
               ? `下载${scriptLoadName}`
+            : questCatalog
+              ? `下载${QUEST_CATALOG_LABEL}`
             : entity
               ? "下载实体"
               : item
@@ -1771,6 +1790,18 @@ export function FlowExplorer({
                 hint: scriptLoadType
                   ? `映射到 src/script/${scriptLoadType}/load.json，不可重命名、移动或删除`
                   : "映射到固定 load.json，不可重命名、移动或删除",
+                action: () => {},
+              },
+            ];
+          }
+          if (questCatalog) {
+            return [
+              { label: openLabel, action: () => onSelect(entry.key) },
+              { label: downloadLabel, action: () => onDownload(entry.key) },
+              {
+                label: `固定${QUEST_CATALOG_LABEL}`,
+                disabled: true,
+                hint: `映射到 ${QUEST_CATALOG_PATH}，不可重命名、移动或删除`,
                 action: () => {},
               },
             ];
@@ -2161,6 +2192,9 @@ export function FlowExplorer({
           const scriptLoadDoc =
             row.entry.kind === "document" &&
             isScriptLoadDocumentKey(row.entry.key);
+          const questCatalogDoc =
+            row.entry.kind === "document" &&
+            isQuestCatalogDocumentKey(row.entry.key);
           const javascriptDoc =
             !!document &&
             !scriptLoadDoc &&
@@ -2207,7 +2241,7 @@ export function FlowExplorer({
                       ? questViewIcon
                       : itemTableDoc
                         ? "item-table"
-                        : scriptLoadDoc
+                        : scriptLoadDoc || questCatalogDoc
                           ? "document"
                         : document?.package === "actor" ? "actor" : document?.package === "reputation" ? "reputation" : entityDoc
                           ? "entities"

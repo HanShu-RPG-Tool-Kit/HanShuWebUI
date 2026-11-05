@@ -17,7 +17,7 @@
 
 - 节点 ID 在整张图内唯一（跨集合也不能重名）。
 - **唯一连接约束**：只能从右端口连到左端口，且**不能成环（含自环）**。连接时直接拒绝；文档里手写出环是校验 error。
-- **内容**：只有开始进度节点有 `questTitle` / `description`；所有进度节点有 `identifier` / `runningLog`（进行时日志）/ `completedLog`（完成时日志）/ `goals` / `completion`；结束节点有 `title` / `rewardKits`；条件只有 `conditions`，没有标题。进度标识符是非本地化字符串；任务标题、说明、日志与结局标题仍是可本地化的 `FlowText`。
+- **内容**：只有开始进度节点有 `questTitle` / `description`，以及任务级策略 `tags` / `visibility` / `acceptance` / `abandonable` / `autoStartWhenAcceptable` / `repeat`（编译进 questc `metadata`）；所有进度节点有 `identifier` / `runningLog`（进行时日志）/ `completedLog`（完成时日志）/ `goals` / `completion`；结束节点有 `title` / `rewardKits`；条件只有 `conditions`，没有标题。进度标识符是非本地化字符串；任务标题、说明、日志与结局标题仍是可本地化的 `FlowText`。
 
 ## 2. 节点族总表
 
@@ -39,12 +39,12 @@
 - **没有左端口**，所以任何线都连不进去；不能靠 A 激活。
 - 任务开始时（模拟器「触发开始」）**直接进入运行中**。
 - 有两个右端口（成功 / 失败），和普通进度一样可以结算；结算后沿对应端口发 A。
-- 额外内容：`questTitle`（任务标题）与 `description`（任务说明）。
+- 额外内容：`questTitle`（任务标题）、`description`（任务说明），以及与单进度相同的任务级策略（周期、可放弃、可承接时自动开始、可见性 / 可承接条件、标签）。这些策略描述整张任务，不描述后续阶段进度节点。
 
 ### 2.2 进度节点
 
 - 一个左端口 `input`（多线），两个右端口 `output` 成功 / `output2` 失败（各多线）。
-- 内容：`identifier`（进度标识符）、`runningLog`（运行中显示的任务日志）、`completedLog`（结算时显示的日志）、`goals`、`completion`（`all` / `any` / `custom`，自定义时带 `completionGraph`）。
+- 内容：`identifier`（进度标识符）、`runningLog`（运行中显示的任务日志）、`completedLog`（结算时显示的日志）、`goals`、`completion`（`all` / `any` / `custom`，自定义时带 `completionGraph`）。`completion` 语义与[任务文档](#progress-document)相同：成功侧表示进入**可交付态**（有 `submission` 则等提交，无则自动交付并已成功）；失败侧直接失败结算。空 `goals` 运行时错误。进度结束后挂载 goals 随之关闭。
 - 标识符在同一 quest 内唯一（包括开始进度与草稿节点），区分大小写；必须非空、无首尾空白、不含换行或制表符，最多 200 字符。不进入 `.lang`，也不随语言切换。内部节点 ID 与标识符分离，改标识符不影响连线。重复或非法值是校验 error，编辑时显示即时提示，模拟与导出前必须修正。
 - 收 **A**（`input`）：未激活 → 运行中，**同时向左端口发 C**（激活即消费输入：上游不必再为它等待或重复触发）。其它状态下的 A 忽略。
 - 结算（模拟器手动）：运行中 → 已成功 / 已失败，并从对应端口发 **A**。
@@ -76,8 +76,8 @@
 
 #### 进度与目标的统一提交格式
 
-- goal 类以 `requires_delivery = True` 显式声明需要交付；未声明默认 False。实现 `deliver` 却未声明 True 是配置错误，不能静默忽略。声明属于脚本运行契约，不放入仅供展示的文件头 JSON。详见[脚本资源](#script-resources)。
-- `submission` 缺省代表无需提交；存在则要求手动提交，即使 goal 不需要交付，也可主动配置人工确认。是否配置提交不改变目标必须具名的要求，运行时连线仍按稳定内部节点 ID 定位。
+- Goal 类型不声明是否需要交付；外部要求交付时调用 `deliver`，未实现则 no-op。见[脚本资源](#script-resources)。
+- `submission` 缺省代表无需手动提交入口；存在则要求玩家经该入口提交。是否配置提交不改变目标必须具名的要求，运行时连线仍按稳定内部节点 ID 定位。
 - 提交只有两个字段：`submit_type` 和由该类型决定的 `param`。放在 `progress.<节点ID>.submission`（含开始进度）或 `objectives.<节点ID>.submission`，两者格式、校验一致，不是根级 Quest 属性。
 
   | `submit_type` | `param` | 含义 |
@@ -94,9 +94,10 @@
   ```
 
 - `submit_type`、`param` 都不本地化。不再存提交标题、说明、按钮文案；旧的三文案配置及未知提交类型会明确报格式错误，不静默丢弃或猜测提交方式。UI 模式不接受空字符串、空对象等伪参数，对话模式不接受空白、带 `@` 或含空白的名称。对话名沿用 `.hs` 的注入点语法，PAK 导出通过现有 `hsInject` 接线检查引用存在性，名字大小写不敏感。
-- **进度自身只描述一次提交**：提交进度时提交其 `goals[]` 中的全部 goal，而不是为每个 goal 选择方式、逐 goal 点击或只提交满足 `completion` 的子集。`completion` 继续描述完成条件，不缩小交付范围；实际整体提交是否成功由实例报告。进度内 goal 仍只保存 `{id, kind, params}`，不能含 `submission` / `submit_type` / `param` 等提交属性。目标节点的单个 `goal` 同样不描述入口，由目标节点自身描述。
-- 目标持有的 goal 声明 `requires_delivery = True`，或进度的任意 goal 声明 True，却缺少该节点的 `submission` 时，表单诊断、图模拟和 PAK 导出报告配置错误；一个进度只报告一次缺少统一提交配置。仅满足条件表示“可以提交”，仍为运行中、Q 回 N；实际提交成功后才进入已成功并从成功口发一次 A，进度不会按 goal 数量重复广播。
-- 交付拒绝或本次提交未完成不是 goal 失败：仍运行中，可重试，不发 A。goal 实例报告失败才进入已失败、从失败口发 A。成功、失败或关闭后均不能再提交。
+- **进度自身只描述一次提交**：提交进度时提交其 `goals[]` 中的全部 goal，而不是为每个 goal 选择方式、逐 goal 点击或只提交满足 `completion` 的子集。`completion` 描述何时进入可交付 / 失败，不缩小交付范围；实际整体提交是否成功由实例报告。进度内 goal 仍只保存 `{id, kind, params}`，不能含 `submission` / `submit_type` / `param` 等提交属性。目标节点的单个 `goal` 同样不描述入口，由目标节点自身描述。
+- **完成全部**：全部 goal 成功 → 可交付；任一 goal 失败 → 已失败并发失败口 A。**完成任一**：任一 goal 成功 → 可交付；全部 goal 失败 → 已失败。**自定义完成**：完成图边沿命中某完成输出的成功入 → 可交付；命中失败入 → 已失败；多完成输出 first-wins、无稳定优先级。
+- 配置了 `submission` 时：可交付表示“可以提交”，仍为运行中、Q 回 N；实际提交成功后才进入已成功并从成功口发一次 A，进度不会按 goal 数量重复广播。未配置 `submission` 时：可交付后**自动交付**，进入已成功并从成功口发一次 A。
+- 交付拒绝或本次提交未完成不是 goal 失败：仍运行中，可重试，不发 A。goal 实例报告失败才按 `completion` 计入失败侧。成功、失败或关闭后均不能再提交。进度结束（含自动交付成功、失败、取消）后挂载 goals 关闭。
 - 图模拟器只提供“模拟提交成功 / 模拟提交未成功”外部结果注入；进度的成功结果代表其全部 goal 已整体提交。模拟器不执行 JavaScript、打开真实任务 UI/对话、校验或扣除物品，也不承诺游戏交付的事务回滚。游戏侧加载器、UI/对话入口路由及实际交付仍由 Mod 接入，不能把模拟按钮当作实际交付实现。
 
 ### 2.4 逻辑节点

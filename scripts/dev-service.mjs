@@ -25,7 +25,7 @@ async function rebuild() {
   if (building) { pending = true; return }
   building = true; pending = false
   if (server) { const old = server; server = undefined; stop(old); await new Promise(r => old.exitCode === null ? old.once('exit', r) : r()) }
-  const build = launch(rust.command, ['build', '--manifest-path', 'src-tauri/Cargo.toml', '-p', 'project-server'])
+  const build = launch(rust.command, ['build', '-p', 'project-server'])
   const code = await new Promise(resolve => { build.once('exit', resolve); build.once('error', e => { console.error('无法启动 Cargo，请安装 Rust 或设置 HANSHU_CARGO。', e.message); resolve(1) }) })
   building = false
   if (shuttingDown) return
@@ -35,7 +35,7 @@ async function rebuild() {
   running.once('exit', code => { if (server === running && !shuttingDown) { console.error(`工程服务退出：${code}`); shutdown(code ?? 1) } })
   if (pending) void rebuild()
 }
-for (const directory of ['src-tauri/crates/project-core/src', 'src-tauri/crates/project-server/src']) {
+for (const directory of ['src-server/project-core/src', 'src-server/project-server/src']) {
   watchers.push(watch(resolve(root, directory), { recursive: true }, (_, filename) => { if (!filename?.endsWith('.rs')) return; clearTimeout(timer); timer = setTimeout(() => void rebuild(), 400) }))
 }
 if (!process.argv.includes('--server-only')) {

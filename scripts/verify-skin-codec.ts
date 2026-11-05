@@ -15,8 +15,7 @@ import {
 const root = join(
   dirname(fileURLToPath(import.meta.url)),
   '..',
-  'src-tauri',
-  'crates',
+  'src-server',
   'skin-core',
   'tests',
   'fixtures',

@@ -54,13 +54,9 @@ WebUI 的编辑、方言校验与 PAK 导出对接 Nashorn 内容脚本宿主。
 
 语言服务规范见[JavaScript 编辑器与语言服务](#javascript-language)。
 
-### goal 交付声明
+### goal 交付约定
 
-目标定义在文件级 `@goal("id", {requires_delivery: true})` 中使用布尔字面量声明“满足条件后仍需交付”；未声明默认 false。实现 `deliver(instance, context)` 的类型必须声明 true，不能通过目标类型名、`consume` 参数或文件头展示 JSON 猜测。声明不能是计算表达式，也不能藏在方法体内。内置四种物品持有/提交目标均声明 true。
-
-目标节点引用该类型，或进度的任意 goal 引用该类型时，所属节点必须显式配置 `submission: {submit_type, param}`；缺失时编辑器、模拟入口和 PAK 导出报错。UI 类型为 `ui`、param 为 null；对话类型为 `dialogue_injection`、param 为不带 `@` 的注入点名，均不本地化。进度只在节点自身配置一次提交，提交全部 goal；目标也只在节点自身配置，不在 goal 中配置入口。所有目标节点均须具名，与是否提交无关。满足条件仅代表可提交；宿主实际交付成功后才令节点进入已成功并发 A。交付拒绝应保留运行中，不能当成目标已失败。详细生命周期和提交字段见[多进度节点图](#progress-node-graph)。
-
-WebUI 只静态读取声明并保存/导出配置，不执行 JavaScript。`requires_delivery` 由 JS 目标定义显式声明；完整任务/进度提交界面是否可用仍以 Mod 对应功能契约为准。
+Goal 不声明“是否需要交付”。外部（进度提交／调试命令）要求交付时调用 `deliver(instance, context)`；未实现则成功 no-op。副作用只应写在 `deliver`，条件跟踪不能扣物。`submission` 是进度／目标节点可选的玩家入口配置，与 goal 类型无关；详见[多进度节点图](#progress-node-graph)。
 
 
 ## 旧工程与验证

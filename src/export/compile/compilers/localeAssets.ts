@@ -1,6 +1,8 @@
 import { getAssetBlob } from '../../../assets/idb'
 import { parseLocaleAssetPath, normalizeSourcePath, sourceLogicalPath, sourceExtension } from '../../../i18n/localeLayout'
 import { isVoiceRefPath, voiceAssetExtension } from '../../../i18n/voiceMap'
+import { isQuestCatalogFileName } from '../../../workspace'
+import { QUEST_CATALOG_LOCALE_NAME } from '../../../workspaces/gameplay/questCatalog'
 import { listLocaleExportRules } from '../registry'
 import type { LocaleAssetExportPolicy, LocaleExportOwner } from '../localization'
 import type { CompileArtifact, PackagePass } from '../types'
@@ -48,7 +50,18 @@ export const localeAssetsPass: PackagePass = {
     const owners = new Map<string, LocaleExportOwner>()
     for (const source of pkg.scripts) {
       const artifacts = sourceArtifacts.get(normalizeSourcePath(source.name))
-      if (!artifacts?.length || !rules.has(sourceExtension(source.name))) continue
+      if (!artifacts?.length) continue
+      // catalog.json 的译文走 lang_quest/catalog.lang（与磁盘后缀解耦）
+      if (isQuestCatalogFileName(source.name)) {
+        if (!rules.has('quest')) continue
+        owners.set(sourceLogicalPath(QUEST_CATALOG_LOCALE_NAME), {
+          source: { ...source, name: QUEST_CATALOG_LOCALE_NAME },
+          artifacts,
+          index: ctx.index,
+        })
+        continue
+      }
+      if (!rules.has(sourceExtension(source.name))) continue
       owners.set(sourceLogicalPath(source.name), { source, artifacts, index: ctx.index })
     }
     const out: CompileArtifact[] = []

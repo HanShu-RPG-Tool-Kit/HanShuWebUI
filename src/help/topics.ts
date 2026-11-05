@@ -315,3 +315,30 @@ export function helpGroups(): { group: string; topics: HelpTopic[] }[] {
   }
   return groups
 }
+
+/** 按标题／分组／id／正文做不区分大小写的子串搜索；空查询返回空数组。 */
+export function searchHelpTopics(query: string): HelpTopic[] {
+  const needle = query.trim().toLowerCase()
+  if (!needle) return []
+  return HELP_TOPICS.filter((topic) =>
+    topic.title.toLowerCase().includes(needle) ||
+    topic.group.toLowerCase().includes(needle) ||
+    topic.id.toLowerCase().includes(needle) ||
+    topic.body.toLowerCase().includes(needle),
+  )
+}
+
+/** 从正文截一段包含关键词的摘要，供搜索结果预览。 */
+export function helpSearchSnippet(body: string, query: string, radius = 36): string | null {
+  const needle = query.trim().toLowerCase()
+  if (!needle) return null
+  const haystack = body.toLowerCase()
+  const index = haystack.indexOf(needle)
+  if (index < 0) return null
+  const start = Math.max(0, index - radius)
+  const end = Math.min(body.length, index + needle.length + radius)
+  let snippet = body.slice(start, end).replace(/\s+/g, ' ').trim()
+  if (start > 0) snippet = `…${snippet}`
+  if (end < body.length) snippet = `${snippet}…`
+  return snippet
+}

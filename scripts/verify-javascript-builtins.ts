@@ -58,7 +58,7 @@ function load(id: string, overrides: Record<string, unknown> = {}) {
   assert.ok(declaration, `${id}: file-level goal metadata`)
   assert.equal(declaration.id, id)
   const field = (value: any) => ({name:value.name, type:value.type, required:value.required, ...(value.defaultValue !== null ? {default:value.defaultValue} : {})})
-  const definition: any = {config:declaration.config.map(field), state:declaration.state.map(field), requires_delivery:declaration.requiresDelivery}
+  const definition: any = {config:declaration.config.map(field), state:declaration.state.map(field)}
   let status = 'TRACKING'
   const context = createContext({
     Java: {type: (name: string) => classes[name.split('.').at(-1)!] ?? class Event {}},
@@ -116,7 +116,7 @@ for (const id of sources.keys()) {
 for (const kind of ['mc', 'rpgtk']) for (const mode of ['hold', 'submit']) {
   check(`${kind}/${mode}: inventory is consumed only once on successful delivery`, () => {
     const t = load(`core:item_${kind}_type_${mode}`, {count: 3})
-    assert.equal(t.definition.requires_delivery, true)
+    assert.equal(typeof t.definition.deliver, 'function')
     t.owner.items = 2; t.dispatch()
     assert.equal(t.update(), 'TRACKING')
     assert.equal(t.deliver(), false)

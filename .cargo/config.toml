@@ -1,0 +1,5 @@
+# Keep one artifact tree for the workspace (S + desktop shell).
+# Fresh aws-lc-sys builds on this Windows MSVC setup can trip cl D8050;
+# reusing the historical target dir preserves the already-built native deps.
+[build]
+target-dir = "src-tauri/target"

@@ -66,16 +66,15 @@ test('config and state metadata remain independent', () => {
  const d=parseGoalDefinitionsFromSource(declaration('test:bags','field("count","int",3)','field("count","int",99)'),{sourceKey:'bags',sourceName:'bags.js'})[0]
  assert.equal(d.fields.length,1);assert.equal(d.fields[0].default,3)
 })
-test('delivery declaration, required/default fields and nonexecuting parser', () => {
+test('optional deliver, required/default fields and nonexecuting parser', () => {
  const parse=(options='',business?:string)=>parseGoalDefinitionsFromSource(declaration('test:delivery','','',options,business),{sourceKey:'x',sourceName:'x.js'})[0]!
  const delivery='function update_state(i: GoalInstance): void {}\nfunction deliver(i: GoalInstance,c: GoalDeliverContext): boolean {return true;}'
- assert.equal(parse().requiresDelivery,false)
- assert.equal(parse('{requires_delivery:true}',delivery).requiresDelivery,true)
- assert.match(parse('',delivery).error!,/requires_delivery/)
+ assert.equal(parse('',delivery).error,undefined)
+ assert.throws(()=>parse('{requires_delivery:true}',delivery),/@goal|Invalid @goal|invalid @goal/i)
  const required=parseGoalDefinitionsFromSource(declaration('test:fields','field("must","string"),field("withDefault","int",2,{required:true})'),{sourceKey:'r',sourceName:'r.js'})[0].fields
  assert.equal(required[0].required,true);assert.equal(required[0].default,undefined);assert.equal(required[1].default,2);assert.equal(required[1].required,true)
  assert.equal(parseGoalDefinitionsFromSource('// @goal("fake")\nvar x="@goal(another)";',{sourceKey:null,sourceName:'x.js'}).length,0)
  const catalog=buildGoalDefinitionCatalog(ensurePackageSections({documents:[],folders:[],activeKey:null}))
- for(const suffix of ['mc_type_submit','mc_type_hold','rpgtk_type_submit','rpgtk_type_hold'])assert.equal(catalog.byKind.get(`core:item_${suffix}`)?.requiresDelivery,true)
+ for(const suffix of ['mc_type_submit','mc_type_hold','rpgtk_type_submit','rpgtk_type_hold'])assert.ok(catalog.byKind.has(`core:item_${suffix}`))
 })
 console.log(`${passed} goal-definition checks passed.`)

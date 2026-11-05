@@ -55,7 +55,7 @@
 
 ## 与 Rust skin-core
 
-- `src-tauri/crates/skin-core` 供可选 Tauri IPC、联网拉取与黄金 fixtures。
+- `src-server/skin-core` 供可选 Tauri IPC、联网拉取与黄金 fixtures。
 - 独立进程 `skin-http` 已移除。
 - Codec 对拍：`npm run test:skin-codec`。
 - 皮肤管理的 HTTP 与双浏览器验收：`npm run verify:skin-management`。
