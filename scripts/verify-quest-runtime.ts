@@ -19,11 +19,23 @@ flow.objectives![b.id].goal={kind:'collect',params:{count:3}}
 const g=C.createTransitionNode(flow,{x:300,y:0});flow=g.flow
 const e=C.createEndNode(flow,{x:900,y:0});flow=e.flow
 for(const [from,to,port]of [[flow.start,g.id,'input'],[a.id,g.id,'input2'],[b.id,g.id,'input2'],[g.id,p.id,'input'],[g.id,q.id,'input'],[p.id,e.id,'input'],[q.id,e.id,'input']] as const)flow=M.connectNodes(flow,from,to,port).flow
+for(const id of [flow.start,p.id,q.id]) flow.progress[id].goals=[{id:`goal_${id}`,kind:'collect',params:{}}]
 const draft=C.createObjectiveNode(flow,{x:0,y:800});flow=draft.flow
 draft.flow.objectives![draft.id].submission={submit_type:'dialogue_injection',param:'not_exported'}
 const note=C.createCanvasNote(flow,{x:0,y:1000});flow=note.flow
 flow.extensions={editorHint:'must not ship'}
 const original=compileQuestFlow(flow),before=JSON.stringify(flow)
+assert.deepEqual(original.metadata.tags,[])
+assert.equal(original.metadata.abandonable,true)
+assert.equal(original.metadata.autoStartWhenAcceptable,false)
+assert.deepEqual(original.metadata.repeat,{kind:'once',hours:24})
+assert.deepEqual(original.metadata.visibility,[])
+assert.deepEqual(original.metadata.acceptance,[])
+const policy=structuredClone(flow)
+policy.progress[policy.start].visibility=[{kind:'task',state:'succeeded',target:'prologue'}]
+policy.progress[policy.start].abandonable=false
+assert.equal(compileQuestFlow(policy).metadata.abandonable,false)
+assert.deepEqual(compileQuestFlow(policy).metadata.visibility,[{kind:'task',state:'succeeded',target:'prologue'}])
 assert.equal(Object.hasOwn(original,'id'),false)
 assert.deepEqual(Object.keys(original).sort(),['format','version','metadata','start','nodes'].sort())
 assert.equal(original.nodes[a.id].type,'condition');assert.equal(original.nodes[b.id].type,'objective')
@@ -71,14 +83,20 @@ console.log('PASS a reverse-only layout reorder cannot change execution halfway 
 const custom=structuredClone(flow)
 custom.progress[p.id].goals=[{id:'goal_a',kind:'collect',params:{}}]
 custom.progress[p.id].completion='custom'
-custom.progress[p.id].completionGraph={nodes:[{id:'leaf',type:'goal',goalId:'goal_a'},{id:'not',type:'logic',op:'not'},{id:'out',type:'output'},{id:'unused',type:'goal',goalId:'missing_draft'}],links:[{id:'l1',from:'leaf',to:'not'},{id:'l2',from:'not',to:'out'}]}
+custom.progress[p.id].completionGraph={nodes:[{id:'leaf',type:'goal',goalId:'goal_a'},{id:'not',type:'logic',op:'not'},{id:'out',type:'output'},{id:'unused',type:'goal',goalId:'missing_draft'}],links:[{id:'l1',from:'leaf',fromPort:'output',to:'not',toPort:'input'},{id:'l2',from:'not',fromPort:'output',to:'out',toPort:'input'},{id:'l3',from:'leaf',fromPort:'output2',to:'out',toPort:'input2'}]}
 const customCompiled=compileQuestFlow(custom)
-assert.deepEqual((customCompiled.nodes[p.id] as any).completionExpression,{type:'logic',op:'not',inputs:[{type:'goal',goalId:'goal_a'}]})
+assert.deepEqual((customCompiled.nodes[p.id] as any).completionExpression,{outputs:[{success:'!(goal.success("goal_a"))',failure:'goal.failure("goal_a")'}]})
+assert.equal(Object.hasOwn(customCompiled.nodes[p.id],'completion'),false)
 assert.equal(Object.hasOwn(customCompiled.nodes[p.id],'completionGraph'),false)
 assert.equal(JSON.stringify(customCompiled).includes('missing_draft'),false)
+const allCompiled=compileQuestFlow(flow)
+assert.deepEqual((allCompiled.nodes[p.id] as any).completionExpression.outputs[0].success,`goal.success(${JSON.stringify(`goal_${p.id}`)})`)
+assert.match((allCompiled.nodes[p.id] as any).completionExpression.outputs[0].failure,/goal\.failure/)
 const incomplete=structuredClone(custom);incomplete.progress[p.id].completionGraph!.links=[]
 assert.throws(()=>compileQuestFlow(incomplete),/请连接完成输出/)
-console.log('PASS custom completion lowers to an expression without edge tables, positions or disconnected completion drafts')
+const emptyGoals=structuredClone(flow);emptyGoals.progress[p.id].goals=[]
+assert.throws(()=>compileQuestFlow(emptyGoals),/缺少目标/)
+console.log('PASS completion lowers to provisional string expressions for all/any/custom without edge tables')
 
 const rejects=(mutate:(value:any)=>void)=>{const bad=structuredClone(original);mutate(bad);assert.throws(()=>parseQuestCompiled(JSON.stringify(bad)),/questc/)}
 rejects(value=>{value.id='not-a-resource-id'})
@@ -89,13 +107,16 @@ rejects(value=>{value.nodes[g.id].outputs.output.push({...value.nodes[g.id].outp
 rejects(value=>{value.nodes[g.id].inputs.wrong=[]})
 rejects(value=>{value.nodes[b.id].layout={}})
 rejects(value=>{value.nodes[flow.start].goals=[{id:'bad',kind:'collect',params:{nested:[]}}]})
-rejects(value=>{value.nodes[flow.start].completion='custom';value.nodes[flow.start].completionExpression={type:'goal',goalId:'missing'}})
+rejects(value=>{value.nodes[flow.start].completionExpression={outputs:[{success:''}]}})
+rejects(value=>{value.nodes[flow.start].goals=[]})
+rejects(value=>{delete value.nodes[flow.start].completionExpression})
 rejects(value=>{value.nodes[e.id].outputs.output=[]})
 rejects(value=>{value.nodes[g.id].outputs.output.push({node:g.id,port:'input'});value.nodes[g.id].inputs.input.push({node:g.id,port:'output'})})
 rejects(value=>{value.nodes.extra={type:'logic',inputs:{input:[],input2:[]},outputs:{output:[]}}})
 console.log('PASS compiled loader rejects invalid schema, dangling/nonreciprocal/duplicate pointers, wrong ports, cycles and leaked drafts')
 
 const doc=createProgress('驿站')
+doc.goals=[{id:'goal_simple',kind:'collect',config:{}}]
 doc.rewardKits=['starter'];doc.authorNotes='private editor notes';doc.tags=['story'];doc.visibility=[{kind:'task',state:'succeeded',target:'prologue'}];doc.autoStartWhenAcceptable=true
 const simple=compileSimpleQuest(doc)
 assert.deepEqual(simple.metadata.visibility,doc.visibility);assert.equal(simple.metadata.autoStartWhenAcceptable,true)

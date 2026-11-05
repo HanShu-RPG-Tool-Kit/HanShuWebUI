@@ -18,6 +18,7 @@ function file(name: string, content: string): SourceFile {
 }
 
 const doc = createProgress('驿站委托')
+doc.goals = [{ id: 'goal_start', kind: 'collect', config: {} }]
 assert.equal(doc.format, SIMPLE_QUEST_FORMAT)
 
 const compiled = compileSimpleQuestDocument(doc)
@@ -60,6 +61,7 @@ assert.deepEqual(fromCompiler,tree)
 let multi = createObjectiveNode(createFlow('tree-1'),{x:300,y:0}).flow
 const backgroundId=Object.keys(multi.objectives!)[0]
 multi.objectives![backgroundId].goal={kind:'collect',params:{item:'minecraft:apple',count:3}}
+multi.progress[multi.start].goals=[{id:'goal_start',kind:'collect',params:{}}]
 const terminal=createEndNode(multi,{x:900,y:0});multi=terminal.flow
 multi=connectNodes(multi,multi.start,terminal.id,'input').flow
 multi=connectNodes(multi,backgroundId,terminal.id,'input').flow
