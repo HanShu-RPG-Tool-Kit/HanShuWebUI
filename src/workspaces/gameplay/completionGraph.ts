@@ -98,7 +98,7 @@ export function canConnectCompletion(graph: CompletionGraph, from: string, fromP
 }
 
 function rootedNodes(graph: CompletionGraph): Set<string> {
-  const byId = new Map(graph.nodes.map(node => [node.id, node])), visited = new Set<string>()
+  const visited = new Set<string>()
   const pending = graph.nodes.filter(node => node.type === 'output').map(node => node.id)
   while (pending.length) {
     const id = pending.pop()!; if (visited.has(id)) continue; visited.add(id)
@@ -148,6 +148,7 @@ function expressionAt(graph: CompletionGraph, id: string, viaPort?: CompletionPo
     const port = viaPort ?? 'output'
     return { type: 'goal', goalId: node.goalId, outcome: outcomeOf(port) }
   }
+  if (node.type !== 'logic') throw new Error('完成输出不能作为表达式叶子')
   const children = graph.links.filter(link => link.to === id).map(link => expressionAt(graph, link.from, link.fromPort))
   return { type: 'logic', op: node.op, inputs: children }
 }
