@@ -88,7 +88,7 @@ for (const [color, depth, samples] of modes) {
 // Empty Adam7 passes are omitted for a 1×1 image.
 assert.equal(parseTexture(png(Uint8Array.of(0, 1, 2, 3, 255), { interlace: 1 })).ok, true)
 for (const name of ['ember_guard', 'simple_bar']) {
-  const source = await readFile(new URL('../demo-projects/bossbar-demo/src/bossbars/' + name + '.bossbar', import.meta.url), 'utf8')
+  const source = await readFile(new URL('./fixtures/bossbars/' + name + '.bossbar', import.meta.url), 'utf8')
   assert.equal(parseBossbarDocument(source).ok, true, 'demo remains valid: ' + name)
 }
 
