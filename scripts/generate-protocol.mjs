@@ -4,7 +4,7 @@ import { resolve } from 'node:path'
 import { rustCommand } from './rust-command.mjs'
 const root = resolve(import.meta.dirname, '..')
 const rust = rustCommand(root)
-const result = spawnSync(rust.command, ['run', '--quiet', '--manifest-path', 'src-tauri/Cargo.toml', '-p', 'project-core', '--example', 'export_protocol'], { cwd: root, env: rust.env, encoding: 'utf8', windowsHide: true })
+const result = spawnSync(rust.command, ['run', '--quiet', '-p', 'project-core', '--example', 'export_protocol'], { cwd: root, env: rust.env, encoding: 'utf8', windowsHide: true })
 if (result.status !== 0) { console.error(result.stderr || result.error); process.exit(1) }
 const file = resolve(root, 'src/collab/generated.ts')
 const output = result.stdout.replace(/\r\n/g, '\n')

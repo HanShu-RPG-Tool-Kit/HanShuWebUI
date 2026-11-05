@@ -16,9 +16,11 @@ dist-ssr
 .env.*
 !.env.example
 
-# Tauri
+# Rust workspace / Tauri (target-dir is src-tauri/target via .cargo/config.toml)
+/target
 src-tauri/target
 src-tauri/gen/schemas
+
 
 # Editor directories and files
 .vscode/*
