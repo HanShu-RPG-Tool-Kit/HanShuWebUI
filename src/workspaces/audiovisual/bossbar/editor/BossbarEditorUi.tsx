@@ -2,9 +2,9 @@ import { useEffect, useState, type ReactNode } from 'react'
 
 /** 设计视图共用的小控件：统一 label 排版与"输入过程中不打断"的行为 */
 
-export function Section({ title, children, extra }: { title: string; children: ReactNode; extra?: ReactNode }) {
+export function Section({ title, children, extra, className }: { title: string; children: ReactNode; extra?: ReactNode; className?: string }) {
   return (
-    <section className="bb-section">
+    <section className={className ? 'bb-section ' + className : 'bb-section'}>
       <header className="bb-section-head">
         <h4>{title}</h4>
         {extra}

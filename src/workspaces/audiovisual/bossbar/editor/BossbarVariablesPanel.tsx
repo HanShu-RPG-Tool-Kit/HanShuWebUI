@@ -238,6 +238,7 @@ function VariableRow({
           />
         </Row>
       )}
+      {/* TODO: split simulation into a dock panel next to variables; drop missing/wrong-type modes. */}
       <Row label="模拟状态">
         <SelectField
           value={simulationMode}

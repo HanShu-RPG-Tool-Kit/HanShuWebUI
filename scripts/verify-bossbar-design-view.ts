@@ -7,8 +7,8 @@ import { updatePaintUv } from '../src/workspaces/audiovisual/bossbar/editor/edit
 import { createBossbar, type BossbarTexturePaint } from '../src/workspaces/audiovisual/bossbar/index'
 
 const render = (content: string, readOnly = false) => renderToStaticMarkup(createElement(BossbarDesignView, {
-  content, readOnly, fileId: 'review', fileName: 'review.bossbar', projectId: 'review', packageId: null,
-  assets: [], active: false, onChange: () => assert.fail('渲染不能反向修改源码'),
+  content, readOnly, fileId: 'review', fileName: 'review.bossbar', projectId: 'review',
+  active: false, onChange: () => assert.fail('渲染不能反向修改源码'),
 }))
 const legacy = JSON.stringify({ format: 'hanshu.bossbar', version: 1, id: 'legacy' })
 const legacyHtml = render(legacy)

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import {
   BOSSBAR_LIMITS,
@@ -8,18 +8,16 @@ import {
   type BossbarUv,
 } from '../protocol'
 import { base64ToBytes, encodeBase64, pngInfo } from '../png'
-import { Button, Empty, NumberField, Row, Section, TextField } from './BossbarEditorUi'
+import { Button, Empty, Row, Section, TextField } from './BossbarEditorUi'
 
 /**
- * 图集面板：唯一 PNG 的上传/替换、放大、UV 框选与精确像素输入。
- *
- * 文档只有一张图，所以这里也是全部 UV 的唯一来源；替换图集是一次文档编辑，
- * 图片数据和全部 UV 一起构成一个草稿版本。
+ * Atlas panel: replace the single PNG and show a fit preview of the current UV.
+ * Editing happens in the UV picker dock, not here.
  */
 
 export type BossbarUvTarget = { componentId: string; slot: 'paint' | 'fill' | 'trail'; frameIndex?: number }
 
-function paintAt(document: BossbarDocument, target: BossbarUvTarget): BossbarPaint | null {
+export function paintAt(document: BossbarDocument, target: BossbarUvTarget): BossbarPaint | null {
   const component = document.components.find((entry) => entry.id === target.componentId)
   if (!component || isDisplayRegion(component)) return null
   if (target.slot === 'paint') return component.type === 'background' ? component.paint : null
@@ -28,140 +26,77 @@ function paintAt(document: BossbarDocument, target: BossbarUvTarget): BossbarPai
   return component.trail?.paint ?? null
 }
 
+export function uvOfTarget(document: BossbarDocument, target: BossbarUvTarget): BossbarUv | null {
+  const paint = paintAt(document, target)
+  if (!paint || paint.kind !== 'texture') return null
+  if (target.frameIndex === undefined) return paint.uv
+  return paint.animation?.frames[target.frameIndex]?.uv ?? null
+}
+
+export function textureSrc(base64: string): string {
+  if (!base64) return ''
+  return base64.startsWith('data:') ? base64 : 'data:image/png;base64,' + base64
+}
+
+function containRect(
+  box: { width: number; height: number },
+  texture: { width: number; height: number },
+) {
+  if (box.width <= 0 || box.height <= 0 || texture.width <= 0 || texture.height <= 0) return null
+  const scale = Math.min(box.width / texture.width, box.height / texture.height)
+  const width = texture.width * scale
+  const height = texture.height * scale
+  return {
+    x: (box.width - width) / 2,
+    y: (box.height - height) / 2,
+    width,
+    height,
+    scale,
+  }
+}
+
 export function BossbarAtlasPanel({
   document,
-  textureImage,
   textureSize,
   target,
   readOnly,
   onTextureChange,
-  onUvChange,
-  onClearTarget,
   onProblems,
 }: {
   document: BossbarDocument
-  textureImage: CanvasImageSource | null
   textureSize: { width: number; height: number }
   target: BossbarUvTarget | null
   readOnly: boolean
   onTextureChange: (base64: string) => void
-  onUvChange: (uv: BossbarUv) => void
-  onClearTarget: () => void
   onProblems: (problems: string[]) => void
 }) {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null)
-  const dragRef = useRef<{ start: { x: number; y: number }; current: { x: number; y: number } } | null>(null)
+  const wrapRef = useRef<HTMLDivElement | null>(null)
   const loadVersionRef = useRef(0)
-  const [zoom, setZoom] = useState(8)
-  const [draft, setDraft] = useState<BossbarUv | null>(null)
+  const [viewSize, setViewSize] = useState({ width: 0, height: 0 })
+  const [stageHeight, setStageHeight] = useState(220)
+  const [stageResizing, setStageResizing] = useState(false)
+  const stageDragRef = useRef<{ pointerId: number; startY: number; startH: number } | null>(null)
+  const [paste, setPaste] = useState('')
+  const [pasteError, setPasteError] = useState('')
 
-  const paint = target ? paintAt(document, target) : null
-  const currentUv = paint && paint.kind === 'texture'
-    ? target?.frameIndex === undefined ? paint.uv : paint.animation?.frames[target.frameIndex]?.uv ?? null
-    : null
+  const currentUv = target ? uvOfTarget(document, target) : null
+  const fitted = containRect(viewSize, textureSize)
+  const src = textureSrc(document.texture)
 
   useEffect(() => () => { loadVersionRef.current += 1 }, [document])
 
-  const draw = useCallback(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const width = Math.max(16, textureSize.width * zoom)
-    const height = Math.max(16, textureSize.height * zoom)
-    // 放大只改变查看尺寸；图集本身最多4096边，不能随32倍缩放分配同等大小的位图。
-    const ratio = Math.min(window.devicePixelRatio || 1, 4096 / width, 4096 / height)
-    canvas.width = Math.round(width * ratio)
-    canvas.height = Math.round(height * ratio)
-    canvas.style.width = width + 'px'
-    canvas.style.height = height + 'px'
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-    ctx.setTransform(ratio, 0, 0, ratio, 0, 0)
-    ctx.clearRect(0, 0, width, height)
-    ctx.fillStyle = '#101418'
-    ctx.fillRect(0, 0, width, height)
-    if (textureImage) {
-      ctx.imageSmoothingEnabled = zoom >= 4 ? false : true
-      ctx.drawImage(textureImage, 0, 0, width, height)
-    }
-    ctx.strokeStyle = 'rgba(255,255,255,0.18)'
-    ctx.lineWidth = 1
-    for (let x = 0; x <= textureSize.width; x += 1) {
-      if (zoom < 6 && x % 4 !== 0) continue
-      ctx.beginPath()
-      ctx.moveTo(Math.round(x * zoom) + 0.5, 0)
-      ctx.lineTo(Math.round(x * zoom) + 0.5, height)
-      ctx.stroke()
-    }
-    for (let y = 0; y <= textureSize.height; y += 1) {
-      if (zoom < 6 && y % 4 !== 0) continue
-      ctx.beginPath()
-      ctx.moveTo(0, Math.round(y * zoom) + 0.5)
-      ctx.lineTo(width, Math.round(y * zoom) + 0.5)
-      ctx.stroke()
-    }
-    const box = draft ?? currentUv
-    if (box) {
-      ctx.save()
-      ctx.fillStyle = 'rgba(120,180,255,0.22)'
-      ctx.strokeStyle = 'rgba(150,200,255,0.95)'
-      ctx.lineWidth = 2
-      ctx.fillRect(box.x * zoom, box.y * zoom, box.width * zoom, box.height * zoom)
-      ctx.strokeRect(box.x * zoom + 1, box.y * zoom + 1, box.width * zoom - 2, box.height * zoom - 2)
-      ctx.restore()
-    }
-  }, [currentUv, draft, textureImage, textureSize.height, textureSize.width, zoom])
-
   useEffect(() => {
-    draw()
-  }, [draw])
-
-  const pointOf = (event: ReactPointerEvent<HTMLCanvasElement>) => {
-    const rect = event.currentTarget.getBoundingClientRect()
-    return {
-      x: Math.floor((event.clientX - rect.left) / zoom),
-      y: Math.floor((event.clientY - rect.top) / zoom),
-    }
-  }
-
-  const onPointerDown = (event: ReactPointerEvent<HTMLCanvasElement>) => {
-    if (readOnly || !target) return
-    event.currentTarget.setPointerCapture(event.pointerId)
-    const point = pointOf(event)
-    dragRef.current = { start: point, current: point }
-    setDraft({ x: point.x, y: point.y, width: 1, height: 1 })
-  }
-
-  const onPointerMove = (event: ReactPointerEvent<HTMLCanvasElement>) => {
-    const drag = dragRef.current
-    if (!drag) return
-    drag.current = pointOf(event)
-    const x = Math.min(drag.start.x, drag.current.x)
-    const y = Math.min(drag.start.y, drag.current.y)
-    const width = Math.max(1, Math.abs(drag.current.x - drag.start.x))
-    const height = Math.max(1, Math.abs(drag.current.y - drag.start.y))
-    setDraft({
-      x: clamp(x, 0, textureSize.width - 1),
-      y: clamp(y, 0, textureSize.height - 1),
-      width: Math.min(width, textureSize.width - clamp(x, 0, textureSize.width - 1)),
-      height: Math.min(height, textureSize.height - clamp(y, 0, textureSize.height - 1)),
+    const wrap = wrapRef.current
+    if (!wrap || typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => {
+      const rect = wrap.getBoundingClientRect()
+      setViewSize({ width: rect.width, height: rect.height })
     })
-  }
-
-  const onPointerUp = (event: ReactPointerEvent<HTMLCanvasElement>) => {
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId)
-    }
-    const drag = dragRef.current
-    dragRef.current = null
-    setDraft(null)
-    if (!drag) return
-    const end = pointOf(event)
-    const x = clamp(Math.min(drag.start.x, end.x), 0, textureSize.width - 1)
-    const y = clamp(Math.min(drag.start.y, end.y), 0, textureSize.height - 1)
-    const width = Math.min(Math.max(1, Math.abs(end.x - drag.start.x)), textureSize.width - x)
-    const height = Math.min(Math.max(1, Math.abs(end.y - drag.start.y)), textureSize.height - y)
-    if (width > 0 && height > 0) onUvChange({ x, y, width, height })
-  }
+    observer.observe(wrap)
+    const rect = wrap.getBoundingClientRect()
+    setViewSize({ width: rect.width, height: rect.height })
+    return () => observer.disconnect()
+  }, [stageHeight])
 
   const loadFile = async (file: File) => {
     const version = ++loadVersionRef.current
@@ -187,58 +122,87 @@ export function BossbarAtlasPanel({
     onTextureChange(encodeBase64(bytes))
   }
 
-  const [paste, setPaste] = useState('')
-  const [pasteError, setPasteError] = useState('')
-
   return (
     <div className="bb-atlas">
       <Section
-        title="图集"
+        className="bb-atlas-view"
+        title="图集预览"
         extra={
           <span className="bb-tag">
             {textureSize.width}×{textureSize.height}
           </span>
         }
       >
-        <div className="bb-atlas-canvas-wrap">
-          <canvas
-            ref={canvasRef}
-            className="bb-atlas-canvas"
-            onPointerDown={onPointerDown}
-            onPointerMove={onPointerMove}
-            onPointerUp={onPointerUp}
-            onPointerCancel={onPointerUp}
-            style={{ cursor: target && !readOnly ? 'crosshair' : 'default' }}
-          />
+        <div className="bb-atlas-preview" ref={wrapRef} style={{ height: stageHeight }}>
+          {src ? (
+            <img
+              className="bb-atlas-preview-image"
+              alt=""
+              draggable={false}
+              src={src}
+              style={
+                fitted
+                  ? {
+                      left: fitted.x,
+                      top: fitted.y,
+                      width: fitted.width,
+                      height: fitted.height,
+                    }
+                  : undefined
+              }
+            />
+          ) : (
+            <Empty>无图集</Empty>
+          )}
+          {fitted && currentUv && (
+            <div
+              className="bb-atlas-uv"
+              style={{
+                left: fitted.x + currentUv.x * fitted.scale,
+                top: fitted.y + currentUv.y * fitted.scale,
+                width: Math.max(1, currentUv.width * fitted.scale),
+                height: Math.max(1, currentUv.height * fitted.scale),
+              }}
+            />
+          )}
         </div>
-        <Row label="放大">
-          <input
-            type="range"
-            min={1}
-            max={32}
-            step={1}
-            value={zoom}
-            onChange={(event) => setZoom(Number(event.target.value))}
-          />
-          <span className="bb-tag">{zoom}×</span>
-        </Row>
-        {target ? (
-          <div className="bb-atlas-target">
-            <span>
-              正在框选：<code>{target.componentId}</code> 的{' '}
-              {target.slot === 'paint' ? '背景纹理' : target.slot === 'fill' ? '填充' : '尾条'}
-              {target.frameIndex !== undefined && ' · 第 ' + (target.frameIndex + 1) + ' 帧'}
-            </span>
-            <Button variant="ghost" onClick={onClearTarget}>
-              结束框选
-            </Button>
-          </div>
-        ) : null}
-        {draft && (
-          <p className="bb-hint">
-            框选：{draft.x},{draft.y} {draft.width}×{draft.height}
-          </p>
-        )}
+        <div
+          className="bb-atlas-view-sash"
+          data-active={stageResizing ? 'true' : undefined}
+          title="拖动调整图集高度"
+          onPointerDown={(event: ReactPointerEvent<HTMLDivElement>) => {
+            if (event.button !== 0) return
+            event.preventDefault()
+            event.stopPropagation()
+            stageDragRef.current = {
+              pointerId: event.pointerId,
+              startY: event.clientY,
+              startH: stageHeight,
+            }
+            setStageResizing(true)
+            try {
+              event.currentTarget.setPointerCapture(event.pointerId)
+            } catch {
+              /* capture is optional */
+            }
+          }}
+          onPointerMove={(event) => {
+            const drag = stageDragRef.current
+            if (!drag || drag.pointerId !== event.pointerId) return
+            const next = drag.startH + (event.clientY - drag.startY)
+            setStageHeight(Math.max(120, Math.min(960, Math.round(next))))
+          }}
+          onPointerUp={(event) => {
+            if (stageDragRef.current?.pointerId !== event.pointerId) return
+            stageDragRef.current = null
+            setStageResizing(false)
+          }}
+          onPointerCancel={(event) => {
+            if (stageDragRef.current?.pointerId !== event.pointerId) return
+            stageDragRef.current = null
+            setStageResizing(false)
+          }}
+        />
       </Section>
 
       <Section title="替换图集">
@@ -252,9 +216,7 @@ export function BossbarAtlasPanel({
             event.target.value = ''
           }}
         />
-        <p className="bb-hint">
-          PNG ≤4MiB、≤4096×4096。替换保留现有 UV。
-        </p>
+        <p className="bb-hint">PNG ≤4MiB、≤4096×4096。替换保留现有 UV。</p>
         <Row label="粘贴 Base64">
           <TextField
             mono
@@ -282,50 +244,6 @@ export function BossbarAtlasPanel({
         </Button>
         {pasteError && <p className="bb-warn">{pasteError}</p>}
       </Section>
-
-      <Section title="当前 UV">
-        {!target && <Empty>请先选择纹理画笔</Empty>}
-        {target && paint && paint.kind !== 'texture' && (
-          <Empty>切换为图集纹理后可设置 UV。</Empty>
-        )}
-        {target && paint && paint.kind === 'texture' && currentUv && (
-          <UvFields uv={currentUv} texture={textureSize} readOnly={readOnly} onChange={onUvChange} />
-        )}
-      </Section>
     </div>
   )
-}
-
-function UvFields({
-  uv,
-  texture,
-  readOnly,
-  onChange,
-}: {
-  uv: BossbarUv
-  texture: { width: number; height: number }
-  readOnly: boolean
-  onChange: (uv: BossbarUv) => void
-}) {
-  return (
-    <div className="bb-uv-grid">
-      {(['x', 'y', 'width', 'height'] as const).map((key) => (
-        <Row key={key} label={key === 'x' ? 'X' : key === 'y' ? 'Y' : key === 'width' ? '宽' : '高'}>
-          <NumberField
-            value={uv[key]}
-            min={key === 'width' || key === 'height' ? 1 : 0}
-            disabled={readOnly}
-            onCommit={(value) => onChange({ ...uv, [key]: Math.round(value) })}
-          />
-        </Row>
-      ))}
-      <p className="bb-hint">
-        UV 须在 {texture.width}×{texture.height} 内。
-      </p>
-    </div>
-  )
-}
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value))
 }

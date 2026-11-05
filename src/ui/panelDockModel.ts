@@ -30,6 +30,8 @@ export type DockSpec = {
   minSize?: number
   maxSize?: number
   defaultFloat?: FloatRect
+  /** First appearance: attach to this panel instead of opening a new lane. */
+  defaultStack?: { with: string; side: DockEdge }
 }
 
 export type DockHit =
@@ -607,16 +609,30 @@ export function normalize(layout: DockLayout) {
   layout.version = 3
 }
 
+export function placeNewPanel(layout: DockLayout, spec: DockSpec) {
+  const panel = layout.panels[spec.id]
+  if (!panel || panel.placement === "float" || findCell(layout, spec.id)) return false
+  const stack = spec.defaultStack
+  if (
+    stack &&
+    stack.with !== spec.id &&
+    (stack.side === "left" || stack.side === "right" || stack.side === "top" || stack.side === "bottom") &&
+    findCell(layout, stack.with) &&
+    dockBeside(layout, spec.id, stack.with, stack.side, panel.size)
+  ) {
+    return true
+  }
+  dockToEdge(layout, spec.id, panel.placement, panel.size, "inner")
+  return true
+}
+
 export function mergeSpecs(layout: DockLayout, specs: readonly DockSpec[]) {
   let changed = false
   const next = copyLayout(layout)
   for (const spec of specs) {
     if (next.panels[spec.id]) continue
     next.panels[spec.id] = defaultRecord(spec)
-    const record = next.panels[spec.id]
-    if (record.placement !== "float") {
-      next.lanes[record.placement].push({ size: record.size, cells: [{ id: spec.id, weight: 1 }] })
-    }
+    placeNewPanel(next, spec)
     changed = true
   }
   if (!changed) return layout

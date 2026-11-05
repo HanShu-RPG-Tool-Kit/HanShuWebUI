@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { getAssetBlob } from '../../../../assets/idb'
 import { loadBossbarTexture, releaseBossbarTexture, textureSizeOf, type BossbarTexture } from '../render/texture'
 
 /** 唯一图集：先同步拿到尺寸，再异步解码位图 */
@@ -71,52 +70,6 @@ export function useBossbarTexture(base64: string, contextKey = ''): BossbarTextu
     error: current?.error ?? null,
     version: state.version,
   }
-}
-
-/** 参考底图：从工程 assets/ 里挑一张 PNG，仅本机预览用 */
-export function useReferenceImage(
-  packageId: string | null,
-  assetPath: string | null,
-  contextKey = '',
-): HTMLImageElement | null {
-  const [state, setState] = useState<{
-    packageId: string | null
-    assetPath: string | null
-    contextKey: string
-    image: HTMLImageElement | null
-  }>(() => ({ packageId, assetPath, contextKey, image: null }))
-  useEffect(() => {
-    setState({ packageId, assetPath, contextKey, image: null })
-    if (!packageId || !assetPath) {
-      return
-    }
-    let cancelled = false
-    let url: string | null = null
-    let element: HTMLImageElement | null = null
-    void getAssetBlob(packageId, assetPath).then((blob) => {
-      if (!blob || cancelled) return
-      url = URL.createObjectURL(blob)
-      element = new Image()
-      element.onload = () => {
-        if (cancelled) return
-        setState({ packageId, assetPath, contextKey, image: element })
-      }
-      element.src = url
-    }).catch(() => {
-      // Reference assets are optional; a failed/removed asset leaves the canvas clear.
-    })
-    return () => {
-      cancelled = true
-      if (element) {
-        element.onload = null
-        element.onerror = null
-        element.src = ''
-      }
-      if (url) URL.revokeObjectURL(url)
-    }
-  }, [assetPath, contextKey, packageId])
-  return state.packageId === packageId && state.assetPath === assetPath && state.contextKey === contextKey
-    ? state.image : null
 }
 
 /** 文本测量：只在浏览器里用 */

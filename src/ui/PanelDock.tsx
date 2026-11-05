@@ -35,6 +35,7 @@ import {
   tabInsertIndex,
   limitsFor,
   mergeSpecs,
+  placeNewPanel,
   removePanel,
   resetCellWeights,
   resizeLane,
@@ -67,6 +68,7 @@ export type DockPanelSpec = {
   minSize?: number
   maxSize?: number
   defaultFloat?: FloatRect
+  defaultStack?: { with: string; side: DockEdge }
   title?: string
   render: (api: PanelDockHandle) => ReactNode
 }
@@ -217,6 +219,15 @@ function readLegacyLayout(specs: readonly DockPanelSpec[]): DockLayout {
   }
   // Explorer is special-cased above. Every other non-float panel, including skin library/details,
   // still has to enter a lane or its band stays hidden.
+  // Dock unstacked panels first so defaultStack can attach to them.
+  for (const spec of specs) {
+    if (spec.defaultStack) continue
+    placeNewPanel(layout, spec)
+  }
+  for (const spec of specs) {
+    if (!spec.defaultStack) continue
+    placeNewPanel(layout, spec)
+  }
   dockOrphans(layout)
   return layout
 }
@@ -288,8 +299,12 @@ function isInteractive(target: EventTarget | null) {
   return target instanceof Element && Boolean(target.closest("button, input, label, a, textarea, select"))
 }
 
+function dockOwn(root: HTMLElement, selector: string): HTMLElement[] {
+  return [...root.querySelectorAll<HTMLElement>(selector)].filter((el) => el.closest(".panel-dock") === root)
+}
+
 function tabBarFor(root: HTMLElement, panelId: string) {
-  return [...root.querySelectorAll<HTMLElement>("[data-dock-tabs]")].find((bar) =>
+  return dockOwn(root, "[data-dock-tabs]").find((bar) =>
     [...bar.querySelectorAll<HTMLElement>("[role=tab]")].some((tab) => tab.dataset.panelId === panelId),
   )
 }
@@ -299,8 +314,9 @@ function pointerOnTabStrip(bar: HTMLElement, x: number, y: number) {
   return x >= rect.left - 4 && x <= rect.right + 4 && y >= rect.top - 4 && y <= rect.bottom + 4
 }
 
-function clearTabDrag(root: ParentNode | null | undefined) {
-  root?.querySelectorAll<HTMLElement>("[data-dock-tabs]").forEach((bar) => {
+function clearTabDrag(root: HTMLElement | null | undefined) {
+  if (!root) return
+  dockOwn(root, "[data-dock-tabs]").forEach((bar) => {
     bar.classList.remove("is-reordering")
     bar.querySelectorAll<HTMLElement>("[role=tab]").forEach((tab) => {
       tab.style.order = ""
@@ -493,7 +509,7 @@ export function PanelDock({
       setRect(band, box)
       band.style.zIndex = "1"
     }
-    root.querySelectorAll<HTMLElement>("[data-dock-tabs]").forEach((el) => {
+    dockOwn(root, "[data-dock-tabs]").forEach((el) => {
       const key = el.dataset.dockTabs ?? ""
       const bar = frame.tabBars.find((item) => item.key === key)
       if (bar) {
@@ -519,7 +535,7 @@ export function PanelDock({
       el.style.zIndex = String(41 + host.z)
       setRect(el, { x: host.floatRect.x, y: host.floatRect.y, w: host.floatRect.w, h: DOCK_TAB_H })
     })
-    root.querySelectorAll<HTMLElement>("[data-dock-sash]").forEach((el) => {
+    dockOwn(root, "[data-dock-sash]").forEach((el) => {
       const key = el.dataset.dockSash ?? ""
       const sash = frame.sashes.find((item) => item.key === key)
       if (!sash) {

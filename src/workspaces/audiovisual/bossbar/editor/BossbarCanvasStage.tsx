@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
+import { useBlockBrowserMouseGestures } from '../../../../ui/blockBrowserMouseGestures'
 import {
   isDisplayRegion,
   isPaintable,
@@ -89,7 +90,6 @@ export function BossbarCanvasStage({
   locked,
   hidden,
   selection,
-  reference,
   onSelectionChange,
   onBoxesChange,
   onViewChange,
@@ -110,20 +110,21 @@ export function BossbarCanvasStage({
   locked: readonly string[]
   hidden: readonly string[]
   selection: readonly string[]
-  reference?: { image: CanvasImageSource | null; opacity: number }
   onSelectionChange: (ids: string[]) => void
   onBoxesChange: (changes: Record<string, BossbarBox>, done: boolean) => void
   onViewChange: (view: ViewTransform) => void
 }) {
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const surfaceRef = useRef<HTMLDivElement | null>(null)
+  useBlockBrowserMouseGestures(surfaceRef)
   const dragRef = useRef<DragState | null>(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
   const lastFitRequestRef = useRef<number | null>(null)
   const lastHomeRequestRef = useRef(0)
   const [marquee, setMarquee] = useState<BossbarBox | null>(null)
   const [guides, setGuides] = useState<{ x: number[]; y: number[] }>({ x: [], y: [] })
-  const [spaceHeld, setSpaceHeld] = useState(false)
+  const [panning, setPanning] = useState(false)
   const measure = useMemo(() => createTextMeasurer(), [])
 
   const hiddenSet = useMemo(() => new Set(hidden), [hidden])
@@ -177,21 +178,6 @@ export function BossbarCanvasStage({
     })
   }, [homeRequest, onViewChange, region, size.height, size.width, view.zoom])
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.code === 'Space') setSpaceHeld(true)
-    }
-    const onKeyUp = (event: KeyboardEvent) => {
-      if (event.code === 'Space') setSpaceHeld(false)
-    }
-    window.addEventListener('keydown', onKeyDown)
-    window.addEventListener('keyup', onKeyUp)
-    return () => {
-      window.removeEventListener('keydown', onKeyDown)
-      window.removeEventListener('keyup', onKeyUp)
-    }
-  }, [])
-
   const effectiveDocument = useMemo(() => {
     if (!hiddenSet.size) return document
     return {
@@ -212,17 +198,6 @@ export function BossbarCanvasStage({
     if (!ctx) return
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0)
     ctx.clearRect(0, 0, size.width, size.height)
-
-    if (reference?.image) {
-      ctx.save()
-      ctx.globalAlpha = reference.opacity
-      ctx.imageSmoothingEnabled = true
-      const image = reference.image
-      const width = image instanceof HTMLImageElement ? image.naturalWidth : 1024
-      const height = image instanceof HTMLImageElement ? image.naturalHeight : 256
-      ctx.drawImage(image, view.panX, view.panY, width * view.zoom, height * view.zoom)
-      ctx.restore()
-    }
 
     if (showGrid) {
       const step = grid * view.zoom
@@ -277,8 +252,7 @@ export function BossbarCanvasStage({
     effectiveDocument,
     grid,
     measure,
-    reference,
-    showGrid,
+      showGrid,
     size.height,
     size.width,
     texture,
@@ -355,9 +329,11 @@ export function BossbarCanvasStage({
 
   const onPointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
-      if (event.button === 1 || (event.button === 0 && spaceHeld)) {
+      if (event.button === 2) {
+        event.preventDefault()
         dragRef.current = { mode: 'pan', startClient: { x: event.clientX, y: event.clientY }, origin: view }
         event.currentTarget.setPointerCapture(event.pointerId)
+        setPanning(true)
         return
       }
       if (event.button !== 0) return
@@ -415,7 +391,7 @@ export function BossbarCanvasStage({
       setMarquee({ x: point.x, y: point.y, width: 0, height: 0 })
       event.currentTarget.setPointerCapture(event.pointerId)
     },
-    [document.components, handleAt, hitTest, locked, onSelectionChange, region, selection, spaceHeld, toDesign, view],
+    [document.components, handleAt, hitTest, locked, onSelectionChange, region, selection, toDesign, view],
   )
 
   const onPointerMove = useCallback(
@@ -525,6 +501,7 @@ export function BossbarCanvasStage({
     (event: ReactPointerEvent<HTMLDivElement>) => {
       const drag = dragRef.current
       dragRef.current = null
+      setPanning(false)
       setGuides({ x: [], y: [] })
       if (event.currentTarget.hasPointerCapture(event.pointerId)) {
         event.currentTarget.releasePointerCapture(event.pointerId)
@@ -562,26 +539,18 @@ export function BossbarCanvasStage({
     const onWheel = (event: WheelEvent) => {
       event.preventDefault()
       const current = viewRef.current
-      if (event.ctrlKey || event.metaKey) {
-        const rect = element.getBoundingClientRect()
-        const localX = event.clientX - rect.left
-        const localY = event.clientY - rect.top
-        const factor = event.deltaY < 0 ? 1.25 : 1 / 1.25
-        const zoom = Math.max(0.1, Math.min(16, current.zoom * factor))
-        if (zoom === current.zoom) return
-        const designX = (localX - current.panX) / current.zoom
-        const designY = (localY - current.panY) / current.zoom
-        onViewChangeRef.current({
-          zoom,
-          panX: localX - designX * zoom,
-          panY: localY - designY * zoom,
-        })
-        return
-      }
+      const rect = element.getBoundingClientRect()
+      const localX = event.clientX - rect.left
+      const localY = event.clientY - rect.top
+      const factor = event.deltaY < 0 ? 1.25 : 1 / 1.25
+      const zoom = Math.max(0.1, Math.min(16, current.zoom * factor))
+      if (zoom === current.zoom) return
+      const designX = (localX - current.panX) / current.zoom
+      const designY = (localY - current.panY) / current.zoom
       onViewChangeRef.current({
-        ...current,
-        panX: current.panX - event.deltaX,
-        panY: current.panY - event.deltaY,
+        zoom,
+        panX: localX - designX * zoom,
+        panY: localY - designY * zoom,
       })
     }
     element.addEventListener('wheel', onWheel, { passive: false })
@@ -589,15 +558,17 @@ export function BossbarCanvasStage({
   }, [])
 
   return (
-    <div className="bb-stage" role="region" aria-label="BossBar 编辑视口" ref={wrapRef} data-space={spaceHeld ? 'pan' : undefined}>
+    <div className="bb-stage" role="region" aria-label="BossBar 编辑视口" ref={wrapRef} onContextMenu={(event) => event.preventDefault()}>
       <canvas ref={canvasRef} className="bb-stage-canvas" style={{ width: size.width, height: size.height }} />
       <div
         className="bb-stage-surface"
+        ref={surfaceRef}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
-        style={{ cursor: spaceHeld ? 'grab' : 'default' }}
+        data-panning={panning ? 'true' : undefined}
+        style={{ cursor: panning ? 'grabbing' : 'default' }}
       >
         {region && (
           <>
@@ -619,7 +590,7 @@ export function BossbarCanvasStage({
                 top: region.box.y * view.zoom + view.panY - 22,
               }}
               onPointerDown={(event) => {
-                if (event.button !== 0 || spaceHeld) return
+                if (event.button !== 0) return
                 event.stopPropagation()
                 onSelectionChange([region.id])
                 dragRef.current = {
