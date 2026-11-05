@@ -73,7 +73,7 @@ const registry: NodeRegistry = {
 
 `features` 可分别关闭 `groups/knife/arrange/selection/connections`，默认启用。只有提供相应业务回调，才能获得可持久化的业务行为；不需要的功能应显式关闭。
 
-`interaction` 可覆盖 `panOnDrag/zoomOnScroll/minZoom/maxZoom`。默认沿用 HanShu 手感：右键拖动平移、滚轮缩放、左键空白处框选、双击空白后第二次按住并拖动切线、双击不缩放也不创建节点。简单右击仍打开菜单，拖动后不误弹菜单。
+`interaction` 可覆盖 `panOnDrag/zoomOnScroll/minZoom/maxZoom`。默认沿用 HanShu 手感：右键拖动平移、滚轮缩放、左键空白处框选、双击空白后第二次按住并拖动切线、双击不缩放也不创建节点；关闭 XYFlow 默认的空格＋左键临时平移。简单右击仍打开菜单，拖动后不误弹菜单。
 
 右键拖动也可从节点、表单正文或输入框开始，平移所属画布；嵌套完成图平移自身视口。右键单击原生字段保留系统菜单，超过 4px 的拖动不弹菜单。`nopan` 继续阻止其他拖动操作，不阻止该右键手势。
 

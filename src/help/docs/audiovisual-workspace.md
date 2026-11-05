@@ -48,6 +48,6 @@ PNG 可以上传、替换或粘贴 Base64。替换后保留 UV 并重新校验�
 
 Ctrl/⌘ + S 和菜单保存走已有的工程事务。保存、携带脏正文改名和导出均执行 BossBar 校验；非法 JSON、图集损坏、组件或 UV 越界、错误类型和预算超限会阻止提交，原始草稿保留。版本冲突保留本窗口输入，避免覆盖其他成员修改。相机、网格、参考底图和面板状态只保存在本机。
 
-`npm run test:bossbar` 执行协议、渲染、图集、编辑工具和保存导出回归。`npm run generate:bossbar-spec` 更新可机器校验的 schema 与夹具，生成结果随协议修改一起提交。演示文件位于 `demo-projects/bossbar-demo/`，无需连接游戏即可模拟满血、受伤、护盾和狂暴。
+`npm run test:bossbar` 执行协议、渲染、图集、编辑工具和保存导出回归。`npm run generate:bossbar-spec` 更新可机器校验的 schema 与夹具，生成结果随协议修改一起提交。协议夹具位于 `scripts/fixtures/bossbars/`。
 
 浏览器字体与游戏字体仍需在实际客户端复核。游戏的变量包发送、追踪清理、客户端模板加载及 HUD 接线留待后续游戏阶段。

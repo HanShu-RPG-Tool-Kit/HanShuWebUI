@@ -43,6 +43,32 @@ export {
   type ScriptLoadType,
   type ScriptLoadDocument,
 } from './scriptLoad'
+import {
+  createQuestCatalog,
+  isQuestCatalogDocumentKey,
+  QUEST_CATALOG_DOCUMENT_KEY,
+  QUEST_CATALOG_LABEL,
+  stringifyQuestCatalog,
+} from './questCatalog'
+export {
+  QUEST_CATALOG_FORMAT,
+  QUEST_CATALOG_FILE_NAME,
+  QUEST_CATALOG_PATH,
+  QUEST_CATALOG_DOCUMENT_KEY,
+  QUEST_CATALOG_LABEL,
+  QUEST_CATALOG_LOCALE_NAME,
+  isQuestCatalogFileName,
+  isQuestCatalogDocumentKey,
+  questCatalogTitleKey,
+  createQuestCatalog,
+  createQuestCatalogDirectory,
+  parseQuestCatalog,
+  stringifyQuestCatalog,
+  readQuestCatalogSource,
+  questCatalogCandidateIds,
+  type QuestCatalogDirectory,
+  type QuestCatalogDocument,
+} from './questCatalog'
 
 export type FlowEntry =
   | { kind: 'package'; package: FlowPackageId }
@@ -111,14 +137,15 @@ export const isScriptDocument = (document: { key?: string; package: FlowPackageI
 }
 export const isKitDocument = (document: { package: FlowPackageId; name: string }) =>
   document.package === 'gift' || document.name.toLowerCase().endsWith('.kit')
-/** 任意任务文档（单进度 / 多进度）。 */
-export const isQuestDocument = (document: { package: FlowPackageId; name: string }) =>
-  document.package === 'quest' || isQuestFileName(document.name)
+/** 任意任务文档（单进度 / 多进度）；不含任务分类虚入口。 */
+export const isQuestDocument = (document: { key?: string; package: FlowPackageId; name: string }) =>
+  !isQuestCatalogDocumentKey(document.key ?? '')
+  && (document.package === 'quest' || isQuestFileName(document.name))
 /** 单进度任务（表单）；按正文 format 判定。 */
-export const isSimpleQuestDocument = (document: { package: FlowPackageId; name: string; source?: string }) =>
+export const isSimpleQuestDocument = (document: { key?: string; package: FlowPackageId; name: string; source?: string }) =>
   isQuestDocument(document) && questAuthorKindOf(document) === 'simple'
 /** 多进度任务（树图）。 */
-export const isMultiQuestDocument = (document: { package: FlowPackageId; name: string; source?: string }) =>
+export const isMultiQuestDocument = (document: { key?: string; package: FlowPackageId; name: string; source?: string }) =>
   isQuestDocument(document) && questAuthorKindOf(document) === 'multi'
 /** @deprecated 使用 isSimpleQuestDocument */
 export const isProgressDocument = isSimpleQuestDocument
@@ -157,9 +184,9 @@ export function scriptTypeInFolder(state:Pick<FlowWorkspaceState,'folders'>,pare
  while(parent&&!visited.has(parent)){visited.add(parent);const section=parseSectionFolderKey(parent);if(section?.package==='script')return scriptTypeFromSection(section.sectionId);parent=state.folders.find(f=>f.key===parent)?.parentId??null}
  return 'common'
 }
-/** 资源树只读项：内置二级分类、虚拟内置文件夹与脚本、物品库表视图、脚本启动列表入口 */
+/** 资源树只读项：内置二级分类、虚拟内置文件夹与脚本、物品库表视图、脚本启动列表／任务分类入口 */
 export const isReadonlyExplorerKey = (key: string) =>
-  isSectionFolder(key) || isQuestViewKey(key) || isBuiltinScriptFolder(key) || isBuiltinScriptDocumentKey(key) || isLibraryTableKey(key) || isScriptLoadDocumentKey(key) || isLevelStaticViewKey(key) || isLevelStaticKey(key)
+  isSectionFolder(key) || isQuestViewKey(key) || isBuiltinScriptFolder(key) || isBuiltinScriptDocumentKey(key) || isLibraryTableKey(key) || isScriptLoadDocumentKey(key) || isQuestCatalogDocumentKey(key) || isLevelStaticViewKey(key) || isLevelStaticKey(key)
 
 export function sectionDefs(pkg: FlowPackageId): FlowSectionDef[] {
   return FLOW_PACKAGE_SECTIONS[pkg] ?? []
@@ -319,6 +346,7 @@ export function renameFlowEntry(state: FlowWorkspaceState, entry: FlowEntry, val
   if (entry.kind === 'document' && isBuiltinScriptDocumentKey(entry.key)) throw new Error('内置脚本为只读，不可重命名。')
   if (entry.kind === 'document' && isLibraryTableKey(entry.key)) throw new Error('资源库表视图为只读，不可重命名。')
   if (entry.kind === 'document' && isScriptLoadDocumentKey(entry.key)) throw new Error('启动列表为固定入口，不可重命名。')
+  if (entry.kind === 'document' && isQuestCatalogDocumentKey(entry.key)) throw new Error('任务分类为固定入口，不可重命名。')
   const item = entry.kind === 'folder' ? state.folders.find((folder) => folder.key === entry.key) : state.documents.find((document) => document.key === entry.key)
   if (!item) throw new Error('资源不存在。')
   const ext = entry.kind === 'document' ? documentExtOf(item as { package: FlowPackageId; name: string }) : false
@@ -338,6 +366,7 @@ export function canMoveFlowEntry(state: FlowWorkspaceState, entry: FlowEntry, pk
   if (entry.kind === 'document' && isBuiltinScriptDocumentKey(entry.key)) return false
   if (entry.kind === 'document' && isLibraryTableKey(entry.key)) return false
   if (entry.kind === 'document' && isScriptLoadDocumentKey(entry.key)) return false
+  if (entry.kind === 'document' && isQuestCatalogDocumentKey(entry.key)) return false
   if (parent !== null && isBuiltinScriptFolder(parent)) return false
   if (parent !== null) {
     const folder = state.folders.find((item) => item.key === parent)
@@ -485,4 +514,37 @@ export function withScriptLoadViews(state: FlowWorkspaceState): FlowWorkspaceSta
 
 export function stripScriptLoadViews(state: FlowWorkspaceState): FlowWorkspaceState {
   return { ...state, documents: state.documents.filter(document => !isScriptLoadDocumentKey(document.key)) }
+}
+
+/** 任务分类虚入口；正文映射到固定 `src/quest/catalog.json`。 */
+export function questCatalogDocument(source = stringifyQuestCatalog(createQuestCatalog())) {
+  return stampDocument({
+    key: QUEST_CATALOG_DOCUMENT_KEY,
+    name: QUEST_CATALOG_LABEL,
+    source,
+    package: 'quest',
+    folderId: null,
+  }, false)
+}
+
+export function withQuestCatalogView(state: FlowWorkspaceState): FlowWorkspaceState {
+  const existing = state.documents.find(doc => isQuestCatalogDocumentKey(doc.key))
+  if (existing) {
+    if (existing.name === QUEST_CATALOG_LABEL && existing.package === 'quest' && existing.folderId == null) {
+      return state
+    }
+    return {
+      ...state,
+      documents: state.documents.map(doc =>
+        isQuestCatalogDocumentKey(doc.key)
+          ? { ...doc, name: QUEST_CATALOG_LABEL, package: 'quest', folderId: null }
+          : doc,
+      ),
+    }
+  }
+  return { ...state, documents: [questCatalogDocument(), ...state.documents] }
+}
+
+export function stripQuestCatalogView(state: FlowWorkspaceState): FlowWorkspaceState {
+  return { ...state, documents: state.documents.filter(document => !isQuestCatalogDocumentKey(document.key)) }
 }

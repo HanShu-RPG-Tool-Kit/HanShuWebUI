@@ -65,9 +65,9 @@ S 打开普通工程目录，直接读写这些资源，不需要把进度文件
 
 | 层 | 开发入口 | 职责 |
 | --- | --- | --- |
-| 关系解析 | `project-core/src/resource_relations.rs` | 从资源类型和工程目录识别归属与引用；关系本身不取得写权、不执行联动 |
-| 操作策略 | `project-core/src/resource_policy.rs` | 根据操作推导文件动作、编辑权威路径、需要的租约和关联范围 |
-| 执行 | `project-core/src/files.rs`、`file_transactions.rs` | 提交时重算策略，检查完整性、主体权限、租约、版本，并原子执行或拒绝 |
+| 关系解析 | `src-server/project-core/src/resource_relations.rs` | 从资源类型和工程目录识别归属与引用；关系本身不取得写权、不执行联动 |
+| 操作策略 | `src-server/project-core/src/resource_policy.rs` | 根据操作推导文件动作、编辑权威路径、需要的租约和关联范围 |
+| 执行 | `src-server/project-core/src/files.rs`、`file_transactions.rs` | 提交时重算策略，检查完整性、主体权限、租约、版本，并原子执行或拒绝 |
 
 归属用 `ownership` 表示：`.hs/.char/.quest/.nav/.kit/.item` 与各语种语言文件、配音目录之间的关系。引用用 `reference` 表示；第一版解析单进度 `.quest` 的 `rewardKits` 到礼包源文件的引用。关系带 `role`（`language/voice/rewardKit`）、`from`（源）、`to`（目标）。有效路径的悬空礼包引用仍作为关系返回；不合法引用和无法解析的源码内容不会使整个工程的关系查询失败。
 
@@ -178,7 +178,7 @@ Web 的目录选择由本机宿主 S 提供，C 只显示目录与发送选择�
 
 ```sh
 npm run build
-cargo run --manifest-path src-tauri/Cargo.toml -p project-server -- --project .hanshu-project --listen 127.0.0.1:47831 --web-root dist --local-projects true
+cargo run -p project-server -- --project .hanshu-project --listen 127.0.0.1:47831 --web-root dist --local-projects true
 ```
 
 打开 `http://127.0.0.1:47831` 即可使用目录选择器。单独启动前端而未启动本机 S 时，弹窗显示本机服务暂不可用；启动服务后点击本机入口重新检测。普通工程服务默认不提供目录选择接口。此模式只允许回环监听和本机页面来源；Dev／Preview 代理也阻止来自 LAN 的宿主请求，普通工程协作 API 不受该限制。远程浏览器仍通过已有的工程服务连接。
@@ -207,7 +207,7 @@ cargo run --manifest-path src-tauri/Cargo.toml -p project-server -- --project .h
 
 ```sh
 npm run build
-cargo run --manifest-path src-tauri/Cargo.toml -p project-server -- --project /path/to/project --listen 127.0.0.1:47831 --web-root dist --local-projects true
+cargo run -p project-server -- --project /path/to/project --listen 127.0.0.1:47831 --web-root dist --local-projects true
 ```
 
 替换工程目录，在服务所在设备打开 `http://127.0.0.1:47831`，通过本机入口连接工程并以 Admin 管理用户，然后在「文件 → 分享工程…」开启共享。其他设备使用分享面板给出的网络地址及各自账号密码登录。保持本机管理监听在回环地址，远端访问共享监听；不要把本机管理入口公开到互联网。
@@ -307,7 +307,7 @@ S 在读取文件树、历史及提交前发现的外部磁盘变化会记为「
 
 `skin-entry-patch` 仅允许路径 `.hanshu/skinmanager/library.json`，正文为 `{entryId,expectedRevision,changes}` 的 Base64 JSON。`changes` 白名单为名称、标签、收藏、位置、启用、模型、协议、来源、备注和自定义 ID，不接受对象身份、条目身份、修订号等替换。它按条目修订号校验而不比较索引文件哈希；S 继续校验角色、短期索引写权、文件夹存在、自定义 ID 唯一和最终对象引用。成功回执的 `skinEntries` 保存该次确认的条目，重放不重新执行或返回后来版本。
 
-`skin-library-command` 使用同一固定路径，正文为带 `command` 字段的 Base64 JSON。命令包括 `ensure-library/import-entry/batch-patch/delete-entries/create-folder/patch-folder/delete-folder/rename-tag/delete-tag/delete-folder-entries`。条目操作使用 `expectedEntries:[{entryId,revision}]`，文件夹操作使用 `expectedFolder`，范围操作额外携带完整的条目或文件夹快照。S 在最新索引上执行命令并返回 `skinCommandResult`；请求、结果、落盘和回执归档继续使用同一文件事务机制。一笔事务最多包含一个皮肤语义操作，可与必要对象写入合批；不能夹带第二个命令或再次直接覆盖索引。业务实现入口为 `project-core/src/skin_commands.rs`，C 请求类型位于 `src/skin/local/libraryCommands.ts`。
+`skin-library-command` 使用同一固定路径，正文为带 `command` 字段的 Base64 JSON。命令包括 `ensure-library/import-entry/batch-patch/delete-entries/create-folder/patch-folder/delete-folder/rename-tag/delete-tag/delete-folder-entries`。条目操作使用 `expectedEntries:[{entryId,revision}]`，文件夹操作使用 `expectedFolder`，范围操作额外携带完整的条目或文件夹快照。S 在最新索引上执行命令并返回 `skinCommandResult`；请求、结果、落盘和回执归档继续使用同一文件事务机制。一笔事务最多包含一个皮肤语义操作，可与必要对象写入合批；不能夹带第二个命令或再次直接覆盖索引。业务实现入口为 `src-server/project-core/src/skin_commands.rs`，C 请求类型位于 `src/skin/local/libraryCommands.ts`。
 
 操作计划请求上限 256 KiB，原始请求和展开后的动作各不超过 4096 项。计划查询不刷新客户端草稿基线；结果未知的事务在计划查询失败时也必须保留原提交编号，直到查询到明确回执。
 
@@ -328,8 +328,8 @@ S 在读取文件树、历史及提交前发现的外部磁盘变化会记为「
 工程历史另有 `scripts/verify-project-history.mjs` 的 15 组真实 HTTP 验收，以及 `scripts/verify-project-history-ui.mjs` 的 6 组浏览器验收。覆盖三个独立客户端、命名与对比、源文件及语言的关联历史、丢失成功回复后的原事务查询、过期预览、单皮肤恢复、跨工程隔离、服务重启和窄屏界面；浏览器测试没有 pageerror。报告和截图在 `../output/project-history/`。Rust 另覆盖提交决议崩溃恢复、损坏对象拒绝、历史分组、恢复权限，以及文件和目录类型替换及其回滚。仍未进行第二台物理设备验收。
 
 ```sh
-cargo test --manifest-path src-tauri/Cargo.toml -p project-core
-cargo build --manifest-path src-tauri/Cargo.toml -p project-server
+cargo test -p project-core
+cargo build -p project-server
 npm run check:protocol
 npm run test:project-boundary
 npm run test:local-projects
@@ -377,7 +377,7 @@ npm run test:archive-diagnostics
 本机 CLI 可在工程打不开时执行只读体检，不启动服务、不申请工程锁、不恢复 journal，也不移动或改写任何回执：
 
 ```powershell
-# 在 src-tauri 目录运行；也可使用已构建的 project-server 可执行文件。
+# 在仓库根目录运行；也可使用已构建的 project-server 可执行文件。
 cargo run -p project-server -- --project "E:/projects/example" --archive-check
 ```
 

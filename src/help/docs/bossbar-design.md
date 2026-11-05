@@ -50,7 +50,7 @@
 }
 ```
 
-这是省略 `format/version/id/texture/layout` 的字段示例。完整可打开文件在 `demo-projects/bossbar-demo/src/bossbars/`，包含参考构图和简单条两份模板。演示中的默认值让模板在没有游戏连接时也能看到血条、护盾和文字。
+这是省略 `format/version/id/texture/layout` 的字段示例。完整模板夹具在 `scripts/fixtures/bossbars/`，包含参考构图和简单条两份。演示中的默认值让模板在没有游戏连接时也能看到血条、护盾和文字。
 
 ## 图集和动画
 

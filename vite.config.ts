@@ -44,7 +44,7 @@ export default defineConfig({
         }
       : undefined,
     watch: {
-      ignored: ['**/src-tauri/**'],
+      ignored: ['**/src-tauri/**', '**/src-server/**'],
     },
   },
   preview: {

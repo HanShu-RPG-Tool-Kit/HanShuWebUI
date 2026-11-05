@@ -14,6 +14,7 @@ import { itemCompiler } from './item'
 import { localeAssetsPass } from './localeAssets'
 import { questCompiler } from './quest'
 import { scriptLoadCompiler } from './scriptLoad'
+import { questCatalogCompiler } from './questCatalog'
 import { displayTextReferences, displayTextRuntimeTranslations, type DisplayTextKind } from '../../../workspaces/gameplay/displayTextLocale'
 import { parseItem } from '../../../workspaces/gameplay/itemDoc'
 import { parseEntity } from '../../../workspaces/gameplay/entityDoc'
@@ -41,7 +42,7 @@ const builtinLocaleRules: LocaleExportRule[] = [
 
 /** Idempotent by id; also reinstalls builtins after clearCompileRegistry without replacing overrides. */
 export function ensureBuiltinCompilers(): void {
-  for (const compiler of [hanshuCompiler, itemCompiler, entityCompiler, kitCompiler, shopCompiler, actorCompiler, bossbarCompiler, reputationCompiler, questCompiler, levelCompiler, navigationCompiler, scriptLoadCompiler, identityCompiler]) {
+  for (const compiler of [hanshuCompiler, itemCompiler, entityCompiler, kitCompiler, shopCompiler, actorCompiler, bossbarCompiler, reputationCompiler, questCompiler, questCatalogCompiler, levelCompiler, navigationCompiler, scriptLoadCompiler, identityCompiler]) {
     if (!listFileCompilers().some((entry) => entry.id === compiler.id)) registerFileCompiler(compiler)
   }
   for (const pass of [localeAssetsPass, activeSkinsPass, levelArtifactPass]) {

@@ -12,7 +12,7 @@ try {
  await page.route('**/__completion',r=>r.fulfill({contentType:'text/html',body:`<meta charset="utf-8"><style>body{margin:0}#root{display:flex;height:100vh}</style><script type="module">import R from '/@react-refresh';R.injectIntoGlobalHook(window);window.$RefreshReg$=()=>{};window.$RefreshSig$=()=>t=>t;window.__vite_plugin_react_preamble_installed__=true;</script><div id="root"></div><script type="module">
  import React from '${react}';import DOM from '${dom}';import {ProgressEditor} from '/src/workspaces/gameplay/ProgressEditor.tsx';import {createProgress,parseProgress,stringifyProgress} from '/src/workspaces/gameplay/progressDoc.ts';
  const definitions=['kill','collect'].map(kind=>({kind,label:kind==='kill'?'击杀':'收集',fields:[],sourceKey:null,sourceName:'fixture'})),catalog={definitions,byKind:new Map(definitions.map(d=>[d.kind,d])),errors:[]};
- let seed=createProgress();seed.goals=['kill','collect','kill'].map((kind,i)=>({id:'uuid-goal-'+i,kind,config:{}}));seed.completionGraph={nodes:[{id:'ref-a',type:'goal',goalId:'uuid-goal-0'},{id:'ref-b',type:'goal',goalId:'uuid-goal-1'},{id:'logic',type:'logic',op:'and'},{id:'output',type:'output'}],links:[{id:'edge-a',from:'ref-a',to:'logic'},{id:'edge-b',from:'ref-b',to:'logic'},{id:'edge-o',from:'logic',to:'output'}]};window.edits=0;
+ let seed=createProgress();seed.goals=['kill','collect','kill'].map((kind,i)=>({id:'uuid-goal-'+i,kind,config:{}}));seed.completionGraph={nodes:[{id:'ref-a',type:'goal',goalId:'uuid-goal-0'},{id:'ref-b',type:'goal',goalId:'uuid-goal-1'},{id:'logic',type:'logic',op:'and'},{id:'output',type:'output'}],links:[{id:'edge-a',from:'ref-a',fromPort:'output',to:'logic',toPort:'input'},{id:'edge-b',from:'ref-b',fromPort:'output',to:'logic',toPort:'input'},{id:'edge-o',from:'logic',fromPort:'output',to:'output',toPort:'input'}]};window.edits=0;
  function App(){const [doc,D]=React.useState(seed),[disabled,B]=React.useState(false);window.doc=doc;window.freeze=B;window.reorder=()=>D(p=>({...p,goals:[p.goals[1],p.goals[0],p.goals[2]]}));window.reload=()=>{const next=parseProgress(stringifyProgress(doc));next.id='reopened';D(next)};return React.createElement(ProgressEditor,{doc,goalCatalog:catalog,disabled,onChange:source=>{window.edits++;D(parseProgress(source))}})}DOM.createRoot(document.getElementById('root')).render(React.createElement(App));
  </script>`}))
  await page.goto(base+'/__completion');await page.getByRole('button',{name:'自定义完成',exact:true}).click()
@@ -35,8 +35,8 @@ try {
  await page.waitForFunction(()=>window.doc.completionGraph.links.length===2)
  assert((await graph.locator('.completion-footer').textContent()).includes('二元异或的输入未接完整'))
  const socket=(id,port)=>graph.locator(`[data-node-id="${id}"][data-flow-socket="${port}"]`)
- const connect=async(from,to)=>{const a=await socket(from,'out').boundingBox(),b=await socket(to,'in').boundingBox();await page.mouse.move(a.x+a.width/2,a.y+a.height/2);await page.mouse.down();await page.mouse.move(b.x+b.width/2,b.y+b.height/2,{steps:8});await page.mouse.up()}
- await connect('ref-b','logic');await page.waitForFunction(()=>window.doc.completionGraph.links.length===3)
+ const connect=async(from,fromPort,to,toPort)=>{const a=await socket(from,fromPort).boundingBox(),b=await socket(to,toPort).boundingBox();await page.mouse.move(a.x+a.width/2,a.y+a.height/2);await page.mouse.down();await page.mouse.move(b.x+b.width/2,b.y+b.height/2,{steps:8});await page.mouse.up()}
+ await connect('ref-b','output','logic','input');await page.waitForFunction(()=>window.doc.completionGraph.links.length===3)
  await graph.locator('[data-canvas-node="output"]').click();await page.keyboard.press('Delete');assert.equal(await graph.locator('[data-canvas-node="output"]').count(),1)
  await page.evaluate(()=>window.reorder());await page.waitForTimeout(80)
  assert.deepEqual(await page.locator('.progress-goal-alias').allTextContents(),['A1','B1','B2'])

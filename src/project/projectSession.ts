@@ -26,8 +26,13 @@ import {
   scriptTypeInFolder,
   sectionFolderKey,
   scriptLoadLabel,
+  isQuestCatalogDocumentKey,
+  QUEST_CATALOG_DOCUMENT_KEY,
+  QUEST_CATALOG_LABEL,
+  QUEST_CATALOG_PATH,
+  QUEST_CATALOG_FILE_NAME,
 } from '../workspaces/gameplay/library'
-import { isScriptLoadFileName } from '../workspace'
+import { isScriptLoadFileName, isQuestCatalogFileName } from '../workspace'
 import type {
   FlowDocument,
   FlowFolder,
@@ -108,13 +113,17 @@ export function packageIdOfExt(ext: string): FlowPackageId | null {
 }
 
 export function isProgressSourceName(name: string): boolean {
-  return PROGRESS_SOURCE_EXTS.has(getExtension(name)) || isScriptLoadFileName(name)
+  return PROGRESS_SOURCE_EXTS.has(getExtension(name))
+    || isScriptLoadFileName(name)
+    || isQuestCatalogFileName(name)
 }
 
-/** 进度文档 ↔ 源文件身份：启动列表虚入口键不等于 `source:…/load.json`。 */
+/** 进度文档 ↔ 源文件身份：启动列表／任务分类虚入口键不等于 `source:…`。 */
 export function progressSourceIdForDocument(doc: { key: string }): string {
   const loadType = scriptLoadTypeOfKey(doc.key)
-  return loadType ? `source:${scriptLoadPath(loadType)}` : doc.key
+  if (loadType) return `source:${scriptLoadPath(loadType)}`
+  if (isQuestCatalogDocumentKey(doc.key)) return `source:${QUEST_CATALOG_PATH}`
+  return doc.key
 }
 
 export function progressDocumentMatchesSource(
@@ -125,6 +134,10 @@ export function progressDocumentMatchesSource(
   if (loadType) {
     return source.id === `source:${scriptLoadPath(loadType)}`
       || (isScriptLoadFileName(source.name ?? '') && source.srcKind === loadType)
+  }
+  if (isQuestCatalogDocumentKey(doc.key)) {
+    return source.id === `source:${QUEST_CATALOG_PATH}`
+      || isQuestCatalogFileName(source.name ?? '')
   }
   return source.id === doc.key
 }
@@ -147,6 +160,19 @@ export function sourcesToProgressDocuments(
         source: source.content,
         package: 'script',
         folderId: sectionFolderKey('script', loadType),
+        createdAt: undefined,
+        updatedAt: new Date(source.updatedAt).toISOString(),
+      }))
+      continue
+    }
+    if (isQuestCatalogFileName(source.name)) {
+      docs.push(stampDocument({
+        key: QUEST_CATALOG_DOCUMENT_KEY,
+        detached: source.detached,
+        name: QUEST_CATALOG_LABEL,
+        source: source.content,
+        package: 'quest',
+        folderId: null,
         createdAt: undefined,
         updatedAt: new Date(source.updatedAt).toISOString(),
       }))
@@ -208,6 +234,15 @@ export function applyProgressDocumentsToWorkspace(
         }
       }
       if (isScriptLoadDocumentKey(doc.key)) return null
+      if (isQuestCatalogDocumentKey(doc.key)) {
+        return {
+          id: `source:${QUEST_CATALOG_PATH}`,
+          detached: doc.detached,
+          name: QUEST_CATALOG_FILE_NAME,
+          content: doc.source,
+          updatedAt: doc.updatedAt ? Date.parse(doc.updatedAt) || Date.now() : Date.now(),
+        }
+      }
       const srcKind=getExtension(doc.name)==='.js'?scriptTypeInFolder(folderState,doc.folderId??null):undefined
       return {
         id: doc.key, detached:doc.detached,

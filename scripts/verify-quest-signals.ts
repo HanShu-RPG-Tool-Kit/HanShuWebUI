@@ -258,8 +258,8 @@ test('required objective identifiers and optional condition identifiers share a 
  flow.objectives![goal].identifier='collect_apples'
  flow.predicates![condition.id].identifier='progress_1'
  const next=C.createProgressNode(flow,{x:300,y:400});assert.equal(next.flow.progress[next.id].identifier,'progress_2')
- const definitions=[{kind:'collect',requiresDelivery:true}]
- assert(M.validateFlow(flow,definitions).some(issue=>issue.severity==='error'&&issue.path===`objectives.${goal}.submission`))
+ const definitions=[{kind:'collect'}]
+ assert.equal(M.validateFlow(flow,definitions).some(issue=>issue.severity==='error'&&issue.path===`objectives.${goal}.submission`),false,'submission is optional')
  flow.objectives![goal].submission={submit_type:'ui',param:null}
  assert.equal(M.validateFlow(flow,definitions).some(issue=>issue.severity==='error'),false)
  for(const submission of [null,{}, {title:{text:'标题'},description:{text:''},buttonText:'提交'}, {submit_type:'ui'}, {submit_type:'ui',param:'unused'}, {submit_type:'dialogue_injection',param:null}, {submit_type:'unknown',param:null}, {submit_type:'ui',param:null,extra:true}]){
@@ -272,8 +272,8 @@ test('progress and objective share the two-field submission shape; embedded goal
  const {flow,goal}=backgroundGoal()
  const start=flow.progress[flow.start]
  start.goals=[{id:'first',kind:'delivery',params:{}},{id:'second',kind:'delivery',params:{}}]
- const definitions=[{kind:'delivery',requiresDelivery:true}]
- assert.equal(M.validateFlow(flow,definitions).filter(issue=>issue.severity==='error'&&issue.path===`progress.${flow.start}.submission`).length,1,'one missing submission issue per progress, never per goal')
+ const definitions=[{kind:'delivery'}]
+ assert.equal(M.validateFlow(flow,definitions).filter(issue=>issue.severity==='error'&&issue.path===`progress.${flow.start}.submission`).length,0,'missing submission is not an error')
  for(const submission of [{submit_type:'ui',param:null},{submit_type:'dialogue_injection',param:'提交_1'}] as const) {
   start.submission=submission;flow.objectives![goal].submission=submission
   assert.deepEqual(M.parseFlow(JSON.stringify(flow)),flow)

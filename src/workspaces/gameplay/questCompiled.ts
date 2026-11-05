@@ -1,5 +1,5 @@
 import { parseJsonValue } from '../../utils/strictJson'
-import { completionIssues, type CompletionGraph, type CompletionLogic } from './completionGraph'
+import { compileBuiltinCompletion, compileCompletionExpression, type CompletionCompiled } from './completionGraph'
 import {
   FLOW_LIMITS, compareIds, connectedToStart, inputPorts, outputPorts, orderedLinks, linkSourcePort,
   getProgressNode, getPredicateNode, getObjectiveNode, getTransitionNode, getEndNode,
@@ -13,13 +13,13 @@ import { PROGRESS_REPEAT_LABELS, type ProgressDocument } from './progressDoc'
 export const QUEST_COMPILED_FORMAT = 'hanshu.questc'
 export const QUEST_COMPILED_EXT = '.questc'
 export type QuestPointer = { node: string; port: FlowInputPort | FlowOutputPort }
-export type CompletionExpression = { type: 'goal'; goalId: string } | { type: 'logic'; op: CompletionLogic; inputs: CompletionExpression[] }
+export type { CompletionCompiled }
 type Connections = {
   inputs: Partial<Record<FlowInputPort, QuestPointer[]>>
   outputs: Partial<Record<FlowOutputPort, QuestPointer[]>>
 }
 export type QuestCompiledNode = Connections & (
-  | { type: 'progress'; identifier: string; runningLog: string; completedLog: string; goals: FlowProgressGoal[]; completion: 'all' | 'any' | 'custom'; completionExpression?: CompletionExpression; submission?: FlowSubmission }
+  | { type: 'progress'; identifier: string; runningLog: string; completedLog: string; goals: FlowProgressGoal[]; completionExpression: CompletionCompiled; submission?: FlowSubmission }
   | { type: 'condition'; identifier?: string; conditions: ProgressConditionRule[] }
   | { type: 'objective'; identifier: string; goal: { kind: string; params: Data }; submission?: FlowSubmission }
   | { type: 'logic' }
@@ -33,18 +33,6 @@ export type QuestCompiled = {
   nodes: Record<string, QuestCompiledNode>
 }
 
-function compileCompletion(graph: CompletionGraph, goals: FlowProgressGoal[]): CompletionExpression {
-  const issues = completionIssues(graph, goals.map(goal => ({ ...goal, config: goal.params as Record<string, string | number | boolean> })))
-  if (issues.length) throw new Error(issues.join('；'))
-  const visit = (id: string): CompletionExpression => {
-    const node = graph.nodes.find(item => item.id === id)!
-    if (node.type === 'goal') return { type: 'goal', goalId: node.goalId }
-    const children = graph.links.filter(link => link.to === id).map(link => visit(link.from))
-    return node.type === 'output' ? children[0] : { type: 'logic', op: node.op, inputs: children }
-  }
-  return visit(graph.nodes.find(node => node.type === 'output')!.id)
-}
-
 /** Project a validated authoring graph. No author ID, edge table, layout or runtime state escapes. */
 export function compileQuestFlow(flow: ProgressFlow): QuestCompiled {
   const effective = connectedToStart(flow), nodes: Record<string, QuestCompiledNode> = Object.create(null)
@@ -53,11 +41,17 @@ export function compileQuestFlow(flow: ProgressFlow): QuestCompiled {
     const inputs = Object.fromEntries(inputPorts(flow, id).map(port => [port, []]))
     const outputs = Object.fromEntries(outputPorts(flow, id).map(port => [port, []]))
     const progress = getProgressNode(flow, id), condition = getPredicateNode(flow, id), objective = getObjectiveNode(flow, id), end = getEndNode(flow, id)
-    if (progress) nodes[id] = {
+    if (progress) {
+      if (!progress.goals.length) throw new Error(`进度 ${id} 缺少目标`)
+      const goals = progress.goals.map(goal => ({ id: goal.id, kind: goal.kind, config: goal.params as Record<string, string | number | boolean> }))
+      const completionExpression = progress.completion === 'custom'
+        ? compileCompletionExpression(progress.completionGraph!, goals)
+        : compileBuiltinCompletion(progress.completion, progress.goals)
+      nodes[id] = {
       type: 'progress', identifier: progress.identifier, runningLog: progress.runningLog.text, completedLog: progress.completedLog.text,
-      goals: progress.goals.map(goal => ({ id: goal.id, kind: goal.kind, params: structuredClone(goal.params) })), completion: progress.completion,
-      ...(progress.completion === 'custom' ? { completionExpression: compileCompletion(progress.completionGraph!, progress.goals) } : {}),
+      goals: progress.goals.map(goal => ({ id: goal.id, kind: goal.kind, params: structuredClone(goal.params) })), completionExpression,
       ...(progress.submission ? { submission: structuredClone(progress.submission) } : {}), inputs, outputs,
+    }
     }
     else if (condition) nodes[id] = { type: 'condition', ...(condition.identifier ? { identifier: condition.identifier } : {}), conditions: structuredClone(condition.conditions), inputs, outputs }
     else if (objective) nodes[id] = { type: 'objective', identifier: objective.identifier, goal: structuredClone(objective.goal), ...(objective.submission ? { submission: structuredClone(objective.submission) } : {}), inputs, outputs }
@@ -71,7 +65,20 @@ export function compileQuestFlow(flow: ProgressFlow): QuestCompiled {
     nodes[link.to].inputs[link.port]!.push({ node: link.from, port: linkSourcePort(flow, link.from, link.fromPort) })
   }
   const start = getProgressNode(flow, flow.start)!
-  const compiled: QuestCompiled = { format: QUEST_COMPILED_FORMAT, version: 1, metadata: { title: start.questTitle?.text ?? '', description: start.description?.text ?? '' }, start: flow.start, nodes }
+  const compiled: QuestCompiled = {
+    format: QUEST_COMPILED_FORMAT, version: 1,
+    metadata: {
+      title: start.questTitle?.text ?? '',
+      description: start.description?.text ?? '',
+      tags: [...(start.tags ?? [])],
+      visibility: structuredClone(start.visibility ?? []),
+      acceptance: structuredClone(start.acceptance ?? []),
+      abandonable: start.abandonable ?? true,
+      autoStartWhenAcceptable: start.autoStartWhenAcceptable ?? false,
+      repeat: structuredClone(start.repeat ?? { kind: 'once', hours: 24 }),
+    },
+    start: flow.start, nodes,
+  }
   return parseQuestCompiled(JSON.stringify(compiled))
 }
 
@@ -115,7 +122,7 @@ export function parseQuestCompiled(source: string): QuestCompiled {
   for (const [id, node] of Object.entries(nodes)) {
     check(stableId(id), '节点 ID 无效')
     check(isObject(node) && ['progress', 'condition', 'objective', 'logic', 'end'].includes(node.type), `节点 ${id} 类型无效`)
-    const fields = node.type === 'progress' ? ['identifier','runningLog','completedLog','goals','completion','completionExpression','submission'] : node.type === 'condition' ? ['identifier','conditions'] : node.type === 'objective' ? ['identifier','goal','submission'] : node.type === 'end' ? ['title','rewardKits'] : []
+    const fields = node.type === 'progress' ? ['identifier','runningLog','completedLog','goals','completionExpression','submission'] : node.type === 'condition' ? ['identifier','conditions'] : node.type === 'objective' ? ['identifier','goal','submission'] : node.type === 'end' ? ['title','rewardKits'] : []
     check(Object.keys(node).every(key => ['type','inputs','outputs',...fields].includes(key)), `节点 ${id} 含非运行字段`)
     if (node.type === 'progress' || node.type === 'objective' || node.type === 'condition' && node.identifier !== undefined) {
       const name = node.identifier
@@ -129,19 +136,17 @@ export function parseQuestCompiled(source: string): QuestCompiled {
     if (node.type === 'progress') {
       check(typeof node.runningLog === 'string' && typeof node.completedLog === 'string' && Array.isArray(node.goals) && node.goals.every(goal => goalShape(goal, true)), `进度 ${id} 内容无效`)
       const goals = new Set(node.goals.map(goal => goal.id))
-      check(goals.size === node.goals.length && ['all','any','custom'].includes(node.completion), `进度 ${id} 目标 ID 或完成规则无效`)
-      let count = 0
-      const expression = (raw: unknown): void => {
-        check(++count <= 512 && isObject(raw), `进度 ${id} 完成表达式无效或超限`)
-        if (raw.type === 'goal') check(Object.keys(raw).length === 2 && typeof raw.goalId === 'string' && goals.has(raw.goalId), `进度 ${id} 完成表达式引用不存在的目标`)
-        else {
-          check(raw.type === 'logic' && Object.keys(raw).length === 3 && ['and','or','not','xor'].includes(String(raw.op)) && Array.isArray(raw.inputs), `进度 ${id} 完成表达式无效`)
-          check(raw.op === 'not' ? raw.inputs.length === 1 : raw.op === 'xor' ? raw.inputs.length === 2 : raw.inputs.length >= 1, `进度 ${id} 完成表达式输入数量无效`)
-          raw.inputs.forEach(expression)
+      check(node.goals.length > 0 && goals.size === node.goals.length, `进度 ${id} 目标 ID 无效`)
+      const compiled = node.completionExpression
+      check(isObject(compiled) && Array.isArray(compiled.outputs) && compiled.outputs.length > 0 && Object.keys(compiled).length === 1, `进度 ${id} 完成表达式无效`)
+      for (const output of compiled.outputs) {
+        check(isObject(output) && Object.keys(output).every(key => ['success', 'failure'].includes(key)) && (output.success !== undefined || output.failure !== undefined), `进度 ${id} 完成输出无效`)
+        for (const side of ['success', 'failure'] as const) {
+          const source = output[side]
+          if (source === undefined) continue
+          check(typeof source === 'string' && source.trim().length > 0 && source.length <= 4096, `进度 ${id} 完成表达式无效`)
         }
       }
-      if (node.completion === 'custom') expression(node.completionExpression)
-      else check(node.completionExpression === undefined, `进度 ${id} 非自定义规则不能带表达式`)
     }
     else if (node.type === 'objective') check(goalShape(node.goal, false), `目标 ${id} 内容无效`)
     else if (node.type === 'condition') parseConditionRules(node.conditions, `nodes.${id}.conditions`, true)

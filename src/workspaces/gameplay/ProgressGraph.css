@@ -32,7 +32,18 @@
 .flow-graph-node-description.is-empty { color: #8c8c8c; }
 
 .flow-graph-node.is-progress .flow-graph-node-header { background: #4f5d7a; color: #e4e9f2; }
-.flow-graph-node.is-start .flow-graph-node-header { background: #536a49; color: #e3eddf; }
+.flow-graph-node.is-start .flow-graph-node-header,
+.flow-graph-node.is-start.is-progress-inactive .flow-graph-node-header,
+.flow-graph-node.is-start.is-progress-running .flow-graph-node-header,
+.flow-graph-node.is-start.is-progress-succeeded .flow-graph-node-header,
+.flow-graph-node.is-start.is-progress-failed .flow-graph-node-header,
+.flow-graph-node.is-start.is-progress-cancelled .flow-graph-node-header,
+.flow-graph-node.is-start.is-progress-terminated .flow-graph-node-header {
+  background: #536a49; color: #e3eddf;
+}
+.flow-graph-node.is-start.is-progress-running .flow-graph-node-header { background: #628554; color: #eef6e8; }
+.flow-graph-node.is-start.is-progress-succeeded .flow-graph-node-header { background: #3f6a52; color: #dff0e6; }
+.flow-graph-node.is-start.is-progress-failed .flow-graph-node-header { background: #6a5640; color: #f0e6d4; }
 .flow-graph-node.is-draft { opacity: .55; border-style: dashed; }
 .flow-graph-node.is-draft .flow-graph-node-header { background: #4a4a4a; color: #bdbdbd; }
 .flow-graph-node.is-progress .flow-graph-node-title { font-size: 13px; }

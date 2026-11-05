@@ -103,12 +103,19 @@ import {
   uniqueDocumentName,
   withLibraryTables,
   withScriptLoadViews,
+  withQuestCatalogView,
   isScriptLoadDocumentKey,
+  isQuestCatalogDocumentKey,
   scriptLoadTypeOfKey,
   scriptLoadPath,
   scriptLoadLabel,
+  QUEST_CATALOG_FILE_NAME,
+  QUEST_CATALOG_LABEL,
+  QUEST_CATALOG_LOCALE_NAME,
+  QUEST_CATALOG_PATH,
 } from "./gameplay/library";
 import { ScriptLoadEditor } from "./gameplay/ScriptLoadEditor";
+import { QuestCatalogEditor } from "./gameplay/QuestCatalogEditor";
 import {
   normalizeQuestFileName,
   questAuthorKindFromSource,
@@ -307,7 +314,7 @@ export function GameplayWorkspace({
   );
   /** 先叠虚拟内置文档 / 启动列表 / 物品库表视图，再清理页条——否则虚拟页会被当成失效键清掉 */
   const state = useMemo(
-    () => normalizeGroups(withLibraryTables(withScriptLoadViews(withBuiltinScripts(baseState)))),
+    () => normalizeGroups(withLibraryTables(withQuestCatalogView(withScriptLoadViews(withBuiltinScripts(baseState))))),
     [baseState],
   );
   const stateRef = useRef(state);
@@ -385,8 +392,8 @@ export function GameplayWorkspace({
           ]
         : [];
     const renames = next.documents.flatMap((doc) => {
-      // 启动列表虚入口键 ≠ source:…/load.json，必须走 progressDocumentMatchesSource
-      if (isScriptLoadDocumentKey(doc.key)) return [];
+      // 启动列表／任务分类虚入口键 ≠ source:…，必须走 progressDocumentMatchesSource
+      if (isScriptLoadDocumentKey(doc.key) || isQuestCatalogDocumentKey(doc.key)) return [];
       const old = prevScripts.find((script) => progressDocumentMatchesSource(doc, script));
       if (!old) return [];
       const srcKind = doc.name.toLowerCase().endsWith(".js")
@@ -694,6 +701,7 @@ export function GameplayWorkspace({
   const kitDoc = doc ? isKitDocument(doc) : false;
   const progressDoc = doc ? isSimpleQuestDocument(doc) : false;
   const multiQuestDoc = doc ? isMultiQuestDocument(doc) : false;
+  const catalogDoc = doc ? isQuestCatalogDocumentKey(doc.key) : false;
   const progressPath =
     progressDoc && doc ? sourcePathOf({ name: doc.name }) : null;
   const progressEditable = !!progressPath && !!client?.writable;
@@ -821,6 +829,7 @@ export function GameplayWorkspace({
     : null;
   const flowLocalizable = Boolean(
     doc &&
+    !catalogDoc &&
     !actorDoc &&
     !reputationDoc &&
     !shopDoc &&
@@ -834,7 +843,7 @@ export function GameplayWorkspace({
     !itemTableDoc,
   );
   const localeDoc = Boolean(
-    doc && (shopDoc || reputationDoc || flowLocalizable || kitDoc || navigationDoc || levelDoc),
+    doc && (catalogDoc || shopDoc || reputationDoc || flowLocalizable || kitDoc || navigationDoc || levelDoc),
   );
 
   // 当前焦点文档的语义键 TextMap（literal）
@@ -848,7 +857,10 @@ export function GameplayWorkspace({
       return;
     }
 
-    const fileName = textAssetPath(locale, sourceDoc.name);
+    const fileName = textAssetPath(
+      locale,
+      catalogDoc ? QUEST_CATALOG_LOCALE_NAME : sourceDoc.name,
+    );
     const packageId = session.workspace.packages[0]?.id;
     if (!packageId) return;
     const sourceClient = session.binding?.handle.client;
@@ -940,6 +952,7 @@ export function GameplayWorkspace({
     locale,
     projectBound,
     localeDoc,
+    catalogDoc,
     session.workspace.packages[0]?.id,
     client,
     client?.remoteEpoch,
@@ -1761,6 +1774,11 @@ export function GameplayWorkspace({
       setNotice(`已下载${scriptLoadLabel(scriptLoadTypeOfKey(item.key)!)}。`);
       return;
     }
+    if (isQuestCatalogDocumentKey(item.key)) {
+      downloadFlowFile(QUEST_CATALOG_FILE_NAME, item.source);
+      setNotice(`已下载${QUEST_CATALOG_LABEL}。`);
+      return;
+    }
     if (
       item.package === "actor" ||
       item.package === "shop" ||
@@ -1876,7 +1894,7 @@ export function GameplayWorkspace({
     folders: string[];
   }) {
     const docs = documentKeys.filter(
-      (key) => !isBuiltinScriptDocumentKey(key) && !isLibraryTableKey(key) && !isScriptLoadDocumentKey(key),
+      (key) => !isBuiltinScriptDocumentKey(key) && !isLibraryTableKey(key) && !isScriptLoadDocumentKey(key) && !isQuestCatalogDocumentKey(key),
     );
     const foldersToRemove = folderKeys.filter(
       (key) =>
@@ -2094,6 +2112,7 @@ export function GameplayWorkspace({
     const paneEntityTable = isEntityLibraryTableKey(paneDoc.key);
     const paneItemTable = isItemLibraryTableKey(paneDoc.key);
     const paneScriptLoad = scriptLoadTypeOfKey(paneDoc.key);
+    const paneCatalog = isQuestCatalogDocumentKey(paneDoc.key);
     const paneEntity = isEntityDocument(paneDoc);
     const paneItem = isItemDocument(paneDoc);
     const paneKitParsed = paneKit ? readKitSource(paneDoc.source) : null;
@@ -2120,7 +2139,8 @@ export function GameplayWorkspace({
       !paneEntity &&
       !paneItemTable &&
       !paneEntityTable &&
-      !paneScriptLoad
+      !paneScriptLoad &&
+      !paneCatalog
     ) {
       // 焦点文档复用 memo 过的 parse，避免父级重渲染换掉 flow 引用打断拖拽
       if (paneDoc.key === focusedKey && parsed.flow) paneFlow = parsed.flow;
@@ -2175,6 +2195,27 @@ export function GameplayWorkspace({
         scriptOptions={options}
         onChange={source => changeSource(source, false, paneDoc.key)}
         onOpenScript={key => selectDocument(key)}
+      />
+    }
+    if (paneCatalog) {
+      const options = state.documents
+        .filter(d => isQuestDocument(d))
+        .map(d => ({
+          ref: d.name.replace(/\.quest$/i, ""),
+          label: d.name,
+          key: d.key,
+        }))
+        .sort((a, b) => a.label.localeCompare(b.label, "zh-CN"));
+      return <QuestCatalogEditor
+        key={paneDoc.key}
+        source={paneDoc.source}
+        disabled={disabledPane}
+        questOptions={options}
+        resolveText={paneDoc.key === focusedKey ? resolveLocaleText : undefined}
+        setText={paneDoc.key === focusedKey ? setLocaleText : undefined}
+        onChange={source => changeSource(source, false, paneDoc.key)}
+        onLocaleSeeds={seeds => queueLocaleSeeds(paneDoc.key, seeds)}
+        onOpenQuest={key => selectDocument(key)}
       />
     }
     if (paneActor) {
@@ -2850,11 +2891,14 @@ export function GameplayWorkspace({
       if (!item) return [];
       const type = scriptTypeInFolder(state, item.folderId ?? null);
       const loadType = scriptLoadTypeOfKey(key);
-      const kind = isEntityLibraryTableKey(key) ? 'entity' : isItemLibraryTableKey(key) ? 'item' : loadType ? 'json' : isSimpleQuestDocument(item) ? 'progress' : isMultiQuestDocument(item) ? 'hflow' : sourceIconKind({ name: item.name, srcKind: type });
+      const catalog = isQuestCatalogDocumentKey(key);
+      const kind = isEntityLibraryTableKey(key) ? 'entity' : isItemLibraryTableKey(key) ? 'item' : loadType || catalog ? 'json' : isSimpleQuestDocument(item) ? 'progress' : isMultiQuestDocument(item) ? 'hflow' : sourceIconKind({ name: item.name, srcKind: type });
       const tooltip = isLibraryTableKey(key)
         ? `${item.name} · 表视图`
         : loadType
           ? `${scriptLoadLabel(loadType)} · ${scriptLoadPath(loadType)}`
+          : catalog
+            ? `${QUEST_CATALOG_LABEL} · ${QUEST_CATALOG_PATH}`
           : `${isBuiltinScriptDocumentKey(key) ? '内置 · ' : ''}${sourcePathOf({ name: item.name, srcKind: type })}`;
       return [{ id: item.key, title: item.name, tooltip, icon: <span className="editor-dock-file-icon"><ExplorerIcon kind={kind} />{isLibraryTableKey(key) && <small aria-hidden="true">▦</small>}</span> }];
     });
@@ -2957,6 +3001,7 @@ export function GameplayWorkspace({
         right={
           <>
             {(progressDoc ||
+              catalogDoc ||
               shopDoc ||
               reputationDoc ||
               flowLocalizable ||
@@ -2978,6 +3023,8 @@ export function GameplayWorkspace({
                 ? doc && isEntityLibraryTableKey(doc.key)
                   ? "实体库 · 网格表视图"
                   : "物品库 · 表视图"
+                : catalogDoc
+                  ? `${QUEST_CATALOG_LABEL} · catalog.json`
                 : actorDoc ? "演员模板 · .actor" : reputationDoc ? "声誉阵营 · .rep" : entityDoc
                   ? "实体 · .entity"
                   : itemDoc

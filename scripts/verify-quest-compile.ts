@@ -18,6 +18,7 @@ function file(name: string, content: string): SourceFile {
 }
 
 const doc = createProgress('驿站委托')
+doc.goals = [{ id: 'goal_start', kind: 'collect', config: {} }]
 assert.equal(doc.format, SIMPLE_QUEST_FORMAT)
 
 const compiled = compileSimpleQuestDocument(doc)
@@ -60,6 +61,7 @@ assert.deepEqual(fromCompiler,tree)
 let multi = createObjectiveNode(createFlow('tree-1'),{x:300,y:0}).flow
 const backgroundId=Object.keys(multi.objectives!)[0]
 multi.objectives![backgroundId].goal={kind:'collect',params:{item:'minecraft:apple',count:3}}
+multi.progress[multi.start].goals=[{id:'goal_start',kind:'collect',params:{}}]
 const terminal=createEndNode(multi,{x:900,y:0});multi=terminal.flow
 multi=connectNodes(multi,multi.start,terminal.id,'input').flow
 multi=connectNodes(multi,backgroundId,terminal.id,'input').flow
@@ -100,24 +102,22 @@ assert.equal(advisoryExport.length,1,'AND-input advisories must not block export
 console.log('PASS: background goal and condition AND-input warnings do not block export')
 
 multi.objectives![backgroundId].goal.kind='core:item_mc_type_submit'
-assert.equal((await questCompiler.compile(file('submit.quest',JSON.stringify(multi)),ctx)).length,0,'builtin delivery goal requires explicit submission')
 multi.objectives![backgroundId].identifier='collect_apples'
+assert.equal((await questCompiler.compile(file('submit-optional.quest',JSON.stringify(multi)),ctx)).length,1,'submission is optional; goal types do not force it')
 multi.objectives![backgroundId].submission={submit_type:'ui',param:null}
 const submissionExport=await questCompiler.compile(file('submit.quest',JSON.stringify(multi)),ctx)
 assert.equal(submissionExport.length,1)
 assert.deepEqual(JSON.parse(String(submissionExport[0].bytes)).nodes[backgroundId].submission,multi.objectives![backgroundId].submission)
-const override={...file('core_item_mc_type_submit.js','import Tick from "test.Tick"\n@goal("core:item_mc_type_submit",{requires_delivery:false})\n@config()\n@state()\n@subscribe(Tick)\nfunction on_tick(instance: GoalInstance,event: Tick): void {}\nfunction update_state(instance: GoalInstance): void {}'),srcKind:'goal' as const}
+const override={...file('core_item_mc_type_submit.js','import Tick from "test.Tick"\n@goal("core:item_mc_type_submit")\n@config()\n@state()\n@subscribe(Tick)\nfunction on_tick(instance: GoalInstance,event: Tick): void {}\nfunction update_state(instance: GoalInstance): void {}\nfunction deliver(instance: GoalInstance,context: GoalDeliverContext): boolean {return true;}'),srcKind:'goal' as const}
 pkg.scripts.push(override)
 delete multi.objectives![backgroundId].submission
-assert.equal((await questCompiler.compile(file('override.quest',JSON.stringify(multi)),ctx)).length,1,'effective project file overrides builtin capability too')
-override.content='import Tick from "test.Tick"\n@goal("core:item_mc_type_submit")\n@config()\n@state()\n@subscribe(Tick)\nfunction on_tick(instance: GoalInstance,event: Tick): void {}\nfunction update_state(instance: GoalInstance): void {}\nfunction deliver(instance: GoalInstance,context: GoalDeliverContext): boolean {return true;}'
-assert.equal((await questCompiler.compile(file('undeclared.quest',JSON.stringify(multi)),ctx)).length,0,'undeclared delivery hook is a configuration error')
-console.log('PASS: delivery declarations, submission requirements, effective overrides and descriptor roundtrip')
+assert.equal((await questCompiler.compile(file('override.quest',JSON.stringify(multi)),ctx)).length,1,'project goal override with deliver remains exportable without submission')
+console.log('PASS: optional submission, deliver without declaration, and descriptor roundtrip')
 
-override.content='import Tick from "test.Tick"\n@goal("core:item_mc_type_submit",{requires_delivery:true})\n@config()\n@state()\n@subscribe(Tick)\nfunction on_tick(instance: GoalInstance,event: Tick): void {}\nfunction update_state(instance: GoalInstance): void {}'
+override.content='import Tick from "test.Tick"\n@goal("core:item_mc_type_submit")\n@config()\n@state()\n@subscribe(Tick)\nfunction on_tick(instance: GoalInstance,event: Tick): void {}\nfunction update_state(instance: GoalInstance): void {}'
 multi.objectives![backgroundId].submission={submit_type:'dialogue_injection',param:'submit_goal'}
 multi.progress[multi.start].goals=[{id:'one',kind:'core:item_mc_type_submit',params:{}},{id:'two',kind:'core:item_mc_type_submit',params:{}}]
-assert.equal((await questCompiler.compile(file('missing-progress-submit.quest',JSON.stringify(multi)),ctx)).length,0)
+assert.equal((await questCompiler.compile(file('progress-without-submit.quest',JSON.stringify(multi)),ctx)).length,1,'progress submission stays optional')
 multi.progress[multi.start].submission={submit_type:'dialogue_injection',param:'submit_progress'}
 const entries=await questCompiler.compile(file('entries.quest',JSON.stringify(multi)),ctx)
 assert.equal(entries.length,1)
