@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { AddButton, ItemCatalogContext, ItemList, KitTagField, Panel, RemoveButton } from './KitEditor'
 import { IconButton, JsonRepairPane, PendingBanner, RefBadge, SheetField, SheetToggle, useSheetDraft } from './SheetParts'
 import {
+  ACTOR_DESPAWN_MODES,
   actorLootRowToKitItem,
   createActor,
   createActorLootItemRow,
@@ -11,6 +12,7 @@ import {
   type ActorDialogue,
   type ActorDialogueCondition,
   type ActorDialogueEntry,
+  type ActorDespawnMode,
   type ActorDisplaySpec,
   type ActorDocument,
   type ActorInteractService,
@@ -448,6 +450,12 @@ export function ActorEditor({
     </header>
     <div className="actor-primary">
       <SheetToggle label="软冻结原版 AI" hint="停用原版目标与行为，保留导航与控制" checked={doc.freezeAi} disabled={disabled} onChange={freezeAi => update({ freezeAi })} />
+      <label className="actor-despawn">
+        <span>消失行为</span>
+        <select className="sheet-select" aria-label="消失行为" disabled={disabled} value={doc.despawn} onChange={e => update({ despawn: e.target.value as ActorDespawnMode })}>
+          {ACTOR_DESPAWN_MODES.map(mode => <option key={mode.id} value={mode.id} title={mode.hint}>{mode.label}</option>)}
+        </select>
+      </label>
       <KitTagField label="演员标签" tags={doc.tags} disabled={disabled} onChange={tags => update({ tags })} />
     </div>
     {pending && <PendingBanner issue={pending.issue} onDiscard={discard} />}

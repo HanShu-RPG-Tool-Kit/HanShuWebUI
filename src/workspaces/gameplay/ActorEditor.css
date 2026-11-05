@@ -13,6 +13,17 @@
   background: var(--fl-panel, #303030);
 }
 
+.actor-primary > .actor-despawn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  padding: 6px 12px 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--kit-radius);
+  background: var(--fl-panel, #303030);
+}
+
 .actor-primary > .kit-tags-row {
   flex: 1;
   min-width: 260px;

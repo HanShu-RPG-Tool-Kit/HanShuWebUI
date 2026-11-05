@@ -39,12 +39,20 @@ export type ActorLootSpec = {
   xp?: ActorLootXp | null
   item?: ActorLootItemSpec | null
 }
+/** 模板级消失行为；缺省 inherit 表示不动原版判定。 */
+export type ActorDespawnMode = 'inherit' | 'persistent' | 'despawn'
+export const ACTOR_DESPAWN_MODES: readonly { id: ActorDespawnMode; label: string; hint: string }[] = [
+  { id: 'inherit', label: '遵循原版', hint: '不干预：实体类型与 NBT 决定' },
+  { id: 'persistent', label: '持久化', hint: '不因距离或空闲消失' },
+  { id: 'despawn', label: '自然消失', hint: '强制按原版规则消失' },
+]
 export type ActorDocument = {
   format: 'rpgtoolkit:actor-template'
   version: 1
   scripts: string[]
   tags: string[]
   freezeAi: boolean
+  despawn: ActorDespawnMode
   display?: ActorDisplaySpec | null
   reputation?: ActorReputationSpec | null
   dialogue?: ActorDialogue | null
@@ -53,7 +61,7 @@ export type ActorDocument = {
 }
 
 const REQUIRED_KEYS = ['format', 'version', 'scripts', 'tags', 'freezeAi'] as const
-const OPTIONAL_KEYS = ['dialogue', 'interactService', 'display', 'reputation', 'loot'] as const
+const OPTIONAL_KEYS = ['despawn', 'dialogue', 'interactService', 'display', 'reputation', 'loot'] as const
 const ALL_KEYS = new Set<string>([...REQUIRED_KEYS, ...OPTIONAL_KEYS])
 const SIDE_EFFECT_MODES = new Set<ActorSideEffectMode>(['leave', 'set', 'clear'])
 const LOOT_XP_MODES = new Set<ActorLootXpMode>(['leave', 'dropXp', 'giveXp', 'giveLv'])
@@ -83,6 +91,7 @@ export const createActor = (): ActorDocument => ({
   scripts: [],
   tags: [],
   freezeAi: false,
+  despawn: 'inherit',
 })
 
 export function stringifyActor(doc: ActorDocument): string {
@@ -93,6 +102,7 @@ export function stringifyActor(doc: ActorDocument): string {
     tags: doc.tags,
     freezeAi: doc.freezeAi,
   }
+  if (doc.despawn !== 'inherit') out.despawn = doc.despawn
   if (doc.display != null) {
     out.display = doc.display.mode === 'set'
       ? { mode: 'set', title: doc.display.title, subtitle: doc.display.subtitle }
@@ -352,6 +362,14 @@ function parseLoot(value: unknown): ActorLootSpec {
   return loot
 }
 
+function parseDespawn(value: unknown): ActorDespawnMode {
+  if (value === undefined || value === null) return 'inherit'
+  if (typeof value !== 'string' || !ACTOR_DESPAWN_MODES.some(mode => mode.id === value)) {
+    throw new Error('despawn 必须是 inherit/persistent/despawn')
+  }
+  return value as ActorDespawnMode
+}
+
 function parseOptionalObject<T>(raw: Record<string, unknown>, key: string, parse: (value: unknown) => T): T | null | undefined {
   if (!(key in raw)) return undefined
   if (raw[key] == null) return null
@@ -377,6 +395,7 @@ export function parseActor(source: string): ActorDocument {
     scripts,
     tags,
     freezeAi: raw.freezeAi,
+    despawn: parseDespawn(raw.despawn),
     display: parseOptionalObject(raw, 'display', parseDisplay),
     reputation: parseOptionalObject(raw, 'reputation', parseReputation),
     dialogue: parseOptionalObject(raw, 'dialogue', parseDialogue),

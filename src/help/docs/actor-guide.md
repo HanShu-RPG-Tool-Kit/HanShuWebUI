@@ -9,6 +9,7 @@
   "scripts": ["guard"],
   "tags": ["village"],
   "freezeAi": true,
+  "despawn": "persistent",
   "display": { "mode": "set", "title": "&a卫兵", "subtitle": "&7东门" },
   "reputation": { "mode": "set", "id": "village_guard" },
   "loot": {
@@ -36,7 +37,13 @@
 ## 字段
 
 - **必填**：`format` / `version` / `scripts` / `tags` / `freezeAi`
-- **可选**（可省略或 `null`；未知键拒载）：`display` / `reputation` / `loot` / `dialogue` / `interactService`
+- **可选**（可省略或 `null`；未知键拒载）：`despawn` / `display` / `reputation` / `loot` / `dialogue` / `interactService`
+
+### `despawn`（消失行为）
+
+`inherit`（缺省，遵循原版）／`persistent`（持久化，不因距离或空闲消失）／`despawn`（自然消失，强制按原版判定）。编辑器在模板头部「消失行为」下拉里选择；选 `inherit` 时导出不写这个键，旧版模组仍可加载。
+
+服务端每 tick 按当前模板推导，不写实体 NBT：改模板或重载 PAK 后立即生效。只覆盖走 `Mob.checkDespawn` 的实体，自行覆写 `checkDespawn` 的实体会忽略 `despawn`。
 
 `scripts` 是有序、不重复的演员脚本 ID，对应 `src/script/actor/<ID>.js`。表单可选择脚本、调整顺序、打开脚本及移除绑定；未解析引用会显示缺失并阻止 PAK 导出。标签去重保序。`freezeAi` 软冻结原版 Goal/Brain，保留 navigation/control；它不控制脚本是否运行。
 
