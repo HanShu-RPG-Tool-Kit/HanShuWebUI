@@ -33,7 +33,7 @@ assert.deepEqual(parseProgress(stringifyProgress(moved), []).goals, moved.goals,
 assert.deepEqual(parseProgress(stringifyProgress(moved), [{ ...defs[0]!, fields: [{ key: 'newField', type: 'int', required: false, default: 12 }] }]).goals, moved.goals, 'reading never injects schema defaults')
 doc.visibility = [
   { kind: 'quest', op: 'succeeded', questId: 'first_task' },
-  { kind: 'talk_read', injectId: 'intro' },
+  { kind: 'talk', op: 'read', injectId: 'intro' },
   { kind: 'expr', source: 'ctx.player.experienceLevel >= 10' },
 ]
 doc.acceptance = [{ kind: 'quest', op: 'completed', questId: 'other_task' }]
@@ -52,6 +52,8 @@ const legacy = parseProgress(JSON.stringify({
   visibility: [
     { kind: 'task', state: 'succeeded', target: 'first_task' },
     { kind: 'dialogue', state: 'after', target: 'intro' },
+    { kind: 'talk_unread', injectId: 'old_intro' },
+    { kind: 'night' },
     { kind: 'expr', state: 'true', target: 'level >= 10' },
     { kind: 'repeat', state: 'satisfied', target: '' },
   ],
@@ -59,7 +61,9 @@ const legacy = parseProgress(JSON.stringify({
 }))
 assert.deepEqual(legacy.visibility, [
   { kind: 'quest', op: 'succeeded', questId: 'first_task' },
-  { kind: 'talk_read', injectId: 'intro' },
+  { kind: 'talk', op: 'read', injectId: 'intro' },
+  { kind: 'talk', op: 'unread', injectId: 'old_intro' },
+  { kind: 'time', op: 'night' },
   { kind: 'expr', source: 'level >= 10' },
 ])
 assert.deepEqual(legacy.acceptance, [{ kind: 'quest', op: 'completed', questId: 'other_task' }])
@@ -69,7 +73,7 @@ assert.throws(() => parseProgress(JSON.stringify({ ...serialized, visibility: [{
 assert.throws(() => parseProgress(JSON.stringify({ ...serialized, visibility: [{ kind: 'repeat', state: 'unsatisfied', target: '' }] })), /不再支持/)
 assert.throws(() => parseProgress(JSON.stringify({ ...serialized, visibility: [{ kind: 'repeat', state: 'satisfied', target: 'self' }] })), /重复周期条件不需要对象/)
 assert.throws(() => parseProgress(JSON.stringify({ ...serialized, acceptance: [{ kind: 'repeat', state: 'satisfied', target: '' }] })), /不能写入重复周期/)
-assert.ok(progressIssues({ ...doc, visibility: [{ kind: 'quest', op: 'active', questId: '' }] }, defs).some(issue => issue.includes('请填写任务 ID')))
+assert.ok(progressIssues({ ...doc, visibility: [{ kind: 'quest', op: 'active', questId: '' }] }, defs).some(issue => issue.includes('请填写任务标识符')))
 assert.ok(progressIssues({ ...doc, visibility: [{ kind: 'expr', source: '' }] }, defs).some(issue => issue.includes('请填写表达式')))
 assert.equal(readProgressSource('{broken').doc, null)
 assert.equal(readProgressSource(JSON.stringify({ ...doc, groups: [] })).doc, null)

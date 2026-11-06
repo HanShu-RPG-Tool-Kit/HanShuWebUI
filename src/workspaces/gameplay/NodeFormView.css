@@ -76,7 +76,8 @@
 .node-form-goals { display: grid; gap: 12px; }
 .node-form-goals-section .progress-add-row { margin-top: 12px; }
 .node-form-rules { grid-column: 1 / -1; min-width: 0; padding-top: 4px; }
-.node-form-rules .progress-visibility-row { margin-bottom: 10px; }
+.node-form-rules .progress-visibility-row { margin-bottom: 0; }
+.node-form-rules .condition-rules { gap: 8px; }
 .node-form-info .progress-abandon-switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 10px; color: var(--pr-muted); font-size: 12px; }
 .node-form-goals .progress-goal { width: 100%; }
 .node-form-goals .progress-parameters { display: flex; flex-direction: column; }

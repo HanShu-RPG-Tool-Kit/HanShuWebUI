@@ -272,9 +272,12 @@ fn expression_conditions_match_the_progress_editor_contract() {
     let mut e = Engine::open(dir.path()).unwrap();
     let (_, owner) = login(&mut e, dir.path());
     let mut doc: serde_json::Value = serde_json::from_str(&progress()).unwrap();
-    for field in ["visibility", "acceptance"] {
-        doc[field] = serde_json::json!([{"kind":"expr","state":"true","target":"level >= 5"}]);
-    }
+    doc["visibility"] = serde_json::json!([
+        {"kind":"quest","op":"succeeded","questId":"prologue"},
+        {"kind":"expr","source":"ctx.player.experienceLevel >= 5"}
+    ]);
+    doc["acceptance"] = serde_json::json!([{"kind":"talk","op":"read","injectId":"intro"}]);
+    doc["hideWhenRepeatUnsatisfied"] = serde_json::json!(true);
     e.create_resource(
         &owner,
         None,
@@ -283,7 +286,7 @@ fn expression_conditions_match_the_progress_editor_contract() {
         Some(doc.to_string()),
     )
     .unwrap();
-    doc["acceptance"][0]["state"] = serde_json::json!("false");
+    doc["acceptance"][0] = serde_json::json!({"kind":"expr","state":"false","target":"x"});
     assert!(e
         .create_resource(
             &owner,

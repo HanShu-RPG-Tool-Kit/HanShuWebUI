@@ -126,25 +126,12 @@ pub fn validate(source: &str) -> Result<()> {
     } else {
         check(v["completion"] != "custom")?;
     }
+    if let Some(hide) = v.get("hideWhenRepeatUnsatisfied") {
+        check(hide.is_boolean())?;
+    }
     for k in ["visibility", "acceptance"] {
         for rule in v[k].as_array().ok_or_else(invalid)? {
-            check(rule["target"].is_string())?;
-            check(match rule["kind"].as_str() {
-                Some("task") => matches!(
-                    rule["state"].as_str(),
-                    Some("before_accept" | "after_accept" | "active" | "succeeded" | "ended")
-                ),
-                Some("dialogue") => matches!(rule["state"].as_str(), Some("before" | "after")),
-                Some("expr") => rule["state"].as_str() == Some("true"),
-                // Repeat cycle may only be authored under visibility; acceptance gets it as an
-                // engine projection ("satisfied"), never as a stored condition slot.
-                Some("repeat") => {
-                    k == "visibility"
-                        && matches!(rule["state"].as_str(), Some("satisfied" | "unsatisfied"))
-                        && rule["target"].as_str() == Some("")
-                }
-                _ => false,
-            })?;
+            check(validate_condition_rule(rule, k == "visibility"))?;
         }
     }
     for tag in v["tags"].as_array().ok_or_else(invalid)? {
@@ -179,6 +166,76 @@ pub fn validate(source: &str) -> Result<()> {
         )?;
     }
     Ok(())
+}
+
+fn quest_op(value: &Value) -> bool {
+    matches!(
+        value.as_str(),
+        Some(
+            "before_start"
+                | "after_start"
+                | "active"
+                | "succeeded"
+                | "failed"
+                | "completed"
+                // Legacy task ops accepted on read until drafts are re-saved.
+                | "before_accept"
+                | "after_accept"
+                | "ended"
+        )
+    )
+}
+
+fn cmp_op(value: &Value) -> bool {
+    matches!(
+        value.as_str(),
+        Some("==" | "!=" | ">" | "<" | ">=" | "<=")
+    )
+}
+
+/// Authoring sugar leaves for visibility/acceptance; mirrors Web `conditions.ts`.
+fn validate_condition_rule(rule: &Value, allow_legacy_repeat: bool) -> bool {
+    match rule["kind"].as_str() {
+        Some("expr") => {
+            rule.get("source").is_some_and(Value::is_string)
+                || (rule["state"].as_str() == Some("true") && rule["target"].is_string())
+        }
+        Some("quest") => quest_op(&rule["op"]) && rule["questId"].is_string(),
+        Some("progress") => {
+            quest_op(&rule["op"]) && rule["questId"].is_string() && rule["progressId"].is_string()
+        }
+        Some("talk") => {
+            matches!(rule["op"].as_str(), Some("read" | "unread")) && rule["injectId"].is_string()
+        }
+        Some("level") => cmp_op(&rule["cmp"]) && rule["n"].as_f64().is_some_and(|n| n.is_finite()),
+        Some("reputation") => {
+            cmp_op(&rule["cmp"])
+                && rule["factionId"].is_string()
+                && rule["n"].as_f64().is_some_and(|n| n.is_finite())
+        }
+        Some("time") => matches!(rule["op"].as_str(), Some("day" | "night")),
+        // Legacy split leaves; Web migrates on parse.
+        Some("talk_read" | "talk_unread") => rule["injectId"].is_string(),
+        Some("day" | "night") => true,
+        // Legacy leaves kept readable so older drafts can open; Web migrates on parse.
+        Some("task") => {
+            rule["target"].is_string()
+                && matches!(
+                    rule["state"].as_str(),
+                    Some("before_accept" | "after_accept" | "active" | "succeeded" | "ended")
+                )
+        }
+        Some("dialogue") => {
+            rule["target"].is_string()
+                && matches!(rule["state"].as_str(), Some("before" | "after"))
+        }
+        Some("repeat") => {
+            allow_legacy_repeat
+                && matches!(rule["state"].as_str(), Some("satisfied" | "unsatisfied"))
+                && rule["target"].as_str() == Some("")
+        }
+        _ => false,
+    }
 }
 
 /// Drafts may be incomplete or reference a deleted goal. Topology must still be a forest.
@@ -299,6 +356,36 @@ pub(crate) fn validate_receipt_snapshot(source: &str, document_id: &str) -> Resu
 mod receipt_tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn modern_condition_leaves_and_hide_flag_are_accepted() {
+        let doc = json!({
+            "format":"hanshu.progress","version":1,"id":"doc","name":"name","description":"description",
+            "authorNotes":"","tags":[],"completion":"all","goals":[],
+            "visibility":[
+                {"kind":"quest","op":"active","questId":"village"},
+                {"kind":"progress","op":"succeeded","questId":"village","progressId":"start"},
+                {"kind":"talk","op":"unread","injectId":"intro"},
+                {"kind":"level","cmp":">=","n":10},
+                {"kind":"reputation","cmp":">","factionId":"town","n":0},
+                {"kind":"time","op":"day"},
+                {"kind":"expr","source":"ctx.player.experienceLevel >= 1"}
+            ],
+            "acceptance":[{"kind":"time","op":"night"}],
+            "hideWhenRepeatUnsatisfied":true,
+            "abandonable":true,"autoStartWhenAcceptable":false,
+            "repeat":{"kind":"once"},"rewardKits":[]
+        });
+        assert!(validate(&doc.to_string()).is_ok());
+        let mut bad = doc.clone();
+        bad["visibility"][0] = json!({"kind":"quest","op":"nope","questId":"x"});
+        assert!(validate(&bad.to_string()).is_err());
+        let mut bad_accept_repeat = doc.clone();
+        bad_accept_repeat["acceptance"] =
+            json!([{"kind":"repeat","state":"satisfied","target":""}]);
+        assert!(validate(&bad_accept_repeat.to_string()).is_err());
+    }
+
     #[test]
     fn historical_snapshot_rules_are_stable_but_identity_and_json_remain_strict() {
         let snapshot = json!({"format":"hanshu.progress","version":1,"id":"doc","name":"name","description":"description",

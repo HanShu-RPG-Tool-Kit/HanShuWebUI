@@ -16,7 +16,7 @@
   - 进度结束（成功 / 失败 / 取消等）后，其上挂载的 goals 随之关闭；不必另写「成功后取消其余目标」——关闭是进度结束的自然结果。
 - Goal 类型及参数字段唯一来自「脚本 → 目标定义」。目录从文件级 `@goal(id)` 与 `@config(field(...))` 元数据解析；表单不执行 JavaScript。文件头 `/* JSON */` 注释（`labels` / `params.*.widget` / `localize`）只供 WebUI。参数控件由可注册的 `goalWidgets` 解析（内置 `text` / `number` / `slider` / `select` / `bool`）；未知控件本阶段回退文本框。
 - 没有脚本时显示空目录。定义删除后目标仍保留类型与参数。未声明的旧参数保留在文件中。
-- `visibility` 与 `acceptance` **相互独立**；作者态为条件组（AND），编译到 questc 时变成一条布尔表达式字符串（空组 → `""` 恒真）。叶子含任务／进度／对话读态／等级／声誉／昼夜／逃生表达式；**不再**有重复周期叶子。周期不可见用 `hideWhenRepeatUnsatisfied`（布尔，缺省 false）。**承接只要求 `acceptance`，不要求 `visibility`**；引擎始终再投影 `repeat`。
+- `visibility` 与 `acceptance` **相互独立**；作者态为条件组（AND），编译到 questc 时变成一条布尔表达式字符串（空组 → `""` 恒真）。叶子：表达式（逃生）／任务／进度／对话（读过｜没读过）／等级／声誉／时间（白天｜黑夜）；**不再**有重复周期叶子。周期不可见用 `hideWhenRepeatUnsatisfied`（布尔，缺省 false）。**承接只要求 `acceptance`，不要求 `visibility`**；引擎始终再投影 `repeat`。
 - `abandonable`、`autoStartWhenAcceptable`、`hideWhenRepeatUnsatisfied` 为布尔；新建显式写出，后两者缺省 false。
 - `rewardKits` 为去重礼包引用数组。
 - `authorNotes` 与玩家 `description` 分开。玩家可见 `name` / `description` 存语义键，译文在 `assets/<locale>/lang_quest/<文件>.lang`；作者备注不本地化。
