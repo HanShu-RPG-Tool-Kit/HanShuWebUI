@@ -19,9 +19,7 @@ export const stageplayMenuContribution: MenuContribution = {
       label: '文件',
       items: [
         cmd('new-script', '新建剧本'),
-        cmd('rename-project', '重命名工程'),
         cmd('save', '保存'),
-        cmd('save-as-project', '另存为工程…'),
       ],
     },
     {

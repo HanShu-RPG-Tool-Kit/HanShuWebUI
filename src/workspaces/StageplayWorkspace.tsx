@@ -123,7 +123,6 @@ import {
   flushProjectEditors,
   registerProjectEditorFlush,
 } from '../project/editorFlush'
-import { exportProjectPack } from '../project/exportActions'
 import {
   createBlankOggBlob,
   isVoiceRefPath,
@@ -2062,30 +2061,6 @@ export const StageplayWorkspace = forwardRef<
     commitWorkspace(toggleAssetsCollapsed(workspaceRef.current, packageId))
   }
 
-  /** 只改 project.json 里的工程名称；目录与 C/S 身份不变。 */
-  const handleRenameProject = (packageId: string) => {
-    const pkg = workspaceRef.current.packages.find((item) => item.id === packageId)
-    if (!pkg) return
-    const previous = pkg.name
-    void promptDialog({
-      title: '重命名工程',
-      message: '输入新的工程名称。工程目录不会改名。',
-      defaultValue: previous,
-      validate: (value) => (value.trim() ? null : '名字不能为空'),
-    }).then((name) => {
-      if (name == null) return
-      const trimmed = name.trim()
-      if (!trimmed || trimmed === previous) return
-      if (!workspaceRef.current.packages.some((item) => item.id === packageId)) return
-      commitWorkspace({
-        ...workspaceRef.current,
-        packages: workspaceRef.current.packages.map((item) =>
-          item.id === packageId ? { ...item, name: trimmed } : item,
-        ),
-      })
-    })
-  }
-
   /**
    * 改名并连带搬迁每种语言的文本 / 音频（见 `renameScriptAssets`）。
    * 界面里的改名与 Agent 的 `rename_source` 共用这一条路径。
@@ -2495,18 +2470,9 @@ export const StageplayWorkspace = forwardRef<
   const handleMenuAction = (item: string) => {
     if (item !== 'voice-studio' && toggleScriptViewItem(item)) return
     switch (item) {
-      case 'save-as-project':
-        void exportProjectPack()
-        return
       case 'save':
         persistNow()
         return
-      case 'rename-project': {
-        const id = workspaceRef.current.packages[0]?.id
-        if (id) handleRenameProject(id)
-        else void alertDialog('请先打开工程。')
-        return
-      }
       case 'new-script':
         setNewFileMenuRequest((count) => count + 1)
         return
@@ -3347,7 +3313,6 @@ export const StageplayWorkspace = forwardRef<
                 ),
               )
             }}
-            onRenameProject={handleRenameProject}
             onToggleAssets={handleToggleAssets}
             onDeleteAsset={handleDeleteAsset}
             onNewAssetFolder={handleNewAssetFolder}

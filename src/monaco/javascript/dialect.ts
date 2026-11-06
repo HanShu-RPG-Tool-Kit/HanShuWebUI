@@ -1,5 +1,5 @@
 import {parse,tokenizer} from 'acorn'
-export type Hook={hook:string;function:string;line:number;cancellable:boolean|null;priority:string;receiveCancelled:boolean}
+export type Hook={hook:string;function:string;line:number;functionLine:number;eventType:string;cancellable:boolean|null;priority:string;receiveCancelled:boolean}
 export type GoalField={name:string;type:string;required:boolean;defaultValue:string|number|boolean|null}
 export type GoalSubscription={event:string;function:string;line:number;priority:string;receiveCancelled:boolean}
 export type GoalMetadata={id:string;line:number;configLine:number;stateLine:number;config:GoalField[];state:GoalField[];handlers:GoalSubscription[]}
@@ -71,13 +71,13 @@ function fields(text:string):GoalField[]{
  }
  return result
 }
-type Signature={name:string;params:string[];typed:boolean;valid:boolean;runtime:string;length:number;line:number;column:number}
+type Signature={name:string;params:string[];paramTypes:string[];typed:boolean;valid:boolean;runtime:string;length:number;line:number;column:number}
 function signature(text:string,line:number):Signature|null{
  const m=new RegExp(`^function\\s+(${ident})\\s*\\(([^)]*)\\)\\s*(?::\\s*([^{}]+?))?\\s*\\{`).exec(text);if(!m)return null
- const params=m[2].trim()?m[2].split(',').map(x=>x.trim()):[],names:string[]=[];let valid=true,typed=!!m[3]
- for(const param of params){const p=new RegExp(`^(${ident})\\s*:\\s*(${typeName})$`).exec(param);if(p){names.push(p[1]);typed=true}else{names.push(param);valid=false}}
+ const params=m[2].trim()?m[2].split(',').map(x=>x.trim()):[],names:string[]=[],paramTypes:string[]=[];let valid=true,typed=!!m[3]
+ for(const param of params){const p=new RegExp(`^(${ident})\\s*:\\s*(${typeName})$`).exec(param);if(p){names.push(p[1]);paramTypes.push(p[2]);typed=true}else{names.push(param);paramTypes.push('');valid=false}}
  if(!m[3]||!new RegExp(`^${typeName}$`).test(m[3].trim()))valid=false
- return {name:m[1],params:names,typed,valid,runtime:`function ${m[1]}(${names.join(', ')}) {`,length:m[0].length,line,column:0}
+ return {name:m[1],params:names,paramTypes,typed,valid,runtime:`function ${m[1]}(${names.join(', ')}) {`,length:m[0].length,line,column:0}
 }
 /** Author-only front end: typed signatures stay in the editor, and are erased only for runtime. */
 export function transformDialect(source:string,mode:'runtime'|'editor'='runtime',_eventType?:string|((hook:string)=>string)){
@@ -116,7 +116,7 @@ export function transformDialect(source:string,mode:'runtime'|'editor'='runtime'
      const fn=nextFunction(index),o=options(args[1],['cancellable','priority','receiveCancelled']),priority=o.priority===undefined?'NORMAL':o.priority;if(typeof priority!=='string'||!priorities.includes(priority))throw Error('Invalid event priority')
      const cancellable=o.cancellable===null||o.cancellable===undefined?null:booleanOption(o,'cancellable',false)
      if(hooks.some(h=>h.function===fn.name))throw Error('Duplicate hook function')
-     hooks.push({hook:name,function:fn.name,line,cancellable,priority,receiveCancelled:booleanOption(o,'receiveCancelled',false)});business=true
+     hooks.push({hook:name,function:fn.name,line,functionLine:fn.line,eventType:fn.paramTypes[0]??'',cancellable,priority,receiveCancelled:booleanOption(o,'receiveCancelled',false)});business=true
     }else{
      if(!goal||phase!==3)throw Error('@subscribe requires a complete goal metadata block')
      const args=split(body);if(args.length<1||args.length>2||!aliases.has(args[0]))throw Error('@subscribe requires an imported Java event alias')
@@ -164,5 +164,5 @@ export function transformDialect(source:string,mode:'runtime'|'editor'='runtime'
   if(!goal.handlers.length)error(goal.line,'Goal requires at least one @subscribe handler')
   for(const [name,count] of [['update_state',1],['localize',2],['deliver',2]] as const){const fn=functions.get(name);if(name==='update_state'&&!fn)error(goal.line,'Goal requires update_state(instance)');if(fn&&fn.params.length!==count)error(fn.line,`${name} requires ${count} parameters`)}
  }
- return {source:mode==='editor'?editor.join('\n'):transformed,hooks,goal,diagnostics,imports:[...new Set(imports)]}
+ return {source:mode==='editor'?editor.join('\n'):transformed,hooks,goal,diagnostics,imports:[...new Set(imports)],aliases:Object.fromEntries(aliases)}
 }

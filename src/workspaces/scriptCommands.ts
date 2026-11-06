@@ -8,7 +8,6 @@ export function scriptPaletteChoices(): DialogChoice[] {
   return [
     { id: 'save', label: '保存' },
     { id: 'new-script', label: '新建剧本' },
-    { id: 'save-as-project', label: '另存为工程' },
     { id: 'undo', label: '撤销' },
     { id: 'redo', label: '重做' },
     { id: 'cut', label: '剪切' },

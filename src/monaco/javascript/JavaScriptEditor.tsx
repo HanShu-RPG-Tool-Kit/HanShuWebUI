@@ -6,6 +6,8 @@ import { notify } from '../../activity/activityStore'
 import { attachJavaScript, captureJavaScriptDiagnostics, JAVASCRIPT_LANGUAGE_ID, registerJavaScriptLanguage } from './javascriptLanguage'
 import { registerJavaImportAction, type ImportRequest } from './javaImportAction'
 import { JavaImportDialog } from './JavaImportDialog'
+import { registerHookInsertAction, type HookInsertRequest } from './hookInsertAction'
+import { HookInsertDialog } from './HookInsertDialog'
 import { getControlHubSnapshot, isControlConnected, subscribeControlHub } from '../../gameDevServer/controlHub'
 import {LanguageDiagnosticsDialog, type LanguageDiagnosticsRequest} from './LanguageDiagnosticsDialog'
 import {recordLanguageDiagnostic} from './diagnostics'
@@ -13,6 +15,7 @@ import {recordLanguageDiagnostic} from './diagnostics'
 /** Shared JavaScript editor; host globals and services belong to its project/type profile. */
 export function JavaScriptEditor({ onMount, beforeMount, scriptType='common', ...props }: EditorProps & {scriptType?:ScriptType}) {
   const [javaImport, setJavaImport] = useState<{ request: ImportRequest; monaco: typeof import('monaco-editor') } | null>(null)
+  const [hookInsert, setHookInsert] = useState<{ request: HookInsertRequest; monaco: typeof import('monaco-editor') } | null>(null)
   const [diagnostics, setDiagnostics] = useState<LanguageDiagnosticsRequest | null>(null)
   const project=useSyncExternalStore(subscribeProjectSession,getProjectSession).binding?.handle.client
   const rebind=useRef<()=>void>(()=>{})
@@ -38,6 +41,7 @@ export function JavaScriptEditor({ onMount, beforeMount, scriptType='common', ..
     rebind.current=attach
     attach()
     const importAction = registerJavaImportAction(editor, monaco, request => setJavaImport({ request, monaco }))
+    const hookAction = registerHookInsertAction(editor, monaco, request => setHookInsert({ request, monaco }))
     const completionAction = editor.addAction({
       id:'hanshu.javascript.triggerSuggest',label:'显示脚本补全',
       keybindings:[monaco.KeyMod.Alt | monaco.KeyCode.Slash],
@@ -61,14 +65,19 @@ export function JavaScriptEditor({ onMount, beforeMount, scriptType='common', ..
     const diagnosticWidget={getId:()=> 'hanshu.javascript.diagnostics',getDomNode:()=>diagnosticButton,getPosition:()=>({preference:monaco.editor.OverlayWidgetPositionPreference.TOP_RIGHT_CORNER})}
     editor.addOverlayWidget(diagnosticWidget)
     const listener = editor.onDidChangeModel(attach)
+    // 只在「已连接 → 断开」时收起补全；自动重连轮询会反复 bump 且长期未连接，
+    // 若每次都 hideSuggestWidget，离线 Alt+/ 弹层会被秒关。
+    let controlConnected = isControlConnected()
     const stopControl = subscribeControlHub(() => {
-      if (!isControlConnected()) {
+      const next = isControlConnected()
+      if (controlConnected && !next) {
         editor.trigger('hanshu-javascript', 'hideSuggestWidget', {})
         editor.trigger('hanshu-javascript', 'closeParameterHints', {})
       }
+      controlConnected = next
     })
-    cleanup.current = () => { rebind.current=()=>{};stopControl(); editor.removeOverlayWidget(diagnosticWidget); diagnosticButton.onclick=null; diagnosticAction.dispose(); completionAction.dispose(); importAction.dispose(); listener.dispose(); binding?.dispose() }
+    cleanup.current = () => { rebind.current=()=>{};stopControl(); editor.removeOverlayWidget(diagnosticWidget); diagnosticButton.onclick=null; diagnosticAction.dispose(); completionAction.dispose(); hookAction.dispose(); importAction.dispose(); listener.dispose(); binding?.dispose() }
     onMount?.(editor, monaco)
   }
-  return <><Editor {...props} language={JAVASCRIPT_LANGUAGE_ID} beforeMount={monaco=>{registerJavaScriptLanguage(monaco);beforeMount?.(monaco)}} onMount={mount} />{javaImport && <JavaImportDialog request={javaImport.request} monaco={javaImport.monaco} close={() => setJavaImport(null)} />}{diagnostics && <LanguageDiagnosticsDialog request={diagnostics} close={() => setDiagnostics(null)} />}</>
+  return <><Editor {...props} language={JAVASCRIPT_LANGUAGE_ID} beforeMount={monaco=>{registerJavaScriptLanguage(monaco);beforeMount?.(monaco)}} onMount={mount} />{javaImport && <JavaImportDialog request={javaImport.request} monaco={javaImport.monaco} close={() => setJavaImport(null)} />}{hookInsert && <HookInsertDialog request={hookInsert.request} monaco={hookInsert.monaco} close={() => setHookInsert(null)} />}{diagnostics && <LanguageDiagnosticsDialog request={diagnostics} close={() => setDiagnostics(null)} />}</>
 }

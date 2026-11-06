@@ -24,7 +24,7 @@ try{
  assert.equal(await sp.getByRole('button',{name:'+剧',exact:true}).count(),1)
  await sp.locator('.explorer-assets-row').filter({hasText:'assets'}).first().waitFor()
  await sp.locator('.explorer-shell-tree').click({button:'right'})
- assert.equal(await page.getByRole('menuitem',{name:'重命名工程'}).count(),1)
+ assert.equal(await page.getByRole('menuitem',{name:'重命名工程'}).count(),0)
  assert.equal(await page.getByRole('menuitem',{name:'删除',exact:true}).count(),0)
  await page.keyboard.press('Escape')
  console.log('PASS stageplay: category tree without project row, no package UI, assets addon mounted')

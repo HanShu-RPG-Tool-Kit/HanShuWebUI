@@ -39,7 +39,7 @@ type TypeMenu = {
 /**
  * 剧本资源管理器：通用分类壳 + `+剧` 类型菜单 + `assets/` 真实目录附加件。
  *
- * 与游戏性 / 视听一样，树顶直接是分类，不挂工程名行（工程名在顶栏；重命名走「文件 → 重命名工程」）。
+ * 与游戏性 / 视听一样，树顶直接是分类，不挂工程名行（工程名在顶栏）。
  * 分类下的文件夹是 `meta/explorer.json` 共享虚拟文件夹；磁盘路径不随文件夹变化。
  */
 export function StageplayExplorer({
@@ -56,7 +56,6 @@ export function StageplayExplorer({
   onRename,
   onDelete,
   onOrganize,
-  onRenameProject,
   onToggleAssets,
   onDeleteAsset,
   onNewAssetFolder,
@@ -82,7 +81,6 @@ export function StageplayExplorer({
   onRename: (scriptId: string, base: string) => string | null;
   onDelete: (scriptIds: string[]) => void;
   onOrganize: (next: ExplorerOrganization, label: string) => void;
-  onRenameProject: (projectId: string) => void;
   onToggleAssets: (projectId: string) => void;
   onDeleteAsset: (assetId: string) => void;
   onNewAssetFolder: (packageId: string, parentPath: string) => void;
@@ -192,12 +190,6 @@ export function StageplayExplorer({
             action: () => openTypeMenuAt(anchor),
           },
           { label: "导入资源…", disabled: readOnly, hint: "导入到 assets/", action: () => requestImport("assets") },
-          {
-            label: "重命名工程",
-            disabled: readOnly,
-            hint: "修改 project.json 里的工程名称；不改目录",
-            action: () => onRenameProject(project.id),
-          },
         ]
       : [
           { label: "创建工程…", action: () => openProjectUi("create") },

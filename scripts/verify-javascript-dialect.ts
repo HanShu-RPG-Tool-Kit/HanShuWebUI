@@ -10,7 +10,8 @@ assert(transformDialect(input,'editor').source.includes('function tick(event: Pl
 assert(!output.source.includes(': PlayerEvent'))
 assert(!transformDialect(input,'editor').source.includes('@param'))
 assert.equal(output.source.split('\n')[2],'//@hook("tick", {cancellable:false})\r')
-assert.deepEqual(output.hooks,[{hook:'tick',function:'tick',line:3,cancellable:false,priority:'NORMAL',receiveCancelled:false}])
+assert.deepEqual(output.hooks,[{hook:'tick',function:'tick',line:3,functionLine:4,eventType:'PlayerEvent',cancellable:false,priority:'NORMAL',receiveCancelled:false}])
+assert.equal(output.aliases.Player,'net.minecraft.server.level.ServerPlayer')
 for(const bad of ['import {X} from "a.b"','import X from "./a"','import X from "common"','require fx from "../fx"','require fx from "net.foo.Bar"','require("fx")','load("a.js")','loadWithNewGlobal("a")','@hook(\n"tick")\nfunction f(e,b){}','@hook("tick")\n\nfunction f(e,b){}','@hook("tick")\nfunction f(e){}','function f(){\nimport X from "a.b"\n}','@hook("tick", {bad:true})\nfunction f(e,b){}'])assert(transformDialect(bad).diagnostics.length,`Gate accepted: ${bad}`)
 assert.deepEqual(transformDialect('/* import X from "./bad"\n@hook("bad")\n*/\nvar text="load(123)"; // require("bad")').diagnostics,[])
 const entry={name:'net.minecraft.world.item.ItemStack',symbol:'ItemStack',packageName:'net.minecraft.world.item',origin:'Minecraft'}

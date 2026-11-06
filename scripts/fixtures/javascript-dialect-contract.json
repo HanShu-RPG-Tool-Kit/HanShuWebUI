@@ -33,6 +33,8 @@
         "hook": "tick",
         "function": "on_tick",
         "line": 1,
+        "functionLine": 2,
+        "eventType": "any",
         "cancellable": null,
         "priority": "NORMAL",
         "receiveCancelled": false
@@ -50,6 +52,8 @@
         "hook": "hit",
         "function": "hit",
         "line": 1,
+        "functionLine": 2,
+        "eventType": "any",
         "cancellable": true,
         "priority": "HIGH",
         "receiveCancelled": true
@@ -75,6 +79,8 @@
         "hook": "tick",
         "function": "on_tick",
         "line": 3,
+        "functionLine": 4,
+        "eventType": "any",
         "cancellable": null,
         "priority": "NORMAL",
         "receiveCancelled": false
@@ -167,6 +173,8 @@
         "hook": "tick",
         "function": "on_tick",
         "line": 2,
+        "functionLine": 3,
+        "eventType": "any",
         "cancellable": null,
         "priority": "NORMAL",
         "receiveCancelled": false

@@ -6,10 +6,10 @@ import { pushActivity, updateActivity } from '../activity'
 import {
   buildResourcePackZip,
   bundlePacksZip,
-  downloadBlob,
   exportPaks,
 } from '../export/resourcePack'
 import { buildProjectPackZip } from '../export/projectPack'
+import { saveBlobAs } from '../export/saveBlob'
 import {
   AUTO_PUBLISH_PAK_NAME,
   publishPakBlob,
@@ -34,13 +34,18 @@ function preparedWorkspace() {
   return getProjectSession().workspace
 }
 
-/** 导出 combined PAK（兼容） */
+/** 导出 combined PAK（兼容）；桌面／支持的浏览器走「另存为」 */
 export async function exportCombinedPak(): Promise<void> {
   try {
     const { blob, fileCount, warnings } = await buildResourcePackZip(
       preparedWorkspace(),
     )
-    downloadBlob(blob, `hanshu-${stamp()}.pak`)
+    const result = await saveBlobAs(blob, `hanshu-${stamp()}.pak`, {
+      title: '导出 PAK',
+      filterLabel: 'PAK',
+      extensions: ['pak'],
+    })
+    if (result === 'cancelled') return
     if (warnings.length > 0) {
       window.alert(
         `已导出 PAK（${fileCount} 个文件），但有警告：\n\n${warnBlock(warnings)}`,
@@ -68,7 +73,12 @@ export async function exportPlanePaks(): Promise<void> {
         : undefined,
     })
     const bundle = await bundlePacksZip(packs)
-    downloadBlob(bundle, `hanshu-paks-${stamp()}.zip`)
+    const result = await saveBlobAs(bundle, `hanshu-paks-${stamp()}.zip`, {
+      title: '导出分平面 PAK',
+      filterLabel: '分平面 PAK 包',
+      extensions: ['zip'],
+    })
+    if (result === 'cancelled') return
 
     const summary = packs
       .map(
@@ -139,13 +149,19 @@ export async function autoPublishPak(): Promise<void> {
   }
 }
 
-/** 导出工程包：原样完整打包 */
+/** 导出工程包：原样完整打包；桌面／支持的浏览器走「另存为」zip */
 export async function exportProjectPack(): Promise<void> {
   try {
     const { blob, fileCount, warnings } = await buildProjectPackZip(
       preparedWorkspace(),
     )
-    downloadBlob(blob, `hanshu-project-${stamp()}.zip`)
+    const fileName = `hanshu-project-${stamp()}.zip`
+    const result = await saveBlobAs(blob, fileName, {
+      title: '导出工程包',
+      filterLabel: '工程包',
+      extensions: ['zip'],
+    })
+    if (result === 'cancelled') return
 
     if (warnings.length > 0) {
       window.alert(

@@ -9,6 +9,7 @@ import {javascriptProfile} from './profiles'
 import {diagnosticValue,languageDiagnosticHistory,recordLanguageDiagnostic} from './diagnostics'
 import {javascriptCompletion,type LanguageCompletion} from './completion'
 import {libraryKey,readJavaLibrary,readLibraryClasses,subscribeJavaLibrary,type JavaLibrary} from './javaLibrary'
+import {hookEventTypeMatches, type HookCatalogEntry} from './hookInsert'
 type M=typeof Monaco
 type LanguageDocument={model:Monaco.editor.ITextModel;file:string;source:string;refs:number;listener:Monaco.IDisposable;timer?:ReturnType<typeof setTimeout>;diagnosticRun:number}
 type TypeDiagnostic={code:number;message:string;start:{line:number;column:number};end:{line:number;column:number};error:boolean}
@@ -42,11 +43,16 @@ export async function captureJavaScriptDiagnostics(model:Monaco.editor.ITextMode
  const source=model.isDisposed()?null:model.getValue()
  return {format:'hanshu.javascript-language-diagnostics',version:1,capturedAt:new Date().toISOString(),document:{uri:model.uri.with({query:'',fragment:''}).toString(),languageId:model.isDisposed()?null:model.getLanguageId(),position,selection,source,editorTransform:source===null?null:transformDialect(source,'editor'),runtimeTransform:source===null?null:transformDialect(source)},service:{unavailable:true,reason:'No active language service snapshot; inspect lifecycle history'},history:languageDiagnosticHistory()}
 }
+export function peekJavaScriptHooks(model:Monaco.editor.ITextModel):HookCatalogEntry[]{
+ const shared=[...services.values()].find(entry=>entry.service.documents.has(model.uri.toString()))
+ return shared?.service.listHooks()??[]
+}
+function hookEventLeaf(fqcn:string){const leaf=fqcn.split('.').pop()??fqcn;const nested=leaf.split('$');return nested[nested.length-1]||leaf}
 let languageSequence=0
 export class JavaScriptLanguage {
  private readonly diagnosticId=`language-${++languageSequence}`
  readonly client=new TsserverClient();readonly documents=new Map<string,LanguageDocument>()
- private disposables:(()=>void)[]=[];private classes=new Map<string,JavaStub>();private javaFiles:Record<string,string>={};private projectFiles:Record<string,string>={};private runtime='';private disposed=false;private hooks:string[]=[];private sequence=0;private generation=0;private queued:Promise<unknown>=Promise.resolve()
+ private disposables:(()=>void)[]=[];private classes=new Map<string,JavaStub>();private javaFiles:Record<string,string>={};private projectFiles:Record<string,string>={};private runtime='';private disposed=false;private hooks:HookCatalogEntry[]=[];private sequence=0;private generation=0;private queued:Promise<unknown>=Promise.resolve()
  private profile:ReturnType<typeof javascriptProfile>;private connected=false;private hookRevision=-1;private hookRuntime='';private hookClasses=new Map<string,string>();private project=getProjectSession().binding?.handle.client
  private monaco:M; private report:(e:unknown)=>void; private type:ScriptType
  private missingClasses=new Set<string>()
@@ -60,7 +66,16 @@ export class JavaScriptLanguage {
   const completion=monaco.languages.registerCompletionItemProvider(LANGUAGE,{triggerCharacters:['.','"',"'"],provideCompletionItems:(model,position)=>this.provide<Monaco.languages.CompletionList>('completion',model,position,{suggestions:[]},async()=>{
    const doc=this.documents.get(model.uri.toString());if(!doc)return {suggestions:[]}
    const word=model.getWordUntilPosition(position),range=new monaco.Range(position.lineNumber,word.startColumn,position.lineNumber,word.endColumn)
-   if(/@hook\(\s*["'][^"']*$/.test(model.getLineContent(position.lineNumber).slice(0,position.column-1)))return {suggestions:this.hooks.map(h=>({label:h,insertText:h,kind:monaco.languages.CompletionItemKind.Event,range}))}
+   if(/@hook\(\s*["'][^"']*$/.test(model.getLineContent(position.lineNumber).slice(0,position.column-1)))return {suggestions:this.hooks.map(h=>({
+    label:h.id,
+    insertText:h.id,
+    kind:monaco.languages.CompletionItemKind.Event,
+    range,
+    detail:h.eventClass?hookEventLeaf(h.eventClass):undefined,
+    documentation:h.eventClass
+      ? `事件类型 ${h.eventClass}${h.cancellable?' · 可取消':''}\n参数需作者写成 event: <类型>；可用「插入钩子函数…」一次生成 import 与签名。`
+      : `宿主未提供 eventClass；请自行声明 event 参数类型。`,
+   }))}
    await this.update(doc);await this.hydrate(doc,position);const values=await this.client.request('completion',{file:doc.file,line:position.lineNumber,column:position.column})
    return {suggestions:values.map((entry:LanguageCompletion)=>javascriptCompletion(monaco,model,position,entry))}
   })})
@@ -93,7 +108,11 @@ export class JavaScriptLanguage {
   this.projectFiles=next;await this.client.writeFiles(changes)
  }
  private async reconnect(force=false){
-  const generation=controlConnectionGeneration(),connected=isControlConnected(),endpoint=libraryKey();if(!force&&this.endpoint===endpoint&&this.generation===generation&&this.connected===connected)return;this.endpoint=endpoint;this.generation=generation;this.connected=connected
+  const generation=controlConnectionGeneration(),connected=isControlConnected(),endpoint=libraryKey()
+  if(!force&&this.endpoint===endpoint&&this.generation===generation&&this.connected===connected)return
+  // 自动重连每次 tryConnect 都会抬升 generation；离线身份未变时不要拆类型库／打断补全
+  if(!force&&!connected&&!this.connected&&this.endpoint===endpoint)return
+  this.endpoint=endpoint;this.generation=generation;this.connected=connected
   recordLanguageDiagnostic(this.diagnosticId,'connection',{generation,connected})
   clearTimeout(this.typeDiagnosticsTimer)
   this.classes.clear();this.missingClasses.clear();this.runtime='';this.hooks=[];this.hookClasses.clear();this.hookRevision=-1;this.hookRuntime='';this.library=undefined
@@ -106,16 +125,17 @@ export class JavaScriptLanguage {
   for(const doc of this.documents.values()){await this.refreshImports(doc.model);await this.diagnose(doc)}
  }
  private async loadHooks(){
-  if(this.library){const snapshot=this.type==='actor'?this.library.actor:this.type==='player'?this.library.player:undefined;if(snapshot){this.hookRuntime=snapshot.runtimeId;this.hookRevision=snapshot.revision;this.hooks=snapshot.hooks.map(h=>h.id);this.hookClasses=new Map(snapshot.hooks.filter(h=>h.eventClass).map(h=>[h.id,h.eventClass!]));}return}
+  if(this.library){const snapshot=this.type==='actor'?this.library.actor:this.type==='player'?this.library.player:undefined;if(snapshot){this.hookRuntime=snapshot.runtimeId;this.hookRevision=snapshot.revision;this.hooks=snapshot.hooks.map(h=>({id:h.id,cancellable:h.cancellable,eventClass:h.eventClass}));this.hookClasses=new Map(snapshot.hooks.filter(h=>h.eventClass).map(h=>[h.id,h.eventClass!]));}return}
   if(!isControlConnected()||!['actor','player'].includes(this.type))return
   const generation=controlConnectionGeneration(),r=await this.requestControl(`javascript.${this.type}Hooks`,{}) as {schemaVersion:number;runtimeId:string;revision:number;hooks:{id:string;cancellable:boolean;eventClass?:string}[]}
   if(this.disposed||generation!==controlConnectionGeneration())return
   if(r.schemaVersion!==1||typeof r.runtimeId!=='string'||!Number.isSafeInteger(r.revision)||!Array.isArray(r.hooks)||r.hooks.some(h=>typeof h.id!=='string'||typeof h.cancellable!=='boolean'))throw Error('不兼容的 hook 注册表')
   if(this.hookRuntime===r.runtimeId&&this.hookRevision>=r.revision)return
-  this.hookRuntime=r.runtimeId;this.hookRevision=r.revision;this.hooks=r.hooks.map(h=>h.id)
+  this.hookRuntime=r.runtimeId;this.hookRevision=r.revision;this.hooks=r.hooks.map(h=>({id:h.id,cancellable:h.cancellable,eventClass:typeof h.eventClass==='string'?h.eventClass:undefined}))
   this.hookClasses=new Map(r.hooks.filter(h=>typeof h.eventClass==='string').map(h=>[h.id,h.eventClass!]))
   for(const doc of this.documents.values()){await this.refreshImports(doc.model);await this.update(doc)}
  }
+ listHooks():HookCatalogEntry[]{return this.hooks.map(h=>({...h}))}
  private async hydrate(doc:{file:string;model:Monaco.editor.ITextModel},position:Monaco.Position){
   await this.refreshImports(doc.model)
   const locations=this.receiverLocations(doc.model,[{line:position.lineNumber,column:position.column}])
@@ -180,14 +200,25 @@ export class JavaScriptLanguage {
   const value=doc.model.getValue(),result=transformDialect(value,'editor')
   if(this.type==='goal'&&!result.goal)result.diagnostics.push({line:1,message:'目标定义必须声明 @goal / @config / @state 文件级元数据块'})
   if(this.type!=='goal'&&result.goal)result.diagnostics.push({line:result.goal.line,message:'Goal 元数据只允许出现在目标定义脚本中'})
-  if(this.hookRevision>=0)for(const hook of result.hooks)if(!this.hooks.includes(hook.hook))result.diagnostics.push({line:hook.line,message:`当前 ${this.type} 宿主未注册 hook：${hook.hook}`})
+  if(this.hookRevision>=0)for(const hook of result.hooks){
+   const catalog=this.hooks.find(h=>h.id===hook.hook)
+   if(!catalog){result.diagnostics.push({line:hook.line,message:`当前 ${this.type} 宿主未注册 hook：${hook.hook}`});continue}
+   if(!catalog.eventClass)continue
+   if(!hookEventTypeMatches(hook.eventType,catalog.eventClass,result.aliases)){
+    result.diagnostics.push({
+     line:hook.functionLine,
+     message:`hook "${hook.hook}" 的事件参数类型应为 ${hookEventLeaf(catalog.eventClass)}（${catalog.eventClass}），当前为 ${hook.eventType||'缺失'}`,
+    })
+   }
+  }
   this.monaco.editor.setModelMarkers(doc.model,'hanshu-dialect',result.diagnostics.map(d=>({severity:this.monaco.MarkerSeverity.Error,message:d.message,startLineNumber:d.line,endLineNumber:d.line,startColumn:1,endColumn:doc.model.getLineMaxColumn(d.line)})))
   if(doc.source!==result.source){doc.source=result.source;await this.client.writeFiles({[doc.file]:result.source})}
  }
  private async diagnose(doc:LanguageDocument){
   if(this.disposed||doc.model.isDisposed())return
-  const version=doc.model.getVersionId(),generation=controlConnectionGeneration(),run=++doc.diagnosticRun
-  const current=()=>!this.disposed&&!doc.model.isDisposed()&&this.documents.get(doc.model.uri.toString())===doc&&version===doc.model.getVersionId()&&generation===controlConnectionGeneration()&&run===doc.diagnosticRun
+  // 用语言服务会话代数，而非 control 握手代数：自动重连抬升 connectGeneration 时不应取消离线诊断
+  const version=doc.model.getVersionId(),session=this.generation,run=++doc.diagnosticRun
+  const current=()=>!this.disposed&&!doc.model.isDisposed()&&this.documents.get(doc.model.uri.toString())===doc&&version===doc.model.getVersionId()&&session===this.generation&&run===doc.diagnosticRun
   await this.refreshImports(doc.model);if(!current())return
   await this.update(doc);if(!current())return
   let revision=this.javaRevision,diagnostics=await this.client.request('diagnostics',{file:doc.file}) as TypeDiagnostic[]
@@ -205,7 +236,7 @@ export class JavaScriptLanguage {
  async captureDiagnostics(model:Monaco.editor.ITextModel,position:Monaco.Position|null,selection:Monaco.Selection|null){
   const doc=this.documents.get(model.uri.toString());if(!doc||model.isDisposed())throw Error('当前脚本已关闭，请重新打开后导出')
   const hub=getControlHubSnapshot(),source=model.getValue()
-  const report={format:'hanshu.javascript-language-diagnostics',version:1,capturedAt:new Date().toISOString(),environment:{mode:import.meta.env.MODE,userAgent:navigator.userAgent,language:navigator.language,online:navigator.onLine,pagePath:location.pathname},document:{uri:model.uri.with({query:'',fragment:''}).toString(),scriptType:this.type,languageId:model.getLanguageId(),version:model.getVersionId(),position,selection,source,editorTransform:transformDialect(source,'editor'),runtimeTransform:transformDialect(source),lastSubmittedVirtualSource:doc.source,virtualFile:doc.file},markers:this.monaco.editor.getModelMarkers({resource:model.uri}).map(m=>({owner:m.owner,source:m.source,code:m.code,message:m.message,severity:m.severity,startLineNumber:m.startLineNumber,startColumn:m.startColumn,endLineNumber:m.endLineNumber,endColumn:m.endColumn})),service:{id:this.diagnosticId,disposed:this.disposed,projectBound:!!this.project,connected:isControlConnected(),generation:controlConnectionGeneration(),runtimeId:this.runtime,javaRevision:this.javaRevision,hookRuntimeId:this.hookRuntime,hookRevision:this.hookRevision,hooks:this.hooks,hookClasses:Object.fromEntries(this.hookClasses),loadedClasses:[...this.classes.keys()],missingClasses:[...this.missingClasses],openDocuments:[...this.documents.values()].map(d=>({uri:d.model.uri.with({query:'',fragment:''}).toString(),file:d.file,version:d.model.getVersionId()}))},control:{phase:hub.phase,healthOk:hub.health?.ok??null,statusOk:hub.status?.ok??null},worker:this.client.diagnosticSnapshot(),actualWorker:null as unknown,history:languageDiagnosticHistory()}
+  const report={format:'hanshu.javascript-language-diagnostics',version:1,capturedAt:new Date().toISOString(),environment:{mode:import.meta.env.MODE,userAgent:navigator.userAgent,language:navigator.language,online:navigator.onLine,pagePath:location.pathname},document:{uri:model.uri.with({query:'',fragment:''}).toString(),scriptType:this.type,languageId:model.getLanguageId(),version:model.getVersionId(),position,selection,source,editorTransform:transformDialect(source,'editor'),runtimeTransform:transformDialect(source),lastSubmittedVirtualSource:doc.source,virtualFile:doc.file},markers:this.monaco.editor.getModelMarkers({resource:model.uri}).map(m=>({owner:m.owner,source:m.source,code:m.code,message:m.message,severity:m.severity,startLineNumber:m.startLineNumber,startColumn:m.startColumn,endLineNumber:m.endLineNumber,endColumn:m.endColumn})),service:{id:this.diagnosticId,disposed:this.disposed,projectBound:!!this.project,connected:isControlConnected(),generation:controlConnectionGeneration(),runtimeId:this.runtime,javaRevision:this.javaRevision,hookRuntimeId:this.hookRuntime,hookRevision:this.hookRevision,hooks:this.hooks.map(h=>h.id),hookCatalog:this.hooks,hookClasses:Object.fromEntries(this.hookClasses),loadedClasses:[...this.classes.keys()],missingClasses:[...this.missingClasses],openDocuments:[...this.documents.values()].map(d=>({uri:d.model.uri.with({query:'',fragment:''}).toString(),file:d.file,version:d.model.getVersionId()}))},control:{phase:hub.phase,healthOk:hub.health?.ok??null,statusOk:hub.status?.ok??null},worker:this.client.diagnosticSnapshot(),actualWorker:null as unknown,history:languageDiagnosticHistory()}
   // Export remains available if the Worker is unresponsive; never await import hydration here.
   try{report.actualWorker=await this.client.request('snapshot',{},1500)}catch(error){report.actualWorker={unavailable:true,error:diagnosticValue(error)}}
   report.history=languageDiagnosticHistory()

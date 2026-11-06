@@ -2,6 +2,7 @@ mod skin;
 mod project_service;
 mod window_chrome;
 mod webview_perms;
+mod export_save;
 
 use tauri::Manager;
 
@@ -28,6 +29,7 @@ pub fn run() {
             project_service::project_open_local,
             window_chrome::desktop_set_splash_chrome,
             window_chrome::desktop_set_main_chrome,
+            export_save::desktop_save_export_file,
             skin::commands::skin_net_fetch_png,
             skin::commands::skin_net_resolve_player,
         ])
