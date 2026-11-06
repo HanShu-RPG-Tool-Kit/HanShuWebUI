@@ -95,12 +95,11 @@ export function NodeFormView({ flow, nodeId, kind, active = false, disabled = fa
         const rules = node[field] ?? []
         return <section key={field} className="node-form-rules" aria-label={title}>
           <header className="progress-section-head progress-card-head"><h2>{title} <span>{rules.length}</span></h2></header>
-          {field === 'acceptance' && <div className="progress-visibility-row is-projected" aria-label="重复周期投影"><span className="progress-condition-kind">重复周期</span><span className="progress-condition-state">已满足</span><span className="progress-condition-target">由周期策略投影，不写入条件</span></div>}
           <ConditionRulesEditor
             title={title}
             rules={rules}
             disabled={disabled}
-            emptyHint={field === 'visibility' ? '没有条件，直接满足。' : '除周期投影外没有条件。'}
+            emptyHint="没有条件，直接满足。"
             onChange={nextRules => update(next => { next.progress[nodeId][field] = nextRules })}
           />
         </section>

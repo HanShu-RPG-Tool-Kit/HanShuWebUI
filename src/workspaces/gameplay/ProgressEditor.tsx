@@ -441,12 +441,11 @@ export function ProgressEditor({ doc, goalCatalog, kitOptions = [], disabled, on
         {doc.completionGraph && <ProgressCompletionEditor key={doc.id} graph={doc.completionGraph} goals={doc.goals} definitions={definitions} disabled={disabled} active={doc.completion === 'custom'} onChange={completionGraph => update({ completionGraph })} />}
       </section>
 
-      {([['visibility', '可见性条件'], ['acceptance', '可承接条件']] as const).map(([field, title]) => <section key={field} className="progress-card progress-rules" aria-label={title}><header className="progress-card-head"><h2>{title}</h2><span className="progress-card-count">{doc[field].length}</span><small className="progress-card-note">{field === 'acceptance' ? '全部满足（含周期投影）' : '全部满足'}</small></header>
-        {field === 'acceptance' && <div className="progress-visibility-row is-projected" aria-label="重复周期投影"><span className="progress-condition-kind">重复周期</span><span className="progress-condition-state">已满足</span><span className="progress-condition-target">由周期策略投影，不写入条件</span></div>}
+      {([['visibility', '可见性条件'], ['acceptance', '可承接条件']] as const).map(([field, title]) => <section key={field} className="progress-card progress-rules" aria-label={title}><header className="progress-card-head"><h2>{title}</h2><span className="progress-card-count">{doc[field].length}</span><small className="progress-card-note">全部满足</small></header>
         <ConditionRulesEditor
           title={title}
           rules={doc[field]}
-          emptyHint={field === 'visibility' ? '没有条件，直接满足。' : '除周期投影外没有条件。'}
+          emptyHint="没有条件，直接满足。"
           onChange={rules => update({ [field]: rules })}
         />
       </section>)}
