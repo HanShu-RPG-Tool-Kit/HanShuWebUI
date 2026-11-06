@@ -3,9 +3,14 @@ import { randomId } from '../../project/crypto'
 import { isObject } from './model'
 import { parseJsonValue } from '../../utils/strictJson'
 import { type GoalConfigValue, type GoalDefinition } from './goalDefinitions'
-import { parseConditionRules, type ProgressConditionRule } from './conditions'
+import {
+  conditionRuleIssue,
+  parseConditionRules,
+  parseHideWhenRepeatUnsatisfied,
+  type ProgressConditionRule,
+} from './conditions'
 
-export { conditionStatesFor, createConditionRule } from './conditions'
+export { conditionStatesFor, createConditionRule, emitConditionExpression } from './conditions'
 export { DIALOGUE_VISIBILITY_STATES, EXPR_VISIBILITY_STATES, REPEAT_CYCLE_STATES, TASK_VISIBILITY_STATES } from './conditions'
 export type { ProgressConditionRule } from './conditions'
 
@@ -27,6 +32,8 @@ export type ProgressDocument = {
   /** Independent conjunctions; each empty list is satisfied. */
   visibility: ProgressConditionRule[]
   acceptance: ProgressConditionRule[]
+  /** After visibility expr, also require metadata.repeat satisfied. */
+  hideWhenRepeatUnsatisfied: boolean
   abandonable: boolean
   /** When acceptance holds, start without a separate player accept action. Independent of visibility. */
   autoStartWhenAcceptable: boolean
@@ -46,7 +53,7 @@ export function createProgress(name = '新建进度', _definitions: readonly Goa
   return {
     format: PROGRESS_FORMAT, version: 1, id: uid(),
     name: 'name', description: 'description', authorNotes: '', tags: [],
-    completion: 'all', goals: [], visibility: [], acceptance: [],
+    completion: 'all', goals: [], visibility: [], acceptance: [], hideWhenRepeatUnsatisfied: false,
     abandonable: true, autoStartWhenAcceptable: false, repeat: { kind: 'once', hours: 24 }, rewardKits: [],
   }
 }
@@ -87,8 +94,10 @@ export function parseProgress(source: string, _definitions: readonly GoalDefinit
     ids.add(value); return value
   }
   const str = (value: unknown, path: string): string => { check(typeof value === 'string', `${path} 必须是文本`); return value }
-  const visibility = parseConditionRules(raw.visibility, '可见性条件', true)
-  const acceptance = parseConditionRules(raw.acceptance, '可承接条件', false)
+  const visibilityParsed = parseConditionRules(raw.visibility, '可见性条件', { allowHideRepeat: true })
+  const acceptance = parseConditionRules(raw.acceptance, '可承接条件').rules
+  const hideWhenRepeatUnsatisfied = parseHideWhenRepeatUnsatisfied(raw.hideWhenRepeatUnsatisfied, visibilityParsed.hideWhenRepeatUnsatisfied)
+  const visibility = visibilityParsed.rules
   const docId = id(raw.id, '进度')
   check(raw.completion === 'all' || raw.completion === 'any' || raw.completion === 'custom', 'completion 必须是 all、any 或 custom')
   const completionGraph = raw.completionGraph === undefined ? undefined : parseCompletionGraph(raw.completionGraph)
@@ -115,7 +124,7 @@ export function parseProgress(source: string, _definitions: readonly GoalDefinit
     format: PROGRESS_FORMAT, version: 1, id: docId, name: str(raw.name, '名称'), description: str(raw.description, '简介'),
     authorNotes: str(raw.authorNotes ?? '', '作者备注'), tags: raw.tags as string[], completion: raw.completion, goals,
     ...(completionGraph ? { completionGraph } : {}),
-    visibility, acceptance,
+    visibility, acceptance, hideWhenRepeatUnsatisfied,
     abandonable: raw.abandonable, autoStartWhenAcceptable: raw.autoStartWhenAcceptable ?? false,
     repeat: { kind: raw.repeat.kind as ProgressRepeatKind, hours }, rewardKits: raw.rewardKits as string[],
   }
@@ -160,8 +169,8 @@ export function progressIssues(
   }
   for (const [label, rules] of [['可见性条件', doc.visibility], ['可承接条件', doc.acceptance]] as const) {
     rules.forEach((rule, index) => {
-      if (rule.kind === 'repeat') return
-      if (!rule.target.trim()) issues.push(`${label} ${index + 1}：请选择或填写对象`)
+      const issue = conditionRuleIssue(rule, `${label} ${index + 1}`)
+      if (issue) issues.push(issue)
     })
   }
   return issues

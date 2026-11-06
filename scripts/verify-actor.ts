@@ -32,13 +32,23 @@ const doc = {
     talkId: '卫兵',
     playerRole: '玩家',
     entries: [
-      { when: [{ kind: 'talk_unread', inject: 'village_intro' }], inject: 'village_intro' },
-      { when: [], inject: 'village_idle' },
+      { when: '!talkRead(ctx.player, "village_intro")', inject: 'village_intro' },
+      { when: '', inject: 'village_idle' },
     ],
   },
   interactService: { type: 'shop' as const, param: { template: 'village' } },
 }
 assert.deepEqual(parseActor(stringifyActor(doc)), { ...doc, tags: ['guard'] })
+assert.equal(
+  parseActor(JSON.stringify({
+    ...createActor(),
+    dialogue: {
+      talkId: '卫兵', playerRole: '玩家',
+      entries: [{ when: [{ kind: 'talk_unread', inject: 'village_intro' }], inject: 'village_intro' }],
+    },
+  })).dialogue!.entries[0].when,
+  '!talkRead(ctx.player, "village_intro")',
+)
 assert.equal(stringifyActor(createActor()).includes('display'), false)
 assert.equal(stringifyActor(createActor()).includes('loot'), false)
 assert.deepEqual(parseActor(JSON.stringify({ ...createActor(), display: { mode: 'clear' } })).display, { mode: 'clear' })
@@ -86,7 +96,7 @@ const scripts = [
   }, null, 2), updatedAt: 1 },
   { id: 'shop', name: 'village.shop', content: JSON.stringify({
     format: 'hanshu.shop', version: 1, id: 'village-shop', name: 'name', tags: [], icon: null,
-    stockSubject: 'infinite', visibility: [], availability: [], params: [], modifiers: [], script: [], entries: [],
+    stockSubject: 'infinite', params: [], modifiers: [], script: [], entries: [],
   }, null, 2), updatedAt: 1 },
   { id: 'blade', name: 'kit_blade.item', content: stringifyItem(createItem('minecraft:iron_sword')), updatedAt: 1 },
   { id: 'hs', name: 'town.hs', content: '@village_intro\n卫兵:你好//\n@village_idle\n卫兵:路过//\n', updatedAt: 1 },

@@ -46,7 +46,7 @@ export function ProgressNode({ node: view, selected, dragging }: NodeViewProps) 
   if (predicate) {
     const truth = S.predicateTruth(sim, id)
     const state = S.conditionState(sim, id)
-    const summary = predicate.conditions.length ? `${predicate.conditions.length} 项判断规则` : '未配置（恒假）'
+    const summary = predicate.conditions.length ? `${predicate.conditions.length} 项判断规则` : '未配置（恒真）'
     return <NodeFrame selected={selected} dragging={dragging} data-condition-state={state} data-predicate-truth={truth ? 'true' : 'false'} className={`flow-graph-node is-predicate${truth && state === 'running' ? ' is-true' : ''}${draftClass}`}>
       <NodeHeader className="flow-graph-node-header" icon="⊢" title="条件" badge={draftTag ?? <span className="flow-graph-header-tag">{state === 'running' ? `运行中 · ${truth ? '真' : '假'}` : S.CONDITION_STATES[state]}</span>} />
       <span className="flow-graph-node-title" title={summary}>{predicate.identifier || summary}</span>

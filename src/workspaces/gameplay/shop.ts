@@ -1,7 +1,6 @@
 import { randomId } from '../../project/crypto'
 import { parseJsonValue } from '../../utils/strictJson'
 import { isObject } from './model'
-import { parseConditionRules, type ProgressConditionRule } from './conditions'
 import { parseKit, unionKitTags, writeKitItem, type KitItem, type KitParam, type KitModifier } from './kit'
 
 export const STOCK_SUBJECTS = { infinite: '无限库存', player: '玩家', game: '游戏', actor: '角色' } as const
@@ -23,8 +22,6 @@ export type ShopDocument = {
   tags: string[]
   icon: KitItem | null
   stockSubject: keyof typeof STOCK_SUBJECTS
-  visibility: ProgressConditionRule[]
-  availability: ProgressConditionRule[]
   params: KitParam[]
   modifiers: KitModifier[]
   script: { ref: string }[]
@@ -59,18 +56,27 @@ export function cloneShopEntry(entry: ShopEntry): ShopEntry {
 export function overlayShopEntry(target: ShopEntry, source: ShopEntry): ShopEntry {
   return { ...cloneShopEntry(source), id: target.id }
 }
-export const createShop = (): ShopDocument => ({ format: 'hanshu.shop', version: 1, id: randomId(), name: 'name', tags: [], icon: null, stockSubject: 'infinite', visibility: [], availability: [], params: [], modifiers: [], script: [], entries: [] })
+export const createShop = (): ShopDocument => ({ format: 'hanshu.shop', version: 1, id: randomId(), name: 'name', tags: [], icon: null, stockSubject: 'infinite', params: [], modifiers: [], script: [], entries: [] })
 export function shopTags(value: unknown): string[] {
   if (value === undefined) return []
   if (!Array.isArray(value) || value.some(t => typeof t !== 'string' || !t.trim())) throw new Error('标签必须是非空字符串列表')
   return unionKitTags(value as string[])
 }
+
+/** 商店级条件组已移除；旧空数组可读，非空拒载；落盘不写顶层 visibility/availability。 */
+function rejectShopLevelConditions(raw: Record<string, unknown>, field: 'visibility' | 'availability') {
+  if (!(field in raw)) return
+  const value = raw[field]
+  if (Array.isArray(value) && value.length === 0) return
+  if (typeof value === 'string' && !value.trim()) return
+  throw new Error(`商店模板不再支持顶层 ${field}；请写到 entries[].${field} 表达式`)
+}
+
 export const stringifyShop = (doc: ShopDocument) => {
   const items = (values: KitItem[]) => values.map(writeKitItem)
   return JSON.stringify({
     format: doc.format, version: doc.version, id: doc.id, name: doc.name, tags: doc.tags, stockSubject: doc.stockSubject,
     icon: doc.icon ? writeKitItem({ ...doc.icon, count: 1, mods: undefined }) : null,
-    visibility: doc.visibility, availability: doc.availability,
     params: doc.params, modifiers: doc.modifiers, script: doc.script,
     entries: doc.entries.map(e => ({ ...e, payment: items(e.payment), goods: items(e.goods) })),
   }, null, 2)
@@ -84,6 +90,8 @@ export function parseShop(source: string, draft = false): ShopDocument {
   if (typeof raw.id !== 'string' || (!draft && !raw.id.trim()) || typeof raw.name !== 'string' || !raw.name.trim()) throw new Error('商店需要稳定 ID 和名称键')
   if (typeof raw.stockSubject !== 'string' || !Object.hasOwn(STOCK_SUBJECTS, raw.stockSubject)) throw new Error('库存主体类型无效')
   if (!Array.isArray(raw.entries) || !Array.isArray(raw.params) || !Array.isArray(raw.modifiers) || !Array.isArray(raw.script)) throw new Error('条目、超参数、修饰器和脚本必须是列表')
+  rejectShopLevelConditions(raw, 'visibility')
+  rejectShopLevelConditions(raw, 'availability')
   const kit = parseKit(JSON.stringify({ params: raw.params, modifiers: raw.modifiers }))
   let icon: KitItem | null = null
   if (raw.icon !== undefined && raw.icon !== null) {
@@ -99,6 +107,7 @@ export function parseShop(source: string, draft = false): ShopDocument {
     if (!isObject(value) || typeof value.id !== 'string' || !value.id.trim() || ids.has(value.id)) throw new Error('商品条目 ID 必须非空且唯一')
     ids.add(value.id)
     if (typeof value.visibility !== 'string' || typeof value.availability !== 'string') throw new Error('商品条件必须是表达式字符串')
+    if (/[;\n\r]/.test(value.visibility) || /[;\n\r]/.test(value.availability)) throw new Error('商品条件只能是表达式，不能含语句')
     const items = (list: unknown): KitItem[] => {
       if (!Array.isArray(list)) throw new Error('支付和获得内容必须是物品列表')
       for (const item of list) {
@@ -121,8 +130,6 @@ export function parseShop(source: string, draft = false): ShopDocument {
   return {
     format: 'hanshu.shop', version: 1, id: raw.id, name: raw.name, tags: shopTags(raw.tags),
     stockSubject: raw.stockSubject as ShopDocument['stockSubject'], icon,
-    visibility: parseConditionRules(raw.visibility ?? [], '商店可见性条件', false),
-    availability: parseConditionRules(raw.availability ?? [], '商店可用性条件', false),
     params: kit.params, modifiers: kit.modifiers, script, entries,
   }
 }

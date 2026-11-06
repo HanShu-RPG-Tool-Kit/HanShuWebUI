@@ -52,17 +52,17 @@ assert.ok(JSON.stringify(result).includes('game'))
 for (const patch of [{ extends: 'parent' }, { includes: [] }, { entries: [...doc.entries, doc.entries[0]] }, { entries: [{ ...doc.entries[0], payment: [{ count: 1 }] }] }, { stockSubject: 'entity-id' }]) {
   assert.throws(() => parseShop(JSON.stringify({ ...doc, ...patch })))
 }
-doc.visibility = [{ kind: 'task', state: 'succeeded', target: '序章' }]
-doc.availability = [{ kind: 'expr', state: 'true', target: 'level > 1' }]
-assert.deepEqual(parseShop(stringifyShop(doc)).visibility, doc.visibility)
-assert.deepEqual(parseShop(stringifyShop(doc)).availability, doc.availability)
-assert.throws(() => parseShop(JSON.stringify({ ...doc, visibility: [{ kind: 'repeat', state: 'satisfied', target: '' }] })))
-assert.deepEqual(parseShop(JSON.stringify({ ...doc, visibility: undefined, availability: undefined })).visibility, [])
-doc.entries[0].visibility = 'level > 2'
-doc.entries[0].availability = 'price(1) > 0'
+const roundTrip = JSON.parse(stringifyShop(doc))
+assert.equal(Object.hasOwn(roundTrip, 'visibility'), false)
+assert.equal(Object.hasOwn(roundTrip, 'availability'), false)
+assert.ok(parseShop(JSON.stringify({ ...roundTrip, visibility: [], availability: [] })))
+assert.throws(() => parseShop(JSON.stringify({ ...roundTrip, visibility: [{ kind: 'quest', op: 'succeeded', questId: '序章' }] })), /不再支持顶层/)
+assert.throws(() => parseShop(JSON.stringify({ ...roundTrip, availability: 'x > 1' })), /不再支持顶层/)
+doc.entries[0].visibility = 'questState(ctx.player, "succeeded", "prologue")'
+doc.entries[0].availability = 'ctx.player.experienceLevel > 1'
 const entryRoundTrip = parseShop(stringifyShop(doc))
-assert.equal(entryRoundTrip.entries[0].visibility, 'level > 2')
-assert.equal(entryRoundTrip.entries[0].availability, 'price(1) > 0')
+assert.equal(entryRoundTrip.entries[0].visibility, 'questState(ctx.player, "succeeded", "prologue")')
+assert.equal(entryRoundTrip.entries[0].availability, 'ctx.player.experienceLevel > 1')
 const reports: unknown[] = []
 await shopCompiler.compile(file, { index: { package: { name: 'test', scripts: [file] } }, report: r => reports.push(r) } as Parameters<typeof shopCompiler.compile>[1])
 assert.ok(reports.length > 0, 'missing item references must block export')

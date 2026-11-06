@@ -13,7 +13,7 @@ export type GoalTerminal = CompletionOutcome
 export type CompletionEval = 'deliverable' | 'failed' | 'race' | null
 /** Internal tree used while lowering authoring graphs; questc emits strings instead. */
 export type CompletionExpression = { type: 'goal'; goalId: string; outcome: CompletionOutcome } | { type: 'logic'; op: CompletionLogic; inputs: CompletionExpression[] }
-/** Provisional string dialect (shop-like bool surface). Exact grammar is not locked yet. */
+/** Compiled questc surface: boolean JS using goalSucceeded(id) / goalFailed(id). */
 export type CompletionCompiled = { outputs: Array<{ success?: string; failure?: string }> }
 
 export const SUCCESS_COLOR = '#6f9e6a'
@@ -153,9 +153,13 @@ function expressionAt(graph: CompletionGraph, id: string, viaPort?: CompletionPo
   return { type: 'logic', op: node.op, inputs: children }
 }
 
-/** Temporary emit only — dialect may change; do not treat atoms as a frozen public API. */
+/** Emit Mod-aligned helpers: goalSucceeded(id) / goalFailed(id). */
 export function emitCompletionSource(expr: CompletionExpression): string {
-  if (expr.type === 'goal') return `goal.${expr.outcome}(${JSON.stringify(expr.goalId)})`
+  if (expr.type === 'goal') {
+    return expr.outcome === 'success'
+      ? `goalSucceeded(${JSON.stringify(expr.goalId)})`
+      : `goalFailed(${JSON.stringify(expr.goalId)})`
+  }
   const parts = expr.inputs.map(input => {
     const text = emitCompletionSource(input)
     return input.type === 'logic' && (input.op === 'and' || input.op === 'or' || input.op === 'xor') ? `(${text})` : text

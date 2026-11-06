@@ -2,7 +2,7 @@ import { useRef, useState } from 'react'
 import { useViewport } from '@xyflow/react'
 import { TextField } from './Fields'
 import { EditorExpansion } from './EditorExpansion'
-import { conditionStatesFor, createConditionRule, type ProgressConditionRule } from './conditions'
+import { ConditionRulesEditor } from './ConditionRulesEditor'
 import { createCompletionGraph, goalAliases } from './completionGraph'
 import { localizedGoalDefinitionLabel, type GoalDefinition } from './goalDefinitions'
 import { GoalParameterField } from './goalWidgets'
@@ -87,23 +87,22 @@ export function NodeFormView({ flow, nodeId, kind, active = false, disabled = fa
         {(node.repeat?.kind ?? 'once') === 'duration' && <label className="flow-field"><span>间隔（小时）</span><input type="number" aria-label="重复间隔小时" min={0.01} step="any" disabled={disabled} value={node.repeat?.hours ?? 24} onChange={event => update(next => { next.progress[nodeId].repeat = { kind: 'duration', hours: Number(event.target.value) || 24 } })} /></label>}
         <label className="progress-abandon-switch"><span>可承接时自动开始</span><input type="checkbox" role="switch" aria-label="可承接时自动开始" disabled={disabled} checked={node.autoStartWhenAcceptable ?? false} onChange={event => update(next => { next.progress[nodeId].autoStartWhenAcceptable = event.target.checked })} /></label>
         <label className="progress-abandon-switch"><span>可放弃</span><input type="checkbox" role="switch" aria-label="可放弃" disabled={disabled} checked={node.abandonable ?? true} onChange={event => update(next => { next.progress[nodeId].abandonable = event.target.checked })} /></label>
+        <label className="progress-abandon-switch"><span>周期不满足时不可见</span><input type="checkbox" role="switch" aria-label="周期不满足时不可见" disabled={disabled} checked={node.hideWhenRepeatUnsatisfied ?? false} onChange={event => update(next => { next.progress[nodeId].hideWhenRepeatUnsatisfied = event.target.checked })} /></label>
         <label className="flow-field"><span>标签（逗号分隔）</span><input aria-label="任务标签" disabled={disabled} value={(node.tags ?? []).join(', ')} onChange={event => update(next => { next.progress[nodeId].tags = event.target.value.split(',').map(tag => tag.trim()).filter(Boolean) })} /></label>
       </>}
       </section>
-      {start && ([['visibility', '可见性条件', true], ['acceptance', '可承接条件', false]] as const).map(([field, title, allowRepeat]) => {
+      {start && ([['visibility', '可见性条件'], ['acceptance', '可承接条件']] as const).map(([field, title]) => {
         const rules = node[field] ?? []
         return <section key={field} className="node-form-rules" aria-label={title}>
           <header className="progress-section-head progress-card-head"><h2>{title} <span>{rules.length}</span></h2></header>
           {field === 'acceptance' && <div className="progress-visibility-row is-projected" aria-label="重复周期投影"><span className="progress-condition-kind">重复周期</span><span className="progress-condition-state">已满足</span><span className="progress-condition-target">由周期策略投影，不写入条件</span></div>}
-          {rules.map((rule, index) => <div className="progress-visibility-row" key={index}>
-            <select aria-label={`${title} ${index + 1} 对象类型`} disabled={disabled} value={rule.kind} onChange={event => update(next => { next.progress[nodeId][field] = rules.map((item, i) => i !== index ? item : createConditionRule(event.target.value as ProgressConditionRule['kind'])) })}><option value="task">任务</option><option value="dialogue">对话</option><option value="expr">求值</option>{allowRepeat && <option value="repeat">重复周期</option>}</select>
-            <select aria-label={`${title} ${index + 1} 状态`} disabled={disabled} value={rule.state} onChange={event => update(next => { next.progress[nodeId][field] = rules.map((item, i) => i !== index ? item : { ...rule, state: event.target.value } as ProgressConditionRule) })}>{Object.entries(conditionStatesFor(rule.kind)).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select>
-            {rule.kind === 'repeat' ? <span className="progress-condition-target">本任务周期</span>
-              : <input aria-label={`${title} ${index + 1} 对象`} disabled={disabled} placeholder={rule.kind === 'task' ? '任务对象' : rule.kind === 'dialogue' ? '对话对象' : '条件表达式'} value={rule.target} onChange={event => update(next => { next.progress[nodeId][field] = rules.map((item, i) => i !== index ? item : { ...rule, target: event.target.value }) })} />}
-            <button type="button" className="progress-remove" disabled={disabled} aria-label={`删除${title} ${index + 1}`} onClick={() => update(next => { next.progress[nodeId][field] = rules.filter((_, i) => i !== index) })}>×</button>
-          </div>)}
-          {!rules.length && <p className="progress-card-empty">{field === 'visibility' ? '没有条件，直接满足。' : '除周期投影外没有条件。'}</p>}
-          <button type="button" className="progress-card-add" disabled={disabled} aria-label={`添加${title}`} onClick={() => update(next => { next.progress[nodeId][field] = [...rules, createConditionRule('task')] })}>＋ 添加条件</button>
+          <ConditionRulesEditor
+            title={title}
+            rules={rules}
+            disabled={disabled}
+            emptyHint={field === 'visibility' ? '没有条件，直接满足。' : '除周期投影外没有条件。'}
+            onChange={nextRules => update(next => { next.progress[nodeId][field] = nextRules })}
+          />
         </section>
       })}
       <section className="node-form-goals-section">
@@ -197,29 +196,13 @@ export function NodeFormView({ flow, nodeId, kind, active = false, disabled = fa
       {optionalIdentifier('predicates', node.identifier)}
       <section className="node-form-section node-form-rules">
         <header><h2>条件 <span>{node.conditions.length}</span></h2></header>
-        {node.conditions.length === 0 && <p className="flow-hint">未配置判断规则时，此节点恒假（不会发出 A）。</p>}
-        {node.conditions.map((rule, index) => <div className="progress-visibility-row" key={index}>
-          <select aria-label={`条件 ${index + 1} 类型`} disabled={disabled} value={rule.kind} onChange={event => update(next => {
-            next.predicates![nodeId].conditions[index] = createConditionRule(event.target.value as ProgressConditionRule['kind'])
-          })}>
-            <option value="task">任务</option>
-            <option value="dialogue">对话</option>
-            <option value="expr">求值</option>
-            <option value="repeat">重复周期</option>
-          </select>
-          <select aria-label={`条件 ${index + 1} 状态`} disabled={disabled} value={rule.state} onChange={event => update(next => {
-            next.predicates![nodeId].conditions[index] = { ...rule, state: event.target.value } as ProgressConditionRule
-          })}>
-            {Object.entries(conditionStatesFor(rule.kind)).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-          </select>
-          {rule.kind === 'repeat'
-            ? <span className="progress-condition-target">本任务周期</span>
-            : <input aria-label={`条件 ${index + 1} 对象`} disabled={disabled} placeholder="任务 / 对话 / 表达式" value={rule.target} onChange={event => update(next => {
-              next.predicates![nodeId].conditions[index] = { ...rule, target: event.target.value } as ProgressConditionRule
-            })} />}
-          <button type="button" className="progress-remove" aria-label={`删除条件 ${index + 1}`} disabled={disabled} onClick={() => update(next => { next.predicates![nodeId].conditions.splice(index, 1) })}>×</button>
-        </div>)}
-        <button type="button" className="progress-card-add" disabled={disabled} onClick={() => update(next => { next.predicates![nodeId].conditions.push(createConditionRule('task')) })}>＋ 添加条件</button>
+        <ConditionRulesEditor
+          title="条件"
+          rules={node.conditions}
+          disabled={disabled}
+          emptyHint="未配置判断规则时，此节点恒真（与 Mod 空串语义一致）。"
+          onChange={rules => update(next => { next.predicates![nodeId].conditions = rules })}
+        />
       </section>
     </>
   } else {

@@ -10,7 +10,6 @@ import {
   parseActor,
   stringifyActor,
   type ActorDialogue,
-  type ActorDialogueCondition,
   type ActorDialogueEntry,
   type ActorDespawnMode,
   type ActorDisplaySpec,
@@ -27,12 +26,6 @@ import type { ItemCatalog } from './kit'
 import './ActorEditor.css'
 
 type RefOption = { ref: string; label: string; key?: string }
-
-const CONDITION_KINDS: Record<ActorDialogueCondition['kind'], string> = {
-  always: '恒真',
-  talk_read: '已读',
-  talk_unread: '未读',
-}
 
 type SideEffectUiMode = 'omit' | 'set' | 'clear'
 
@@ -109,11 +102,6 @@ function ModeSelect({
   return <select className="sheet-select" aria-label={label} disabled={disabled} value={value} onChange={e => onChange(e.target.value as SideEffectUiMode)}>
     {SIDE_EFFECT_UI_MODES.map(mode => <option key={mode.id} value={mode.id}>{mode.label}</option>)}
   </select>
-}
-
-function nextCondition(kind: ActorDialogueCondition['kind'], previous?: ActorDialogueCondition): ActorDialogueCondition {
-  if (kind === 'always') return { kind: 'always' }
-  return { kind, inject: previous && previous.kind !== 'always' ? previous.inject : '' }
 }
 
 function swap<T>(list: T[], index: number, delta: number): T[] {
@@ -227,11 +215,6 @@ export function ActorEditor({
   const patchEntry = (index: number, patch: Partial<ActorDialogueEntry>) => {
     if (dialogue) setEntries(dialogue.entries.map((entry, i) => i === index ? { ...entry, ...patch } : entry))
   }
-  const patchCondition = (entryIndex: number, conditionIndex: number, next: ActorDialogueCondition) => {
-    if (!dialogue) return
-    const entry = dialogue.entries[entryIndex]
-    patchEntry(entryIndex, { when: entry.when.map((condition, j) => j === conditionIndex ? next : condition) })
-  }
   const changeServiceType = (type: ActorInteractService['type']) => {
     if (service?.type === type) return
     update({ interactService: type === 'shop' ? { type: 'shop', param: { template: '' } } : { type: 'vault', param: {} } })
@@ -314,7 +297,7 @@ export function ActorEditor({
 
   const dialoguePanel = <Panel title="对话路由" subtitle="脚本 interact 之后匹配 · 首条全部满足的条目生效" count={dialogue ? dialogue.entries.length : undefined} className={`sheet-panel actor-dialogue${dialogue ? '' : ' is-off'}`}
     action={<>
-      {dialogue && add('添加对话条目', () => setEntries([...dialogue.entries, { when: [], inject: '' }]))}
+      {dialogue && add('添加对话条目', () => setEntries([...dialogue.entries, { when: '', inject: '' }]))}
       <SheetToggle label="启用" ariaLabel="启用对话路由" checked={dialogue != null} disabled={disabled} onChange={on => update({ dialogue: on ? { talkId: '', playerRole: '玩家', entries: [] } : null })} />
     </>}>
     {dialogue ? <div className="sheet-panel-body">
@@ -339,25 +322,20 @@ export function ActorEditor({
                 </span>
               </header>
               <div className="actor-conditions">
-                <span className="actor-conditions-label">当{entry.when.length > 1 ? '（全部满足）' : ''}</span>
-                {entry.when.length === 0
-                  ? <span className="actor-condition-empty">无条件 · 恒真</span>
-                  : <ul>
-                    {entry.when.map((condition, conditionIndex) => {
-                      const label = `对话条目 ${n} 条件 ${conditionIndex + 1}`
-                      return <li key={conditionIndex} className="actor-condition">
-                        {conditionIndex > 0 && <span className="actor-condition-and">且</span>}
-                        <select className="sheet-select actor-condition-kind" aria-label={`${label} 类型`} disabled={disabled} value={condition.kind} onChange={e => patchCondition(entryIndex, conditionIndex, nextCondition(e.target.value as ActorDialogueCondition['kind'], condition))}>
-                          {Object.entries(CONDITION_KINDS).map(([kind, text]) => <option key={kind} value={kind}>{text} · {kind}</option>)}
-                        </select>
-                        {condition.kind !== 'always'
-                          ? <InjectSelect label={`${label} 注入点`} value={condition.inject} options={injectOptions} disabled={disabled} onChange={inject => patchCondition(entryIndex, conditionIndex, { kind: condition.kind, inject })} />
-                          : <span className="actor-condition-note">始终成立</span>}
-                        <RemoveButton label={`移除${label}`} disabled={disabled} onClick={() => patchEntry(entryIndex, { when: entry.when.filter((_, i) => i !== conditionIndex) })} />
-                      </li>
-                    })}
-                  </ul>}
-                {add('添加条件', () => patchEntry(entryIndex, { when: [...entry.when, { kind: 'talk_unread', inject: '' }] }))}
+                <span className="actor-conditions-label">当</span>
+                <input
+                  className="sheet-input actor-when-expr"
+                  aria-label={`对话条目 ${n} 条件表达式`}
+                  disabled={disabled}
+                  placeholder="空串恒真 · 例 !talkRead(ctx.player, &quot;intro&quot;)"
+                  value={entry.when}
+                  onChange={e => patchEntry(entryIndex, { when: e.target.value })}
+                />
+                <span className="actor-when-presets">
+                  <button type="button" disabled={disabled} onClick={() => patchEntry(entryIndex, { when: '' })}>恒真</button>
+                  <button type="button" disabled={disabled || !entry.inject} onClick={() => patchEntry(entryIndex, { when: `!talkRead(ctx.player, ${JSON.stringify(entry.inject)})` })}>未读本条</button>
+                  <button type="button" disabled={disabled || !entry.inject} onClick={() => patchEntry(entryIndex, { when: `talkRead(ctx.player, ${JSON.stringify(entry.inject)})` })}>已读本条</button>
+                </span>
               </div>
             </li>
           })}

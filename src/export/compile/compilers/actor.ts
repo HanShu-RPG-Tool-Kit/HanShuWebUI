@@ -34,10 +34,12 @@ export const actorCompiler: FileCompiler = {
       if (actor.dialogue) {
         const known = injectNames(ctx)
         const missing = new Set<string>()
+        const talkReadRef = /talkRead\s*\(\s*ctx\.player\s*,\s*(['"])(.*?)\1\s*\)/g
         for (const entry of actor.dialogue.entries) {
           if (entry.inject && !known.has(entry.inject)) missing.add(entry.inject)
-          for (const condition of entry.when) {
-            if (condition.kind !== 'always' && condition.inject && !known.has(condition.inject)) missing.add(condition.inject)
+          for (const match of entry.when.matchAll(talkReadRef)) {
+            const inject = match[2]
+            if (inject && !known.has(inject)) missing.add(inject)
           }
         }
         if (missing.size) throw new Error(`缺少对话注入点：${[...missing].join('、')}`)

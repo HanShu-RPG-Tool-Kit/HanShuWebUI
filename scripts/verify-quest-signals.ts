@@ -416,7 +416,7 @@ test('background goals count toward shared execution limits',()=>{
 test('background goals and conditions on AND inputs warn per link without blocking execution',()=>{
  let {flow,goal,gate,end}=backgroundGoal()
  const predicate=C.createPredicateNode(flow,{x:0,y:400});flow=predicate.flow
- flow.predicates![predicate.id].conditions=[{kind:'task',state:'succeeded',target:'other'}]
+ flow.predicates![predicate.id].conditions=[{kind:'quest',op:'succeeded',questId:'other'}]
  flow=M.connectNodes(flow,predicate.id,gate,'input','output').flow
  flow=M.connectNodes(flow,predicate.id,gate,'input2','output').flow
  flow=M.connectNodes(flow,goal,gate,'input','output2').flow
@@ -545,7 +545,7 @@ test('recursive query contexts roll back on budget and graph-change faults',()=>
  const {flow,sim,a,b,condition,wire}=nestedQueryFixture();sim.predicates[condition]=true
  let pending=S.propagateSignals(flow,sim,[{signal:{kind:'query'},from:b,to:a,port:'output',link:wire.id,round:301}],true)
  pending=S.stepSignal(flow,pending);assert(Object.keys(pending.queryRounds[a]).length)
- const changed=structuredClone(flow);changed.predicates![condition].conditions=[{kind:'expr',state:'true',target:'changed'}]
+ const changed=structuredClone(flow);changed.predicates![condition].conditions=[{kind:'expr',source:'changed'}]
  const graphFault=S.drainSignals(changed,pending);assert.equal(graphFault.fault?.code,'graph-changed');assert.deepEqual(graphFault.queryRounds,sim.queryRounds)
  pending.execution!.budget=pending.execution!.processed
  const budgetFault=S.drainSignals(flow,pending);assert.equal(budgetFault.fault?.code,'budget-exceeded');assert.deepEqual(budgetFault.queryRounds,sim.queryRounds)

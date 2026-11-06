@@ -29,13 +29,16 @@ assert.deepEqual(original.metadata.tags,[])
 assert.equal(original.metadata.abandonable,true)
 assert.equal(original.metadata.autoStartWhenAcceptable,false)
 assert.deepEqual(original.metadata.repeat,{kind:'once',hours:24})
-assert.deepEqual(original.metadata.visibility,[])
-assert.deepEqual(original.metadata.acceptance,[])
+assert.equal(original.metadata.visibility,'')
+assert.equal(original.metadata.acceptance,'')
+assert.equal(original.metadata.hideWhenRepeatUnsatisfied,false)
 const policy=structuredClone(flow)
-policy.progress[policy.start].visibility=[{kind:'task',state:'succeeded',target:'prologue'}]
+policy.progress[policy.start].visibility=[{kind:'quest',op:'succeeded',questId:'prologue'}]
+policy.progress[policy.start].hideWhenRepeatUnsatisfied=true
 policy.progress[policy.start].abandonable=false
 assert.equal(compileQuestFlow(policy).metadata.abandonable,false)
-assert.deepEqual(compileQuestFlow(policy).metadata.visibility,[{kind:'task',state:'succeeded',target:'prologue'}])
+assert.equal(compileQuestFlow(policy).metadata.visibility,'(questState(ctx.player, "succeeded", "prologue"))')
+assert.equal(compileQuestFlow(policy).metadata.hideWhenRepeatUnsatisfied,true)
 assert.equal(Object.hasOwn(original,'id'),false)
 assert.deepEqual(Object.keys(original).sort(),['format','version','metadata','start','nodes'].sort())
 assert.equal(original.nodes[a.id].type,'condition');assert.equal(original.nodes[b.id].type,'objective')
@@ -85,18 +88,18 @@ custom.progress[p.id].goals=[{id:'goal_a',kind:'collect',params:{}}]
 custom.progress[p.id].completion='custom'
 custom.progress[p.id].completionGraph={nodes:[{id:'leaf',type:'goal',goalId:'goal_a'},{id:'not',type:'logic',op:'not'},{id:'out',type:'output'},{id:'unused',type:'goal',goalId:'missing_draft'}],links:[{id:'l1',from:'leaf',fromPort:'output',to:'not',toPort:'input'},{id:'l2',from:'not',fromPort:'output',to:'out',toPort:'input'},{id:'l3',from:'leaf',fromPort:'output2',to:'out',toPort:'input2'}]}
 const customCompiled=compileQuestFlow(custom)
-assert.deepEqual((customCompiled.nodes[p.id] as any).completionExpression,{outputs:[{success:'!(goal.success("goal_a"))',failure:'goal.failure("goal_a")'}]})
+assert.deepEqual((customCompiled.nodes[p.id] as any).completionExpression,{outputs:[{success:'!(goalSucceeded("goal_a"))',failure:'goalFailed("goal_a")'}]})
 assert.equal(Object.hasOwn(customCompiled.nodes[p.id],'completion'),false)
 assert.equal(Object.hasOwn(customCompiled.nodes[p.id],'completionGraph'),false)
 assert.equal(JSON.stringify(customCompiled).includes('missing_draft'),false)
 const allCompiled=compileQuestFlow(flow)
-assert.deepEqual((allCompiled.nodes[p.id] as any).completionExpression.outputs[0].success,`goal.success(${JSON.stringify(`goal_${p.id}`)})`)
-assert.match((allCompiled.nodes[p.id] as any).completionExpression.outputs[0].failure,/goal\.failure/)
+assert.deepEqual((allCompiled.nodes[p.id] as any).completionExpression.outputs[0].success,`goalSucceeded(${JSON.stringify(`goal_${p.id}`)})`)
+assert.match((allCompiled.nodes[p.id] as any).completionExpression.outputs[0].failure,/goalFailed\(/)
 const incomplete=structuredClone(custom);incomplete.progress[p.id].completionGraph!.links=[]
 assert.throws(()=>compileQuestFlow(incomplete),/请连接完成输出/)
 const emptyGoals=structuredClone(flow);emptyGoals.progress[p.id].goals=[]
 assert.throws(()=>compileQuestFlow(emptyGoals),/缺少目标/)
-console.log('PASS completion lowers to provisional string expressions for all/any/custom without edge tables')
+console.log('PASS completion lowers to goalSucceeded/goalFailed expressions for all/any/custom without edge tables')
 
 const rejects=(mutate:(value:any)=>void)=>{const bad=structuredClone(original);mutate(bad);assert.throws(()=>parseQuestCompiled(JSON.stringify(bad)),/questc/)}
 rejects(value=>{value.id='not-a-resource-id'})
@@ -117,9 +120,9 @@ console.log('PASS compiled loader rejects invalid schema, dangling/nonreciprocal
 
 const doc=createProgress('驿站')
 doc.goals=[{id:'goal_simple',kind:'collect',config:{}}]
-doc.rewardKits=['starter'];doc.authorNotes='private editor notes';doc.tags=['story'];doc.visibility=[{kind:'task',state:'succeeded',target:'prologue'}];doc.autoStartWhenAcceptable=true
+doc.rewardKits=['starter'];doc.authorNotes='private editor notes';doc.tags=['story'];doc.visibility=[{kind:'quest',op:'succeeded',questId:'prologue'}];doc.hideWhenRepeatUnsatisfied=true;doc.autoStartWhenAcceptable=true
 const simple=compileSimpleQuest(doc)
-assert.deepEqual(simple.metadata.visibility,doc.visibility);assert.equal(simple.metadata.autoStartWhenAcceptable,true)
+assert.equal(simple.metadata.visibility,'(questState(ctx.player, "succeeded", "prologue"))');assert.equal(simple.metadata.hideWhenRepeatUnsatisfied,true);assert.equal(simple.metadata.autoStartWhenAcceptable,true)
 assert.deepEqual(simple.metadata.tags,['story']);assert.equal(simple.metadata.title,'name')
 if(simple.nodes.end_success.type==='end')assert.deepEqual(simple.nodes.end_success.rewardKits,['starter'])
 if(simple.nodes.end_failure.type==='end')assert.deepEqual(simple.nodes.end_failure.rewardKits,[])

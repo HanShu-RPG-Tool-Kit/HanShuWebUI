@@ -6,8 +6,7 @@ import {
   isObject, parseFlowSubmission, flowSubmissionIssue, type Data, type FlowInputPort, type FlowOutputPort,
   type FlowSubmission, type FlowProgressGoal, type ProgressFlow,
 } from './model'
-import type { ProgressConditionRule } from './conditions'
-import { parseConditionRules } from './conditions'
+import { emitConditionExpression, parseConditionExpressionString } from './conditions'
 import { PROGRESS_REPEAT_LABELS, type ProgressDocument } from './progressDoc'
 
 export const QUEST_COMPILED_FORMAT = 'hanshu.questc'
@@ -20,7 +19,7 @@ type Connections = {
 }
 export type QuestCompiledNode = Connections & (
   | { type: 'progress'; identifier: string; runningLog: string; completedLog: string; goals: FlowProgressGoal[]; completionExpression: CompletionCompiled; submission?: FlowSubmission }
-  | { type: 'condition'; identifier?: string; conditions: ProgressConditionRule[] }
+  | { type: 'condition'; identifier?: string; conditions: string }
   | { type: 'objective'; identifier: string; goal: { kind: string; params: Data }; submission?: FlowSubmission }
   | { type: 'logic' }
   | { type: 'end'; title: string; rewardKits: string[] }
@@ -28,7 +27,17 @@ export type QuestCompiledNode = Connections & (
 export type QuestCompiled = {
   format: typeof QUEST_COMPILED_FORMAT
   version: 1
-  metadata: { title: string; description: string } & Partial<Pick<ProgressDocument, 'tags' | 'visibility' | 'acceptance' | 'abandonable' | 'autoStartWhenAcceptable' | 'repeat'>>
+  metadata: {
+    title: string
+    description: string
+    tags?: string[]
+    visibility?: string
+    acceptance?: string
+    hideWhenRepeatUnsatisfied?: boolean
+    abandonable?: boolean
+    autoStartWhenAcceptable?: boolean
+    repeat?: ProgressDocument['repeat']
+  }
   start: string
   nodes: Record<string, QuestCompiledNode>
 }
@@ -53,7 +62,7 @@ export function compileQuestFlow(flow: ProgressFlow): QuestCompiled {
       ...(progress.submission ? { submission: structuredClone(progress.submission) } : {}), inputs, outputs,
     }
     }
-    else if (condition) nodes[id] = { type: 'condition', ...(condition.identifier ? { identifier: condition.identifier } : {}), conditions: structuredClone(condition.conditions), inputs, outputs }
+    else if (condition) nodes[id] = { type: 'condition', ...(condition.identifier ? { identifier: condition.identifier } : {}), conditions: emitConditionExpression(condition.conditions), inputs, outputs }
     else if (objective) nodes[id] = { type: 'objective', identifier: objective.identifier, goal: structuredClone(objective.goal), ...(objective.submission ? { submission: structuredClone(objective.submission) } : {}), inputs, outputs }
     else if (getTransitionNode(flow, id)) nodes[id] = { type: 'logic', inputs, outputs }
     else if (end) nodes[id] = { type: 'end', title: end.title.text, rewardKits: [...end.rewardKits], inputs, outputs }
@@ -71,8 +80,9 @@ export function compileQuestFlow(flow: ProgressFlow): QuestCompiled {
       title: start.questTitle?.text ?? '',
       description: start.description?.text ?? '',
       tags: [...(start.tags ?? [])],
-      visibility: structuredClone(start.visibility ?? []),
-      acceptance: structuredClone(start.acceptance ?? []),
+      visibility: emitConditionExpression(start.visibility ?? []),
+      acceptance: emitConditionExpression(start.acceptance ?? []),
+      hideWhenRepeatUnsatisfied: start.hideWhenRepeatUnsatisfied ?? false,
       abandonable: start.abandonable ?? true,
       autoStartWhenAcceptable: start.autoStartWhenAcceptable ?? false,
       repeat: structuredClone(start.repeat ?? { kind: 'once', hours: 24 }),
@@ -96,7 +106,16 @@ export function compileSimpleQuest(doc: ProgressDocument): QuestCompiled {
     logic: { links: [{ id: 'success', from: start, fromPort: 'output', to: success, port: 'input' }, { id: 'failure', from: start, fromPort: 'output2', to: failure, port: 'input2' }] },
   }
   const compiled = compileQuestFlow(flow)
-  compiled.metadata = { ...compiled.metadata, tags: [...doc.tags], visibility: structuredClone(doc.visibility), acceptance: structuredClone(doc.acceptance), abandonable: doc.abandonable, autoStartWhenAcceptable: doc.autoStartWhenAcceptable, repeat: structuredClone(doc.repeat) }
+  compiled.metadata = {
+    ...compiled.metadata,
+    tags: [...doc.tags],
+    visibility: emitConditionExpression(doc.visibility),
+    acceptance: emitConditionExpression(doc.acceptance),
+    hideWhenRepeatUnsatisfied: doc.hideWhenRepeatUnsatisfied,
+    abandonable: doc.abandonable,
+    autoStartWhenAcceptable: doc.autoStartWhenAcceptable,
+    repeat: structuredClone(doc.repeat),
+  }
   return compiled
 }
 
@@ -108,10 +127,10 @@ export function parseQuestCompiled(source: string): QuestCompiled {
   check(Object.keys(value).every(key => ['format', 'version', 'metadata', 'start', 'nodes'].includes(key)), '不能携带任务 ID、边表或编辑器数据')
   check(isObject(value.metadata) && typeof value.metadata.title === 'string' && typeof value.metadata.description === 'string', '缺少任务元信息')
   const metadata = value.metadata
-  check(Object.keys(metadata).every(key => ['title','description','tags','visibility','acceptance','abandonable','autoStartWhenAcceptable','repeat'].includes(key)), '元信息含非运行字段')
+  check(Object.keys(metadata).every(key => ['title','description','tags','visibility','acceptance','hideWhenRepeatUnsatisfied','abandonable','autoStartWhenAcceptable','repeat'].includes(key)), '元信息含非运行字段')
   if (metadata.tags !== undefined) check(Array.isArray(metadata.tags) && metadata.tags.every(tag => typeof tag === 'string'), '标签无效')
-  for (const key of ['abandonable','autoStartWhenAcceptable']) if (metadata[key] !== undefined) check(typeof metadata[key] === 'boolean', `${key} 无效`)
-  for (const key of ['visibility','acceptance']) if (metadata[key] !== undefined) parseConditionRules(metadata[key], key, key === 'visibility')
+  for (const key of ['abandonable','autoStartWhenAcceptable','hideWhenRepeatUnsatisfied']) if (metadata[key] !== undefined) check(typeof metadata[key] === 'boolean', `${key} 无效`)
+  for (const key of ['visibility','acceptance'] as const) if (metadata[key] !== undefined) metadata[key] = parseConditionExpressionString(metadata[key], key)
   if (metadata.repeat !== undefined) check(isObject(metadata.repeat) && Object.hasOwn(PROGRESS_REPEAT_LABELS, String(metadata.repeat.kind)) && typeof metadata.repeat.hours === 'number' && Number.isFinite(metadata.repeat.hours) && metadata.repeat.hours > 0, '重复策略无效')
   check(isObject(value.nodes) && typeof value.start === 'string' && Object.hasOwn(value.nodes, value.start), '开始节点不存在')
   const nodes = value.nodes as Record<string, QuestCompiledNode>, start = value.start
@@ -149,7 +168,7 @@ export function parseQuestCompiled(source: string): QuestCompiled {
       }
     }
     else if (node.type === 'objective') check(goalShape(node.goal, false), `目标 ${id} 内容无效`)
-    else if (node.type === 'condition') parseConditionRules(node.conditions, `nodes.${id}.conditions`, true)
+    else if (node.type === 'condition') check(typeof node.conditions === 'string' && !/[;\n\r]/.test(node.conditions), `nodes.${id}.conditions 必须是表达式字符串`)
     else if (node.type === 'end') check(typeof node.title === 'string' && Array.isArray(node.rewardKits) && node.rewardKits.every(kit => typeof kit === 'string' && kit.trim()) && new Set(node.rewardKits).size === node.rewardKits.length, `结束节点 ${id} 内容无效`)
     check(isObject(node.inputs) && isObject(node.outputs), `节点 ${id} 缺少端口列表`)
     const ins = node.type === 'progress' ? id === start ? [] : ['input'] : ['logic','end'].includes(node.type) ? ['input','input2'] : []

@@ -17,7 +17,7 @@
 
 - 节点 ID 在整张图内唯一（跨集合也不能重名）。
 - **唯一连接约束**：只能从右端口连到左端口，且**不能成环（含自环）**。连接时直接拒绝；文档里手写出环是校验 error。
-- **内容**：只有开始进度节点有 `questTitle` / `description`，以及任务级策略 `tags` / `visibility` / `acceptance` / `abandonable` / `autoStartWhenAcceptable` / `repeat`（编译进 questc `metadata`）；所有进度节点有 `identifier` / `runningLog`（进行时日志）/ `completedLog`（完成时日志）/ `goals` / `completion`；结束节点有 `title` / `rewardKits`；条件只有 `conditions`，没有标题。进度标识符是非本地化字符串；任务标题、说明、日志与结局标题仍是可本地化的 `FlowText`。
+- **内容**：只有开始进度节点有 `questTitle` / `description`，以及任务级策略 `tags` / `visibility` / `acceptance` / `hideWhenRepeatUnsatisfied` / `abandonable` / `autoStartWhenAcceptable` / `repeat`（编译进 questc `metadata`；条件组导出为表达式字符串）；所有进度节点有 `identifier` / `runningLog`（进行时日志）/ `completedLog`（完成时日志）/ `goals` / `completion`；结束节点有 `title` / `rewardKits`；条件只有 `conditions`（导出为表达式字符串），没有标题。进度标识符是非本地化字符串；任务标题、说明、日志与结局标题仍是可本地化的 `FlowText`。
 
 ## 2. 节点族总表
 

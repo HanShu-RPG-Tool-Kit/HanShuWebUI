@@ -26,8 +26,8 @@
     "talkId": "卫兵",
     "playerRole": "玩家",
     "entries": [
-      { "when": [{ "kind": "talk_unread", "inject": "village_intro" }], "inject": "village_intro" },
-      { "when": [], "inject": "village_idle" }
+      { "when": "!talkRead(ctx.player, \"village_intro\")", "inject": "village_intro" },
+      { "when": "", "inject": "village_idle" }
     ]
   },
   "interactService": { "type": "shop", "param": { "template": "village" } }
@@ -73,13 +73,14 @@
 
 ### 对话路由
 
-右键顺序：脚本 `interact` → `dialogue`（首条 when 全满足）→ `interactService` → 原版。
+右键顺序：脚本 `interact` → `dialogue`（首条 `when` 为真）→ `interactService` → 原版。
 
 | 字段 | 含义 |
 | --- | --- |
 | `talkId` / `playerRole` | 非空且互不相同的角色 ID |
-| `entries` | 有序；`when` 为 AND 条件集合，空数组恒真；`inject` 为全局 `@inject` 名 |
-| 条件 `kind` | `always`（禁止 inject）／`talk_read`／`talk_unread`（后两者必须带 inject） |
+| `entries` | 有序；`when` 为布尔表达式字符串（空串恒真）；`inject` 为全局 `@inject` 名 |
+
+旧 `when` 条件数组在读入时降下为表达式；落盘只写字符串。
 
 ### 交互服务
 

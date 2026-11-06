@@ -3,11 +3,8 @@ import { normalizeItemRef, writeKitItem, type KitItem } from './kit'
 import { isObject } from './model'
 import { readComponents, type ItemComponents } from './tnbtJson'
 
-export type ActorDialogueConditionKind = 'always' | 'talk_read' | 'talk_unread'
-export type ActorDialogueCondition =
-  | { kind: 'always' }
-  | { kind: 'talk_read' | 'talk_unread'; inject: string }
-export type ActorDialogueEntry = { when: ActorDialogueCondition[]; inject: string }
+/** 对话条目条件：布尔 JS 表达式；空串恒真。旧条件数组在 parse 时降下。 */
+export type ActorDialogueEntry = { when: string; inject: string }
 export type ActorDialogue = { talkId: string; playerRole: string; entries: ActorDialogueEntry[] }
 export type ActorInteractService =
   | { type: 'shop'; param: { template: string } }
@@ -117,9 +114,7 @@ export function stringifyActor(doc: ActorDocument): string {
     talkId: doc.dialogue.talkId,
     playerRole: doc.dialogue.playerRole,
     entries: doc.dialogue.entries.map(entry => ({
-      when: entry.when.map(condition => condition.kind === 'always'
-        ? { kind: 'always' }
-        : { kind: condition.kind, inject: condition.inject }),
+      when: entry.when,
       inject: entry.inject,
     })),
   }
@@ -225,20 +220,34 @@ function parseReputation(value: unknown): ActorReputationSpec {
   return { mode: 'set', id: parseFlatResourceId(requireString(value.id, 'reputation.id'), '声誉阵营') }
 }
 
-function parseCondition(value: unknown): ActorDialogueCondition {
+function emitLegacyDialogueCondition(value: unknown): string {
   if (!isObject(value) || typeof value.kind !== 'string') throw new Error('dialogue 条件需要 kind')
   const kind = value.kind.trim().toLowerCase()
   if (kind === 'always') {
     requireExactKeys(value, new Set(['kind']), 'always 条件')
-    return { kind: 'always' }
+    return ''
   }
   if (kind === 'talk_read' || kind === 'talk_unread') {
     requireExactKeys(value, new Set(['kind', 'inject']), `${kind} 条件`)
     const inject = requireString(value.inject, 'dialogue 条件 inject').trim()
     if (!inject) throw new Error('dialogue 条件 inject 不能为空')
-    return { kind, inject }
+    const call = `talkRead(ctx.player, ${JSON.stringify(inject)})`
+    return kind === 'talk_read' ? call : `!${call}`
   }
   throw new Error(`未知 dialogue 条件 kind：${value.kind}`)
+}
+
+function parseDialogueWhen(value: unknown): string {
+  if (typeof value === 'string') {
+    if (/[;\n\r]/.test(value)) throw new Error('dialogue entry when 只能是表达式，不能含语句')
+    return value
+  }
+  if (!Array.isArray(value)) throw new Error('dialogue entry when 必须是表达式字符串')
+  if (!value.length) return ''
+  const parts = value.map(emitLegacyDialogueCondition).filter(part => part.length > 0)
+  if (!parts.length) return ''
+  if (parts.length === 1) return parts[0]!
+  return parts.map(part => `(${part})`).join(' && ')
 }
 
 function parseDialogue(value: unknown): ActorDialogue {
@@ -253,10 +262,9 @@ function parseDialogue(value: unknown): ActorDialogue {
   const entries = value.entries.map(entry => {
     if (!isObject(entry)) throw new Error('dialogue entry 必须是对象')
     requireExactKeys(entry, new Set(['when', 'inject']), 'dialogue entry')
-    if (!Array.isArray(entry.when)) throw new Error('dialogue entry when 必须是数组')
     const inject = requireString(entry.inject, 'dialogue entry inject').trim()
     if (!inject) throw new Error('dialogue entry inject 不能为空')
-    return { when: entry.when.map(parseCondition), inject }
+    return { when: parseDialogueWhen(entry.when), inject }
   })
   return { talkId, playerRole, entries }
 }

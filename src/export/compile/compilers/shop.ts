@@ -2,7 +2,6 @@ import type { FileCompiler } from '../types'
 import { sourcePathOf } from '../../../workspace'
 import { parseShop, stringifyShop } from '../../../workspaces/gameplay/shop'
 import { buildKitModifierEnv } from '../../../workspaces/gameplay/kitExpr'
-import { compileShopCondition } from '../../../workspaces/gameplay/shopExpr'
 export const shopCompiler: FileCompiler = {
   id: 'shop', match: file => file.name.toLowerCase().endsWith('.shop'),
   async compile(file, ctx) {
@@ -18,14 +17,11 @@ export const shopCompiler: FileCompiler = {
     }
     const env = buildKitModifierEnv(shop.params, shop.modifiers)
     env.errors.forEach(error)
-    for (const rule of [...shop.visibility, ...shop.availability]) if (rule.kind === 'expr') {
-      try { compileShopCondition(rule.target, env) } catch (cause) { error(`商店条件：${String(cause)}`) }
-    }
     for (const script of shop.script) if (!ctx.index.package.scripts.some(s => sourcePathOf(s) === `src/script/shop/${script.ref}.js`)) error(`缺少商店脚本：${script.ref}`)
     if (shop.icon?.item && !ctx.index.package.scripts.some(s => s.name === `${shop.icon!.item}.item`)) error(`缺少图标物品：${shop.icon.item}`)
     for (const entry of shop.entries) {
-      for (const expression of [entry.visibility, entry.availability]) if (expression.trim()) {
-        try { compileShopCondition(expression, env) } catch (cause) { error(`条目 ${entry.id}：${String(cause)}`) }
+      for (const expression of [entry.visibility, entry.availability]) if (/[;\n\r]/.test(expression)) {
+        error(`条目 ${entry.id}：条件只能是表达式，不能含语句`)
       }
       for (const item of [...entry.payment, ...entry.goods]) {
         if (item.item && !ctx.index.package.scripts.some(s => s.name === `${item.item}.item`)) error(`缺少物品：${item.item}`)

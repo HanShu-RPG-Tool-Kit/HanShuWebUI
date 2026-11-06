@@ -1,7 +1,7 @@
 import { randomId } from '../../project/crypto'
 import { parseJsonValue } from '../../utils/strictJson'
 import { parseCompletionGraph, type CompletionGraph } from './completionGraph'
-import { parseConditionRules, type ProgressConditionRule } from './conditions'
+import { conditionRuleIssue, parseConditionRules, parseHideWhenRepeatUnsatisfied, type ProgressConditionRule } from './conditions'
 import type { ProgressRepeatKind } from './progressDoc'
 import { matchInjectLine } from '../../hanshu/hsSyntaxRules'
 
@@ -57,12 +57,13 @@ export type FlowProgressNode = {
   tags?: string[]
   visibility?: ProgressConditionRule[]
   acceptance?: ProgressConditionRule[]
+  hideWhenRepeatUnsatisfied?: boolean
   abandonable?: boolean
   autoStartWhenAcceptable?: boolean
   repeat?: { kind: ProgressRepeatKind; hours: number }
   extensions?: Data
 }
-/** 条件节点：无左端口，条件全部成立时发 A；对 Q 回报真 / N。空条件恒假。 */
+/** 条件节点：无左端口，条件全部成立时发 A；对 Q 回报真 / N。空条件导出 ""（恒真，与 Mod 对齐）。 */
 export type FlowPredicateNode = {
   identifier?: string
   conditions: ProgressConditionRule[]
@@ -234,6 +235,7 @@ export function createFlow(id = randomId(), questTitle = '新的进度流程'): 
         tags: [],
         visibility: [],
         acceptance: [],
+        hideWhenRepeatUnsatisfied: false,
         abandonable: true,
         autoStartWhenAcceptable: false,
         repeat: { kind: 'once', hours: 24 },
@@ -335,7 +337,7 @@ export function parseFlow(source: string): ProgressFlow {
     delete raw.title
     checkText(node.runningLog, `progress.${id}.runningLog`)
     checkText(node.completedLog, `progress.${id}.completedLog`)
-    const policyKeys = ['tags', 'visibility', 'acceptance', 'abandonable', 'autoStartWhenAcceptable', 'repeat'] as const
+    const policyKeys = ['tags', 'visibility', 'acceptance', 'hideWhenRepeatUnsatisfied', 'abandonable', 'autoStartWhenAcceptable', 'repeat'] as const
     if (start) {
       checkText(node.questTitle, `progress.${id}.questTitle`)
       checkText(node.description, `progress.${id}.description`)
@@ -346,8 +348,10 @@ export function parseFlow(source: string): ProgressFlow {
       if (!Object.hasOwn(raw, 'autoStartWhenAcceptable')) raw.autoStartWhenAcceptable = false
       if (!Object.hasOwn(raw, 'repeat')) raw.repeat = { kind: 'once', hours: 24 }
       require(Array.isArray(raw.tags) && raw.tags.every(tag => typeof tag === 'string'), `progress.${id}.tags`)
-      raw.visibility = parseConditionRules(raw.visibility, `progress.${id}.visibility`, true)
-      raw.acceptance = parseConditionRules(raw.acceptance, `progress.${id}.acceptance`, false)
+      const visibilityParsed = parseConditionRules(raw.visibility, `progress.${id}.visibility`, { allowHideRepeat: true })
+      raw.visibility = visibilityParsed.rules
+      raw.acceptance = parseConditionRules(raw.acceptance, `progress.${id}.acceptance`).rules
+      raw.hideWhenRepeatUnsatisfied = parseHideWhenRepeatUnsatisfied(raw.hideWhenRepeatUnsatisfied, visibilityParsed.hideWhenRepeatUnsatisfied)
       require(typeof raw.abandonable === 'boolean', `progress.${id}.abandonable`)
       require(typeof raw.autoStartWhenAcceptable === 'boolean', `progress.${id}.autoStartWhenAcceptable`)
       require(isObject(raw.repeat) && PROGRESS_REPEAT_KINDS.has(String((raw.repeat as { kind?: unknown }).kind)), `progress.${id}.repeat`)
@@ -404,7 +408,7 @@ export function parseFlow(source: string): ProgressFlow {
       require(raw.identifier === undefined || typeof raw.identifier === 'string', `predicates.${id}.identifier`)
       checkExtensions(raw, `predicates.${id}`)
       if (Object.hasOwn(raw, 'title')) { checkText(raw.title, `predicates.${id}.title`); delete raw.title }
-      node.conditions = parseConditionRules(raw.conditions, '条件节点', true)
+      node.conditions = parseConditionRules(raw.conditions, '条件节点').rules
     }
   }
   if (f.transitions !== undefined) {
@@ -546,9 +550,10 @@ export function validateFlow(flow: ProgressFlow, definitions: readonly { kind: s
   for (const [id, node] of Object.entries(flow.predicates ?? {})) {
     const issue = nodeIdentifierIssue(flow, id, node.identifier ?? '')
     if (issue) error(`predicates.${id}.identifier`, issue)
-    if (!node.conditions.length && !drafts.has(id)) warning(`predicates.${id}`, '没有配置条件（恒假）。')
+    if (!node.conditions.length && !drafts.has(id)) warning(`predicates.${id}`, '没有配置条件（恒真）。')
     node.conditions.forEach((rule, index) => {
-      if (rule.kind !== 'repeat' && !rule.target.trim() && !drafts.has(id)) warning(`predicates.${id}`, `第 ${index + 1} 个条件还没有填写对象。`)
+      const issue = conditionRuleIssue(rule, `第 ${index + 1} 个条件`)
+      if (issue && !drafts.has(id)) warning(`predicates.${id}`, issue)
     })
   }
   for (const [id, node] of Object.entries(flow.objectives ?? {})) {

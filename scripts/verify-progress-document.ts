@@ -32,29 +32,45 @@ for (const completion of ['all', 'any'] as const) {
 assert.deepEqual(parseProgress(stringifyProgress(moved), []).goals, moved.goals, 'unknown definitions must preserve goals')
 assert.deepEqual(parseProgress(stringifyProgress(moved), [{ ...defs[0]!, fields: [{ key: 'newField', type: 'int', required: false, default: 12 }] }]).goals, moved.goals, 'reading never injects schema defaults')
 doc.visibility = [
-  { kind: 'task', state: 'succeeded', target: 'first_task' },
-  { kind: 'dialogue', state: 'after', target: 'intro' },
-  { kind: 'expr', state: 'true', target: 'level >= 10' },
-  { kind: 'repeat', state: 'satisfied', target: '' },
-  { kind: 'repeat', state: 'unsatisfied', target: '' },
+  { kind: 'quest', op: 'succeeded', questId: 'first_task' },
+  { kind: 'talk_read', injectId: 'intro' },
+  { kind: 'expr', source: 'ctx.player.experienceLevel >= 10' },
 ]
-doc.acceptance = [{ kind: 'task', state: 'ended', target: 'other_task' }]
+doc.acceptance = [{ kind: 'quest', op: 'completed', questId: 'other_task' }]
+doc.hideWhenRepeatUnsatisfied = true
 assert.deepEqual(parseProgress(stringifyProgress(doc)).visibility, doc.visibility)
 assert.deepEqual(parseProgress(stringifyProgress(doc)).acceptance, doc.acceptance)
+assert.equal(parseProgress(stringifyProgress(doc)).hideWhenRepeatUnsatisfied, true)
 const noAcceptance = parseProgress(stringifyProgress({ ...doc, acceptance: [] }))
 assert.deepEqual(noAcceptance.acceptance, [])
 assert.deepEqual(noAcceptance.visibility, doc.visibility, 'clearing acceptance never changes visibility')
 const serialized = JSON.parse(stringifyProgress(doc))
 assert.ok(!('accept' in serialized) && !('visible' in serialized) && !('deliver' in serialized) && !('fail' in serialized))
+const legacy = parseProgress(JSON.stringify({
+  ...serialized,
+  hideWhenRepeatUnsatisfied: undefined,
+  visibility: [
+    { kind: 'task', state: 'succeeded', target: 'first_task' },
+    { kind: 'dialogue', state: 'after', target: 'intro' },
+    { kind: 'expr', state: 'true', target: 'level >= 10' },
+    { kind: 'repeat', state: 'satisfied', target: '' },
+  ],
+  acceptance: [{ kind: 'task', state: 'ended', target: 'other_task' }],
+}))
+assert.deepEqual(legacy.visibility, [
+  { kind: 'quest', op: 'succeeded', questId: 'first_task' },
+  { kind: 'talk_read', injectId: 'intro' },
+  { kind: 'expr', source: 'level >= 10' },
+])
+assert.deepEqual(legacy.acceptance, [{ kind: 'quest', op: 'completed', questId: 'other_task' }])
+assert.equal(legacy.hideWhenRepeatUnsatisfied, true)
 assert.throws(() => parseProgress(JSON.stringify({ ...serialized, visibility: [{ kind: 'dialogue', state: 'succeeded', target: 'intro' }] })), /对话条件状态无效/)
-assert.throws(() => parseProgress(JSON.stringify({ ...serialized, visibility: [{ kind: 'task', state: 'after', target: 'first_task' }] })), /任务条件状态无效/)
-assert.throws(() => parseProgress(JSON.stringify({ ...serialized, visibility: [{ kind: 'expr', state: 'after', target: 'x' }] })), /求值条件状态无效/)
-assert.throws(() => parseProgress(JSON.stringify({ ...serialized, visibility: [{ kind: 'repeat', state: 'true', target: '' }] })), /重复周期条件状态无效/)
+assert.throws(() => parseProgress(JSON.stringify({ ...serialized, visibility: [{ kind: 'task', state: 'after', target: 'first_task' }] })), /状态无效/)
+assert.throws(() => parseProgress(JSON.stringify({ ...serialized, visibility: [{ kind: 'repeat', state: 'unsatisfied', target: '' }] })), /不再支持/)
 assert.throws(() => parseProgress(JSON.stringify({ ...serialized, visibility: [{ kind: 'repeat', state: 'satisfied', target: 'self' }] })), /重复周期条件不需要对象/)
 assert.throws(() => parseProgress(JSON.stringify({ ...serialized, acceptance: [{ kind: 'repeat', state: 'satisfied', target: '' }] })), /不能写入重复周期/)
-assert.ok(progressIssues({ ...doc, visibility: [{ kind: 'task', state: 'active', target: '' }] }, defs).some(issue => issue.includes('请选择或填写对象')))
-assert.ok(progressIssues({ ...doc, visibility: [{ kind: 'expr', state: 'true', target: '' }] }, defs).some(issue => issue.includes('请选择或填写对象')))
-assert.ok(!progressIssues({ ...doc, visibility: [{ kind: 'repeat', state: 'unsatisfied', target: '' }], goals: [first] }, defs).some(issue => issue.includes('请选择或填写对象')), 'repeat cycle has no object')
+assert.ok(progressIssues({ ...doc, visibility: [{ kind: 'quest', op: 'active', questId: '' }] }, defs).some(issue => issue.includes('请填写任务 ID')))
+assert.ok(progressIssues({ ...doc, visibility: [{ kind: 'expr', source: '' }] }, defs).some(issue => issue.includes('请填写表达式')))
 assert.equal(readProgressSource('{broken').doc, null)
 assert.equal(readProgressSource(JSON.stringify({ ...doc, groups: [] })).doc, null)
 assert.equal(readProgressSource(JSON.stringify({ ...doc, completion: 'atLeast' })).doc, null)
@@ -62,6 +78,7 @@ assert.throws(() => parseProgress(stringifyProgress({ ...doc, goals: [first, fir
 const empty = createProgress('')
 assert.deepEqual(empty.visibility, [])
 assert.deepEqual(empty.acceptance, [])
+assert.equal(empty.hideWhenRepeatUnsatisfied, false)
 assert.equal(empty.autoStartWhenAcceptable, false)
 assert.equal(parseProgress(stringifyProgress(empty)).autoStartWhenAcceptable, false)
 assert.equal(parseProgress(stringifyProgress({ ...empty, autoStartWhenAcceptable: true })).autoStartWhenAcceptable, true)

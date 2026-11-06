@@ -29,8 +29,8 @@ for (const pack of exported.packs) {
   assert.equal(!!zip.file('script/shop/trade.js'), pack.target === 'server')
   if (pack.target === 'server') {
     const result = JSON.parse(await zip.file('shop/web-shop.shop')!.async('string'))
-    assert.deepEqual(result.visibility, [])
-    assert.deepEqual(result.availability, [])
+    assert.equal(Object.hasOwn(result, 'visibility'), false)
+    assert.equal(Object.hasOwn(result, 'availability'), false)
     assert.equal(result.entries[0].visibility, shop.entries[0].visibility)
     assert.equal(result.entries[0].availability, shop.entries[0].availability)
     assert.equal(result.icon.id, 'minecraft:chest')
