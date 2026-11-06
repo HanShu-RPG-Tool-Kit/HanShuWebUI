@@ -267,9 +267,8 @@ export function ShopEditor({ source, disabled, onChange, resolveText, setText, i
       <label className="kit-name-field"><span className="kit-name-label">名称</span><input className="kit-title" aria-label="商店名称" placeholder="未命名商店" value={displayName} disabled={disabled || !setText} onChange={e => setText?.(doc.name, e.target.value)} /></label>
       <label className="shop-stock-field"><span>库存主体</span><select aria-label="库存主体类型" disabled={disabled} value={doc.stockSubject} onChange={e => update({ stockSubject: e.target.value as ShopDocument['stockSubject'] })}>{Object.entries(STOCK_SUBJECTS).map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></label>
       <div className="shop-header-meta">
-        <span className="shop-meta-note">主体收款并供货 · 具体实体由实例绑定</span>
+        <span className="shop-meta-note">主体收款并供货 · 具体实体由实例绑定 · 模板 ID 即文件名</span>
         <span className="shop-template-badge">商店模板</span>
-        <details className="shop-identity"><summary>模板 ID</summary><label className="kit-field"><span>模板 ID</span><input aria-label="模板 ID" value={doc.id} disabled={disabled} onChange={e => update({ id: e.target.value })} /></label></details>
       </div>
     </header>
     <div className="shop-header-secondary">

@@ -66,7 +66,7 @@ export function FlowDocumentProperties({ doc, onSave, onCancel }: {
     <header><strong id={titleId}>{title}</strong></header>
     <div className="flow-alert-body flow-properties-body">
       <TextField label="文件名" value={name} onChange={(value) => { setName(value); setError('') }} />
-      {doc.package === 'actor' ? <p className="flow-hint">演员模板以 .actor 保存；文件名就是模板 ID，脚本、显示、对话、服务与声誉在主区编辑。</p> : doc.package === 'reputation' ? <p className="flow-hint">声誉阵营以 .rep 保存；文件名就是阵营 ID，显示名与描述在 lang_rep。</p> : doc.package === 'shop' ? <p className="flow-hint">商店模板以 .shop（JSON）保存，组合和主体实体绑定由实例管理。</p> : item ? (
+      {doc.package === 'actor' ? <p className="flow-hint">演员模板以 .actor 保存；文件名就是模板 ID，脚本、显示、对话、服务与声誉在主区编辑。</p> : doc.package === 'reputation' ? <p className="flow-hint">声誉阵营以 .rep 保存；文件名就是阵营 ID，显示名与描述在 lang_rep。</p> : doc.package === 'shop' ? <p className="flow-hint">商店模板以 .shop（JSON）保存；文件名就是模板 ID，组合和主体实体绑定由实例管理。</p> : item ? (
         <p className="flow-hint">物品以 `.item`（JSON）写入工程目录；可从 `.itemstack` 导入。内容在主区可视化编辑器中修改。</p>
       ) : kit ? (
         <p className="flow-hint">礼包以 `.kit`（JSON）写入工程目录；内容在主区表单中修改。</p>

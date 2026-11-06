@@ -23,7 +23,6 @@ export type ShopEntry = {
 export type ShopDocument = {
   format: 'hanshu.shop'
   version: 1
-  id: string
   name: string
   tags: string[]
   icon: KitItem | null
@@ -67,7 +66,7 @@ export function overlayShopEntry(target: ShopEntry, source: ShopEntry): ShopEntr
   return { ...cloneShopEntry(source), id: target.id }
 }
 export const createShop = (): ShopDocument => ({
-  format: 'hanshu.shop', version: 1, id: randomId(), name: 'name', tags: [], icon: null, stockSubject: 'infinite',
+  format: 'hanshu.shop', version: 1, name: 'name', tags: [], icon: null, stockSubject: 'infinite',
   visibility: [], availability: [], params: [], modifiers: [], script: [], entries: [],
 })
 export function shopTags(value: unknown): string[] {
@@ -101,7 +100,7 @@ export function stringifyShop(doc: ShopDocument, options?: { plane?: 'source' | 
   const compile = options?.plane === 'pak'
   const items = (values: KitItem[]) => values.map(writeKitItem)
   return JSON.stringify({
-    format: doc.format, version: doc.version, id: doc.id, name: doc.name, tags: doc.tags, stockSubject: doc.stockSubject,
+    format: doc.format, version: doc.version, name: doc.name, tags: doc.tags, stockSubject: doc.stockSubject,
     icon: doc.icon ? writeKitItem({ ...doc.icon, count: 1, mods: undefined }) : null,
     visibility: writeShopLevelConditions(doc.visibility, compile),
     availability: writeShopLevelConditions(doc.availability, compile),
@@ -115,7 +114,7 @@ export function parseShop(source: string, draft = false): ShopDocument {
   const raw = parseJsonValue(source)
   if (!isObject(raw) || raw.format !== 'hanshu.shop' || raw.version !== 1) throw new Error('需要 hanshu.shop version 1 商店模板')
   if ('extends' in raw || 'includes' in raw) throw new Error('商店模板不支持继承或组合；组合属于实例')
-  if (typeof raw.id !== 'string' || (!draft && !raw.id.trim()) || typeof raw.name !== 'string' || !raw.name.trim()) throw new Error('商店需要稳定 ID 和名称键')
+  if (typeof raw.name !== 'string' || !raw.name.trim()) throw new Error('商店需要名称键')
   if (typeof raw.stockSubject !== 'string' || !Object.hasOwn(STOCK_SUBJECTS, raw.stockSubject)) throw new Error('库存主体类型无效')
   if (!Array.isArray(raw.entries) || !Array.isArray(raw.params) || !Array.isArray(raw.modifiers) || !Array.isArray(raw.script)) throw new Error('条目、超参数、修饰器和脚本必须是列表')
   const kit = parseKit(JSON.stringify({ params: raw.params, modifiers: raw.modifiers }))
@@ -154,7 +153,7 @@ export function parseShop(source: string, draft = false): ShopDocument {
   })
   if (!draft && new Set(script.map(s => s.ref)).size !== script.length) throw new Error('脚本不能重复绑定')
   return {
-    format: 'hanshu.shop', version: 1, id: raw.id, name: raw.name, tags: shopTags(raw.tags),
+    format: 'hanshu.shop', version: 1, name: raw.name, tags: shopTags(raw.tags),
     stockSubject: raw.stockSubject as ShopDocument['stockSubject'], icon,
     visibility: parseShopLevelConditions(raw.visibility, '商店可见性条件'),
     availability: parseShopLevelConditions(raw.availability, '商店可用性条件'),

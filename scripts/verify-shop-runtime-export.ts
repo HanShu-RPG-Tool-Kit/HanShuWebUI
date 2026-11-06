@@ -8,7 +8,7 @@ import { createShop, createShopEntry, stringifyShop } from '../src/workspaces/ga
 import { createKitItem } from '../src/workspaces/gameplay/kit'
 
 const shop = createShop()
-shop.id = 'web-shop'; shop.tags = ['village']; shop.stockSubject = 'actor'
+shop.tags = ['village']; shop.stockSubject = 'actor'
 shop.icon = { ...createKitItem('minecraft:chest', 1), components: {
   'minecraft:custom_data': { type: 'compound', value: { shop_icon: { type: 'string', value: 'fixture' } } },
 } }

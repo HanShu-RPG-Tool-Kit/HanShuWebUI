@@ -10,12 +10,6 @@ export const shopCompiler: FileCompiler = {
     let shop: ReturnType<typeof parseShop>
     try { shop = parseShop(file.content) }
     catch (cause) { error(String(cause)); return [] }
-    for (const other of ctx.index.package.scripts) {
-      if (other.name === file.name || !other.name.toLowerCase().endsWith('.shop')) continue
-      let otherId: string | undefined
-      try { otherId = parseShop(other.content).id } catch { /* The other compiler reports its own malformed template. */ }
-      if (otherId === shop.id) error(`商店模板 ID 与 ${other.name} 重复：${shop.id}`)
-    }
     const env = buildKitModifierEnv(shop.params, shop.modifiers)
     env.errors.forEach(error)
     for (const [label, rules] of [['可见性', shop.visibility], ['可用性', shop.availability]] as const) {
