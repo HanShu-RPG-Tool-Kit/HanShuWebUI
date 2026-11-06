@@ -22,6 +22,18 @@
   border: 1px solid var(--border);
   border-radius: var(--kit-radius);
   background: var(--fl-panel, #303030);
+  color: var(--text);
+  font-size: calc(12.5px * var(--fl-s, 1.25) / 1.1);
+}
+
+.actor-primary > .actor-despawn > span {
+  flex: none;
+  white-space: nowrap;
+}
+
+.actor-primary > .actor-despawn > .sheet-select {
+  width: auto;
+  min-width: 7.5em;
 }
 
 .actor-primary > .kit-tags-row {
