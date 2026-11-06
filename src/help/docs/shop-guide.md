@@ -4,7 +4,7 @@
 
 ## 模板与实例
 
-商店模板定义名称、标签、库存主体类型、商品条目、超参数、修饰器和有序脚本列表。模板不提供继承或组合，不保存具体主体实体、delta 或实例参数值。**不再有商店级条件组**；条件写在各 `entries[].visibility`／`availability` 表达式上。
+商店模板定义名称、标签、库存主体类型、商品条目、超参数、修饰器和有序脚本列表。模板不提供继承或组合，不保存具体主体实体、delta 或实例参数值。商店级 `visibility`／`availability` 为条件组（与任务 visibility 同一套叶子，AND，空组恒真）；条目级同名字段仍是表达式字符串。二者分开求值。
 
 组合属于商店实例的能力。实例引用一个或多个模板，每次引用独立传入超参数、绑定具体主体实体。实例为会话级；同一模板可在不同会话使用不同参数，但一个会话中最多引用一次。实例管理的约束如下，本文不定义其实例文件格式：
 
@@ -50,9 +50,12 @@ current = initialCapacity + delta
 
 无限主体仅使用 `initialCapacity < maxCapacity` 作为额度开放标志，显示 `∞`，不受差值限制且交易不累加 delta；相等表示额度关闭，大于最大值是配置错误。无限不绕过物品支付、商店条件或商品条件。
 
-## 条目条件
+## 条件
 
-`entries[].visibility`／`availability` 为 **Mod 条件表达式字符串**（空串恒真），在商品表格的“可见／可用”单元格内直接编辑。可用 `questState`／`talkRead`／`reputationPoints`／`isDay`／`ctx.player.experienceLevel` 等条件标准库，也可引用本模板超参数与修饰器（与 Mod `ConditionEval`／kit 绑定一致）。旧顶层商店条件组：空数组可读，非空拒载；落盘不再写出。
+- **商店级** `visibility`／`availability`：作者态为条件组（任务／进度／对话／等级／声誉／时间／表达式叶子）；源文件落盘条件组，导出 server PAK 时编译为一条布尔表达式（空组 → `""` 恒真）。
+- **条目级** `entries[].visibility`／`availability`：直接写 **Mod 条件表达式字符串**（空串恒真），在商品表格的“可见／可用”单元格内编辑。可用 `questState`／`talkRead`／`reputationPoints`／`isDay`／`ctx.player.experienceLevel` 等，也可引用本模板超参数与修饰器（与 Mod `ConditionEval`／kit 绑定一致）。
+
+商店级与条目级分开求值，不自动 AND 拼成一棵树。旧顶层表达式字符串读入时降下为 `expr` 叶子。
 
 ## 商品条目与物品
 
@@ -88,6 +91,8 @@ Mod 在交易预提交阶段按涉及模板引用及其脚本列表顺序执行�
   "name": "name",
   "tags": ["village"],
   "stockSubject": "actor",
+  "visibility": [],
+  "availability": [],
   "params": [{"id":"priceScale","kind":"float","default":1,"hint":"价格倍率"}],
   "modifiers": [{"id":"price","label":"价格","expr":"x * priceScale"}],
   "script": [],

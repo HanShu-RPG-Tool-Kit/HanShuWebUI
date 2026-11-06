@@ -53,11 +53,19 @@ for (const patch of [{ extends: 'parent' }, { includes: [] }, { entries: [...doc
   assert.throws(() => parseShop(JSON.stringify({ ...doc, ...patch })))
 }
 const roundTrip = JSON.parse(stringifyShop(doc))
-assert.equal(Object.hasOwn(roundTrip, 'visibility'), false)
-assert.equal(Object.hasOwn(roundTrip, 'availability'), false)
-assert.ok(parseShop(JSON.stringify({ ...roundTrip, visibility: [], availability: [] })))
-assert.throws(() => parseShop(JSON.stringify({ ...roundTrip, visibility: [{ kind: 'quest', op: 'succeeded', questId: '序章' }] })), /不再支持顶层/)
-assert.throws(() => parseShop(JSON.stringify({ ...roundTrip, availability: 'x > 1' })), /不再支持顶层/)
+assert.deepEqual(roundTrip.visibility, [])
+assert.deepEqual(roundTrip.availability, [])
+doc.visibility = [{ kind: 'quest', op: 'succeeded', questId: '序章' }]
+doc.availability = [{ kind: 'expr', source: 'ctx.player.experienceLevel > 1' }]
+assert.deepEqual(parseShop(stringifyShop(doc)).visibility, doc.visibility)
+assert.deepEqual(parseShop(stringifyShop(doc)).availability, doc.availability)
+assert.deepEqual(
+  parseShop(JSON.stringify({ ...roundTrip, visibility: 'questState(ctx.player, "succeeded", "prologue")' })).visibility,
+  [{ kind: 'expr', source: 'questState(ctx.player, "succeeded", "prologue")' }],
+)
+const pak = JSON.parse(stringifyShop(doc, { plane: 'pak' }))
+assert.equal(pak.visibility, '(questState(ctx.player, "succeeded", "序章"))')
+assert.equal(pak.availability, '(ctx.player.experienceLevel > 1)')
 doc.entries[0].visibility = 'questState(ctx.player, "succeeded", "prologue")'
 doc.entries[0].availability = 'ctx.player.experienceLevel > 1'
 const entryRoundTrip = parseShop(stringifyShop(doc))

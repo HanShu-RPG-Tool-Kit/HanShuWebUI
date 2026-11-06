@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useState, type MouseEvent } from 'react'
 import { AddButton, ItemCatalogContext, ItemList, KitTagField, Panel, RemoveButton } from './KitEditor'
+import { ConditionRulesEditor } from './ConditionRulesEditor'
 import { IconButton, JsonRepairPane, PendingBanner, RefBadge, SheetField, SheetToggle, useSheetDraft } from './SheetParts'
 import {
   ACTOR_DESPAWN_MODES,
@@ -21,9 +22,14 @@ import {
   type ActorLootXp,
   type ActorLootXpMode,
   type ActorReputationSpec,
+  type ProgressConditionRule,
 } from './actor'
 import type { ItemCatalog } from './kit'
 import './ActorEditor.css'
+import './ProgressEditor.css'
+
+const ENTRY_ROW_CONTROLS = 'input,select,textarea,button,a,label,.actor-row-tools,.actor-ref-field'
+const whenSummary = (when: ProgressConditionRule[]) => when.length ? `${when.length} 项条件` : '恒真'
 
 type RefOption = { ref: string; label: string; key?: string }
 
@@ -189,6 +195,7 @@ export function ActorEditor({
 }) {
   const [repairing, setRepairing] = useState(false)
   const [lootStash, setLootStash] = useState<ActorLootItemRow[]>([])
+  const [expandedEntry, setExpandedEntry] = useState<number | null>(null)
   const { pending, commit, discard } = useSheetDraft(source, disabled, parseActor, stringifyActor, onChange)
   let parsed: ActorDocument = createActor(), error = ''
   try { parsed = parseActor(source) } catch (cause) { error = cause instanceof Error ? cause.message : String(cause) }
@@ -211,9 +218,31 @@ export function ActorEditor({
   const loot = doc.loot ?? null
   const lootItem = loot?.item ?? null
   const setDialogue = (next: Partial<ActorDialogue>) => { if (dialogue) update({ dialogue: { ...dialogue, ...next } }) }
-  const setEntries = (entries: ActorDialogueEntry[]) => setDialogue({ entries })
+  const setEntries = (entries: ActorDialogueEntry[]) => {
+    setDialogue({ entries })
+    if (expandedEntry != null && expandedEntry >= entries.length) setExpandedEntry(null)
+  }
   const patchEntry = (index: number, patch: Partial<ActorDialogueEntry>) => {
     if (dialogue) setEntries(dialogue.entries.map((entry, i) => i === index ? { ...entry, ...patch } : entry))
+  }
+  const toggleEntry = (index: number) => setExpandedEntry(current => current === index ? null : index)
+  const entryClick = (event: MouseEvent<HTMLElement>, index: number) => {
+    if (!(event.target as Element).closest(ENTRY_ROW_CONTROLS)) toggleEntry(index)
+  }
+  const addDialogueEntry = () => {
+    if (!dialogue) return
+    const entries = [...dialogue.entries, { when: [] as ProgressConditionRule[], inject: '' }]
+    setEntries(entries)
+    setExpandedEntry(entries.length - 1)
+  }
+  const removeDialogueEntry = (index: number) => {
+    if (!dialogue) return
+    setEntries(dialogue.entries.filter((_, i) => i !== index))
+    setExpandedEntry(current => {
+      if (current == null) return null
+      if (current === index) return null
+      return current > index ? current - 1 : current
+    })
   }
   const changeServiceType = (type: ActorInteractService['type']) => {
     if (service?.type === type) return
@@ -295,48 +324,69 @@ export function ActorEditor({
     </div>
   </Panel>
 
-  const dialoguePanel = <Panel title="对话路由" subtitle="脚本 interact 之后匹配 · 首条全部满足的条目生效" count={dialogue ? dialogue.entries.length : undefined} className={`sheet-panel actor-dialogue${dialogue ? '' : ' is-off'}`}
+  const dialoguePanel = <Panel title="对话路由" subtitle="脚本 interact 之后匹配 · 首条条件组全部满足的条目生效" count={dialogue ? dialogue.entries.length : undefined} className={`sheet-panel actor-dialogue${dialogue ? '' : ' is-off'}`}
     action={<>
-      {dialogue && add('添加对话条目', () => setEntries([...dialogue.entries, { when: '', inject: '' }]))}
-      <SheetToggle label="启用" ariaLabel="启用对话路由" checked={dialogue != null} disabled={disabled} onChange={on => update({ dialogue: on ? { talkId: '', playerRole: '玩家', entries: [] } : null })} />
+      {dialogue && add('添加对话条目', addDialogueEntry)}
+      <SheetToggle label="启用" ariaLabel="启用对话路由" checked={dialogue != null} disabled={disabled} onChange={on => { update({ dialogue: on ? { talkId: '', playerRole: '玩家', entries: [] } : null }); setExpandedEntry(null) }} />
     </>}>
     {dialogue ? <div className="sheet-panel-body">
       <div className="actor-dialogue-roles">
         <SheetField label="角色 ID" invalid={!!talkIdIssue} hint={talkIdIssue || '对话脚本中 NPC 的角色名'}><input aria-label="对话角色 ID" aria-invalid={!!talkIdIssue} disabled={disabled} value={dialogue.talkId} placeholder="村长" onChange={e => setDialogue({ talkId: e.target.value })} /></SheetField>
         <SheetField label="玩家角色 ID" invalid={!!playerRoleIssue} hint={playerRoleIssue || '对话脚本中代表玩家的角色名'}><input aria-label="对话玩家角色 ID" aria-invalid={!!playerRoleIssue} disabled={disabled} value={dialogue.playerRole} onChange={e => setDialogue({ playerRole: e.target.value })} /></SheetField>
       </div>
+      <p className="sheet-note actor-dialogue-hint">点击条目展开条件组；与任务 visibility 同一套叶子，导出编译为表达式。</p>
       {dialogue.entries.length === 0
         ? <p className="kit-empty actor-dialogue-empty">没有对话条目，右键时直接落到交互服务。</p>
         : <ol className="actor-entries">
           {dialogue.entries.map((entry, entryIndex) => {
             const n = entryIndex + 1
-            return <li key={entryIndex} className={`actor-entry${entry.inject ? '' : ' is-incomplete'}`}>
-              <header className="actor-entry-head">
-                <span className="actor-entry-index">#{n}</span>
+            const open = expandedEntry === entryIndex
+            const detailId = `actor-dialogue-detail-${entryIndex}`
+            return <li key={entryIndex} className={`actor-entry${open ? ' is-expanded' : ''}${entry.inject ? '' : ' is-incomplete'}`}>
+              <header
+                className="actor-entry-head"
+                role="button"
+                tabIndex={0}
+                aria-expanded={open}
+                aria-controls={open ? detailId : undefined}
+                onClick={e => entryClick(e, entryIndex)}
+                onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleEntry(entryIndex) } }}
+              >
+                <span className="actor-entry-index" aria-hidden>#{n}</span>
                 <span className="actor-entry-verb">进入</span>
                 <InjectSelect label={`对话条目 ${n} 注入点`} value={entry.inject} options={injectOptions} disabled={disabled} onChange={inject => patchEntry(entryIndex, { inject })} />
+                <span className="actor-entry-when-summary" title={whenSummary(entry.when)}>{whenSummary(entry.when)}</span>
                 <span className="actor-row-tools">
-                  <IconButton label={`上移对话条目 ${n}`} glyph="↑" disabled={disabled || entryIndex === 0} onClick={() => setEntries(swap(dialogue.entries, entryIndex, -1))} />
-                  <IconButton label={`下移对话条目 ${n}`} glyph="↓" disabled={disabled || entryIndex === dialogue.entries.length - 1} onClick={() => setEntries(swap(dialogue.entries, entryIndex, 1))} />
-                  <RemoveButton label={`移除对话条目 ${n}`} disabled={disabled} onClick={() => setEntries(dialogue.entries.filter((_, i) => i !== entryIndex))} />
+                  <IconButton label={`上移对话条目 ${n}`} glyph="↑" disabled={disabled || entryIndex === 0} onClick={() => {
+                    setEntries(swap(dialogue.entries, entryIndex, -1))
+                    setExpandedEntry(current => current === entryIndex ? entryIndex - 1 : current === entryIndex - 1 ? entryIndex : current)
+                  }} />
+                  <IconButton label={`下移对话条目 ${n}`} glyph="↓" disabled={disabled || entryIndex === dialogue.entries.length - 1} onClick={() => {
+                    setEntries(swap(dialogue.entries, entryIndex, 1))
+                    setExpandedEntry(current => current === entryIndex ? entryIndex + 1 : current === entryIndex + 1 ? entryIndex : current)
+                  }} />
+                  <RemoveButton label={`移除对话条目 ${n}`} disabled={disabled} onClick={() => removeDialogueEntry(entryIndex)} />
                 </span>
               </header>
-              <div className="actor-conditions">
-                <span className="actor-conditions-label">当</span>
-                <input
-                  className="sheet-input actor-when-expr"
-                  aria-label={`对话条目 ${n} 条件表达式`}
+              {open && <section className="actor-entry-detail progress-editor" id={detailId} role="region" aria-label={`对话条目 ${n} 条件组`}>
+                <header className="actor-entry-detail-head">
+                  <strong>条件组</strong>
+                  <small>全部满足（AND）· 空组恒真</small>
+                  <span className="actor-entry-detail-presets">
+                    <button type="button" className="sheet-btn is-quiet" disabled={disabled} onClick={() => patchEntry(entryIndex, { when: [] })}>清空恒真</button>
+                    <button type="button" className="sheet-btn is-quiet" disabled={disabled || !entry.inject} onClick={() => patchEntry(entryIndex, { when: [...entry.when, { kind: 'talk', op: 'unread', injectId: entry.inject }] })}>＋未读本条</button>
+                    <button type="button" className="sheet-btn is-quiet" disabled={disabled || !entry.inject} onClick={() => patchEntry(entryIndex, { when: [...entry.when, { kind: 'talk', op: 'read', injectId: entry.inject }] })}>＋已读本条</button>
+                  </span>
+                  <button type="button" className="actor-entry-detail-close" aria-label={`收起对话条目 ${n} 条件组`} onClick={() => setExpandedEntry(null)}>收起 ▴</button>
+                </header>
+                <ConditionRulesEditor
+                  title={`对话条目 ${n} 条件`}
+                  rules={entry.when}
                   disabled={disabled}
-                  placeholder="空串恒真 · 例 !talkRead(ctx.player, &quot;intro&quot;)"
-                  value={entry.when}
-                  onChange={e => patchEntry(entryIndex, { when: e.target.value })}
+                  emptyHint="没有条件，直接满足。"
+                  onChange={when => patchEntry(entryIndex, { when })}
                 />
-                <span className="actor-when-presets">
-                  <button type="button" disabled={disabled} onClick={() => patchEntry(entryIndex, { when: '' })}>恒真</button>
-                  <button type="button" disabled={disabled || !entry.inject} onClick={() => patchEntry(entryIndex, { when: `!talkRead(ctx.player, ${JSON.stringify(entry.inject)})` })}>未读本条</button>
-                  <button type="button" disabled={disabled || !entry.inject} onClick={() => patchEntry(entryIndex, { when: `talkRead(ctx.player, ${JSON.stringify(entry.inject)})` })}>已读本条</button>
-                </span>
-              </div>
+              </section>}
             </li>
           })}
         </ol>}

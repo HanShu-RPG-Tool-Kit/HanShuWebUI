@@ -26,8 +26,8 @@
     "talkId": "卫兵",
     "playerRole": "玩家",
     "entries": [
-      { "when": "!talkRead(ctx.player, \"village_intro\")", "inject": "village_intro" },
-      { "when": "", "inject": "village_idle" }
+      { "when": [{ "kind": "talk", "op": "unread", "injectId": "village_intro" }], "inject": "village_intro" },
+      { "when": [], "inject": "village_idle" }
     ]
   },
   "interactService": { "type": "shop", "param": { "template": "village" } }
@@ -73,14 +73,14 @@
 
 ### 对话路由
 
-右键顺序：脚本 `interact` → `dialogue`（首条 `when` 为真）→ `interactService` → 原版。
+右键顺序：脚本 `interact` → `dialogue`（首条 `when` 条件组全部满足）→ `interactService` → 原版。
 
 | 字段 | 含义 |
 | --- | --- |
 | `talkId` / `playerRole` | 非空且互不相同的角色 ID |
-| `entries` | 有序；`when` 为布尔表达式字符串（空串恒真）；`inject` 为全局 `@inject` 名 |
+| `entries` | 有序；`when` 为条件组（与任务 `visibility` 同一套叶子，AND，空组恒真）；`inject` 为全局 `@inject` 名 |
 
-旧 `when` 条件数组在读入时降下为表达式；落盘只写字符串。
+源文件落盘条件组；导出 server PAK 时编译为一条布尔表达式字符串。旧表达式字符串／旧 `always`／`talk_read`／`talk_unread` 数组在读入时降下为条件组。编辑器点击条目展开条件组（商店展开风格）。
 
 ### 交互服务
 

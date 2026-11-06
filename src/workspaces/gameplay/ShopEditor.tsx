@@ -1,6 +1,7 @@
 import { Fragment, useContext, useMemo, useRef, useState, type DragEvent, type MouseEvent } from 'react'
 import { TextField } from './Fields'
 import { acceptKitItemDrops, AddButton, hasKitItemDrag, ItemCatalogContext, ItemList, ItemVisual, KitExprContext, KitTagField, ModifierPanel, Panel, ParamPanel, RemoveButton } from './KitEditor'
+import { ConditionRulesEditor } from './ConditionRulesEditor'
 import { NodeContextMenu } from '../../nodeEditor/ContextMenu'
 import { KitScriptField, type KitScriptOptions } from './KitScriptField'
 import { ItemSnapshotPanelStatus } from './ItemSnapshotPanelStatus'
@@ -9,6 +10,7 @@ import { activeKitModifiers, activeKitParams, createKitItem, createKitModifier, 
 import { buildKitModifierEnv } from './kitExpr'
 import { createShopEntry, overlayShopEntry, parseShop, STOCK_SUBJECTS, stringifyShop, type ShopDocument, type ShopEntry } from './shop'
 import './ShopEditor.css'
+import './ProgressEditor.css'
 
 const itemSummary = (items: KitItem[]) => items.length ? items.map(item => `${item.item || item.id || '未选择物品'} ×${item.count}`).join('、') : '未设置'
 const capacityLabel = (value: ShopEntry, subject: ShopDocument['stockSubject']) => subject === 'infinite'
@@ -288,9 +290,17 @@ export function ShopEditor({ source, disabled, onChange, resolveText, setText, i
     {doc.entries.filter(value => value.initialCapacity > value.maxCapacity).map(value => <p className="kit-banner" role="alert" key={value.id}>交易 {doc.entries.indexOf(value) + 1}：初始额度不能超过最大额度。</p>)}
     <ItemCatalogContext.Provider value={itemCatalog}><KitExprContext.Provider value={{ env, modifiers: activeKitModifiers(doc.modifiers).filter(m => env.declared.has(m.id)).map(m => ({ id: m.id, label: m.label })) }}>
       {sheet}
-      <p className="kit-hint shop-sheet-note">条目可见性／可用性为 Mod 条件表达式（空串恒真）；不再有商店级条件组。</p>
-      <div className="kit-stack shop-settings" role="region" aria-label="商店参数与脚本">
-        <header className="shop-section-head"><strong>商店规则</strong><span>超参数与脚本作用于整店；条目条件写在各交易行</span></header>
+      <p className="kit-hint shop-sheet-note">商品行条件为表达式（空串恒真）；下方商店级条件组与其分开求值，导出时编译为表达式。</p>
+      <div className="kit-stack shop-settings" role="region" aria-label="商店条件与参数">
+        <header className="shop-section-head"><strong>商店规则</strong><span>可见性、可用性、超参数与脚本作用于整店，与单笔交易条件分开求值</span></header>
+        <div className="shop-condition-columns progress-editor">
+          <Panel title="商店可见性" subtitle="全部满足（AND）· 空组恒真" count={doc.visibility.length} className="shop-condition-panel">
+            <ConditionRulesEditor title="商店可见性条件" rules={doc.visibility} disabled={disabled} emptyHint="没有条件，直接满足。" onChange={visibility => update({ visibility })} />
+          </Panel>
+          <Panel title="商店可用性" subtitle="全部满足（AND）· 空组恒真" count={doc.availability.length} className="shop-condition-panel">
+            <ConditionRulesEditor title="商店可用性条件" rules={doc.availability} disabled={disabled} emptyHint="没有条件，直接满足。" onChange={availability => update({ availability })} />
+          </Panel>
+        </div>
         <Panel title="超参数" subtitle="由实例注入 · 此处为默认值" count={doc.params.length} action={add('添加超参数', () => update({ params: [...doc.params, createKitParam()] }))}><ParamPanel params={doc.params} preview={preview} disabled={disabled} onChange={params => update({ params })} onPreview={(id, value) => setPreview(p => ({ ...p, [id]: value }))} /></Panel>
         <Panel title="修饰器" subtitle="一元函数 f(x) · 仅本模板作用域" count={doc.modifiers.length} action={add('添加修饰器', () => update({ modifiers: [...doc.modifiers, createKitModifier()] }))}><ModifierPanel modifiers={doc.modifiers} env={env} disabled={disabled} onChange={modifiers => update({ modifiers })} />{env.errors.map((error, i) => <p className="kit-banner" role="alert" key={i}>{error}</p>)}</Panel>
         <Panel title="脚本" subtitle="按列表顺序执行" count={doc.script.length} className="kit-script" action={<span className="kit-lang">JavaScript</span>}><KitScriptField value={doc.script} options={scriptOptions} resourceLabel="商店脚本" disabled={disabled} onOpen={onOpenScript} onChange={script => update({ script: kitScriptRefs(script).map(ref => ({ ref })) })} /></Panel>

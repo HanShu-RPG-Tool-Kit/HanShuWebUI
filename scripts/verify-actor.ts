@@ -32,14 +32,14 @@ const doc = {
     talkId: '卫兵',
     playerRole: '玩家',
     entries: [
-      { when: '!talkRead(ctx.player, "village_intro")', inject: 'village_intro' },
-      { when: '', inject: 'village_idle' },
+      { when: [{ kind: 'talk' as const, op: 'unread' as const, injectId: 'village_intro' }], inject: 'village_intro' },
+      { when: [], inject: 'village_idle' },
     ],
   },
   interactService: { type: 'shop' as const, param: { template: 'village' } },
 }
 assert.deepEqual(parseActor(stringifyActor(doc)), { ...doc, tags: ['guard'] })
-assert.equal(
+assert.deepEqual(
   parseActor(JSON.stringify({
     ...createActor(),
     dialogue: {
@@ -47,8 +47,23 @@ assert.equal(
       entries: [{ when: [{ kind: 'talk_unread', inject: 'village_intro' }], inject: 'village_intro' }],
     },
   })).dialogue!.entries[0].when,
-  '!talkRead(ctx.player, "village_intro")',
+  [{ kind: 'talk', op: 'unread', injectId: 'village_intro' }],
 )
+assert.deepEqual(
+  parseActor(JSON.stringify({
+    ...createActor(),
+    dialogue: {
+      talkId: '卫兵', playerRole: '玩家',
+      entries: [{ when: '!talkRead(ctx.player, "village_intro")', inject: 'village_intro' }],
+    },
+  })).dialogue!.entries[0].when,
+  [{ kind: 'expr', source: '!talkRead(ctx.player, "village_intro")' }],
+)
+assert.equal(
+  JSON.parse(stringifyActor(doc, { plane: 'pak' })).dialogue.entries[0].when,
+  '(!talkRead(ctx.player, "village_intro"))',
+)
+assert.equal(JSON.parse(stringifyActor(doc, { plane: 'pak' })).dialogue.entries[1].when, '')
 assert.equal(stringifyActor(createActor()).includes('display'), false)
 assert.equal(stringifyActor(createActor()).includes('loot'), false)
 assert.deepEqual(parseActor(JSON.stringify({ ...createActor(), display: { mode: 'clear' } })).display, { mode: 'clear' })

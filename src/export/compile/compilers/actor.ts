@@ -37,9 +37,16 @@ export const actorCompiler: FileCompiler = {
         const talkReadRef = /talkRead\s*\(\s*ctx\.player\s*,\s*(['"])(.*?)\1\s*\)/g
         for (const entry of actor.dialogue.entries) {
           if (entry.inject && !known.has(entry.inject)) missing.add(entry.inject)
-          for (const match of entry.when.matchAll(talkReadRef)) {
-            const inject = match[2]
-            if (inject && !known.has(inject)) missing.add(inject)
+          for (const rule of entry.when) {
+            if (rule.kind === 'talk' && rule.injectId.trim() && !known.has(rule.injectId.trim())) {
+              missing.add(rule.injectId.trim())
+            }
+            if (rule.kind === 'expr') {
+              for (const match of rule.source.matchAll(talkReadRef)) {
+                const inject = match[2]
+                if (inject && !known.has(inject)) missing.add(inject)
+              }
+            }
           }
         }
         if (missing.size) throw new Error(`缺少对话注入点：${[...missing].join('、')}`)
@@ -54,7 +61,7 @@ export const actorCompiler: FileCompiler = {
       }
       const path = sourcePathOf(file).slice(4)
       if (!/^actors\/[^/\\:]+\.actor$/i.test(path)) throw new Error('演员模板需要扁平文件名')
-      return [{ path, bytes: stringifyActor(actor), plane: 'server', packageName: ctx.index.package.name, sourcePath: file.name }]
+      return [{ path, bytes: stringifyActor(actor, { plane: 'pak' }), plane: 'server', packageName: ctx.index.package.name, sourcePath: file.name }]
     } catch (error) {
       ctx.report({ severity: 'error', code: 'actor_invalid', sourcePath: file.name, message: String(error) })
       return []

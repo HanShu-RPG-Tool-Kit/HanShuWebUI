@@ -1,11 +1,18 @@
 import { parseJsonValue } from '../../utils/strictJson'
+import {
+  conditionRuleIssue,
+  emitConditionExpression,
+  parseConditionRuleList,
+  type ProgressConditionRule,
+} from './conditions'
 import { normalizeItemRef, writeKitItem, type KitItem } from './kit'
 import { isObject } from './model'
 import { readComponents, type ItemComponents } from './tnbtJson'
 
-/** 对话条目条件：布尔 JS 表达式；空串恒真。旧条件数组在 parse 时降下。 */
-export type ActorDialogueEntry = { when: string; inject: string }
+/** 对话条目条件组（AND）；空组恒真。导出 PAK 时编译为表达式字符串。 */
+export type ActorDialogueEntry = { when: ProgressConditionRule[]; inject: string }
 export type ActorDialogue = { talkId: string; playerRole: string; entries: ActorDialogueEntry[] }
+export type { ProgressConditionRule }
 export type ActorInteractService =
   | { type: 'shop'; param: { template: string } }
   | { type: 'vault'; param: Record<string, never> }
@@ -91,7 +98,18 @@ export const createActor = (): ActorDocument => ({
   despawn: 'inherit',
 })
 
-export function stringifyActor(doc: ActorDocument): string {
+function writeDialogueEntry(entry: ActorDialogueEntry, compileWhen: boolean): Record<string, unknown> {
+  if (!compileWhen) return { when: entry.when, inject: entry.inject }
+  for (const [index, rule] of entry.when.entries()) {
+    const issue = conditionRuleIssue(rule, `dialogue entry when ${index + 1}`)
+    if (issue) throw new Error(issue)
+  }
+  return { when: emitConditionExpression(entry.when), inject: entry.inject }
+}
+
+/** `plane: 'source'`（默认）落盘条件组；`plane: 'pak'` 把 when 编译成 Mod 表达式字符串。 */
+export function stringifyActor(doc: ActorDocument, options?: { plane?: 'source' | 'pak' }): string {
+  const compileWhen = options?.plane === 'pak'
   const out: Record<string, unknown> = {
     format: 'rpgtoolkit:actor-template',
     version: 1,
@@ -113,10 +131,7 @@ export function stringifyActor(doc: ActorDocument): string {
   if (doc.dialogue != null) out.dialogue = {
     talkId: doc.dialogue.talkId,
     playerRole: doc.dialogue.playerRole,
-    entries: doc.dialogue.entries.map(entry => ({
-      when: entry.when,
-      inject: entry.inject,
-    })),
+    entries: doc.dialogue.entries.map(entry => writeDialogueEntry(entry, compileWhen)),
   }
   if (doc.interactService != null) {
     out.interactService = doc.interactService.type === 'shop'
@@ -220,34 +235,22 @@ function parseReputation(value: unknown): ActorReputationSpec {
   return { mode: 'set', id: parseFlatResourceId(requireString(value.id, 'reputation.id'), '声誉阵营') }
 }
 
-function emitLegacyDialogueCondition(value: unknown): string {
-  if (!isObject(value) || typeof value.kind !== 'string') throw new Error('dialogue 条件需要 kind')
-  const kind = value.kind.trim().toLowerCase()
-  if (kind === 'always') {
-    requireExactKeys(value, new Set(['kind']), 'always 条件')
-    return ''
-  }
-  if (kind === 'talk_read' || kind === 'talk_unread') {
-    requireExactKeys(value, new Set(['kind', 'inject']), `${kind} 条件`)
-    const inject = requireString(value.inject, 'dialogue 条件 inject').trim()
-    if (!inject) throw new Error('dialogue 条件 inject 不能为空')
-    const call = `talkRead(ctx.player, ${JSON.stringify(inject)})`
-    return kind === 'talk_read' ? call : `!${call}`
-  }
-  throw new Error(`未知 dialogue 条件 kind：${value.kind}`)
-}
-
-function parseDialogueWhen(value: unknown): string {
+function parseDialogueWhen(value: unknown): ProgressConditionRule[] {
   if (typeof value === 'string') {
     if (/[;\n\r]/.test(value)) throw new Error('dialogue entry when 只能是表达式，不能含语句')
-    return value
+    const source = value.trim()
+    return source ? [{ kind: 'expr', source }] : []
   }
-  if (!Array.isArray(value)) throw new Error('dialogue entry when 必须是表达式字符串')
-  if (!value.length) return ''
-  const parts = value.map(emitLegacyDialogueCondition).filter(part => part.length > 0)
-  if (!parts.length) return ''
-  if (parts.length === 1) return parts[0]!
-  return parts.map(part => `(${part})`).join(' && ')
+  if (!Array.isArray(value)) throw new Error('dialogue entry when 必须是条件组数组')
+  const kept: unknown[] = []
+  for (const item of value) {
+    if (isObject(item) && typeof item.kind === 'string' && item.kind.trim().toLowerCase() === 'always') {
+      requireExactKeys(item, new Set(['kind']), 'always 条件')
+      continue
+    }
+    kept.push(item)
+  }
+  return parseConditionRuleList(kept, 'dialogue entry when')
 }
 
 function parseDialogue(value: unknown): ActorDialogue {
