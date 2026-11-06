@@ -28,7 +28,7 @@ try {
     await target.waitFor()
     if (await target.getAttribute('aria-expanded') !== 'true') await target.click()
   }
-  await expand('地图')
+  await expand('地图 WIP')
   await expand('地图模板')
   await row('hub.level').click()
   await expand('导航器')
@@ -51,7 +51,7 @@ try {
   await page.reload()
   await loginProject(page, h.base, account.credential, 'map editor reopened', false)
   await page.getByRole('tab', { name: '游戏性', exact: true }).click()
-  await expand('地图')
+  await expand('地图 WIP')
   await expand('地图模板')
   await row('地图整理').waitFor()
   await row('hub.level').click()

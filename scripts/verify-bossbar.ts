@@ -50,6 +50,7 @@ import { resourceTypeForExtension, AUDIOVISUAL_CATEGORIES, AUDIOVISUAL_CATEGORY_
 import { EXPLORER_ICON_KINDS } from '../src/explorerIcons'
 import { sourcePathOf } from '../src/workspace'
 import { findNewFileType } from '../src/newFileTypes'
+import { AUDIOVISUAL_PACKAGE_SECTIONS } from '../src/workspaces/audiovisual/sections'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const specDir = resolve(here, '../src/workspaces/audiovisual/bossbar/spec')
@@ -441,6 +442,17 @@ assert.equal(AUDIOVISUAL_CATEGORIES.ui.name, '用户界面')
 assert.equal(AUDIOVISUAL_CATEGORIES.overhead.name, '头顶标记')
 assert.equal(AUDIOVISUAL_CATEGORIES.overhead.icon, 'av-overhead')
 assert.equal(AUDIOVISUAL_CATEGORIES.voiceover.name, '配音')
+assert.equal(AUDIOVISUAL_CATEGORIES.prop.name, '物品外观')
+assert.equal(AUDIOVISUAL_CATEGORIES.decoration.name, '建筑')
+assert.equal(AUDIOVISUAL_CATEGORIES.cutscene.name, '过场动画')
+assert.deepEqual(
+  AUDIOVISUAL_PACKAGE_SECTIONS.cutscene?.map(section => [section.id, section.name, section.virtual]),
+  [['realtime', '即时演算', true], ['video', '视频播片', true]],
+)
+assert.deepEqual(
+  AUDIOVISUAL_PACKAGE_SECTIONS.decoration?.map(section => [section.id, section.name, section.virtual]),
+  [['schematic', '原理图', true], ['ornament', '装饰', true]],
+)
 assert.deepEqual(AUDIOVISUAL_CATEGORIES.ui.types, [])
 assert.deepEqual(AUDIOVISUAL_CATEGORIES.overhead.types, [])
 assert.deepEqual(AUDIOVISUAL_CATEGORY_ORDER.slice(0, 3), ['ui', 'bossbar', 'overhead'])

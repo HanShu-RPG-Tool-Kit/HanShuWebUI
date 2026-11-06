@@ -27,8 +27,17 @@ import {
 } from './virtualFolders'
 import './explorerShell.css'
 
+/** 分类下的内置二级分区（稳定键）；与共享虚拟文件夹无关。 */
+export type ShellSectionDef = {
+  id: string
+  name: string
+  parentId?: string
+  virtual?: boolean
+}
+
 type TreeNode =
   | { kind: 'category'; category: string }
+  | { kind: 'section'; category: string; sectionId: string }
   | { kind: 'folder'; key: string; category: string }
   | { kind: 'file'; id: string; category: string }
 
@@ -41,6 +50,7 @@ type Row = {
   file?: ShellFile
   /** 分类下当前可见资源数；仅用于空态，不在行尾展示（与游戏性一致）。 */
   fileCount?: number
+  builtin?: boolean
 }
 
 type Edit =
@@ -66,7 +76,10 @@ export type CategoryExplorerSlots = {
 }
 
 const nodeId = (node: TreeNode) =>
-  node.kind === 'category' ? `category:${node.category}` : node.kind === 'folder' ? `folder:${node.key}` : `file:${node.id}`
+  node.kind === 'category' ? `category:${node.category}`
+    : node.kind === 'section' ? `section:${node.category}:${node.sectionId}`
+      : node.kind === 'folder' ? `folder:${node.key}`
+        : `file:${node.id}`
 
 const byName = (a: { name: string }, b: { name: string }) =>
   a.name.localeCompare(b.name, 'zh-CN', { numeric: true })
@@ -85,6 +98,7 @@ export function CategoryExplorer({
   activeId,
   readOnly,
   defaultOpen = [],
+  sections = {},
   emptyHint,
   onOpen,
   onCreate,
@@ -105,6 +119,8 @@ export function CategoryExplorer({
   activeId: string | null
   readOnly: boolean
   defaultOpen?: readonly string[]
+  /** 按分类 ID 挂载的内置二级分区（只读展示；与虚拟文件夹无关）。 */
+  sections?: Readonly<Partial<Record<string, readonly ShellSectionDef[]>>>
   /** 有格式但没有文件时的提示 */
   emptyHint?: (category: ShellCategory) => string
   onOpen: (id: string) => void
@@ -174,6 +190,14 @@ export function CategoryExplorer({
         result.push({ node: { kind: 'file', id: file.id, category: category.id }, depth, name: file.name, icon: file.icon, file })
       }
     }
+    const walkSections = (category: ShellCategory, parentSectionId: string | null, depth: number) => {
+      for (const section of (sections[category.id] ?? []).filter(item => (item.parentId ?? null) === parentSectionId)) {
+        const node: TreeNode = { kind: 'section', category: category.id, sectionId: section.id }
+        const open = Boolean(query) || expanded.has(nodeId(node))
+        result.push({ node, depth, name: section.name, icon: category.icon, expanded: open, builtin: true })
+        if (open) walkSections(category, section.id, depth + 1)
+      }
+    }
     for (const category of categories) {
       const node: TreeNode = { kind: 'category', category: category.id }
       const open = Boolean(query) || expanded.has(nodeId(node))
@@ -181,12 +205,15 @@ export function CategoryExplorer({
         ? files.filter(file => file.category === category.id && matches(file)).length
         : 0
       result.push({ node, depth: 0, name: category.name, icon: category.icon, expanded: open, fileCount })
-      if (open) walk(category, null, 1)
+      if (open) {
+        walkSections(category, null, 1)
+        walk(category, null, 1)
+      }
     }
     return result
     // placementOf / matches read the same inputs listed here
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [categories, files, folders, folderByKey, organization, expanded, query])
+  }, [categories, files, folders, folderByKey, organization, expanded, query, sections])
 
   const organize = (label: string, change: (value: ExplorerOrganization) => ExplorerOrganization) => {
     if (!organization || !onOrganize || readOnly) return false
@@ -216,7 +243,7 @@ export function CategoryExplorer({
       const first = categories.find(category => category.createLabel)
       return first ? { category: first.id, parent: null } : null
     }
-    if (node.kind === 'category') return { category: node.category, parent: null }
+    if (node.kind === 'category' || node.kind === 'section') return { category: node.category, parent: null }
     if (node.kind === 'folder') return { category: node.category, parent: node.key }
     const file = fileById.get(node.id)
     return { category: node.category, parent: file ? placementOf(file) : null }
@@ -381,7 +408,8 @@ export function CategoryExplorer({
 
   const canDrop = (target: TreeNode): boolean => {
     const source = dragging.current
-    if (!source || !canOrganize || source.kind === 'category' || target.kind === 'file') return false
+    if (!source || !canOrganize || source.kind === 'category' || source.kind === 'section') return false
+    if (target.kind === 'file' || target.kind === 'section') return false
     if (source.category !== target.category || !categoryById.get(target.category)?.folders) return false
     return !(source.kind === 'folder' && target.kind === 'folder' && source.key === target.key)
   }
@@ -390,7 +418,7 @@ export function CategoryExplorer({
     const source = dragging.current
     dragging.current = null
     setDropTarget(null)
-    if (!source || target.kind === 'file' || source.kind === 'category') return
+    if (!source || target.kind === 'file' || target.kind === 'section' || source.kind === 'category' || source.kind === 'section') return
     const parent = target.kind === 'folder' ? target.key : null
     if (source.kind === 'file') {
       const file = fileById.get(source.id)
@@ -580,8 +608,11 @@ export function CategoryExplorer({
           const newFolderHere =
             edit?.kind === 'new-folder' && row.node.category === edit.category &&
             (row.node.kind === 'category' ? edit.parent === null : row.node.kind === 'folder' && edit.parent === row.node.key)
-          const draggable = canOrganize && category.folders && row.node.kind !== 'category' && !renaming
-          const placeholder = row.node.kind === 'category' && row.expanded && !category.extensions.length && !query
+          const draggable = canOrganize && category.folders && (row.node.kind === 'folder' || row.node.kind === 'file') && !renaming
+          const categoryHasSections = (sections[category.id] ?? []).length > 0
+          const placeholder = row.node.kind === 'category' && row.expanded && !category.extensions.length && !query && !categoryHasSections
+          const sectionLeaf = row.node.kind === 'section' && row.expanded && !query &&
+            !(sections[row.node.category] ?? []).some(item => item.parentId === row.node.sectionId)
           const empty = row.node.kind === 'category' && row.expanded && category.extensions.length > 0 && !query &&
             (row.fileCount ?? 0) === 0 && !folders.some(folder => folder.category === category.id)
           return (
@@ -601,6 +632,7 @@ export function CategoryExplorer({
                   selected: selected.has(id),
                   open: row.node.kind === 'file' && row.node.id === activeId,
                   dropTarget: dropTarget === id,
+                  builtin: row.builtin,
                   detached: row.file?.detached,
                 }}
                 icon={<ExplorerIcon kind={row.icon} />}
@@ -658,6 +690,11 @@ export function CategoryExplorer({
               {newFolderHere && editRow(row.depth + 1)}
               {placeholder && (
                 <p className="explorer-shell-empty">格式待定。分类已预留，后续接入资源类型。</p>
+              )}
+              {sectionLeaf && (
+                <p className="explorer-shell-empty" style={{ paddingLeft: `${(row.depth + 1) * 14 + 28}px` }}>
+                  格式待定。二级分类已预留，后续接入资源类型。
+                </p>
               )}
               {empty && (
                 <p className="explorer-shell-empty">{emptyHint?.(category) ?? '暂无资源。'}</p>

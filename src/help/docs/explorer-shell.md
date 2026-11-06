@@ -29,7 +29,8 @@
 
 - `ExplorerShellFrame`：标题栏、PanelDock 拖动 / 停靠回边缘、工具按钮槽。三个工作区都用它。
 - `ExplorerTreeRow`：缩进、展开箭头、图标、状态类名（`selected` / `is-open` / `drop-target` / `is-builtin` / `is-detached`）。
-- `CategoryExplorer`：通用的「分类 → 共享虚拟文件夹 → 源文件」树，含搜索、多选、键盘导航、就地改名、右键菜单和组内拖放。剧本与视听效果直接使用它；游戏性因任务视图、表视图等领域插件仍用自己的树（`FlowExplorer`），但同用外框、行组件与组织协议。
+- `CategoryExplorer`：通用的「分类 →（可选内置二级分区）→ 共享虚拟文件夹 → 源文件」树，含搜索、多选、键盘导航、就地改名、右键菜单和组内拖放。剧本与视听效果直接使用它；游戏性因任务视图、表视图等领域插件仍用自己的树（`FlowExplorer`），但同用外框、行组件与组织协议。
+  - `sections`：按分类 ID 挂载的内置二级分区（`ShellSectionDef`），只读展示、不进 `meta/explorer.json`；视听「过场动画」「建筑」等占位二级结构由此接入。
   - `onCreate(category, folderKey, anchor)`：新建入口给出目标分类、目标共享文件夹（分类根为 `null`）和触发位置；工作区据此弹出自己的类型菜单，创建后用 `placeSource` 登记归属。
   - `slots`：`rootClass`（追加根类名）、`tools`（标题栏工具，排在壳自带按钮前，如剧本 `+剧`）、`prepend`（树顶附加内容，如未打开工程时的提示）、`blankMenuItems`（树空白处右键附加项）。
   - `renameRequest`：`{ id, seq }` 的 `seq` 变化时展开到该文件并进入行内改名，用于「创建后立即改名」。

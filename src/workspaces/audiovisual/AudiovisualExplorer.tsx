@@ -3,6 +3,7 @@ import { CategoryExplorer, filesForCategories, type ExplorerDockProps } from '..
 import type { ExplorerOrganization } from '../../project/explorerOrganization'
 import type { SourceFile } from '../../workspace'
 import { AUDIOVISUAL_EXPLORER_CATEGORIES } from './explorerCategories'
+import { AUDIOVISUAL_PACKAGE_SECTIONS } from './sections'
 
 export function AudiovisualExplorer({
   files,
@@ -37,6 +38,7 @@ export function AudiovisualExplorer({
       activeId={activeId}
       readOnly={readOnly}
       defaultOpen={['bossbar']}
+      sections={AUDIOVISUAL_PACKAGE_SECTIONS}
       emptyHint={(category) =>
         category.createLabel ? `暂无资源。右键或点标题栏新建按钮${category.createLabel.replace(/^新建/, '创建')}。` : '暂无资源。'
       }

@@ -1,4 +1,4 @@
-export { CategoryExplorer, type CategoryExplorerSlots, type CreateAnchor } from './CategoryExplorer'
+export { CategoryExplorer, type CategoryExplorerSlots, type CreateAnchor, type ShellSectionDef } from './CategoryExplorer'
 export { ExplorerShellFrame, type ExplorerShellClasses } from './ExplorerShellFrame'
 export { ExplorerTreeRow } from './ExplorerTreeRow'
 export { dockTitleHint, explorerRowClassName, type ExplorerDockProps, type ExplorerRowState } from './shellModel'

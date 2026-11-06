@@ -246,6 +246,11 @@ body.is-panel-dragging .explorer-shell-heading.is-draggable {
   outline-offset: -1px;
 }
 
+.explorer-shell-row.is-builtin .explorer-shell-name {
+  opacity: 0.78;
+  font-style: italic;
+}
+
 .explorer-shell-row.is-detached .explorer-shell-name {
   opacity: 0.65;
   text-decoration: line-through;
