@@ -22,7 +22,7 @@ pub struct ProgressSlot {
 pub enum ProgressTarget {
     Field {
         #[ts(
-            type = "'name' | 'description' | 'authorNotes' | 'tags' | 'completion' | 'completionGraph' | 'visibility' | 'acceptance' | 'hideWhenRepeatUnsatisfied' | 'abandonable' | 'autoStartWhenAcceptable' | 'repeat' | 'rewardKits'"
+            type = "'name' | 'description' | 'authorNotes' | 'tags' | 'completion' | 'completionGraph' | 'visibility' | 'acceptance' | 'hideWhenRepeatUnsatisfied' | 'abandonable' | 'autoStartWhenAcceptable' | 'repeat' | 'rewardKits' | 'tracking'"
         )]
         field: String,
     },
@@ -140,6 +140,7 @@ fn field_ok(field: &str) -> Result<()> {
                 | "autoStartWhenAcceptable"
                 | "repeat"
                 | "rewardKits"
+                | "tracking"
         ),
         "invalid",
         "不能通过进度字段操作替换文档身份或结构",

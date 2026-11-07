@@ -40,6 +40,11 @@ export function flowNodeFieldKey(
   return `${collection}.${id}.${field}`
 }
 
+/** 进度簇标题文案键：由簇 id 推导，不写入 .quest。 */
+export function clusterTitleKey(id: string): string {
+  return `clusters.${id}`
+}
+
 export function localizedText(
   keyOrPlain: string,
   resolve: ((key: string) => string | null) | null | undefined,
@@ -142,6 +147,7 @@ export function defaultFlowLocaleSeeds(
     [flowNodeFieldKey('progress', 'progress_start', 'description')]: '',
     [flowNodeFieldKey('progress', 'progress_start', 'runningLog')]: '',
     [flowNodeFieldKey('progress', 'progress_start', 'completedLog')]: '',
+    [flowNodeFieldKey('progress', 'progress_start', 'tracking')]: '',
   }
 }
 
@@ -159,7 +165,7 @@ export function flowNodeLocaleKeyMoves(
   newId: string,
 ): Array<[string, string]> {
   const fields: Record<'progress' | 'predicates' | 'objectives' | 'ends', readonly string[]> = {
-    progress: ['runningLog', 'completedLog', 'questTitle', 'description'],
+    progress: ['runningLog', 'completedLog', 'questTitle', 'description', 'tracking'],
     predicates: [],
     objectives: [],
     ends: ['title'],

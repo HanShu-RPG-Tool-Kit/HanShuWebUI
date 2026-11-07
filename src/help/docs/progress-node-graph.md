@@ -17,7 +17,7 @@
 
 - 节点 ID 在整张图内唯一（跨集合也不能重名）。
 - **唯一连接约束**：只能从右端口连到左端口，且**不能成环（含自环）**。连接时直接拒绝；文档里手写出环是校验 error。
-- **内容**：只有开始进度节点有 `questTitle` / `description`，以及任务级策略 `tags` / `visibility` / `acceptance` / `hideWhenRepeatUnsatisfied` / `abandonable` / `autoStartWhenAcceptable` / `repeat`（编译进 questc `metadata`；条件组导出为表达式字符串）；所有进度节点有 `identifier` / `runningLog`（进行时日志）/ `completedLog`（完成时日志）/ `goals` / `completion`；结束节点有 `internalName` / `title` / `rewardKits`（`internalName` 编译进 questc，见[流程模型](#progress-flow-model)）；条件只有 `conditions`（导出为表达式字符串），没有标题。进度标识符是非本地化字符串；任务标题、说明、日志与结局标题仍是可本地化的 `FlowText`。
+- **内容**：只有开始进度节点有 `questTitle` / `description`，以及任务级策略 `tags` / `clusters` / `visibility` / `acceptance` / `hideWhenRepeatUnsatisfied` / `abandonable` / `autoStartWhenAcceptable` / `repeat`（编译进 questc `metadata`；条件组导出为表达式字符串）；所有进度节点有 `identifier` / `runningLog`（进行时日志）/ `completedLog`（完成时日志）/ `goals` / `completion` / `tracking`（`auto`｜`manual`，手动时 `text` 为本地化键 `progress.<id>.tracking`；编译进 questc）／可选 `clusterId`（引用开始节点簇表，至多一个）；结束节点有 `internalName` / `title` / `rewardKits`（`internalName` 编译进 questc，见[流程模型](#progress-flow-model)）；条件只有 `conditions`（导出为表达式字符串），没有标题。进度标识符是非本地化字符串；任务标题、说明、日志与结局标题仍是可本地化的 `FlowText`。
 
 ## 2. 节点族总表
 
@@ -39,12 +39,12 @@
 - **没有左端口**，所以任何线都连不进去；不能靠 A 激活。
 - 任务开始时（模拟器「触发开始」）**直接进入运行中**。
 - 有两个右端口（成功 / 失败），和普通进度一样可以结算；结算后沿对应端口发 A。
-- 额外内容：`questTitle`（任务标题）、`description`（任务说明），以及与单进度相同的任务级策略（周期、可放弃、可承接时自动开始、可见性 / 可承接条件、标签）。这些策略描述整张任务，不描述后续阶段进度节点。
+- 额外内容：`questTitle`（任务标题）、`description`（任务说明），以及与单进度相同的任务级策略（周期、可放弃、可承接时自动开始、可见性 / 可承接条件、标签），外加任务级 **进度簇** 表 `clusters: { id }[]`（UUID；标题文案键约定 `clusters.<id>`，不写入 `.quest`）。这些策略描述整张任务，不描述后续阶段进度节点。
 
 ### 2.2 进度节点
 
 - 一个左端口 `input`（多线），两个右端口 `output` 成功 / `output2` 失败（各多线）。
-- 内容：`identifier`（进度标识符）、`runningLog`（运行中显示的任务日志）、`completedLog`（结算时显示的日志）、`goals`、`completion`（`all` / `any` / `custom`，自定义时带 `completionGraph`）。`completion` 语义与[任务文档](#progress-document)相同：成功侧表示进入**可交付态**（有 `submission` 则等提交，无则自动交付并已成功）；失败侧直接失败结算。空 `goals` 运行时错误。进度结束后挂载 goals 随之关闭。
+- 内容：`identifier`（进度标识符）、`runningLog`（运行中显示的任务日志）、`completedLog`（结算时显示的日志）、`goals`、`completion`（`all` / `any` / `custom`，自定义时带 `completionGraph`）、可选 `clusterId`（零或一个，必须存在于开始节点 `clusters`）。`completion` 语义与[任务文档](#progress-document)相同：成功侧表示进入**可交付态**（有 `submission` 则等提交，无则自动交付并已成功）；失败侧直接失败结算。空 `goals` 运行时错误。进度结束后挂载 goals 随之关闭。开始进度同样可选 `clusterId`。
 - 标识符在同一 quest 内唯一（包括开始进度与草稿节点），区分大小写；必须非空、无首尾空白、不含换行或制表符，最多 200 字符。不进入 `.lang`，也不随语言切换。内部节点 ID 与标识符分离，改标识符不影响连线。重复或非法值是校验 error，编辑时显示即时提示，模拟与导出前必须修正。
 - 收 **A**（`input`）：未激活 → 运行中，**同时向左端口发 C**（激活即消费输入：上游不必再为它等待或重复触发）。其它状态下的 A 忽略。
 - 结算（模拟器手动）：运行中 → 已成功 / 已失败，并从对应端口发 **A**。

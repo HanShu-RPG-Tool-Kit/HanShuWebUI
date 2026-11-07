@@ -129,6 +129,22 @@ pub fn validate(source: &str) -> Result<()> {
     if let Some(hide) = v.get("hideWhenRepeatUnsatisfied") {
         check(hide.is_boolean())?;
     }
+    if let Some(tracking) = v.get("tracking") {
+        check(tracking.is_object())?;
+        // auto/manual 为现行；default/advanced 为试水草稿兼容。
+        check(matches!(
+            tracking["mode"].as_str(),
+            Some("auto" | "manual" | "default" | "advanced")
+        ))?;
+        if let Some(text) = tracking.get("text") {
+            check(text.as_str().is_some_and(|s| !s.trim().is_empty()))?;
+        } else if tracking["mode"] == "manual" {
+            return Err(invalid());
+        }
+        for key in tracking.as_object().ok_or_else(invalid)?.keys() {
+            check(matches!(key.as_str(), "mode" | "text" | "lines"))?;
+        }
+    }
     for k in ["visibility", "acceptance"] {
         for rule in v[k].as_array().ok_or_else(invalid)? {
             check(validate_condition_rule(rule, k == "visibility"))?;

@@ -18,6 +18,15 @@ export const PROGRESS_FORMAT = 'hanshu.progress'
 export type ProgressConfigValue = GoalConfigValue
 export type ProgressRepeatKind = 'once' | 'game_daily' | 'game_weekly' | 'real_daily' | 'real_weekly' | 'real_monthly' | 'duration' | 'manual'
 export type ProgressGoal = { id: string; kind: string; config: Record<string, ProgressConfigValue> }
+/** 任务追踪文本：单进度与多进度进度节点共用；编译进 questc（引擎可先忽略）。 */
+export type ProgressTrackingMode = 'auto' | 'manual'
+export type ProgressTracking = {
+  mode: ProgressTrackingMode
+  /** manual 时的本地化语义键；切回 auto 时可保留以免丢草稿。 */
+  text?: string
+}
+/** questc / 运行模板上的追踪形态（无草稿键）。 */
+export type QuestTracking = { mode: 'auto' } | { mode: 'manual'; text: string }
 export type ProgressDocument = {
   format: typeof PROGRESS_FORMAT
   version: 1
@@ -39,6 +48,8 @@ export type ProgressDocument = {
   autoStartWhenAcceptable: boolean
   repeat: { kind: ProgressRepeatKind; hours: number }
   rewardKits: string[]
+  /** 任务追踪文案；缺省＝自动（引擎提供）。编译进 questc 进度节点。 */
+  tracking?: ProgressTracking
 }
 export const PROGRESS_REPEAT_LABELS: Record<ProgressRepeatKind, string> = {
   once: '仅一次', game_daily: '每个游戏日', game_weekly: '每个游戏周',
@@ -55,8 +66,11 @@ export function createProgress(name = '新建进度', _definitions: readonly Goa
     name: 'name', description: 'description', authorNotes: '', tags: [],
     completion: 'all', goals: [], visibility: [], acceptance: [], hideWhenRepeatUnsatisfied: false,
     abandonable: true, autoStartWhenAcceptable: false, repeat: { kind: 'once', hours: 24 }, rewardKits: [],
+    tracking: { mode: 'auto' },
   }
 }
+
+export const PROGRESS_TRACKING_TEXT_KEY = 'tracking'
 
 /** 新建进度时写入默认语的文案种子（文档字段已是语义键） */
 export function createProgressLocaleSeeds(name = '新建进度'): Record<string, string> {
@@ -73,11 +87,69 @@ export function goalConfigSummary(goal: ProgressGoal, definitions: readonly Goal
     return `${field?.label || key} ${typeof value === 'boolean' ? value ? '是' : '否' : value}`
   }).join(' · ')
 }
+export function normalizeProgressTracking(
+  tracking: ProgressTracking | undefined,
+  fallbackText = PROGRESS_TRACKING_TEXT_KEY,
+): ProgressTracking {
+  const mode = tracking?.mode === 'manual' ? 'manual' : 'auto'
+  const text = typeof tracking?.text === 'string' && tracking.text.trim() ? tracking.text.trim() : undefined
+  if (mode === 'manual') return { mode: 'manual', text: text ?? fallbackText }
+  return text ? { mode: 'auto', text } : { mode: 'auto' }
+}
+
+/** 编译到 questc：去掉 auto 下的草稿键。 */
+export function emitQuestTracking(
+  tracking: ProgressTracking | undefined,
+  fallbackText = PROGRESS_TRACKING_TEXT_KEY,
+): QuestTracking {
+  const normalized = normalizeProgressTracking(tracking, fallbackText)
+  return normalized.mode === 'manual'
+    ? { mode: 'manual', text: normalized.text ?? fallbackText }
+    : { mode: 'auto' }
+}
+
+export function parseQuestTracking(raw: unknown, path = 'tracking'): QuestTracking {
+  if (!isObject(raw)) throw new Error(`${path} 必须是对象`)
+  if (Object.keys(raw).some(key => key !== 'mode' && key !== 'text')) throw new Error(`${path} 含未知字段`)
+  if (raw.mode === 'auto') {
+    if (raw.text !== undefined) throw new Error(`${path}.auto 不应携带 text`)
+    return { mode: 'auto' }
+  }
+  if (raw.mode === 'manual') {
+    if (typeof raw.text !== 'string' || !raw.text.trim()) throw new Error(`${path}.text 不能为空`)
+    return { mode: 'manual', text: raw.text.trim() }
+  }
+  throw new Error(`${path}.mode 必须是 auto 或 manual`)
+}
+
 export function stringifyProgress(doc: ProgressDocument) {
   return JSON.stringify({ ...doc,
     goals: doc.goals.map(({ id, kind, config }) => ({ id, kind, config })),
     repeat: doc.repeat.kind === 'duration' ? doc.repeat : { kind: doc.repeat.kind },
+    tracking: normalizeProgressTracking(doc.tracking),
   }, null, 2) + '\n'
+}
+
+export function parseProgressTracking(raw: unknown, fallbackText = PROGRESS_TRACKING_TEXT_KEY): ProgressTracking {
+  if (raw === undefined) return { mode: 'auto' }
+  if (!isObject(raw)) throw new Error('tracking 必须是对象')
+  // 试水期兼容刚写过的 default/advanced 草稿。
+  const rawMode = raw.mode
+  const mode =
+    rawMode === 'auto' || rawMode === 'default' ? 'auto'
+      : rawMode === 'manual' || rawMode === 'advanced' ? 'manual'
+        : null
+  if (!mode) throw new Error('tracking.mode 必须是 auto 或 manual')
+  if (Object.keys(raw).some(key => !['mode', 'text', 'lines'].includes(key))) {
+    throw new Error('tracking 含未知字段')
+  }
+  let text: string | undefined
+  if (typeof raw.text === 'string' && raw.text.trim()) text = raw.text.trim()
+  else if (Array.isArray(raw.lines) && raw.lines[0] && isObject(raw.lines[0]) && typeof raw.lines[0].text === 'string' && raw.lines[0].text.trim()) {
+    text = raw.lines[0].text.trim()
+  }
+  if (mode === 'manual') return { mode: 'manual', text: text ?? fallbackText }
+  return text ? { mode: 'auto', text } : { mode: 'auto' }
 }
 
 // Read without normalizing in-progress text or injecting evolving definition defaults.
@@ -120,6 +192,7 @@ export function parseProgress(source: string, _definitions: readonly GoalDefinit
   check(raw.autoStartWhenAcceptable === undefined || typeof raw.autoStartWhenAcceptable === 'boolean', 'autoStartWhenAcceptable 必须是布尔值')
   check(Array.isArray(raw.rewardKits) && raw.rewardKits.every(ref => typeof ref === 'string' && ref.trim()), 'rewardKits 必须是礼包引用数组')
   check(new Set(raw.rewardKits).size === raw.rewardKits.length, '奖励礼包不能重复')
+  const tracking = parseProgressTracking(raw.tracking)
   return {
     format: PROGRESS_FORMAT, version: 1, id: docId, name: str(raw.name, '名称'), description: str(raw.description, '简介'),
     authorNotes: str(raw.authorNotes ?? '', '作者备注'), tags: raw.tags as string[], completion: raw.completion, goals,
@@ -127,6 +200,7 @@ export function parseProgress(source: string, _definitions: readonly GoalDefinit
     visibility, acceptance, hideWhenRepeatUnsatisfied,
     abandonable: raw.abandonable, autoStartWhenAcceptable: raw.autoStartWhenAcceptable ?? false,
     repeat: { kind: raw.repeat.kind as ProgressRepeatKind, hours }, rewardKits: raw.rewardKits as string[],
+    tracking,
   }
 }
 export function readProgressSource(source: string, definitions: readonly GoalDefinition[] = []): { doc: ProgressDocument | null; error: string } {
@@ -172,6 +246,13 @@ export function progressIssues(
       const issue = conditionRuleIssue(rule, `${label} ${index + 1}`)
       if (issue) issues.push(issue)
     })
+  }
+  const tracking = doc.tracking ?? { mode: 'auto' as const }
+  if (tracking.mode === 'manual') {
+    const key = tracking.text?.trim() || PROGRESS_TRACKING_TEXT_KEY
+    const line = resolveText?.(key) ?? ''
+    if (resolveText && !line.trim()) issues.push('请填写手动追踪文案')
+    else if (/[\r\n]/.test(line)) issues.push('手动追踪文案只能是一行')
   }
   return issues
 }

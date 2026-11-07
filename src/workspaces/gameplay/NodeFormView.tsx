@@ -9,8 +9,13 @@ import { GoalParameterField } from './goalWidgets'
 import { GoalPicker } from './ProgressEditor'
 import { ProgressCompletionEditor } from './ProgressCompletionEditor'
 import { SubmissionField } from './SubmissionField'
-import { PROGRESS_REPEAT_LABELS, type ProgressRepeatKind } from './progressDoc'
-import { flowNodeLabel, progressIdentifierIssue, nodeIdentifierIssue, objectiveIdentifierIssue, endInternalNameIssue, getEndNode, getPredicateNode, getObjectiveNode, getProgressNode, isStartNode, type FlowText, type ProgressFlow } from './model'
+import { PROGRESS_REPEAT_LABELS, type ProgressRepeatKind, type ProgressTracking } from './progressDoc'
+import {
+  createProgressCluster, flowNodeLabel, progressIdentifierIssue, nodeIdentifierIssue, objectiveIdentifierIssue,
+  endInternalNameIssue, getEndNode, getPredicateNode, getObjectiveNode, getProgressNode, isStartNode,
+  type FlowText, type ProgressFlow,
+} from './model'
+import { clusterTitleKey, flowNodeFieldKey } from './progressLocale'
 
 export type NodeFormKind = 'progress' | 'predicate' | 'objective' | 'end'
 
@@ -69,6 +74,8 @@ export function NodeFormView({ flow, nodeId, kind, active = false, disabled = fa
     title = start ? '开始进度' : '进度'
     const goals = node.goals.map(goal => ({ id: goal.id, kind: goal.kind, config: goal.params as Record<string, string | number | boolean> }))
     const aliases = goalAliases(goals)
+    const startNode = getProgressNode(flow, flow.start)
+    const clusters = startNode?.clusters ?? []
     body = <div className="node-form-progress-layout">
       <section className="node-form-info"><h2>进度信息</h2>
       {start && authorText('任务标题', node.questTitle ?? { text: '' }, (next, field) => { next.progress[nodeId].questTitle = field })}
@@ -81,6 +88,84 @@ export function NodeFormView({ flow, nodeId, kind, active = false, disabled = fa
         if (submission) next.progress[nodeId].submission = submission
         else delete next.progress[nodeId].submission
       })} />
+      <label className="flow-field">
+        <span>所属进度簇</span>
+        <select
+          aria-label="所属进度簇"
+          disabled={disabled}
+          value={node.clusterId ?? ''}
+          onChange={event => update(next => {
+            const value = event.target.value
+            if (value) next.progress[nodeId].clusterId = value
+            else delete next.progress[nodeId].clusterId
+          })}
+        >
+          <option value="">无</option>
+          {clusters.map(cluster => {
+            const title = read({ text: clusterTitleKey(cluster.id) }).trim()
+            return <option key={cluster.id} value={cluster.id}>{title || cluster.id.slice(0, 8)}</option>
+          })}
+        </select>
+      </label>
+      {(() => {
+        const tracking: ProgressTracking = node.tracking ?? { mode: 'auto' }
+        const trackingTextKey = tracking.text?.trim() || flowNodeFieldKey('progress', nodeId, 'tracking')
+        const setTracking = (nextTracking: ProgressTracking) => update(next => { next.progress[nodeId].tracking = nextTracking })
+        return <section className="progress-card progress-tracking" aria-label="任务追踪文本">
+          <header className="progress-card-head">
+            <h2>任务追踪文本</h2>
+            <div className="progress-completion-switch" role="group" aria-label="追踪文本模式">
+              <button type="button" disabled={disabled} aria-pressed={tracking.mode === 'auto'} onClick={() => setTracking({ mode: 'auto', ...(tracking.text ? { text: tracking.text } : { text: trackingTextKey }) })}>自动</button>
+              <button type="button" disabled={disabled} aria-pressed={tracking.mode === 'manual'} onClick={() => setTracking({ mode: 'manual', text: trackingTextKey })}>手动</button>
+            </div>
+          </header>
+          <div className="progress-card-body">
+            {tracking.mode === 'auto' ? (
+              <p className="progress-tracking-hint">引擎按目标类型自动生成追踪行；编译进 questc，Mod 侧可先忽略。</p>
+            ) : (
+              <TextField label="追踪文案（单行）" value={read({ text: trackingTextKey })} disabled={disabled} onChange={content => {
+                const line = content.replace(/[\r\n]+/g, ' ')
+                if (!tracking.text) setTracking({ mode: 'manual', text: trackingTextKey })
+                if (setText) setText(trackingTextKey, line)
+                else update(next => { next.progress[nodeId].tracking = { mode: 'manual', text: line } })
+              }} />
+            )}
+          </div>
+        </section>
+      })()}
+      {start && <section className="progress-card progress-clusters" aria-label="进度簇">
+        <header className="progress-card-head">
+          <h2>进度簇 <span>{clusters.length}</span></h2>
+        </header>
+        <div className="progress-card-body">
+          <p className="progress-tracking-hint">{'任务级分组；标题键为 clusters.{id}。进度可选挂一个簇。'}</p>
+          {clusters.map(cluster => {
+            const key = clusterTitleKey(cluster.id)
+            return <article className="progress-cluster-row" key={cluster.id} aria-label={`进度簇 ${cluster.id}`}>
+              <code className="progress-cluster-id" title={cluster.id}>{cluster.id.slice(0, 8)}…</code>
+              <TextField label="簇标题" value={read({ text: key })} disabled={disabled} onChange={content => {
+                if (setText) setText(key, content)
+              }} />
+              <button type="button" className="progress-remove" disabled={disabled} aria-label={`删除进度簇 ${cluster.id}`} onClick={() => update(next => {
+                const startProgress = next.progress[next.start]
+                startProgress.clusters = (startProgress.clusters ?? []).filter(item => item.id !== cluster.id)
+                for (const progress of Object.values(next.progress)) {
+                  if (progress.clusterId === cluster.id) delete progress.clusterId
+                }
+                if (setText) setText(key, '')
+              })}>×</button>
+            </article>
+          })}
+          <button type="button" disabled={disabled} onClick={() => {
+            const cluster = createProgressCluster()
+            update(next => {
+              const startProgress = next.progress[next.start]
+              startProgress.clusters = [...(startProgress.clusters ?? []), cluster]
+            })
+            if (setText) setText(clusterTitleKey(cluster.id), '')
+          }}>＋ 添加簇</button>
+        </div>
+      </section>}
       {start && <>
         <h2>周期与策略</h2>
         <label className="flow-field"><span>重复方式</span><select aria-label="重复方式" disabled={disabled} value={node.repeat?.kind ?? 'once'} onChange={event => update(next => { next.progress[nodeId].repeat = { kind: event.target.value as ProgressRepeatKind, hours: next.progress[nodeId].repeat?.hours ?? 24 } })}>{Object.entries(PROGRESS_REPEAT_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>

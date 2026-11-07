@@ -126,6 +126,7 @@ doc.rewardKits=['starter'];doc.authorNotes='private editor notes';doc.tags=['sto
 const simple=compileSimpleQuest(doc)
 assert.equal(simple.metadata.visibility,'(questState(ctx.player, "succeeded", "prologue"))');assert.equal(simple.metadata.hideWhenRepeatUnsatisfied,true);assert.equal(simple.metadata.autoStartWhenAcceptable,true)
 assert.deepEqual(simple.metadata.tags,['story']);assert.equal(simple.metadata.title,'name')
+assert.deepEqual(simple.metadata.clusters,[]);assert.equal(Object.hasOwn(simple.nodes[simple.start],'clusterId'),false)
 if(simple.nodes.end_success.type==='end'){assert.equal(simple.nodes.end_success.internalName,'success');assert.deepEqual(simple.nodes.end_success.rewardKits,['starter'])}
 if(simple.nodes.end_failure.type==='end'){assert.equal(simple.nodes.end_failure.internalName,'failure');assert.deepEqual(simple.nodes.end_failure.rewardKits,[])}
 assert.equal(JSON.stringify(simple).includes('private editor notes'),false)

@@ -2,7 +2,7 @@ import { randomId } from '../../project/crypto'
 import { parseJsonValue } from '../../utils/strictJson'
 import { parseCompletionGraph, type CompletionGraph } from './completionGraph'
 import { conditionRuleIssue, parseConditionRules, parseHideWhenRepeatUnsatisfied, type ProgressConditionRule } from './conditions'
-import type { ProgressRepeatKind } from './progressDoc'
+import { parseProgressTracking, type ProgressRepeatKind, type ProgressTracking } from './progressDoc'
 import { matchInjectLine } from '../../hanshu/hsSyntaxRules'
 
 /** Mirrors PROGRESS_REPEAT_LABELS keys without importing progressDoc values (avoids cycle). */
@@ -33,6 +33,8 @@ export type FlowProgressGoal = {
   kind: string
   params: Data
 }
+/** 任务级进度簇：仅 id；标题文案键约定为 clusters.<id>。 */
+export type FlowProgressCluster = { id: string }
 /**
  * 进度节点：持有阶段运行状态（未激活 / 运行中 / 已成功 / 已失败 / 已取消）。
  * 开始进度节点是其中特例：没有左端口，任务开始时直接进入运行中，且承载任务元信息。
@@ -49,12 +51,18 @@ export type FlowProgressNode = {
   completionGraph?: CompletionGraph
   /** One submission entry for the whole progress, never per embedded goal. */
   submission?: FlowSubmission
+  /** 任务追踪文本；编译进 questc。text 为本地化语义键。 */
+  tracking?: ProgressTracking
+  /** 所属进度簇；缺省＝无簇；有值时必须引用开始节点 clusters。 */
+  clusterId?: string
   /** 仅开始进度节点：任务标题 */
   questTitle?: FlowText
   /** 仅开始进度节点：任务说明 */
   description?: FlowText
   /** 仅开始进度：任务级策略，编译进 questc.metadata */
   tags?: string[]
+  /** 仅开始进度：进度簇表 */
+  clusters?: FlowProgressCluster[]
   visibility?: ProgressConditionRule[]
   acceptance?: ProgressConditionRule[]
   hideWhenRepeatUnsatisfied?: boolean
@@ -62,6 +70,9 @@ export type FlowProgressNode = {
   autoStartWhenAcceptable?: boolean
   repeat?: { kind: ProgressRepeatKind; hours: number }
   extensions?: Data
+}
+export function createProgressCluster(): FlowProgressCluster {
+  return { id: randomId() }
 }
 /** 条件节点：无左端口，条件全部成立时发 A；对 Q 回报真 / N。空条件导出 ""（恒真，与 Mod 对齐）。 */
 export type FlowPredicateNode = {
@@ -234,7 +245,9 @@ export function createFlow(id = randomId(), questTitle = '新的进度流程'): 
         completedLog: text(`progress.${start}.completedLog`),
         goals: [],
         completion: 'all',
+        tracking: { mode: 'auto', text: `progress.${start}.tracking` },
         tags: [],
+        clusters: [],
         visibility: [],
         acceptance: [],
         hideWhenRepeatUnsatisfied: false,
@@ -352,17 +365,31 @@ export function parseFlow(source: string): ProgressFlow {
     delete raw.title
     checkText(node.runningLog, `progress.${id}.runningLog`)
     checkText(node.completedLog, `progress.${id}.completedLog`)
-    const policyKeys = ['tags', 'visibility', 'acceptance', 'hideWhenRepeatUnsatisfied', 'abandonable', 'autoStartWhenAcceptable', 'repeat'] as const
+    const trackingKey = `progress.${id}.tracking`
+    try { raw.tracking = parseProgressTracking(raw.tracking, trackingKey) }
+    catch (error) { throw new Error(`progress.${id}.tracking：${error instanceof Error ? error.message : String(error)}`) }
+    const policyKeys = ['tags', 'clusters', 'visibility', 'acceptance', 'hideWhenRepeatUnsatisfied', 'abandonable', 'autoStartWhenAcceptable', 'repeat'] as const
     if (start) {
       checkText(node.questTitle, `progress.${id}.questTitle`)
       checkText(node.description, `progress.${id}.description`)
       if (!Object.hasOwn(raw, 'tags')) raw.tags = []
+      if (!Object.hasOwn(raw, 'clusters')) raw.clusters = []
       if (!Object.hasOwn(raw, 'visibility')) raw.visibility = []
       if (!Object.hasOwn(raw, 'acceptance')) raw.acceptance = []
       if (!Object.hasOwn(raw, 'abandonable')) raw.abandonable = true
       if (!Object.hasOwn(raw, 'autoStartWhenAcceptable')) raw.autoStartWhenAcceptable = false
       if (!Object.hasOwn(raw, 'repeat')) raw.repeat = { kind: 'once', hours: 24 }
       require(Array.isArray(raw.tags) && raw.tags.every(tag => typeof tag === 'string'), `progress.${id}.tags`)
+      require(Array.isArray(raw.clusters), `progress.${id}.clusters`)
+      const clusterIds = new Set<string>()
+      raw.clusters = (raw.clusters as unknown[]).map((item, index) => {
+        require(isObject(item) && Object.keys(item).every(key => key === 'id'), `progress.${id}.clusters[${index}]`)
+        const clusterId = (item as { id?: unknown }).id
+        require(typeof clusterId === 'string' && safeId(clusterId), `progress.${id}.clusters[${index}].id`)
+        require(!clusterIds.has(clusterId), `progress.${id}.clusters（重复 id：${clusterId}）`)
+        clusterIds.add(clusterId)
+        return { id: clusterId }
+      })
       const visibilityParsed = parseConditionRules(raw.visibility, `progress.${id}.visibility`, { allowHideRepeat: true })
       raw.visibility = visibilityParsed.rules
       raw.acceptance = parseConditionRules(raw.acceptance, `progress.${id}.acceptance`).rules
@@ -377,6 +404,9 @@ export function parseFlow(source: string): ProgressFlow {
       require(!Object.hasOwn(raw, 'questTitle') && !Object.hasOwn(raw, 'description'), `progress.${id}（只有开始进度节点可以带 questTitle / description）`)
       require(policyKeys.every(key => !Object.hasOwn(raw, key)), `progress.${id}（只有开始进度节点可以带任务级策略字段）`)
     }
+    if (raw.clusterId !== undefined) {
+      require(typeof raw.clusterId === 'string' && safeId(raw.clusterId), `progress.${id}.clusterId`)
+    }
     require(node.completion === 'all' || node.completion === 'any' || node.completion === 'custom', `progress.${id}.completion`)
     const graph = raw.completionGraph === undefined ? undefined : parseCompletionGraph(raw.completionGraph)
     require(node.completion !== 'custom' || graph, `progress.${id}.completion（自定义完成需要 completionGraph）`)
@@ -388,6 +418,18 @@ export function parseFlow(source: string): ProgressFlow {
       for (const [key, data] of Object.entries(goal.params)) {
         require(typeof data === 'string' || typeof data === 'boolean' || (typeof data === 'number' && Number.isFinite(data)), `progress.${id}.goals.${goal.id}.params.${key}`)
       }
+    }
+  }
+  {
+    const startNode = progressFamily[f.start as string] as Record<string, unknown> | undefined
+    const known = new Set(
+      Array.isArray(startNode?.clusters)
+        ? (startNode.clusters as FlowProgressCluster[]).map(cluster => cluster.id)
+        : [],
+    )
+    for (const [id, value] of Object.entries(progressFamily)) {
+      if (!isObject(value) || value.clusterId === undefined) continue
+      require(typeof value.clusterId === 'string' && known.has(value.clusterId), `progress.${id}.clusterId（未定义的进度簇）`)
     }
   }
   const seenNodeIds = new Set(Object.keys(progressFamily))
@@ -519,6 +561,19 @@ export function validateFlow(flow: ProgressFlow, definitions: readonly { kind: s
   const start = getProgressNode(flow, flow.start)
   if (!start) error('start', '开始进度节点不存在。')
   else if (!displayText(start.questTitle ?? { text: '' }).trim()) warning('start', '还没有为任务命名。')
+  const clusterIds = new Set((start?.clusters ?? []).map(cluster => cluster.id))
+  if (start) {
+    const seen = new Set<string>()
+    for (const cluster of start.clusters ?? []) {
+      if (!safeId(cluster.id)) error(`progress.${flow.start}.clusters`, '进度簇 id 无效。')
+      else if (seen.has(cluster.id)) error(`progress.${flow.start}.clusters`, `进度簇 id 重复：${cluster.id}`)
+      seen.add(cluster.id)
+    }
+  }
+  for (const [id, node] of Object.entries(flow.progress)) {
+    if (!node.clusterId) continue
+    if (!clusterIds.has(node.clusterId)) error(`progress.${id}.clusterId`, '所选进度簇不存在。')
+  }
   const connected = connectedToStart(flow)
   const drafts = new Set([...Object.keys(flow.progress ?? {}), ...Object.keys(flow.predicates ?? {}), ...Object.keys(flow.objectives ?? {}), ...Object.keys(flow.transitions ?? {}), ...Object.keys(flow.ends ?? {})].filter(id => !connected.has(id)))
   for (const id of drafts) warning(id, '未与开始进度节点联通，属于草稿节点。')

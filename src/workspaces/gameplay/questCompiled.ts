@@ -7,7 +7,10 @@ import {
   type FlowSubmission, type FlowProgressGoal, type ProgressFlow,
 } from './model'
 import { emitConditionExpression, parseConditionExpressionString } from './conditions'
-import { PROGRESS_REPEAT_LABELS, type ProgressDocument } from './progressDoc'
+import {
+  emitQuestTracking, parseQuestTracking, PROGRESS_REPEAT_LABELS,
+  type ProgressDocument, type QuestTracking,
+} from './progressDoc'
 
 export const QUEST_COMPILED_FORMAT = 'hanshu.questc'
 export const QUEST_COMPILED_EXT = '.questc'
@@ -18,7 +21,7 @@ type Connections = {
   outputs: Partial<Record<FlowOutputPort, QuestPointer[]>>
 }
 export type QuestCompiledNode = Connections & (
-  | { type: 'progress'; identifier: string; runningLog: string; completedLog: string; goals: FlowProgressGoal[]; completionExpression: CompletionCompiled; submission?: FlowSubmission }
+  | { type: 'progress'; identifier: string; runningLog: string; completedLog: string; goals: FlowProgressGoal[]; completionExpression: CompletionCompiled; tracking: QuestTracking; clusterId?: string; submission?: FlowSubmission }
   | { type: 'condition'; identifier?: string; conditions: string }
   | { type: 'objective'; identifier: string; goal: { kind: string; params: Data }; submission?: FlowSubmission }
   | { type: 'logic' }
@@ -31,6 +34,7 @@ export type QuestCompiled = {
     title: string
     description: string
     tags?: string[]
+    clusters?: string[]
     visibility?: string
     acceptance?: string
     hideWhenRepeatUnsatisfied?: boolean
@@ -59,6 +63,8 @@ export function compileQuestFlow(flow: ProgressFlow): QuestCompiled {
       nodes[id] = {
       type: 'progress', identifier: progress.identifier, runningLog: progress.runningLog.text, completedLog: progress.completedLog.text,
       goals: progress.goals.map(goal => ({ id: goal.id, kind: goal.kind, params: structuredClone(goal.params) })), completionExpression,
+      tracking: emitQuestTracking(progress.tracking, `progress.${id}.tracking`),
+      ...(progress.clusterId ? { clusterId: progress.clusterId } : {}),
       ...(progress.submission ? { submission: structuredClone(progress.submission) } : {}), inputs, outputs,
     }
     }
@@ -80,6 +86,7 @@ export function compileQuestFlow(flow: ProgressFlow): QuestCompiled {
       title: start.questTitle?.text ?? '',
       description: start.description?.text ?? '',
       tags: [...(start.tags ?? [])],
+      clusters: (start.clusters ?? []).map(cluster => cluster.id),
       visibility: emitConditionExpression(start.visibility ?? []),
       acceptance: emitConditionExpression(start.acceptance ?? []),
       hideWhenRepeatUnsatisfied: start.hideWhenRepeatUnsatisfied ?? false,
@@ -98,6 +105,7 @@ export function compileSimpleQuest(doc: ProgressDocument): QuestCompiled {
   const progress = {
     identifier: 'start', runningLog: { text: '' }, completedLog: { text: '' },
     goals: doc.goals.map(goal => ({ id: goal.id, kind: goal.kind, params: { ...goal.config } })), completion: doc.completion,
+    tracking: doc.tracking ?? { mode: 'auto' as const },
     ...(doc.completionGraph ? { completionGraph: doc.completionGraph } : {}), questTitle: { text: doc.name }, description: { text: doc.description },
   }
   const flow: ProgressFlow = {
@@ -112,6 +120,7 @@ export function compileSimpleQuest(doc: ProgressDocument): QuestCompiled {
   compiled.metadata = {
     ...compiled.metadata,
     tags: [...doc.tags],
+    clusters: [],
     visibility: emitConditionExpression(doc.visibility),
     acceptance: emitConditionExpression(doc.acceptance),
     hideWhenRepeatUnsatisfied: doc.hideWhenRepeatUnsatisfied,
@@ -130,8 +139,12 @@ export function parseQuestCompiled(source: string): QuestCompiled {
   check(Object.keys(value).every(key => ['format', 'version', 'metadata', 'start', 'nodes'].includes(key)), '不能携带任务 ID、边表或编辑器数据')
   check(isObject(value.metadata) && typeof value.metadata.title === 'string' && typeof value.metadata.description === 'string', '缺少任务元信息')
   const metadata = value.metadata
-  check(Object.keys(metadata).every(key => ['title','description','tags','visibility','acceptance','hideWhenRepeatUnsatisfied','abandonable','autoStartWhenAcceptable','repeat'].includes(key)), '元信息含非运行字段')
+  check(Object.keys(metadata).every(key => ['title','description','tags','clusters','visibility','acceptance','hideWhenRepeatUnsatisfied','abandonable','autoStartWhenAcceptable','repeat'].includes(key)), '元信息含非运行字段')
   if (metadata.tags !== undefined) check(Array.isArray(metadata.tags) && metadata.tags.every(tag => typeof tag === 'string'), '标签无效')
+  if (metadata.clusters === undefined) metadata.clusters = []
+  check(Array.isArray(metadata.clusters) && metadata.clusters.every(id => typeof id === 'string' && id.trim() && id.length <= 200 && !['__proto__','prototype','constructor'].includes(id)), '进度簇无效')
+  check(new Set(metadata.clusters).size === metadata.clusters.length, '进度簇 id 重复')
+  const clusterIds = new Set(metadata.clusters as string[])
   for (const key of ['abandonable','autoStartWhenAcceptable','hideWhenRepeatUnsatisfied']) if (metadata[key] !== undefined) check(typeof metadata[key] === 'boolean', `${key} 无效`)
   for (const key of ['visibility','acceptance'] as const) if (metadata[key] !== undefined) metadata[key] = parseConditionExpressionString(metadata[key], key)
   if (metadata.repeat !== undefined) check(isObject(metadata.repeat) && Object.hasOwn(PROGRESS_REPEAT_LABELS, String(metadata.repeat.kind)) && typeof metadata.repeat.hours === 'number' && Number.isFinite(metadata.repeat.hours) && metadata.repeat.hours > 0, '重复策略无效')
@@ -144,7 +157,7 @@ export function parseQuestCompiled(source: string): QuestCompiled {
   for (const [id, node] of Object.entries(nodes)) {
     check(stableId(id), '节点 ID 无效')
     check(isObject(node) && ['progress', 'condition', 'objective', 'logic', 'end'].includes(node.type), `节点 ${id} 类型无效`)
-    const fields = node.type === 'progress' ? ['identifier','runningLog','completedLog','goals','completionExpression','submission'] : node.type === 'condition' ? ['identifier','conditions'] : node.type === 'objective' ? ['identifier','goal','submission'] : node.type === 'end' ? ['internalName','title','rewardKits'] : []
+    const fields = node.type === 'progress' ? ['identifier','runningLog','completedLog','goals','completionExpression','tracking','clusterId','submission'] : node.type === 'condition' ? ['identifier','conditions'] : node.type === 'objective' ? ['identifier','goal','submission'] : node.type === 'end' ? ['internalName','title','rewardKits'] : []
     check(Object.keys(node).every(key => ['type','inputs','outputs',...fields].includes(key)), `节点 ${id} 含非运行字段`)
     if (node.type === 'progress' || node.type === 'objective' || node.type === 'condition' && node.identifier !== undefined) {
       const name = node.identifier
@@ -162,6 +175,14 @@ export function parseQuestCompiled(source: string): QuestCompiled {
     }
     if (node.type === 'progress') {
       check(typeof node.runningLog === 'string' && typeof node.completedLog === 'string' && Array.isArray(node.goals) && node.goals.every(goal => goalShape(goal, true)), `进度 ${id} 内容无效`)
+      try {
+        node.tracking = node.tracking === undefined
+          ? { mode: 'auto' }
+          : parseQuestTracking(node.tracking, `nodes.${id}.tracking`)
+      } catch (error) { throw new Error(`questc：${error instanceof Error ? error.message : String(error)}`) }
+      if (node.clusterId !== undefined) {
+        check(typeof node.clusterId === 'string' && clusterIds.has(node.clusterId), `进度 ${id} 的 clusterId 无效`)
+      }
       const goals = new Set(node.goals.map(goal => goal.id))
       check(node.goals.length > 0 && goals.size === node.goals.length, `进度 ${id} 目标 ID 无效`)
       const compiled = node.completionExpression

@@ -20,6 +20,7 @@
 - `abandonable`、`autoStartWhenAcceptable`、`hideWhenRepeatUnsatisfied` 为布尔；新建显式写出，后两者缺省 false。
 - `rewardKits` 为去重礼包引用数组。
 - `authorNotes` 与玩家 `description` 分开。玩家可见 `name` / `description` 存语义键，译文在 `assets/<locale>/lang_quest/<文件>.lang`；作者备注不本地化。
+- **`tracking`**：`mode: "auto" | "manual"`。自动＝引擎按目标类型生成追踪行；手动＝单一本地化键 `text`（缺省 `tracking`）。切回自动可保留 `text` 草稿键。编译进 questc 进度节点（`auto` 不带 `text`；`manual` 带键字符串）；Mod 侧可先忽略。
 
 ## 交互
 
@@ -27,7 +28,7 @@
 
 顶部双栏：左标题描述，右常显文档 ID、标签与作者备注。参数区：原生数字、布尔、`enum:` 下拉与文本；可一键恢复默认。
 
-完成奖励与周期双栏在目标上方。奖励可从「礼包」拖入 `.kit` 或下拉添加。可见性 / 可承接各用常显卡片；周期卡含「可承接时自动开始」「可放弃」「周期不满足时不可见」。
+完成奖励与周期双栏在目标上方。其下为「任务追踪文本」卡片（自动／手动）。奖励可从「礼包」拖入 `.kit` 或下拉添加。可见性 / 可承接各用常显卡片；周期卡含「可承接时自动开始」「可放弃」「周期不满足时不可见」。
 
 ## 任务分类（UI 目录）
 

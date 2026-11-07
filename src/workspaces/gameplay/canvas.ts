@@ -111,9 +111,10 @@ export function createProgressNode(flow: ProgressFlow, position: FlowPosition) {
     completedLog: text(`progress.${id}.completedLog`),
     goals: [],
     completion: 'all',
+    tracking: { mode: 'auto', text: `progress.${id}.tracking` },
   }
   next.layout!.positions[id] = { ...position }
-  return { flow: next, id, localeSeeds: { [`progress.${id}.runningLog`]: '', [`progress.${id}.completedLog`]: '' } }
+  return { flow: next, id, localeSeeds: { [`progress.${id}.runningLog`]: '', [`progress.${id}.completedLog`]: '', [`progress.${id}.tracking`]: '' } }
 }
 
 export function createPredicateNode(flow: ProgressFlow, position: FlowPosition) {

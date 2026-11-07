@@ -3,8 +3,9 @@ import { ProgressCompletionEditor } from './ProgressCompletionEditor'
 import { createCompletionGraph, goalAliases } from './completionGraph'
 import {
   createProgressGoal, duplicateProgressGoal, goalConfigSummary,
-  moveProgressGoal, progressIssues, PROGRESS_REPEAT_LABELS, stringifyProgress,
-  type ProgressDocument, type ProgressGoal,
+  moveProgressGoal, progressIssues, PROGRESS_REPEAT_LABELS, PROGRESS_TRACKING_TEXT_KEY,
+  stringifyProgress,
+  type ProgressDocument, type ProgressGoal, type ProgressTracking,
   type ProgressRepeatKind,
 } from './progressDoc'
 import { ConditionRulesEditor } from './ConditionRulesEditor'
@@ -249,9 +250,14 @@ export function ProgressEditor({ doc, goalCatalog, kitOptions = [], disabled, on
   const changeGoal = (goal: ProgressGoal, immediate = true) => update({ goals: doc.goals.map(item => item.id === goal.id ? goal : item) }, immediate)
   const issues = progressIssues(doc, definitions, resolveText ? (key) => resolveText(key) : null)
   const aliases = goalAliases(doc.goals)
+  const tracking: ProgressTracking = doc.tracking ?? { mode: 'auto' }
+  const trackingTextKey = tracking.text?.trim() || PROGRESS_TRACKING_TEXT_KEY
   const count = doc.goals.length
   const pickerGoal = doc.goals.find(goal => goal.id === picker?.goalId)
   const availableKits = kitOptions.filter(item => !doc.rewardKits.includes(item.ref))
+  function setTracking(next: ProgressTracking) {
+    update({ tracking: next })
+  }
   function choose(kind: string) {
     if (!picker || disabled || !goalCatalog.byKind.has(kind)) return
     if (pickerGoal) {
@@ -382,6 +388,42 @@ export function ProgressEditor({ doc, goalCatalog, kitOptions = [], disabled, on
           </div>
         </section>
       </div>
+
+      <section className="progress-card progress-tracking" aria-label="任务追踪文本">
+        <header className="progress-card-head">
+          <h2>任务追踪文本</h2>
+          <div className="progress-completion-switch" role="group" aria-label="追踪文本模式">
+            <button
+              type="button"
+              aria-pressed={tracking.mode === 'auto'}
+              onClick={() => setTracking({ mode: 'auto', ...(tracking.text ? { text: tracking.text } : {}) })}
+            >自动</button>
+            <button
+              type="button"
+              aria-pressed={tracking.mode === 'manual'}
+              onClick={() => setTracking({ mode: 'manual', text: trackingTextKey })}
+            >手动</button>
+          </div>
+        </header>
+        <div className="progress-card-body">
+          {tracking.mode === 'auto' ? (
+            <p className="progress-tracking-hint">引擎按目标类型自动生成追踪行；编译进 questc，Mod 侧可先忽略。</p>
+          ) : (
+            <label className="progress-field">
+              <span>追踪文案 <small>本地化 · 单行</small></span>
+              <input
+                aria-label="手动追踪文案"
+                placeholder="向玩家展示的一行追踪说明…"
+                value={readText(trackingTextKey)}
+                onChange={event => {
+                  if (!tracking.text) setTracking({ mode: 'manual', text: trackingTextKey })
+                  writeText(trackingTextKey, event.target.value.replace(/[\r\n]+/g, ' '))
+                }}
+              />
+            </label>
+          )}
+        </div>
+      </section>
 
       <section className="progress-card progress-objectives" aria-label="目标要求">
         <div className="progress-section-head progress-card-head"><div><h2>目标 <span>{count}</span></h2></div>

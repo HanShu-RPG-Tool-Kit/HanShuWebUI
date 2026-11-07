@@ -79,6 +79,24 @@
 .node-form-rules .progress-visibility-row { margin-bottom: 0; }
 .node-form-rules .condition-rules { gap: 8px; }
 .node-form-info .progress-abandon-switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0 0 10px; color: var(--pr-muted); font-size: 12px; }
+.node-form-info .progress-tracking { margin: 0 0 12px; padding: 0; border: 1px solid var(--pr-line, #3f4349); border-radius: 6px; background: var(--pr-surface, #26282b); overflow: hidden; }
+.node-form-info .progress-tracking .progress-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0; padding: 8px 10px; border-bottom: 1px solid var(--pr-line, #3f4349); }
+.node-form-info .progress-tracking .progress-card-head h2 { margin: 0; font-size: 12px; font-weight: 600; }
+.node-form-info .progress-tracking .progress-card-body { padding: 10px; }
+.node-form-info .progress-tracking-hint { margin: 0; color: var(--pr-muted, #9aa3ad); font-size: 12px; line-height: 1.45; }
+.node-form-info .progress-completion-switch { display: inline-flex; padding: 3px; border: 1px solid #44474c; border-radius: 5px; background: #202123; flex-shrink: 0; }
+.node-form-info .progress-completion-switch button { border: 0; border-radius: 3px; padding: 5px 11px; background: transparent; color: var(--pr-muted, #9aa3ad); font-size: 12px; }
+.node-form-info .progress-completion-switch button[aria-pressed=true] { background: #454b55; color: #f2f0eb; }
+.node-form-info .progress-clusters { margin: 0 0 12px; padding: 0; border: 1px solid var(--pr-line, #3f4349); border-radius: 6px; background: var(--pr-surface, #26282b); overflow: hidden; }
+.node-form-info .progress-clusters .progress-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 0; padding: 8px 10px; border-bottom: 1px solid var(--pr-line, #3f4349); }
+.node-form-info .progress-clusters .progress-card-head h2 { margin: 0; font-size: 12px; font-weight: 600; }
+.node-form-info .progress-clusters .progress-card-head span { margin-left: 6px; color: var(--pr-muted, #9aa3ad); font-weight: 400; }
+.node-form-info .progress-clusters .progress-card-body { padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.node-form-info .progress-cluster-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 8px; align-items: end; }
+.node-form-info .progress-cluster-row .flow-field { margin: 0; }
+.node-form-info .progress-cluster-id { color: #9fb0c0; font-size: 11px; line-height: 32px; }
+.node-form-info .progress-cluster-row .progress-remove { width: 28px; height: 28px; border: 0; border-radius: 4px; background: transparent; color: #c9a8a8; font-size: 16px; }
+.node-form-info .progress-cluster-row .progress-remove:hover:not(:disabled) { background: #ffffff12; color: #ffd1c8; }
 .node-form-goals .progress-goal { width: 100%; }
 .node-form-goals .progress-parameters { display: flex; flex-direction: column; }
 .node-form-goals .progress-goal-open { min-width: 0; }

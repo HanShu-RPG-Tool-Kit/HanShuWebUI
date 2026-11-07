@@ -221,6 +221,8 @@
 .progress-card-count { min-width: 18px; padding: 0 6px; background: #ffffff0f; color: #aaa; font-size: 11px; line-height: 18px; text-align: center; }
 .progress-card-body { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
 .progress-card-body > select { width: 100%; }
+.progress-tracking .progress-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.progress-tracking-hint { margin: 0; color: var(--pr-muted); font-size: 12px; line-height: 1.45; }
 .progress-card.progress-rules { padding: 0; }
 .progress-summary-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
 .progress-card-body.progress-lifecycle { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; border: 0; padding: 12px; gap: 12px; }

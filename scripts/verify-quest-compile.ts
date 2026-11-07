@@ -74,6 +74,24 @@ assert.equal(passthrough[0]!.path, 'quest/b.questc')
 assert.equal(JSON.parse(String(passthrough[0]!.bytes)).format, QUEST_COMPILED_FORMAT)
 assert.equal(JSON.parse(String(passthrough[0]!.bytes)).extensions, undefined)
 assert.deepEqual(JSON.parse(String(passthrough[0]!.bytes)).nodes[backgroundId].goal,multi.objectives![backgroundId].goal,'background goal type and parameters survive export without runtime state')
+assert.deepEqual(JSON.parse(String(passthrough[0]!.bytes)).metadata.clusters, [])
+assert.equal(Object.hasOwn(JSON.parse(String(passthrough[0]!.bytes)).nodes[multi.start], 'clusterId'), false)
+assert.deepEqual(tree.metadata.clusters, [])
+
+{
+  const clustered = structuredClone(multi)
+  const clusterId = '11111111-2222-4333-8444-555555555555'
+  clustered.progress[clustered.start].clusters = [{ id: clusterId }]
+  clustered.progress[clustered.start].clusterId = clusterId
+  const arts = await questCompiler.compile(file('cluster.quest', `${JSON.stringify(clustered)}\n`), ctx)
+  const out = JSON.parse(String(arts[0]!.bytes))
+  assert.deepEqual(out.metadata.clusters, [clusterId])
+  assert.equal(out.nodes[clustered.start].clusterId, clusterId)
+  parseQuestCompiled(JSON.stringify(out))
+  clustered.progress[clustered.start].clusterId = 'missing-cluster'
+  const dangling = validateFlow(clustered)
+  assert(dangling.some(issue => issue.severity === 'error' && String(issue.path).includes('clusterId')), 'dangling clusterId must be an authoring error')
+}
 
 console.log('PASS: both quest authoring formats compile to the same questc pointer graph')
 
