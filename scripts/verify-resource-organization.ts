@@ -3,7 +3,7 @@ import {buildProjectPackZip} from '../src/export/projectPack'
 import assert from 'node:assert/strict'
 import {RESOURCE_TYPES,categoryExtensions} from '../src/resourceTypes'
 import {assertCanonicalSourcePath,sourcePathOf,findScriptByName,createProject,createSourceFile} from '../src/workspace'
-import {emptyOrganization,parseOrganization,serializeOrganization,organizationFromDocuments,documentPlacements,relocateOrganization,projectDomainOrganization,domainFolders} from '../src/project/explorerOrganization'
+import {emptyOrganization,parseOrganization,serializeOrganization,organizationFromDocuments,documentPlacements,relocateOrganization,projectDomainOrganization,domainFolders,setOrganizationDraft,isOrganizationDraft} from '../src/project/explorerOrganization'
 import {AUDIOVISUAL_DOMAIN,DEFAULT_ORGANIZATION_REGISTRY,GAMEPLAY_DOMAIN,STAGEPLAY_DOMAIN,categoryAllowsFolders,organizationRegistry} from '../src/project/organizationDomains'
 import {addVirtualFolder,moveVirtualFolder,placeSource,removeVirtualFolder,renameVirtualFolder} from '../src/explorerShell/virtualFolders'
 import {gameplayFolders,canMoveFlowEntry,moveFlowEntry,requireAvailableName,sectionFolderKey,packageAcceptsImportFile,withLibraryTables,isBuiltinScriptDocumentKey,scriptTypeInFolder,ensurePackageSections} from '../src/workspaces/gameplay/library'
@@ -51,6 +51,18 @@ test('shared placements are canonical paths, not window-local IDs',()=>{
  assert.equal(org.placements['src/items/apple.item'],'f')
  assert.equal(documentPlacements([{...createSourceFile('apple.item'),id:'another-client'}],org)['another-client'],'f')
  assert.equal(serializeOrganization(parseOrganization(serializeOrganization(org))),serializeOrganization(org))
+})
+test('engineering drafts round-trip and relocate with source paths',()=>{
+ let org=setOrganizationDraft(emptyOrganization(),'src/quest/intro.quest',true)
+ assert.equal(isOrganizationDraft(org,'src/quest/intro.quest'),true)
+ assert.equal(serializeOrganization(parseOrganization(serializeOrganization(org))),serializeOrganization(org))
+ org=relocateOrganization(org,[{path:'src/quest/intro.quest',destination:'src/quest/prologue.quest'}])
+ assert.equal(isOrganizationDraft(org,'src/quest/intro.quest'),false)
+ assert.equal(isOrganizationDraft(org,'src/quest/prologue.quest'),true)
+ org=setOrganizationDraft(org,'src/quest/prologue.quest',false)
+ assert.equal(org.drafts,undefined)
+ assert.throws(()=>setOrganizationDraft(emptyOrganization(),'src/quest/../x.quest',true))
+ assert.throws(()=>parseOrganization(JSON.stringify({version:2,folders:[],placements:{},drafts:{'src/quest/a.quest':false}})))
 })
 test('map sections round-trip without leaking default document placements',()=>{
  const projected=ensurePackageSections({documents:[

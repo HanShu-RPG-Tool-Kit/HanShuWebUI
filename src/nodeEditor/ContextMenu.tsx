@@ -2,7 +2,14 @@ import './ContextMenu.css'
 import { useEffect, useLayoutEffect, useRef, useState, useId, type KeyboardEvent, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 
-export type NodeMenuItem = { label: string; disabled?: boolean; hint?: string; className?: string } & (
+export type NodeMenuItem = {
+  label: string
+  disabled?: boolean
+  hint?: string
+  className?: string
+  /** 勾选项：显示在标签左侧，并设置 aria-checked */
+  checked?: boolean
+} & (
   | { action: () => void; children?: never }
   | { children: NodeMenuItem[]; action?: never }
 )
@@ -86,11 +93,18 @@ function MenuLevel({ x, y, title, items, onClose, label, className, parent, onBa
   return <>
     <div ref={panel} id={parent ? submenuId : undefined} className={`flow-node-menu ${className ?? ''}`} style={{ left: x, top: y }} role="menu" tabIndex={-1} aria-label={label} onKeyDown={onKeyDown} onContextMenu={event => event.preventDefault()}>
       <div className="flow-node-menu-title" title={title}>{title}</div>
-      {items.map((item, index) => <button key={item.label} data-menu-index={index} className={item.className} type="button" role="menuitem" tabIndex={-1} disabled={item.disabled} title={item.hint}
+      {items.map((item, index) => <button key={item.label} data-menu-index={index} className={item.className} type="button" role={item.checked !== undefined ? 'menuitemcheckbox' : 'menuitem'} tabIndex={-1} disabled={item.disabled} title={item.hint}
+        aria-checked={item.checked !== undefined ? item.checked : undefined}
         aria-haspopup={item.children ? 'menu' : undefined} aria-expanded={item.children ? opened?.index === index : undefined}
         onPointerEnter={event => { if (item.children && !item.disabled) open(index, event.currentTarget, false); else setOpened(null) }}
         onClick={event => { if (item.children) open(index, event.currentTarget, true); else { onClose(); item.action() } }}>
-        <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 20 }}><span>{item.label}</span>{item.children && <span aria-hidden="true">›</span>}</span>
+        <span style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 20 }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            {item.checked !== undefined && <span aria-hidden="true" className="flow-node-menu-check">{item.checked ? '☑' : '☐'}</span>}
+            <span>{item.label}</span>
+          </span>
+          {item.children && <span aria-hidden="true">›</span>}
+        </span>
       </button>)}
     </div>
     {opened && child?.children && !child.disabled && <MenuLevel key={opened.index} x={opened.rect.right + 4} y={opened.rect.top} parent={opened.rect} focus={opened.focus}

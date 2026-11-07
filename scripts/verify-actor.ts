@@ -170,6 +170,17 @@ for (const pak of exported.packs) {
   assert.equal(!!zip.file('actors/village.actor'), pak.target === 'server')
   assert.equal(!!zip.file('script/actor/guard.js'), pak.target === 'server')
 }
+workspace.packages[0].explorer = {
+  version: 2,
+  folders: [],
+  placements: {},
+  drafts: { 'src/actors/village.actor': true },
+}
+const drafted = await buildCompileGraph(workspace)
+assert(drafted.diagnostics.some(d => d.code === 'draft_skipped' && d.message.includes('village.actor')))
+assert(!drafted.artifacts.some(a => a.path === 'actors/village.actor'))
+assert(drafted.artifacts.some(a => a.path === 'script/actor/guard.js'))
+workspace.packages[0].explorer = undefined
 workspace.packages[0].scripts = scripts.filter(s => s.id !== 'guard')
 const missing = await buildCompileGraph(workspace)
 assert(missing.diagnostics.some(d => d.code === 'actor_invalid' && d.message.includes('guard')))

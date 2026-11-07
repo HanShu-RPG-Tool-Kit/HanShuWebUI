@@ -1,5 +1,7 @@
-import {effectiveBuiltinScripts} from '../../scriptResources'
-import {sourcePathOf,type Project,type Workspace} from '../../workspace'
+import { isOrganizationDraft } from '../../project/explorerOrganization'
+import { effectiveBuiltinScripts } from '../../scriptResources'
+import { supportsGameplayDraft } from '../../workspaces/gameplay/draftResources'
+import { sourcePathOf, type Project, type Workspace } from '../../workspace'
 import { ensureBuiltinCompilers } from './compilers/registerBuiltin'
 import { hasLinkErrors, linkArtifacts } from './link'
 import { listFileCompilers, listPackagePasses } from './registry'
@@ -58,6 +60,19 @@ export async function buildCompileGraph(
 
     const fromFiles: CompileArtifact[] = []
     for (const script of pkg.scripts) {
+      const path = sourcePathOf(script)
+      if (
+        supportsGameplayDraft(script.name) &&
+        isOrganizationDraft(pkg.explorer, path)
+      ) {
+        ctx.report({
+          severity: 'warning',
+          code: 'draft_skipped',
+          message: `跳过草稿：${script.name}`,
+          sourcePath: path,
+        })
+        continue
+      }
       // 专用编译器优先于 identity，避免注册顺序踩坑
       const compiler =
         compilers.find(

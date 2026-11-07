@@ -4,9 +4,16 @@ import {
   EXPLORER_ORGANIZATION_PATH,
   documentPlacements,
   emptyOrganization,
+  isOrganizationDraft,
   organizationFromDocuments,
   serializeOrganization,
+  setOrganizationDraft,
 } from "../project/explorerOrganization";
+import { commitOrganization } from "../explorerShell/commitOrganization";
+import {
+  supportsGameplayDraft,
+  supportsGameplayViewSource,
+} from "./gameplay/draftResources";
 import { JavaScriptEditor } from "../monaco/javascript/JavaScriptEditor";
 import { scriptType, scriptSection, scriptTemplate } from "../scriptResources";
 import { scriptTypeInFolder, sectionFolderKey } from "./gameplay/library";
@@ -224,7 +231,7 @@ import { FilePresenceBar } from "../project/FilePresenceBar";
 import { notify } from "../activity";
 import { StatusBarSlots } from "../chrome";
 import { renameScriptAssets } from "../workspaceMove";
-import { registerAsset, saveWorkspace, sourcePathOf } from "../workspace";
+import { getExtension, registerAsset, saveWorkspace, sourcePathOf } from "../workspace";
 import { deleteAssetBlob, getAssetBlob, putAssetBlob } from "../assets/idb";
 import { TextMap, TEXT_ASSET_MIME } from "../i18n/textMap";
 import { textAssetPath } from "../i18n/localeLayout";
@@ -1304,6 +1311,37 @@ export function GameplayWorkspace({
     setProgressSourceKey(key);
     setNotice("");
   }
+  function documentSourcePath(doc: { name: string; folderId?: string | null; package: string }) {
+    const srcKind =
+      doc.name.toLowerCase().endsWith(".js")
+        ? scriptTypeInFolder(state, doc.folderId ?? null)
+        : undefined;
+    return sourcePathOf({ name: doc.name, srcKind });
+  }
+  async function toggleDocumentDraft(key: string) {
+    const doc = state.documents.find((item) => item.key === key);
+    if (!doc || !supportsGameplayDraft(doc.name) || readOnly) return;
+    const path = documentSourcePath(doc);
+    const organization =
+      session.workspace.packages[0]?.explorer ?? emptyOrganization();
+    const next = setOrganizationDraft(
+      organization,
+      path,
+      !isOrganizationDraft(organization, path),
+    );
+    try {
+      await commitOrganization(next);
+      setNotice(
+        isOrganizationDraft(next, path)
+          ? `已标为草稿：${doc.name}（导出时跳过）`
+          : `已取消草稿：${doc.name}`,
+      );
+    } catch (error) {
+      setNotice(
+        error instanceof Error ? error.message : `无法更新草稿：${String(error)}`,
+      );
+    }
+  }
   function closeGameplayPages(keys: string[], nextActiveId?: string) {
     const closing = new Set(keys);
     updateGroups((previous) => {
@@ -2124,6 +2162,46 @@ export function GameplayWorkspace({
       : null;
     const paneLevelParsed = paneLevel ? readLevelSource(paneDoc.source) : null;
     const paneItemParsed = paneItem ? readItemSource(paneDoc.source) : null;
+    if (
+      progressSourceKey === paneDoc.key &&
+      supportsGameplayViewSource(paneDoc.name)
+    ) {
+      const ext = getExtension(paneDoc.name) || ".json";
+      return (
+        <div
+          className="flow-source-pane flow-script-pane"
+          aria-label={`${ext} 源码`}
+        >
+          <div className="flow-script-readonly-bar">
+            <span>只读 · {ext} JSON</span>
+            <button type="button" onClick={() => setProgressSourceKey(null)}>
+              返回编辑器
+            </button>
+          </div>
+          <div className="flow-script-editor">
+            <Editor
+              height="100%"
+              language="json"
+              theme={HANSHU_THEME_ID}
+              value={paneDoc.source}
+              path={`gameplay-source://g${group}/${paneDoc.key}/${paneDoc.name}`}
+              beforeMount={registerHanshuLanguage}
+              options={{
+                fontSize: editorFontSize,
+                mouseWheelZoom: true,
+                minimap: { enabled: false },
+                wordWrap: "on",
+                automaticLayout: true,
+                scrollBeyondLastLine: false,
+                padding: { top: 8 },
+                readOnly: true,
+                domReadOnly: true,
+              }}
+            />
+          </div>
+        </div>
+      );
+    }
     let paneFlow: ProgressFlow | null = null;
     let paneError = "";
     if (
@@ -2284,47 +2362,6 @@ export function GameplayWorkspace({
             }}
           />
         );
-      if (progressSourceKey === paneDoc.key) {
-        return (
-          <div
-            className="flow-source-pane flow-script-pane"
-            aria-label=".quest 源码"
-          >
-            <div className="flow-script-readonly-bar">
-              <span>只读 · .quest JSON（单进度）</span>
-              <button type="button" onClick={() => setProgressSourceKey(null)}>
-                返回表单
-              </button>
-            </div>
-            <div className="flow-script-editor">
-              <Editor
-                height="100%"
-                language="json"
-                theme={HANSHU_THEME_ID}
-                value={
-                  progressEditorSession(
-                    client,
-                    sourcePathOf({ name: paneDoc.name }),
-                  )?.getSnapshot().view.source ?? paneDoc.source
-                }
-                path={`progress-source://g${group}/${paneDoc.key}/${paneDoc.name}`}
-                beforeMount={registerHanshuLanguage}
-                options={{
-                  fontSize: editorFontSize,
-                  mouseWheelZoom: true,
-                  minimap: { enabled: false },
-                  wordWrap: "on",
-                  automaticLayout: true,
-                  scrollBeyondLastLine: false,
-                  padding: { top: 8 },
-                  readOnly: true,
-                  domReadOnly: true,
-                }}
-              />
-            </div>
-          </div>
-        );
-      }
       return (
         <div className="flow-kit-pane">
           {client && (
@@ -2528,42 +2565,6 @@ export function GameplayWorkspace({
       );
     }
     if (paneItem && paneItemParsed) {
-      if (progressSourceKey === paneDoc.key) {
-        return (
-          <div
-            className="flow-source-pane flow-script-pane"
-            aria-label=".item 源码"
-          >
-            <div className="flow-script-readonly-bar">
-              <span>只读 · .item JSON</span>
-              <button type="button" onClick={() => setProgressSourceKey(null)}>
-                返回编辑器
-              </button>
-            </div>
-            <div className="flow-script-editor">
-              <Editor
-                height="100%"
-                language="json"
-                theme={HANSHU_THEME_ID}
-                value={paneDoc.source}
-                path={`progress-item-source://g${group}/${paneDoc.key}/${paneDoc.name}`}
-                beforeMount={registerHanshuLanguage}
-                options={{
-                  fontSize: editorFontSize,
-                  mouseWheelZoom: true,
-                  minimap: { enabled: false },
-                  wordWrap: "on",
-                  automaticLayout: true,
-                  scrollBeyondLastLine: false,
-                  padding: { top: 8 },
-                  readOnly: true,
-                  domReadOnly: true,
-                }}
-              />
-            </div>
-          </div>
-        );
-      }
       return (
         <div className="flow-kit-pane">
           <LocalizedItemEditor
@@ -2852,6 +2853,17 @@ export function GameplayWorkspace({
           onRemove={removeResources}
           onProperties={setPropertiesKey}
           onViewSource={viewProgressSource}
+          onToggleDraft={(key) => {
+            void toggleDocumentDraft(key);
+          }}
+          isDraft={(key) => {
+            const doc = state.documents.find((item) => item.key === key);
+            if (!doc || !supportsGameplayDraft(doc.name)) return false;
+            return isOrganizationDraft(
+              session.workspace.packages[0]?.explorer,
+              documentSourcePath(doc),
+            );
+          }}
           onOpenEntityInGame={(key) => {
             void openEntityInGame(key);
           }}

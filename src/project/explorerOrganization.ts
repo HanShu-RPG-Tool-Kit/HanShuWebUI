@@ -21,6 +21,11 @@ export type ExplorerOrganization = {
   version: 2
   folders: ExplorerFolder[]
   placements: Record<string, string>
+  /**
+   * 工程级草稿：规范源路径 → true。
+   * 文件仍在工程里可编辑，导出 PAK 时跳过；不进表单字段。
+   */
+  drafts?: Record<string, true>
 }
 
 export const emptyOrganization = (): ExplorerOrganization => ({ version: 2, folders: [], placements: {} })
@@ -31,7 +36,7 @@ export const emptyOrganization = (): ExplorerOrganization => ({ version: 2, fold
  */
 export function parseOrganization(raw: string | null, registry: OrganizationRegistry = DEFAULT_ORGANIZATION_REGISTRY): ExplorerOrganization {
   if (raw === null) return emptyOrganization()
-  const value = JSON.parse(raw) as { version?: unknown; folders?: unknown; placements?: unknown }
+  const value = JSON.parse(raw) as { version?: unknown; folders?: unknown; placements?: unknown; drafts?: unknown }
   if ((value?.version !== 1 && value?.version !== 2) || !Array.isArray(value.folders) || value.folders.length > 2000 ||
       !value.placements || typeof value.placements !== 'object' || Array.isArray(value.placements)) {
     throw new Error('资源组织元数据格式无效')
@@ -91,7 +96,26 @@ export function parseOrganization(raw: string | null, registry: OrganizationRegi
     }
     placements[path] = key
   }
-  return { version: 2, folders: [...folders.values()], placements }
+
+  const drafts: Record<string, true> = {}
+  if (value.drafts !== undefined) {
+    if (!value.drafts || typeof value.drafts !== 'object' || Array.isArray(value.drafts) || Object.keys(value.drafts).length > 10000) {
+      throw new Error('草稿清单无效')
+    }
+    for (const [path, flag] of Object.entries(value.drafts as Record<string, unknown>)) {
+      assertCanonicalSourcePath(path)
+      if (flag !== true) throw new Error('草稿清单无效')
+      if (!resourceTypeForExtension(getExtension(path))) throw new Error('草稿路径不是已知资源类型')
+      drafts[path] = true
+    }
+  }
+
+  return {
+    version: 2,
+    folders: [...folders.values()],
+    placements,
+    ...(Object.keys(drafts).length ? { drafts } : {}),
+  }
 }
 
 /** Stable output and semantic comparisons must ignore input JSON formatting/order. */
@@ -99,7 +123,40 @@ export function serializeOrganization(value: ExplorerOrganization): string {
   const checked = parseOrganization(JSON.stringify(value))
   checked.folders.sort((a, b) => a.key.localeCompare(b.key))
   checked.placements = Object.fromEntries(Object.entries(checked.placements).sort(([a], [b]) => a.localeCompare(b)))
+  if (checked.drafts) {
+    checked.drafts = Object.fromEntries(
+      Object.keys(checked.drafts).sort((a, b) => a.localeCompare(b)).map((path) => [path, true as const]),
+    )
+  }
   return JSON.stringify(checked, null, 2) + '\n'
+}
+
+export function isOrganizationDraft(
+  value: ExplorerOrganization | null | undefined,
+  path: string,
+): boolean {
+  return value?.drafts?.[path] === true
+}
+
+/** Toggle engineering draft for a canonical source path. */
+export function setOrganizationDraft(
+  value: ExplorerOrganization,
+  path: string,
+  draft: boolean,
+): ExplorerOrganization {
+  assertCanonicalSourcePath(path)
+  if (!resourceTypeForExtension(getExtension(path))) {
+    throw new Error('草稿路径不是已知资源类型')
+  }
+  const drafts = { ...(value.drafts ?? {}) }
+  if (draft) drafts[path] = true
+  else delete drafts[path]
+  return parseOrganization(JSON.stringify({
+    version: 2,
+    folders: value.folders,
+    placements: value.placements,
+    ...(Object.keys(drafts).length ? { drafts } : {}),
+  }))
 }
 
 /** 某个域认领的文件夹；其他工作区的文件夹不进入本域视图。 */
@@ -131,7 +188,13 @@ export function projectDomainOrganization(
     if (!keys.has(key) && !registry.sections.has(key)) delete nextPlacements[path]
   }
   Object.assign(nextPlacements, placements)
-  return parseOrganization(JSON.stringify({ version: 2, folders: nextFolders, placements: nextPlacements }), registry)
+  const drafts = previous?.organization.drafts
+  return parseOrganization(JSON.stringify({
+    version: 2,
+    folders: nextFolders,
+    placements: nextPlacements,
+    ...(drafts && Object.keys(drafts).length ? { drafts } : {}),
+  }), registry)
 }
 
 /** Replace only this window's source projection; peers may have registered unsaved paths. */
@@ -170,15 +233,24 @@ export function relocateOrganization(
   commands: Array<{ path: string; destination: string | null }>,
 ): ExplorerOrganization {
   const placements = { ...value.placements }
+  const drafts = { ...(value.drafts ?? {}) }
   for (const { path, destination } of commands) {
     const key = placements[path]
     delete placements[path]
     if (destination && key) placements[destination] = key
+    const draft = drafts[path]
+    delete drafts[path]
+    if (destination && draft) drafts[destination] = true
   }
   // Outside the explorer, a cross-type script move cannot retain its previous type's folder.
   for (const [path, key] of Object.entries(placements)) {
     try { parseOrganization(JSON.stringify({ ...value, placements: { [path]: key } })) }
     catch { delete placements[path] }
   }
-  return { ...value, placements }
+  return parseOrganization(JSON.stringify({
+    version: 2,
+    folders: value.folders,
+    placements,
+    ...(Object.keys(drafts).length ? { drafts } : {}),
+  }))
 }

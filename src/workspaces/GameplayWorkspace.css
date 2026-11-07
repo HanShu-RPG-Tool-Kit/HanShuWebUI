@@ -312,6 +312,16 @@ body.is-panel-dragging .flow-explorer-heading.is-draggable { cursor: grabbing; }
 .flow-resource-row.drop-target { background: rgba(71, 114, 179, .28); outline: 1px solid var(--accent); outline-offset: -1px; }
 .flow-resource-twist { display: inline-flex; align-items: center; justify-content: center; width: 12px; flex-shrink: 0; font-size: var(--fl-font-xs); color: #9a9aa5; }
 .flow-resource-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.flow-resource-draft {
+  margin-left: 4px;
+  padding: 0 4px;
+  border: 1px solid var(--border, #555);
+  border-radius: 2px;
+  color: var(--fl-faint, #999);
+  font-size: var(--fl-font-xs, 11px);
+  font-style: normal;
+  vertical-align: 1px;
+}
 .flow-resource-edit { display: flex; flex: 1; min-width: 0; }
 .gameplay-workspace .flow-resource-edit input, .gameplay-workspace .flow-resource-new input { height: auto; padding: 2px 6px; border-color: var(--accent); font-size: var(--fl-font-sm); }
 .flow-resource-new { padding-top: 2px; padding-bottom: 2px; }

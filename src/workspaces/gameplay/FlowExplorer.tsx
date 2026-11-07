@@ -86,6 +86,10 @@ import {
   itemRefFromFileName,
   kitRefFromFileName,
 } from "./kit";
+import {
+  supportsGameplayDraft,
+  supportsGameplayViewSource,
+} from "./draftResources";
 import type { FlowPackageId, FlowWorkspaceState } from "./storage";
 import { readLevelSource } from "./levelDoc";
 import { resourceBaseError } from "../../resourceNames";
@@ -338,6 +342,8 @@ export function FlowExplorer({
   onRemove,
   onProperties,
   onViewSource,
+  onToggleDraft,
+  isDraft,
   onOpenItemInGame,
   onOpenEntityInGame,
   onOverrideBuiltinScript,
@@ -371,8 +377,11 @@ export function FlowExplorer({
   onDownload: (key: string) => void;
   onRemove: (selection: { documents: string[]; folders: string[] }) => void;
   onProperties: (key: string) => void;
-  /** 查看 .quest / .item 等文档只读源码 */
+  /** 查看表单文档的只读 JSON 源码 */
   onViewSource?: (key: string) => void;
+  /** 工程级草稿勾选（写 meta/explorer.json，导出跳过） */
+  onToggleDraft?: (key: string) => void;
+  isDraft?: (key: string) => boolean;
   /** 经 Control 呼出客户端 IBE 编辑当前 .item */
   onOpenItemInGame?: (key: string) => void;
   onOpenEntityInGame?: (key: string) => void;
@@ -1861,8 +1870,25 @@ export function FlowExplorer({
                   },
                 ]
               : []),
-            ...((simpleQuest || item) && onViewSource
+            ...(document &&
+            supportsGameplayViewSource(document.name) &&
+            onViewSource
               ? [{ label: "查看源码", action: () => onViewSource(entry.key) }]
+              : []),
+            ...(document &&
+            supportsGameplayDraft(document.name) &&
+            onToggleDraft
+              ? [
+                  {
+                    label: "草稿",
+                    checked: isDraft?.(entry.key) ?? false,
+                    disabled: readOnly,
+                    hint: readOnly
+                      ? "只读工程不可改草稿"
+                      : "勾选后仍可编辑，导出 PAK 时跳过",
+                    action: () => onToggleDraft(entry.key),
+                  },
+                ]
               : []),
             { label: "属性…", action: () => onProperties(entry.key) },
             {
@@ -2439,7 +2465,17 @@ export function FlowExplorer({
                     />
                   </form>
                 ) : (
-                  <span className="flow-resource-name">{row.name}</span>
+                  <span className="flow-resource-name">
+                    {row.name}
+                    {document &&
+                      supportsGameplayDraft(document.name) &&
+                      isDraft?.(document.key) && (
+                        <span className="flow-resource-draft" title="草稿 · 导出时跳过">
+                          {" "}
+                          草稿
+                        </span>
+                      )}
+                  </span>
                 )}
               </ExplorerTreeRow>
               {isEditing && edit.mode === "folder" && (
