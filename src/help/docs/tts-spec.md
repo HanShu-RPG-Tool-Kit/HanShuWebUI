@@ -765,6 +765,14 @@ JSON 解析用 `JSON.parse`,写出复用现成的保真写入思路。
 
 规则由 `scripts/verify-tts-*.ts` 钉住(`npm run test:tts`)。
 
+打包版还有一条**环境**约束:桌面壳 CSP 必须允许 WebAssembly。`@audio/encode-ogg`
+把 WASM 内联成 `data:` URI,运行时用 `WebAssembly.instantiateStreaming(fetch(data:...))`,
+所以 `src-tauri/tauri.conf.json` 的 `script-src` 需要 `'wasm-unsafe-eval'`、
+`connect-src` 需要 `data:`。开发期前端由 Vite devUrl 直接提供、不套 Tauri CSP,
+这条只在打包后暴露;缺了它,录音 / TTS / 拖拽三条入口共用的导入工作流都会在转码阶段
+失败并只报 `Import workflow interrupted unexpectedly.`。`scripts/verify-voice-import-csp.mjs`
+(`npm run test:voice-import:csp`) 读取实际配置、用同引擎浏览器跑一遍真实转码链路。
+
 **协议实现进度**:
 
 | 协议 | 状态 | 备注 |
