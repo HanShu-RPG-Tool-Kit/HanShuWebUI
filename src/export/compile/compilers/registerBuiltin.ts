@@ -4,7 +4,7 @@ import {bossbarCompiler} from './bossbar'
 import {reputationCompiler} from './reputation'
 import {shopCompiler} from './shop'
 import {levelArtifactPass, levelCompiler, navigationCompiler} from './level'
-import { listFileCompilers, listPackagePasses, listLocaleExportRules, registerFileCompiler, registerPackagePass, registerLocaleExportRule } from '../registry'
+import { listLocaleExportRules, registerFileCompiler, registerPackagePass, registerLocaleExportRule } from '../registry'
 import type { LocaleExportRule } from '../localization'
 import { activeSkinsPass } from './activeSkins'
 import { hanshuCompiler } from './hanshu'
@@ -40,13 +40,17 @@ const builtinLocaleRules: LocaleExportRule[] = [
   })),
 ]
 
-/** Idempotent by id; also reinstalls builtins after clearCompileRegistry without replacing overrides. */
+/**
+ * 挂上 / 刷新内置编译器与包级 pass：同 id 一律覆盖，避免 Vite HMR 后
+ * 仍沿用首次注册的旧 `compile` 闭包（例如旁表字段修过但导出仍写 functionLine）。
+ * 本地化规则仍「缺则补」，保留测试/调用方对 builtin id 的显式覆盖。
+ */
 export function ensureBuiltinCompilers(): void {
   for (const compiler of [hanshuCompiler, itemCompiler, entityCompiler, kitCompiler, shopCompiler, actorCompiler, bossbarCompiler, reputationCompiler, questCompiler, questCatalogCompiler, levelCompiler, navigationCompiler, scriptLoadCompiler, identityCompiler]) {
-    if (!listFileCompilers().some((entry) => entry.id === compiler.id)) registerFileCompiler(compiler)
+    registerFileCompiler(compiler)
   }
   for (const pass of [localeAssetsPass, activeSkinsPass, levelArtifactPass]) {
-    if (!listPackagePasses().some((entry) => entry.id === pass.id)) registerPackagePass(pass)
+    registerPackagePass(pass)
   }
   for (const rule of builtinLocaleRules) {
     if (!listLocaleExportRules().some((entry) => entry.id === rule.id)) registerLocaleExportRule(rule)

@@ -182,6 +182,6 @@ PAK 本体是 ZIP。内部条目路径：
 
 ## Nashorn 内容脚本
 
-`.js` 脚本导出为 `script/<类型>/<id>.js` （goal 类型为 `goal_scripts/<id>.js`）与同目录 `<id>.hooks.json`。源码中的 import / require / hook / Goal 注解按一行换一行规则转换，强制签名类型在导出时同行剥离，非法方言阻止导出。旁表为 `{version:2,hooks:[{hook,function,line,cancellable,priority,receiveCancelled}],goal:null}`；Goal 目录的 goal 为文件级声明与订阅元数据对象；line 是作者 hook 注解的 1-based 行号。即使没有 hook 也输出空数组；游戏显式按已编译入口核对源码与旁表，原始作者源码则须通过强制类型闸门。
+`.js` 脚本导出为 `script/<类型>/<id>.js` （goal 类型为 `goal_scripts/<id>.js`）与同目录 `<id>.hooks.json`。源码中的 import / require / hook / Goal 注解按一行换一行规则转换，强制签名类型在导出时同行剥离，非法方言阻止导出。旁表为 `{version:2,hooks:[{hook,function,line,cancellable,priority,receiveCancelled}],goal:null}`（与引擎 `JavaScriptDialect.Hook` 对齐；编辑器内部的 `functionLine` / `eventType` 不进 PAK）；Goal 目录的 goal 为文件级声明与订阅元数据对象；line 是作者 hook 注解的 1-based 行号。即使没有 hook 也输出空数组；游戏显式按已编译入口核对源码与旁表，原始作者源码则须通过强制类型闸门。
 
 工程 ZIP 保留作者方言源文档，PAK 才包含可执行 JS。全部脚本产物只进入 server / combined PAK，client PAK 不包含脚本或 hook 旁表。旧 Python 内容脚本不会被自动改名后执行；需要显式改写为 JavaScript。

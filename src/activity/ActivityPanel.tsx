@@ -1,6 +1,8 @@
-import { useEffect, useRef, useSyncExternalStore } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import {
   clearActivities,
+  copyActivitiesToClipboard,
+  copyActivityEntryToClipboard,
   dismissActivity,
   getActivitySnapshot,
   setActivityPanelOpen,
@@ -41,11 +43,32 @@ function progressText(entry: ActivityEntry): string | null {
 
 function ActivityRow({ entry }: { entry: ActivityEntry }) {
   const progress = progressText(entry)
+  const [copyHint, setCopyHint] = useState<string | null>(null)
+
+  async function onCopy() {
+    try {
+      await copyActivityEntryToClipboard(entry)
+      setCopyHint('已复制')
+    } catch {
+      setCopyHint('复制失败')
+    }
+    window.setTimeout(() => setCopyHint(null), 1500)
+  }
+
   return (
     <li className={`activity-row is-${entry.kind}${entry.unread ? ' is-unread' : ''}${entry.done ? ' is-done' : ''}`}>
       <div className="activity-row-main">
         <span className="activity-row-kind">{kindLabel(entry.kind)}</span>
         <span className="activity-row-title">{entry.title}</span>
+        <button
+          type="button"
+          className="activity-row-copy"
+          aria-label={entry.clipboardDetail ? '复制此条（含完整详情）' : '复制此条'}
+          title={entry.clipboardDetail ? '复制（含完整详情）' : '复制此条'}
+          onClick={() => void onCopy()}
+        >
+          {copyHint ?? '复制'}
+        </button>
         <button
           type="button"
           className="activity-row-dismiss"
@@ -57,7 +80,7 @@ function ActivityRow({ entry }: { entry: ActivityEntry }) {
       </div>
       {(entry.detail || progress || entry.source) && (
         <div className="activity-row-meta">
-          {entry.detail && <span>{entry.detail}</span>}
+          {entry.detail && <pre className="activity-row-detail">{entry.detail}</pre>}
           {progress && <span className="activity-row-progress">{progress}</span>}
           {entry.source && <span className="activity-row-source">{entry.source}</span>}
           <span className="activity-row-time">{formatTime(entry.at)}</span>
@@ -86,6 +109,7 @@ export function ActivityPanel() {
     getActivitySnapshot,
   )
   const panelRef = useRef<HTMLDivElement>(null)
+  const [copyHint, setCopyHint] = useState<string | null>(null)
 
   useEffect(() => {
     if (!snap.open) return
@@ -106,6 +130,16 @@ export function ActivityPanel() {
     }
   }, [snap.open])
 
+  async function onCopyAll() {
+    try {
+      const ok = await copyActivitiesToClipboard()
+      setCopyHint(ok ? '已复制到剪贴板' : '暂无活动可复制')
+    } catch {
+      setCopyHint('复制失败')
+    }
+    window.setTimeout(() => setCopyHint(null), 2000)
+  }
+
   return (
     <div className="activity-dock" ref={panelRef}>
       {snap.open && (
@@ -113,6 +147,10 @@ export function ActivityPanel() {
           <header className="activity-panel-head">
             <h2>活动</h2>
             <div className="activity-panel-actions">
+              {copyHint && <span className="activity-copy-hint" role="status">{copyHint}</span>}
+              <button type="button" disabled={snap.entries.length === 0} onClick={() => void onCopyAll()}>
+                复制全部
+              </button>
               <button type="button" disabled={snap.entries.length === 0} onClick={() => clearActivities()}>
                 清空
               </button>

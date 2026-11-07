@@ -1,7 +1,11 @@
 export { ActivityPanel } from './ActivityPanel'
 export {
   clearActivities,
+  copyActivitiesToClipboard,
+  copyActivityEntryToClipboard,
   dismissActivity,
+  formatActivitiesForClipboard,
+  formatActivityEntryForClipboard,
   getActivitySnapshot,
   inferActivityKind,
   markActivitiesRead,

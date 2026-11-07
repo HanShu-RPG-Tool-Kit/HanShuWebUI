@@ -1,9 +1,16 @@
 import {parse,tokenizer} from 'acorn'
 export type Hook={hook:string;function:string;line:number;functionLine:number;eventType:string;cancellable:boolean|null;priority:string;receiveCancelled:boolean}
+/** PAK `.hooks.json` hook 行：与 RPGToolKit `JavaScriptDialect.Hook` 字段一致（不含编辑器专用字段）。 */
+export type PakHook={hook:string;function:string;line:number;cancellable:boolean|null;priority:string;receiveCancelled:boolean}
 export type GoalField={name:string;type:string;required:boolean;defaultValue:string|number|boolean|null}
 export type GoalSubscription={event:string;function:string;line:number;priority:string;receiveCancelled:boolean}
 export type GoalMetadata={id:string;line:number;configLine:number;stateLine:number;config:GoalField[];state:GoalField[];handlers:GoalSubscription[]}
 export type DialectDiagnostic={line:number;message:string}
+export type PakScriptMetadata={version:2;hooks:PakHook[];goal:GoalMetadata|null}
+/** 导出旁表：去掉 `functionLine` / `eventType`，避免加载器 JSON 全等比对失败而 RETAINED。 */
+export function pakScriptMetadata(hooks:Hook[],goal:GoalMetadata|null):PakScriptMetadata{
+ return {version:2,hooks:hooks.map(({hook,function:fn,line,cancellable,priority,receiveCancelled})=>({hook,function:fn,line,cancellable,priority,receiveCancelled})),goal}
+}
 const ident='[A-Za-z_$][\\w$]*',typeName=`${ident}(?:\\.${ident})*(?:\\[\\])?`
 const declaration=new RegExp(`^(import|require)\\s+(${ident})\\s+from\\s+(["'])([^"'\\r\\n]+)\\3\\s*;?\\s*(?://.*)?$`)
 const fqcn=/^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)+$/

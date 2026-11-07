@@ -29,6 +29,24 @@ function warnBlock(warnings: string[]): string {
   return `${shown}${more}`
 }
 
+/** 面板短摘要：只露前几条。 */
+function warnSummary(warnings: string[]): string {
+  if (warnings.length === 0) return ''
+  const preview = warnings.slice(0, 3).join('；')
+  const more =
+    warnings.length > 3 ? `；…另有 ${warnings.length - 3} 条（点「复制」可取全文）` : ''
+  return `编译警告 ${warnings.length} 条：${preview}${more}`
+}
+
+/** 复制用：全量警告，不截断。 */
+function warnClipboard(warnings: string[]): string {
+  if (warnings.length === 0) return ''
+  return [
+    `编译警告 ${warnings.length} 条：`,
+    ...warnings.map((w, i) => `${i + 1}. ${w}`),
+  ].join('\n')
+}
+
 function preparedWorkspace() {
   flushProjectEditors()
   return getProjectSession().workspace
@@ -126,15 +144,15 @@ export async function autoPublishPak(): Promise<void> {
     const retained = result.publishedOrSkipped === false
     updateActivity(activityId, {
       kind: retained || warnings.length > 0 ? 'warning' : 'success',
-      title: retained ? '自动发版完成（部分保留旧表）' : '自动发版完成',
-      detail: [
-        summary,
-        warnings.length
-          ? `编译警告 ${warnings.length} 条：${warnings.slice(0, 3).join('；')}`
-          : '',
-      ]
+      title: retained
+        ? '自动发版完成（部分保留旧表）'
+        : warnings.length > 0
+          ? `自动发版完成（${warnings.length} 条编译警告）`
+          : '自动发版完成',
+      detail: [summary, warnSummary(warnings)].filter(Boolean).join('\n'),
+      clipboardDetail: [summary, warnClipboard(warnings)]
         .filter(Boolean)
-        .join('\n'),
+        .join('\n\n'),
       progress: undefined,
       done: true,
     })

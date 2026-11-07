@@ -10,7 +10,13 @@ export type ActivityEntry = {
   at: number
   kind: ActivityKind
   title: string
+  /** 面板展示用短文案 */
   detail?: string
+  /**
+   * 复制时优先使用的完整正文（如全量编译警告）。
+   * 未设则复制 `detail`。
+   */
+  clipboardDetail?: string
   /** 来源工作区或子系统，如 progress / items / project */
   source?: string
   /** 进度任务：确定进度或不确定 */
@@ -85,6 +91,7 @@ export type PushActivityInput = {
   kind?: ActivityKind
   title: string
   detail?: string
+  clipboardDetail?: string
   source?: string
   progress?: ActivityEntry['progress']
   /** 默认：progress 为 false，其余 true */
@@ -104,6 +111,7 @@ export function pushActivity(input: PushActivityInput): string {
     kind,
     title,
     detail: input.detail,
+    clipboardDetail: input.clipboardDetail,
     source: input.source,
     progress: input.progress,
     done,
@@ -124,7 +132,14 @@ export function updateActivity(
   const entry = entries.find((row) => row.id === id)
   if (!entry) return
   Object.assign(entry, patch)
-  if (patch.title !== undefined || patch.detail !== undefined || patch.kind !== undefined || patch.done !== undefined || patch.progress !== undefined) {
+  if (
+    patch.title !== undefined ||
+    patch.detail !== undefined ||
+    patch.clipboardDetail !== undefined ||
+    patch.kind !== undefined ||
+    patch.done !== undefined ||
+    patch.progress !== undefined
+  ) {
     entry.unread = !open
     entry.at = Date.now()
     // 移到顶部
@@ -176,4 +191,53 @@ export function notify(
 ): string {
   const kind = options?.kind ?? inferActivityKind(title)
   return pushActivity({ ...options, title, kind })
+}
+
+function progressLabel(entry: ActivityEntry): string | null {
+  if (!entry.progress) return null
+  if (entry.progress === 'indeterminate') return entry.done ? '已完成' : '进行中'
+  return `${entry.progress.current}/${entry.progress.total}`
+}
+
+/** 单条活动纯文本；有 `clipboardDetail` 时复制完整正文，面板仍只显示 `detail`。 */
+export function formatActivityEntryForClipboard(entry: ActivityEntry): string {
+  const bits = [
+    `[${new Date(entry.at).toISOString()}] ${entry.kind} ${entry.title}`,
+  ]
+  if (entry.source) bits.push(`source=${entry.source}`)
+  const progress = progressLabel(entry)
+  if (progress) bits.push(`progress=${progress}`)
+  const head = bits.join(' · ')
+  const body = entry.clipboardDetail ?? entry.detail
+  return body ? `${head}\n${body}` : head
+}
+
+/** 当前面板内全部活动（新→旧） */
+export function formatActivitiesForClipboard(): string {
+  if (entries.length === 0) return ''
+  const lines = [
+    `# HanShu 活动列表 ${new Date().toISOString()} · ${entries.length} 条`,
+    '',
+  ]
+  for (const entry of entries) {
+    lines.push(formatActivityEntryForClipboard(entry))
+    lines.push('')
+  }
+  return lines.join('\n').trimEnd()
+}
+
+export async function copyActivitiesToClipboard(): Promise<boolean> {
+  const text = formatActivitiesForClipboard()
+  if (!text) return false
+  await navigator.clipboard.writeText(text)
+  return true
+}
+
+export async function copyActivityEntryToClipboard(
+  entry: ActivityEntry,
+): Promise<boolean> {
+  const text = formatActivityEntryForClipboard(entry)
+  if (!text) return false
+  await navigator.clipboard.writeText(text)
+  return true
 }

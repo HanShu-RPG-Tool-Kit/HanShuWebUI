@@ -6,7 +6,7 @@ import {
   sourcePathOf,
 } from '../../../workspace'
 import type { FileCompiler } from '../types'
-import {transformDialect} from '../../../monaco/javascript/dialect'
+import {pakScriptMetadata,transformDialect} from '../../../monaco/javascript/dialect'
 
 /** 未由专用编译器接手的 `src/` 源文件：原样写入对应 kind 目录（`.js` → script/<类型>/） */
 export const identityCompiler: FileCompiler = {
@@ -30,7 +30,7 @@ export const identityCompiler: FileCompiler = {
       const common={plane:defaultPlaneForFile(file.name),packageName:ctx.index.package.name,sourcePath:file.name}
       return [
         {path,bytes:result.source,...common,...(file.srcKind==='goal'?{provides:[{kind:'goalDefFile' as const,id:file.name.slice(0,-3).toLowerCase()}]}:{})},
-        {path:path.slice(0,-3)+'.hooks.json',bytes:JSON.stringify({version:2,hooks:result.hooks,goal:result.goal}),...common},
+        {path:path.slice(0,-3)+'.hooks.json',bytes:JSON.stringify(pakScriptMetadata(result.hooks,result.goal)),...common},
       ]
     }
     return [

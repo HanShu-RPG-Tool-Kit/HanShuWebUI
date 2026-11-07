@@ -7,7 +7,7 @@ import {ensurePackageSections,sectionFolderKey,requireAvailableName,uniqueDocume
 import {withBuiltinScripts,stripBuiltinScripts} from '../src/workspaces/gameplay/scriptResources'
 import {buildGoalDefinitionCatalog} from '../src/workspaces/gameplay/goalDefinitions'
 import {buildCompileGraph} from '../src/export/compile'
-import {transformDialect} from '../src/monaco/javascript/dialect'
+import {pakScriptMetadata,transformDialect} from '../src/monaco/javascript/dialect'
 import {exportPaks} from '../src/export/pack/exportPaks'
 const scripts=SCRIPT_TYPES.map((type,i)=>({id:type,name:'shared.js',srcKind:type,content:type==='goal'?'import Tick from "test.Tick"\n@goal("test:shared")\n@config()\n@state()\n@subscribe(Tick)\nfunction on_tick(instance: GoalInstance,event: Tick): void {}\nfunction update_state(instance: GoalInstance): void {}':`// ${type}`,updatedAt:i}))
 for(const s of scripts){assert.equal(sourcePathOf(s),`src/script/${s.srcKind}/shared.js`);assert.equal(srcKindFromDiskPath(sourcePathOf(s)),s.srcKind);assert(scriptTemplate(s.srcKind as typeof SCRIPT_TYPES[number],'default.js','标题').startsWith('// 标题'))}
@@ -30,6 +30,10 @@ assert.equal(goalTable.version,2);assert.equal(goalTable.goal.id,'test:replaceme
 assert.deepEqual(goalTable.hooks,[])
 const commonTable=JSON.parse(String(graph.artifacts.find(a=>a.path==='script/common/shared.hooks.json')?.bytes))
 assert.deepEqual(commonTable,{version:2,hooks:[],goal:null})
+const hooked=transformDialect('@hook("tick")\nfunction tick(event: any, board: any): void {}\n')
+assert.deepEqual(pakScriptMetadata(hooked.hooks,hooked.goal).hooks[0],{hook:'tick',function:'tick',line:1,cancellable:null,priority:'NORMAL',receiveCancelled:false})
+assert(!('functionLine' in pakScriptMetadata(hooked.hooks,hooked.goal).hooks[0]))
+assert(!('eventType' in pakScriptMetadata(hooked.hooks,hooked.goal).hooks[0]))
 assert.equal(transformDialect(replacement.content).source.split('\n').length,replacement.content.split('\n').length,'export must retain every author line')
 assert.equal(graph.artifacts.filter(a=>(a.path.startsWith('script/')||a.path.startsWith('goal_scripts/'))&&a.path.endsWith('.js')).length,BUILTIN_SCRIPTS.length+scripts.length)
 assert(!graph.artifacts.some(a=>a.path.startsWith('goal/')||a.path.includes('templates/')))

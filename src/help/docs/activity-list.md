@@ -5,10 +5,11 @@
 ## 用户怎么用
 
 - **IDE 统一状态栏最右侧**的铃铛（与 Cursor 通知铃同位置语义；见 [IDE 壳](#ide-chrome)）：未读角标；点击向上弹出活动面板。
-- 面板内按时间倒序列出活动；可单条关闭或「清空」。
+- 面板内按时间倒序列出活动；可单条「复制」/关闭，或顶栏「复制全部」「清空」。详情可选中划词复制。
 - 打开面板视为已读（角标清零）。`Esc` 或点面板外关闭。
+- 面板只显示短 `detail`；若有更长正文（如全量编译警告），点「复制」会带上 `clipboardDetail` 全文。
 
-典型会出现的内容：保存结果、导入/导出、刷新物品快照、资源树操作失败等。
+典型会出现的内容：保存结果、导入/导出、自动发版摘要、刷新物品快照、资源树操作失败等。
 
 活动数据全局一份；铃铛固定在壳状态栏最右，不随工作区再画第二条底栏。不再用悬浮按钮或占编辑区 layout 的横幅。
 
@@ -19,7 +20,7 @@
 | API | 用途 |
 | --- | --- |
 | `notify(title, options?)` | 短提示；可省略 `kind`（按文案推断 success/error/warning/info） |
-| `pushActivity({ title, kind?, detail?, source?, progress?, done?, id? })` | 完整写入；可带稳定 `id` 便于后续更新 |
+| `pushActivity({ title, kind?, detail?, clipboardDetail?, source?, progress?, done?, id? })` | 完整写入；可带稳定 `id`；`clipboardDetail` 仅供复制，面板仍用短 `detail` |
 | `updateActivity(id, patch)` | 更新进度或把 `progress` 标为 `done` |
 | `dismissActivity` / `clearActivities` | 移除 |
 
