@@ -2289,6 +2289,7 @@ export function GameplayWorkspace({
         source={paneDoc.source}
         disabled={disabledPane}
         questOptions={options}
+        itemCatalog={itemCatalog}
         resolveText={paneDoc.key === focusedKey ? resolveLocaleText : undefined}
         setText={paneDoc.key === focusedKey ? setLocaleText : undefined}
         onChange={source => changeSource(source, false, paneDoc.key)}

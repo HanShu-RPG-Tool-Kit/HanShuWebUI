@@ -12,7 +12,7 @@ import './ProgressEditor.css'
 function fieldName(effect: ProgressEffect) {
   const target = effect.target
   if (target.kind === 'locale') return `${target.locale} · ${target.key === 'name' ? '标题' : target.key === 'description' ? '描述' : target.key}`
-  if (target.kind === 'field') return ({ completion: '完成规则', completionGraph: '自定义完成图', authorNotes: '作者备注', tags: '标签', visibility: '可见性条件', acceptance: '可承接条件', hideWhenRepeatUnsatisfied: '周期不满足时不可见', abandonable: '可放弃', autoStartWhenAcceptable: '可承接时自动开始', repeat: '周期', rewardKits: '完成奖励', tracking: '任务追踪文本', name: '标题键', description: '描述键' })[target.field]
+  if (target.kind === 'field') return ({ completion: '完成规则', completionGraph: '自定义完成图', authorNotes: '作者备注', tags: '标签', visibility: '可见性条件', acceptance: '可承接条件', abandonable: '可放弃', autoStartWhenAcceptable: '可承接时自动开始', uiVisible: '在 UI 中可见', uiDiscoverable: '可在 UI 中发现', uiAcceptable: '可在 UI 中承接', uiAbandonable: '可在 UI 中放弃', repeat: '周期', rewardKits: '完成奖励', tracking: '任务追踪文本', name: '标题键', description: '描述键' })[target.field]
   return target.kind === 'goal-config' ? `目标参数 · ${target.key}` : target.kind === 'goal-order' ? '目标顺序' : '目标'
 }
 

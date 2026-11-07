@@ -238,44 +238,31 @@ function parseOneRule(value: unknown, label: string): ProgressConditionRule | { 
   throw new Error(`${label}条件类型无效`)
 }
 
-export type VisibilityParseResult = {
-  rules: ProgressConditionRule[]
-  hideWhenRepeatUnsatisfied: boolean
-}
-
 /**
- * 解析条件数组。可见性里旧 `repeat:satisfied` → hideWhenRepeatUnsatisfied；
- * `repeat:unsatisfied` 与可承接里的 repeat 一律拒绝。
+ * 解析条件数组。可见性里旧 `repeat:satisfied` 叶子直接丢弃；
+ * `repeat:unsatisfied` 与可承接里的 repeat 一律拒绝（周期由引擎投影到可承接）。
  */
-export function parseConditionRules(values: unknown, label: string, options: { allowHideRepeat?: boolean } = {}): VisibilityParseResult {
+export function parseConditionRules(values: unknown, label: string, options: { allowHideRepeat?: boolean } = {}): ProgressConditionRule[] {
   if (!Array.isArray(values)) throw new Error(`${label}必须是条件数组`)
   const allowHideRepeat = options.allowHideRepeat === true
   const rules: ProgressConditionRule[] = []
-  let hideWhenRepeatUnsatisfied = false
   values.forEach((value, index) => {
     const parsed = parseOneRule(value, `${label} ${index + 1}`)
     if (parsed.kind === 'repeat') {
-      if (!allowHideRepeat) throw new Error(`${label}不能写入重复周期；可见性用 hideWhenRepeatUnsatisfied，可承接由引擎投影`)
+      if (!allowHideRepeat) throw new Error(`${label}不能写入重复周期；可承接由引擎投影，可见性请用表达式 repeatSatisfied`)
       if (parsed.state === 'unsatisfied') {
         throw new Error(`${label}不再支持「周期不满足」叶子；请改用表达式 !repeatSatisfied(ctx.player, "<questId>")`)
       }
-      hideWhenRepeatUnsatisfied = true
       return
     }
     rules.push(parsed)
   })
-  return { rules, hideWhenRepeatUnsatisfied }
+  return rules
 }
 
-/** 兼容旧签名：第三参 true=允许从旧 repeat.satisfied 抽出 hide 标志（调用方应改用 parseConditionRules + hide 字段）。 */
+/** 兼容旧签名：第三参 true=允许丢弃可见性里旧的 repeat.satisfied 叶子。 */
 export function parseConditionRuleList(values: unknown, label: string, allowRepeat = false): ProgressConditionRule[] {
-  return parseConditionRules(values, label, { allowHideRepeat: allowRepeat }).rules
-}
-
-export function parseHideWhenRepeatUnsatisfied(value: unknown, fromLegacyVisibility: boolean): boolean {
-  if (value === undefined) return fromLegacyVisibility
-  if (typeof value !== 'boolean') throw new Error('hideWhenRepeatUnsatisfied 必须是布尔值')
-  return value || fromLegacyVisibility
+  return parseConditionRules(values, label, { allowHideRepeat: allowRepeat })
 }
 
 export function emitConditionLeaf(rule: ProgressConditionRule): string {

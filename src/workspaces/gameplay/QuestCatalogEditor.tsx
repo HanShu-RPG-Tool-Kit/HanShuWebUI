@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { Panel, RemoveButton } from './KitEditor'
+import { ItemCatalogContext, ItemList, Panel, RemoveButton } from './KitEditor'
+import { createKitItem, type ItemCatalog } from './kit'
 import { IconButton, JsonRepairPane, PendingBanner, RefBadge, errorText, useSheetDraft } from './SheetParts'
 import {
   QUEST_CATALOG_FILE_NAME,
@@ -21,6 +22,7 @@ export function QuestCatalogEditor({
   source,
   disabled,
   questOptions,
+  itemCatalog,
   resolveText,
   setText,
   onChange,
@@ -30,6 +32,7 @@ export function QuestCatalogEditor({
   source: string
   disabled?: boolean
   questOptions: QuestCatalogOption[]
+  itemCatalog: ItemCatalog
   resolveText?: (key: string) => string
   setText?: (key: string, value: string) => void
   onChange: (source: string) => void
@@ -41,7 +44,7 @@ export function QuestCatalogEditor({
   const { pending, commit, discard } = useSheetDraft(
     source,
     !!disabled,
-    parseQuestCatalog,
+    text => parseQuestCatalog(text, true),
     stringifyQuestCatalog,
     onChange,
   )
@@ -95,94 +98,112 @@ export function QuestCatalogEditor({
     })
   }
 
-  return <div className="flow-kit-pane sheet-editor actor-editor" aria-label={`${QUEST_CATALOG_LABEL}编辑器`}>
-    <div className="kit-editor"><div className="kit-page sheet-page">
-      <header className="kit-header sheet-header">
-        <div className="sheet-heading">
-          <h2>{QUEST_CATALOG_LABEL}</h2>
-          <span className="sheet-kind">{QUEST_CATALOG_FILE_NAME}</span>
-        </div>
-        <span className="sheet-header-hint">固定路径 {QUEST_CATALOG_PATH} · 目录 id 自动生成 · 任务集合无序去重</span>
-        <div className="sheet-header-actions">
-          <button type="button" className="sheet-btn is-quiet" disabled={disabled} onClick={() => { discard(); setRepairing(true) }}>编辑 JSON</button>
-          <button type="button" className="sheet-btn" disabled={disabled} onClick={addDirectory}>+ 添加目录</button>
-        </div>
-      </header>
-      {pending && <PendingBanner issue={pending.issue} onDiscard={discard} />}
-      {doc.directories.length === 0
-        ? <p className="kit-empty">还没有分类目录。添加目录后，把任务加入集合即可在 UI 中按类浏览。</p>
-        : doc.directories.map(directory => {
-          const title = resolveText?.(directory.title) ?? ''
-          const available = questOptions.filter(option => !directory.quests.includes(option.ref))
-          return <Panel
-            key={directory.id}
-            title={title || '未命名目录'}
-            subtitle={`id ${directory.id}`}
-            count={directory.quests.length}
-            className="actor-scripts"
-            action={<select
-              className="sheet-select actor-add-select"
-              aria-label={`向${title || directory.id}添加任务`}
-              value=""
-              disabled={disabled}
-              onChange={e => {
-                if (e.target.value) toggleQuest(directory.id, e.target.value)
-              }}
-            >
-              <option value="">{available.length ? '+ 添加任务…' : questOptions.length ? '已全部添加' : '没有可添加的任务'}</option>
-              {available.map(option => (
-                <option key={option.ref} value={option.ref}>{option.label}</option>
-              ))}
-            </select>}
-          >
-            <label className="kit-name-field">
-              <span className="kit-name-label">标题</span>
-              <input
-                className="kit-title"
-                aria-label="分类目录标题"
-                placeholder="未命名目录"
-                value={title}
-                disabled={disabled || !setText}
-                onChange={e => setText?.(directory.title, e.target.value)}
-              />
-            </label>
-            {directory.quests.length === 0
-              ? <p className="kit-empty">集合为空。从下拉添加任务；同一任务可出现在多个目录。</p>
-              : <ul className="kit-list actor-script-list">
-                {directory.quests.map(questId => {
-                  const option = questOptions.find(item => item.ref === questId)
-                  return <li key={questId} className={`kit-row actor-script-row${option ? '' : ' is-missing'}`}>
-                    <span className="actor-script-name">
-                      <code>{questId}</code>
-                      {option && option.label !== questId && <small>{option.label}</small>}
-                      <RefBadge missing={!option} />
-                    </span>
-                    {option?.key
-                      ? <button type="button" className="sheet-btn is-quiet" onClick={() => onOpenQuest(option.key!)}>打开任务</button>
-                      : <span />}
-                    <span className="actor-row-tools">
-                      <RemoveButton
-                        label={`移除 ${questId}`}
-                        disabled={disabled}
-                        onClick={() => toggleQuest(directory.id, questId)}
-                      />
-                    </span>
-                  </li>
-                })}
-              </ul>}
-            <div className="actor-row-tools" style={{ marginTop: 8 }}>
-              <IconButton
-                label={`删除目录 ${title || directory.id}`}
-                glyph="⌫"
+  return <ItemCatalogContext.Provider value={itemCatalog}>
+    <div className="flow-kit-pane sheet-editor actor-editor" aria-label={`${QUEST_CATALOG_LABEL}编辑器`}>
+      <div className="kit-editor"><div className="kit-page sheet-page">
+        <header className="kit-header sheet-header">
+          <div className="sheet-heading">
+            <h2>{QUEST_CATALOG_LABEL}</h2>
+            <span className="sheet-kind">{QUEST_CATALOG_FILE_NAME}</span>
+          </div>
+          <span className="sheet-header-hint">固定路径 {QUEST_CATALOG_PATH} · 目录 id 自动生成 · 任务集合无序去重</span>
+          <div className="sheet-header-actions">
+            <button type="button" className="sheet-btn is-quiet" disabled={disabled} onClick={() => { discard(); setRepairing(true) }}>编辑 JSON</button>
+            <button type="button" className="sheet-btn" disabled={disabled} onClick={addDirectory}>+ 添加目录</button>
+          </div>
+        </header>
+        {pending && <PendingBanner issue={pending.issue} onDiscard={discard} />}
+        {doc.directories.length === 0
+          ? <p className="kit-empty">还没有分类目录。添加目录后，把任务加入集合即可在 UI 中按类浏览。</p>
+          : doc.directories.map(directory => {
+            const title = resolveText?.(directory.title) ?? ''
+            const available = questOptions.filter(option => !directory.quests.includes(option.ref))
+            return <Panel
+              key={directory.id}
+              title={title || '未命名目录'}
+              subtitle={`id ${directory.id}`}
+              count={directory.quests.length}
+              className="actor-scripts"
+              action={<select
+                className="sheet-select actor-add-select"
+                aria-label={`向${title || directory.id}添加任务`}
+                value=""
                 disabled={disabled}
-                onClick={() => update({ directories: doc.directories.filter(item => item.id !== directory.id) })}
-              />
-            </div>
-          </Panel>
-        })}
-      <p className="sheet-note is-info">
-        <span>目录 id 对作者透明，标题走本地化键。任务集合无序去重；缺失引用导出时记为警告。同一任务可属于多个目录。</span>
-      </p>
-    </div></div>
-  </div>
+                onChange={e => {
+                  if (e.target.value) toggleQuest(directory.id, e.target.value)
+                }}
+              >
+                <option value="">{available.length ? '+ 添加任务…' : questOptions.length ? '已全部添加' : '没有可添加的任务'}</option>
+                {available.map(option => (
+                  <option key={option.ref} value={option.ref}>{option.label}</option>
+                ))}
+              </select>}
+            >
+              <label className="kit-name-field">
+                <span className="kit-name-label">标题</span>
+                <input
+                  className="kit-title"
+                  aria-label="分类目录标题"
+                  placeholder="未命名目录"
+                  value={title}
+                  disabled={disabled || !setText}
+                  onChange={e => setText?.(directory.title, e.target.value)}
+                />
+              </label>
+              <Panel
+                title="图标"
+                subtitle="分类书签显示的物品 · 留空使用书本"
+                className="shop-icon-slot"
+                action={!directory.icon ? <button type="button" className="sheet-btn" disabled={disabled} onClick={() => patchDirectory(directory.id, { icon: createKitItem() })}>设置图标</button> : undefined}
+              >
+                <ItemList
+                  items={directory.icon ? [directory.icon] : []}
+                  singleItem
+                  disabled={disabled}
+                  emptyText="未设置 · 客户端用默认书本"
+                  onChange={items => patchDirectory(directory.id, {
+                    icon: items[0] ? { ...items[0], count: 1, mods: undefined } : null,
+                  })}
+                />
+              </Panel>
+              {directory.quests.length === 0
+                ? <p className="kit-empty">集合为空。从下拉添加任务；同一任务可出现在多个目录。</p>
+                : <ul className="kit-list actor-script-list">
+                  {directory.quests.map(questId => {
+                    const option = questOptions.find(item => item.ref === questId)
+                    return <li key={questId} className={`kit-row actor-script-row${option ? '' : ' is-missing'}`}>
+                      <span className="actor-script-name">
+                        <code>{questId}</code>
+                        {option && option.label !== questId && <small>{option.label}</small>}
+                        <RefBadge missing={!option} />
+                      </span>
+                      {option?.key
+                        ? <button type="button" className="sheet-btn is-quiet" onClick={() => onOpenQuest(option.key!)}>打开任务</button>
+                        : <span />}
+                      <span className="actor-row-tools">
+                        <RemoveButton
+                          label={`移除 ${questId}`}
+                          disabled={disabled}
+                          onClick={() => toggleQuest(directory.id, questId)}
+                        />
+                      </span>
+                    </li>
+                  })}
+                </ul>}
+              <div className="actor-row-tools" style={{ marginTop: 8 }}>
+                <IconButton
+                  label={`删除目录 ${title || directory.id}`}
+                  glyph="⌫"
+                  disabled={disabled}
+                  onClick={() => update({ directories: doc.directories.filter(item => item.id !== directory.id) })}
+                />
+              </div>
+            </Panel>
+          })}
+        <p className="sheet-note is-info">
+          <span>目录 id 对作者透明，标题走本地化键。图标与商店模板相同（物品模板链接或内嵌 ItemStack）。任务集合无序去重；缺失引用导出时记为警告。同一任务可属于多个目录。</span>
+        </p>
+      </div></div>
+    </div>
+  </ItemCatalogContext.Provider>
 }

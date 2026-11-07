@@ -171,9 +171,12 @@ export function NodeFormView({ flow, nodeId, kind, active = false, disabled = fa
         <h2>周期与策略</h2>
         <label className="flow-field"><span>重复方式</span><select aria-label="重复方式" disabled={disabled} value={node.repeat?.kind ?? 'once'} onChange={event => update(next => { next.progress[nodeId].repeat = { kind: event.target.value as ProgressRepeatKind, hours: next.progress[nodeId].repeat?.hours ?? 24 } })}>{Object.entries(PROGRESS_REPEAT_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
         {(node.repeat?.kind ?? 'once') === 'duration' && <label className="flow-field"><span>间隔（小时）</span><input type="number" aria-label="重复间隔小时" min={0.01} step="any" disabled={disabled} value={node.repeat?.hours ?? 24} onChange={event => update(next => { next.progress[nodeId].repeat = { kind: 'duration', hours: Number(event.target.value) || 24 } })} /></label>}
+        <label className="progress-abandon-switch"><span>在 UI 中可见</span><input type="checkbox" role="switch" aria-label="在 UI 中可见" disabled={disabled} checked={node.uiVisible ?? true} onChange={event => update(next => { next.progress[nodeId].uiVisible = event.target.checked })} /></label>
+        <label className="progress-abandon-switch"><span>可在 UI 中发现</span><input type="checkbox" role="switch" aria-label="可在 UI 中发现" disabled={disabled} checked={node.uiDiscoverable ?? false} onChange={event => update(next => { next.progress[nodeId].uiDiscoverable = event.target.checked })} /></label>
+        <label className="progress-abandon-switch"><span>可在 UI 中承接</span><input type="checkbox" role="switch" aria-label="可在 UI 中承接" disabled={disabled} checked={node.uiAcceptable ?? false} onChange={event => update(next => { next.progress[nodeId].uiAcceptable = event.target.checked })} /></label>
+        <label className="progress-abandon-switch"><span>可在 UI 中放弃</span><input type="checkbox" role="switch" aria-label="可在 UI 中放弃" disabled={disabled} checked={node.uiAbandonable ?? false} onChange={event => update(next => { next.progress[nodeId].uiAbandonable = event.target.checked })} /></label>
         <label className="progress-abandon-switch"><span>可承接时自动开始</span><input type="checkbox" role="switch" aria-label="可承接时自动开始" disabled={disabled} checked={node.autoStartWhenAcceptable ?? false} onChange={event => update(next => { next.progress[nodeId].autoStartWhenAcceptable = event.target.checked })} /></label>
-        <label className="progress-abandon-switch"><span>可放弃</span><input type="checkbox" role="switch" aria-label="可放弃" disabled={disabled} checked={node.abandonable ?? true} onChange={event => update(next => { next.progress[nodeId].abandonable = event.target.checked })} /></label>
-        <label className="progress-abandon-switch"><span>周期不满足时不可见</span><input type="checkbox" role="switch" aria-label="周期不满足时不可见" disabled={disabled} checked={node.hideWhenRepeatUnsatisfied ?? false} onChange={event => update(next => { next.progress[nodeId].hideWhenRepeatUnsatisfied = event.target.checked })} /></label>
+        <label className="progress-abandon-switch"><span>可放弃</span><input type="checkbox" role="switch" aria-label="可放弃" disabled={disabled} checked={node.abandonable ?? false} onChange={event => update(next => { next.progress[nodeId].abandonable = event.target.checked })} /></label>
         <label className="flow-field"><span>标签（逗号分隔）</span><input aria-label="任务标签" disabled={disabled} value={(node.tags ?? []).join(', ')} onChange={event => update(next => { next.progress[nodeId].tags = event.target.value.split(',').map(tag => tag.trim()).filter(Boolean) })} /></label>
       </>}
       </section>
@@ -298,7 +301,6 @@ export function NodeFormView({ flow, nodeId, kind, active = false, disabled = fa
       <TextField label="内部名" value={node.internalName} disabled={disabled} onChange={internalName => update(next => { next.ends![nodeId].internalName = internalName })} />
       {endInternalNameIssue(flow, nodeId, node.internalName) && <p className="progress-inline-warning" role="alert">{endInternalNameIssue(flow, nodeId, node.internalName)}</p>}
       <p className="flow-hint">写入 questc 的 internalName；与进度／目标标识符隔离，允许多个结局同名。</p>
-      {authorText('结局标题', node.title, (next, field) => { next.ends![nodeId].title = field })}
       <section className="node-form-section">
         <header>奖励礼包</header>
         {node.rewardKits.length === 0 && <p className="flow-hint">还没有奖励。</p>}

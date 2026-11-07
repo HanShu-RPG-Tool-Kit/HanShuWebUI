@@ -45,6 +45,18 @@ const parsed = parseQuestCatalog(stringifyQuestCatalog({
   directories: [{ ...directory, quests: ['b', 'a'] }],
 }))
 assert.deepEqual(parsed.directories[0]!.quests, ['a', 'b'])
+assert.equal(parsed.directories[0]!.icon, null)
+
+const withIcon = parseQuestCatalog(stringifyQuestCatalog({
+  ...empty,
+  directories: [{
+    ...directory,
+    icon: { item: '', id: 'minecraft:writable_book', count: 1, components: {} },
+    quests: ['intro'],
+  }],
+}))
+assert.equal(withIcon.directories[0]!.icon?.id, 'minecraft:writable_book')
+assert.equal(withIcon.directories[0]!.icon?.count, 1)
 
 for (const bad of [
   { version: 2 },

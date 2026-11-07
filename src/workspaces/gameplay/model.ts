@@ -1,7 +1,7 @@
 import { randomId } from '../../project/crypto'
 import { parseJsonValue } from '../../utils/strictJson'
 import { parseCompletionGraph, type CompletionGraph } from './completionGraph'
-import { conditionRuleIssue, parseConditionRules, parseHideWhenRepeatUnsatisfied, type ProgressConditionRule } from './conditions'
+import { conditionRuleIssue, parseConditionRules, type ProgressConditionRule } from './conditions'
 import { parseProgressTracking, type ProgressRepeatKind, type ProgressTracking } from './progressDoc'
 import { matchInjectLine } from '../../hanshu/hsSyntaxRules'
 
@@ -65,9 +65,16 @@ export type FlowProgressNode = {
   clusters?: FlowProgressCluster[]
   visibility?: ProgressConditionRule[]
   acceptance?: ProgressConditionRule[]
-  hideWhenRepeatUnsatisfied?: boolean
   abandonable?: boolean
   autoStartWhenAcceptable?: boolean
+  /** 任务在玩家 UI 中是否可见；缺省 true。 */
+  uiVisible?: boolean
+  /** 是否可在玩家 UI 中被发现；缺省 false。 */
+  uiDiscoverable?: boolean
+  /** 是否可在玩家 UI 中承接；缺省 false。 */
+  uiAcceptable?: boolean
+  /** 是否可在玩家 UI 中放弃；缺省 false。 */
+  uiAbandonable?: boolean
   repeat?: { kind: ProgressRepeatKind; hours: number }
   extensions?: Data
 }
@@ -98,11 +105,10 @@ export function flowSubmissionIssue(submission: FlowSubmission): string | null {
 export type FlowObjectiveNode = { identifier: string; goal: Omit<FlowProgressGoal, 'id'>; submission?: FlowSubmission; extensions?: Data }
 /** 逻辑节点：左端口 并且 / 或者 收 A，右端口发 A；无内容。 */
 export type FlowTransitionNode = { extensions?: Data }
-/** 结束节点：成功入 / 失败入，决定任务终局；携带内部名、结局标题与奖励礼包。 */
+/** 结束节点：成功入 / 失败入，决定任务终局；携带内部名与奖励礼包。 */
 export type FlowEndNode = {
   /** 运行时内部名；写入 questc `end.internalName`。自有命名空间，允许与其它结束节点重复。 */
   internalName: string
-  title: FlowText
   rewardKits: string[]
   extensions?: Data
 }
@@ -250,9 +256,12 @@ export function createFlow(id = randomId(), questTitle = '新的进度流程'): 
         clusters: [],
         visibility: [],
         acceptance: [],
-        hideWhenRepeatUnsatisfied: false,
-        abandonable: true,
+        abandonable: false,
         autoStartWhenAcceptable: false,
+        uiVisible: true,
+        uiDiscoverable: false,
+        uiAcceptable: false,
+        uiAbandonable: false,
         repeat: { kind: 'once', hours: 24 },
       },
     },
@@ -321,7 +330,7 @@ export function flowNodeLabel(flow: ProgressFlow, id: string, resolveText?: (key
   const objective = getObjectiveNode(flow, id)
   if (objective) return objective.identifier || '未填写目标标识符'
   const end = getEndNode(flow, id)
-  if (end) return displayText(end.title, resolveText) || '未命名结局'
+  if (end) return end.internalName?.trim() || '未命名结局'
   return getTransitionNode(flow, id) ? '逻辑' : id
 }
 
@@ -367,7 +376,7 @@ export function parseFlow(source: string): ProgressFlow {
     checkText(node.completedLog, `progress.${id}.completedLog`)
     try { raw.tracking = parseProgressTracking(raw.tracking) }
     catch (error) { throw new Error(`progress.${id}.tracking：${error instanceof Error ? error.message : String(error)}`) }
-    const policyKeys = ['tags', 'clusters', 'visibility', 'acceptance', 'hideWhenRepeatUnsatisfied', 'abandonable', 'autoStartWhenAcceptable', 'repeat'] as const
+    const policyKeys = ['tags', 'clusters', 'visibility', 'acceptance', 'abandonable', 'autoStartWhenAcceptable', 'uiVisible', 'uiDiscoverable', 'uiAcceptable', 'uiAbandonable', 'repeat'] as const
     if (start) {
       checkText(node.questTitle, `progress.${id}.questTitle`)
       checkText(node.description, `progress.${id}.description`)
@@ -375,9 +384,14 @@ export function parseFlow(source: string): ProgressFlow {
       if (!Object.hasOwn(raw, 'clusters')) raw.clusters = []
       if (!Object.hasOwn(raw, 'visibility')) raw.visibility = []
       if (!Object.hasOwn(raw, 'acceptance')) raw.acceptance = []
-      if (!Object.hasOwn(raw, 'abandonable')) raw.abandonable = true
+      if (!Object.hasOwn(raw, 'abandonable')) raw.abandonable = false
       if (!Object.hasOwn(raw, 'autoStartWhenAcceptable')) raw.autoStartWhenAcceptable = false
+      if (!Object.hasOwn(raw, 'uiVisible')) raw.uiVisible = true
+      if (!Object.hasOwn(raw, 'uiDiscoverable')) raw.uiDiscoverable = false
+      if (!Object.hasOwn(raw, 'uiAcceptable')) raw.uiAcceptable = false
+      if (!Object.hasOwn(raw, 'uiAbandonable')) raw.uiAbandonable = false
       if (!Object.hasOwn(raw, 'repeat')) raw.repeat = { kind: 'once', hours: 24 }
+      delete raw.hideWhenRepeatUnsatisfied
       require(Array.isArray(raw.tags) && raw.tags.every(tag => typeof tag === 'string'), `progress.${id}.tags`)
       require(Array.isArray(raw.clusters), `progress.${id}.clusters`)
       const clusterIds = new Set<string>()
@@ -389,12 +403,14 @@ export function parseFlow(source: string): ProgressFlow {
         clusterIds.add(clusterId)
         return { id: clusterId }
       })
-      const visibilityParsed = parseConditionRules(raw.visibility, `progress.${id}.visibility`, { allowHideRepeat: true })
-      raw.visibility = visibilityParsed.rules
-      raw.acceptance = parseConditionRules(raw.acceptance, `progress.${id}.acceptance`).rules
-      raw.hideWhenRepeatUnsatisfied = parseHideWhenRepeatUnsatisfied(raw.hideWhenRepeatUnsatisfied, visibilityParsed.hideWhenRepeatUnsatisfied)
+      raw.visibility = parseConditionRules(raw.visibility, `progress.${id}.visibility`, { allowHideRepeat: true })
+      raw.acceptance = parseConditionRules(raw.acceptance, `progress.${id}.acceptance`)
       require(typeof raw.abandonable === 'boolean', `progress.${id}.abandonable`)
       require(typeof raw.autoStartWhenAcceptable === 'boolean', `progress.${id}.autoStartWhenAcceptable`)
+      require(typeof raw.uiVisible === 'boolean', `progress.${id}.uiVisible`)
+      require(typeof raw.uiDiscoverable === 'boolean', `progress.${id}.uiDiscoverable`)
+      require(typeof raw.uiAcceptable === 'boolean', `progress.${id}.uiAcceptable`)
+      require(typeof raw.uiAbandonable === 'boolean', `progress.${id}.uiAbandonable`)
       require(isObject(raw.repeat) && PROGRESS_REPEAT_KINDS.has(String((raw.repeat as { kind?: unknown }).kind)), `progress.${id}.repeat`)
       const hours = (raw.repeat as { kind: string; hours?: unknown }).kind === 'duration' ? (raw.repeat as { hours?: unknown }).hours : 24
       require(typeof hours === 'number' && Number.isFinite(hours) && hours > 0, `progress.${id}.repeat.hours`)
@@ -464,7 +480,7 @@ export function parseFlow(source: string): ProgressFlow {
       require(raw.identifier === undefined || typeof raw.identifier === 'string', `predicates.${id}.identifier`)
       checkExtensions(raw, `predicates.${id}`)
       if (Object.hasOwn(raw, 'title')) { checkText(raw.title, `predicates.${id}.title`); delete raw.title }
-      node.conditions = parseConditionRules(raw.conditions, '条件节点').rules
+      node.conditions = parseConditionRules(raw.conditions, '条件节点')
     }
   }
   if (f.transitions !== undefined) {
@@ -498,9 +514,9 @@ export function parseFlow(source: string): ProgressFlow {
         usedEndNames.add(raw.internalName)
       }
       require(Object.keys(raw).every(key => ['internalName', 'title', 'rewardKits', 'extensions'].includes(key)), `ends.${id}（不支持旧草稿字段）`)
+      delete raw.title
       checkExtensions(raw, `ends.${id}`)
       require(typeof node.internalName === 'string', `ends.${id}.internalName`)
-      checkText(node.title, `ends.${id}.title`)
       checkKits(node.rewardKits, `ends.${id}.rewardKits`)
     }
   }

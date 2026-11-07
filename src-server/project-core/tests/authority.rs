@@ -277,7 +277,6 @@ fn expression_conditions_match_the_progress_editor_contract() {
         {"kind":"expr","source":"ctx.player.experienceLevel >= 5"}
     ]);
     doc["acceptance"] = serde_json::json!([{"kind":"talk","op":"read","injectId":"intro"}]);
-    doc["hideWhenRepeatUnsatisfied"] = serde_json::json!(true);
     e.create_resource(
         &owner,
         None,

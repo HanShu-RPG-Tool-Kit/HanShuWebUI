@@ -121,10 +121,11 @@ export function ensureFlowLocaleKeys(flow: ProgressFlow): {
   }
 
   if (flow.ends) {
-    next.ends = Object.fromEntries(Object.entries(flow.ends).map(([id, node]) => [id, {
-      ...node,
-      title: migrateFlowText(node.title, flowNodeFieldKey('ends', id, 'title'), seeds),
-    }]))
+    next.ends = Object.fromEntries(Object.entries(flow.ends).map(([id, node]) => {
+      const { title: _dropped, ...rest } = node as typeof node & { title?: unknown }
+      void _dropped
+      return [id, rest]
+    }))
   }
 
   return { flow: next, seeds }
@@ -156,7 +157,8 @@ export function flowNodeLocaleSeeds(
   id: string,
   title: string,
 ): Record<string, string> {
-  return collection === 'ends' ? { [flowNodeFieldKey(collection, id, 'title')]: title } : {}
+  void collection; void id; void title
+  return {}
 }
 
 /** 节点 ID 重命名时，.lang 内键的搬家列表 */
@@ -168,7 +170,7 @@ export function flowNodeLocaleKeyMoves(
     progress: ['runningLog', 'completedLog', 'questTitle', 'description', 'tracking'],
     predicates: [],
     objectives: [],
-    ends: ['title'],
+    ends: [],
   }
   const moves: Array<[string, string]> = []
   for (const [collection, keys] of Object.entries(fields) as Array<['progress' | 'predicates' | 'objectives' | 'ends', readonly string[]]>) {

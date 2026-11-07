@@ -5,7 +5,7 @@ export type { ProgressSlot, ProgressTarget, ProgressEffect, ProgressCommand, Pro
 export type { ProgressAcknowledgement } from '../../project/serviceClient'
 
 export type ProgressState = { source: string; languages: Record<string, Record<string, string>> }
-const fields = ['name', 'description', 'authorNotes', 'tags', 'completion', 'completionGraph', 'visibility', 'acceptance', 'hideWhenRepeatUnsatisfied', 'abandonable', 'autoStartWhenAcceptable', 'repeat', 'rewardKits', 'tracking'] as const
+const fields = ['name', 'description', 'authorNotes', 'tags', 'completion', 'completionGraph', 'visibility', 'acceptance', 'abandonable', 'autoStartWhenAcceptable', 'uiVisible', 'uiDiscoverable', 'uiAcceptable', 'uiAbandonable', 'repeat', 'rewardKits', 'tracking'] as const
 const clone = <T,>(value: T): T => structuredClone(value)
 export const sameProgressValue = (a: unknown, b: unknown): boolean => {
   if (Object.is(a, b)) return true

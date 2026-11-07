@@ -66,10 +66,10 @@ export function ProgressNode({ node: view, selected, dragging }: NodeViewProps) 
   const end = getEndNode(flow, id)
   if (end) {
     const outcome = S.endOutcome(sim, id)
-    const title = displayText(end.title, resolveText)
+    const title = end.internalName?.trim() || '未命名结局'
     return <NodeFrame selected={selected} dragging={dragging} data-end-outcome={outcome ?? undefined} className={`flow-graph-node is-end${outcome ? ' is-reached' : ''}${draftClass}`}>
       <NodeHeader className="flow-graph-node-header" icon="■" title="结束" badge={draftTag ?? (outcome ? <span className="flow-graph-header-tag">{outcome === 'success' ? '成功' : '失败'}</span> : undefined)} />
-      <span className="flow-graph-node-title" title={title}>{title || '未命名结局'}</span>
+      <span className="flow-graph-node-title" title={title}>{title}</span>
       <div className="flow-graph-node-port-band" />
       {ports}
     </NodeFrame>

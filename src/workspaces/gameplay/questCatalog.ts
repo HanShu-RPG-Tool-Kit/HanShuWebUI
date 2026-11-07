@@ -3,6 +3,7 @@ import { randomId } from '../../project/crypto'
 import { isQuestCatalogFileName } from '../../workspace'
 import { parseFlatResourceId } from './actor'
 import { isObject } from './model'
+import { parseKit, writeKitItem, type KitItem } from './kit'
 
 export const QUEST_CATALOG_FORMAT = 'hanshu.quest-catalog' as const
 export const QUEST_CATALOG_FILE_NAME = 'catalog.json'
@@ -16,6 +17,8 @@ export type QuestCatalogDirectory = {
   id: string
   /** 语义键 `directories.<id>.title` */
   title: string
+  /** 分类书签图标；null＝客户端用默认书本。形状与商店模板 icon 相同。 */
+  icon: KitItem | null
   /** 无序去重集合；落盘时排序保证稳定 */
   quests: string[]
 }
@@ -45,7 +48,7 @@ export function createQuestCatalogDirectory(seedTitle = '新建目录'): {
   const id = randomId()
   const title = questCatalogTitleKey(id)
   return {
-    directory: { id, title, quests: [] },
+    directory: { id, title, icon: null, quests: [] },
     localeSeeds: { [title]: seedTitle },
   }
 }
@@ -54,19 +57,46 @@ function uniqueSorted(ids: string[]): string[] {
   return [...new Set(ids)].sort((a, b) => a.localeCompare(b, 'en'))
 }
 
+function parseDirectoryIcon(raw: unknown, label: string, draft: boolean): KitItem | null {
+  if (raw === undefined || raw === null) return null
+  if (!isObject(raw)) throw new Error(`${label} 图标必须是一个物品或 null`)
+  for (const field of ['item', 'id']) {
+    if (raw[field] !== undefined && typeof raw[field] !== 'string') {
+      throw new Error(`${label} 图标 ${field} 必须是字符串`)
+    }
+  }
+  if ('virtual' in raw || 'virtualItem' in raw) throw new Error(`${label} 图标必须是实际物品`)
+  if (raw.mods !== undefined && (!isObject(raw.mods) || Object.keys(raw.mods).length > 0)) {
+    throw new Error(`${label} 图标不支持数量修饰器`)
+  }
+  const iconData = parseKit(JSON.stringify({ items: [{ ...raw, count: 1 }] })).items[0]
+  if (iconData.item?.trim() || iconData.id.trim() || draft) {
+    return { ...iconData, count: 1, mods: undefined }
+  }
+  return null
+}
+
 export function stringifyQuestCatalog(doc: QuestCatalogDocument): string {
   return `${JSON.stringify({
     format: QUEST_CATALOG_FORMAT,
     version: 1,
-    directories: doc.directories.map(directory => ({
-      id: directory.id,
-      title: directory.title,
-      quests: uniqueSorted(directory.quests),
-    })),
+    directories: doc.directories.map(directory => {
+      const entry: Record<string, unknown> = {
+        id: directory.id,
+        title: directory.title,
+        quests: uniqueSorted(directory.quests),
+      }
+      if (directory.icon && (directory.icon.item?.trim() || directory.icon.id.trim())) {
+        entry.icon = writeKitItem({ ...directory.icon, count: 1, mods: undefined })
+      } else {
+        entry.icon = null
+      }
+      return entry
+    }),
   }, null, 2)}\n`
 }
 
-export function parseQuestCatalog(source: string): QuestCatalogDocument {
+export function parseQuestCatalog(source: string, draft = false): QuestCatalogDocument {
   const raw = parseJsonValue(
     source.trim()
       ? source
@@ -86,7 +116,7 @@ export function parseQuestCatalog(source: string): QuestCatalogDocument {
   for (const [index, entry] of raw.directories.entries()) {
     if (!isObject(entry)) throw new Error(`任务分类目录 #${index + 1} 必须是对象`)
     for (const key of Object.keys(entry)) {
-      if (key !== 'id' && key !== 'title' && key !== 'quests') {
+      if (key !== 'id' && key !== 'title' && key !== 'quests' && key !== 'icon') {
         throw new Error(`任务分类目录未知字段：${key}`)
       }
     }
@@ -107,7 +137,8 @@ export function parseQuestCatalog(source: string): QuestCatalogDocument {
     if (new Set(quests).size !== quests.length) {
       throw new Error(`任务分类目录 ${id} 不能重复引用同一任务`)
     }
-    directories.push({ id, title: entry.title, quests: uniqueSorted(quests) })
+    const icon = parseDirectoryIcon(entry.icon, `任务分类目录 ${id}`, draft)
+    directories.push({ id, title: entry.title, icon, quests: uniqueSorted(quests) })
   }
   return { format: QUEST_CATALOG_FORMAT, version: 1, directories }
 }

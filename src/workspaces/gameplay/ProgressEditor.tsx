@@ -381,9 +381,12 @@ export function ProgressEditor({ doc, goalCatalog, kitOptions = [], disabled, on
           <div className="progress-card-body progress-lifecycle"><label className="progress-field"><span>重复方式</span><select aria-label="重复方式" value={doc.repeat.kind} onChange={event => update({ repeat: { ...doc.repeat, kind: event.target.value as ProgressRepeatKind } })}>{Object.entries(PROGRESS_REPEAT_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
               {doc.repeat.kind === 'duration' && <label className="progress-field"><span>间隔（小时）</span><NumberInput label="重复间隔小时" min={0.01} value={doc.repeat.hours} onChange={hours => { if (hours !== undefined) update({ repeat: { ...doc.repeat, hours } }) }} /></label>}
               <div className="progress-lifecycle-switches">
+                <label className="progress-abandon-switch"><span>在 UI 中可见</span><input type="checkbox" role="switch" aria-label="在 UI 中可见" checked={doc.uiVisible} onChange={event => update({ uiVisible: event.target.checked })} /></label>
+                <label className="progress-abandon-switch"><span>可在 UI 中发现</span><input type="checkbox" role="switch" aria-label="可在 UI 中发现" checked={doc.uiDiscoverable} onChange={event => update({ uiDiscoverable: event.target.checked })} /></label>
+                <label className="progress-abandon-switch"><span>可在 UI 中承接</span><input type="checkbox" role="switch" aria-label="可在 UI 中承接" checked={doc.uiAcceptable} onChange={event => update({ uiAcceptable: event.target.checked })} /></label>
+                <label className="progress-abandon-switch"><span>可在 UI 中放弃</span><input type="checkbox" role="switch" aria-label="可在 UI 中放弃" checked={doc.uiAbandonable} onChange={event => update({ uiAbandonable: event.target.checked })} /></label>
                 <label className="progress-abandon-switch"><span>可承接时自动开始</span><input type="checkbox" role="switch" aria-label="可承接时自动开始" checked={doc.autoStartWhenAcceptable} onChange={event => update({ autoStartWhenAcceptable: event.target.checked })} /></label>
                 <label className="progress-abandon-switch"><span>可放弃</span><input type="checkbox" role="switch" aria-label="可放弃" checked={doc.abandonable} onChange={event => update({ abandonable: event.target.checked })} /></label>
-                <label className="progress-abandon-switch"><span>周期不满足时不可见</span><input type="checkbox" role="switch" aria-label="周期不满足时不可见" checked={doc.hideWhenRepeatUnsatisfied} onChange={event => update({ hideWhenRepeatUnsatisfied: event.target.checked })} /></label>
               </div>
           </div>
         </section>

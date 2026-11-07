@@ -17,7 +17,7 @@
 
 - 节点 ID 在整张图内唯一（跨集合也不能重名）。
 - **唯一连接约束**：只能从右端口连到左端口，且**不能成环（含自环）**。连接时直接拒绝；文档里手写出环是校验 error。
-- **内容**：只有开始进度节点有 `questTitle` / `description`，以及任务级策略 `tags` / `clusters` / `visibility` / `acceptance` / `hideWhenRepeatUnsatisfied` / `abandonable` / `autoStartWhenAcceptable` / `repeat`（编译进 questc `metadata`；条件组导出为表达式字符串）；所有进度节点有 `identifier` / `runningLog`（进行时日志）/ `completedLog`（完成时日志）/ `goals` / `completion` / `tracking`（`auto`｜`manual`；手动文案键约定 `progress.<id>.tracking`，不写入文档；编译进 questc 仅 `mode`）／可选 `clusterId`（引用开始节点簇表，至多一个）；结束节点有 `internalName` / `title` / `rewardKits`（`internalName` 编译进 questc，见[流程模型](#progress-flow-model)）；条件只有 `conditions`（导出为表达式字符串），没有标题。进度标识符是非本地化字符串；任务标题、说明、日志与结局标题仍是可本地化的 `FlowText`。
+- **内容**：只有开始进度节点有 `questTitle` / `description`，以及任务级策略 `tags` / `clusters` / `visibility` / `acceptance` / `abandonable` / `autoStartWhenAcceptable` / `uiVisible` / `uiDiscoverable` / `uiAcceptable` / `uiAbandonable` / `repeat`（编译进 questc `metadata`；条件组导出为表达式字符串）；所有进度节点有 `identifier` / `runningLog`（进行时日志）/ `completedLog`（完成时日志）/ `goals` / `completion` / `tracking`（`auto`｜`manual`；手动文案键约定 `progress.<id>.tracking`，不写入文档；编译进 questc 仅 `mode`）／可选 `clusterId`（引用开始节点簇表，至多一个）；结束节点有 `internalName` / `rewardKits`（`internalName` 编译进 questc，见[流程模型](#progress-flow-model)）；条件只有 `conditions`（导出为表达式字符串），没有标题。进度标识符是非本地化字符串；任务标题、说明与日志仍是可本地化的 `FlowText`。
 
 ## 2. 节点族总表
 
@@ -39,12 +39,12 @@
 - **没有左端口**，所以任何线都连不进去；不能靠 A 激活。
 - 任务开始时（模拟器「触发开始」）**直接进入运行中**。
 - 有两个右端口（成功 / 失败），和普通进度一样可以结算；结算后沿对应端口发 A。
-- 额外内容：`questTitle`（任务标题）、`description`（任务说明），以及与单进度相同的任务级策略（周期、可放弃、可承接时自动开始、可见性 / 可承接条件、标签），外加任务级 **进度簇** 表 `clusters: { id }[]`（UUID；标题文案键约定 `clusters.<id>`，不写入 `.quest`）。这些策略描述整张任务，不描述后续阶段进度节点。
+- 额外内容：`questTitle`（任务标题）、`description`（任务说明），以及与单进度相同的任务级策略（周期、可放弃、可承接时自动开始、UI 可见／发现／承接／放弃、可见性 / 可承接条件、标签），外加任务级 **进度簇** 表 `clusters: { id }[]`（UUID；标题文案键约定 `clusters.<id>`，不写入 `.quest`）。这些策略描述整张任务，不描述后续阶段进度节点。
 
 ### 2.2 进度节点
 
 - 一个左端口 `input`（多线），两个右端口 `output` 成功 / `output2` 失败（各多线）。
-- 内容：`identifier`（进度标识符）、`runningLog`（运行中显示的任务日志）、`completedLog`（结算时显示的日志）、`goals`、`completion`（`all` / `any` / `custom`，自定义时带 `completionGraph`）、可选 `clusterId`（零或一个，必须存在于开始节点 `clusters`）。`completion` 语义与[任务文档](#progress-document)相同：成功侧表示进入**可交付态**（有 `submission` 则等提交，无则自动交付并已成功）；失败侧直接失败结算。空 `goals` 运行时错误。进度结束后挂载 goals 随之关闭。开始进度同样可选 `clusterId`。
+- 内容：`identifier`（进度标识符）、`runningLog`（进入运行时追加的任务日志）、`completedLog`（结算／取消／终止时追加的日志）、`goals`、`completion`（`all` / `any` / `custom`，自定义时带 `completionGraph`）、可选 `clusterId`（零或一个，必须存在于开始节点 `clusters`）。`completion` 语义与[任务文档](#progress-document)相同：成功侧表示进入**可交付态**（有 `submission` 则等提交，无则自动交付并已成功）；失败侧直接失败结算。空 `goals` 运行时错误。进度结束后挂载 goals 随之关闭。开始进度同样可选 `clusterId`。运行时日志为追加式，顺序写入实例 `snapshot.progressLog`（见 Mod `docs/quest.md`），同一进度的进行时与完成时可同时留在手账中。
 - 标识符在同一 quest 内唯一（包括开始进度与草稿节点），区分大小写；必须非空、无首尾空白、不含换行或制表符，最多 200 字符。不进入 `.lang`，也不随语言切换。内部节点 ID 与标识符分离，改标识符不影响连线。重复或非法值是校验 error，编辑时显示即时提示，模拟与导出前必须修正。
 - 收 **A**（`input`）：未激活 → 运行中，**同时向左端口发 C**（激活即消费输入：上游不必再为它等待或重复触发）。其它状态下的 A 忽略。
 - 结算（模拟器手动）：运行中 → 已成功 / 已失败，并从对应端口发 **A**。
@@ -121,7 +121,7 @@
 - 两个左端口：`input` 成功入、`input2` 失败入，均可多线。
 - 收 **A**：从哪个入口进来就记录哪种任务终局；第一个有效投递锁存整个 quest 的 `{endId,result}`，立即终止传播。尚未投递的信号进入丢弃记录，不再送达，不覆盖终局。
 - 终局前已处理的状态保留；其他运行中进度直接标记为 `terminated`（随任务结束），不算失败，也不广播 C。此实例拒绝后续业务事件；只有重置才能重新运行。奖励只允许由胜出结局触发一次；模拟器不发放真实奖励。
-- 内容：`internalName`（运行时内部名，表单必填；自有命名空间，允许与其它结束节点重复，不与进度／目标／条件 identifier 冲突）、`title`（结局标题）与 `rewardKits`（奖励礼包引用列表）。新建结束节点默认 `end_1`、`end_2`…
+- 内容：`internalName`（运行时内部名，表单必填；自有命名空间，允许与其它结束节点重复，不与进度／目标／条件 identifier 冲突）与 `rewardKits`（奖励礼包引用列表）。新建结束节点默认 `end_1`、`end_2`…
 - 可以有很多个结束节点，也可以完全没有结束节点。缺少结束节点在语法上合法；没有任何**与开始联通**的结束节点是校验 warning，不阻止编辑。无结束节点的任务必定失败，开始后的首次信号结算边界按 §9.4 判定。
 
 ### 2.6 注释
@@ -134,8 +134,8 @@
 - **每个节点最多一张**：再次双击只保持原视图，不会开第二张；可以同时打开多个节点的视图。
 - 视图可拖动，但位置只在**当前会话**有效，不写入 `.quest`、不参与校验、不进 Group、不可连线。
 - 内容随改随写回文档（走工作区既有的撤销 / 保存）。
-- 表单内容：进度标识符、两段日志、目标与完成判定、节点统一提交方式；开始进度额外包含可本地化的任务标题与说明；条件是可选标识符与判断规则组；目标是必填目标标识符、单个 goal 和节点提交方式。两类提交控件相同：无需提交 / UI / 对话注入点，只有对话类型显示参数输入。结束是结局标题与奖励礼包。逻辑没有表单。
-- 节点正文与下方端口标签区分开布局，长标识符单行省略并可悬停查看全文；不显示重复的“双击编辑”提示，也不把表单关联锚点文字显示为业务端口。结束节点保留结局标题。
+- 表单内容：进度标识符、两段日志、目标与完成判定、节点统一提交方式；开始进度额外包含可本地化的任务标题与说明；条件是可选标识符与判断规则组；目标是必填目标标识符、单个 goal 和节点提交方式。两类提交控件相同：无需提交 / UI / 对话注入点，只有对话类型显示参数输入。结束是内部名与奖励礼包。逻辑没有表单。
+- 节点正文与下方端口标签区分开布局，长标识符单行省略并可悬停查看全文；不显示重复的“双击编辑”提示，也不把表单关联锚点文字显示为业务端口。结束节点展示 `internalName`。
 - 空白处右键「编辑任务信息…」等同于打开开始进度节点的表单。
 
 ## 3. 连线规则

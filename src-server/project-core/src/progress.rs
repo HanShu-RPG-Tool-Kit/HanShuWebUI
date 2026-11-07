@@ -105,7 +105,15 @@ pub fn validate(source: &str) -> Result<()> {
         matches!(v["completion"].as_str(), Some("all" | "any" | "custom"))
             && v["abandonable"].is_boolean()
             && v.get("autoStartWhenAcceptable")
-                .is_none_or(Value::is_boolean),
+                .is_none_or(Value::is_boolean)
+            && [
+                ("uiVisible", true),
+                ("uiDiscoverable", false),
+                ("uiAcceptable", false),
+                ("uiAbandonable", false),
+            ]
+            .into_iter()
+            .all(|(key, _)| v.get(key).is_none_or(Value::is_boolean)),
     )?;
     for goal in v["goals"].as_array().ok_or_else(invalid)? {
         let id = goal["id"]
@@ -126,20 +134,16 @@ pub fn validate(source: &str) -> Result<()> {
     } else {
         check(v["completion"] != "custom")?;
     }
-    if let Some(hide) = v.get("hideWhenRepeatUnsatisfied") {
-        check(hide.is_boolean())?;
-    }
     if let Some(tracking) = v.get("tracking") {
         check(tracking.is_object())?;
-        // auto/manual 为现行；default/advanced 为试水草稿兼容。
+        // auto/manual 为现行；default/advanced 与旧 text/lines 为试水草稿兼容。
+        // 手动文案键约定 progress.<节点id>.tracking，不写入文档。
         check(matches!(
             tracking["mode"].as_str(),
             Some("auto" | "manual" | "default" | "advanced")
         ))?;
         if let Some(text) = tracking.get("text") {
             check(text.as_str().is_some_and(|s| !s.trim().is_empty()))?;
-        } else if tracking["mode"] == "manual" {
-            return Err(invalid());
         }
         for key in tracking.as_object().ok_or_else(invalid)?.keys() {
             check(matches!(key.as_str(), "mode" | "text" | "lines"))?;
@@ -388,7 +392,6 @@ mod receipt_tests {
                 {"kind":"expr","source":"ctx.player.experienceLevel >= 1"}
             ],
             "acceptance":[{"kind":"time","op":"night"}],
-            "hideWhenRepeatUnsatisfied":true,
             "abandonable":true,"autoStartWhenAcceptable":false,
             "repeat":{"kind":"once"},"rewardKits":[]
         });
@@ -400,6 +403,19 @@ mod receipt_tests {
         bad_accept_repeat["acceptance"] =
             json!([{"kind":"repeat","state":"satisfied","target":""}]);
         assert!(validate(&bad_accept_repeat.to_string()).is_err());
+    }
+
+    #[test]
+    fn manual_tracking_without_embedded_text_is_accepted() {
+        let doc = json!({
+            "format":"hanshu.progress","version":1,"id":"doc","name":"name","description":"description",
+            "authorNotes":"","tags":[],"completion":"all","goals":[],
+            "visibility":[],"acceptance":[],
+            "abandonable":true,"autoStartWhenAcceptable":false,
+            "repeat":{"kind":"once"},"rewardKits":[],
+            "tracking":{"mode":"manual"}
+        });
+        assert!(validate(&doc.to_string()).is_ok());
     }
 
     #[test]

@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import {
   emitConditionExpression,
   parseConditionRules,
-  parseHideWhenRepeatUnsatisfied,
   type ProgressConditionRule,
 } from '../src/workspaces/gameplay/conditions.ts'
 
@@ -36,15 +35,13 @@ const migrated = parseConditionRules([
   { kind: 'expr', state: 'true', target: 'x > 1' },
   { kind: 'repeat', state: 'satisfied', target: '' },
 ], '可见性', { allowHideRepeat: true })
-assert.deepEqual(migrated.rules, [
+assert.deepEqual(migrated, [
   { kind: 'quest', op: 'succeeded', questId: 'prologue' },
   { kind: 'talk', op: 'unread', injectId: 'intro' },
   { kind: 'talk', op: 'read', injectId: 'village_intro' },
   { kind: 'time', op: 'day' },
   { kind: 'expr', source: 'x > 1' },
 ])
-assert.equal(migrated.hideWhenRepeatUnsatisfied, true)
-assert.equal(parseHideWhenRepeatUnsatisfied(true, false), true)
 assert.throws(() => parseConditionRules([{ kind: 'repeat', state: 'unsatisfied', target: '' }], '可见性', { allowHideRepeat: true }), /不再支持/)
 assert.throws(() => parseConditionRules([{ kind: 'repeat', state: 'satisfied', target: '' }], '可承接'), /不能写入重复周期/)
 

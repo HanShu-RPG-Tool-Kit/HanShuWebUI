@@ -37,10 +37,8 @@ doc.visibility = [
   { kind: 'expr', source: 'ctx.player.experienceLevel >= 10' },
 ]
 doc.acceptance = [{ kind: 'quest', op: 'completed', questId: 'other_task' }]
-doc.hideWhenRepeatUnsatisfied = true
 assert.deepEqual(parseProgress(stringifyProgress(doc)).visibility, doc.visibility)
 assert.deepEqual(parseProgress(stringifyProgress(doc)).acceptance, doc.acceptance)
-assert.equal(parseProgress(stringifyProgress(doc)).hideWhenRepeatUnsatisfied, true)
 const noAcceptance = parseProgress(stringifyProgress({ ...doc, acceptance: [] }))
 assert.deepEqual(noAcceptance.acceptance, [])
 assert.deepEqual(noAcceptance.visibility, doc.visibility, 'clearing acceptance never changes visibility')
@@ -48,7 +46,7 @@ const serialized = JSON.parse(stringifyProgress(doc))
 assert.ok(!('accept' in serialized) && !('visible' in serialized) && !('deliver' in serialized) && !('fail' in serialized))
 const legacy = parseProgress(JSON.stringify({
   ...serialized,
-  hideWhenRepeatUnsatisfied: undefined,
+  hideWhenRepeatUnsatisfied: true,
   visibility: [
     { kind: 'task', state: 'succeeded', target: 'first_task' },
     { kind: 'dialogue', state: 'after', target: 'intro' },
@@ -67,7 +65,7 @@ assert.deepEqual(legacy.visibility, [
   { kind: 'expr', source: 'level >= 10' },
 ])
 assert.deepEqual(legacy.acceptance, [{ kind: 'quest', op: 'completed', questId: 'other_task' }])
-assert.equal(legacy.hideWhenRepeatUnsatisfied, true)
+assert.equal(Object.hasOwn(legacy, 'hideWhenRepeatUnsatisfied'), false)
 assert.throws(() => parseProgress(JSON.stringify({ ...serialized, visibility: [{ kind: 'dialogue', state: 'succeeded', target: 'intro' }] })), /对话条件状态无效/)
 assert.throws(() => parseProgress(JSON.stringify({ ...serialized, visibility: [{ kind: 'task', state: 'after', target: 'first_task' }] })), /状态无效/)
 assert.throws(() => parseProgress(JSON.stringify({ ...serialized, visibility: [{ kind: 'repeat', state: 'unsatisfied', target: '' }] })), /不再支持/)
@@ -82,7 +80,7 @@ assert.throws(() => parseProgress(stringifyProgress({ ...doc, goals: [first, fir
 const empty = createProgress('')
 assert.deepEqual(empty.visibility, [])
 assert.deepEqual(empty.acceptance, [])
-assert.equal(empty.hideWhenRepeatUnsatisfied, false)
+assert.equal(Object.hasOwn(empty, 'hideWhenRepeatUnsatisfied'), false)
 assert.equal(empty.autoStartWhenAcceptable, false)
 assert.equal(parseProgress(stringifyProgress(empty)).autoStartWhenAcceptable, false)
 assert.equal(parseProgress(stringifyProgress({ ...empty, autoStartWhenAcceptable: true })).autoStartWhenAcceptable, true)

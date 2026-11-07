@@ -10,6 +10,7 @@
 import { parseActor, actorLootRowToKitItem } from './actor'
 import { parseItem } from './itemDoc'
 import { expandKitItem, normalizeItemRef, parseKit, type ItemCatalog, type KitItem } from './kit'
+import { isQuestCatalogDocumentKey, parseQuestCatalog } from './questCatalog'
 import { parseShop } from './shop'
 import { isItemStackFileName, itemFingerprint, parseItemStack } from './itemstack'
 
@@ -99,6 +100,18 @@ function collectShopDocument(doc: SnapshotDocumentLike, context: SnapshotSourceC
   return collectKitSnapshotItems(items, context.itemCatalog)
 }
 
+/** 任务分类目录书签图标。 */
+function collectQuestCatalogDocument(doc: SnapshotDocumentLike, context: SnapshotSourceContext): SnapshotSourceItem[] {
+  let catalog
+  try {
+    catalog = parseQuestCatalog(doc.source, true)
+  } catch {
+    return []
+  }
+  const items = catalog.directories.flatMap(directory => (directory.icon ? [directory.icon] : []))
+  return collectKitSnapshotItems(items, context.itemCatalog)
+}
+
 /** `.actor` 死亡掉落里的自定义物品行。 */
 function collectActorDocument(doc: SnapshotDocumentLike, context: SnapshotSourceContext): SnapshotSourceItem[] {
   let actor
@@ -139,6 +152,7 @@ function collectItemStackDocument(doc: SnapshotDocumentLike): SnapshotSourceItem
  * - `.itemstack` 文档按 ItemStack 解析，display 只当缓存，不参与刷新
  * - `.kit` 只取本文件 items / pools
  * - `.shop` 取所有条目的 payment / goods
+ * - 任务分类虚入口取各目录 icon
  * - `.actor` 取 `loot.item.items`
  * - 物品库表视图等虚拟文档没有 source，返回空
  */
@@ -148,6 +162,8 @@ export function collectDocumentSnapshotItems(
 ): SnapshotSourceItem[] {
   if (!doc.source.trim()) return []
   const name = doc.name.toLowerCase()
+  if (doc.key && isQuestCatalogDocumentKey(doc.key)) return collectQuestCatalogDocument(doc, context)
+  if (name === 'catalog.json' && doc.package === 'quest') return collectQuestCatalogDocument(doc, context)
   if (isItemStackFileName(name)) return collectItemStackDocument(doc)
   if (name.endsWith('.kit') || doc.package === 'gift') return collectKitDocument(doc, context)
   if (name.endsWith('.shop') || doc.package === 'shop') return collectShopDocument(doc, context)

@@ -6,7 +6,6 @@ import { type GoalConfigValue, type GoalDefinition } from './goalDefinitions'
 import {
   conditionRuleIssue,
   parseConditionRules,
-  parseHideWhenRepeatUnsatisfied,
   type ProgressConditionRule,
 } from './conditions'
 
@@ -37,11 +36,17 @@ export type ProgressDocument = {
   /** Independent conjunctions; each empty list is satisfied. */
   visibility: ProgressConditionRule[]
   acceptance: ProgressConditionRule[]
-  /** After visibility expr, also require metadata.repeat satisfied. */
-  hideWhenRepeatUnsatisfied: boolean
   abandonable: boolean
   /** When acceptance holds, start without a separate player accept action. Independent of visibility. */
   autoStartWhenAcceptable: boolean
+  /** 任务在玩家 UI 中是否可见；缺省 true。 */
+  uiVisible: boolean
+  /** 是否可在玩家 UI 中被发现；缺省 false。 */
+  uiDiscoverable: boolean
+  /** 是否可在玩家 UI 中承接；缺省 false。 */
+  uiAcceptable: boolean
+  /** 是否可在玩家 UI 中放弃；缺省 false。 */
+  uiAbandonable: boolean
   repeat: { kind: ProgressRepeatKind; hours: number }
   rewardKits: string[]
   /** 任务追踪文案；缺省＝自动（引擎提供）。编译进 questc 进度节点。 */
@@ -60,8 +65,10 @@ export function createProgress(name = '新建进度', _definitions: readonly Goa
   return {
     format: PROGRESS_FORMAT, version: 1, id: uid(),
     name: 'name', description: 'description', authorNotes: '', tags: [],
-    completion: 'all', goals: [], visibility: [], acceptance: [], hideWhenRepeatUnsatisfied: false,
-    abandonable: true, autoStartWhenAcceptable: false, repeat: { kind: 'once', hours: 24 }, rewardKits: [],
+    completion: 'all', goals: [], visibility: [], acceptance: [],
+    abandonable: false, autoStartWhenAcceptable: false,
+    uiVisible: true, uiDiscoverable: false, uiAcceptable: false, uiAbandonable: false,
+    repeat: { kind: 'once', hours: 24 }, rewardKits: [],
     tracking: { mode: 'auto' },
   }
 }
@@ -142,10 +149,8 @@ export function parseProgress(source: string, _definitions: readonly GoalDefinit
     ids.add(value); return value
   }
   const str = (value: unknown, path: string): string => { check(typeof value === 'string', `${path} 必须是文本`); return value }
-  const visibilityParsed = parseConditionRules(raw.visibility, '可见性条件', { allowHideRepeat: true })
-  const acceptance = parseConditionRules(raw.acceptance, '可承接条件').rules
-  const hideWhenRepeatUnsatisfied = parseHideWhenRepeatUnsatisfied(raw.hideWhenRepeatUnsatisfied, visibilityParsed.hideWhenRepeatUnsatisfied)
-  const visibility = visibilityParsed.rules
+  const visibility = parseConditionRules(raw.visibility, '可见性条件', { allowHideRepeat: true })
+  const acceptance = parseConditionRules(raw.acceptance, '可承接条件')
   const docId = id(raw.id, '进度')
   check(raw.completion === 'all' || raw.completion === 'any' || raw.completion === 'custom', 'completion 必须是 all、any 或 custom')
   const completionGraph = raw.completionGraph === undefined ? undefined : parseCompletionGraph(raw.completionGraph)
@@ -166,6 +171,15 @@ export function parseProgress(source: string, _definitions: readonly GoalDefinit
   check(typeof hours === 'number' && Number.isFinite(hours) && hours > 0, '重复间隔必须大于零')
   check(typeof raw.abandonable === 'boolean', 'abandonable 必须是布尔值')
   check(raw.autoStartWhenAcceptable === undefined || typeof raw.autoStartWhenAcceptable === 'boolean', 'autoStartWhenAcceptable 必须是布尔值')
+  const optionalBool = (value: unknown, path: string, fallback: boolean) => {
+    if (value === undefined) return fallback
+    check(typeof value === 'boolean', `${path} 必须是布尔值`)
+    return value as boolean
+  }
+  const uiVisible = optionalBool(raw.uiVisible, 'uiVisible', true)
+  const uiDiscoverable = optionalBool(raw.uiDiscoverable, 'uiDiscoverable', false)
+  const uiAcceptable = optionalBool(raw.uiAcceptable, 'uiAcceptable', false)
+  const uiAbandonable = optionalBool(raw.uiAbandonable, 'uiAbandonable', false)
   check(Array.isArray(raw.rewardKits) && raw.rewardKits.every(ref => typeof ref === 'string' && ref.trim()), 'rewardKits 必须是礼包引用数组')
   check(new Set(raw.rewardKits).size === raw.rewardKits.length, '奖励礼包不能重复')
   const tracking = parseProgressTracking(raw.tracking)
@@ -173,8 +187,9 @@ export function parseProgress(source: string, _definitions: readonly GoalDefinit
     format: PROGRESS_FORMAT, version: 1, id: docId, name: str(raw.name, '名称'), description: str(raw.description, '简介'),
     authorNotes: str(raw.authorNotes ?? '', '作者备注'), tags: raw.tags as string[], completion: raw.completion, goals,
     ...(completionGraph ? { completionGraph } : {}),
-    visibility, acceptance, hideWhenRepeatUnsatisfied,
+    visibility, acceptance,
     abandonable: raw.abandonable, autoStartWhenAcceptable: raw.autoStartWhenAcceptable ?? false,
+    uiVisible, uiDiscoverable, uiAcceptable, uiAbandonable,
     repeat: { kind: raw.repeat.kind as ProgressRepeatKind, hours }, rewardKits: raw.rewardKits as string[],
     tracking,
   }

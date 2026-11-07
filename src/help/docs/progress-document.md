@@ -16,8 +16,9 @@
   - 进度结束（成功 / 失败 / 取消等）后，其上挂载的 goals 随之关闭；不必另写「成功后取消其余目标」——关闭是进度结束的自然结果。
 - Goal 类型及参数字段唯一来自「脚本 → 目标定义」。目录从文件级 `@goal(id)` 与 `@config(field(...))` 元数据解析；表单不执行 JavaScript。文件头 `/* JSON */` 注释（`labels` / `params.*.widget` / `localize`）只供 WebUI。参数控件由可注册的 `goalWidgets` 解析（内置 `text` / `number` / `slider` / `select` / `bool`）；未知控件本阶段回退文本框。
 - 没有脚本时显示空目录。定义删除后目标仍保留类型与参数。未声明的旧参数保留在文件中。
-- `visibility` 与 `acceptance` **相互独立**；作者态为条件组（AND），编译到 questc 时变成一条布尔表达式字符串（空组 → `""` 恒真）。叶子：表达式（逃生）／任务／进度／对话（读过｜没读过）／等级／声誉／时间（白天｜黑夜）；**不再**有重复周期叶子。周期不可见用 `hideWhenRepeatUnsatisfied`（布尔，缺省 false）。**承接只要求 `acceptance`，不要求 `visibility`**；引擎始终再投影 `repeat`。
-- `abandonable`、`autoStartWhenAcceptable`、`hideWhenRepeatUnsatisfied` 为布尔；新建显式写出，后两者缺省 false。
+- `visibility` 与 `acceptance` **相互独立**；作者态为条件组（AND），编译到 questc 时变成一条布尔表达式字符串（空组 → `""` 恒真）。叶子：表达式（逃生）／任务／进度／对话（读过｜没读过）／等级／声誉／时间（白天｜黑夜）；**不再**有重复周期叶子（旧 `repeat:satisfied` 可见性叶子读入时丢弃）。**承接只要求 `acceptance`，不要求 `visibility`**；引擎始终再投影 `repeat`。
+- `abandonable`、`autoStartWhenAcceptable` 为布尔；新建显式写出，缺省均为 false。
+- UI 策略：`uiVisible`（在 UI 中可见，缺省 true）、`uiDiscoverable`／`uiAcceptable`／`uiAbandonable`（可在 UI 中发现／承接／放弃，缺省 false）。编译进 questc `metadata`。
 - `rewardKits` 为去重礼包引用数组。
 - `authorNotes` 与玩家 `description` 分开。玩家可见 `name` / `description` 存语义键，译文在 `assets/<locale>/lang_quest/<文件>.lang`；作者备注不本地化。
 - **`tracking`**：`mode: "auto" | "manual"`。自动＝引擎按目标类型生成；手动＝单行文案，键约定 `progress.progress_start.tracking`（不写入文档）。编译进 questc 仅 `mode`；Mod 按节点 id 取 `progress.<节点id>.tracking`。
@@ -28,11 +29,11 @@
 
 顶部双栏：左标题描述，右常显文档 ID、标签与作者备注。参数区：原生数字、布尔、`enum:` 下拉与文本；可一键恢复默认。
 
-完成奖励与周期双栏在目标上方。其下为「任务追踪文本」卡片（自动／手动）。奖励可从「礼包」拖入 `.kit` 或下拉添加。可见性 / 可承接各用常显卡片；周期卡含「可承接时自动开始」「可放弃」「周期不满足时不可见」。
+完成奖励与周期双栏在目标上方。其下为「任务追踪文本」卡片（自动／手动）。奖励可从「礼包」拖入 `.kit` 或下拉添加。可见性 / 可承接各用常显卡片；周期卡含「在 UI 中可见／发现／承接／放弃」「可承接时自动开始」「可放弃」。
 
 ## 任务分类（UI 目录）
 
-与单／多进度文档并列的固定虚入口「任务分类」映射 `src/quest/catalog.json`（不是新的资源类型，也不替代资源树整理文件夹）。格式 `hanshu.quest-catalog` version 1：`directories[]` 含自动生成的 `id`、语义键 `title`（`directories.<id>.title`）、以及无序去重的 `quests` 任务基名集合。多对多：同一 `.quest` 可出现在多个目录。导出进 shared PAK 为 `quest/catalog.json`；验证：`npm run test:quest-catalog`。
+与单／多进度文档并列的固定虚入口「任务分类」映射 `src/quest/catalog.json`（不是新的资源类型，也不替代资源树整理文件夹）。格式 `hanshu.quest-catalog` version 1：`directories[]` 含自动生成的 `id`、语义键 `title`（`directories.<id>.title`）、可选 `icon`（与商店模板相同的物品对象或 `null`；缺省客户端用书本）、以及无序去重的 `quests` 任务基名集合。多对多：同一 `.quest` 可出现在多个目录。导出进 shared PAK 为 `quest/catalog.json`；验证：`npm run test:quest-catalog`。
 
 ## 开发试用与验证
 

@@ -158,9 +158,9 @@ export function createEndNode(flow: ProgressFlow, position: FlowPosition) {
   let id: string
   do { id = `end_${randomId()}` } while (hasCanvasItem(next, id) || id === next.start)
   next.ends ??= {}
-  next.ends[id] = { internalName: nextEndInternalName(next), title: text(`ends.${id}.title`), rewardKits: [] }
+  next.ends[id] = { internalName: nextEndInternalName(next), rewardKits: [] }
   next.layout!.positions[id] = { ...position }
-  return { flow: next, id, localeSeeds: { [`ends.${id}.title`]: '新结局' } }
+  return { flow: next, id, localeSeeds: {} }
 }
 
 /** Notes belong only to the canvas layout; they never expose graph ports. */
