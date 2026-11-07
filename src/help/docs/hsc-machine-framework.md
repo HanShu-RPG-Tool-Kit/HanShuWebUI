@@ -85,7 +85,7 @@ load(program) → Accept(readyTypeView) | Reject(code, message?)
 | `onMenuPresent` | 每次展示菜单前（`?` 求值之后或与之配合） | 可叠加标注/过滤 UI，**不得**破坏「`?` 为假则不可见」的契约 |
 | `onOptionPicked` | 用户选定某选项后、发射 `!:` 前 | 否 |
 | `onReply` | 执行答复时 | 否 |
-| `onJump` | `:>>` 跳转时 | 否 |
+| `onJump` | `:>>` 或独立 `>>` 跳转时 | 否 |
 | `onSysReturn` | `--<` / `--<<` 时 | 否 |
 
 **明确不列入本标准参考的钩子：**

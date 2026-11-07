@@ -15,6 +15,11 @@ import {
   HsCompileError,
   compileHsToHsc,
 } from '../src/hanshu/compiler.ts'
+import {
+  collectHsInjectJumps,
+  isLinearJumpLine,
+  isStructuralLine,
+} from '../src/hanshu/hsSyntaxRules.ts'
 import { analyzeHsDiagnostics } from '../src/monaco/hsDiagnostics.ts'
 import { parseSourceText, unparseSourceText } from '../src/agent/agentOps.ts'
 import { stopParseLineOf } from '../src/hanshu/directives.ts'
@@ -390,6 +395,28 @@ test('`unparse_hs` 也不受指令限制：指令常顶格写在第一行，逆�
   // 成键 → 指令 → 逆解析 → 再成键：键可复现（Agent 的"关闭解析/主动解析"流程）
   const keyed = keyAll('narrator:\n译好的台词\n//\n').text
   assert.match(keyed, /^narrator:\n[0-9a-f]{8}\n\/\/\n$/)
+})
+
+section('7. 独立线性跳转 `>>name`')
+one(
+  '独立 >> 透传进 .hsc，且打断后不会被折进上一句',
+  'npc:说完了。//\n>>later\nnpc:下一幕。//\n',
+  'npc:说完了。\n>>later\nnpc:下一幕。',
+)
+one(
+  '选项 :>> 与独立 >> 并存',
+  '-回去:>>guard//\n>>later\n',
+  '-回去:>>guard\n>>later',
+)
+
+test('collectHsInjectJumps 收录选项与独立跳转', () => {
+  assert.deepEqual(collectHsInjectJumps('-回去:>>guard//\n>>later\n'), [
+    'guard',
+    'later',
+  ])
+  assert.equal(isLinearJumpLine('>>later'), true)
+  assert.equal(isLinearJumpLine('>> later'), false)
+  assert.equal(isStructuralLine('>>later'), true)
 })
 
 console.log(`\n${passed} hs-compile checks passed.`)

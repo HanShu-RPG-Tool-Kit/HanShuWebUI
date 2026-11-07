@@ -7,6 +7,7 @@ import {
   isActionSignalLine,
   isChoiceAttachSignalLine,
   isDialogueBreakLine,
+  isLinearJumpLine,
   isSkippedHsLine,
   matchInjectLine,
   matchSystemReturnChoice,
@@ -119,11 +120,12 @@ function diagnoseDuplicateSysReturns(
     if (isChoiceAttachSignalLine(line.text) || COMMENT_LINE_SOFT(line.text)) {
       continue
     }
-    // 树打断：对白 / @ / ! 等 → 清空
+    // 树打断：对白 / @ / ! / 独立 >> 等 → 清空
     if (
       SPEAKER_LINE.test(line.text) ||
       line.text.startsWith('@') ||
-      isActionSignalLine(line.text)
+      isActionSignalLine(line.text) ||
+      isLinearJumpLine(line.text)
     ) {
       ancestors.length = 0
       continue

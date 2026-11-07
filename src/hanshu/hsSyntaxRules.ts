@@ -6,9 +6,9 @@
  * 与应用内帮助「.hs 语法说明」的对应关系：
  * - 多行对白必须由**独占一行**的 `//` 收尾；正文行尾缀 `//` 不算收尾。
  * - 只有单行写法（`name:正文//`、`-文案:回复//`）才认行尾 `//`。
- * - 「块到此为止」的边界：选项行、新对白行、信号行、`@` / `@@`。
+ * - 「块到此为止」的边界：选项行、新对白行、信号行、独立 `>>name`、`@` / `@@`。
  * - 注释只认行首（可含前导空白）的 `#`，行内 `#` 属于正文。
- * - 信号 / 选项 / 注入等结构只认**行首**（无前导空白）。
+ * - 信号 / 选项 / 注入 / 独立跳转等结构只认**行首**（无前导空白）。
  */
 
 /** 角色行：`名字:正文` */
@@ -67,9 +67,23 @@ export function matchInjectLine(text: string): InjectLine | null {
   return { name: m[1]! }
 }
 
+/** 注入点标识符：`[A-Za-z_][A-Za-z0-9_]*`（与 `:>>` / 独立 `>>` 一致） */
+export const INJECT_IDENT = '[a-zA-Z_][a-zA-Z0-9_]*'
+
+/** 独立线性跳转行：行首 `>>name`（与 `!` 同级；打断选项树） */
+export const LINEAR_JUMP_LINE = new RegExp(`^>>(${INJECT_IDENT})$`)
+
+export type LinearJumpLine = { name: string }
+
+/** 独立 `>>name` 行；不是则 null */
+export function matchLinearJumpLine(text: string): LinearJumpLine | null {
+  const m = LINEAR_JUMP_LINE.exec(text)
+  return m ? { name: m[1]! } : null
+}
+
 /** 选项回复里的跳转目标：`>>name` → `name`；否则 null */
 export function choiceJumpTarget(reply: string): string | null {
-  const m = /^\s*>>([a-zA-Z_][a-zA-Z0-9_]*)\s*$/.exec(reply)
+  const m = new RegExp(`^\\s*>>(${INJECT_IDENT})\\s*$`).exec(reply)
   return m ? m[1]! : null
 }
 
@@ -95,10 +109,15 @@ export function collectHsInjectNames(source: string): string[] {
   return out
 }
 
-/** 收集选项 `:>>name` 跳转目标（可跨文件解析到 `hsInject`） */
+/** 收集 `:>>name` 与独立 `>>name` 跳转目标（可跨文件解析到 `hsInject`） */
 export function collectHsInjectJumps(source: string): string[] {
   const out: string[] = []
   for (const line of splitHsLines(source)) {
+    const linear = matchLinearJumpLine(line.text)
+    if (linear) {
+      out.push(linear.name)
+      continue
+    }
     const choice = CHOICE_LINE.exec(line.text)
     if (!choice) continue
     const body = choice[2]!
@@ -182,7 +201,12 @@ export function isHsSignalLine(text: string): boolean {
 
 /** 选项回复是否为跳转：`>>name` */
 export function isChoiceJumpReply(reply: string): boolean {
-  return /^\s*>>[a-zA-Z_][a-zA-Z0-9_]*\s*$/.test(reply)
+  return choiceJumpTarget(reply) != null
+}
+
+/** 独立线性跳转行（打断选项树，与 `!` 同级） */
+export function isLinearJumpLine(text: string): boolean {
+  return matchLinearJumpLine(text) != null
 }
 
 /** 「这个块到此为止」：选项行 / 新对白行 */
@@ -190,13 +214,14 @@ export const STATEMENT_BREAK_RE = /^(-|[a-zA-Z_][a-zA-Z0-9_]*:)/
 
 /**
  * 对白块正文边界：结构语句会结束当前块。
- * 含选项、新对白、`@` / `@@`、全部信号行。
+ * 含选项、新对白、`@` / `@@`、全部信号行、独立 `>>name`。
  */
 export function isDialogueBreakLine(text: string): boolean {
   return (
     STATEMENT_BREAK_RE.test(text) ||
     text.startsWith('@') ||
-    isHsSignalLine(text)
+    isHsSignalLine(text) ||
+    isLinearJumpLine(text)
   )
 }
 
@@ -226,10 +251,14 @@ export function blockCloserLine(
  * 避免把下一行折上来。
  */
 export const STRUCTURAL_LINE_RE =
-  /^(#|@|-|\?|!:|:!|![a-zA-Z_]|[a-zA-Z_][a-zA-Z0-9_]*:)/
+  /^(#|@|-|\?|!:|:!|![a-zA-Z_]|>>[a-zA-Z_]|[a-zA-Z_][a-zA-Z0-9_]*:)/
 
 export function isStructuralLine(line: string): boolean {
-  return STRUCTURAL_LINE_RE.test(line) || isHsSignalLine(line)
+  return (
+    STRUCTURAL_LINE_RE.test(line) ||
+    isHsSignalLine(line) ||
+    isLinearJumpLine(line)
+  )
 }
 
 /** `.hs` 源文件的一行：`start` 是它在原文里的绝对偏移 */
@@ -250,9 +279,14 @@ export function splitHsLines(source: string): HsLine[] {
   return out
 }
 
-/** 解析与诊断都跳过的行：注释、`@` 注入/终止、信号行 */
+/** 解析与诊断都跳过的行：注释、`@` 注入/终止、信号行、独立 `>>name` */
 export function isSkippedHsLine(text: string): boolean {
-  return COMMENT_LINE.test(text) || text.startsWith('@') || isHsSignalLine(text)
+  return (
+    COMMENT_LINE.test(text) ||
+    text.startsWith('@') ||
+    isHsSignalLine(text) ||
+    isLinearJumpLine(text)
+  )
 }
 
 /**

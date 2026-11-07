@@ -20,7 +20,7 @@ export const HANSHU_THEME_ID = 'hanshu-dark-v6'
  * 汉书剧本语法（高亮）：
  * - # 注释 / #stopparse 指令
  * - 行首信号：`?` 条件 / `!` 行为 / `!:`·`:!` 选项附件（后两者与 `!` 分色）
- * - speaker: … // 、行首选项、- 、>>跳转 、<<回退
+ * - speaker: … // 、行首选项、- 、选项 `:>>` / 独立 `>>name` 跳转 、`:<<` 回退
  * - 系统返回 `--<` / `--<<`（层级 ≥ 2）
  * - @后缀 注入点（洋红）
  * - 行首 @@ 终止符（红色）
@@ -65,6 +65,21 @@ function signalLineRules(nextRoot: boolean): Array<[RegExp, unknown]> {
         'hanshu.signal.action.id',
         tail('hanshu.signal.action.args'),
       ],
+    ],
+  ]
+}
+
+/** 独立线性跳转 `>>name`（与选项 `:>>` 同色；块内遇到时切回 root） */
+function linearJumpLineRules(nextRoot: boolean): Array<[RegExp, unknown]> {
+  return [
+    [
+      /^(>>)([a-zA-Z_][a-zA-Z0-9_]*)$/,
+      nextRoot
+        ? [
+            'hanshu.jump.mark',
+            { token: 'hanshu.jump.name', next: 'root' as const },
+          ]
+        : ['hanshu.jump.mark', 'hanshu.jump.name'],
     ],
   ]
 }
@@ -267,6 +282,7 @@ const HSC_TOKENIZER = {
   tokenizer: {
     root: [
       ...signalLineRules(false),
+      ...linearJumpLineRules(false),
       [/^@@@@[^\r\n]*/, 'hs.term'],
       [/@@[^\s@@][^\s]*/, 'hs.inject'],
 
@@ -330,6 +346,7 @@ const HSC_TOKENIZER = {
       [/\\>>/, 'hanshu.escape'],
       [/\\-/, 'hanshu.escape'],
       ...signalLineRules(true),
+      ...linearJumpLineRules(true),
       [/^@@@@[^\r\n]*/, { token: 'hs.term', next: '@pop' }],
       [/@@[^\s@@][^\s]*/, { token: 'hs.inject', next: '@pop' }],
       ...SYSTEM_RETURN_LINE_RULES,
@@ -412,7 +429,7 @@ export function registerHanshuLanguage(monaco: Monaco) {
       { token: 'hanshu.choice.mark', foreground: 'DCDCAA', fontStyle: 'bold' },
       { token: 'hanshu.choice.label', foreground: 'D7BA7D' },
       { token: 'hanshu.choice.reply', foreground: 'CE9178' },
-      // :>>name 跳到 @name —— 与注入点同色系
+      // :>>name / 独立 >>name 跳到 @name —— 与注入点同色系
       { token: 'hanshu.jump.mark', foreground: 'C586C0', fontStyle: 'bold' },
       { token: 'hanshu.jump.name', foreground: 'C586C0', fontStyle: 'italic' },
       // :<< 回整树根
@@ -457,6 +474,7 @@ export function registerHanshuLanguage(monaco: Monaco) {
         [/^\s*#.*$/, 'comment'],
 
         ...signalLineRules(false),
+        ...linearJumpLineRules(false),
 
         // 行首终止符：字面量 @@  → Monarch 写成 @@@@
         [/^@@@@[^\r\n]*/, 'hs.term'],
@@ -493,6 +511,7 @@ export function registerHanshuLanguage(monaco: Monaco) {
         [/\\>>/, 'hanshu.escape'],
         [/\\-/, 'hanshu.escape'],
         ...signalLineRules(true),
+        ...linearJumpLineRules(true),
         [/^@@@@[^\r\n]*/, 'hs.term'],
         [/@@[^\s@@][^\s]*/, 'hs.inject'],
         // 块结束符只有两种形态（与解析器同一份正则）：独占一行、或行尾。
