@@ -611,8 +611,9 @@ export function CategoryExplorer({
           const draggable = canOrganize && category.folders && (row.node.kind === 'folder' || row.node.kind === 'file') && !renaming
           const categoryHasSections = (sections[category.id] ?? []).length > 0
           const placeholder = row.node.kind === 'category' && row.expanded && !category.extensions.length && !query && !categoryHasSections
-          const sectionLeaf = row.node.kind === 'section' && row.expanded && !query &&
-            !(sections[row.node.category] ?? []).some(item => item.parentId === row.node.sectionId)
+          const sectionNode = row.node.kind === 'section' ? row.node : null
+          const sectionLeaf = sectionNode !== null && row.expanded && !query &&
+            !(sections[sectionNode.category] ?? []).some(item => item.parentId === sectionNode.sectionId)
           const empty = row.node.kind === 'category' && row.expanded && category.extensions.length > 0 && !query &&
             (row.fileCount ?? 0) === 0 && !folders.some(folder => folder.category === category.id)
           return (
