@@ -87,8 +87,10 @@ export function flowSubmissionIssue(submission: FlowSubmission): string | null {
 export type FlowObjectiveNode = { identifier: string; goal: Omit<FlowProgressGoal, 'id'>; submission?: FlowSubmission; extensions?: Data }
 /** 逻辑节点：左端口 并且 / 或者 收 A，右端口发 A；无内容。 */
 export type FlowTransitionNode = { extensions?: Data }
-/** 结束节点：成功入 / 失败入，决定任务终局；携带结局标题与奖励礼包。 */
+/** 结束节点：成功入 / 失败入，决定任务终局；携带内部名、结局标题与奖励礼包。 */
 export type FlowEndNode = {
+  /** 运行时内部名；写入 questc `end.internalName`。自有命名空间，允许与其它结束节点重复。 */
+  internalName: string
   title: FlowText
   rewardKits: string[]
   extensions?: Data
@@ -262,6 +264,12 @@ export function nextProgressIdentifier(flow: ProgressFlow): string {
 export function nextObjectiveIdentifier(flow: ProgressFlow): string {
   return nextNodeIdentifier(flow, 'objective')
 }
+export function nextEndInternalName(flow: ProgressFlow): string {
+  const used = new Set(Object.values(flow.ends ?? {}).map(node => node.internalName).filter(Boolean))
+  let index = 1
+  while (used.has(`end_${index}`)) index++
+  return `end_${index}`
+}
 function nextNodeIdentifier(flow: ProgressFlow, prefix: string): string {
   const used = new Set([...Object.values(flow.progress), ...Object.values(flow.predicates ?? {}), ...Object.values(flow.objectives ?? {})].map(node => node.identifier))
   let index = 1
@@ -282,6 +290,13 @@ export function nodeIdentifierIssue(flow: ProgressFlow, id: string, value: strin
 export function objectiveIdentifierIssue(flow: ProgressFlow, id: string, value: string): string | null {
   if (!value.trim()) return '目标标识符不能为空。'
   return nodeIdentifierIssue(flow, id, value)
+}
+/** 结束节点 internalName：必填；格式同标识符；与进度／目标／条件命名空间隔离，允许结局之间重复。 */
+export function endInternalNameIssue(_flow: ProgressFlow, _id: string, value: string): string | null {
+  if (!value.trim()) return '内部名不能为空。'
+  if (value !== value.trim() || /[\r\n\t]/.test(value) || value.length > 200) return '内部名不能含首尾空白或换行，且长度不超过 200。'
+  if (['__proto__', 'prototype', 'constructor'].includes(value)) return '内部名不能使用保留名称。'
+  return null
 }
 
 /** All authoring and debugger labels share the same nonlocalized progress name. */
@@ -423,13 +438,27 @@ export function parseFlow(source: string): ProgressFlow {
   }
   if (f.ends !== undefined) {
     require(isObject(f.ends), 'ends')
+    const usedEndNames = new Set(
+      Object.values(f.ends as Record<string, unknown>)
+        .filter(isObject)
+        .map(node => (node as Record<string, unknown>).internalName)
+        .filter((name): name is string => typeof name === 'string' && name.trim().length > 0),
+    )
     for (const [id, value] of Object.entries(f.ends as Record<string, unknown>)) {
       require(safeId(id) && !seenNodeIds.has(id) && isObject(value), `ends.${id}`)
       seenNodeIds.add(id)
       const node = value as FlowEndNode
       const raw = value as Record<string, unknown>
-      require(Object.keys(raw).every(key => ['title', 'rewardKits', 'extensions'].includes(key)), `ends.${id}（不支持旧草稿字段）`)
+      if (!Object.hasOwn(raw, 'internalName') || typeof raw.internalName !== 'string' || !String(raw.internalName).trim()) {
+        // 旧作者文档缺字段时补默认名，不改稳定节点 ID。
+        let name = `end`, suffix = 1
+        while (usedEndNames.has(`${name}_${suffix}`)) suffix++
+        raw.internalName = `${name}_${suffix}`
+        usedEndNames.add(raw.internalName)
+      }
+      require(Object.keys(raw).every(key => ['internalName', 'title', 'rewardKits', 'extensions'].includes(key)), `ends.${id}（不支持旧草稿字段）`)
       checkExtensions(raw, `ends.${id}`)
+      require(typeof node.internalName === 'string', `ends.${id}.internalName`)
       checkText(node.title, `ends.${id}.title`)
       checkKits(node.rewardKits, `ends.${id}.rewardKits`)
     }
@@ -566,6 +595,10 @@ export function validateFlow(flow: ProgressFlow, definitions: readonly { kind: s
       if (issue) error(`objectives.${id}.submission`, issue)
     }
     if (!node.goal.kind.trim() && !drafts.has(id)) warning(`objectives.${id}.goal`, '目标还没有选择类型。')
+  }
+  for (const [id, node] of Object.entries(flow.ends ?? {})) {
+    const issue = endInternalNameIssue(flow, id, node.internalName ?? '')
+    if (issue) error(`ends.${id}.internalName`, issue)
   }
   if (!Object.keys(flow.ends ?? {}).some(id => connected.has(id))) warning('ends', '没有任何与开始联通的结束节点，任务开始并完成首轮信号结算后将自动失败。')
   return issues

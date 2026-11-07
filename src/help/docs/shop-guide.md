@@ -53,7 +53,7 @@ current = initialCapacity + delta
 ## 条件
 
 - **商店级** `visibility`／`availability`：作者态为条件组（任务／进度／对话／等级／声誉／时间／表达式叶子）；源文件落盘条件组，导出 server PAK 时编译为一条布尔表达式（空组 → `""` 恒真）。
-- **条目级** `entries[].visibility`／`availability`：直接写 **Mod 条件表达式字符串**（空串恒真），在商品表格的“可见／可用”单元格内编辑。可用 `questState`／`talkRead`／`reputationPoints`／`isDay`／`ctx.player.experienceLevel` 等，也可引用本模板超参数与修饰器（与 Mod `ConditionEval`／kit 绑定一致）。
+- **条目级** `entries[].visibility`／`availability`：直接写 **Mod 条件表达式字符串**（空串恒真），在商品表格的“可见／可用”单元格内编辑。可用 `questState`／`questAcceptable`／`questVisible`／`talkRead`／`reputationPoints`／`isDay`／`ctx.player.experienceLevel` 等，也可引用本模板超参数与修饰器（与 Mod `ConditionEval`／kit 绑定一致）。
 
 商店级与条目级分开求值，不自动 AND 拼成一棵树。旧顶层表达式字符串读入时降下为 `expr` 叶子。
 

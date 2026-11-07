@@ -80,7 +80,7 @@
 | `talkId` / `playerRole` | 非空且互不相同的角色 ID |
 | `entries` | 有序；`when` 为条件组（与任务 `visibility` 同一套叶子，AND，空组恒真）；`inject` 为全局 `@inject` 名 |
 
-源文件落盘条件组；导出 server PAK 时编译为一条布尔表达式字符串。旧表达式字符串／旧 `always`／`talk_read`／`talk_unread` 数组在读入时降下为条件组。编辑器点击条目展开条件组（商店展开风格）。
+源文件落盘条件组；导出 server PAK 时编译为一条布尔表达式字符串。旧表达式字符串／旧 `always`／`talk_read`／`talk_unread` 数组在读入时降下为条件组。编辑器点击条目展开条件组（商店展开风格）。表达式叶子可写 `questAcceptable(ctx.player, "id")` 等（与 Mod 条件助手一致；Talk HSC `?` 里则是顶层 `player`）。
 
 ### 交互服务
 

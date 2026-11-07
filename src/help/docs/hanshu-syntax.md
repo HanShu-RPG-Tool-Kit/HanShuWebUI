@@ -113,7 +113,7 @@ narrator:
 | `!: <call expression>` | **选项行为**：约束下一选项行的「选项」侧 |
 | `:! <call expression>` | **答复行为**：约束下一选项行的「答复」侧 |
 
-RPGToolKit Talk：`?`／`!`／`!:`／`:!` 均绑 `player`（发起玩家）与 `entity`（对方实体；无 `ctx`／`api`）。`?` 为布尔表达式（`talkRead`／`questState` 等条件助手）；`!` 族为调用式并忽略返回值，另有行动助手 `sudo`／`message`／`questStart`／`pulseGoal`（均显式传 `player`）。
+RPGToolKit Talk：`?`／`!`／`!:`／`:!` 均绑 `player`（发起玩家）与 `entity`（对方实体；无 `ctx`／`api`）。`?` 为布尔表达式（`talkRead`／`questState`／`questAcceptable`／`questVisible` 等条件助手）；`!` 族为调用式并忽略返回值，另有行动助手 `sudo`／`message`／`questStart`／`pulseGoal`（均显式传 `player`）。对白接任务常用 `?questAcceptable(player, "id")` 再 `!questStart(player, "id")`。
 
 ### 选项前置附件（紧贴选项，中间不能有空行）
 

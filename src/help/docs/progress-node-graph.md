@@ -17,7 +17,7 @@
 
 - 节点 ID 在整张图内唯一（跨集合也不能重名）。
 - **唯一连接约束**：只能从右端口连到左端口，且**不能成环（含自环）**。连接时直接拒绝；文档里手写出环是校验 error。
-- **内容**：只有开始进度节点有 `questTitle` / `description`，以及任务级策略 `tags` / `visibility` / `acceptance` / `hideWhenRepeatUnsatisfied` / `abandonable` / `autoStartWhenAcceptable` / `repeat`（编译进 questc `metadata`；条件组导出为表达式字符串）；所有进度节点有 `identifier` / `runningLog`（进行时日志）/ `completedLog`（完成时日志）/ `goals` / `completion`；结束节点有 `title` / `rewardKits`；条件只有 `conditions`（导出为表达式字符串），没有标题。进度标识符是非本地化字符串；任务标题、说明、日志与结局标题仍是可本地化的 `FlowText`。
+- **内容**：只有开始进度节点有 `questTitle` / `description`，以及任务级策略 `tags` / `visibility` / `acceptance` / `hideWhenRepeatUnsatisfied` / `abandonable` / `autoStartWhenAcceptable` / `repeat`（编译进 questc `metadata`；条件组导出为表达式字符串）；所有进度节点有 `identifier` / `runningLog`（进行时日志）/ `completedLog`（完成时日志）/ `goals` / `completion`；结束节点有 `internalName` / `title` / `rewardKits`（`internalName` 编译进 questc，见[流程模型](#progress-flow-model)）；条件只有 `conditions`（导出为表达式字符串），没有标题。进度标识符是非本地化字符串；任务标题、说明、日志与结局标题仍是可本地化的 `FlowText`。
 
 ## 2. 节点族总表
 
@@ -121,7 +121,7 @@
 - 两个左端口：`input` 成功入、`input2` 失败入，均可多线。
 - 收 **A**：从哪个入口进来就记录哪种任务终局；第一个有效投递锁存整个 quest 的 `{endId,result}`，立即终止传播。尚未投递的信号进入丢弃记录，不再送达，不覆盖终局。
 - 终局前已处理的状态保留；其他运行中进度直接标记为 `terminated`（随任务结束），不算失败，也不广播 C。此实例拒绝后续业务事件；只有重置才能重新运行。奖励只允许由胜出结局触发一次；模拟器不发放真实奖励。
-- 内容：`title`（结局标题）与 `rewardKits`（奖励礼包引用列表）。
+- 内容：`internalName`（运行时内部名，表单必填；自有命名空间，允许与其它结束节点重复，不与进度／目标／条件 identifier 冲突）、`title`（结局标题）与 `rewardKits`（奖励礼包引用列表）。新建结束节点默认 `end_1`、`end_2`…
 - 可以有很多个结束节点，也可以完全没有结束节点。缺少结束节点在语法上合法；没有任何**与开始联通**的结束节点是校验 warning，不阻止编辑。无结束节点的任务必定失败，开始后的首次信号结算边界按 §9.4 判定。
 
 ### 2.6 注释

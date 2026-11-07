@@ -22,7 +22,7 @@ export type QuestCompiledNode = Connections & (
   | { type: 'condition'; identifier?: string; conditions: string }
   | { type: 'objective'; identifier: string; goal: { kind: string; params: Data }; submission?: FlowSubmission }
   | { type: 'logic' }
-  | { type: 'end'; title: string; rewardKits: string[] }
+  | { type: 'end'; internalName: string; title: string; rewardKits: string[] }
 )
 export type QuestCompiled = {
   format: typeof QUEST_COMPILED_FORMAT
@@ -65,7 +65,7 @@ export function compileQuestFlow(flow: ProgressFlow): QuestCompiled {
     else if (condition) nodes[id] = { type: 'condition', ...(condition.identifier ? { identifier: condition.identifier } : {}), conditions: emitConditionExpression(condition.conditions), inputs, outputs }
     else if (objective) nodes[id] = { type: 'objective', identifier: objective.identifier, goal: structuredClone(objective.goal), ...(objective.submission ? { submission: structuredClone(objective.submission) } : {}), inputs, outputs }
     else if (getTransitionNode(flow, id)) nodes[id] = { type: 'logic', inputs, outputs }
-    else if (end) nodes[id] = { type: 'end', title: end.title.text, rewardKits: [...end.rewardKits], inputs, outputs }
+    else if (end) nodes[id] = { type: 'end', internalName: end.internalName, title: end.title.text, rewardKits: [...end.rewardKits], inputs, outputs }
   }
   for (const link of orderedLinks(flow)) if (effective.has(link.from) && effective.has(link.to)) {
     nodes[link.from].outputs[linkSourcePort(flow, link.from, link.fromPort)]!.push({ node: link.to, port: link.port })
@@ -102,7 +102,10 @@ export function compileSimpleQuest(doc: ProgressDocument): QuestCompiled {
   }
   const flow: ProgressFlow = {
     format: 'hanshu.progress-tree', version: 1, id: doc.id, start, progress: { [start]: progress },
-    ends: { [success]: { title: { text: '' }, rewardKits: [...doc.rewardKits] }, [failure]: { title: { text: '' }, rewardKits: [] } },
+    ends: {
+      [success]: { internalName: 'success', title: { text: '' }, rewardKits: [...doc.rewardKits] },
+      [failure]: { internalName: 'failure', title: { text: '' }, rewardKits: [] },
+    },
     logic: { links: [{ id: 'success', from: start, fromPort: 'output', to: success, port: 'input' }, { id: 'failure', from: start, fromPort: 'output2', to: failure, port: 'input2' }] },
   }
   const compiled = compileQuestFlow(flow)
@@ -141,12 +144,17 @@ export function parseQuestCompiled(source: string): QuestCompiled {
   for (const [id, node] of Object.entries(nodes)) {
     check(stableId(id), '节点 ID 无效')
     check(isObject(node) && ['progress', 'condition', 'objective', 'logic', 'end'].includes(node.type), `节点 ${id} 类型无效`)
-    const fields = node.type === 'progress' ? ['identifier','runningLog','completedLog','goals','completionExpression','submission'] : node.type === 'condition' ? ['identifier','conditions'] : node.type === 'objective' ? ['identifier','goal','submission'] : node.type === 'end' ? ['title','rewardKits'] : []
+    const fields = node.type === 'progress' ? ['identifier','runningLog','completedLog','goals','completionExpression','submission'] : node.type === 'condition' ? ['identifier','conditions'] : node.type === 'objective' ? ['identifier','goal','submission'] : node.type === 'end' ? ['internalName','title','rewardKits'] : []
     check(Object.keys(node).every(key => ['type','inputs','outputs',...fields].includes(key)), `节点 ${id} 含非运行字段`)
     if (node.type === 'progress' || node.type === 'objective' || node.type === 'condition' && node.identifier !== undefined) {
       const name = node.identifier
       check(typeof name === 'string' && name.trim() && name === name.trim() && !/[\r\n\t]/.test(name) && name.length <= 200 && !names.has(name), `节点 ${id} 标识符无效或重复`)
       names.add(name)
+    }
+    if (node.type === 'end') {
+      const name = node.internalName
+      // 与 progress/objective/condition 标识符命名空间隔离；允许重复。
+      check(typeof name === 'string' && name.trim() && name === name.trim() && !/[\r\n\t]/.test(name) && name.length <= 200 && !['__proto__','prototype','constructor'].includes(name), `结束节点 ${id} internalName 无效`)
     }
     if ('submission' in node && node.submission !== undefined) {
       parseFlowSubmission(node.submission, `nodes.${id}.submission`)

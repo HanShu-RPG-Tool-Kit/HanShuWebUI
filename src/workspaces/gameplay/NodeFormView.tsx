@@ -10,7 +10,7 @@ import { GoalPicker } from './ProgressEditor'
 import { ProgressCompletionEditor } from './ProgressCompletionEditor'
 import { SubmissionField } from './SubmissionField'
 import { PROGRESS_REPEAT_LABELS, type ProgressRepeatKind } from './progressDoc'
-import { flowNodeLabel, progressIdentifierIssue, nodeIdentifierIssue, objectiveIdentifierIssue, getEndNode, getPredicateNode, getObjectiveNode, getProgressNode, isStartNode, type FlowText, type ProgressFlow } from './model'
+import { flowNodeLabel, progressIdentifierIssue, nodeIdentifierIssue, objectiveIdentifierIssue, endInternalNameIssue, getEndNode, getPredicateNode, getObjectiveNode, getProgressNode, isStartNode, type FlowText, type ProgressFlow } from './model'
 
 export type NodeFormKind = 'progress' | 'predicate' | 'objective' | 'end'
 
@@ -209,6 +209,9 @@ export function NodeFormView({ flow, nodeId, kind, active = false, disabled = fa
     if (!node) return null
     title = '结束'
     body = <>
+      <TextField label="内部名" value={node.internalName} disabled={disabled} onChange={internalName => update(next => { next.ends![nodeId].internalName = internalName })} />
+      {endInternalNameIssue(flow, nodeId, node.internalName) && <p className="progress-inline-warning" role="alert">{endInternalNameIssue(flow, nodeId, node.internalName)}</p>}
+      <p className="flow-hint">写入 questc 的 internalName；与进度／目标标识符隔离，允许多个结局同名。</p>
       {authorText('结局标题', node.title, (next, field) => { next.ends![nodeId].title = field })}
       <section className="node-form-section">
         <header>奖励礼包</header>

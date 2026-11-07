@@ -116,6 +116,8 @@ rejects(value=>{delete value.nodes[flow.start].completionExpression})
 rejects(value=>{value.nodes[e.id].outputs.output=[]})
 rejects(value=>{value.nodes[g.id].outputs.output.push({node:g.id,port:'input'});value.nodes[g.id].inputs.input.push({node:g.id,port:'output'})})
 rejects(value=>{value.nodes.extra={type:'logic',inputs:{input:[],input2:[]},outputs:{output:[]}}})
+rejects(value=>{if(value.nodes[e.id]?.type==='end')delete value.nodes[e.id].internalName})
+if(original.nodes[e.id].type==='end')assert.equal(original.nodes[e.id].internalName,flow.ends![e.id].internalName)
 console.log('PASS compiled loader rejects invalid schema, dangling/nonreciprocal/duplicate pointers, wrong ports, cycles and leaked drafts')
 
 const doc=createProgress('驿站')
@@ -124,8 +126,8 @@ doc.rewardKits=['starter'];doc.authorNotes='private editor notes';doc.tags=['sto
 const simple=compileSimpleQuest(doc)
 assert.equal(simple.metadata.visibility,'(questState(ctx.player, "succeeded", "prologue"))');assert.equal(simple.metadata.hideWhenRepeatUnsatisfied,true);assert.equal(simple.metadata.autoStartWhenAcceptable,true)
 assert.deepEqual(simple.metadata.tags,['story']);assert.equal(simple.metadata.title,'name')
-if(simple.nodes.end_success.type==='end')assert.deepEqual(simple.nodes.end_success.rewardKits,['starter'])
-if(simple.nodes.end_failure.type==='end')assert.deepEqual(simple.nodes.end_failure.rewardKits,[])
+if(simple.nodes.end_success.type==='end'){assert.equal(simple.nodes.end_success.internalName,'success');assert.deepEqual(simple.nodes.end_success.rewardKits,['starter'])}
+if(simple.nodes.end_failure.type==='end'){assert.equal(simple.nodes.end_failure.internalName,'failure');assert.deepEqual(simple.nodes.end_failure.rewardKits,[])}
 assert.equal(JSON.stringify(simple).includes('private editor notes'),false)
 assert.deepEqual(compileSimpleQuest({...doc,id:'different-editor-identity'}),simple)
 const pkg=createProject('locale-quest')
