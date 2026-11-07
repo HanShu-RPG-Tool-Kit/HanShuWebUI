@@ -112,7 +112,7 @@ narrator:
 | `!: <call expression>` | **选项行为**：约束下一选项行的「选项」侧 |
 | `:! <call expression>` | **答复行为**：约束下一选项行的「答复」侧 |
 
-RPGToolKit Talk：`?` → `ConditionEval`（`questState`／`talkRead` 等）；`!`／`!:`／`:!` → 一次性 JS 调用式，绑定 `api`（`PlayerScriptApi`，含 `sudoAsSelf`／`pulseGoal`／`message` 等），忽略返回值。
+RPGToolKit Talk：`?`／`!`／`!:`／`:!` 均绑 `player`（发起玩家）与 `entity`（对方实体；无 `ctx`／`api`）。`?` 为布尔表达式（`talkRead`／`questState` 等条件助手）；`!` 族为调用式并忽略返回值，另有行动助手 `sudo`／`message`／`questStart`／`pulseGoal`（均显式传 `player`）。
 
 ### 选项前置附件（紧贴选项，中间不能有空行）
 
@@ -133,12 +133,12 @@ RPGToolKit Talk：`?` → `ConditionEval`（`questState`／`talkRead` 等）；`
 
 ### 正例
 ```hs
-? talkRead(ctx.player, "prologue")
-!: api.pulseGoal("start_quest")
-:! api.message("hello world")
+? talkRead(player, "prologue")
+!: questStart(player, "prologue_quest")
 -硬闯:你力气够大。//
 
-! api.pulseGoal("prologue")
+! pulseGoal(player, "prologue")
+! message(player, "走吧")
 
 guard_a:站住！//
 ```
@@ -146,17 +146,17 @@ guard_a:站住！//
 ### 反例
 ```hs
 # 错误：? 与选项之间空行
-? talkRead(ctx.player, "prologue")
+? talkRead(player, "prologue")
 
 -硬闯:你力气够大。//
 
 # 错误：顺序颠倒
-:! api.message("x")
-!: api.pulseGoal("y")
+:! pulseGoal(player, "x")
+!: questStart(player, "y")
 -硬闯:走。//
 
 # 错误：缩进（仅行首）
- ? talkRead(ctx.player, "x")
+ ? talkRead(player, "x")
 ```
 
 ---
