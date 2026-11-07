@@ -51,7 +51,7 @@ export type FlowProgressNode = {
   completionGraph?: CompletionGraph
   /** One submission entry for the whole progress, never per embedded goal. */
   submission?: FlowSubmission
-  /** 任务追踪文本；编译进 questc。text 为本地化语义键。 */
+  /** 任务追踪文本；编译进 questc。手动文案键约定 progress.<节点id>.tracking。 */
   tracking?: ProgressTracking
   /** 所属进度簇；缺省＝无簇；有值时必须引用开始节点 clusters。 */
   clusterId?: string
@@ -245,7 +245,7 @@ export function createFlow(id = randomId(), questTitle = '新的进度流程'): 
         completedLog: text(`progress.${start}.completedLog`),
         goals: [],
         completion: 'all',
-        tracking: { mode: 'auto', text: `progress.${start}.tracking` },
+        tracking: { mode: 'auto' },
         tags: [],
         clusters: [],
         visibility: [],
@@ -365,8 +365,7 @@ export function parseFlow(source: string): ProgressFlow {
     delete raw.title
     checkText(node.runningLog, `progress.${id}.runningLog`)
     checkText(node.completedLog, `progress.${id}.completedLog`)
-    const trackingKey = `progress.${id}.tracking`
-    try { raw.tracking = parseProgressTracking(raw.tracking, trackingKey) }
+    try { raw.tracking = parseProgressTracking(raw.tracking) }
     catch (error) { throw new Error(`progress.${id}.tracking：${error instanceof Error ? error.message : String(error)}`) }
     const policyKeys = ['tags', 'clusters', 'visibility', 'acceptance', 'hideWhenRepeatUnsatisfied', 'abandonable', 'autoStartWhenAcceptable', 'repeat'] as const
     if (start) {

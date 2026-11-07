@@ -111,7 +111,7 @@ export function createProgressNode(flow: ProgressFlow, position: FlowPosition) {
     completedLog: text(`progress.${id}.completedLog`),
     goals: [],
     completion: 'all',
-    tracking: { mode: 'auto', text: `progress.${id}.tracking` },
+    tracking: { mode: 'auto' },
   }
   next.layout!.positions[id] = { ...position }
   return { flow: next, id, localeSeeds: { [`progress.${id}.runningLog`]: '', [`progress.${id}.completedLog`]: '', [`progress.${id}.tracking`]: '' } }

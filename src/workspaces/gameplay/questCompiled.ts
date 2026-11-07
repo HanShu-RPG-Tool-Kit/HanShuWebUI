@@ -63,7 +63,7 @@ export function compileQuestFlow(flow: ProgressFlow): QuestCompiled {
       nodes[id] = {
       type: 'progress', identifier: progress.identifier, runningLog: progress.runningLog.text, completedLog: progress.completedLog.text,
       goals: progress.goals.map(goal => ({ id: goal.id, kind: goal.kind, params: structuredClone(goal.params) })), completionExpression,
-      tracking: emitQuestTracking(progress.tracking, `progress.${id}.tracking`),
+      tracking: emitQuestTracking(progress.tracking),
       ...(progress.clusterId ? { clusterId: progress.clusterId } : {}),
       ...(progress.submission ? { submission: structuredClone(progress.submission) } : {}), inputs, outputs,
     }

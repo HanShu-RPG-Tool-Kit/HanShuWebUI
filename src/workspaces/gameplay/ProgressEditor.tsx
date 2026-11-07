@@ -251,7 +251,7 @@ export function ProgressEditor({ doc, goalCatalog, kitOptions = [], disabled, on
   const issues = progressIssues(doc, definitions, resolveText ? (key) => resolveText(key) : null)
   const aliases = goalAliases(doc.goals)
   const tracking: ProgressTracking = doc.tracking ?? { mode: 'auto' }
-  const trackingTextKey = tracking.text?.trim() || PROGRESS_TRACKING_TEXT_KEY
+  const trackingTextKey = PROGRESS_TRACKING_TEXT_KEY
   const count = doc.goals.length
   const pickerGoal = doc.goals.find(goal => goal.id === picker?.goalId)
   const availableKits = kitOptions.filter(item => !doc.rewardKits.includes(item.ref))
@@ -396,12 +396,12 @@ export function ProgressEditor({ doc, goalCatalog, kitOptions = [], disabled, on
             <button
               type="button"
               aria-pressed={tracking.mode === 'auto'}
-              onClick={() => setTracking({ mode: 'auto', ...(tracking.text ? { text: tracking.text } : {}) })}
+              onClick={() => setTracking({ mode: 'auto' })}
             >自动</button>
             <button
               type="button"
               aria-pressed={tracking.mode === 'manual'}
-              onClick={() => setTracking({ mode: 'manual', text: trackingTextKey })}
+              onClick={() => setTracking({ mode: 'manual' })}
             >手动</button>
           </div>
         </header>
@@ -416,7 +416,6 @@ export function ProgressEditor({ doc, goalCatalog, kitOptions = [], disabled, on
                 placeholder="向玩家展示的一行追踪说明…"
                 value={readText(trackingTextKey)}
                 onChange={event => {
-                  if (!tracking.text) setTracking({ mode: 'manual', text: trackingTextKey })
                   writeText(trackingTextKey, event.target.value.replace(/[\r\n]+/g, ' '))
                 }}
               />

@@ -20,7 +20,7 @@
 - `abandonable`、`autoStartWhenAcceptable`、`hideWhenRepeatUnsatisfied` 为布尔；新建显式写出，后两者缺省 false。
 - `rewardKits` 为去重礼包引用数组。
 - `authorNotes` 与玩家 `description` 分开。玩家可见 `name` / `description` 存语义键，译文在 `assets/<locale>/lang_quest/<文件>.lang`；作者备注不本地化。
-- **`tracking`**：`mode: "auto" | "manual"`。自动＝引擎按目标类型生成追踪行；手动＝单一本地化键 `text`（缺省 `tracking`）。切回自动可保留 `text` 草稿键。编译进 questc 进度节点（`auto` 不带 `text`；`manual` 带键字符串）；Mod 侧可先忽略。
+- **`tracking`**：`mode: "auto" | "manual"`。自动＝引擎按目标类型生成；手动＝单行文案，键约定 `progress.progress_start.tracking`（不写入文档）。编译进 questc 仅 `mode`；Mod 按节点 id 取 `progress.<节点id>.tracking`。
 
 ## 交互
 

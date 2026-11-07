@@ -9,13 +9,16 @@ import { GoalParameterField } from './goalWidgets'
 import { GoalPicker } from './ProgressEditor'
 import { ProgressCompletionEditor } from './ProgressCompletionEditor'
 import { SubmissionField } from './SubmissionField'
-import { PROGRESS_REPEAT_LABELS, type ProgressRepeatKind, type ProgressTracking } from './progressDoc'
+import {
+  PROGRESS_REPEAT_LABELS, progressTrackingTextKey,
+  type ProgressRepeatKind, type ProgressTracking,
+} from './progressDoc'
 import {
   createProgressCluster, flowNodeLabel, progressIdentifierIssue, nodeIdentifierIssue, objectiveIdentifierIssue,
   endInternalNameIssue, getEndNode, getPredicateNode, getObjectiveNode, getProgressNode, isStartNode,
   type FlowText, type ProgressFlow,
 } from './model'
-import { clusterTitleKey, flowNodeFieldKey } from './progressLocale'
+import { clusterTitleKey } from './progressLocale'
 
 export type NodeFormKind = 'progress' | 'predicate' | 'objective' | 'end'
 
@@ -109,14 +112,14 @@ export function NodeFormView({ flow, nodeId, kind, active = false, disabled = fa
       </label>
       {(() => {
         const tracking: ProgressTracking = node.tracking ?? { mode: 'auto' }
-        const trackingTextKey = tracking.text?.trim() || flowNodeFieldKey('progress', nodeId, 'tracking')
+        const trackingTextKey = progressTrackingTextKey(nodeId)
         const setTracking = (nextTracking: ProgressTracking) => update(next => { next.progress[nodeId].tracking = nextTracking })
         return <section className="progress-card progress-tracking" aria-label="任务追踪文本">
           <header className="progress-card-head">
             <h2>任务追踪文本</h2>
             <div className="progress-completion-switch" role="group" aria-label="追踪文本模式">
-              <button type="button" disabled={disabled} aria-pressed={tracking.mode === 'auto'} onClick={() => setTracking({ mode: 'auto', ...(tracking.text ? { text: tracking.text } : { text: trackingTextKey }) })}>自动</button>
-              <button type="button" disabled={disabled} aria-pressed={tracking.mode === 'manual'} onClick={() => setTracking({ mode: 'manual', text: trackingTextKey })}>手动</button>
+              <button type="button" disabled={disabled} aria-pressed={tracking.mode === 'auto'} onClick={() => setTracking({ mode: 'auto' })}>自动</button>
+              <button type="button" disabled={disabled} aria-pressed={tracking.mode === 'manual'} onClick={() => setTracking({ mode: 'manual' })}>手动</button>
             </div>
           </header>
           <div className="progress-card-body">
@@ -125,9 +128,7 @@ export function NodeFormView({ flow, nodeId, kind, active = false, disabled = fa
             ) : (
               <TextField label="追踪文案（单行）" value={read({ text: trackingTextKey })} disabled={disabled} onChange={content => {
                 const line = content.replace(/[\r\n]+/g, ' ')
-                if (!tracking.text) setTracking({ mode: 'manual', text: trackingTextKey })
                 if (setText) setText(trackingTextKey, line)
-                else update(next => { next.progress[nodeId].tracking = { mode: 'manual', text: line } })
               }} />
             )}
           </div>

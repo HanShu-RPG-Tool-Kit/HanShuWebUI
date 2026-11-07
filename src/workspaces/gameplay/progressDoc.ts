@@ -20,13 +20,9 @@ export type ProgressRepeatKind = 'once' | 'game_daily' | 'game_weekly' | 'real_d
 export type ProgressGoal = { id: string; kind: string; config: Record<string, ProgressConfigValue> }
 /** 任务追踪文本：单进度与多进度进度节点共用；编译进 questc（引擎可先忽略）。 */
 export type ProgressTrackingMode = 'auto' | 'manual'
-export type ProgressTracking = {
-  mode: ProgressTrackingMode
-  /** manual 时的本地化语义键；切回 auto 时可保留以免丢草稿。 */
-  text?: string
-}
-/** questc / 运行模板上的追踪形态（无草稿键）。 */
-export type QuestTracking = { mode: 'auto' } | { mode: 'manual'; text: string }
+export type ProgressTracking = { mode: ProgressTrackingMode }
+/** questc：仅 mode；手动文案键约定 progress.<节点id>.tracking。 */
+export type QuestTracking = { mode: 'auto' } | { mode: 'manual' }
 export type ProgressDocument = {
   format: typeof PROGRESS_FORMAT
   version: 1
@@ -70,11 +66,16 @@ export function createProgress(name = '新建进度', _definitions: readonly Goa
   }
 }
 
-export const PROGRESS_TRACKING_TEXT_KEY = 'tracking'
+/** 手动追踪文案键：由进度节点 id 推导（单进度编译节点为 progress_start）。 */
+export function progressTrackingTextKey(progressNodeId: string): string {
+  return `progress.${progressNodeId}.tracking`
+}
+/** 单进度作者态／编译开始节点共用。 */
+export const PROGRESS_TRACKING_TEXT_KEY = progressTrackingTextKey('progress_start')
 
 /** 新建进度时写入默认语的文案种子（文档字段已是语义键） */
 export function createProgressLocaleSeeds(name = '新建进度'): Record<string, string> {
-  return { name: name.trim() || '新建进度', description: '' }
+  return { name: name.trim() || '新建进度', description: '', [PROGRESS_TRACKING_TEXT_KEY]: '' }
 }
 export function goalLabel(goal: ProgressGoal, definitions: readonly GoalDefinition[] = []) {
   return definitions.find(item => item.kind === goal.kind)?.label || goal.kind || '未选择目标类型'
@@ -87,38 +88,19 @@ export function goalConfigSummary(goal: ProgressGoal, definitions: readonly Goal
     return `${field?.label || key} ${typeof value === 'boolean' ? value ? '是' : '否' : value}`
   }).join(' · ')
 }
-export function normalizeProgressTracking(
-  tracking: ProgressTracking | undefined,
-  fallbackText = PROGRESS_TRACKING_TEXT_KEY,
-): ProgressTracking {
-  const mode = tracking?.mode === 'manual' ? 'manual' : 'auto'
-  const text = typeof tracking?.text === 'string' && tracking.text.trim() ? tracking.text.trim() : undefined
-  if (mode === 'manual') return { mode: 'manual', text: text ?? fallbackText }
-  return text ? { mode: 'auto', text } : { mode: 'auto' }
+export function normalizeProgressTracking(tracking: ProgressTracking | undefined): ProgressTracking {
+  return { mode: tracking?.mode === 'manual' ? 'manual' : 'auto' }
 }
 
-/** 编译到 questc：去掉 auto 下的草稿键。 */
-export function emitQuestTracking(
-  tracking: ProgressTracking | undefined,
-  fallbackText = PROGRESS_TRACKING_TEXT_KEY,
-): QuestTracking {
-  const normalized = normalizeProgressTracking(tracking, fallbackText)
-  return normalized.mode === 'manual'
-    ? { mode: 'manual', text: normalized.text ?? fallbackText }
-    : { mode: 'auto' }
+export function emitQuestTracking(tracking: ProgressTracking | undefined): QuestTracking {
+  return normalizeProgressTracking(tracking)
 }
 
 export function parseQuestTracking(raw: unknown, path = 'tracking'): QuestTracking {
   if (!isObject(raw)) throw new Error(`${path} 必须是对象`)
+  // 兼容曾导出过 text 的包：忽略 text，只认 mode。
   if (Object.keys(raw).some(key => key !== 'mode' && key !== 'text')) throw new Error(`${path} 含未知字段`)
-  if (raw.mode === 'auto') {
-    if (raw.text !== undefined) throw new Error(`${path}.auto 不应携带 text`)
-    return { mode: 'auto' }
-  }
-  if (raw.mode === 'manual') {
-    if (typeof raw.text !== 'string' || !raw.text.trim()) throw new Error(`${path}.text 不能为空`)
-    return { mode: 'manual', text: raw.text.trim() }
-  }
+  if (raw.mode === 'auto' || raw.mode === 'manual') return { mode: raw.mode }
   throw new Error(`${path}.mode 必须是 auto 或 manual`)
 }
 
@@ -130,10 +112,10 @@ export function stringifyProgress(doc: ProgressDocument) {
   }, null, 2) + '\n'
 }
 
-export function parseProgressTracking(raw: unknown, fallbackText = PROGRESS_TRACKING_TEXT_KEY): ProgressTracking {
+export function parseProgressTracking(raw: unknown): ProgressTracking {
   if (raw === undefined) return { mode: 'auto' }
   if (!isObject(raw)) throw new Error('tracking 必须是对象')
-  // 试水期兼容刚写过的 default/advanced 草稿。
+  // 试水期兼容 default/advanced，以及曾写入的 text/lines。
   const rawMode = raw.mode
   const mode =
     rawMode === 'auto' || rawMode === 'default' ? 'auto'
@@ -143,13 +125,7 @@ export function parseProgressTracking(raw: unknown, fallbackText = PROGRESS_TRAC
   if (Object.keys(raw).some(key => !['mode', 'text', 'lines'].includes(key))) {
     throw new Error('tracking 含未知字段')
   }
-  let text: string | undefined
-  if (typeof raw.text === 'string' && raw.text.trim()) text = raw.text.trim()
-  else if (Array.isArray(raw.lines) && raw.lines[0] && isObject(raw.lines[0]) && typeof raw.lines[0].text === 'string' && raw.lines[0].text.trim()) {
-    text = raw.lines[0].text.trim()
-  }
-  if (mode === 'manual') return { mode: 'manual', text: text ?? fallbackText }
-  return text ? { mode: 'auto', text } : { mode: 'auto' }
+  return { mode }
 }
 
 // Read without normalizing in-progress text or injecting evolving definition defaults.
@@ -249,8 +225,7 @@ export function progressIssues(
   }
   const tracking = doc.tracking ?? { mode: 'auto' as const }
   if (tracking.mode === 'manual') {
-    const key = tracking.text?.trim() || PROGRESS_TRACKING_TEXT_KEY
-    const line = resolveText?.(key) ?? ''
+    const line = resolveText?.(PROGRESS_TRACKING_TEXT_KEY) ?? ''
     if (resolveText && !line.trim()) issues.push('请填写手动追踪文案')
     else if (/[\r\n]/.test(line)) issues.push('手动追踪文案只能是一行')
   }

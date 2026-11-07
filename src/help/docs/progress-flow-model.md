@@ -134,7 +134,7 @@
 - 编译只保留与开始节点**无向联通**的生效节点，因此不会误删仅有出边的条件、目标；其余草稿、注释、Group、坐标和表单状态全部剥离。未知编辑扩展不进入运行模板。不对节点做语义合并或重编号。
 - `metadata` 来自开始进度：`title` / `description` 以及 `tags` / `clusters`（簇 id 字符串数组）/ `visibility`（表达式字符串）/ `acceptance`（表达式字符串）/ `hideWhenRepeatUnsatisfied` / `abandonable` / `autoStartWhenAcceptable` / `repeat`。条件节点 `conditions` 同样是表达式字符串。日志、结局标题等 `FlowText` 编译为其文本键字符串，仍使用原 `.quest` 归属的 `assets/<locale>/lang_quest/<名>.lang`，不烘焙某种语言。无需跟随运行后缀改成 `lang_questc`。提交配置原样保留在所属节点，goal 不描述提交。簇标题不进 questc，运行时按 `clusters.<id>` 从同一 lang 取文案。
 - 生效进度一律编译为 `completionExpression: { outputs: [{ success?: string, failure?: string }] }`。叶子方言为 Mod 对齐的 `goalSucceeded("<id>")`／`goalFailed("<id>")`（可与 `&&`／`||`／`!` 组合）。作者态 `all` / `any` / `custom` 都会降下：内置规则展开成败两侧字符串；自定义图要求完整，Goal 成败双出口、完成输出成败双入口、可多输出（first-wins），逻辑单轨。去掉完成图节点/边表、断开草稿与作者态 `completion` 枚举。空 `goals` 不得编译为可运行模板。
-- 进度节点另含 `tracking`：`{ "mode": "auto" }` 或 `{ "mode": "manual", "text": "<本地化键>" }`（单进度手动键缺省 `tracking`，多进度为 `progress.<节点id>.tracking`）。自动＝引擎按目标类型生成；手动＝作者文案。编译始终写出；Mod 侧可先忽略。缺省旧包按 `auto` 读取。
+- 进度节点另含 `tracking`：`{ "mode": "auto" }` 或 `{ "mode": "manual" }`。手动单行文案键约定 `progress.<节点id>.tracking`（不进 questc）。缺省旧包按 `auto`；曾带 `text` 的包读取时忽略该字段。
 - 进度节点可选 `clusterId`（须落在 `metadata.clusters`）；无簇则省略。单进度编译 `clusters` 为空数组且不写 `clusterId`。
 - 结束节点编译为 `end`，必填 `internalName`（来自作者态同名字段；自有命名空间，可与其它结束节点重复，不与 progress／objective／condition 的 identifier 共用）。单进度生成节点 `end_success` / `end_failure`，`internalName` 分别为 `success` / `failure`（成功口接成功结束并承载奖励礼包，失败口接无奖励失败结束）；任务级策略写入 metadata（与多进度开始进度同源）。作者备注不导出。不再使用 `extensions.hanshuSimpleQuest`。多进度不擅自补结束节点：没有结束仍是合法但不能完成的任务。
 - `.questc` 只保存模板，不保存实例状态、goal 累计值、队列、查询轮次、终局或挂起原因。当前改造没有替游戏引擎实现加载执行、真实交付或已有实例迁移。
