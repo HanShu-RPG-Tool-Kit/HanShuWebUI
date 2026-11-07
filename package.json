@@ -90,6 +90,7 @@
     "test:tts-net": "tsx scripts/verify-tts-net.ts",
     "test:tts-protocols": "tsx scripts/verify-tts-protocols.ts",
     "test:tts-voices": "tsx scripts/verify-tts-voices.ts",
+    "test:voice-import:csp": "node scripts/verify-voice-import-csp.mjs",
     "test:project-boundary": "node scripts/verify-project-boundary.mjs",
     "test:local-projects": "node scripts/verify-local-projects.mjs",
     "test:local-projects:ui": "node scripts/verify-local-projects-ui.mjs",

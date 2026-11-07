@@ -63,6 +63,7 @@ npm run test:collaboration:ui
 npm run test:collaboration:presence
 npm run test:presence-protocol
 npm run test:resource-status
+npm run test:voice-import:csp
 npm run test:collaboration:unified
 npm run test:file-editing
 npm run test:progress-edit-session

@@ -1,6 +1,6 @@
 import { Fragment, useContext, useMemo, useRef, useState, type DragEvent, type MouseEvent } from 'react'
 import { TextField } from './Fields'
-import { acceptKitItemDrops, AddButton, hasKitItemDrag, ItemCatalogContext, ItemList, ItemVisual, KitExprContext, KitTagField, ModifierPanel, Panel, ParamPanel, RemoveButton } from './KitEditor'
+import { acceptKitItemDrops, AddButton, hasKitItemDrag, ItemCatalogContext, ItemList, ItemVisual, KitExprContext, KitTagField, ModifierPanel, Panel, ParamPanel } from './KitEditor'
 import { ConditionRulesEditor } from './ConditionRulesEditor'
 import { NodeContextMenu } from '../../nodeEditor/ContextMenu'
 import { KitScriptField, type KitScriptOptions } from './KitScriptField'
