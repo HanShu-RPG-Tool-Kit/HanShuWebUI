@@ -193,6 +193,60 @@ export async function writeLangAsset(
   return result?.workspace ?? workspace
 }
 
+export type MissingTranslationSummary = {
+  locale: string
+  /** 该语言缺少译文的键数 */
+  missing: number
+  /** 该语言对应的正文键总数 */
+  total: number
+  /** 涉及多少个源文件（只数缺译文的） */
+  sources: number
+}
+
+/**
+ * 导出预检：找出「正文有键、语言文件没文本」的情况。
+ *
+ * 为什么放在这里而不是导出器里：导出预检与编辑器全红用的是同一份判断
+ * （键来自正文、文本来自语言文件），导出器只负责打包。这里只做汇总，
+ * 真正读语言文件由调用方注入 —— 必须读**工程文件**（S 权威），不能读本机镜像，
+ * 否则又会出现"工具说没问题、用户看到全红"。
+ */
+export async function collectMissingTranslationWarnings(
+  sources: ReadonlyArray<{ name: string; content: string }>,
+  locales: readonly string[],
+  readLang: (sourceName: string, locale: string) => Promise<Record<string, string>>,
+): Promise<{ warnings: string[]; summaries: MissingTranslationSummary[] }> {
+  const warnings: string[] = []
+  const summaries: MissingTranslationSummary[] = []
+  for (const locale of locales) {
+    let missing = 0
+    let total = 0
+    let missingSources = 0
+    for (const source of sources) {
+      const keys = collectSourceKeys(source.content, source.name)
+      if (keys.length === 0) continue
+      const map = await readLang(source.name, locale)
+      let fileMissing = 0
+      for (const key of keys) {
+        total += 1
+        if (!String(map[key.key] ?? '').trim()) {
+          missing += 1
+          fileMissing += 1
+        }
+      }
+      if (fileMissing > 0) missingSources += 1
+    }
+    if (missing > 0) {
+      summaries.push({ locale, missing, total, sources: missingSources })
+      warnings.push(
+        `[${locale}] 有 ${missing} 个键没有译文（涉及 ${missingSources} 个源文件，共 ${total} 个键）；` +
+          '用 list_lang_keys 查缺哪些，write_lang 补上',
+      )
+    }
+  }
+  return { warnings, summaries }
+}
+
 export type LocaleSummary = { locale: string; langFiles: number; voiceFiles: number }
 
 /** 工程里真实存在过的语言（`assets/<locale>/lang_*` 与 `voice_*`） */

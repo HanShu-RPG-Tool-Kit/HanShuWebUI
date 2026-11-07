@@ -1,0 +1,373 @@
+/**
+ * Agent 运行时的**共享契约**：只放类型，不放实现，也不 import 任何 PI 包。
+ *
+ * 分层（见 help/docs/agent-runtime.md）：
+ *   ① UI（AgentPanel）        —— 只依赖 AgentRuntimeView / AgentRuntime
+ *   ② 适配层（pi/facade.ts）  —— 唯一 import PI 的文件
+ *   ③ 运行时支撑（runtime/）  —— 版本表 · 锁表 · Run 撤销日志
+ *   ④ 存储（store/）          —— 活跃段库 / 归档段库 / windowId
+ *   ⑤ 领域工具（tools.ts）    —— read / lock / write 三类语义
+ *
+ * 本文件的类型是这几层之间**唯一的**耦合面：改这里等于改协议。
+ */
+
+/* ───────────────────────── 版本与锁 ───────────────────────── */
+
+/**
+ * 版本标识 = **文件内容哈希**（与 S 同构）。
+ * 用哈希而不是计数器：改了又改回来不算冲突。
+ */
+export type ContentVersion = string
+
+/** 带版本的文件快照；`version` 是内容哈希，不是时间戳 */
+export type VersionedFile = {
+  content: string
+  version: ContentVersion
+}
+
+/** 逻辑名（`序章.hs`），与工具参数一致；不是项目相对路径 */
+export type AgentPath = string
+
+/** lock 失败原因（见文档 §8「lock 的返回」） */
+export type LockDenyReason =
+  /** 最后读到的版本 ≠ 当前版本 */
+  | 'version_stale'
+  /** 人类有未提交的脏编辑 */
+  | 'human_editing'
+  /** 本 Run 内没读过该文件 */
+  | 'not_read'
+  /** 文件不存在（且调用方没有声明 create） */
+  | 'not_found'
+  /** 已被其他 Run / 人类持有 */
+  | 'held'
+
+export type LockGrant = {
+  locked: true
+  version: ContentVersion
+  content: string
+}
+
+export type LockDenial = {
+  locked: false
+  reason: LockDenyReason
+  /** 失败也回传最新内容，让模型一次往返内自愈 */
+  currentVersion?: ContentVersion
+  currentContent?: string
+  hint: string
+}
+
+export type LockResult = LockGrant | LockDenial
+
+/** 多路径原子：要么全拿到，要么一个都不持有 */
+export type LockRequest = {
+  paths: AgentPath[]
+  /** create 语义：占住一个**不存在**的名字 */
+  creating?: boolean
+}
+
+/**
+ * 锁/版本层看到的世界。
+ * 所有读都要经过宿主（编辑器缓冲先 flush），否则人类正在打的字不进哈希。
+ */
+export type AgentFileWorld = {
+  /** flush 编辑器缓冲 + 读当前内容；不存在返回 null */
+  read: (path: AgentPath) => Promise<VersionedFile | null>
+  /** 人类是否有未提交的脏编辑（派发写入时的人类缓冲） */
+  isHumanDirty: (path: AgentPath) => boolean
+  /** 撤销日志回放用：把内容写回工作区（null = 删除） */
+  write: (path: AgentPath, content: string | null) => Promise<void>
+}
+
+/* ───────────────────────── 工具三语义 ───────────────────────── */
+
+/**
+ * 工具语义分类。文档 §8：read / lock / write 是**三类语义**，不是只保留 3 个工具。
+ * - read：返回 content + version
+ * - lock：占住路径（write 的前置条件）
+ * - write：落地修改，**必须已持锁**
+ */
+export type AgentToolKind = 'read' | 'lock' | 'write'
+
+/** 单个工具调用的结果：一律带 `ok`，失败带 `error`（可选 `hint` 指向正确下一步） */
+export type AgentOpResult = { ok: boolean; [key: string]: unknown }
+
+export type LangEntry = { key: string; text: string }
+
+/**
+ * 领域工具宿主：由工作区（StageplayWorkspace）实现，负责真正的读写与连带资产处理。
+ *
+ * 与旧版的差别：
+ * 1. 版本从「最后更新时间」改成「内容哈希」（`ContentVersion`）；
+ * 2. 写操作不再自己校验版本 —— 版本前置条件统一由锁协议强制；
+ * 3. 读写都必须经过 `flushEditorBuffer` 之后的世界（宿主自己保证）。
+ */
+export type AgentHost = {
+  /** 所有包与源文件（逻辑名 + 类别） */
+  listSources: (packageName?: string) => AgentOpResult
+  /** 分页读源文件；`version` 是内容哈希，供 lock 校验 */
+  readSource: (source: string, offset?: number, limit?: number) => AgentOpResult
+  /**
+   * 读**完整**正文（不截断）：锁协议要用它算内容哈希、并在 lock 成功时顺带把最新内容交给模型。
+   * 省略时运行时退化为 `readSource(source, 1, 2000)`（>2000 行的文件请务必实现）。
+   */
+  readFullSource?: (source: string) => AgentOpResult
+  /** 人类是否有未提交的脏编辑（编辑器缓冲）：lock 的 `human_editing` 判据 */
+  isHumanDirty?: (source: string) => boolean
+  /**
+   * 源文件派生的语言资产路径（按工程语言表推导）。
+   * 锁会覆盖这些路径：外部改了语言文件、源文件版本却没变时，
+   * 下一次写译文会以版本冲突被拒绝，而不是悄悄覆盖别人的改动（§8 派生资产）。
+   */
+  derivedLangPaths?: (source: string) => AgentPath[]
+  /**
+   * 读派生的语言资产正文（S 权威优先，退回本机缓存）；不存在返回 null。
+   * 供派生资产的锁版本与 `write_lang` 的写前校验使用。
+   */
+  readAssetText?: (path: AgentPath) => Promise<string | null>
+  /** 新建源文件；同名已存在时**失败**（改用 `writeSource`） */
+  createSource: (source: string, content: string) => AgentOpResult
+  /** 覆盖**已存在**的源文件；不存在时**失败**（改用 `createSource`）。`.lang` 交给 `writeLang` */
+  writeSource: (source: string, content: string) => AgentOpResult
+  /** 删除源文件，并连带删除它在所有语言下的语言文本与配音 */
+  deleteSource: (source: string) => Promise<AgentOpResult>
+  /** 精确字面替换 */
+  editSource: (
+    source: string,
+    oldText: string,
+    newText: string,
+    replaceAll?: boolean,
+  ) => AgentOpResult
+  /** 改名，并连带搬迁所有语言的 lang / voice */
+  renameSource: (source: string, newSource: string) => Promise<AgentOpResult>
+  /** 语法诊断 + `.hsc` 编译校验 */
+  validateSource: (source: string) => AgentOpResult
+  /** 当前打开文件的名字、类别与项目相对路径 */
+  getActiveFilePath: () => AgentOpResult
+  /** 工程里出现过的语言 */
+  listLocales: () => AgentOpResult
+  /** 源正文里出现的键 × 该语言的译文 */
+  listLangKeys: (
+    source: string,
+    locale?: string,
+    offset?: number,
+    limit?: number,
+  ) => Promise<AgentOpResult>
+  /** 一次写入多种语言的译文；键必须已存在于正文 */
+  writeLang: (
+    source: string,
+    translations: Record<string, LangEntry[]>,
+  ) => Promise<AgentOpResult>
+  /** 删除译文键 */
+  deleteLangKeys: (
+    source: string,
+    keys: string[],
+    locale?: string,
+  ) => Promise<AgentOpResult>
+  /** 对等配音是否存在、是否单声道 Vorbis ogg */
+  listVoiceStatus: (source: string, locale?: string) => Promise<AgentOpResult>
+  /** 解析：把正文的可本地化文本换成键名，并把文本写进该语言的映射 */
+  parseHs: (source: string, locale?: string) => Promise<AgentOpResult>
+  /** 逆解析：把该语言映射里的文本换回正文（键名被替换掉） */
+  unparseHs: (source: string, locale?: string) => Promise<AgentOpResult>
+  /** 内存里预演两个导出，返回文件数与警告（不下载） */
+  checkExport: () => Promise<AgentOpResult>
+}
+
+/**
+ * 工具派发前的仲裁层：由运行时（Lead 侧的 facade/AgentRuntime）实现。
+ * `tools.ts` 只认这个接口，不认 PI，也不认锁表的内部结构。
+ */
+export type AgentToolArbiter = {
+  /** read：返回内容与版本，并把「本 Run 读过这一版」记进版本表 */
+  read: (source: AgentPath, offset?: number, limit?: number) => Promise<AgentOpResult>
+  /** lock：多路径原子；失败回传当前内容 */
+  lock: (paths: AgentPath[], options?: { creating?: boolean }) => Promise<LockResult>
+  /** write 前的强制校验：未持锁 / 版本已变 → 拒绝执行 */
+  assertWritable: (
+    source: AgentPath,
+    options?: { creating?: boolean },
+  ) => Promise<
+    { ok: true; version: ContentVersion } | { ok: false; error: string; hint?: string }
+  >
+  /** write 成功后登记（供撤销日志与后续版本校验） */
+  noteWritten: (source: AgentPath) => void | Promise<void>
+  /** 本轮模型回复结束：释放未被 write 消费的锁 */
+  endRound: () => void | Promise<void>
+}
+
+/* ───────────────────────── Run 撤销日志 ───────────────────────── */
+
+/** 单个文件在 Run 失败时的回放结论 */
+export type UndoOutcome = {
+  path: AgentPath
+  action: 'restored' | 'deleted' | 'skipped' | 'finished'
+  /** 跳过原因：被后续改动覆盖 / 已不存在等 */
+  reason?: string
+}
+
+/* ───────────────────────── 会话段与归档段 ───────────────────────── */
+
+/** 段的生命周期状态（文档 §9） */
+export type SegmentState = 'active' | 'dormant' | 'sealed'
+
+/** 会话段：窗口内的活跃会话；一个活跃段库可含 N 个段 */
+export type SegmentInfo = {
+  id: string
+  title: string
+  createdAt: number
+  updatedAt: number
+  /** 创建窗口；段只归创建窗口 */
+  windowId: string
+  state: SegmentState
+  runCount: number
+  /** 从哪个归档段「继承对话」而来；删归档段时用于级联 */
+  sourceSnapshotId?: string
+}
+
+/**
+ * 归档段（保存点）：不可变，存**归档段库**；同一工程 scope 的所有窗口可读。
+ * 归档 ≠ 段结束：保存产出归档段后，活跃段仍可继续。
+ */
+export type SnapshotInfo = {
+  id: string
+  /** 工程 scope（分区键） */
+  scope: string
+  /** 产出它的段 */
+  segmentId: string
+  /** 跨库谱系：归档段之间的父链（自有元数据） */
+  parentSnapshotId?: string
+  title: string
+  createdAt: number
+  /** 已归档的条目数 */
+  entryCount: number
+  /** 最后一条条目 id（增量补写的锚点） */
+  tailEntryId?: string
+  /** 从该归档段 fork 出来的段（二期载入时回填） */
+  sourceSnapshotId?: string
+}
+
+/** 归档段库的存储后端（IndexedDB 实现 + 测试用内存实现） */
+export type SnapshotBackend = {
+  /** 追加一条归档段记录；id 已存在时**失败**（不可变） */
+  put: (record: SnapshotInfo, entries: unknown[]) => Promise<void>
+  list: (scope: string) => Promise<SnapshotInfo[]>
+  entries: (snapshotId: string) => Promise<unknown[]>
+  remove: (snapshotId: string) => Promise<void>
+  /** 本工程 scope 的占用估算（字节） */
+  usage: (scope: string) => Promise<number>
+}
+
+/* ───────────────────────── 会话视图（给 UI） ───────────────────────── */
+
+export type AgentViewItem =
+  | { id: string; kind: 'user'; text: string }
+  | {
+      id: string
+      kind: 'assistant'
+      text: string
+      streaming?: boolean
+      /** 模型思考内容（默认不展开；为空表示这一轮没有思考或厂商不返回） */
+      thinking?: string
+    }
+  | { id: string; kind: 'tool'; name: string; status: 'running' | 'done' | 'error'; output?: string }
+  | { id: string; kind: 'error'; text: string }
+  | { id: string; kind: 'notice'; text: string }
+
+/** Run 状态：Run = 一次用户输入到最终答案的原子回合 */
+export type AgentRunState = 'idle' | 'running' | 'aborted' | 'failed'
+
+export type AgentRuntimeView = {
+  /** 当前段 id；null = 还没有打开的段 */
+  segmentId: string | null
+  runId: string | null
+  runState: AgentRunState
+  /** 产物（流式逐字 + 工具状态）：按条目顺序 */
+  items: AgentViewItem[]
+  /** 人类可读的状态行（思考中 / 工具名） */
+  status: string
+  /** 当前持有的锁（逻辑名），供编辑器转只读 */
+  lockedPaths: string[]
+  /** 用量/成本（可选，来自 pi-durable pi.usage） */
+  usage?: { inputTokens?: number; outputTokens?: number; costUsd?: number }
+}
+
+/* ───────────────────────── AgentRuntime（facade 对 UI 的唯一面） ───────────────────────── */
+
+export type AgentRuntimeOptions = {
+  /** 工程 scope（共享库分区键）：远端用 S 的 projectId，本机用 project.json.id */
+  scope: string
+  windowId: string
+  /** 领域工具宿主 */
+  host: AgentHost
+  /** 用户填写的厂商 API Key（只存浏览器本地，不进构建产物） */
+  apiKey: string
+  /** 可选：自建网关地址；省略用厂商默认 */
+  baseUrl?: string
+  /** 模型 id：deepseek-v4-pro / deepseek-flash */
+  model: string
+  /** 当前工程名 / 文件（进提示词的上下文节） */
+  projectLabel?: string
+  /**
+   * 保存事务进行中禁止启动 Run（文档 §7「Run 与保存双向互斥」）。
+   * 省略 = 不限制。
+   */
+  canStartRun?: () => boolean
+}
+
+/** 一次 Run 的结果（失败不抛异常，交给 UI 渲染成一条记录） */
+export type AgentRunResult = {
+  ok: boolean
+  /** 失败原因（模型错误 / 中断 / 原子性回滚告警） */
+  error?: string
+  /** Run 失败时按版本守卫回放的结果 */
+  undo?: UndoOutcome[]
+  /** 是否因页面存活而回滚；刷新/崩溃后不回滚 */
+  rolledBack?: boolean
+}
+
+/**
+ * 会话段与归档段的管理面。
+ * Save 路径（工作区「保存」）在文件事务确认提交后调用 `archive()`。
+ */
+export type AgentRuntime = {
+  /** 打开（或创建）本窗口在本工程下的活跃段库，并接管未完成 Run（标记中断，不续跑） */
+  open: () => Promise<void>
+  /** 列出本窗口的段；以及同工程 scope 的其它窗口段（只读可见性提示用） */
+  listSegments: () => Promise<SegmentInfo[]>
+  /** 新建并切换到空段 */
+  createSegment: (title?: string) => Promise<SegmentInfo>
+  /** 切换到已有段（同窗口） */
+  selectSegment: (segmentId: string) => Promise<void>
+  /**
+   * 删除一个活跃段（连同它的对话条目）。
+   * 归档段库里的归档不受影响（那是保存点）；删当前段后会自动切到另一段或新建空段。
+   */
+  deleteSegment: (segmentId: string) => Promise<void>
+  /** 当前视图（订阅前先拿一次） */
+  view: () => AgentRuntimeView
+  /** 订阅视图变化；返回取消订阅 */
+  subscribe: (listener: (view: AgentRuntimeView) => void) => () => void
+  /** 发起一个 Run（用户输入）；返回后 Run 可能仍在跑，进度走订阅 */
+  run: (text: string) => Promise<AgentRunResult>
+  /** 中止当前 Run（页面存活时按版本守卫回滚） */
+  abort: () => Promise<void>
+  /** 保存路径调用：把段自上次归档之后的新增条目追加进归档段库，产出一条归档记录 */
+  archive: (title?: string) => Promise<SnapshotInfo | null>
+  /** 归档段列表 */
+  listSnapshots: () => Promise<SnapshotInfo[]>
+  /** 读某个归档段的对话条目（只读查看用） */
+  snapshotItems: (snapshotId: string) => Promise<AgentViewItem[]>
+  /** 从归档段「继承对话」：新建一个活跃段并复制该归档的条目 */
+  forkSnapshot: (snapshotId: string) => Promise<SegmentInfo>
+  /**
+   * 删除归档段，并级联删除直接/间接继承它的段（活跃段与归档段都算）。
+   * 被删段里的对话会一起消失；当前段若被级联删除，会自动切到另一段或新建空段。
+   */
+  deleteSnapshot: (snapshotId: string) => Promise<{ snapshots: number; segments: number }>
+  /** 本工程归档段库占用（字节）；由 UI 做 50MB 黄条 / 100MB 红条 */
+  storageUsage: () => Promise<number>
+  /** 拿持久化配额，避免空间压力回收 */
+  persistStorage: () => Promise<boolean>
+  /** 关闭（切换工程 / 卸载）：关旧 Harness，活跃段库保留 */
+  close: () => Promise<void>
+}

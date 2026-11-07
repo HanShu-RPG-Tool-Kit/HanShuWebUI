@@ -155,6 +155,7 @@ import {
 import {
   activeFilePathOf,
   applyTextEdit,
+  collectMissingTranslationWarnings,
   collectSourceKeys,
   deleteSourceAssets,
   langAssetPathFor,
@@ -172,6 +173,10 @@ import { MarkdownPreview } from '../MarkdownPreview'
 import { HscPreview } from '../HscPreview'
 import { AssetPreview } from '../AssetPreview'
 import { AgentPanel } from '../AgentPanel'
+import { createAgentRuntime } from '../agent/pi/facade'
+import { claimWindowId } from '../agent/store/windowId'
+import { getAgentApiKey, getAgentModelId } from '../agent/config'
+import type { AgentRuntime, AgentRuntimeView } from '../agent/contracts'
 import {
   AgentDiffModal,
   type AgentDiffSnapshot,
@@ -195,6 +200,7 @@ import { TextEditBox } from '../TextEditBox'
 import {
   TextMap,
   TEXT_ASSET_MIME,
+  parseTextFile,
   stringifyTextFile,
   textAssetPath,
 } from '../i18n/textMap'
@@ -291,6 +297,9 @@ export const StageplayWorkspace = forwardRef<
   const tabsHydratedRef = useRef(false)
   const [project, setProject] = useState<BoundProject | null>(null)
   const [projectBusy, setProjectBusy] = useState(false)
+  /** 保存事务是否进行中：Agent Run 的启动闸门要读最新值（闭包里的 state 会是旧值） */
+  const projectBusyRef = useRef(projectBusy)
+  projectBusyRef.current = projectBusy
   const active = useMemo(
     () => findScript(workspace, workspace.activeScriptId),
     [workspace],
@@ -324,6 +333,35 @@ export const StageplayWorkspace = forwardRef<
   const setAgentOpen = (next: boolean | ((open: boolean) => boolean)) => {
     assignViewFlag(scriptViewFlags, 'agent', next)
   }
+
+  /** Agent 运行时（pi-durable facade）：只在面板打开且工程就绪时创建 */
+  const [agentRuntime, setAgentRuntime] = useState<AgentRuntime | null>(null)
+  /** 订阅到的会话视图：Run 状态、锁列表、流式条目都从这里来 */
+  const [agentView, setAgentView] = useState<AgentRuntimeView | null>(null)
+  /** 面板里改了网关/模型 → 重建运行时（Key 是惰性读的，不需要重建） */
+  const [agentRuntimeNonce, setAgentRuntimeNonce] = useState(0)
+  const agentRuntimeRef = useRef<AgentRuntime | null>(null)
+  const agentHostRef = useRef<AgentHost | null>(null)
+  /**
+   * 稳定宿主代理：运行时只创建一次，但工具调用要拿到**当前渲染**的宿主实现
+   * （宿主方法里会读 locale、活动文件这类每次渲染都可能变的值）。
+   */
+  const agentHostProxyRef = useRef<AgentHost | null>(null)
+  if (!agentHostProxyRef.current) {
+    agentHostProxyRef.current = new Proxy({} as AgentHost, {
+      get: (_target, property) => {
+        const host = agentHostRef.current as unknown as
+          | Record<PropertyKey, unknown>
+          | null
+        const value = host?.[property]
+        return typeof value === 'function'
+          ? (value as (...args: unknown[]) => unknown).bind(host)
+          : value
+      },
+    })
+  }
+  /** Run 活跃：保存按钮/快捷键/自动保存全部禁用（文档 §7 双向互斥） */
+  const agentRunning = agentView?.runState === 'running'
   const [agentDiffs, setAgentDiffs] = useState<AgentDiffSnapshot[]>([])
   const [diffOpen, setDiffOpen] = useState(false)
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null)
@@ -379,6 +417,8 @@ export const StageplayWorkspace = forwardRef<
   const packageName = viewingAsset
     ? activeAssetHit!.pkg.name
     : (active?.pkg.name ?? '')
+  /** Agent 正持锁改这个文件 → 编辑器转只读并提示（文档 §8 人类侧：人类永不等待，只会被暂时只读） */
+  const agentWritingFile = Boolean(agentView?.lockedPaths.includes(titleName))
   const SourceEditor=editorLanguageForFile(titleName)==='javascript'?JavaScriptEditor:Editor
   const editingMarkdown = !viewingAsset && isMarkdownFile(titleName)
   const editingHanshu = !viewingAsset && isHanshuFile(titleName)
@@ -601,6 +641,10 @@ export const StageplayWorkspace = forwardRef<
   const handleSaveTextAsset = async (content: string) => {
     const hit = activeAssetHit
     if (!hit) return
+    if (agentRuntimeRef.current?.view().runState === 'running') {
+      void alertDialog('Agent 运行中，暂不可保存。等这一轮结束（或点停止）再保存。')
+      return
+    }
     const { pkg, asset } = hit
     const mime = asset.mime || TEXT_ASSET_MIME
     const blob = new Blob([content], { type: mime })
@@ -1784,6 +1828,15 @@ export const StageplayWorkspace = forwardRef<
       setProject(saved)
       setBoundProject(saved)
       setDiskSavedAt(Date.now())
+      // ② 文件已确认提交 → 才把段的新增条目追加进快照库。
+      // 失败只告警、不回滚文件：档案是本机副本，文件才是服务端权威（文档 §9「保存路径」）
+      try {
+        await agentRuntimeRef.current?.archive()
+      } catch (error) {
+        void alertDialog(
+          `文件已保存，但对话快照未落盘：${error instanceof Error ? error.message : String(error)}。下次保存会补写。`,
+        )
+      }
     } finally {
       setProjectBusy(false)
     }
@@ -1810,6 +1863,11 @@ export const StageplayWorkspace = forwardRef<
   }
 
   const persistNow = () => {
+    // 文档 §7：Run 活跃 → 保存按钮、快捷键、自动保存全部禁用
+    if (agentRuntimeRef.current?.view().runState === 'running') {
+      void alertDialog('Agent 运行中，暂不可保存。等这一轮结束（或点停止）再保存。')
+      return
+    }
     const text = valueRef.current
     // 落点用正文的归属：Ctrl+S 保存的是"你正在看的那份"，它属于谁就写给谁
     const id = bufferOwnerRef.current ?? activeIdRef.current
@@ -2656,14 +2714,6 @@ export const StageplayWorkspace = forwardRef<
     clearAgentDiffs()
   }
 
-  const getEditorSelection = () => {
-    const ed = editorRef.current
-    const model = ed?.getModel()
-    const sel = ed?.getSelection()
-    if (!ed || !model || !sel || sel.isEmpty()) return ''
-    return model.getValueInRange(sel)
-  }
-
   /** Agent 写入已有文件：并回编辑器、记 diff；工程历史由 S 在提交成功时记录。 */
   const applyAgentFileWrite = (
     scriptId: string,
@@ -2691,14 +2741,104 @@ export const StageplayWorkspace = forwardRef<
       : hit.script.content
   }
 
+  /**
+   * 语言文本的权威读取：绑定工程时以 **S（工程文件）** 为准，读不到才退回本机缓存。
+   *
+   * 这是"工具越自信、用户越对不上"的修复点之一：以前 list_lang_keys 只读本机
+   * IndexedDB 镜像，agent 写进镜像、没进工程文件，也照样回 `translated: true`。
+   * 现在 read 走 `readSnapshot`，`version` 就是 S 的内容哈希；`localDraft` 表示
+   * 当前语言文件还有用户未保存的编辑器草稿（此时读到的仍是工程文件那一版）。
+   */
+  const readLangState = async (
+    pkgId: string,
+    path: string,
+  ): Promise<{ map: Record<string, string>; version: string | null; localDraft: boolean }> => {
+    const client = projectRef.current?.handle.client
+    if (client?.entry(path)) {
+      try {
+        const { file, version } = await client.readSnapshot(path, false)
+        return {
+          map: parseTextFile(await file.text()),
+          version,
+          localDraft: client.transactions.hasDraft(path),
+        }
+      } catch {
+        /* 读不到就退回本机缓存，至少不要阻断工具 */
+      }
+    }
+    return { map: await readLangAsset(pkgId, path), version: null, localDraft: false }
+  }
+
+  /**
+   * 语言资产写入：绑定工程时提交一次 S 文件事务（**立即落盘**），成功后再同步本机镜像。
+   * 返回 `saved=true` 才代表工程文件里已经有了；失败时不写本机镜像，避免"镜像成功、磁盘没有"。
+   *
+   * 为什么是立即提交而不是等"保存工程"：语言文本不在正文编辑器的保存批次里
+   * （见 collaboration-programming「语言 .lang」），agent 又无法可靠地知道用户何时保存；
+   * 返回 `written` 却只在缓存里，正是本次故障的根因。
+   */
+  const commitLangAsset = async (
+    pkgId: string,
+    path: string,
+    data: Record<string, string>,
+    label: string,
+  ): Promise<{
+    saved: boolean
+    /** 未绑定工程：只写进本机工作区（没有可落盘的工程文件） */
+    localOnly?: boolean
+    version?: string | null
+    error?: string
+  }> => {
+    const client = projectRef.current?.handle.client
+    if (client) {
+      if (client.transactions.hasDraft(path)) {
+        return {
+          saved: false,
+          error: '该语言文件还有用户未保存的编辑器草稿，先让用户保存或放弃后再写',
+        }
+      }
+      if (!client.writable) {
+        return {
+          saved: false,
+          error: client.online
+            ? '当前主体只有读取权限，未写入工程文件'
+            : '服务已断开，未写入工程文件',
+        }
+      }
+      try {
+        // 与编辑器里的语言暂存同一种数据形态（字符串），S 按 UTF-8 落盘
+        await client.apply([{ op: 'write', path, data: stringifyTextFile(data) }], label)
+      } catch (error) {
+        const code = (error as { code?: string } | null)?.code
+        const detail = error instanceof Error ? error.message : String(error)
+        if (code === 'commit_uncertain') {
+          return {
+            saved: false,
+            error: `写入结果未知（${detail}），请刷新工程确认后再重试，不要直接重写`,
+          }
+        }
+        return { saved: false, error: detail }
+      }
+    } else {
+      // 未绑定工程（虚拟工程）：没有工程文件可落盘，写进本机工作区并如实标注
+      const workspace = await writeLangAsset(workspaceRef.current, pkgId, path, data)
+      commitWorkspace(workspace)
+      return { saved: false, localOnly: true, version: null }
+    }
+
+    const workspace = await writeLangAsset(workspaceRef.current, pkgId, path, data)
+    commitWorkspace(workspace)
+    return { saved: true, version: client.baseline.get(path) ?? null }
+  }
+
   /** 语言工具的目标：源文件 + 语言 → 所属包、资产路径与当前译文表 */
   const langTargetOf = async (sourceName: string, localeArg?: string) => {
     const hit = findScriptByName(workspaceRef.current, sourceName)
     if (!hit) return null
     const lang = localeArg?.trim() || locale
     const path = langAssetPathFor(hit.script.name, lang)
-    const map = await readLangAsset(hit.pkg.id, path)
-    return { hit, lang, path, map }
+    const state = await readLangState(hit.pkg.id, path)
+    return { hit, lang, path, map: state.map, version: state.version, localDraft: state.localDraft }
   }
 
   /** Agent 写源文件名前的校验：`.lang` 不当普通文件写（走 write_lang） */
@@ -2800,9 +2940,30 @@ export const StageplayWorkspace = forwardRef<
         ok: true,
         source: hit.script.name,
         kind: sourceKindOf(hit.script.name, hit.script.srcKind),
-        version: hit.script.updatedAt,
         ...page,
       }
+    },
+    /** 锁协议要完整正文：版本哈希按全文算（截断会让锁校验错位） */
+    readFullSource: (source) => {
+      const hit = findScriptByName(workspaceRef.current, source)
+      if (!hit) return { ok: false, error: `未找到文件：${source}` }
+      return {
+        ok: true,
+        source: hit.script.name,
+        content: agentSourceContent(hit.script.id) ?? hit.script.content,
+      }
+    },
+    /**
+     * 人类是否正在改这个文件：编辑器缓冲的归属就是判据。
+     * 只要归属匹配且缓冲内容与已提交正文不同，就说明用户还有没落盘的输入（文档 §8 human_editing）。
+     */
+    isHumanDirty: (source) => {
+      const hit = findScriptByName(workspaceRef.current, source)
+      if (!hit) return false
+      return (
+        hit.script.id === bufferOwnerRef.current &&
+        valueRef.current !== hit.script.content
+      )
     },
     createSource: (source, content) => {
       const checked = normalizeAgentSource(source)
@@ -2846,7 +3007,7 @@ export const StageplayWorkspace = forwardRef<
       })
       return { ok: true, source: checked.name, created: true, activeUnchanged: true }
     },
-    writeSource: (source, content, expectedVersion) => {
+    writeSource: (source, content) => {
       const checked = normalizeAgentSource(source)
       if ('error' in checked) return checked.error
 
@@ -2858,16 +3019,7 @@ export const StageplayWorkspace = forwardRef<
           hint: '新建请用 create_source；write_source 只覆盖已有文件',
         }
       }
-      if (
-        expectedVersion != null &&
-        existing.script.updatedAt !== expectedVersion
-      ) {
-        return {
-          ok: false,
-          error: '文件已被改动，写入被拒绝',
-          hint: '重新 read_source 拿到新的 version 再写',
-        }
-      }
+      // 版本前置条件不在这里校验：严格模式由锁协议保证（未持锁在 tools.ts 就被拒）
       const written = applyAgentFileWrite(
         existing.script.id,
         content,
@@ -2964,6 +3116,33 @@ export const StageplayWorkspace = forwardRef<
         label: entry.nativeName,
       })),
     }),
+    /** 源文件的派生语言资产路径（锁覆盖用）：工程语言表 × 该源文件 */
+    derivedLangPaths: (source) => {
+      const hit = findScriptByName(workspaceRef.current, source)
+      if (!hit) return []
+      return listLocalesOf(workspaceRef.current).map((item) =>
+        langAssetPathFor(hit.script.name, item.locale),
+      )
+    },
+    /** 读派生语言资产正文（S 权威优先）：锁版本与 write_lang 写前校验用 */
+    readAssetText: async (path) => {
+      const client = projectRef.current?.handle.client
+      if (client?.entry(path)) {
+        try {
+          const { file } = await client.readSnapshot(path, false)
+          return await file.text()
+        } catch {
+          return null
+        }
+      }
+      const packageId =
+        client?.assetPackageId ??
+        projectRef.current?.manifest.id ??
+        workspaceRef.current.packages[0]?.id
+      if (!packageId) return null
+      const blob = await getAssetBlob(packageId, path)
+      return blob ? blob.text() : null
+    },
     listLangKeys: async (source, localeArg, offset, limit) => {
       const resolved = resolveAgentLocale(localeArg)
       if ('error' in resolved) return resolved.error
@@ -2986,6 +3165,10 @@ export const StageplayWorkspace = forwardRef<
         source: target.hit.script.name,
         locale: target.lang,
         path: target.path,
+        /** 工程文件里的内容哈希（S 权威）；null = 该语言还没有文件 */
+        version: target.version,
+        /** 用户编辑器里还有未保存草稿：读到的是工程文件那一版，写前先让用户保存 */
+        localDraft: target.localDraft,
         total: keys.length,
         missing: keys.filter((item) => !(item.key in target.map)).length,
         offset: start,
@@ -3014,15 +3197,17 @@ export const StageplayWorkspace = forwardRef<
       const known = new Set(
         collectSourceKeys(content, hit.script.name).map((item) => item.key),
       )
-      let workspace = workspaceRef.current
       const results: Array<Record<string, unknown>> = []
+      const writtenPaths: string[] = []
+      const failures: string[] = []
       let writtenTotal = 0
+      let unsavedTotal = 0
 
       for (const step of plan) {
         const locale = step.locale
         const path = langAssetPathFor(hit.script.name, locale)
-        const map = await readLangAsset(hit.pkg.id, path)
-        const next = { ...map }
+        const state = await readLangState(hit.pkg.id, path)
+        const next = { ...state.map }
         const written: string[] = []
         const skipped: string[] = []
         for (const entry of step.entries) {
@@ -3042,11 +3227,34 @@ export const StageplayWorkspace = forwardRef<
             skipped,
             writtenCount: 0,
             total: Object.keys(next).length,
+            saved: false,
           })
           continue
         }
-        workspace = await writeLangAsset(workspace, hit.pkg.id, path, next)
+        const commit = await commitLangAsset(
+          hit.pkg.id,
+          path,
+          next,
+          `Agent 写入语言文本（${locale}）`,
+        )
+        if (!commit.saved && !commit.localOnly) {
+          unsavedTotal += written.length
+          failures.push(`${locale}：${commit.error ?? '未写入工程文件'}`)
+          results.push({
+            locale,
+            path,
+            written,
+            skipped,
+            writtenCount: written.length,
+            total: Object.keys(next).length,
+            saved: false,
+            error: commit.error,
+          })
+          continue
+        }
+        writtenPaths.push(path)
         writtenTotal += written.length
+        const localOnly = commit.localOnly === true
         if (textMapRef.current?.fileName.toLowerCase() === path.toLowerCase()) {
           textCacheRef.current = stringifyTextFile(next)
           textMapRef.current.load()
@@ -3058,20 +3266,38 @@ export const StageplayWorkspace = forwardRef<
           skipped,
           writtenCount: written.length,
           total: Object.keys(next).length,
+          saved: true,
+          savedToProject: !localOnly,
+          version: commit.version,
         })
       }
 
-      if (writtenTotal > 0) commitWorkspace(workspace)
       if (writtenTotal === 0) {
         return {
           ok: false,
-          error: '没有任何键存在于正文里',
+          error:
+            unsavedTotal > 0
+              ? `译文没有写入工程文件：${failures.join('；')}`
+              : '没有任何键存在于正文里',
           locales: results,
           notes,
-          hint: '键写在正文里（单行 `narrator:7f3a91c2//`；多行块里键名单独占一行）；用 list_lang_keys 查，或先 parse_hs 成键',
+          writtenPaths,
+          hint:
+            unsavedTotal > 0
+              ? '检查工程写权限 / 网络后重试；写译文不改正文，但要先确认正文里的键已保存到工程。'
+              : '键写在正文里（单行 `narrator:7f3a91c2//`；多行块里键名单独占一行）；用 list_lang_keys 查，或先 parse_hs 成键',
         }
       }
-      return { ok: true, source: hit.script.name, locales: results, notes }
+      return {
+        ok: true,
+        source: hit.script.name,
+        locales: results,
+        notes,
+        /** **已经写进工程文件**的语言资产路径（工具层据此更新版本表） */
+        writtenPaths,
+        saved: true,
+        ...(unsavedTotal > 0 ? { warnings: failures } : {}),
+      }
     },
     deleteLangKeys: async (source, keys, localeArg) => {
       const resolved = resolveAgentLocale(localeArg)
@@ -3088,13 +3314,23 @@ export const StageplayWorkspace = forwardRef<
       }
       if (removed.length === 0) return { ok: true, removed: [], total: Object.keys(next).length }
 
-      const workspace = await writeLangAsset(
-        workspaceRef.current,
+      const commit = await commitLangAsset(
         target.hit.pkg.id,
         target.path,
         next,
+        `Agent 删除语言文本（${target.lang}）`,
       )
-      commitWorkspace(workspace)
+      if (!commit.saved && !commit.localOnly) {
+        return {
+          ok: false,
+          error: `译文没有写入工程文件：${commit.error ?? '未写入工程文件'}`,
+          source: target.hit.script.name,
+          locale: target.lang,
+          removed,
+          total: Object.keys(target.map).length,
+          hint: '检查工程写权限 / 网络后重试。',
+        }
+      }
       if (
         textMapRef.current?.fileName.toLowerCase() === target.path.toLowerCase()
       ) {
@@ -3107,6 +3343,9 @@ export const StageplayWorkspace = forwardRef<
         locale: target.lang,
         removed,
         total: Object.keys(next).length,
+        writtenPaths: [target.path],
+        saved: true,
+        version: commit.version,
       }
     },
     listVoiceStatus: async (source, localeArg) => {
@@ -3143,7 +3382,8 @@ export const StageplayWorkspace = forwardRef<
       if ('error' in resolved) return resolved.error
       const lang = resolved.locale
       const path = langAssetPathFor(hit.script.name, lang)
-      const map = await readLangAsset(hit.pkg.id, path)
+      const state = await readLangState(hit.pkg.id, path)
+      const map = state.map
       const before = agentSourceContent(hit.script.id) ?? hit.script.content
       const parsed = parseSourceText(before, map, hit.script.name)
 
@@ -3158,16 +3398,27 @@ export const StageplayWorkspace = forwardRef<
         }
       }
 
-      // 先写映射再改正文：万一正文写入失败，只是多出几条孤儿译文，不会出现"有键无译文"
+      // 先把译文写进工程文件，再改正文：正文写入失败最多留下孤儿译文，
+      // 不会出现"正文有键、语言文件没有"（那正是导出预检和编辑器全红的状态）
       const next = { ...map }
       for (const [key, text] of parsed.entries) next[key] = text
-      const workspace = await writeLangAsset(
-        workspaceRef.current,
+      const commit = await commitLangAsset(
         hit.pkg.id,
         path,
         next,
+        `Agent 成键并写入译文（${lang}）`,
       )
-      commitWorkspace(workspace)
+      if (!commit.saved && !commit.localOnly) {
+        return {
+          ok: false,
+          error: `成键失败：译文没有写入工程文件（${commit.error ?? '未写入工程文件'}）`,
+          source: hit.script.name,
+          locale: lang,
+          created: 0,
+          skipped: parsed.skipped,
+          hint: '正文没有改动。检查工程写权限 / 网络后重试。',
+        }
+      }
       if (textMapRef.current?.fileName.toLowerCase() === path.toLowerCase()) {
         textCacheRef.current = stringifyTextFile(next)
         textMapRef.current.load()
@@ -3185,6 +3436,9 @@ export const StageplayWorkspace = forwardRef<
         created: parsed.entries.length,
         skipped: parsed.skipped,
         keys: parsed.entries.map(([key]) => key),
+        writtenPaths: [path],
+        saved: true,
+        version: commit.version,
       }
     },
     unparseHs: async (source, localeArg) => {
@@ -3194,7 +3448,8 @@ export const StageplayWorkspace = forwardRef<
       if ('error' in resolved) return resolved.error
       const lang = resolved.locale
       const path = langAssetPathFor(hit.script.name, lang)
-      const map = await readLangAsset(hit.pkg.id, path)
+      const state = await readLangState(hit.pkg.id, path)
+      const map = state.map
       const before = agentSourceContent(hit.script.id) ?? hit.script.content
       const unparsed = unparseSourceText(before, map, hit.script.name)
 
@@ -3242,13 +3497,98 @@ export const StageplayWorkspace = forwardRef<
         }
       }
       const project = await buildProjectPackZip(workspace)
+      // 译文完整性：导出预检必须能发现"正文有键、语言文件没文本"，
+      // 否则用户在看不懂全红的编辑器里，还得靠肉眼翻 .lang 文件
+      const localizable = workspace.packages.flatMap((pkg) =>
+        pkg.scripts
+          .filter(
+            (script) =>
+              !script.detached &&
+              (script.name.toLowerCase().endsWith('.hs') ||
+                script.name.toLowerCase().endsWith('.char')),
+          )
+          .map((script) => ({ name: script.name, content: script.content })),
+      )
+      const langReview = await collectMissingTranslationWarnings(
+        localizable,
+        listLocalesOf(workspace).map((item) => item.locale),
+        async (sourceName, langTag) => {
+          const hit = findScriptByName(workspace, sourceName)
+          if (!hit) return {}
+          const path = langAssetPathFor(hit.script.name, langTag)
+          const state = await readLangState(hit.pkg.id, path)
+          return state.map
+        },
+      )
       return {
         ok: true,
-        pak: { files: pak.fileCount, warnings: pak.warnings },
-        project: { files: project.fileCount, warnings: project.warnings },
+        warnings: langReview.warnings,
+        missingTranslations: langReview.summaries,
+        pak: {
+          files: pak.fileCount,
+          warnings: [...langReview.warnings, ...pak.warnings],
+        },
+        project: {
+          files: project.fileCount,
+          warnings: [...langReview.warnings, ...project.warnings],
+        },
       }
     },
   }
+
+  // 工具派发时读最新宿主：runtime 只创建一次，宿主随渲染更新（避免每次渲染重建运行时）
+  agentHostRef.current = agentHost
+
+  const agentScope = project?.manifest.id ?? workspace.packages[0]?.id ?? 'local'
+
+  useEffect(() => {
+    if (!agentOpen || !agentHostRef.current) return
+    let disposed = false
+    let cleanup: (() => void) | null = null
+
+    void (async () => {
+      try {
+        const windowId = await claimWindowId()
+        // 每个窗口一个独立段库（文档 §9）：windowId 跨刷新稳定，复制标签页会拿到新 id
+        const runtime = createAgentRuntime({
+          scope: agentScope,
+          windowId,
+          host: agentHostProxyRef.current as AgentHost,
+          apiKey: getAgentApiKey(),
+          model: getAgentModelId(),
+          // 文档 §7：保存事务进行中禁止启动 Run
+          canStartRun: () => !projectBusyRef.current,
+        })
+        await runtime.open()
+        if (disposed) {
+          await runtime.close()
+          return
+        }
+        agentRuntimeRef.current = runtime
+        setAgentRuntime(runtime)
+        setAgentView(runtime.view())
+        const unsubscribe = runtime.subscribe((next) => setAgentView(next))
+        cleanup = () => {
+          unsubscribe()
+          agentRuntimeRef.current = null
+          void runtime.close()
+        }
+      } catch (error) {
+        if (!disposed) {
+          console.warn('[hanshu] Agent 运行时启动失败', error)
+        }
+      }
+    })()
+
+    return () => {
+      disposed = true
+      if (cleanup) cleanup()
+      setAgentRuntime(null)
+      setAgentView(null)
+    }
+    // 宿主与配置都通过 ref/闭包读取，不重建运行时；只有工程 scope 变了才换段库
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentOpen, agentScope, agentRuntimeNonce])
 
   useImperativeHandle(ref, () => ({
     handleMenuAction,
@@ -3338,17 +3678,14 @@ export const StageplayWorkspace = forwardRef<
       render: (dock) => (
         <AgentPanel
           open={agentOpen}
-          host={agentHost}
+          runtime={agentRuntime}
           onClose={() => setAgentOpen(false)}
+          saveBlockedByRun={agentRunning}
+          contextLabel={titleName}
+          onConfigChanged={() => setAgentRuntimeNonce((value) => value + 1)}
           placement={dock.placement}
           onTitlePointerDown={dock.onTitlePointerDown}
           onRedock={dock.onRedock}
-          getContext={() => ({
-            packageName,
-            fileName: titleName,
-            content: valueRef.current,
-            selection: getEditorSelection(),
-          })}
         />
       ),
     },
@@ -3523,7 +3860,12 @@ export const StageplayWorkspace = forwardRef<
                   <SecondaryDockPage
                     page={page}
                     workspace={workspace}
-                    readOnly={projectBusy || serviceSession.binding?.handle.client.snapshot.role === 'viewer'}
+                    readOnly={
+                      projectBusy ||
+                      agentRunning ||
+                      Boolean(agentWritingFile) ||
+                      serviceSession.binding?.handle.client.snapshot.role === 'viewer'
+                    }
                     onChangeScript={writeScriptContent}
                   />
                 )
@@ -3682,7 +4024,12 @@ export const StageplayWorkspace = forwardRef<
                            * 录音棚打开时编辑器是**只读**的：那会儿左键点键名是"选中"、
                            * 空白处按下是"划框"，不允许再改正文（正常交互整体让位）。
                            */
-                          readOnly: projectBusy || studioOpen || serviceSession.binding?.handle.client.snapshot.role === 'viewer',
+                          readOnly:
+                            projectBusy ||
+                            studioOpen ||
+                            agentRunning ||
+                            Boolean(agentWritingFile) ||
+                            serviceSession.binding?.handle.client.snapshot.role === 'viewer',
                           domReadOnly: studioOpen,
                           scrollBeyondLastLine: false,
                           automaticLayout: true,

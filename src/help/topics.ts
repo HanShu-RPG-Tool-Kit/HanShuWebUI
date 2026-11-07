@@ -7,6 +7,7 @@ import scriptResources from './docs/script-resources.md?raw'
 import entityGuide from './docs/entity-guide.md?raw'
 import nodeEditor from './docs/node-editor.md?raw'
 import collaborationService from './docs/collaboration-service.md?raw'
+import agentRuntime from './docs/agent-runtime.md?raw'
 import collaborationGuide from './docs/collaboration-guide.md?raw'
 import collaborationProgramming from './docs/collaboration-programming.md?raw'
 import browserCache from './docs/browser-cache.md?raw'
@@ -45,6 +46,7 @@ export type HelpTopicId =
   | 'javascript-language'
   | 'collaboration-guide'
   | 'collaboration-service'
+  | 'agent-runtime'
   | 'node-editor'
   | 'collaboration-programming'
   | 'browser-cache'
@@ -102,6 +104,7 @@ export const HELP_TOPICS: HelpTopic[] = [
   {id:'node-editor',title:'通用节点编辑器接入规范',group:'开始',audience:'dev',inDocs:true,body:nodeEditor},
   { id:'collaboration-guide',title:'连接与协作',group:'开始',audience:'user',inDocs:true,body:collaborationGuide },
   { id:'collaboration-service',title:'工程服务与多人协作',group:'开始',audience:'both',inDocs:true,body:collaborationService },
+  { id:'agent-runtime',title:'Agent 运行时',group:'开始',audience:'dev',inDocs:true,body:agentRuntime },
   { id:'collaboration-programming',title:'多人协作编程指南',group:'开始',audience:'dev',inDocs:true,body:collaborationProgramming },
   { id:'browser-cache',title:'WebUI 浏览器缓存',group:'开始',audience:'both',inDocs:true,body:browserCache },
   { id:'activity-list',title:'IDE 活动列表',group:'开始',audience:'both',inDocs:true,body:activityList },
