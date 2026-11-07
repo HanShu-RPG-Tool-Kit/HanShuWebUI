@@ -36,9 +36,17 @@ const doc = {
       { when: [], inject: 'village_idle' },
     ],
   },
-  interactService: { type: 'shop' as const, param: { template: 'village' } },
+  interactService: { type: 'shop' as const, param: { templates: ['village'] } },
 }
 assert.deepEqual(parseActor(stringifyActor(doc)), { ...doc, tags: ['guard'] })
+assert.deepEqual(
+  parseActor(JSON.stringify({ ...createActor(), interactService: { type: 'shop', param: { template: 'village' } } })).interactService,
+  { type: 'shop', param: { templates: ['village'] } },
+)
+assert.deepEqual(
+  JSON.parse(stringifyActor({ ...createActor(), interactService: { type: 'shop', param: { templates: ['a', 'b'] } } })).interactService,
+  { type: 'shop', param: { templates: ['a', 'b'] } },
+)
 assert.deepEqual(
   parseActor(JSON.stringify({
     ...createActor(),
@@ -85,6 +93,8 @@ for (const bad of [
   { bossBar: { title: 'x' } },
   { dialogue: { talkId: 'a', playerRole: 'a', entries: [] } },
   { interactService: { type: 'shop', param: {} } },
+  { interactService: { type: 'shop', param: { templates: [] } } },
+  { interactService: { type: 'shop', param: { templates: ['a', 'a'] } } },
   { display: { title: '&a' } },
   { display: { mode: 'clear', title: 'x' } },
   { reputation: 'village_guard' },

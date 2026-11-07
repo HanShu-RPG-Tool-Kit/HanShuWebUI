@@ -246,8 +246,9 @@ export function ActorEditor({
   }
   const changeServiceType = (type: ActorInteractService['type']) => {
     if (service?.type === type) return
-    update({ interactService: type === 'shop' ? { type: 'shop', param: { template: '' } } : { type: 'vault', param: {} } })
+    update({ interactService: type === 'shop' ? { type: 'shop', param: { templates: [] } } : { type: 'vault', param: {} } })
   }
+  const setShopTemplates = (templates: string[]) => update({ interactService: { type: 'shop', param: { templates } } })
   const setLoot = (next: ActorLootSpec | null) => update({ loot: next })
   const patchLootFields = (patch: Partial<ActorLootSpec>) => setLoot(patchLoot(loot, patch))
   const add = (label: string, onClick: () => void) => <AddButton label={label} disabled={disabled} onClick={onClick} />
@@ -255,8 +256,9 @@ export function ActorEditor({
   const availableScripts = scriptOptions.filter(option => !doc.scripts.includes(option.ref))
   const reputationId = doc.reputation?.mode === 'set' ? doc.reputation.id : ''
   const reputationMissing = !!reputationId && !reputationOptions.some(option => option.ref === reputationId)
-  const shopTemplate = service?.type === 'shop' ? service.param.template : ''
-  const shopMissing = !!shopTemplate && !shopOptions.some(option => option.ref === shopTemplate)
+  const shopTemplates = service?.type === 'shop' ? service.param.templates : []
+  const availableShops = shopOptions.filter(option => !shopTemplates.includes(option.ref))
+  const shopMissing = shopTemplates.filter(id => !shopOptions.some(option => option.ref === id))
   const talkIdIssue = dialogue && (!dialogue.talkId.trim() ? '必填' : dialogue.talkId.trim() === dialogue.playerRole.trim() ? '不能与玩家角色相同' : '')
   const playerRoleIssue = dialogue && !dialogue.playerRole.trim() ? '必填' : ''
   const reputationIdIssue = doc.reputation?.mode === 'set' && !reputationId.trim() ? '写入时必填阵营 ID' : ''
@@ -395,24 +397,56 @@ export function ActorEditor({
   </Panel>
 
   const servicePanel = <Panel title="交互服务" subtitle="对话未命中后打开" className={`sheet-panel actor-service${service ? '' : ' is-off'}`}
-    action={<SheetToggle label="启用" ariaLabel="启用交互服务" checked={service != null} disabled={disabled} onChange={on => update({ interactService: on ? { type: 'shop', param: { template: '' } } : null })} />}>
+    action={<SheetToggle label="启用" ariaLabel="启用交互服务" checked={service != null} disabled={disabled} onChange={on => update({ interactService: on ? { type: 'shop', param: { templates: [] } } : null })} />}>
     {service ? <div className="sheet-panel-body">
       <div className="actor-service-types" role="radiogroup" aria-label="交互服务类型">
-        {([['shop', '商店', '无限库存商店模板'], ['vault', '本地仓库', '玩家个人仓库，无参数']] as const).map(([type, title, hint]) =>
+        {([['shop', '商店', '一个或多个无限库存模板'], ['vault', '本地仓库', '玩家个人仓库，无参数']] as const).map(([type, title, hint]) =>
           <button key={type} type="button" role="radio" aria-checked={service.type === type} className={`actor-service-type${service.type === type ? ' is-active' : ''}`} disabled={disabled} onClick={() => changeServiceType(type)}>
             <b>{title}</b><small>{hint}</small>
           </button>)}
       </div>
       {service.type === 'shop'
-        ? <SheetField label="商店模板" invalid={!shopTemplate || shopMissing} hint={!shopTemplate ? '必填：选择一个商店模板' : shopMissing ? '找不到对应的 .shop 资源' : '有限库存的商店请在脚本中打开。'}>
-          <span className="actor-ref-field">
-            <select aria-label="商店模板" disabled={disabled} value={shopTemplate} onChange={e => update({ interactService: { type: 'shop', param: { template: e.target.value } } })}>
-              <option value="">选择商店…</option>
-              {shopOptions.map(option => <option key={option.ref} value={option.ref}>{option.label}</option>)}
-              {shopMissing && <option value={shopTemplate}>{shopTemplate}（引用缺失）</option>}
+        ? <SheetField
+          label="商店模板"
+          invalid={!shopTemplates.length || shopMissing.length > 0}
+          hint={!shopTemplates.length
+            ? '至少选择一个无限库存商店模板'
+            : shopMissing.length
+              ? `找不到：${shopMissing.join('、')}`
+              : '列表顺序即商店页签顺序；有限库存请在脚本中打开。'}
+        >
+          <div className="actor-shop-templates">
+            <select
+              className="sheet-select actor-add-select"
+              aria-label="添加商店模板"
+              value=""
+              disabled={disabled}
+              onChange={e => { if (e.target.value) setShopTemplates([...shopTemplates, e.target.value]) }}
+            >
+              <option value="">{availableShops.length ? '+ 添加商店…' : shopOptions.length ? '已全部添加' : '没有商店模板'}</option>
+              {availableShops.map(option => <option key={option.ref} value={option.ref}>{option.label}</option>)}
             </select>
-            <RefBadge missing={shopMissing} />
-          </span>
+            {shopTemplates.length === 0
+              ? <p className="kit-empty">{shopOptions.length ? '尚未绑定商店。从上方选择 src/shop 下的模板。' : '项目中还没有商店模板。'}</p>
+              : <ol className="kit-list actor-script-list">
+                {shopTemplates.map((id, index) => {
+                  const option = shopOptions.find(s => s.ref === id)
+                  return <li key={id} className={`kit-row actor-script-row${option ? '' : ' is-missing'}`}>
+                    <span className="kit-row-index">{index + 1}</span>
+                    <span className="actor-script-name">
+                      <code>{id}</code>
+                      {option && option.label !== id && <small>{option.label}</small>}
+                      <RefBadge missing={!option} />
+                    </span>
+                    <span className="actor-row-tools">
+                      <IconButton label={`上移 ${id}`} glyph="↑" disabled={disabled || index === 0} onClick={() => setShopTemplates(swap(shopTemplates, index, -1))} />
+                      <IconButton label={`下移 ${id}`} glyph="↓" disabled={disabled || index === shopTemplates.length - 1} onClick={() => setShopTemplates(swap(shopTemplates, index, 1))} />
+                      <RemoveButton label={`移除 ${id}`} disabled={disabled} onClick={() => setShopTemplates(shopTemplates.filter(t => t !== id))} />
+                    </span>
+                  </li>
+                })}
+              </ol>}
+          </div>
         </SheetField>
         : <p className="sheet-note">右键时打开该玩家的本地仓库。</p>}
     </div> : <p className="sheet-off">未启用 · 对话未命中时不做任何事</p>}

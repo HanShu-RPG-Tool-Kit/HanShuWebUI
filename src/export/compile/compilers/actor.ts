@@ -26,9 +26,10 @@ export const actorCompiler: FileCompiler = {
         if (!ctx.index.package.scripts.some(s => sourcePathOf(s) === path)) throw new Error(`缺少声誉阵营：${actor.reputation.id}（${path}）`)
       }
       if (actor.interactService?.type === 'shop') {
-        const template = actor.interactService.param.template
-        if (!ctx.index.package.scripts.some(s => s.name.toLowerCase() === `${template.toLowerCase()}.shop`)) {
-          throw new Error(`缺少商店模板：${template}（src/shop/${template}.shop）`)
+        for (const template of actor.interactService.param.templates) {
+          if (!ctx.index.package.scripts.some(s => s.name.toLowerCase() === `${template.toLowerCase()}.shop`)) {
+            throw new Error(`缺少商店模板：${template}（src/shop/${template}.shop）`)
+          }
         }
       }
       if (actor.dialogue) {

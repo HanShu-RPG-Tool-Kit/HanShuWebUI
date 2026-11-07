@@ -14,7 +14,7 @@ export type ActorDialogueEntry = { when: ProgressConditionRule[]; inject: string
 export type ActorDialogue = { talkId: string; playerRole: string; entries: ActorDialogueEntry[] }
 export type { ProgressConditionRule }
 export type ActorInteractService =
-  | { type: 'shop'; param: { template: string } }
+  | { type: 'shop'; param: { templates: string[] } }
   | { type: 'vault'; param: Record<string, never> }
 export type ActorSideEffectMode = 'leave' | 'set' | 'clear'
 export type ActorDisplaySpec =
@@ -135,7 +135,7 @@ export function stringifyActor(doc: ActorDocument, options?: { plane?: 'source' 
   }
   if (doc.interactService != null) {
     out.interactService = doc.interactService.type === 'shop'
-      ? { type: 'shop', param: { template: doc.interactService.param.template } }
+      ? { type: 'shop', param: { templates: [...doc.interactService.param.templates] } }
       : { type: 'vault', param: {} }
   }
   if (doc.loot != null) out.loot = writeLoot(doc.loot)
@@ -279,10 +279,29 @@ function parseInteractService(value: unknown): ActorInteractService {
   const type = value.type.trim().toLowerCase()
   if (!isObject(value.param)) throw new Error('interactService.param 必须是对象')
   if (type === 'shop') {
-    requireExactKeys(value.param, new Set(['template']), 'shop interactService.param')
-    const template = requireString(value.param.template, 'shop template').trim()
-    if (!template) throw new Error('shop interactService 需要 template')
-    return { type: 'shop', param: { template } }
+    const keys = Object.keys(value.param)
+    if (keys.length === 1 && keys[0] === 'templates') {
+      if (!Array.isArray(value.param.templates)) throw new Error('shop templates 必须是数组')
+      const templates: string[] = []
+      const seen = new Set<string>()
+      for (const entry of value.param.templates) {
+        const template = requireString(entry, 'shop template').trim()
+        if (!template) throw new Error('shop template 不能为空')
+        if (seen.has(template)) throw new Error(`重复的商店模板：${template}`)
+        seen.add(template)
+        templates.push(template)
+      }
+      if (!templates.length) throw new Error('shop interactService 需要至少一个 template')
+      if (templates.length > 64) throw new Error('shop interactService 最多 64 个 template')
+      return { type: 'shop', param: { templates } }
+    }
+    // Legacy single-template form.
+    if (keys.length === 1 && keys[0] === 'template') {
+      const template = requireString(value.param.template, 'shop template').trim()
+      if (!template) throw new Error('shop interactService 需要 template')
+      return { type: 'shop', param: { templates: [template] } }
+    }
+    throw new Error('shop interactService.param 必须是 { templates: [...] }（或旧版 { template: "…" }）')
   }
   if (type === 'vault') {
     if (Object.keys(value.param).length) throw new Error('vault interactService.param 必须是 {}')
