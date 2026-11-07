@@ -149,7 +149,7 @@ export function parseProgress(source: string, _definitions: readonly GoalDefinit
     ids.add(value); return value
   }
   const str = (value: unknown, path: string): string => { check(typeof value === 'string', `${path} 必须是文本`); return value }
-  const visibility = parseConditionRules(raw.visibility, '可见性条件', { allowHideRepeat: true })
+  const visibility = parseConditionRules(raw.visibility, '可发现时可见性条件', { allowHideRepeat: true })
   const acceptance = parseConditionRules(raw.acceptance, '可承接条件')
   const docId = id(raw.id, '进度')
   check(raw.completion === 'all' || raw.completion === 'any' || raw.completion === 'custom', 'completion 必须是 all、any 或 custom')
@@ -232,7 +232,7 @@ export function progressIssues(
         if (value !== undefined && ((field.type === 'string' && typeof value !== 'string') || (field.type === 'bool' && typeof value !== 'boolean') || (['int', 'float'].includes(field.type) && typeof value !== 'number') || (field.type === 'int' && typeof value === 'number' && !Number.isInteger(value)))) issues.push(`${goalLabel(goal, definitions)}：${field.label || field.key} 类型不符合定义`)
       }
   }
-  for (const [label, rules] of [['可见性条件', doc.visibility], ['可承接条件', doc.acceptance]] as const) {
+  for (const [label, rules] of [['可发现时可见性条件', doc.visibility], ['可承接条件', doc.acceptance]] as const) {
     rules.forEach((rule, index) => {
       const issue = conditionRuleIssue(rule, `${label} ${index + 1}`)
       if (issue) issues.push(issue)

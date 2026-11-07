@@ -485,7 +485,7 @@ export function ProgressEditor({ doc, goalCatalog, kitOptions = [], disabled, on
         {doc.completionGraph && <ProgressCompletionEditor key={doc.id} graph={doc.completionGraph} goals={doc.goals} definitions={definitions} disabled={disabled} active={doc.completion === 'custom'} onChange={completionGraph => update({ completionGraph })} />}
       </section>
 
-      {([['visibility', '可见性条件'], ['acceptance', '可承接条件']] as const).map(([field, title]) => <section key={field} className="progress-card progress-rules" aria-label={title}><header className="progress-card-head"><h2>{title}</h2><span className="progress-card-count">{doc[field].length}</span><small className="progress-card-note">全部满足</small></header>
+      {([['visibility', '可发现时可见性条件'], ['acceptance', '可承接条件']] as const).map(([field, title]) => <section key={field} className="progress-card progress-rules" aria-label={title}><header className="progress-card-head"><h2>{title}</h2><span className="progress-card-count">{doc[field].length}</span><small className="progress-card-note">全部满足</small></header>
         <ConditionRulesEditor
           title={title}
           rules={doc[field]}

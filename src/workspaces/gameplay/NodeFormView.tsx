@@ -180,7 +180,7 @@ export function NodeFormView({ flow, nodeId, kind, active = false, disabled = fa
         <label className="flow-field"><span>标签（逗号分隔）</span><input aria-label="任务标签" disabled={disabled} value={(node.tags ?? []).join(', ')} onChange={event => update(next => { next.progress[nodeId].tags = event.target.value.split(',').map(tag => tag.trim()).filter(Boolean) })} /></label>
       </>}
       </section>
-      {start && ([['visibility', '可见性条件'], ['acceptance', '可承接条件']] as const).map(([field, title]) => {
+      {start && ([['visibility', '可发现时可见性条件'], ['acceptance', '可承接条件']] as const).map(([field, title]) => {
         const rules = node[field] ?? []
         return <section key={field} className="node-form-rules" aria-label={title}>
           <header className="progress-section-head progress-card-head"><h2>{title} <span>{rules.length}</span></h2></header>
