@@ -30,7 +30,7 @@
       { "when": [], "inject": "village_idle" }
     ]
   },
-  "interactService": { "type": "shop", "param": { "template": "village" } }
+  "interactService": { "type": "shop", "param": { "templates": ["village"] } }
 }
 ```
 
@@ -86,7 +86,7 @@
 
 | type | param | 行为 |
 | --- | --- | --- |
-| `shop` | `{ "template": "<源名去.shop>" }` | 打开无限库存商店模板 |
+| `shop` | `{ "templates": ["<源名去.shop>", ...] }`（1–64，顺序即页签） | 按各模板 `stockSubject` 打开：无限无主体 · 玩家→交易玩家 · 游戏→全局 · 角色→本演员 id；不支持自定义参数 |
 | `vault` | `{}` | 打开本地仓库 |
 
 ## 协作与引用

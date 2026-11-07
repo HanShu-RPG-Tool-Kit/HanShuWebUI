@@ -442,6 +442,43 @@
 }
 .flow-kit-pane .actor-service-type:disabled { cursor: default; opacity: 0.6; }
 
+.actor-shop-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 24px;
+}
+.actor-shop-head > .sheet-field-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.actor-shop-count {
+  padding: 0 6px;
+  border-radius: var(--kit-radius);
+  background: rgba(71, 114, 179, 0.14);
+  color: var(--accent);
+  font: calc(10.5px * var(--fl-s, 1.25) / 1.1)/16px var(--kit-mono);
+}
+
+.actor-shop-templates {
+  border: 1px solid var(--border);
+  border-radius: var(--kit-radius);
+  background: #2a2a2a;
+}
+.actor-shop-templates.is-empty { border-style: dashed; background: transparent; }
+.actor-shop-templates .kit-empty { padding: 14px; }
+.actor-shop-field.is-invalid .actor-shop-templates.is-empty { border-color: rgba(224, 108, 117, 0.45); }
+
+.actor-shop-row {
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  min-height: 32px;
+}
+.actor-shop-row.is-missing { box-shadow: inset 2px 0 0 rgba(224, 108, 117, 0.7); }
+
+.actor-shop-note { margin-top: -2px; }
+
 @container (max-width: 620px) {
   .actor-dialogue-roles,
   .actor-service-types { grid-template-columns: 1fr; }

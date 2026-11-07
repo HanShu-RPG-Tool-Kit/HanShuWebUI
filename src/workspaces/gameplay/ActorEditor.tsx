@@ -400,54 +400,57 @@ export function ActorEditor({
     action={<SheetToggle label="启用" ariaLabel="启用交互服务" checked={service != null} disabled={disabled} onChange={on => update({ interactService: on ? { type: 'shop', param: { templates: [] } } : null })} />}>
     {service ? <div className="sheet-panel-body">
       <div className="actor-service-types" role="radiogroup" aria-label="交互服务类型">
-        {([['shop', '商店', '一个或多个无限库存模板'], ['vault', '本地仓库', '玩家个人仓库，无参数']] as const).map(([type, title, hint]) =>
+        {([['shop', '商店', '打开一个或多个商店模板'], ['vault', '本地仓库', '打开玩家个人仓库，无需配置']] as const).map(([type, title, hint]) =>
           <button key={type} type="button" role="radio" aria-checked={service.type === type} className={`actor-service-type${service.type === type ? ' is-active' : ''}`} disabled={disabled} onClick={() => changeServiceType(type)}>
             <b>{title}</b><small>{hint}</small>
           </button>)}
       </div>
       {service.type === 'shop'
-        ? <SheetField
-          label="商店模板"
-          invalid={!shopTemplates.length || shopMissing.length > 0}
-          hint={!shopTemplates.length
-            ? '至少选择一个无限库存商店模板'
-            : shopMissing.length
-              ? `找不到：${shopMissing.join('、')}`
-              : '列表顺序即商店页签顺序；有限库存请在脚本中打开。'}
-        >
-          <div className="actor-shop-templates">
-            <select
-              className="sheet-select actor-add-select"
-              aria-label="添加商店模板"
-              value=""
-              disabled={disabled}
-              onChange={e => { if (e.target.value) setShopTemplates([...shopTemplates, e.target.value]) }}
-            >
-              <option value="">{availableShops.length ? '+ 添加商店…' : shopOptions.length ? '已全部添加' : '没有商店模板'}</option>
-              {availableShops.map(option => <option key={option.ref} value={option.ref}>{option.label}</option>)}
-            </select>
-            {shopTemplates.length === 0
-              ? <p className="kit-empty">{shopOptions.length ? '尚未绑定商店。从上方选择 src/shop 下的模板。' : '项目中还没有商店模板。'}</p>
-              : <ol className="kit-list actor-script-list">
-                {shopTemplates.map((id, index) => {
-                  const option = shopOptions.find(s => s.ref === id)
-                  return <li key={id} className={`kit-row actor-script-row${option ? '' : ' is-missing'}`}>
-                    <span className="kit-row-index">{index + 1}</span>
-                    <span className="actor-script-name">
-                      <code>{id}</code>
-                      {option && option.label !== id && <small>{option.label}</small>}
-                      <RefBadge missing={!option} />
-                    </span>
-                    <span className="actor-row-tools">
-                      <IconButton label={`上移 ${id}`} glyph="↑" disabled={disabled || index === 0} onClick={() => setShopTemplates(swap(shopTemplates, index, -1))} />
-                      <IconButton label={`下移 ${id}`} glyph="↓" disabled={disabled || index === shopTemplates.length - 1} onClick={() => setShopTemplates(swap(shopTemplates, index, 1))} />
-                      <RemoveButton label={`移除 ${id}`} disabled={disabled} onClick={() => setShopTemplates(shopTemplates.filter(t => t !== id))} />
-                    </span>
-                  </li>
-                })}
-              </ol>}
+        ? <>
+          <div className={`sheet-field actor-shop-field${!shopTemplates.length || shopMissing.length ? ' is-invalid' : ''}`} role="group" aria-label="商店模板">
+            <div className="actor-shop-head">
+              <span className="sheet-field-label">商店模板{shopTemplates.length > 0 && <span className="actor-shop-count">{shopTemplates.length}</span>}</span>
+              <select
+                className="sheet-select actor-add-select"
+                aria-label="添加商店模板"
+                value=""
+                disabled={disabled}
+                onChange={e => { if (e.target.value) setShopTemplates([...shopTemplates, e.target.value]) }}
+              >
+                <option value="">{availableShops.length ? '+ 添加商店…' : shopOptions.length ? '已全部添加' : '没有商店模板'}</option>
+                {availableShops.map(option => <option key={option.ref} value={option.ref}>{option.label}</option>)}
+              </select>
+            </div>
+            <div className={`actor-shop-templates${shopTemplates.length ? '' : ' is-empty'}`}>
+              {shopTemplates.length === 0
+                ? <p className="kit-empty">{shopOptions.length ? '尚未添加商店。从右上角选择 src/shop 下的模板。' : '项目中还没有商店模板。在 src/shop 下新建后即可添加。'}</p>
+                : <ol className="kit-list">
+                  {shopTemplates.map((id, index) => {
+                    const option = shopOptions.find(s => s.ref === id)
+                    return <li key={id} className={`kit-row actor-shop-row${option ? '' : ' is-missing'}`}>
+                      <span className="kit-row-index">{index + 1}</span>
+                      <span className="actor-script-name">
+                        <code>{id}</code>
+                        {option && option.label !== id && <small>{option.label}</small>}
+                        <RefBadge missing={!option} />
+                      </span>
+                      <span className="actor-row-tools">
+                        <IconButton label={`上移 ${id}`} glyph="↑" disabled={disabled || index === 0} onClick={() => setShopTemplates(swap(shopTemplates, index, -1))} />
+                        <IconButton label={`下移 ${id}`} glyph="↓" disabled={disabled || index === shopTemplates.length - 1} onClick={() => setShopTemplates(swap(shopTemplates, index, 1))} />
+                        <RemoveButton label={`移除 ${id}`} disabled={disabled} onClick={() => setShopTemplates(shopTemplates.filter(t => t !== id))} />
+                      </span>
+                    </li>
+                  })}
+                </ol>}
+            </div>
+            <small className="sheet-field-hint">{!shopTemplates.length
+              ? '至少添加一个商店模板。'
+              : shopMissing.length
+                ? `找不到商店模板：${shopMissing.join('、')}。请移除或恢复对应文件。`
+                : '多个商店按列表顺序显示为页签。'}</small>
           </div>
-        </SheetField>
+          <p className="sheet-note actor-shop-note">库存按模板的库存主体自动绑定：<b>无限</b> 不绑定 · <b>玩家</b> 当前交易玩家 · <b>游戏</b> 全局共享 · <b>角色</b> 本演员 ID。</p>
+        </>
         : <p className="sheet-note">右键时打开该玩家的本地仓库。</p>}
     </div> : <p className="sheet-off">未启用 · 对话未命中时不做任何事</p>}
   </Panel>
