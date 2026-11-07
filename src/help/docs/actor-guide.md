@@ -62,7 +62,7 @@
 
 ### 显示与声誉副作用
 
-有脚本：在会话 **init** 时应用。无脚本：在绑定时应用。解绑 actor **不**自动清除二者。整键省略／`null` 等同 `mode: leave`（不动实例）。有对象时 **`mode` 必填**：`leave`｜`set`｜`clear`。
+在会话 **init** 时应用（`scripts` 可空）。解绑 actor **不**自动清除二者。整键省略／`null` 等同 `mode: leave`（不动实例）。有对象时 **`mode` 必填**：`leave`｜`set`｜`clear`。
 
 | 字段 | 含义 |
 | --- | --- |
@@ -93,7 +93,7 @@
 
 工程保存、只读和冲突沿用[多人协作编程指南](#collaboration-programming)的普通文件事务。改名与删除模板不会改写或删除引用的脚本／阵营／商店／注入点。WebUI 不执行 JavaScript。
 
-在游戏中使用 `/rt actor bind <entity-uuid> <ID>` 绑定模板；带脚本的模板仅能绑定 Mob。重新 bind 强制重建脚本会话；PAK reload 也重建已加载 Mob 的会话。
+在游戏中使用 `/rt actor bind <entity-uuid> <ID>` 绑定模板；宿主须为 Mob。重新 bind 强制重建会话（`scripts` 可空）；PAK reload 也重建已加载 Mob 的会话。
 
 ## Hook 与调度
 
