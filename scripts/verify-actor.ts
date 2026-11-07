@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
 import JSZip from 'jszip'
 import { createActor, parseActor, stringifyActor } from '../src/workspaces/gameplay/actor'
+import { actorDisplayLineForEditor } from '../src/workspaces/gameplay/actorDisplayText'
+import { stringifyFeedbackText } from '../src/textComponent/model'
 import { createItem, stringifyItem } from '../src/workspaces/gameplay/itemDoc'
 import { SCRIPT_TYPES, scriptTemplate } from '../src/scriptResources'
 import { sourcePathOf, type Workspace } from '../src/workspace'
@@ -108,6 +110,25 @@ for (const bad of [
   { loot: { item: { items: [{ id: 'minecraft:stick', chance: 2 }] } } },
   { loot: { bonus: true } },
 ]) assert.throws(() => parseActor(JSON.stringify({ ...createActor(), ...bad })))
+const richTitle = stringifyFeedbackText([{ text: '卫兵', color: '#55FF55' }])
+assert.equal(richTitle.startsWith('{'), true)
+assert.deepEqual(
+  parseActor(JSON.stringify({
+    ...createActor(),
+    display: { mode: 'set', title: richTitle, subtitle: '&7东门' },
+  })).display,
+  { mode: 'set', title: richTitle, subtitle: '&7东门' },
+)
+assert.equal(actorDisplayLineForEditor('plain'), 'plain')
+assert.equal(actorDisplayLineForEditor(richTitle), richTitle)
+assert.equal(
+  actorDisplayLineForEditor('&a卫兵'),
+  stringifyFeedbackText([{ text: '卫兵', color: '#55FF55' }]),
+)
+assert.equal(
+  actorDisplayLineForEditor('&6&l村长'),
+  stringifyFeedbackText([{ text: '村长', color: '#FFAA00', bold: true }]),
+)
 assert.deepEqual(parseActor(JSON.stringify({ ...createActor(), display: null })).display, null)
 assert.deepEqual(parseActor(JSON.stringify({ ...createActor(), reputation: null })).reputation, null)
 assert.deepEqual(parseActor(JSON.stringify({ ...createActor(), loot: null })).loot, null)

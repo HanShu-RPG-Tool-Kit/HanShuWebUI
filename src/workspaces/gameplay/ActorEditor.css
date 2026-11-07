@@ -296,6 +296,13 @@
   background: #e06c7514;
 }
 
+/* ---------- display nameplate ---------- */
+.actor-display-pair {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
 /* ---------- loot ---------- */
 .actor-loot { container-type: inline-size; container-name: actor-loot; }
 .actor-loot .sheet-panel-body { gap: 10px; }

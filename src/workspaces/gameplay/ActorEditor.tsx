@@ -1,6 +1,8 @@
 import { useState, type MouseEvent } from 'react'
 import { AddButton, ItemCatalogContext, ItemList, KitTagField, Panel, RemoveButton } from './KitEditor'
 import { ConditionRulesEditor } from './ConditionRulesEditor'
+import { FeedbackTextEditor } from './FeedbackTextEditor'
+import { actorDisplayLineForEditor } from './actorDisplayText'
 import { IconButton, JsonRepairPane, PendingBanner, RefBadge, SheetField, SheetToggle, useSheetDraft } from './SheetParts'
 import {
   ACTOR_DESPAWN_MODES,
@@ -293,13 +295,27 @@ export function ActorEditor({
 
   const displayPanel = <Panel title="显示名牌" subtitle="绑定时副作用" className={`sheet-panel${display?.mode === 'set' ? '' : display?.mode === 'clear' ? '' : ' is-off'}`}>
     <div className="sheet-panel-body">
-      <SheetField label="副作用" hint="写入时 title／subtitle 可用 & 颜色码。">
+      <SheetField label="副作用" hint="写入时可用富文本或魔杖 & 颜色码；保存后富文本为原版文本组件 JSON。">
         <ModeSelect label="名牌副作用" value={displayModeOf(display)} disabled={disabled} onChange={mode => update({ display: nextDisplay(mode, display) })} />
       </SheetField>
-      {display?.mode === 'set' && <>
-        <SheetField label="主标题"><input aria-label="名牌主标题" disabled={disabled} value={display.title} placeholder={'&6村长'} onChange={e => update({ display: { mode: 'set', title: e.target.value, subtitle: display.subtitle } })} /></SheetField>
-        <SheetField label="副标题"><input aria-label="名牌副标题" disabled={disabled} value={display.subtitle} placeholder={'&7右键交谈'} onChange={e => update({ display: { mode: 'set', title: display.title, subtitle: e.target.value } })} /></SheetField>
-      </>}
+      {display?.mode === 'set' && <div className="actor-display-pair">
+        <FeedbackTextEditor
+          label="主标题"
+          value={actorDisplayLineForEditor(display.title)}
+          placeholder="村长"
+          disabled={disabled}
+          tone="title"
+          onChange={title => update({ display: { mode: 'set', title, subtitle: display.subtitle } })}
+        />
+        <FeedbackTextEditor
+          label="副标题"
+          value={actorDisplayLineForEditor(display.subtitle)}
+          placeholder="右键交谈"
+          disabled={disabled}
+          tone="subtitle"
+          onChange={subtitle => update({ display: { mode: 'set', title: display.title, subtitle } })}
+        />
+      </div>}
       {display?.mode === 'clear' && <p className="sheet-note">绑定时清除实体名牌。</p>}
       {(!display || display.mode === 'leave') && <p className="sheet-off">不修改实体名牌</p>}
       <p className="sheet-note">Boss 血条请在脚本中调用 <code>api.bossBar()</code>，不要写进模板。</p>

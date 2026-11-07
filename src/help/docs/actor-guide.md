@@ -66,7 +66,7 @@
 
 | 字段 | 含义 |
 | --- | --- |
-| `display.mode` | `leave` 不动名牌；`set` 整板写入（`title`／`subtitle` 可选，`&` 纯文本）；`clear` 清除名牌 |
+| `display.mode` | `leave` 不动名牌；`set` 整板写入（`title`／`subtitle` 可选：原版文本组件 JSON，或魔杖同款 `&` 纯文本）；`clear` 清除名牌 |
 | `reputation.mode` | `leave` 不动成员；`set` 需 `id`（已发布阵营）；`clear` 清除成员 |
 
 `leave`／`clear` 不得附带 `title`／`subtitle` 或 `id`。Boss 血条是脚本 API（`event.api().bossBar()`），**不能**写进 `.actor`。
