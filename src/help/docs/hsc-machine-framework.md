@@ -165,7 +165,7 @@ Type = BaseHscMachine.compose([
 | 角色 | 职责 |
 |------|------|
 | **Machine（Type+Instance）** | 何时步进、何时进树、何时调用信号、PC/`>>`/`<<`/`--<` |
-| **SignalDriver** | `?`→bool，`!`/`!:`/`:!`→void；参数语义 |
+| **SignalDriver** | `? body`→bool，`!`/`!:`/`:! body`→副作用；body 为源码，由宿主解释 |
 | **View** | 对白/选项如何呈现；系统返回的 GUI 文案 |
 
 Driver / View 由 `spawn(context)` 注入；**不要**写在 Type 的全局单例上（否则无法多实例）。
