@@ -12,7 +12,11 @@
  * ⑦ P5 配音文案：ok 只说 mono Vorbis Ogg，invalid 才给原因；
  * ⑧ P10 键格式 lint：大写 / 长度不对的十六进制；纯小写数字不误报；
  * ⑨ panel-ui 纯函数：collectOrphanKeys / translateExportWarning；
- * ⑩ B6 未成键检测：countUnparsedTexts + validate_source 汇总诊断。
+ * ⑩ B6 未成键检测：countUnparsedTexts + validate_source 汇总诊断；
+ * ⑪ 1 语言路径反推源名（sourceNameFromLangPath）；
+ * ⑫ A3 反解析安全内联（unrepresentable）；
+ * ⑬ A4 跳转目标 lint；
+ * ⑭ B9 诊断补 1 起行号。
  *
  * 跑法：node scripts/run-verification.mjs scripts/verify-agent-ops.ts
  */
@@ -26,6 +30,7 @@ import {
   lintHsSource,
   paginateSource,
   parseSourceText,
+  sourceNameFromLangPath,
   sourceOffsetError,
   translateExportWarning,
   unparseSourceText,
@@ -367,6 +372,84 @@ assert.equal(
   false,
 )
 
+/* ── ⑪ 1 语言资产路径反推源文件逻辑名（unlock_lang 省略 locales 用） ── */
+assert.equal(sourceNameFromLangPath('assets/zh_cn/lang_hs/序章.lang'), '序章.hs')
+assert.equal(sourceNameFromLangPath('assets/en_us/lang_char/sub/角色.lang'), 'sub/角色.char')
+assert.equal(sourceNameFromLangPath('assets/ja_jp/lang_md/docs/说明.lang'), 'docs/说明.md')
+assert.equal(sourceNameFromLangPath('assets/zh_cn/voice_hs/序章/7f3a91c2.ogg'), null)
+assert.equal(sourceNameFromLangPath('src/hanshu/序章.hs'), null)
+
+/* ── ⑫ A3 反解析安全内联：不安全文本不内联，进 unrepresentable ── */
+const unparseMap = {
+  '11111111': '普通文本',
+  '22222222': '带 // 的译文',
+  '33333333': '含冒号:回复',
+  '44444444': 'a >> b',
+}
+const unparseSource = [
+  'narrator:11111111//',
+  'narrator:22222222//',
+  '-问题:33333333//',
+  'narrator:44444444//',
+].join('\n')
+const safeUnparse = unparseSourceText(unparseSource, unparseMap)
+assert.equal(safeUnparse.replaced, 2, '普通文本与 >> 文本可内联')
+assert.match(safeUnparse.content, /narrator:普通文本\/\//)
+assert.match(safeUnparse.content, /narrator:22222222\/\//, '含 // 的译文保持原键名')
+assert.match(safeUnparse.content, /-问题:33333333\/\//, '选项回复里的键保持原样')
+assert.ok(safeUnparse.content.includes('a \\>> b'), '>> 仍要转义')
+const unsafeReasons = new Map(
+  safeUnparse.unrepresentable.map((item) => [item.key, item.reason]),
+)
+assert.equal(unsafeReasons.get('22222222'), 'line-terminator')
+assert.equal(unsafeReasons.get('33333333'), 'option-colon')
+
+/* ── ⑬ A4 跳转目标 lint：本文件 / foreignInjects / 注释 ── */
+const jumpFound = validateSourceContent('a.hs', ['@start', '-去:>>start//'].join('\n'))
+assert.equal(
+  jumpFound.diagnostics.some(
+    (item) => item.kind === 'agent-lint' && item.message.startsWith('jump target not found'),
+  ),
+  false,
+)
+const jumpMissing = validateSourceContent('a.hs', '-去:>>missing//')
+const missingJump = jumpMissing.diagnostics.find(
+  (item) => item.kind === 'agent-lint' && item.message === 'jump target not found: missing',
+)
+assert.ok(missingJump, '缺失跳转目标要报 agent-lint')
+assert.equal(missingJump.line, 1)
+const jumpForeign = validateSourceContent('a.hs', '-去:>>OTHER//', {
+  foreignInjects: new Map([['other', 'b.hs']]),
+})
+assert.equal(
+  jumpForeign.diagnostics.some(
+    (item) => item.kind === 'agent-lint' && item.message.startsWith('jump target not found'),
+  ),
+  false,
+  '跨文件注入点大小写不敏感',
+)
+const jumpComment = validateSourceContent('a.hs', ['# 注释 :>>nowhere', 'narrator:7f3a91c2//'].join('\n'))
+assert.equal(
+  jumpComment.diagnostics.some(
+    (item) => item.kind === 'agent-lint' && item.message.startsWith('jump target not found'),
+  ),
+  false,
+  '注释里的 :>> 不报',
+)
+
+/* ── ⑭ B9 诊断统一补 1 起行号（保留 offset） ── */
+const hsDiagnostics = validateSourceContent('a.hs', ['narrator:', '正文', ''].join('\n'))
+assert.ok(hsDiagnostics.diagnostics.length > 0)
+assert.ok(
+  hsDiagnostics.diagnostics.every((item) => Number.isInteger(item.line) && item.line >= 1),
+  '每条 .hs 诊断都要有 1 起 line',
+)
+const charDiagnostics = validateSourceContent('role.char', ['key:msg//', 'broken line'].join('\n'))
+const badChar = charDiagnostics.diagnostics.find((item) => item.kind === 'invalid-char-line')
+assert.ok(badChar, '.char 诊断要保留 kind/offset 并补 line')
+assert.equal((badChar as { offset: number }).offset > 0, true)
+assert.equal(badChar.line, 2)
+
 console.log(
-  '通过：宿主层（分页/lint/语言键/编译英文映射/P1 键复用/P5 配音文案/P10 键 lint/panel 纯函数/B6 未成键）',
+  '通过：宿主层（分页/lint/语言键/编译映射/P1/P5/P10/panel 纯函数/B6/路径反推/A3 安全内联/A4 跳转 lint/B9 行号）',
 )

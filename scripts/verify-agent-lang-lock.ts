@@ -593,6 +593,27 @@ await test('P3 部分解锁：held 列出调用后仍持有的全部路径（源
   })
 })
 
+await test('1 unlock_lang 省略 locales：释放该源文件全部语言锁（含非工程语言 ja_jp）', async () => {
+  await withScene(async (scene) => {
+    await lockSource(scene)
+    await callTool(scene, 'lock_lang', {
+      source: SOURCE,
+      locales: ['zh_cn', 'en_us', 'ja_jp'],
+    })
+    // 不传 locales：不能只按工程语言表（LANGS=zh_cn,en_us）派生，ja_jp 也要释放
+    const released = await callTool(scene, 'unlock_lang', { source: SOURCE })
+    assert.deepEqual(
+      [...released.unlocked].sort(),
+      [LANG_EN, LANG_JA, LANG_ZH].sort(),
+      '全部语言锁（含非工程语言）都要释放',
+    )
+    assert.deepEqual(released.held, [SOURCE], 'held 只剩源文件锁')
+    assert.equal(scene.arbiter.isLocked(LANG_ZH), false)
+    assert.equal(scene.arbiter.isLocked(LANG_EN), false)
+    assert.equal(scene.arbiter.isLocked(LANG_JA), false)
+  })
+})
+
 await test('P8 宿主 keys_not_in_source / missingKeys 结构化错误纯透传', async () => {
   await withScene(async (scene) => {
     await lockSource(scene)

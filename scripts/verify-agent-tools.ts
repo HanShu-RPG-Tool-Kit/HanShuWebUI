@@ -75,6 +75,10 @@ function makeWorld(
   const voicePageArgs: Array<{ offset: number | undefined; limit: number | undefined }> = []
   /** delete_lang_keys 收到的 force 参数 */
   const deleteForces: Array<boolean | undefined> = []
+  /** validateSourceName 的调用记录（A2：占名前校验） */
+  const validateNameCalls: string[] = []
+  /** arbiter.lock 实际收到的路径（A2：应使用校验后的规范名） */
+  const lockPaths: string[] = []
   const counters = {
     listSources: 0,
     readSource: 0,
@@ -162,6 +166,19 @@ function makeWorld(
     getActiveFilePath: () => {
       counters.getActiveFilePath += 1
       return { ok: true, name: '序章.hs', kind: 'hanshu', path: 'src/hanshu/序章.hs' }
+    },
+    validateSourceName: (name) => {
+      validateNameCalls.push(name)
+      // A2 假宿主：拒绝目录/绝对路径/保留字符；接受的名字规范化出 `.hs` 后缀
+      if (name.includes('..') || name.includes('/') || name.includes('\\') || name.includes(':')) {
+        return {
+          ok: false,
+          error: `invalid name: ${name}`,
+          hint: 'Use a plain logical file name such as "chapter.hs".',
+        }
+      }
+      const canonical = /\.(hs|md|char)$/i.test(name) ? name : `${name}.hs`
+      return { ok: true, name: canonical }
     },
     listLocales: () => {
       counters.listLocales += 1
@@ -285,6 +302,7 @@ function makeWorld(
     },
     lock: async (paths, options) => {
       const creating = options?.creating === true
+      lockPaths.push(...paths)
       // 多路径原子：先全部校验，再统一落锁；任何一条失败都不得留下半套锁
       for (const path of paths) {
         const content = sources.get(path)
@@ -444,6 +462,8 @@ function makeWorld(
     assertWritableCalls,
     voicePageArgs,
     deleteForces,
+    validateNameCalls,
+    lockPaths,
     counters,
     host,
     arbiter,
@@ -729,7 +749,7 @@ await test('宿主抛出的 Error 被转成结构化 {ok:false,error,hint}，不
   assert.equal(parsed.ok, false)
   assert.match(parsed.error, /resource name is not unique/)
   assert.equal(typeof parsed.hint, 'string')
-  assert.match(parsed.hint, /explicit logical file name/)
+  assert.match(parsed.hint, /unexpected error/)
   assert.match(parsed.hint, /list_sources/)
 })
 
@@ -978,6 +998,21 @@ await test('P7 changed：同内容重写两次为 changed:false 且 version 不�
   const third = await run(world, 'write_source', { source: '序章.hs', content: '又一段正文' })
   assert.equal(third.changed, true, '内容真的变了 → changed:true')
   assert.notEqual(third.version, firstVersion)
+})
+
+await test('A2 lock_source 占名前若名字非法则拒绝且不触达 arbiter，合法时用规范名去锁', async () => {
+  const world = makeWorld()
+  const invalid = await run(world, 'lock_source', { paths: ['../evil.hs'], creating: true })
+  assert.equal(invalid.ok, false)
+  assert.equal(invalid.errorCode, 'invalid_arguments')
+  assert.match(String(invalid.error), /invalid file name: \.\.\/evil\.hs/)
+  assert.deepEqual(world.validateNameCalls, ['../evil.hs'])
+  assert.equal(world.lockPaths.length, 0, '非法名字不得触达 arbiter（不占名）')
+
+  const canonical = await run(world, 'lock_source', { paths: ['chapter'], creating: true })
+  assert.equal(canonical.locked, true, JSON.stringify(canonical))
+  assert.deepEqual(world.lockPaths, ['chapter.hs'], '必须用宿主返回的规范名去 lock')
+  assert.equal(world.arbiter.isLocked('chapter.hs'), true)
 })
 
 await test('lock_source 多路径原子：一条失败则一条都不持有', async () => {

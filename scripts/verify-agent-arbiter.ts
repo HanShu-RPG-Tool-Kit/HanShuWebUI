@@ -189,6 +189,7 @@ await test('lock 拒绝顺序按 D6：不存在→not_found、存在未读→not
   assert.equal(stale.locked, false)
   if (!stale.locked) {
     assert.equal(stale.reason, 'version_stale')
+    assert.equal(stale.contentOmitted, undefined, 'B10 只省略 already_exists')
     assert.equal(stale.currentContent, 'v2\\n')
   }
 })
@@ -200,6 +201,28 @@ await test('creating 命中已存在 → already_exists，提示改用 write（D
   if (!denied.locked) {
     assert.equal(denied.reason, 'already_exists')
     assert.match(denied.hint, /write/i)
+    // B10：already_exists 不回整篇正文，只留版本 + 标记（长文件 payload 不膨胀）
+    assert.equal(denied.currentContent, undefined, 'already_exists 不得回传 currentContent')
+    assert.equal(denied.contentOmitted, true)
+    assert.equal(typeof denied.currentVersion, 'string', '仍要回 currentVersion')
+    assert.equal((denied.currentVersion as string).length, 64)
+  }
+})
+
+await test('lock：held 仍回传 currentContent（B10 只对 already_exists 省略）', async () => {
+  seedSource('被占.hs', '被占内容')
+  currentRun = 'run-other'
+  await arbiter.read('被占.hs')
+  assert.equal((await arbiter.lock(['被占.hs'])).locked, true)
+
+  currentRun = 'run-1'
+  await arbiter.read('被占.hs')
+  const denied = await arbiter.lock(['被占.hs'])
+  assert.equal(denied.locked, false)
+  if (!denied.locked) {
+    assert.equal(denied.reason, 'held')
+    assert.equal(denied.currentContent, '被占内容', 'held 必须回传内容，模型才能自愈')
+    assert.equal(denied.contentOmitted, undefined)
   }
 })
 

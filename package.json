@@ -113,6 +113,7 @@
     "test:agent-lock-ui": "node scripts/run-verification.mjs scripts/verify-agent-lock-ui.ts",
     "test:agent-panel": "node scripts/run-verification.mjs scripts/verify-agent-panel.ts",
     "test:agent-ops": "node scripts/run-verification.mjs scripts/verify-agent-ops.ts",
+    "test:hanshu-text-safety": "node scripts/run-verification.mjs scripts/verify-hanshu-text-safety.ts",
     "test:agent-config": "node scripts/run-verification.mjs scripts/verify-agent-config.ts",
     "test:agent-purge": "node scripts/verify-agent-segment-purge.mjs",
     "test:agent-archive": "node scripts/verify-agent-archive.mjs",
