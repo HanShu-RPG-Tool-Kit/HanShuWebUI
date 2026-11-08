@@ -9,8 +9,15 @@ import { getAssetBlob, deleteAssetBlob, putAssetBlob } from '../assets/idb'
 import { HsCompileError, compileHsToHsc, type HsCompileErrorCode } from '../hanshu/compiler'
 import { stopParseLineOf } from '../hanshu/directives'
 import { escapeHsText, splitHsLines } from '../hanshu/hsSyntaxRules'
+import { collectInjectDefinitions, collectJumpTargets } from '../hanshu/injectRefs'
+import { unsafeInlineReason, type InlineContext, type UnsafeInlineReason } from '../hanshu/inlineText'
 import { collectSourceKeys, suspectKeySpans, type SourceKeyEntry } from '../hanshu/sourceKeys'
-import { sourceExtension, textAssetPath } from '../i18n/localeLayout'
+import {
+  TEXT_ASSET_EXTENSION,
+  parseLocaleAssetPath,
+  sourceExtension,
+  textAssetPath,
+} from '../i18n/localeLayout'
 import {
   TEXT_ASSET_MIME,
   createLocaleKeyFromText,
@@ -298,17 +305,44 @@ function englishCompileError(error: HsCompileError): AgentCompileError {
   }
 }
 
+/** 带行号的源文件诊断（B9）：旧诊断只有 offset，agent 侧统一补 1 起 line */
+export type AgentSourceDiagnostic =
+  | (HsDiagnostic & { line: number })
+  | (CharDiagnostic & { line: number })
+  | AgentLintDiagnostic
+
+/** offset（0 起）→ 行号（1 起） */
+function lineNumberAt(content: string, offset: number): number {
+  const limit = Math.max(0, Math.min(offset, content.length))
+  let line = 1
+  for (let index = 0; index < limit; index += 1) {
+    if (content[index] === '\n') line += 1
+  }
+  return line
+}
+
+function withDiagnosticLine(
+  content: string,
+  diagnostics: ReadonlyArray<HsDiagnostic | CharDiagnostic>,
+): Array<(HsDiagnostic & { line: number }) | (CharDiagnostic & { line: number })> {
+  return diagnostics.map((item) => ({ ...item, line: lineNumberAt(content, item.offset) }))
+}
+
 /** `.hs` / `.char` 语法诊断；`.hs` 另跑编译校验（注入点可带跨文件占用表） */
 export function validateSourceContent(
   name: string,
   content: string,
   options?: { foreignInjects?: ReadonlyMap<string, string> },
 ): {
-  diagnostics: Array<HsDiagnostic | CharDiagnostic | AgentLintDiagnostic>
+  diagnostics: AgentSourceDiagnostic[]
   compileError: AgentCompileError | null
 } {
   if (isCharFile(name)) {
-    return { diagnostics: analyzeCharDiagnostics(content), compileError: null }
+    // B9：.char 诊断也补 line
+    return {
+      diagnostics: withDiagnosticLine(content, analyzeCharDiagnostics(content)),
+      compileError: null,
+    }
   }
   if (!isHanshuFile(name)) return { diagnostics: [], compileError: null }
   let compileError: AgentCompileError | null = null
@@ -318,11 +352,31 @@ export function validateSourceContent(
     if (error instanceof HsCompileError) compileError = englishCompileError(error)
     else throw error
   }
+  // A4：`:>>name` 必须指向本文件或 foreignInjects 里存在的 @name（大小写不敏感）
+  const knownInjects = new Set<string>()
+  for (const definition of collectInjectDefinitions(content)) {
+    knownInjects.add(definition.name.toLowerCase())
+  }
+  const foreignInjects = options?.foreignInjects
+  if (foreignInjects !== undefined) {
+    for (const name of foreignInjects.keys()) knownInjects.add(name.toLowerCase())
+  }
+  const jumpDiagnostics = collectJumpTargets(content)
+    .filter((target) => !knownInjects.has(target.name.toLowerCase()))
+    .map((target) => ({
+      kind: 'agent-lint' as const,
+      line: target.line,
+      message: `jump target not found: ${target.name}`,
+    }))
+  const unparsed = countUnparsedTexts(content, name)
   return {
     diagnostics: [
-      ...analyzeHsDiagnostics(content, {
-        foreignInjects: options?.foreignInjects,
-      }),
+      ...withDiagnosticLine(
+        content,
+        analyzeHsDiagnostics(content, {
+          foreignInjects: options?.foreignInjects,
+        }),
+      ),
       ...lintHsSource(content),
       // P10：形似键但格式不对（大写 / 长度不对）→ agent lint，带行号英文消息
       ...suspectKeySpans(content).map((item) => ({
@@ -330,18 +384,17 @@ export function validateSourceContent(
         line: item.line,
         message: `line ${item.line}: key "${item.text}" is not a valid 8-digit lowercase hex key`,
       })),
+      ...jumpDiagnostics,
       // B6：还没成键的可本地化正文（一条汇总，行号取第一条样本）
-      ...(() => {
-        const unparsed = countUnparsedTexts(content, name)
-        if (unparsed.count === 0) return []
-        return [
-          {
-            kind: 'agent-lint' as const,
-            line: unparsed.samples[0]?.line ?? 1,
-            message: `${unparsed.count} localizable text segment(s) are not keyed yet; run parse_hs to create keys`,
-          },
-        ]
-      })(),
+      ...(unparsed.count === 0
+        ? []
+        : [
+            {
+              kind: 'agent-lint' as const,
+              line: unparsed.samples[0]?.line ?? 1,
+              message: `${unparsed.count} localizable text segment(s) are not keyed yet; run parse_hs to create keys`,
+            },
+          ]),
     ],
     compileError,
   }
@@ -353,6 +406,23 @@ export { collectSourceKeys, type SourceKeyEntry }
 /** 语言文本资产路径（由源文件的逻辑名 + 语言推导，调用方无需拼路径） */
 export function langAssetPathFor(source: string, locale: string): string {
   return textAssetPath(locale, source)
+}
+
+/**
+ * 语言资产路径 → 源文件逻辑名（`assets/<locale>/lang_<ext>/<dir>/<name>.lang`
+ * 反推 `<dir>/<name>.<ext>`）；不是语言资产时返回 null。
+ *
+ * `unlock_lang` 省略 locales 时用它从 heldPaths 里挑出「该源文件的全部语言锁」
+ * （包括工程语言表之外的标签），不再依赖 lock_lang 的派生集合。
+ */
+export function sourceNameFromLangPath(path: string): string | null {
+  const asset = parseLocaleAssetPath(path)
+  if (!asset || asset.kind !== 'text') return null
+  const suffix = `.${TEXT_ASSET_EXTENSION}`
+  if (!asset.rest.toLowerCase().endsWith(suffix)) return null
+  const stem = asset.rest.slice(0, -suffix.length)
+  if (!stem) return null
+  return `${stem}.${asset.sourceExt}`
 }
 
 /** 读语言文本；缺失返回空表（不是错误：该语言还没开始翻译） */
@@ -683,20 +753,33 @@ export function countUnparsedTexts(
   return { count: dryRun.entries.length, samples }
 }
 
+export type UnrepresentableLangText = { key: string; reason: UnsafeInlineReason }
+
 /**
  * 逆解析：把正文里的键名换回该语言的映射文本（转义后写回）。
  * 多行译文与缺失译文不处理，原样报告给调用方 —— 不静默丢内容。
  * `#stopparse` 只控制**解析成键**，逆解析不受它影响：它要还原的是整个文件，
  * 指令往往就顶格写在第一行（Agent 的"关闭解析 → 逆解析 → 改稿 → 主动解析"流程）。
+ *
+ * A3：写回前先用 `unsafeInlineReason(text, context)` 做安全判定 —— 含 `//`、选项里的
+ * `:`、行首结构字符、空串等会拆坏语法的文本**不内联**，进 `unrepresentable` 让作者
+ * 用 `edit_source` 处理；安全文本才 `escapeHsText` 后替换。
  */
 export function unparseSourceText(
   content: string,
   map: TextFile,
   sourceName?: string,
-): { content: string; replaced: number; missing: string[]; multiline: string[] } {
+): {
+  content: string
+  replaced: number
+  missing: string[]
+  multiline: string[]
+  unrepresentable: UnrepresentableLangText[]
+} {
   const edits: Array<{ start: number; end: number; text: string }> = []
   const missing: string[] = []
   const multiline: string[] = []
+  const unrepresentable: UnrepresentableLangText[] = []
 
   for (const span of localizedSpans(content, sourceName)) {
     const key = normalizeLocaleKey(span.value)
@@ -710,6 +793,17 @@ export function unparseSourceText(
       multiline.push(key)
       continue
     }
+    const context: InlineContext =
+      span.kind === 'choice-label'
+        ? 'optionText'
+        : span.kind === 'choice-reply'
+          ? 'optionReply'
+          : 'dialogue'
+    const unsafe = unsafeInlineReason(text, context)
+    if (unsafe !== null) {
+      unrepresentable.push({ key, reason: unsafe })
+      continue
+    }
     edits.push({ start: span.start, end: span.end, text: escapeHsText(text) })
   }
 
@@ -717,7 +811,7 @@ export function unparseSourceText(
   for (const edit of edits.sort((a, b) => b.start - a.start)) {
     next = next.slice(0, edit.start) + edit.text + next.slice(edit.end)
   }
-  return { content: next, replaced: edits.length, missing, multiline }
+  return { content: next, replaced: edits.length, missing, multiline, unrepresentable }
 }
 
 export type VoiceStatusEntry = {

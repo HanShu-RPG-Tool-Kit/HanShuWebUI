@@ -27,8 +27,8 @@ import type {
   ContentVersion,
   LangLockDenial,
   LangLockGrant,
-  LangLockResult,
-  LockResult,
+  LockDenial,
+  LockGrant,
   UndoChannel,
   VersionedFile,
 } from '../contracts'
@@ -120,6 +120,20 @@ export type WriteDenial = {
   reason: 'held' | 'already_exists' | 'version_stale'
 }
 
+/**
+ * lock 失败的返回体（B10）：契约 `LockDenial` 之上允许 `contentOmitted` 标记。
+ *
+ * 为什么只对 `already_exists` 省内容：create 占名撞上已存在时，模型下一步是「改用 write_source」，
+ * 不需要整篇正文（长文件 payload 膨胀）；而 `version_stale` / `held` 需要回内容才能一次往返自愈。
+ */
+export type LockDenialBody = LockDenial & { contentOmitted?: true }
+
+/** lock_lang 的失败体：与 `LockDenialBody` 同口径（语言路径极少走到 already_exists，但保持一致） */
+export type LangLockDenialBody = LangLockDenial & { contentOmitted?: true }
+
+/** lock_lang 的返回体（契约结果 + B10 标记） */
+export type LangLockResultBody = { locked: true; langs: LangLockGrant[] } | LangLockDenialBody
+
 export class RuntimeArbiter implements AgentToolArbiter {
   private readonly options: ArbiterOptions
 
@@ -160,13 +174,28 @@ export class RuntimeArbiter implements AgentToolArbiter {
    * 修正草案 D2：**只锁传入的路径**。以前顺带展开「已存在的派生语言资产」是为了让
    * `write_lang` 的版本守卫能察觉外部改动；现在语言有自己的 `lock_lang`，
    * 源文件锁不再替语言锁兜底（避免锁徽标暴露 `.lang` 内部路径，也避免误锁一堆文件）。
+   *
+   * B10：`already_exists` 只回 `currentVersion` + `contentOmitted:true`（不给整篇正文）。
    */
   async lock(
     paths: AgentPath[],
     options?: { creating?: boolean },
-  ): Promise<LockResult> {
+  ): Promise<LockGrant | LockDenialBody> {
     const result = await this.options.locks.acquire(this.options.runKey(), paths, options)
-    if (result.locked) this.options.onLockChange?.()
+    if (result.locked) {
+      this.options.onLockChange?.()
+      return result
+    }
+    if (result.reason === 'already_exists') {
+      const denied: LockDenialBody = {
+        locked: false,
+        reason: result.reason,
+        hint: result.hint,
+        contentOmitted: true,
+      }
+      if (result.currentVersion !== undefined) denied.currentVersion = result.currentVersion
+      return denied
+    }
     return result
   }
 
@@ -178,7 +207,7 @@ export class RuntimeArbiter implements AgentToolArbiter {
    * - 不存在的 `.lang`：按 creating 占名（译文文件常常还没建）；
    * - 整批原子：任一条失败，一个都不持有（`acquireEach` 保证）。
    */
-  async lockLang(source: AgentPath, locales?: string[]): Promise<LangLockResult> {
+  async lockLang(source: AgentPath, locales?: string[]): Promise<LangLockResultBody> {
     const resolve = this.options.host.derivedLangTargets
     if (resolve === undefined) {
       return {
@@ -217,11 +246,13 @@ export class RuntimeArbiter implements AgentToolArbiter {
     const result = await this.options.locks.acquireEach(runKey, entries)
     if (!result.locked) {
       const failed = grants[result.index]
-      const denied: LangLockDenial = {
+      const omitContent = result.denial.reason === 'already_exists'
+      const denied: LangLockDenialBody = {
         locked: false,
         reason: result.denial.reason,
         hint: result.denial.hint,
       }
+      if (omitContent) denied.contentOmitted = true
       if (failed !== undefined) {
         denied.locale = failed.locale
         denied.path = failed.path
@@ -229,7 +260,8 @@ export class RuntimeArbiter implements AgentToolArbiter {
       if (result.denial.currentVersion !== undefined) {
         denied.currentVersion = result.denial.currentVersion
       }
-      if (result.denial.currentContent !== undefined) {
+      // B10：already_exists 省略整篇正文，其它 reason 仍回内容供模型自愈
+      if (!omitContent && result.denial.currentContent !== undefined) {
         denied.currentContent = result.denial.currentContent
       }
       return denied

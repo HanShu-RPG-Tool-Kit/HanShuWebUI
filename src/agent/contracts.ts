@@ -53,6 +53,8 @@ export type LockDenial = {
   /** 失败也回传最新内容，让模型一次往返内自愈 */
   currentVersion?: ContentVersion
   currentContent?: string
+  /** `already_exists` 时不回传整篇内容（长文件 payload 保护） */
+  contentOmitted?: true
   hint: string
 }
 
@@ -81,6 +83,8 @@ export type LangLockDenial = {
   path?: AgentPath
   currentVersion?: ContentVersion
   currentContent?: string
+  /** `already_exists` 时不回传整篇内容（长文件 payload 保护） */
+  contentOmitted?: true
   hint: string
 }
 
@@ -167,6 +171,13 @@ export type AgentHost = {
   readAssetText?: (path: AgentPath) => Promise<string | null>
   /** 新建源文件；同名已存在时**失败**（改用 `writeSource`） */
   createSource: (source: string, content: string) => AgentOpResult
+  /**
+   * 校验并规范化逻辑文件名（`lock_source(creating)` 在占名前调用，避免占住一个
+   * `create_source` 会拒绝的非法名字）。返回规范化后的名字。
+   */
+  validateSourceName?: (
+    name: string,
+  ) => { ok: true; name: string } | { ok: false; error: string; hint?: string }
   /**
    * 只从本机工作区草稿里删掉一个文件（**不写 S**）。撤销日志回放「本 Run 新建的文件」时用。
    * 与 `deleteSource` 的区别：后者会发结构事务，agent 工具层已经不再提供删除能力（D1b）。

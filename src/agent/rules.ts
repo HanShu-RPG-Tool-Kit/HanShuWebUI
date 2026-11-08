@@ -24,7 +24,7 @@ export const AGENT_RULES = `
    - 多文件 / 多语言一次传全：lock_source / lock_lang 都是原子的，要么全拿到、要么一个都不持有。
 3. **后写**：拿到锁再调用写工具。写成功后锁**不会释放** —— 同一 Run 里可以连续写，不需要反复 lock。
    **所有写入只到本地草稿**：工具返回 draft:true / saved:false（语言写还有 version:null），表示还没进工程文件；写完要在回复里提醒用户「保存工程」。
-4. **释放**：需要让用户或其他 Run 编辑这些文件时，用 unlock_source({ paths }) / unlock_lang({ source, locales }) 主动释放（幂等，可重复调用）；Run 结束也会自动释放全部锁。
+4. **释放**：需要让用户或其他 Run 编辑这些文件时，用 unlock_source({ paths }) / unlock_lang({ source, locales }) 主动释放（幂等，可重复调用）；unlock_lang 省略 locales 会释放**本 Run 为该源文件持有的全部语言锁**（含工程语言表之外的语言）；Run 结束也会自动释放全部锁。
 
 ## 锁失败怎么自愈（看 reason，别盲目重试）
 - version_stale：read 之后文件又被改过。用返回的 currentContent 重新 read_source，再 lock。
@@ -86,6 +86,8 @@ export const AGENT_RULES = `
 - **locale 以返回值为准**：请求的标签可能被归一化（en → en_us、ja → ja_jp），lock_lang / write_lang / parse_hs
   返回体里的 locale 字段才是工程实际标签；回执与日志都用返回值。
 - **锁期间编辑器不会自动成键**（避免和你的写入抢正文），解锁后也不会补做；所以你改正文时不必担心自动成键打乱键位。
+- **逆解析不是万能的**：unparse_hs 只内联能安全写回正文的译文；含 //、选项文案/回复含 :、行首 ?/!/@/#/* 的键和多行译文会原样留成键名，并在返回的 unrepresentable / multiline 里列出——这些块用 edit_source 处理，不要硬写回去。
+- **改完跳转要校验**：validate_source 会检查 :>>name 的目标注入点是否存在（本文件与跨文件都查）；报 jump target not found 就补上 @name 定义或改跳转名。
 - 导出：check_export 预演两个导出包的文件数与警告；它会报告每种语言缺多少个译文
   （warnings / missingTranslations）。导出前若有译文警告，先用 list_lang_keys + write_lang 补齐。
 - 语言文件被外部改过（源文件版本却没变）时，write_lang 会以语言锁版本冲突拒绝：

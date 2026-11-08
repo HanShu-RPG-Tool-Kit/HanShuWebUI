@@ -31,6 +31,7 @@ import type {
   ContentVersion,
   LangEntry,
 } from './contracts'
+import { sourceNameFromLangPath } from './agentOps'
 
 /**
  * 兼容旧引用：UI/工作区之前直接从 tools.ts 取这些类型。
@@ -242,12 +243,12 @@ const TOOL_SPECS: ToolSpec[] = [
   defineTool(
     'lock',
     'unlock_lang',
-    '【lock / 释放语言锁】释放某源文件在指定语言下的 .lang 锁，幂等。locales 省略 = 全部派生语言。只会释放本 Run 的锁。返回 { unlocked:[...], held:[...] }：unlocked 是真正释放的 .lang 路径，held 是**调用后本 Run 仍持有的全部路径（源文件 + 语言资产）**。',
+    '【lock / 释放语言锁】释放某源文件在指定语言下的 .lang 锁，幂等。**locales 省略 = 本 Run 为该源文件持有的全部语言锁（含非工程语言）**；显式 locales = 只释放指定语言。只会释放本 Run 的锁。返回 { unlocked:[...], held:[...] }：unlocked 是真正释放的 .lang 路径，held 是**调用后本 Run 仍持有的全部路径（源文件 + 语言资产）**。',
     {
       source: str('逻辑文件名，如 序章.hs'),
       locales: {
         type: 'array',
-        description: '语言标签列表；省略 = 全部派生语言',
+        description: '语言标签列表；省略 = 本 Run 为该源文件持有的全部语言锁（含非工程语言）',
         items: { type: 'string' },
       },
     },
@@ -927,13 +928,28 @@ export async function executeAgentTool(
 
       /* ── lock 类 ── */
       case 'lock_source': {
-        const paths = normalizePaths(args.paths)
-        if (paths.length === 0) {
+        const requested = normalizePaths(args.paths)
+        if (requested.length === 0) {
           return failJson(
             'lock_source requires at least one path, for example {"paths":["chapter.hs"]}',
             'Call read_source to confirm the logical file name first, then call lock_source({ "paths": ["chapter.hs"] }).',
             'invalid_arguments',
           )
+        }
+        // A2：占名前先用宿主校验/规范化名字（和 create_source 的落盘口径一致）。
+        // 任一名字非法 → 直接拒绝，**不触达 arbiter**（绝不占住一个写不出去的名字）。
+        const paths: AgentPath[] = []
+        for (const name of requested) {
+          const checked = target.host.validateSourceName?.(name)
+          if (checked !== undefined && checked.ok === false) {
+            return failJson(
+              `invalid file name: ${name}`,
+              checked.hint ??
+                'Use a plain logical file name such as "chapter.hs"; do not pass directories, absolute paths, or reserved characters.',
+              'invalid_arguments',
+            )
+          }
+          paths.push(checked !== undefined && checked.ok ? checked.name : name)
         }
         // 成功/失败都直接透出：失败体带 reason/currentVersion/currentContent/hint，
         // normalizeFailure 另补 errorCode（reason 原样保留，兼容旧调用方）
@@ -979,7 +995,17 @@ export async function executeAgentTool(
           )
         }
         const locales = normalizeLocales(args.locales)
-        // held = 调用后本 Run 仍持有的全部路径（P3：不再只能反查本次 locale 的派生目标）
+        if (locales === undefined) {
+          // 1：省略 locales = 释放该源文件在本 Run 持有的**全部**语言锁（含非工程语言）。
+          // 走 heldPaths 反查，而不是 unlockLang 的派生集合 —— 后者只覆盖工程语言表。
+          const sourceName = file.trim().replace(/\\/g, '/')
+          const lockedPaths = target.arbiter
+            .heldPaths()
+            .filter((path) => sourceNameFromLangPath(path) === sourceName)
+          const unlocked = target.arbiter.unlock(lockedPaths)
+          return JSON.stringify({ unlocked, held: target.arbiter.heldPaths() })
+        }
+        // 显式 locales：保持原语义，只释放指定语言的锁
         const unlocked = target.arbiter.unlockLang(file, locales)
         return JSON.stringify({ unlocked, held: target.arbiter.heldPaths() })
       }
@@ -1062,7 +1088,7 @@ export async function executeAgentTool(
     const message = error instanceof Error ? error.message : String(error)
     return failJson(
       message,
-      'The host raised an error. Retry with an explicit logical file name (include the package/folder when the name is duplicated across packages), or call list_sources first to disambiguate.',
+      'The host raised an unexpected error. Call list_sources to verify the file name, or report it to the user.',
       'host_error',
     )
   }
