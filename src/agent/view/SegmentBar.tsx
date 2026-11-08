@@ -40,8 +40,15 @@ export function SegmentBar({
 
   return (
     <div className="agent-segbar">
-      <span className="agent-seg-label" title="活跃段：本窗口的对话，可继续聊；保存会产出一条归档段">
-        活跃段
+      <span
+        className="agent-seg-label"
+        title={
+          current?.state === 'sealed'
+            ? '已封存段：只读查看历史；发送消息会开始新会话'
+            : '活跃段：本窗口的对话，可继续聊；保存会产出一条归档段'
+        }
+      >
+        {current?.state === 'sealed' ? '已封存段' : '活跃段'}
       </span>
       {segments.length > 0 ? (
         <select

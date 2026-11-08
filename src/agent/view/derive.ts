@@ -113,10 +113,12 @@ export function runStateLabel(state: AgentRunState): string {
   return '空闲'
 }
 
-/** 段下拉里的一行文案（标题 + 轮数，便于区分同名段） */
+/** 段下拉里的一行文案（标题 + 轮数 + 封存标记，便于区分同名段） */
 export function segmentOptionLabel(segment: SegmentInfo): string {
   const title = segment.title.trim() || '未命名段'
-  return segment.runCount > 0 ? `${title} · ${segment.runCount} 轮` : title
+  const rounds = segment.runCount > 0 ? ` · ${segment.runCount} 轮` : ''
+  const sealed = segment.state === 'sealed' ? '（已封存）' : ''
+  return `${title}${rounds}${sealed}`
 }
 
 /** 工具输出可能很大，对话流里只放头尾，避免整段 JSON 撑爆滚动区 */

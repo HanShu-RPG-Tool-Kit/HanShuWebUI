@@ -8,6 +8,7 @@ import type { NewFileType, NewFileTypeId } from "../../newFileTypes";
 import type { NodeMenuItem } from "../../nodeEditor/ContextMenu";
 import type { ExplorerOrganization } from "../../project/explorerOrganization";
 import { openProjectUi } from "../../project/projectUi";
+import { notify } from "../../activity";
 import { chooseDialog } from "../../ui/dialogs";
 import { isVoiceMapFile, sourcePathOf, type Project } from "../../workspace";
 import { StageplayAssetsAddon } from "./StageplayAssetsAddon";
@@ -50,6 +51,8 @@ export function StageplayExplorer({
   activeAssetId,
   newFileMenuRequest = 0,
   renameRequest,
+  lockedSourceNames,
+  lockedAssetPaths,
   onOpenScript,
   onOpenAsset,
   onCreate,
@@ -74,6 +77,13 @@ export function StageplayExplorer({
   /** 应用菜单「新建剧本」：值变化即在 `+剧` 旁打开类型菜单（0 = 从未请求） */
   newFileMenuRequest?: number;
   renameRequest: { id: string; seq: number } | null;
+  /**
+   * Agent 正持锁的源文件逻辑名（含其派生 `.lang` 被锁的源）。
+   * 改名/删除源文件会连带搬迁/删除语言资产，所以这些入口按它挡住。
+   */
+  lockedSourceNames: ReadonlySet<string>;
+  /** Agent 正持锁的资产路径（`.lang` 等）：资产删除入口按它禁用。 */
+  lockedAssetPaths: ReadonlySet<string>;
   onOpenScript: (scriptId: string) => void;
   onOpenAsset: (assetId: string) => void;
   /** 选类型即创建；folderKey 非空时创建后登记到该共享文件夹。失败原因由工作区提示。 */
@@ -101,6 +111,37 @@ export function StageplayExplorer({
   const scripts = useMemo(() => project?.scripts ?? [], [project]);
   const files = useMemo(() => stageplayShellFiles(scripts), [scripts]);
   const looseFiles = useMemo(() => stageplayLooseSources(scripts), [scripts]);
+
+  /** 源文件是否被 Agent 锁住（含派生 `.lang`）：改名/删除会连带搬迁语言资产 */
+  const isSourceLocked = (scriptId: string): boolean => {
+    const name = scripts.find((script) => script.id === scriptId)?.name
+    return Boolean(name && lockedSourceNames.has(name))
+  }
+  const lockedSourceNamesOf = (scriptIds: string[]): string[] =>
+    scriptIds
+      .filter(isSourceLocked)
+      .map((id) => scripts.find((script) => script.id === id)?.name)
+      .filter((name): name is string => Boolean(name))
+  /**
+   * 删除入口的逐目标判断：被锁资源不删，其余照常删；不把整次操作变成静默失败。
+   * （通用树底座的删除菜单只有全局 readOnly，没法逐行禁用，所以在这里拦。）
+   */
+  const guardDelete = (scriptIds: string[]) => {
+    const locked = lockedSourceNamesOf(scriptIds)
+    if (locked.length > 0) {
+      notify(
+        `以下资源正被 Agent 使用（锁未释放），暂不能删除：${locked.join('、')}；等解锁后再试。`,
+        { kind: 'error' },
+      )
+    }
+    const allowed = scriptIds.filter((id) => !isSourceLocked(id))
+    if (allowed.length > 0) onDelete(allowed)
+  }
+  /** 改名入口：返回错误串由树的行内改名输入框就地展示 */
+  const guardRename = (scriptId: string, base: string): string | null =>
+    isSourceLocked(scriptId)
+      ? '该资源正被 Agent 使用（锁未释放），暂不能改名；等解锁后再试。'
+      : onRename(scriptId, base)
 
   /** 没有工程时不能新建文件：提示去创建或导入，而不是把点击吃掉。 */
   const promptCreateOrImport = () => {
@@ -210,7 +251,7 @@ export function StageplayExplorer({
           activeScriptId={activeScriptId}
           readOnly={readOnly}
           onOpen={onOpenScript}
-          onDelete={(id) => onDelete([id])}
+          onDelete={(id) => guardDelete([id])}
           onGeneratePlaceholderVoice={onGeneratePlaceholderVoice}
           showContext={showContext}
         />
@@ -219,6 +260,7 @@ export function StageplayExplorer({
         <StageplayAssetsAddon
           project={project}
           activeAssetId={activeAssetId}
+          lockedAssetPaths={lockedAssetPaths}
           onToggleRoot={() => onToggleAssets(project.id)}
           onOpenAsset={onOpenAsset}
           onDeleteAsset={onDeleteAsset}
@@ -257,8 +299,8 @@ export function StageplayExplorer({
         emptyHint={(category) => `暂无资源。右键或点 +剧 ${category.createLabel?.replace(/^新建/, "创建").replace(/…$/, "") ?? "新建"}。`}
         onOpen={onOpenScript}
         onCreate={createInCategory}
-        onRename={onRename}
-        onDelete={onDelete}
+        onRename={guardRename}
+        onDelete={guardDelete}
         onOrganize={onOrganize}
         onFileDragStart={(file, event) => {
           if (!project) return;

@@ -13,6 +13,10 @@
  * - 数据只在本机本浏览器（空状态写明），归档段跨窗口但载入／导出是二期。
  */
 
+/* 面板同时导出可单测的纯派生函数（失败卡片/冲突消息），Fast refresh 的
+ * “只导出组件”规则在这里不适用（与 gameplay 的 builtins.tsx 同一处理方式）。 */
+/* oxlint-disable react/only-export-components */
+
 import {
   useCallback,
   useEffect,
@@ -26,9 +30,13 @@ import type {
   AgentRunResult,
   AgentRuntime,
   AgentRuntimeView,
+  PendingRollback,
   SegmentInfo,
   SnapshotInfo,
+  UndoConflict,
+  UndoOutcome,
 } from './agent/contracts'
+import { confirmDialog } from './ui/dialogs'
 import {
   clearAgentApiKey,
   getAgentApiKey,
@@ -61,6 +69,12 @@ import {
   maskApiKey,
   runStateLabel,
 } from './agent/view/derive'
+import {
+  normalizeSourcePath,
+  parseLocaleAssetPath,
+  sourceLogicalPath,
+  TEXT_ASSET_EXTENSION,
+} from './i18n/localeLayout'
 
 export type AgentPanelProps = {
   open: boolean
@@ -88,6 +102,189 @@ const PLACEMENT_HINT: Record<NonNullable<AgentPanelProps['placement']>, string> 
   top: '拖动标题可停靠，拖到中间变弹层',
   bottom: '拖动标题可停靠，拖到中间变弹层',
   float: '拖到边缘停靠，停在中间保持弹层',
+}
+
+/**
+ * 锁徽标只显示**源文件逻辑名**（文档 D2）：
+ * - `assets/<locale>/lang_<ext>/…` 归回所属源文件（`folder/cp1.lang` → `folder/cp1.hs`）；
+ * - 其它 `assets/` 内部路径（语音等）不展示，徽标不暴露工程布局；
+ * - 同时持有源锁与语言锁时去重，避免同名文件出现两次。
+ */
+function lockedSourceLabels(paths: readonly string[]): string[] {
+  const labels: string[] = []
+  const seen = new Set<string>()
+  const push = (label: string) => {
+    if (seen.has(label)) return
+    seen.add(label)
+    labels.push(label)
+  }
+  for (const raw of paths) {
+    const path = normalizeSourcePath(raw)
+    const parsed = parseLocaleAssetPath(path)
+    if (parsed) {
+      if (parsed.kind !== 'text') continue
+      const suffix = `.${TEXT_ASSET_EXTENSION}`
+      if (!parsed.rest.toLowerCase().endsWith(suffix)) continue
+      const stem = parsed.rest.slice(0, -suffix.length)
+      if (stem) push(`${stem}.${parsed.sourceExt}`)
+      continue
+    }
+    if (path.startsWith('assets/')) continue
+    const logical = sourceLogicalPath(path)
+    if (logical) push(logical)
+  }
+  return labels
+}
+
+/* ───────────────────────── 失败回滚卡片（D3 三选项） ───────────────────────── */
+
+/** 冲突原因 → 一句中文（不要给用户看枚举） */
+export function describeConflictReason(reason: UndoConflict['reason'] | string): string {
+  if (reason === 'version_stale') return '之后被改过'
+  if (reason === 'no_before_image') return '没有写前快照'
+  if (reason === 'human_editing') return '编辑器里还有未保存修改'
+  if (reason === 'unavailable') return '当前不支持回滚该文件'
+  return String(reason)
+}
+
+/** 把冲突清单拼成一条中文用户消息，交给 Agent 处理（D3 第一个选项） */
+export function composeConflictMessage(conflicts: readonly UndoConflict[]): string {
+  const lines = conflicts
+    .slice(0, 20)
+    .map((conflict) => `- ${conflict.path}（${describeConflictReason(conflict.reason)}）`)
+  if (conflicts.length > 20) lines.push(`- ……等 ${conflicts.length} 个文件`)
+  return [
+    '上一轮运行失败，回滚时遇到了冲突。',
+    '请先读取下面这些文件的当前内容，再决定怎样安全恢复；不要覆盖我后来的修改。',
+    ...lines,
+    '处理完后告诉我改了哪些文件。',
+  ].join('\n')
+}
+
+/** 回滚结果里真正需要用户知道的失败项（逐项报告，不静默部分成功） */
+export function formatRollbackFailures(outcomes: readonly UndoOutcome[]): string[] {
+  return outcomes
+    .filter((outcome) => outcome.action === 'conflict' || outcome.action === 'skipped')
+    .map((outcome) => {
+      const reason = outcome.reason ? `（${describeConflictReason(outcome.reason)}）` : ''
+      return `${outcome.path}${reason}`
+    })
+}
+
+export type RollbackAction = 'force' | 'abandon' | 'retry'
+/** 卡片上的进行中态：三个 runtime 动作之外，还有「让 Agent 帮忙」的提交中 */
+export type RollbackBusy = 'help' | RollbackAction
+
+/**
+ * 执行一个回滚动作并返回可展示的结果（与面板解耦，便于测试断言调到了哪个 runtime 方法）。
+ * `force` 前的确认框在面板里做，这里只负责调用与汇总 outcomes。
+ */
+export async function executeRollbackAction(
+  runtime: Pick<AgentRuntime, 'forceRollback' | 'abandonRollback' | 'retryRollback'>,
+  action: RollbackAction,
+): Promise<{ ok: boolean; message: string }> {
+  if (action === 'abandon') {
+    await runtime.abandonRollback()
+    return { ok: true, message: '已放弃回滚' }
+  }
+  if (action === 'force') {
+    const outcomes = await runtime.forceRollback()
+    const failures = formatRollbackFailures(outcomes)
+    return failures.length > 0
+      ? { ok: false, message: `回滚未完成：${failures.join('；')}` }
+      : { ok: true, message: '已强制回滚' }
+  }
+  const result = await runtime.retryRollback()
+  if (result.ok) return { ok: true, message: '已回滚' }
+  const failures = formatRollbackFailures(result.outcomes)
+  const conflicts = result.conflicts.map(
+    (conflict) => `${conflict.path}（${describeConflictReason(conflict.reason)}）`,
+  )
+  const items = failures.length > 0 ? failures : conflicts
+  return {
+    ok: false,
+    message: items.length > 0 ? `仍有冲突：${items.join('；')}` : '回滚仍未完成',
+  }
+}
+
+export type RollbackCardProps = {
+  pending: PendingRollback | null
+  /** 正在执行的动作：所有按钮互斥禁用并显示进行中态 */
+  busy: RollbackBusy | null
+  /** Run 运行中 / 没有运行时也一律禁用 */
+  disabled?: boolean
+  /** 执行完的短提示（成功 / 失败） */
+  notice?: string
+  onHelp: () => void
+  onForce: () => void
+  onAbandon: () => void
+  onRetry: () => void
+}
+
+/** 失败卡片：`pendingRollback` 存在时才有内容（三个选项 + failed 时的重试） */
+export function RollbackCard({
+  pending,
+  busy,
+  disabled = false,
+  notice,
+  onHelp,
+  onForce,
+  onAbandon,
+  onRetry,
+}: RollbackCardProps) {
+  if (!pending) return null
+  const locked = busy !== null || disabled
+  const failures = formatRollbackFailures(pending.outcomes ?? [])
+  const shown = pending.conflicts.slice(0, 5)
+  return (
+    <div className="agent-rollback" role="alert" aria-label="回滚待处理">
+      <div className="agent-rollback-head">
+        <span>回滚待处理</span>
+        {pending.status === 'failed' && <span className="agent-rollback-tag">回滚失败</span>}
+      </div>
+      {shown.length > 0 && (
+        <ul className="agent-rollback-list">
+          {shown.map((conflict) => (
+            <li key={`${conflict.channel}:${conflict.path}`}>
+              {conflict.path}（{describeConflictReason(conflict.reason)}）
+            </li>
+          ))}
+          {pending.conflicts.length > shown.length && (
+            <li>……等 {pending.conflicts.length} 个文件</li>
+          )}
+        </ul>
+      )}
+      {failures.length > 0 && (
+        <div className="agent-rollback-failures">未恢复：{failures.join('；')}</div>
+      )}
+      {notice && <div className="agent-rollback-notice">{notice}</div>}
+      <div className="agent-rollback-actions">
+        <button type="button" disabled={locked} onClick={onHelp}>
+          {busy === 'help' ? '提交中…' : '让 Agent 帮忙处理冲突'}
+        </button>
+        <button type="button" disabled={locked} onClick={onForce}>
+          {busy === 'force' ? '回滚中…' : '强制回滚'}
+        </button>
+        <button type="button" disabled={locked} onClick={onAbandon}>
+          {busy === 'abandon' ? '处理中…' : '放弃回滚'}
+        </button>
+        {pending.status === 'failed' && (
+          <button type="button" disabled={locked} onClick={onRetry}>
+            {busy === 'retry' ? '重试中…' : '重试回滚'}
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** 保存封段后的输入区提示（不禁止发送：facade 会自动开新段） */
+export function SegmentSealedHint() {
+  return (
+    <div className="agent-banner sealed" role="status">
+      本次保存已封存当前会话；发送消息将开始新会话
+    </div>
+  )
 }
 
 export function AgentPanel({
@@ -128,6 +325,9 @@ export function AgentPanel({
   const [apiOpen, setApiOpen] = useState(false)
   const [panelError, setPanelError] = useState('')
   const [panelInfo, setPanelInfo] = useState('')
+  /** 失败卡片回滚动作的进行中态（互斥禁用三/四个按钮） */
+  const [rollbackBusy, setRollbackBusy] = useState<RollbackBusy | null>(null)
+  const [rollbackNotice, setRollbackNotice] = useState('')
   const startingRef = useRef(false)
 
   const running = view?.runState === 'running'
@@ -209,6 +409,11 @@ export function AgentPanel({
     () => appendRunFailure(deriveMessageRows(view?.items ?? []), runFailure, view?.runId ?? null),
     [view, runFailure],
   )
+  /** 锁徽标用：`.lang` 锁归回源文件逻辑名，去重；空数组 = 当前没有可展示的锁 */
+  const lockedLabels = useMemo(
+    () => lockedSourceLabels(view?.lockedPaths ?? []),
+    [view?.lockedPaths],
+  )
 
   const togglePro = useCallback(() => {
     const next = !useProState
@@ -217,35 +422,103 @@ export function AgentPanel({
     setPanelInfo(`已切换为 ${next ? 'Pro' : 'Flash'}，下一轮生效。`)
   }, [useProState])
 
-  const send = useCallback(() => {
-    const text = input.trim()
-    if (!text || !runtime || running || startingRef.current) return
-    if (!keyConfigured) {
-      setPanelError('先填写 API Key，再发送。')
-      return
-    }
-    startingRef.current = true
-    setInput('')
-    setPanelError('')
-    setPanelInfo('')
-    setRunFailure(null)
-    runtime
-      .run(text)
-      .then((result) => {
-        // 失败不当异常弹窗：run() 约定不抛，结果落成对话里的记录（文档 §7）
-        if (!result.ok) setRunFailure(result)
-        void refreshSegments()
-      })
-      .catch((error: unknown) => {
-        setRunFailure({
-          ok: false,
-          error: `启动失败：${describeError(error)}。检查 API 设置与网络后重试。`,
+  const pendingRollback = view?.pendingRollback ?? null
+  /** `runItemId` 缺失时卡片放面板顶部；否则跟在对话流末尾（失败记录通常就是最后一条） */
+  const rollbackAtTop = pendingRollback !== null && !pendingRollback.runItemId
+
+  /** 统一发送入口：输入框发送与「让 Agent 帮忙处理冲突」共用（隐藏起点，仍走现有 run） */
+  const submit = useCallback(
+    (text: string): Promise<boolean> => {
+      const trimmed = text.trim()
+      if (!trimmed || !runtime || running || startingRef.current) return Promise.resolve(false)
+      if (!keyConfigured) {
+        setPanelError('先填写 API Key，再发送。')
+        return Promise.resolve(false)
+      }
+      startingRef.current = true
+      setPanelError('')
+      setPanelInfo('')
+      setRunFailure(null)
+      setRollbackNotice('')
+      return runtime
+        .run(trimmed)
+        .then((result) => {
+          // 失败不当异常弹窗：run() 约定不抛，结果落成对话里的记录（文档 §7）
+          if (!result.ok) setRunFailure(result)
+          void refreshSegments()
+          return result.ok
         })
-      })
-      .finally(() => {
-        startingRef.current = false
-      })
-  }, [input, runtime, running, keyConfigured, refreshSegments])
+        .catch((error: unknown) => {
+          setRunFailure({
+            ok: false,
+            error: `启动失败：${describeError(error)}。检查 API 设置与网络后重试。`,
+          })
+          return false
+        })
+        .finally(() => {
+          startingRef.current = false
+        })
+    },
+    [runtime, running, keyConfigured, refreshSegments],
+  )
+
+  const send = useCallback(() => {
+    if (!input.trim()) return
+    setInput('')
+    void submit(input)
+  }, [input, submit])
+
+  /** D3 第一个选项：把冲突清单拼成一条中文用户消息，开一个新 Run（不封段） */
+  const helpWithConflicts = useCallback(() => {
+    if (!pendingRollback || rollbackBusy) return
+    setRollbackBusy('help')
+    void submit(composeConflictMessage(pendingRollback.conflicts)).finally(() =>
+      setRollbackBusy(null),
+    )
+  }, [pendingRollback, rollbackBusy, submit])
+
+  /** D3 第二/三个选项 + 失败后的重试；执行期间所有按钮互斥禁用 */
+  const runRollback = useCallback(
+    (action: RollbackAction) => {
+      if (!runtime || rollbackBusy) return
+      void (async () => {
+        if (action === 'force') {
+          const ok = await confirmDialog({
+            message: '强制回滚会丢弃这次失败之后的所有编辑，继续？',
+            danger: true,
+          })
+          if (!ok) return
+        }
+        setRollbackBusy(action)
+        setPanelError('')
+        setRollbackNotice('')
+        try {
+          const result = await executeRollbackAction(runtime, action)
+          if (result.ok) setRollbackNotice(result.message)
+          else setPanelError(result.message)
+        } catch (error: unknown) {
+          setPanelError(`回滚失败：${describeError(error)}。`)
+        } finally {
+          setRollbackBusy(null)
+        }
+      })()
+    },
+    [runtime, rollbackBusy],
+  )
+
+  /** 失败卡片：`pendingRollback` 存在时才有内容（组件内部判空） */
+  const rollbackCard = (
+    <RollbackCard
+      pending={pendingRollback}
+      busy={rollbackBusy}
+      disabled={running || !runtime}
+      notice={rollbackNotice}
+      onHelp={helpWithConflicts}
+      onForce={() => runRollback('force')}
+      onAbandon={() => runRollback('abandon')}
+      onRetry={() => runRollback('retry')}
+    />
+  )
 
   const stop = useCallback(() => {
     if (!runtime) return
@@ -311,13 +584,24 @@ export function AgentPanel({
     (snapshotId: string) => {
       if (!runtime) return
       const info = snapshots.find((item) => item.id === snapshotId)
-      setOpenedArchive({ id: snapshotId, title: info?.title || '归档段', items: [] })
+      // 归档元数据（filesChanged / rolledBack / rollbackLog）随详情展示；旧归档没有这些字段
+      setOpenedArchive({
+        id: snapshotId,
+        title: info?.title || '归档段',
+        items: [],
+        ...(info ? { snapshot: info } : {}),
+      })
       setOpenedLoading(true)
       setPanelError('')
       runtime
         .snapshotItems(snapshotId)
         .then((items) => {
-          setOpenedArchive({ id: snapshotId, title: info?.title || '归档段', items })
+          setOpenedArchive({
+            id: snapshotId,
+            title: info?.title || '归档段',
+            items,
+            ...(info ? { snapshot: info } : {}),
+          })
         })
         .catch((error: unknown) => {
           setPanelError(`读取归档段失败：${describeError(error)}。`)
@@ -540,12 +824,12 @@ export function AgentPanel({
         </div>
       )}
 
-      {view && view.lockedPaths.length > 0 && (
+      {lockedLabels.length > 0 && (
         <div
           className="agent-lock-badge"
-          title="这些文件暂时只读，Agent 改完会恢复"
+          title="Agent 正在使用这些资源；被锁的源文件或语言文本在编辑器里暂时只读，其余文件仍可编辑"
         >
-          Agent 正在修改：{view.lockedPaths.join('、')}
+          Agent 正在修改：{lockedLabels.join('、')}
         </div>
       )}
 
@@ -589,13 +873,19 @@ export function AgentPanel({
           {apiForm}
         </div>
       ) : (
-        <MessageList
-          rows={rows}
-          status={running ? view?.status ?? '' : panelInfo || view?.status || ''}
-          resetKey={view?.segmentId ?? null}
-          empty={emptyState}
-        />
+        <>
+          {rollbackAtTop && rollbackCard}
+          <MessageList
+            rows={rows}
+            status={running ? view?.status ?? '' : panelInfo || view?.status || ''}
+            resetKey={view?.segmentId ?? null}
+            empty={emptyState}
+          />
+          {!rollbackAtTop && rollbackCard}
+        </>
       )}
+
+      {view?.segmentSealed && <SegmentSealedHint />}
 
       <form
         className="agent-input-row"

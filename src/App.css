@@ -1652,6 +1652,12 @@ body.is-resizing .monaco-editor {
   border-left: 3px solid var(--warn);
 }
 
+.agent-banner.sealed {
+  color: #a8c7e8;
+  background: rgb(90 150 216 / 12%);
+  border-left: 3px solid #5a96d8;
+}
+
 .agent-banner.error {
   color: #f0a6ab;
   background: rgb(232 101 109 / 14%);
@@ -1692,6 +1698,83 @@ body.is-resizing .monaco-editor {
   overflow: hidden;
   text-overflow: ellipsis;
   flex-shrink: 0;
+}
+
+/* 失败卡片：待处理回滚三选项（D3） */
+.agent-rollback {
+  flex-shrink: 0;
+  margin: 8px 10px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  border: 1px solid rgb(232 101 109 / 40%);
+  border-left: 3px solid var(--danger);
+  border-radius: 4px;
+  background: rgb(232 101 109 / 8%);
+}
+
+.agent-rollback-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.agent-rollback-tag {
+  padding: 0 5px;
+  font-size: 11px;
+  font-weight: 400;
+  border: 1px solid currentcolor;
+  border-radius: 3px;
+}
+
+.agent-rollback-list {
+  margin: 4px 0 0;
+  padding-left: 16px;
+  max-height: 88px;
+  overflow: auto;
+  opacity: 0.85;
+  word-break: break-all;
+}
+
+.agent-rollback-failures {
+  margin-top: 4px;
+  color: #f0a6ab;
+  word-break: break-all;
+}
+
+.agent-rollback-notice {
+  margin-top: 4px;
+  color: var(--warn);
+}
+
+.agent-rollback-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.agent-rollback-actions button {
+  appearance: none;
+  padding: 2px 8px;
+  font-family: inherit;
+  font-size: 12px;
+  color: inherit;
+  cursor: pointer;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+}
+
+.agent-rollback-actions button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.agent-rollback-actions button:disabled {
+  cursor: default;
+  opacity: 0.55;
 }
 
 .agent-api-section {
@@ -2108,6 +2191,38 @@ body.is-resizing .monaco-editor {
   gap: 4px 10px;
   font-size: 12px;
   color: var(--text-dim);
+}
+
+/* 归档简化日志（D4）：只读摘要 + 可展开的 path/短哈希 */
+.agent-snapshot-changes {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.agent-snapshot-log {
+  font-size: 12px;
+  color: var(--text-dim);
+}
+
+.agent-snapshot-log summary {
+  cursor: pointer;
+}
+
+.agent-snapshot-log ul {
+  margin: 4px 0 0;
+  padding-left: 16px;
+  max-height: 160px;
+  overflow: auto;
+}
+
+.agent-snapshot-log li {
+  display: flex;
+  gap: 8px;
+  word-break: break-all;
+}
+
+.agent-snapshot-log code {
+  color: var(--text-bright);
 }
 
 .agent-snapshot-actions {

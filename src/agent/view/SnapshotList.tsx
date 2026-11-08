@@ -28,6 +28,8 @@ export type OpenedArchive = {
   id: string
   title: string
   items: AgentViewItem[]
+  /** 归档元数据（简化日志：改动数 / 是否回滚过 / 逐步哈希）；旧归档可能没有 */
+  snapshot?: SnapshotInfo
 }
 
 type Props = {
@@ -55,6 +57,40 @@ const LEVEL_TEXT: Record<StorageLevel, string> = {
   ok: '正常',
   warn: '偏多',
   danger: '过多',
+}
+
+/** 短哈希：只给辨认用，不冒充完整版本号 */
+function shortHash(hash: string | null | undefined): string {
+  return hash ? hash.slice(0, 8) : '—'
+}
+
+/** 归档的简化改动摘要（D4）：旧归档没有 filesChanged/rolledBack 就整行不显示 */
+function SnapshotChangeSummary({ snapshot }: { snapshot: SnapshotInfo }) {
+  const parts: string[] = []
+  if (snapshot.filesChanged !== undefined) parts.push(`改动 ${snapshot.filesChanged} 个文件`)
+  if (snapshot.rolledBack === true) parts.push('有回滚')
+  if (parts.length === 0) return null
+  return <div className="agent-snapshot-changes">{parts.join(' · ')}</div>
+}
+
+/** 简化日志：只读的 path + 短哈希，不提供任何回滚入口 */
+function SnapshotRollbackLog({ entries }: { entries: NonNullable<SnapshotInfo['rollbackLog']> }) {
+  if (entries.length === 0) return null
+  return (
+    <details className="agent-snapshot-log">
+      <summary>改动明细（{entries.length}）</summary>
+      <ul>
+        {entries.map((entry, index) => (
+          <li key={`${entry.path}:${index}`}>
+            <code>{entry.path}</code>
+            <span>
+              {shortHash(entry.beforeHash)} → {shortHash(entry.afterHash)}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </details>
+  )
 }
 
 export function SnapshotList({
@@ -92,6 +128,14 @@ export function SnapshotList({
           </div>
         </div>
         <div className="agent-snapshot-view-title">{opened.title}</div>
+        {opened.snapshot && (
+          <>
+            <SnapshotChangeSummary snapshot={opened.snapshot} />
+            {opened.snapshot.rollbackLog && (
+              <SnapshotRollbackLog entries={opened.snapshot.rollbackLog} />
+            )}
+          </>
+        )}
         {openedLoading ? (
           <div className="agent-empty">
             <div className="agent-empty-title">读取中…</div>
@@ -196,6 +240,8 @@ function SnapshotRow({
         <span>{formatDateTime(snapshot.createdAt)}</span>
         <span>{snapshot.entryCount} 条对话</span>
       </div>
+      <SnapshotChangeSummary snapshot={snapshot} />
+      {snapshot.rollbackLog && <SnapshotRollbackLog entries={snapshot.rollbackLog} />}
       <div className="agent-snapshot-actions">
         <button type="button" onClick={() => onOpen(snapshot.id)} disabled={busy}>
           打开
