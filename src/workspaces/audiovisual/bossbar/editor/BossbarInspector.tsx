@@ -240,28 +240,17 @@ function RegionFields({
   onChange: (document: BossbarDocument) => void
 }) {
   const commit = (patch: Partial<typeof region.box>) => {
-    const raw = { ...region.box, ...patch }
-    if (raw.width < 1 || raw.height < 1) return
-    // 收缩/移动显示区域不能把已有组件挤出去
-    const left = Math.min(raw.x, ...document.components.filter((entry) => !isDisplayRegion(entry)).map((entry) => entry.box.x), raw.x)
-    const top = Math.min(raw.y, ...document.components.filter((entry) => !isDisplayRegion(entry)).map((entry) => entry.box.y), raw.y)
-    const right = Math.max(
-      raw.x + raw.width,
-      ...document.components.filter((entry) => !isDisplayRegion(entry)).map((entry) => entry.box.x + entry.box.width),
-      raw.x + raw.width,
-    )
-    const bottom = Math.max(
-      raw.y + raw.height,
-      ...document.components.filter((entry) => !isDisplayRegion(entry)).map((entry) => entry.box.y + entry.box.height),
-      raw.y + raw.height,
-    )
+    const nextBox = { ...region.box, ...patch }
+    if (nextBox.width < 1 || nextBox.height < 1) return
+    const dx = nextBox.x - region.box.x
+    const dy = nextBox.y - region.box.y
     onChange({
       ...document,
-      components: document.components.map((entry) =>
-        entry.id === region.id
-          ? { ...entry, box: { x: left, y: top, width: right - left, height: bottom - top } }
-          : entry,
-      ),
+      components: document.components.map((entry) => {
+        if (entry.id === region.id) return { ...entry, box: nextBox }
+        if (!dx && !dy) return entry
+        return { ...entry, box: { ...entry.box, x: entry.box.x + dx, y: entry.box.y + dy } }
+      }),
     } as BossbarDocument)
   }
   return (
