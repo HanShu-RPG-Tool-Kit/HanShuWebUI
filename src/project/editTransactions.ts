@@ -137,7 +137,7 @@ export class EditTransactions {
     const data = this.staged.get(path)?.edit.data
     return typeof data === 'string' ? data : undefined
   }
-  hasDraft(path: string): boolean { return this.dirty.has(path) || this.staged.has(path) || [...this.editorDirty.values()].some(paths => paths.has(path)) }
+  hasDraft(path: string, exceptEditorOwner?: string): boolean { return this.dirty.has(path) || this.staged.has(path) || [...this.editorDirty.entries()].some(([owner, paths]) => owner !== exceptEditorOwner && paths.has(path)) }
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener) } }
   private emit() {
     this.state = {

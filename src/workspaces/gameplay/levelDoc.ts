@@ -1,6 +1,7 @@
 import { normalizeKitTag, unionKitTags } from './kit'
 import { parseJsonValue } from '../../utils/strictJson'
 import { isObject } from './model'
+import { effectSections, readRegionEffects, type RegionEffectSections } from './regionEffects'
 import {
   NAV_COORD_ABS_MAX,
   NAV_DISPLAY_ICON,
@@ -9,18 +10,18 @@ import {
   NAV_DISPLAY_NAME,
   NAV_LABEL_MAX,
   NAV_TYPE_POS,
-  type NavTypeId,
 } from './navigationPoint'
 
 /**
  * 地图模板（`.level`）的作者文档。
  *
- * 编辑侧是一个模板文件里嵌 regions + 导航点；编译时摊平成：
+ * 编辑侧是一个模板文件里嵌 regions + 地标；编译时摊平成：
  *   levels/<模板>.json
  *   regions/<模板>$<区域 id>.json
- *   navigation_points/<模板>$<导航点 id>.json
+ *   landmarks/<模板>$<地标 id>.json
  *
- * 因此子对象的 `level` 由编译器写入，作者不写；区域/导航点的 `id` 只在本模板内唯一。
+ * 因此子对象的 `level` 由编译器写入，作者不写；区域/地标的 `id` 只在本模板内唯一。
+ * 根字段 `navigation` 已废弃，出现即整文件非法。
  */
 export type LevelY = 'all' | [number, number]
 
@@ -31,15 +32,15 @@ export type LevelArea = LevelRectArea | LevelCircleArea | LevelPolygonArea
 
 export type LevelCustomData = Record<string, unknown>
 
-export type LevelRegion = {
+export type LevelRegion = RegionEffectSections & {
   id: string
   areas: LevelArea[]
   custom_data: LevelCustomData
 }
 
-export type LevelNavigationPoint = {
+export type LevelLandmark = {
   id: string
-  type: NavTypeId
+  kind: 'rpgtoolkit:pos'
   param: { x: number; y: number; z: number }
   custom_data: LevelCustomData
 }
@@ -47,7 +48,7 @@ export type LevelNavigationPoint = {
 export type LevelDocument = {
   tags: string[]
   regions: LevelRegion[]
-  navigation: LevelNavigationPoint[]
+  landmarks: LevelLandmark[]
   custom_data: LevelCustomData
 }
 
@@ -69,7 +70,7 @@ export function levelChildExportId(templateId: string, childId: string): string 
 }
 
 export function createLevelDocument(): LevelDocument {
-  return { tags: [], regions: [], navigation: [], custom_data: {} }
+  return { tags: [], regions: [], landmarks: [], custom_data: {} }
 }
 
 export function stringifyLevelDocument(doc: LevelDocument): string {
@@ -82,11 +83,12 @@ function toAuthorObject(doc: LevelDocument): Record<string, unknown> {
     regions: doc.regions.map((region) => ({
       id: region.id,
       areas: region.areas.map(areaToJson),
+      ...effectSections(region),
       ...(Object.keys(region.custom_data).length ? { custom_data: region.custom_data } : {}),
     })),
-    navigation: doc.navigation.map((point) => ({
+    landmarks: doc.landmarks.map((point) => ({
       id: point.id,
-      type: point.type,
+      kind: point.kind,
       param: { x: point.param.x, y: point.param.y, z: point.param.z },
       ...(Object.keys(point.custom_data).length ? { custom_data: point.custom_data } : {}),
     })),
@@ -105,13 +107,14 @@ export function parseLevelDocument(source: string): LevelDocument {
   const raw = parseJsonValue(source)
   if (!isObject(raw)) throw new Error('地图模板必须是 JSON 对象')
   for (const key of Object.keys(raw)) {
-    if (!['tags', 'regions', 'navigation', 'custom_data'].includes(key)) throw new Error(`未知地图模板字段：${key}`)
+    if (key === 'navigation') throw new Error('navigation 已废弃，改用 landmarks')
+    if (!['tags', 'regions', 'landmarks', 'custom_data'].includes(key)) throw new Error(`未知地图模板字段：${key}`)
   }
   const tags = readTags(raw.tags, 'tags')
   const regions = readList(raw.regions, 'regions').map((value, index) => readRegion(value, `regions[${index}]`))
-  const navigation = readList(raw.navigation, 'navigation').map((value, index) => readNavigationPoint(value, `navigation[${index}]`))
+  const landmarks = readList(raw.landmarks, 'landmarks').map((value, index) => readLandmark(value, `landmarks[${index}]`))
   const customData = readCustomData(raw.custom_data, 'custom_data')
-  const doc: LevelDocument = { tags, regions, navigation, custom_data: customData }
+  const doc: LevelDocument = { tags, regions, landmarks, custom_data: customData }
   for (const issue of validateLevelDocument(doc)) throw new Error(issue)
   return doc
 }
@@ -127,22 +130,28 @@ export function readLevelSource(source: string): { doc: LevelDocument | null; er
 function readRegion(value: unknown, path: string): LevelRegion {
   if (!isObject(value)) throw new Error(`${path} 应为对象`)
   for (const key of Object.keys(value)) {
-    if (!['id', 'areas', 'custom_data'].includes(key)) throw new Error(`${path} 未知字段：${key}`)
+    if (!['id', 'areas', 'custom_data', 'music', 'environment'].includes(key)) throw new Error(`${path} 未知字段：${key}`)
   }
   const id = readId(value.id, `${path}.id`)
   const areas = readList(value.areas, `${path}.areas`).map((area, index) => readArea(area, `${path}.areas[${index}]`))
   if (areas.length < 1) throw new Error(`${path}.areas 至少需要一个 Area`)
   if (areas.length > LEVEL_AREAS_MAX) throw new Error(`${path}.areas 最多 ${LEVEL_AREAS_MAX} 个`)
-  return { id, areas, custom_data: readCustomData(value.custom_data, `${path}.custom_data`) }
+  return { id, areas, custom_data: readCustomData(value.custom_data, `${path}.custom_data`), ...readRegionEffects(value, areas, path) }
 }
 
 function readArea(value: unknown, path: string): LevelArea {
   if (!isObject(value)) throw new Error(`${path} 应为对象`)
+  if ('shape' in value && typeof value.shape !== 'string') throw new Error(`${path}.shape 应为字符串`)
   const declared = typeof value.shape === 'string' ? value.shape : undefined
   if (declared !== undefined && !['rect', 'circle', 'polygon'].includes(declared)) {
     throw new Error(`${path}.shape 只能是 rect / circle / polygon`)
   }
   const inferred = declared ?? ('points' in value ? 'polygon' : 'center' in value ? 'circle' : 'rect')
+  const allowed = inferred === 'circle' ? ['shape', 'center', 'radius', 'y']
+    : inferred === 'polygon' ? ['shape', 'points', 'y'] : ['shape', 'x', 'z', 'y']
+  for (const key of Object.keys(value)) {
+    if (!allowed.includes(key)) throw new Error(`${path} 的 ${inferred} 未知字段：${key}`)
+  }
   const y = readY(value.y, `${path}.y`)
   const hasXZ = 'x' in value || 'z' in value
   const hasCenter = 'center' in value
@@ -158,16 +167,17 @@ function readArea(value: unknown, path: string): LevelArea {
     return { kind: 'polygon', points, y }
   }
   if (hasCenter || hasPoints) throw new Error(`${path} 的 rect 不能同时包含 center 或 points`)
-  return { kind: 'rect', x: readRange(value.x, `${path}.x`), z: readRange(value.z, `${path}.z`), y }
+  return { kind: 'rect', x: readBounds(value.x, `${path}.x`), z: readBounds(value.z, `${path}.z`), y }
 }
 
-function readNavigationPoint(value: unknown, path: string): LevelNavigationPoint {
+function readLandmark(value: unknown, path: string): LevelLandmark {
   if (!isObject(value)) throw new Error(`${path} 应为对象`)
   for (const key of Object.keys(value)) {
-    if (!['id', 'type', 'param', 'custom_data'].includes(key)) throw new Error(`${path} 未知字段：${key}`)
+    if (key === 'type') throw new Error(`${path}.type 已废弃，改用 kind`)
+    if (!['id', 'kind', 'param', 'custom_data'].includes(key)) throw new Error(`${path} 未知字段：${key}`)
   }
   const id = readId(value.id, `${path}.id`)
-  if (value.type !== NAV_TYPE_POS) throw new Error(`${path}.type 本轮只支持 ${NAV_TYPE_POS}`)
+  if (value.kind !== NAV_TYPE_POS) throw new Error(`${path}.kind 本轮只支持 ${NAV_TYPE_POS}`)
   if (!isObject(value.param)) throw new Error(`${path}.param 应为对象`)
   for (const key of Object.keys(value.param)) if (!['x', 'y', 'z'].includes(key)) throw new Error(`${path}.param 未知字段：${key}`)
   const param = {
@@ -177,7 +187,7 @@ function readNavigationPoint(value: unknown, path: string): LevelNavigationPoint
   }
   const custom = readCustomData(value.custom_data, `${path}.custom_data`)
   validateDisplayData(custom, path)
-  return { id, type: NAV_TYPE_POS, param, custom_data: custom }
+  return { id, kind: NAV_TYPE_POS, param, custom_data: custom }
 }
 
 function validateDisplayData(custom: LevelCustomData, path: string) {
@@ -195,6 +205,11 @@ function validateDisplayData(custom: LevelCustomData, path: string) {
       throw new Error(`${path}.${key} 须为 ≥ 0 的有限数`)
     }
   }
+  const min = custom[NAV_DISPLAY_MIN_DISTANCE]
+  const max = custom[NAV_DISPLAY_MAX_DISTANCE]
+  if (typeof min === 'number' && typeof max === 'number' && max > 0 && min > max) {
+    throw new Error(`${path}.${NAV_DISPLAY_MIN_DISTANCE} 不能大于 ${NAV_DISPLAY_MAX_DISTANCE}`)
+  }
 }
 
 export function validateLevelDocument(doc: LevelDocument): string[] {
@@ -206,15 +221,29 @@ export function validateLevelDocument(doc: LevelDocument): string[] {
     const key = region.id.trim()
     if (sawRegion.has(key.toLowerCase())) issues.push(`${path}.id 与前面的区域重复：${key}`)
     sawRegion.add(key.toLowerCase())
+    try { readRegionEffects(region, region.areas, path) }
+    catch (error) { issues.push(error instanceof Error ? error.message : String(error)) }
     if (region.areas.length < 1 || region.areas.length > LEVEL_AREAS_MAX) issues.push(`${path}.areas 需要 1..${LEVEL_AREAS_MAX} 个`)
+    region.areas.forEach((area, areaIndex) => {
+      try {
+        readArea(areaToJson(area), `${path}.areas[${areaIndex}]`)
+      } catch (error) {
+        issues.push(error instanceof Error ? error.message : String(error))
+      }
+    })
   })
-  const sawNav = new Set<string>()
-  doc.navigation.forEach((point, index) => {
-    const path = `navigation[${index}]`
+  const sawLandmark = new Set<string>()
+  doc.landmarks.forEach((point, index) => {
+    const path = `landmarks[${index}]`
     issues.push(...validateId(point.id, `${path}.id`))
     const key = point.id.trim()
-    if (sawNav.has(key.toLowerCase())) issues.push(`${path}.id 与前面的导航点重复：${key}`)
-    sawNav.add(key.toLowerCase())
+    if (sawLandmark.has(key.toLowerCase())) issues.push(`${path}.id 与前面的地标重复：${key}`)
+    sawLandmark.add(key.toLowerCase())
+    try {
+      readLandmark(point, path)
+    } catch (error) {
+      issues.push(error instanceof Error ? error.message : String(error))
+    }
   })
   return issues
 }
@@ -235,8 +264,13 @@ function readId(value: unknown, path: string): string {
 }
 
 function readY(value: unknown, path: string): LevelY {
-  if (value === undefined || value === 'all') return 'all'
+  if (value === 'all') return 'all'
   return readRange(value, path)
+}
+
+function readBounds(value: unknown, path: string): [number, number] {
+  const [a, b] = readPair(value, path)
+  return [Math.min(a, b), Math.max(a, b)]
 }
 
 function readRange(value: unknown, path: string): [number, number] {
@@ -252,10 +286,7 @@ function readPair(value: unknown, path: string): [number, number] {
     if (value.length !== 2) throw new Error(`${path} 应为 [x, z]`)
     return [readNumber(value[0], `${path}[0]`), readNumber(value[1], `${path}[1]`)]
   }
-  if (isObject(value)) {
-    return [readNumber(value.x, `${path}.x`), readNumber(value.z, `${path}.z`)]
-  }
-  throw new Error(`${path} 应为 [x, z] 或 { x, z }`)
+  throw new Error(`${path} 应为 [x, z]`)
 }
 
 function readNumber(value: unknown, path: string): number {

@@ -12,6 +12,7 @@ import { identityCompiler } from './identity'
 import { entityCompiler } from './entity'
 import { itemCompiler } from './item'
 import { localeAssetsPass } from './localeAssets'
+import { regionEffectAssetsPass } from './regionEffectAssets'
 import { questCompiler } from './quest'
 import { scriptLoadCompiler } from './scriptLoad'
 import { questCatalogCompiler } from './questCatalog'
@@ -49,7 +50,7 @@ export function ensureBuiltinCompilers(): void {
   for (const compiler of [hanshuCompiler, itemCompiler, entityCompiler, kitCompiler, shopCompiler, actorCompiler, bossbarCompiler, reputationCompiler, questCompiler, questCatalogCompiler, levelCompiler, navigationCompiler, scriptLoadCompiler, identityCompiler]) {
     registerFileCompiler(compiler)
   }
-  for (const pass of [localeAssetsPass, activeSkinsPass, levelArtifactPass]) {
+  for (const pass of [localeAssetsPass, activeSkinsPass, levelArtifactPass, regionEffectAssetsPass]) {
     registerPackagePass(pass)
   }
   for (const rule of builtinLocaleRules) {

@@ -2,13 +2,9 @@ import assert from 'node:assert/strict'
 import {
   createNavigationPoint,
   fromEngineObject,
-  NAV_DISPLAY_ICON,
-  NAV_DISPLAY_MAX_DISTANCE,
-  NAV_DISPLAY_MIN_DISTANCE,
-  NAV_DISPLAY_NAME,
-  NAV_TYPE_POS,
   parseNavigationPoint,
   stringifyNavigationPoint,
+  summarizeNavigationPoint,
   toEngineObject,
   validateNavigationPoint,
 } from '../src/workspaces/gameplay/navigationPoint.ts'
@@ -16,66 +12,56 @@ import {
 let passed = 0
 function test(name: string, check: () => void) { check(); passed++; console.log(`[OK] ${name}`) }
 
-test('default v3 point has level/type/param/custom_data only', () => {
-  const point = createNavigationPoint('hub')
-  point.param = { x: 40, y: 72, z: 40 }
+test('tracker stores id, level and landmark ref only', () => {
+  const point = createNavigationPoint('hub', 'camp')
+  point.track.ref = 'hub$old_tower'
   const raw = toEngineObject(point)
-  assert.deepEqual(Object.keys(raw).sort(), ['custom_data', 'level', 'param', 'type'].sort())
+  assert.deepEqual(Object.keys(raw).sort(), ['id', 'level', 'track'])
   assert.equal(raw.level, 'hub')
-  assert.equal(raw.type, NAV_TYPE_POS)
-  assert.deepEqual(raw.param, { x: 40, y: 72, z: 40 })
-  assert.equal((raw.custom_data as Record<string, unknown>)[NAV_DISPLAY_NAME], 'display_name')
-  assert.equal('dimension' in raw, false)
-  assert.equal('x' in raw, false)
+  assert.deepEqual(raw.track, { type: 'landmark', ref: 'hub$old_tower' })
+  assert.equal('param' in raw, false)
+  assert.equal('type' in raw, false)
+  assert.equal('custom_data' in raw, false)
 })
 
-test('round-trip v3 JSON', () => {
-  const point = createNavigationPoint('hub')
-  point.custom_data[NAV_DISPLAY_ICON] = 'minecraft:compass'
-  point.custom_data[NAV_DISPLAY_MAX_DISTANCE] = 256
-  point.custom_data[NAV_DISPLAY_MIN_DISTANCE] = 8
+test('round-trip keeps the track and drops nothing', () => {
+  const point = createNavigationPoint('hub', 'camp')
+  point.track.ref = 'hub$old_tower'
   const again = parseNavigationPoint(stringifyNavigationPoint(point))
-  assert.equal(again.level, 'hub')
-  assert.equal(again.type, NAV_TYPE_POS)
-  assert.equal(again.custom_data[NAV_DISPLAY_ICON], 'minecraft:compass')
-  assert.equal(again.custom_data[NAV_DISPLAY_MAX_DISTANCE], 256)
-  assert.equal(again.custom_data[NAV_DISPLAY_MIN_DISTANCE], 8)
+  assert.deepEqual(again, point)
 })
 
-test('legacy .nav is rejected explicitly instead of silently dropping fields', () => {
+test('legacy fields and embedded coordinates are rejected', () => {
   assert.throws(() => fromEngineObject({ type: 'position', dimension: 'minecraft:overworld', x: 1, y: 2, z: 3 }), /旧版 \.nav/)
-  assert.throws(() => fromEngineObject({ level: 'hub', type: 'position', x: 1, y: 2, z: 3 }), /旧版 \.nav/)
   assert.throws(() => fromEngineObject({ level: 'hub', type: 'position', label: '旧塔' }), /旧版 \.nav/)
-  assert.throws(() => fromEngineObject({ level: 'hub', type: 'position', public: true }), /旧版 \.nav/)
+  assert.throws(() => fromEngineObject({ level: 'hub', type: 'rpgtoolkit:pos', param: { x: 1, y: 2, z: 3 } }), /不能保存坐标/)
+  assert.throws(() => fromEngineObject({ id: 'camp', level: 'hub', x: 1, y: 2, z: 3, track: { type: 'landmark', ref: 'hub$old_tower' } }), /不能保存坐标/)
 })
 
-test('only rpgtoolkit:pos is accepted this round', () => {
-  assert.throws(() => fromEngineObject({ level: 'hub', type: 'rpgtoolkit:entity_tag', param: { tag: 'x' } }), /未知导航点类型/)
-  assert.throws(() => fromEngineObject({ level: 'hub', type: 'rpgtoolkit:pos', param: { x: 1, y: 2 } }), /param\.z/)
+test('track must name a landmark and cannot carry unknown keys', () => {
+  assert.throws(() => fromEngineObject({ level: 'hub', track: { type: 'position', ref: 'hub$old_tower' } }), /track\.type/)
+  assert.throws(() => fromEngineObject({ level: 'hub', track: { type: 'landmark', ref: 'hub$old_tower' }, extra: 1 }), /未知导航器字段/)
+  assert.throws(() => fromEngineObject({ level: 'hub', track: { type: 'landmark', ref: 'hub$old_tower', x: 1 } }), /未知 track 字段/)
 })
 
-test('unknown fields and bad custom_data are rejected', () => {
-  assert.throws(() => fromEngineObject({ level: 'hub', type: 'rpgtoolkit:pos', param: { x: 1, y: 2, z: 3 }, extra: 1 }), /未知导航点字段/)
-  assert.throws(() => fromEngineObject({ level: 'hub', type: 'rpgtoolkit:pos', param: { x: 1, y: 2, z: 3 }, custom_data: { [NAV_DISPLAY_NAME]: 3 } }), /display_name/)
-  assert.throws(() => fromEngineObject({ level: 'hub', type: 'rpgtoolkit:pos', param: { x: 1, y: 2, z: 3 }, custom_data: { [NAV_DISPLAY_MAX_DISTANCE]: -1 } }), /display_max_distance/)
-})
-
-test('validate warns on missing level and bad coordinates', () => {
+test('validate requires a template and a <template>$<landmark> ref', () => {
   const point = createNavigationPoint('')
-  assert.ok(validateNavigationPoint(point).some((item) => item.includes('地图模板')))
+  const missing = validateNavigationPoint(point)
+  assert.ok(missing.some((item) => item.includes('地图模板')))
+  assert.ok(missing.some((item) => item.includes('地标')))
   point.level = 'hub'
-  point.param.x = 40_000_000
-  assert.ok(validateNavigationPoint(point).some((item) => item.includes('x')))
+  point.track.ref = 'other$old_tower'
+  assert.ok(validateNavigationPoint(point).some((item) => item.includes('hub')))
+  point.track.ref = 'hub$old_tower'
+  assert.deepEqual(validateNavigationPoint(point), [])
+  point.level = 'demo:hub'
+  assert.ok(validateNavigationPoint(point).some((item) => item.includes('模板 ID')), '模板 ID 取文件名，不能含冒号')
 })
 
-test('display_icon and distance ranges are validated', () => {
-  const point = createNavigationPoint('hub')
-  point.custom_data[NAV_DISPLAY_ICON] = 'not a resource id'
-  point.custom_data[NAV_DISPLAY_MIN_DISTANCE] = 20
-  point.custom_data[NAV_DISPLAY_MAX_DISTANCE] = 10
-  const issues = validateNavigationPoint(point)
-  assert.ok(issues.some((item) => item.includes('display_icon')))
-  assert.ok(issues.some((item) => item.includes('display_min_distance')))
+test('summary names the template and the ref', () => {
+  const point = createNavigationPoint('hub', 'camp')
+  point.track.ref = 'hub$old_tower'
+  assert.deepEqual(summarizeNavigationPoint(point), ['hub', 'hub$old_tower'])
 })
 
 console.log(`\n${passed} navigation-point checks passed.`)

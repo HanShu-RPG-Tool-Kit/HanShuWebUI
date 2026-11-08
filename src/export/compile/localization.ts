@@ -1,7 +1,10 @@
 import type { SourceFile } from '../../workspace'
 import type { CompileArtifact, CompileIndex, Plane } from './types'
 
-/** A source must have at least one emitted runtime artifact before its locale assets are exported. */
+/**
+ * A source must have at least one emitted runtime artifact before its locale assets are exported.
+ * `.nav` is the exception: it validates and emits no PAK entry, but still owns `lang_nav`.
+ */
 export type LocaleExportOwner = {
   source: SourceFile
   artifacts: readonly CompileArtifact[]

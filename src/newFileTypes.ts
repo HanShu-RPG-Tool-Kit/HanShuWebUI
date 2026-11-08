@@ -333,7 +333,7 @@ export const NEW_FILE_TYPES: readonly NewFileType[] = [
     id: "level",
     ext: ".level",
     label: "地图模板",
-    hint: "一个模板文件包含区域与静态导航器（src/level）",
+    hint: "一个模板文件包含区域与地标（src/level）",
     icon: "level",
     group: "gameplay",
     defaultBase: "新地图",
@@ -346,11 +346,11 @@ export const NEW_FILE_TYPES: readonly NewFileType[] = [
   {
     id: "nav",
     ext: ".nav",
-    label: "动态导航点",
-    hint: "独立导航点，编译时写入所属地图模板（src/navigator）",
+    label: "导航器",
+    hint: "导航器文件（src/navigator）。只引用地标，坐标写在地图模板里",
     icon: "nav",
     group: "gameplay",
-    defaultBase: "新导航点",
+    defaultBase: "新导航器",
     // `createNavigationPoint` 同样忽略展示名：`display_name` 是语义键，译文在 lang_nav
     seed: () => stringifyNavigationPoint(createNavigationPoint()),
   },
