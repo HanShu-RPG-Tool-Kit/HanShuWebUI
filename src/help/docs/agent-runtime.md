@@ -103,6 +103,15 @@
 - **锁期间不自动成键**：本 Run 持锁的文件，编辑器不会自动成键（解锁后也不补做），agent 改正文不会与自动成键抢键位。
 - **逆解析必须同语言（C2）**：键名是文本哈希，`unparse_hs(locale)` 之后必须用**同一个 locale** 重新 `parse_hs`；
   跨语言逆解析会生成新键、旧键变孤儿并把错误文本灌进目标语言。`unparse_hs` / `parse_hs` 的成功返回带 `note` 提醒。
+- **只读/写入语义补充（D11）**：
+  - `unlock_lang` 省略 `locales` = 释放**本 Run 为该源文件持有的全部语言锁**（含工程语言表之外的手写 locale，如 `fr_fr`）；显式传 locales 只释放对应语言。`unlock_source` 同理只放本 Run 的源锁。
+  - `lock_source` 在占名前先经 `validateSourceName` 校验逻辑名（非法名字直接 `invalid_arguments`，**不会白占名字**）；`create_source` 对非法名字同样返回 `invalid_arguments`。
+  - `unparse_hs` 遇到**不能安全内联**的译文（含 `//`、选项文案/回复含 `:`、行首 `?`/`!`/`@`/`#`/`*`）不替换，返回 `unrepresentable`；`multiline` 与 `unrepresentable` 都带 hint 提示用 `edit_source` 处理。
+  - `validate_source` 现在会校验 `:>>name` 的跳转目标是否存在（本文件 `@name` + 跨文件注入点），缺失报 `agent-lint: jump target not found: name`；诊断统一带 `line`（保留 `offset`）。
+  - `write_lang` 对将来无法安全逆解析的译文给 `warnings`（`{locale,key,reasons}`，只警告不拒绝），避免把 `//`、`:`、行首结构字符写进语言文件。
+  - `lock_source` 的 `already_exists` 失败体不再回传整篇 `currentContent`（只给 `currentVersion` + `contentOmitted:true`），减少长文件 payload。
+  - `write_lang` 逐语言结果用 `fileTotal`（语言文件条目数，含 orphan），`list_lang_keys.total` 是正文键数；`list_lang_keys` 另有 `hasSaved` / `hasDraft` 自解释字段。
+  - `check_export` / `list_sources` 返回 `includesDrafts: true`：它们按**工作区视角**统计，包含尚未保存的草稿。
 
 ## Run 生命周期
 
@@ -192,15 +201,16 @@ node scripts/run-verification.mjs scripts/verify-agent-undo.ts     # 有序操�
 node scripts/run-verification.mjs scripts/verify-agent-undo-journal.ts # 待处理回滚持久化：roundtrip/体积保护/key（9 项）
 node scripts/run-verification.mjs scripts/verify-agent-rollback-ui.ts # 失败卡片三选项（SSR：按钮、禁用、动作映射）
 node scripts/run-verification.mjs scripts/verify-agent-segment-ui.ts  # 封段提示/段状态/归档简化日志（SSR）
-node scripts/run-verification.mjs scripts/verify-agent-tools.ts    # 三语义派发/严格模式/参数与键校验/无中文输出/errorCode（32 项）
-node scripts/run-verification.mjs scripts/verify-agent-ops.ts      # 分页边界、agent lint、编译错误英文映射、键复用/orphan/未成键/导出 warning 映射
-node scripts/run-verification.mjs scripts/verify-agent-arbiter.ts  # 两把锁、写后锁仍在、未锁拒绝、撤销回放、offset 越界、heldPaths（23 项）
+node scripts/run-verification.mjs scripts/verify-agent-tools.ts    # 三语义派发/严格模式/参数与键校验/无中文输出/errorCode（33 项）
+node scripts/run-verification.mjs scripts/verify-agent-ops.ts      # 分页边界、agent lint（含跳转目标/未成键）、反解析安全、键复用/orphan、导出 warning 映射
+node scripts/run-verification.mjs scripts/verify-agent-arbiter.ts  # 两把锁、写后锁仍在、未锁拒绝、撤销回放、offset 越界、heldPaths（24 项）
+node scripts/run-verification.mjs scripts/verify-hanshu-text-safety.ts # 底层语法：安全内联判定、注入点/跳转引用扫描（7 项）
 node scripts/run-verification.mjs scripts/verify-agent-panel.ts    # 视图派生/阈值/掩码
 node scripts/run-verification.mjs scripts/verify-agent-config.ts   # 两档模型、模型 id 校验
 node scripts/run-verification.mjs scripts/verify-agent-runtime.ts  # 真 Harness 闭环（MemoryStorage + faux 模型，5 项）
 node scripts/verify-agent-segment-purge.mjs                        # 删除活跃段（真实浏览器 IndexedDB，Playwright）
 node scripts/verify-agent-archive.mjs                              # 归档段打开/继承/级联删除（真实浏览器 + 真 Harness，不调模型）
-node scripts/run-verification.mjs scripts/verify-agent-lang-lock.ts # 语言锁（lock_lang/unlock_lang）/外部回写拦截/导出译文预检（13 项）
+node scripts/run-verification.mjs scripts/verify-agent-lang-lock.ts # 语言锁（lock_lang/unlock_lang）/外部回写拦截/导出译文预检（14 项）
 node scripts/run-verification.mjs scripts/verify-agent-lang-draft.ts # 语言草稿：草稿优先读、assetEpochs 同步、localOnly 分支、镜像失败撤销
 node scripts/run-verification.mjs scripts/verify-agent-lock-targets.ts # 锁目标映射：源锁/语言锁只读分离、成键抑制、路径归一
 node scripts/run-verification.mjs scripts/verify-agent-lock-ui.ts    # 锁状态驱动资源树按钮 + AssetPreview 只读（SSR）
