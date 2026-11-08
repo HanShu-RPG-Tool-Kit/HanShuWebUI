@@ -946,6 +946,31 @@ export class SkinLibrarySession {
 
   async exportSkin(skinId: string, format: 'png' | 'skin' | 'hskin' | 'skin-json') {
     this.ensureReady()
+    if (format === 'png') {
+      // Prefer disk preview cache before decoding/re-encoding via canvas.
+      const diskPng = await readBytesAt(this.root, this.previewCachePath(skinId))
+      if (diskPng && diskPng.length > 0) {
+        let binary = ''
+        for (const b of diskPng) binary += String.fromCharCode(b)
+        return { pngBase64: btoa(binary) }
+      }
+      const decoded = await this.readObject(skinId)
+      if (!decoded) {
+        throw new SkinApiError({
+          code: 'NOT_FOUND',
+          message: 'skin object missing',
+        })
+      }
+      const png = await rgbaToPngBlob(
+        decoded.rgba,
+        decoded.width,
+        decoded.height,
+      )
+      const buf = new Uint8Array(await png.arrayBuffer())
+      let binary = ''
+      for (const b of buf) binary += String.fromCharCode(b)
+      return { pngBase64: btoa(binary) }
+    }
     const decoded = await this.readObject(skinId)
     if (!decoded) {
       throw new SkinApiError({
@@ -954,25 +979,14 @@ export class SkinLibrarySession {
       })
     }
     if (format === 'skin' || format === 'hskin') {
-      if(this.disposed)throw new Error('皮肤工程会话已关闭')
-    const disk = encodeDiskFile(decoded)
+      if (this.disposed) throw new Error('皮肤工程会话已关闭')
+      const disk = encodeDiskFile(decoded)
       let binary = ''
       for (const b of disk) binary += String.fromCharCode(b)
       return { skinBase64: btoa(binary) }
     }
-    if (format === 'skin-json') {
-      const skinCode = await this.getSkinCode(skinId)
-      return { text: skinCode }
-    }
-    const png = await rgbaToPngBlob(
-      decoded.rgba,
-      decoded.width,
-      decoded.height,
-    )
-    const buf = new Uint8Array(await png.arrayBuffer())
-    let binary = ''
-    for (const b of buf) binary += String.fromCharCode(b)
-    return { pngBase64: btoa(binary) }
+    const skinCode = await this.getSkinCode(skinId)
+    return { text: skinCode }
   }
 
   async exportEntry(entryId: string, format: 'v3' | 'v2' = 'v3') {

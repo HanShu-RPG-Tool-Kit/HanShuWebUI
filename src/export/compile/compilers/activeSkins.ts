@@ -5,6 +5,8 @@
  * - `assets/skins.json` — customId → skinId 稳定别名索引（无 customId 的不进表）
  *
  * 皮肤库是工程级（`.hanshu/skinmanager`），整次编译只在首个包吐一次，避免多包重复。
+ *
+ * 任一启用皮肤 PNG 导出失败记为 error；全部失败时不写 skins.json，避免发版覆盖掉原先可用的包。
  */
 
 import { SkinApiError } from '../../../skin/contracts/types'
@@ -52,6 +54,13 @@ export const activeSkinsPass: PackagePass = {
         message,
         packageName: pkg.name,
       })
+    const error = (message: string) =>
+      ctx.report({
+        severity: 'error',
+        code: 'active_skin',
+        message,
+        packageName: pkg.name,
+      })
 
     let api: Awaited<ReturnType<typeof getSkinApi>>
     let entries: Awaited<ReturnType<typeof listActiveEntries>>['entries']
@@ -62,7 +71,7 @@ export const activeSkinsPass: PackagePass = {
         warn('未打开工程，跳过启用皮肤导出')
         return []
       }
-      warn(`读取皮肤库失败：${e instanceof Error ? e.message : String(e)}`)
+      error(`读取皮肤库失败：${e instanceof Error ? e.message : String(e)}`)
       return []
     }
 
@@ -70,26 +79,20 @@ export const activeSkinsPass: PackagePass = {
 
     const out: CompileArtifact[] = []
     const exportedIds = new Set<string>()
-    const alias: Record<string, string> = {}
+    const attemptedIds = new Set<string>()
+    let failed = 0
 
     for (const entry of entries) {
-      if (entry.customId) {
-        if (alias[entry.customId] && alias[entry.customId] !== entry.skinId) {
-          warn(
-            `自定义 ID「${entry.customId}」映射冲突（${alias[entry.customId]} vs ${entry.skinId}），保留先出现的`,
-          )
-        } else {
-          alias[entry.customId] = entry.skinId
-        }
-      }
-
-      if (exportedIds.has(entry.skinId)) continue
-      exportedIds.add(entry.skinId)
+      if (attemptedIds.has(entry.skinId)) continue
+      attemptedIds.add(entry.skinId)
 
       try {
         const { pngBase64 } = await api.exportSkin(entry.skinId, 'png')
         if (!pngBase64) {
-          warn(`皮肤 ${entry.name}（${entry.skinId.slice(0, 12)}…）导出 PNG 为空`)
+          failed += 1
+          error(
+            `皮肤 ${entry.name}（${entry.skinId.slice(0, 12)}…）导出 PNG 为空`,
+          )
           continue
         }
         out.push({
@@ -100,13 +103,40 @@ export const activeSkinsPass: PackagePass = {
           sourcePath: `skin:${entry.entryId}`,
           provides: [{ kind: 'skinId', id: entry.skinId }],
         })
+        exportedIds.add(entry.skinId)
       } catch (e) {
-        warn(
+        failed += 1
+        error(
           `皮肤 ${entry.name}（${entry.skinId.slice(0, 12)}…）导出失败：${
             e instanceof Error ? e.message : String(e)
           }`,
         )
       }
+    }
+
+    if (exportedIds.size === 0) {
+      error(
+        `启用皮肤 ${entries.length} 条，但没有成功导出任何 PNG；已跳过 skins.json，避免发版覆盖旧包`,
+      )
+      return []
+    }
+
+    if (failed > 0) {
+      error(
+        `启用皮肤有 ${failed} 条 PNG 导出失败（已导出 ${exportedIds.size} 张）；请修复后重试发版`,
+      )
+    }
+
+    const alias: Record<string, string> = {}
+    for (const entry of entries) {
+      if (!entry.customId || !exportedIds.has(entry.skinId)) continue
+      if (alias[entry.customId] && alias[entry.customId] !== entry.skinId) {
+        warn(
+          `自定义 ID「${entry.customId}」映射冲突（${alias[entry.customId]} vs ${entry.skinId}），保留先出现的`,
+        )
+        continue
+      }
+      alias[entry.customId] = entry.skinId
     }
 
     const orderedAlias: Record<string, string> = {}
