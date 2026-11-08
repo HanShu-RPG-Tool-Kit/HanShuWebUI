@@ -146,14 +146,22 @@ await test('lock：读过但版本已变 → version_stale，且回传最新内�
   assert.equal(table.isLocked('a.hs'), false)
 })
 
-await test('lock：human-dirty → human_editing', async () => {
+await test('lock：人类有未保存编辑但版本未变 → 允许加锁（D8）', async () => {
   const fw = fakeWorld({ 'a.hs': '正文' })
   const table = new LockTable(fw.world)
+  // world.read 会 flush 编辑器缓冲：读到的就是人类正在编辑的当前内容
   const file = await readFile(fw.world, 'a.hs')
   table.noteRead('run-a', 'a.hs', file.version)
   fw.dirty.add('a.hs')
-  const result = denialOf(await table.acquire('run-a', ['a.hs']))
-  assert.equal(result.reason, 'human_editing')
+  const result = await table.acquire('run-a', ['a.hs'])
+  assert.equal(result.locked, true, 'D8：锁只看版本，human-dirty 不再拒绝')
+  assert.equal(table.isLocked('a.hs'), true)
+
+  // 人类继续输入 → 内容真的变了 → version_stale（README/§9 D8）
+  fw.set('a.hs', '人类继续输入的内容')
+  const stale = denialOf(await table.acquire('run-a', ['a.hs']))
+  assert.equal(stale.reason, 'version_stale')
+  assert.equal(stale.currentContent, '人类继续输入的内容')
 })
 
 await test('lock：文件不存在且非 creating → not_found', async () => {
@@ -175,7 +183,7 @@ await test('lock：create 语义——名字不存在则授予，已存在则失
   assert.equal(table.ownerOf('新流程.hs'), 'run-a')
   assert.equal(table.lockedVersion('新流程.hs'), '', 'create 锁没有内容版本')
   const result = denialOf(await table.acquire('run-a', ['a.hs'], { creating: true }))
-  assert.equal(result.reason, 'not_found', 'create 遇到已存在的名字必须反转成失败')
+  assert.equal(result.reason, 'already_exists', 'create 命中已存在必须给 already_exists（D6）')
   assert.match(result.hint, /write/, 'hint 必须指向 write')
   assert.equal(result.currentContent, '已有')
 })
@@ -196,21 +204,40 @@ await test('lock：多路径原子——一个失败则其余全不持有', asyn
   assert.equal(table.ownerOf('b.hs'), 'run-b', '原有持有者不受影响')
 })
 
-await test('lock：consume 后锁立即释放（生命周期 ①）', async () => {
+await test('lock：写后锁仍在——refreshLocked 刷新版本但不释放（D2）', async () => {
   const fw = fakeWorld({ 'a.hs': '正文' })
   const table = new LockTable(fw.world)
   const file = await readFile(fw.world, 'a.hs')
   table.noteRead('run-a', 'a.hs', file.version)
   assert.equal((await table.acquire('run-a', ['a.hs'])).locked, true)
   assert.equal(table.lockedVersion('a.hs'), file.version)
-  assert.equal(table.consume('run-a', 'a.hs'), true)
-  assert.equal(table.isLocked('a.hs'), false)
-  assert.equal(table.lockedVersion('a.hs'), null)
-  assert.equal(table.consume('run-a', 'a.hs'), false, '重复消费不应报成功')
-  assert.equal((await table.acquire('run-a', ['a.hs'])).locked, true, '读记录仍在，可再次加锁')
+  // 模拟宿主写完：内容变了，仲裁层用 refreshLocked 把锁的锚定版本刷成写后版本
+  fw.set('a.hs', '改后')
+  const written = await readFile(fw.world, 'a.hs')
+  assert.equal(table.refreshLocked('run-a', 'a.hs', written), true)
+  assert.equal(table.isLocked('a.hs'), true, '写成功不得释放锁')
+  assert.equal(table.lockedVersion('a.hs'), written.version, '锁版本必须刷新成写后版本')
+  assert.equal(table.lockInfo('a.hs')?.creating, false, 'create 锁写成功后转为普通锁')
+  assert.equal(table.refreshLocked('run-b', 'a.hs', written), false, '别人的锁不能刷新')
 })
 
-await test('lock：releaseRound 只释放未消费锁，读记录保留（生命周期 ②）', async () => {
+await test('lock：release 只释放本 Run 的锁（幂等，不放别人的）', async () => {
+  const fw = fakeWorld({ 'a.hs': 'A', 'b.hs': 'B' })
+  const table = new LockTable(fw.world)
+  const a = await readFile(fw.world, 'a.hs')
+  const b = await readFile(fw.world, 'b.hs')
+  table.noteRead('run-a', 'a.hs', a.version)
+  table.noteRead('run-b', 'b.hs', b.version)
+  assert.equal((await table.acquire('run-a', ['a.hs'])).locked, true)
+  assert.equal((await table.acquire('run-b', ['b.hs'])).locked, true)
+  assert.deepEqual(table.release('run-b', ['a.hs']), [], '不得释放别的 Run 的锁')
+  assert.equal(table.ownerOf('a.hs'), 'run-a')
+  assert.deepEqual(table.release('run-a', ['a.hs', 'a.hs']), ['a.hs'], '同一路径重复传入只释放一次')
+  assert.deepEqual(table.release('run-a', ['a.hs']), [], '重复释放幂等')
+  assert.equal(table.isLocked('b.hs'), true, '别人的锁不受影响')
+})
+
+await test('lock：releaseRound 兼容入口释放本 Run 全部锁，读记录保留', async () => {
   const fw = fakeWorld({ 'a.hs': 'A', 'b.hs': 'B' })
   const table = new LockTable(fw.world)
   const a = await readFile(fw.world, 'a.hs')
@@ -218,13 +245,12 @@ await test('lock：releaseRound 只释放未消费锁，读记录保留（生命
   table.noteRead('run-a', 'a.hs', a.version)
   table.noteRead('run-a', 'b.hs', b.version)
   assert.equal((await table.acquire('run-a', ['a.hs', 'b.hs'])).locked, true)
-  table.consume('run-a', 'a.hs')
   const released = table.releaseRound('run-a')
-  assert.deepEqual(released, ['b.hs'], '只应释放本轮未被 write 消费的锁')
+  assert.deepEqual(released.slice().sort(), ['a.hs', 'b.hs'], 'releaseRound 释放本 Run 全部锁')
   assert.equal(table.isLocked('a.hs'), false)
   assert.equal(table.isLocked('b.hs'), false)
   assert.equal(table.readVersion('run-a', 'a.hs'), a.version, '读记录必须保留')
-  assert.equal((await table.acquire('run-a', ['b.hs'])).locked, true, '下一轮可直接再锁')
+  assert.equal((await table.acquire('run-a', ['b.hs'])).locked, true, '读记录还在，可直接再锁')
 })
 
 await test('lock：releaseRun 释放全部锁并丢掉读记录（生命周期 ③）', async () => {
@@ -272,10 +298,10 @@ await test('lock：锁不等待——另一个 Run 持锁时立即失败，不�
 await test('runUndo：Run 成功 discard 后回滚为空', async () => {
   const fw = fakeWorld({ 'a.hs': '旧' })
   const log = new RunUndoLog(fw.world)
-  await log.recordBefore('run-1', 'a.hs')
-  assert.equal(log.has('run-1'), true, '写前应留下 before-image')
+  await log.recordBefore('run-1', 'a.hs', 'source')
   await fw.world.write('a.hs', '新')
-  log.recordWrite('run-1', 'a.hs', { content: '新', version: await contentVersion('新') })
+  log.recordWrite('run-1', 'a.hs', 'source', { content: '新', version: await contentVersion('新') })
+  assert.equal(log.has('run-1'), true, '真正写过的文件应有可回放条目')
   log.discard('run-1')
   assert.equal(log.has('run-1'), false)
   assert.deepEqual(await log.rollback('run-1'), [], '成功 Run 丢弃日志后不应回放')
@@ -285,12 +311,12 @@ await test('runUndo：Run 成功 discard 后回滚为空', async () => {
 await test('runUndo：失败时逆序回放，恢复旧内容', async () => {
   const fw = fakeWorld({ 'a.hs': 'A0', 'b.hs': 'B0' })
   const log = new RunUndoLog(fw.world)
-  await log.recordBefore('run-2', 'a.hs')
+  await log.recordBefore('run-2', 'a.hs', 'source')
   await fw.world.write('a.hs', 'A1')
-  log.recordWrite('run-2', 'a.hs', { content: 'A1', version: await contentVersion('A1') })
-  await log.recordBefore('run-2', 'b.hs')
+  log.recordWrite('run-2', 'a.hs', 'source', { content: 'A1', version: await contentVersion('A1') })
+  await log.recordBefore('run-2', 'b.hs', 'source')
   await fw.world.write('b.hs', 'B1')
-  log.recordWrite('run-2', 'b.hs', { content: 'B1', version: await contentVersion('B1') })
+  log.recordWrite('run-2', 'b.hs', 'source', { content: 'B1', version: await contentVersion('B1') })
   const outcomes = await log.rollback('run-2')
   assert.deepEqual(
     outcomes.map(outcome => [outcome.path, outcome.action]),
@@ -301,27 +327,61 @@ await test('runUndo：失败时逆序回放，恢复旧内容', async () => {
   assert.equal(fw.files.get('b.hs'), 'B0')
 })
 
-await test('runUndo：被后续改动覆盖的文件跳过并给 version_stale', async () => {
+await test('runUndo：预演发现版本冲突 → 不安全，且一个文件都不动（D3）', async () => {
   const fw = fakeWorld({ 'a.hs': 'A0' })
   const log = new RunUndoLog(fw.world)
-  await log.recordBefore('run-3', 'a.hs')
+  await log.recordBefore('run-3', 'a.hs', 'source')
   await fw.world.write('a.hs', 'A1')
-  log.recordWrite('run-3', 'a.hs', { content: 'A1', version: await contentVersion('A1') })
+  log.recordWrite('run-3', 'a.hs', 'source', { content: 'A1', version: await contentVersion('A1') })
   // 锁已释放，人类随后改了同一文件
   fw.set('a.hs', '人类手改')
+  const writesBefore = fw.writeLog.length
+
+  const preflight = await log.preflight('run-3')
+  assert.equal(preflight.safe, false)
+  if (!preflight.safe) {
+    assert.deepEqual(preflight.conflicts, [
+      { path: 'a.hs', channel: 'source', reason: 'version_stale' },
+    ])
+  }
   const outcomes = await log.rollback('run-3')
-  assert.deepEqual(outcomes, [{ path: 'a.hs', action: 'skipped', reason: 'version_stale' }])
+  assert.deepEqual(
+    outcomes.map(outcome => [outcome.path, outcome.action, outcome.reason]),
+    [['a.hs', 'conflict', 'version_stale']],
+  )
+  assert.equal(fw.writeLog.length, writesBefore, '预演失败时不得动任何文件')
   assert.equal(fw.files.get('a.hs'), '人类手改', '被覆盖的文件绝不能自动回退')
+})
+
+await test('runUndo：force 强制恢复被后续改动覆盖的写前内容', async () => {
+  const fw = fakeWorld({ 'a.hs': 'A0' })
+  const log = new RunUndoLog(fw.world)
+  await log.recordBefore('run-force', 'a.hs', 'source')
+  await fw.world.write('a.hs', 'A1')
+  log.recordWrite('run-force', 'a.hs', 'source', {
+    content: 'A1',
+    version: await contentVersion('A1'),
+  })
+  fw.set('a.hs', '人类手改')
+  const outcomes = await log.force('run-force')
+  assert.deepEqual(
+    outcomes.map(outcome => [outcome.path, outcome.action]),
+    [['a.hs', 'restored']],
+  )
+  assert.equal(fw.files.get('a.hs'), 'A0', '强制回滚必须覆盖后来的改动')
 })
 
 await test('runUndo：写前文件不存在 → 回放即删除（deleted）', async () => {
   const fw = fakeWorld({})
   const log = new RunUndoLog(fw.world)
-  await log.recordBefore('run-4', '新建.hs')
+  await log.recordBefore('run-4', '新建.hs', 'source')
   await fw.world.write('新建.hs', '新内容')
-  log.recordWrite('run-4', '新建.hs', { content: '新内容', version: await contentVersion('新内容') })
+  log.recordWrite('run-4', '新建.hs', 'source', {
+    content: '新内容',
+    version: await contentVersion('新内容'),
+  })
   const outcomes = await log.rollback('run-4')
-  assert.deepEqual(outcomes, [{ path: '新建.hs', action: 'deleted' }])
+  assert.deepEqual(outcomes, [{ path: '新建.hs', channel: 'source', action: 'deleted' }])
   assert.equal(fw.files.has('新建.hs'), false, '新建的文件必须被删除')
   assert.equal(fw.writeLog[fw.writeLog.length - 1].content, null, '回放删除应写 null')
 })
@@ -329,13 +389,13 @@ await test('runUndo：写前文件不存在 → 回放即删除（deleted）', a
 await test('runUndo：重复回放 → finished，不重复写盘', async () => {
   const fw = fakeWorld({ 'a.hs': 'A0' })
   const log = new RunUndoLog(fw.world)
-  await log.recordBefore('run-5', 'a.hs')
+  await log.recordBefore('run-5', 'a.hs', 'source')
   await fw.world.write('a.hs', 'A1')
-  log.recordWrite('run-5', 'a.hs', { content: 'A1', version: await contentVersion('A1') })
+  log.recordWrite('run-5', 'a.hs', 'source', { content: 'A1', version: await contentVersion('A1') })
   assert.deepEqual((await log.rollback('run-5')).map(outcome => outcome.action), ['restored'])
   const writesAfterFirst = fw.writeLog.length
   const outcomes = await log.rollback('run-5')
-  assert.deepEqual(outcomes, [{ path: 'a.hs', action: 'finished' }])
+  assert.deepEqual(outcomes, [{ path: 'a.hs', channel: 'source', action: 'finished' }])
   assert.equal(fw.writeLog.length, writesAfterFirst, 'finished 不应再写盘')
 })
 
