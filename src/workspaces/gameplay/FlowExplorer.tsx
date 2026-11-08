@@ -1195,8 +1195,7 @@ export function FlowExplorer({
         !isBuiltinScriptDocumentKey(key) &&
         !isLibraryTableKey(key) &&
         !isScriptLoadDocumentKey(key) &&
-        !isQuestCatalogDocumentKey(key) &&
-        !isLevelStaticKey(key),
+        !isQuestCatalogDocumentKey(key),
     );
     if (!removableDocs.length && !removableFolders.length) {
       onNotice(
@@ -1523,8 +1522,7 @@ export function FlowExplorer({
               !isBuiltinScriptDocumentKey(key) &&
               !isLibraryTableKey(key) &&
               !isScriptLoadDocumentKey(key) &&
-              !isQuestCatalogDocumentKey(key) &&
-              !isLevelStaticKey(key),
+              !isQuestCatalogDocumentKey(key),
           );
           const canRemove =
             removableDocs.length > 0 || removableFolders.length > 0;

@@ -169,7 +169,7 @@ export function scriptTypeInFolder(state:Pick<FlowWorkspaceState,'folders'>,pare
 }
 /** 资源树只读项：内置二级分类、虚拟内置文件夹与脚本、物品库表视图、脚本启动列表／任务分类入口 */
 export const isReadonlyExplorerKey = (key: string) =>
-  isSectionFolder(key) || isQuestViewKey(key) || isBuiltinScriptFolder(key) || isBuiltinScriptDocumentKey(key) || isLibraryTableKey(key) || isScriptLoadDocumentKey(key) || isQuestCatalogDocumentKey(key) || isLevelStaticViewKey(key) || isLevelStaticKey(key)
+  isSectionFolder(key) || isQuestViewKey(key) || isBuiltinScriptFolder(key) || isBuiltinScriptDocumentKey(key) || isLibraryTableKey(key) || isScriptLoadDocumentKey(key) || isQuestCatalogDocumentKey(key)
 
 export function sectionDefs(pkg: FlowPackageId): FlowSectionDef[] {
   return FLOW_PACKAGE_SECTIONS[pkg] ?? []
