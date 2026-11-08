@@ -31,6 +31,8 @@ function on_tick(event: PlayerEvent, board: Blackboard): void {
 
 **Ctrl+/**（右键「切换行注释」）切换 `//` 行注释。对话正文的 `#` 注释快捷键不会绑到脚本编辑器。
 
+语法高亮会给 `import`／`require` 绑定名、`new` 后的类名，以及函数参数／返回值类型注解（如 `event: PlayerEvent`、`: void`）使用类型色。
+
 `javascript.stubs` 返回工程级共享 `.d.ts` 虚拟文件，Java 类型按 `JavaTypeMap` 与 `Java.type` 关联，不把全量 Minecraft 类型插入每个缓冲区。显式 Java imports 同时提供值和签名可用的类型；相关 Java 类型按需加载。已连接游戏时一律走在线按需请求（含 hooks 与类搜索），不读本地快照、也不把在线结果回写 IndexedDB；断线后才使用已同步的本地完整类型库。断线和游戏进程变化会清理在线临时类型。不同宿主仅拥有各自的全局变量：kit 的 kit/player/players/random，shop 的 shop/player，goal 的 cfg/st/pick_locale/update_satisfied_state/complete/fail。事件类型由作者签名明确声明，`Blackboard` 保持动态键。类型判断使用原生 `value instanceof JavaType`。
 
 ## Java 回调推导

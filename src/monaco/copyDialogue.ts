@@ -1,9 +1,11 @@
 import type { Monaco } from '@monaco-editor/react'
 import type { editor } from 'monaco-editor'
+import { notify } from '../activity/activityStore'
 import {
   isHsSignalLine,
   matchSystemReturnChoice,
 } from '../hanshu/hsSyntaxRules'
+import { normalizeLocaleKey, type TextMap } from '../i18n/textMap'
 
 const SPEAKER_LINE = /^([a-zA-Z_][a-zA-Z0-9_]*):(.*)$/
 const CHOICE_LINE = /^(-+)([\s\S]*?)\/\/\s*$/
@@ -187,20 +189,33 @@ export function extractChoiceParts(text: string): ChoicePart[] {
   return parts
 }
 
+/** 整段正文若是本地化键，则换成映射文本；否则原样返回。 */
+export function resolveDialogueLocaleText(
+  content: string,
+  lookup?: (key: string) => string | null,
+): string {
+  if (!lookup) return content
+  const key = normalizeLocaleKey(content)
+  if (!key) return content
+  return lookup(key) ?? content
+}
+
 /**
  * 纯文本导出：
  * - 角色对白 + 选项答复 → 按 speaker 分组
  * - 选项文案单独「选项」组
+ * - 传入 lookup 时，键名段会换成当前语言译文
  */
 export function formatDialoguePlainText(
   blocks: DialogueBlock[],
   choiceParts: ChoicePart[] = [],
+  lookup?: (key: string) => string | null,
 ): string {
   const order: string[] = []
   const groups = new Map<string, string[]>()
 
   const add = (speaker: string, content: string) => {
-    const body = content.replace(/^\s+|\s+$/g, '')
+    const body = resolveDialogueLocaleText(content, lookup).replace(/^\s+|\s+$/g, '')
     if (!body) return
     if (!groups.has(speaker)) {
       order.push(speaker)
@@ -214,19 +229,20 @@ export function formatDialoguePlainText(
   const labelSeen = new Set<string>()
   const labels: string[] = []
   for (const part of choiceParts) {
+    const content = resolveDialogueLocaleText(part.content, lookup)
     if (part.kind === 'label') {
-      if (labelSeen.has(part.content)) continue
-      labelSeen.add(part.content)
-      labels.push(part.content)
+      if (labelSeen.has(content)) continue
+      labelSeen.add(content)
+      labels.push(content)
       continue
     }
     // reply → 归角色；未知 speaker 时仍放「选项」以免丢文
     if (part.speaker) {
       add(part.speaker, part.content)
     } else {
-      if (labelSeen.has(part.content)) continue
-      labelSeen.add(part.content)
-      labels.push(part.content)
+      if (labelSeen.has(content)) continue
+      labelSeen.add(content)
+      labels.push(content)
     }
   }
 
@@ -289,16 +305,7 @@ function getCopySource(ed: editor.IStandaloneCodeEditor): string {
   return model.getValue()
 }
 
-export async function copyDialoguePlainText(
-  ed: editor.IStandaloneCodeEditor,
-): Promise<boolean> {
-  const source = getCopySource(ed)
-  const text = formatDialoguePlainText(
-    extractDialogueBlocks(source),
-    extractChoiceParts(source),
-  )
-  if (!text) return false
-
+async function writeClipboard(text: string): Promise<boolean> {
   try {
     await navigator.clipboard.writeText(text)
     return true
@@ -315,14 +322,72 @@ export async function copyDialoguePlainText(
   }
 }
 
+export async function copyDialoguePlainText(
+  ed: editor.IStandaloneCodeEditor,
+  options: {
+    lookup?: (key: string) => string | null
+  } = {},
+): Promise<boolean> {
+  const source = getCopySource(ed)
+  const text = formatDialoguePlainText(
+    extractDialogueBlocks(source),
+    extractChoiceParts(source),
+    options.lookup,
+  )
+  if (!text) return false
+  return writeClipboard(text)
+}
+
 export function bindCopyDialogueHotkey(
   ed: editor.IStandaloneCodeEditor,
   monaco: Monaco,
+  getMap: () => TextMap | null | undefined = () => null,
 ) {
-  ed.addCommand(
-    monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyC,
-    () => {
-      void copyDialoguePlainText(ed)
+  const run = async (localized: boolean) => {
+    const map = getMap() ?? null
+    const lookup =
+      localized && map ? (key: string) => map.get(key) : undefined
+    const ok = await copyDialoguePlainText(ed, { lookup })
+    if (localized) {
+      if (!map) {
+        notify(ok ? '当前没有语言文本映射，已按正文键名复制' : '没有可复制的对白', {
+          kind: 'warning',
+        })
+        return
+      }
+      notify(ok ? `已复制本地化对白（${map.locale}）` : '没有可复制的对白', {
+        kind: ok ? 'info' : 'warning',
+      })
+      return
+    }
+    if (!ok) notify('没有可复制的对白', { kind: 'warning' })
+  }
+
+  ed.addAction({
+    id: 'hanshu.copyDialogue',
+    label: '复制对白',
+    keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyC],
+    contextMenuGroupId: '9_cutcopypaste',
+    contextMenuOrder: 1.5,
+    precondition: 'editorTextFocus',
+    run: () => {
+      void run(false)
     },
-  )
+  })
+  ed.addAction({
+    id: 'hanshu.copyDialogueLocalized',
+    label: '复制对白（本地化）',
+    keybindings: [
+      monaco.KeyMod.CtrlCmd |
+        monaco.KeyMod.Shift |
+        monaco.KeyMod.Alt |
+        monaco.KeyCode.KeyC,
+    ],
+    contextMenuGroupId: '9_cutcopypaste',
+    contextMenuOrder: 1.6,
+    precondition: 'editorTextFocus',
+    run: () => {
+      void run(true)
+    },
+  })
 }

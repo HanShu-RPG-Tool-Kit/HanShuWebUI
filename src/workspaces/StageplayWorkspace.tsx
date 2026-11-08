@@ -3624,7 +3624,7 @@ export const StageplayWorkspace = forwardRef<
                               monaco,
                               () => rolesRef.current,
                             )
-                            bindCopyDialogueHotkey(editor, monaco)
+                            bindCopyDialogueHotkey(editor, monaco, () => textMapRef.current)
                           }
                           textBindingRef.current?.dispose()
                           // 换文件 = 换绑定：旧绑定的编辑请求已经作废，覆盖编辑框不能留在新文件上

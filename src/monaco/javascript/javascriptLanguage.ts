@@ -25,7 +25,33 @@ export function registerJavaScriptLanguage(monaco:M){
  monaco.editor.onDidChangeMarkers(resources=>{
   for(const resource of resources){const model=monaco.editor.getModel(resource);if(model?.getLanguageId()===LANGUAGE&&monaco.editor.getModelMarkers({resource,owner:'javascript'}).length)monaco.editor.setModelMarkers(model,'javascript',[])}
  })
- monaco.languages.setMonarchTokensProvider(LANGUAGE,{tokenizer:{root:[[/\/\/.*$/,'comment'],[/\/\*/,'comment','@comment'],[/"([^"\\]|\\.)*"|'([^'\\]|\\.)*'/,'string'],[/\x40(?:hook|goal|config|state|subscribe)\b/,'annotation'],[/\b(?:function|var|return|if|else|for|while|new|throw|try|catch|import|require|from|true|false|null)\b/,'keyword'],[/\b\d+(?:\.\d+)?\b/,'number']],comment:[[/[^/*]+/,'comment'],[/\*\//,'comment','@pop'],[/[/*]/,'comment']]}})
+ monaco.languages.setMonarchTokensProvider(LANGUAGE,{
+  defaultToken:'',
+  tokenizer:{
+   root:[
+    [/\/\/.*$/,'comment'],
+    [/\/\*/,'comment','@comment'],
+    [/"([^"\\]|\\.)*"|'([^'\\]|\\.)*'/,'string'],
+    [/\x40(?:hook|goal|config|state|subscribe)\b/,'annotation'],
+    // import Player from "…" / require fx from "…" —— 绑定名按类型色
+    [/\b(import|require)(\s+)([A-Za-z_$][\w$]*)/,['keyword','white','type']],
+    // new ServerPlayer —— 构造的类名
+    [/\b(new)(\s+)([A-Za-z_$][\w$]*)/,['keyword','white','type']],
+    [/\b(?:function|var|return|if|else|for|while|new|throw|try|catch|import|require|from|true|false|null)\b/,'keyword'],
+    [/\b\d+(?:\.\d+)?\b/,'number'],
+    // event: PlayerEvent / ): void / : net.foo.Bar[]
+    [/:/,{token:'delimiter',next:'@typeName'}],
+   ],
+   typeName:[
+    [/\s+/,'white'],
+    [/\b(?:true|false|null)\b/,{token:'keyword',next:'@pop'}],
+    [/\b(?:void|number|string|boolean|any|int|double|bool)\b/,{token:'type',next:'@pop'}],
+    [/[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*(?:\[\])?/,{token:'type',next:'@pop'}],
+    [/./,{token:'',next:'@pop'}],
+   ],
+   comment:[[/[^/*]+/,'comment'],[/\*\//,'comment','@pop'],[/[/*]/,'comment']],
+  },
+ })
  monaco.languages.setLanguageConfiguration(LANGUAGE,{comments:{lineComment:'//',blockComment:['/*','*/']},brackets:[['{','}'],['[',']'],['(',')']],autoClosingPairs:[{open:'{',close:'}'},{open:'[',close:']'},{open:'(',close:')'},{open:'"',close:'"'},{open:"'",close:"'"}]})
 }
 export function attachJavaScript(monaco:M,model:Monaco.editor.ITextModel,report:(e:unknown)=>void,type:ScriptType='common'){
