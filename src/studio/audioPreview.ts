@@ -64,6 +64,90 @@ export async function decodeMemoryAudio(
   }
 }
 
+/** 把多声道 float PCM 写成 16-bit LE WAV（导入工作流认 wav，会再转单通道 Vorbis） */
+export function encodeWavPcm(
+  channels: Float32Array[],
+  sampleRate: number,
+): Uint8Array {
+  const channelCount = Math.max(1, channels.length)
+  const frames = channels[0]?.length ?? 0
+  const bytesPerSample = 2
+  const blockAlign = channelCount * bytesPerSample
+  const dataBytes = frames * blockAlign
+  const out = new Uint8Array(44 + dataBytes)
+  const view = new DataView(out.buffer)
+
+  const writeAscii = (offset: number, text: string) => {
+    for (let i = 0; i < text.length; i += 1) {
+      view.setUint8(offset + i, text.charCodeAt(i))
+    }
+  }
+
+  writeAscii(0, 'RIFF')
+  view.setUint32(4, 36 + dataBytes, true)
+  writeAscii(8, 'WAVE')
+  writeAscii(12, 'fmt ')
+  view.setUint32(16, 16, true)
+  view.setUint16(20, 1, true) // PCM
+  view.setUint16(22, channelCount, true)
+  view.setUint32(24, sampleRate, true)
+  view.setUint32(28, sampleRate * blockAlign, true)
+  view.setUint16(32, blockAlign, true)
+  view.setUint16(34, bytesPerSample * 8, true)
+  writeAscii(36, 'data')
+  view.setUint32(40, dataBytes, true)
+
+  let offset = 44
+  for (let i = 0; i < frames; i += 1) {
+    for (let c = 0; c < channelCount; c += 1) {
+      const sample = Math.max(-1, Math.min(1, channels[c]?.[i] ?? 0))
+      view.setInt16(
+        offset,
+        sample < 0 ? sample * 0x8000 : sample * 0x7fff,
+        true,
+      )
+      offset += 2
+    }
+  }
+  return out
+}
+
+/**
+ * 按秒裁一段内存音频 → WAV。
+ * 解不开 / 区间非法返回 null。结果给导入工作流转码即可，不必自己编 Vorbis。
+ */
+export async function trimAudioBytes(
+  bytes: Uint8Array,
+  startSec: number,
+  endSec: number,
+): Promise<{ name: string; bytes: Uint8Array } | null> {
+  const ctx = ensureDecodeContext()
+  if (!ctx) return null
+  let buffer: AudioBuffer
+  try {
+    buffer = await ctx.decodeAudioData(bytes.slice().buffer as ArrayBuffer)
+  } catch (error) {
+    console.warn('[hanshu] 裁剪前解码失败', error)
+    return null
+  }
+
+  const duration = buffer.duration
+  const start = Math.max(0, Math.min(duration, startSec))
+  const end = Math.max(start, Math.min(duration, endSec))
+  if (end - start < 0.01) return null
+
+  const sampleRate = buffer.sampleRate
+  const from = Math.floor(start * sampleRate)
+  const to = Math.min(buffer.length, Math.ceil(end * sampleRate))
+  if (to <= from) return null
+
+  const channels: Float32Array[] = []
+  for (let c = 0; c < buffer.numberOfChannels; c += 1) {
+    channels.push(buffer.getChannelData(c).slice(from, to))
+  }
+  return { name: '录音-裁剪.wav', bytes: encodeWavPcm(channels, sampleRate) }
+}
+
 /** 录音结果：内存字节 + 由容器类型推出来的文件名（名字只影响 MIME 推断与提示） */
 export type RecordingTake = {
   name: string

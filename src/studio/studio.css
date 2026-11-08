@@ -700,6 +700,7 @@ body.is-panel-dragging .studio-header.is-draggable {
 }
 
 .studio-take-wave {
+  position: relative;
   height: 64px;
   margin-top: 8px;
   padding: 4px;
@@ -707,12 +708,72 @@ body.is-panel-dragging .studio-header.is-draggable {
   border-radius: var(--radius-s);
   background: var(--bg-sunken);
   color: var(--accent);
+  overflow: hidden;
+  touch-action: none;
 }
 
 .studio-take-wave svg {
   display: block;
   width: 100%;
   height: 100%;
+}
+
+/*
+ * 录音节选：盖在波形上。两端把手拖出要保留的一段，
+ * 外侧半透明遮罩表示会被裁掉（典型：开头的按键声）。
+ */
+.studio-take-trim {
+  position: absolute;
+  inset: 4px;
+  z-index: 1;
+  cursor: ew-resize;
+}
+
+.studio-take-trim-shade {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgb(0 0 0 / 45%);
+  pointer-events: none;
+}
+
+.studio-take-trim-shade.is-left {
+  left: 0;
+}
+
+.studio-take-trim-shade.is-right {
+  right: 0;
+}
+
+.studio-take-trim-window {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 2px solid #f4e6b4;
+  border-right: 2px solid #f4e6b4;
+  box-sizing: border-box;
+  pointer-events: none;
+}
+
+.studio-take-trim-handle {
+  position: absolute;
+  top: 50%;
+  width: 10px;
+  height: 28px;
+  margin-top: -14px;
+  border: 1px solid rgb(216 180 90 / 70%);
+  border-radius: 3px;
+  background: #d8b45a;
+  pointer-events: auto;
+  cursor: ew-resize;
+}
+
+.studio-take-trim-handle.is-start {
+  left: -6px;
+}
+
+.studio-take-trim-handle.is-end {
+  right: -6px;
 }
 
 .studio-take-empty {

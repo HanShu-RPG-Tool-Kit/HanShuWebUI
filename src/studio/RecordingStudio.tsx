@@ -34,6 +34,7 @@ import {
   canRecordAudio,
   decodeMemoryAudio,
   startVoiceRecording,
+  trimAudioBytes,
   type MemoryAudioInfo,
   type VoiceRecorder,
 } from './audioPreview'
@@ -313,11 +314,19 @@ export function RecordingStudio({
   /** 确认后自动开始下一个待录键 */
   const [autoContinue, setAutoContinue] = useState(true)
   const [notice, setNotice] = useState<string | null>(null)
+  /**
+   * 本次录音的节选区间（相对整段 0..1）。
+   * 拖波形两端把手改；点「裁剪」后会写回 take，区间回到整段。
+   */
+  const [trimStart, setTrimStart] = useState(0)
+  const [trimEnd, setTrimEnd] = useState(1)
+  const [trimming, setTrimming] = useState(false)
   /** 「确认导入」之后在等下一个待录键出现 → 出现了就自动开录 */
   const awaitingNextRef = useRef(false)
   const recorderRef = useRef<VoiceRecorder | null>(null)
   const levelRef = useRef<HTMLDivElement>(null)
   const clockRef = useRef<HTMLSpanElement>(null)
+  const trimDragRef = useRef<'start' | 'end' | null>(null)
   /** 资产解码结果返回 / 试听状态变化时重画 */
   const [, setTick] = useState(0)
   const [, setProgressTick] = useState(0)
@@ -355,6 +364,13 @@ export function RecordingStudio({
 
   /** 刚录下、还没确认导入的那条 */
   const take = memory?.origin === 'record' ? memory : null
+
+  // 新 take / 清掉 take：节选回到整段
+  useEffect(() => {
+    setTrimStart(0)
+    setTrimEnd(1)
+    setTrimming(false)
+  }, [take?.id])
 
   // 内存音频解码：拖入的和刚录的走同一条路（预览窗的波形与信息栏都依赖它）
   useEffect(() => {
@@ -513,6 +529,90 @@ export function RecordingStudio({
       )
     }
   }, [])
+
+  /** 节选是否比整段窄一点点（浮点容差） */
+  const trimActive = trimEnd - trimStart < 0.999
+
+  /** 把选中段写成新 take（WAV），丢掉两端 —— 典型用途是砍掉开头按键声 */
+  const applyTrim = useCallback(async () => {
+    if (!take || !memoryInfo || trimming) return
+    if (!trimActive) return
+    const startSec = memoryInfo.duration * trimStart
+    const endSec = memoryInfo.duration * trimEnd
+    if (endSec - startSec < 0.05) {
+      setNotice('选中的太短了，至少留 0.05 秒')
+      return
+    }
+    setTrimming(true)
+    setNotice(null)
+    library?.stop()
+    try {
+      const result = await trimAudioBytes(take.bytes, startSec, endSec)
+      if (!result) {
+        setNotice('裁剪失败：这段录音解不开')
+        return
+      }
+      setMemory({
+        kind: 'memory',
+        id: `take:${Date.now()}`,
+        name: result.name,
+        size: result.bytes.byteLength,
+        bytes: result.bytes,
+        origin: 'record',
+      })
+    } catch (error) {
+      setNotice(
+        `裁剪失败：${error instanceof Error ? error.message : String(error)}`,
+      )
+    } finally {
+      setTrimming(false)
+    }
+  }, [take, memoryInfo, trimming, trimActive, trimStart, trimEnd, library])
+
+  const ratioFromTrimEvent = (
+    event: ReactPointerEvent<HTMLDivElement>,
+  ): number => {
+    const rect = event.currentTarget.getBoundingClientRect()
+    if (rect.width <= 0) return 0
+    return Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width))
+  }
+
+  const onTrimPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (trimming || memoryStatus !== 'ready') return
+    const handle = (event.target as HTMLElement | null)?.dataset?.trimHandle
+    const which: 'start' | 'end' =
+      handle === 'start' || handle === 'end'
+        ? handle
+        : ratioFromTrimEvent(event) < (trimStart + trimEnd) / 2
+          ? 'start'
+          : 'end'
+    trimDragRef.current = which
+    event.currentTarget.setPointerCapture(event.pointerId)
+    const ratio = ratioFromTrimEvent(event)
+    // 两端至少留 2% 空隙，避免拖成零长度
+    const gap = 0.02
+    if (which === 'start') setTrimStart(Math.min(ratio, trimEnd - gap))
+    else setTrimEnd(Math.max(ratio, trimStart + gap))
+  }
+
+  const onTrimPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const which = trimDragRef.current
+    if (!which) return
+    const ratio = ratioFromTrimEvent(event)
+    const gap = 0.02
+    if (which === 'start') setTrimStart(Math.min(ratio, trimEnd - gap))
+    else setTrimEnd(Math.max(ratio, trimStart + gap))
+  }
+
+  const endTrimDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!trimDragRef.current) return
+    trimDragRef.current = null
+    try {
+      event.currentTarget.releasePointerCapture(event.pointerId)
+    } catch {
+      /* 已经松开了 */
+    }
+  }
 
   // 录音中的电平与计时：直接改 DOM，别按帧 setState
   useEffect(() => {
@@ -870,12 +970,28 @@ export function RecordingStudio({
       if (!recordTarget || !take) return
       // 只有批量才有"下一个"：单选录完这一个就结束，别挂自动续录的钩子
       if (mode === 'batch') awaitingNextRef.current = true
-      onImport([recordTarget], {
-        kind: 'file',
-        name: take.name,
-        bytes: take.bytes,
-      })
-      setMemory(null)
+      const importTake = async () => {
+        let name = take.name
+        let bytes = take.bytes
+        // 拖了节选但还没点「裁剪」：确认时照样只写入选中段
+        if (trimActive && memoryInfo) {
+          const trimmed = await trimAudioBytes(
+            take.bytes,
+            memoryInfo.duration * trimStart,
+            memoryInfo.duration * trimEnd,
+          )
+          if (!trimmed) {
+            setNotice('裁剪失败：这段录音解不开')
+            awaitingNextRef.current = false
+            return
+          }
+          name = trimmed.name
+          bytes = trimmed.bytes
+        }
+        onImport([recordTarget], { kind: 'file', name, bytes })
+        setMemory(null)
+      }
+      void importTake()
       return
     }
     if (!source) return
@@ -1282,10 +1398,25 @@ export function RecordingStudio({
                       {memoryStatus === 'failed'
                         ? '解不开'
                         : memoryInfo
-                          ? formatVoiceDuration(memoryInfo.duration)
+                          ? trimActive
+                            ? `${formatVoiceDuration(
+                                memoryInfo.duration * (trimEnd - trimStart),
+                              )} / ${formatVoiceDuration(memoryInfo.duration)}`
+                            : formatVoiceDuration(memoryInfo.duration)
                           : '解码中…'}
                     </span>
                     <span className="spacer" />
+                    {trimActive && (
+                      <button
+                        type="button"
+                        className="studio-mini"
+                        disabled={trimming || memoryStatus !== 'ready'}
+                        onClick={() => void applyTrim()}
+                        title="只保留选中段，丢掉前后多余的部分（例如开头的按键声）"
+                      >
+                        {trimming ? '裁剪中…' : '裁剪'}
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="studio-mini"
@@ -1315,13 +1446,48 @@ export function RecordingStudio({
                   </div>
                   <div className="studio-take-wave">
                     {memoryInfo ? (
-                      <WaveformSlot
-                        state={{
-                          kind: 'ready',
-                          peaks: memoryInfo.peaks,
-                          progress: playedRatio,
-                        }}
-                      />
+                      <>
+                        <WaveformSlot
+                          state={{
+                            kind: 'ready',
+                            peaks: memoryInfo.peaks,
+                            progress: playedRatio,
+                          }}
+                        />
+                        <div
+                          className="studio-take-trim"
+                          onPointerDown={onTrimPointerDown}
+                          onPointerMove={onTrimPointerMove}
+                          onPointerUp={endTrimDrag}
+                          onPointerCancel={endTrimDrag}
+                          title="拖两端把手选出要保留的一段，再点「裁剪」"
+                        >
+                          <div
+                            className="studio-take-trim-shade is-left"
+                            style={{ width: `${trimStart * 100}%` }}
+                          />
+                          <div
+                            className="studio-take-trim-window"
+                            style={{
+                              left: `${trimStart * 100}%`,
+                              width: `${(trimEnd - trimStart) * 100}%`,
+                            }}
+                          >
+                            <span
+                              className="studio-take-trim-handle is-start"
+                              data-trim-handle="start"
+                            />
+                            <span
+                              className="studio-take-trim-handle is-end"
+                              data-trim-handle="end"
+                            />
+                          </div>
+                          <div
+                            className="studio-take-trim-shade is-right"
+                            style={{ width: `${(1 - trimEnd) * 100}%` }}
+                          />
+                        </div>
+                      </>
                     ) : (
                       <WaveformSlot state={{ kind: 'empty' }} />
                     )}
