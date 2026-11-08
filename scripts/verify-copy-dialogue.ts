@@ -3,7 +3,7 @@ import {
   extractChoiceParts,
   extractDialogueBlocks,
   formatDialoguePlainText,
-  resolveDialogueLocaleText,
+  substituteLocaleKeysInSource,
 } from '../src/monaco/copyDialogue'
 
 const source = `alice:a1b2c3d4//
@@ -15,15 +15,11 @@ e5f60718
 
 const map: Record<string, string> = {
   a1b2c3d4: '你好',
-  e5f60718: '再见',
+  e5f60718: '再见\n朋友',
   c0ffee01: '继续',
   d00d0001: '好的',
 }
 const lookup = (key: string) => map[key] ?? null
-
-assert.equal(resolveDialogueLocaleText('a1b2c3d4', lookup), '你好')
-assert.equal(resolveDialogueLocaleText('plain text', lookup), 'plain text')
-assert.equal(resolveDialogueLocaleText('deadbeef', lookup), 'deadbeef')
 
 const raw = formatDialoguePlainText(
   extractDialogueBlocks(source),
@@ -32,15 +28,19 @@ const raw = formatDialoguePlainText(
 assert.match(raw, /a1b2c3d4/)
 assert.match(raw, /c0ffee01/)
 
-const localized = formatDialoguePlainText(
-  extractDialogueBlocks(source),
-  extractChoiceParts(source),
-  lookup,
-)
-assert.equal(localized.includes('a1b2c3d4'), false)
-assert.match(localized, /你好/)
-assert.match(localized, /再见/)
-assert.match(localized, /继续/)
-assert.match(localized, /好的/)
+const localized = substituteLocaleKeysInSource(source, lookup)
+assert.equal(localized.replaced, 4)
+assert.equal(localized.missing.length, 0)
+assert.match(localized.content, /^alice:你好\/\//m)
+assert.match(localized.content, /^bob:\n再见\n朋友\n\/\//m)
+assert.match(localized.content, /^-继续:好的\/\//m)
+assert.match(localized.content, /alice:/)
+assert.match(localized.content, /bob:/)
+assert.equal(localized.content.includes('a1b2c3d4'), false)
 
-console.log('PASS copy dialogue: raw keys vs localized lookup')
+const missing = substituteLocaleKeysInSource('npc:deadbeef//\n', lookup)
+assert.equal(missing.replaced, 0)
+assert.deepEqual(missing.missing, ['deadbeef'])
+assert.match(missing.content, /deadbeef/)
+
+console.log('PASS copy dialogue: plain extract + DSL key substitution')

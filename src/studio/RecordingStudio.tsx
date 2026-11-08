@@ -38,6 +38,10 @@ import {
   type MemoryAudioInfo,
   type VoiceRecorder,
 } from './audioPreview'
+import {
+  SliceBindPanel,
+  type SliceBindStatus,
+} from './SliceBindPanel'
 // 面板样式跟着组件走（原先在 App.css 里，见 studio.css 的头注释）
 import './studio.css'
 
@@ -47,13 +51,16 @@ import './studio.css'
  * **两个维度**，互相正交，所以组件内部是「作用范围 × 配音方式」的笛卡尔积：
  * - `mode`（作用范围）：`single` 单选配音 = 当前选中的那一个键；
  *   `batch` 批量配音 = 全部选中的键
- * - `sourceMode`（配音方式）：`fixed` 固定音频 / `tts` 批量 TTS / `record` 录音
+ * - `sourceMode`（配音方式）：`fixed` 固定音频 / `tts` 批量 TTS / `record` 录音 /
+ *   `slice` 切段绑键 / `ref` 引用资产
  *
- * 三个配音方式对**单选与批量是同一套实现**，差别只落在"目标键集合"上：
+ * 配音方式对**单选与批量是同一套实现**，差别只落在"目标键集合"上：
  * - `fixed` ：一份音频写进 1 个（单选）或 N 个（批量）键
  * - `record`：为待录的键逐个录；单选就是"就录这一个"（已有配音也照录，等于覆盖），
  *   批量则排队推进，确认后自动接上下一个没配音的键
- * - `tts`   ：按需求**先留空**（只给一个明确的占位，不假装能用）
+ * - `tts`   ：按配音方案为键生成
+ * - `slice` ：导入一条或多条单音轨，在波形上划段并绑到选中的键，再按段导入
+ * - `ref`   ：键指向工程内已有音频（写 `.ref`，不拷贝）
  *
  * 单选与「固定音频」共用同一套固定组件（也是全模式的公共外壳）：
  * 配音模式提示 → 预览窗（可拖拽 + 波形）→ 播放与进度条 → 音频信息（路径/时长/格式/声道）
@@ -64,7 +71,7 @@ import './studio.css'
  */
 
 export type StudioMode = 'single' | 'batch'
-export type StudioSourceMode = 'fixed' | 'tts' | 'record' | 'ref'
+export type StudioSourceMode = 'fixed' | 'tts' | 'record' | 'ref' | 'slice'
 
 /**
  * TTS 生成的当前状态 —— 失败要分类、要给出下一步，不能只说"生成失败"。
@@ -150,8 +157,8 @@ export type RecordingStudioProps = {
   onClearSelection(): void
   /** 清除这些键的配音（确认与落盘由上层负责） */
   onClearVoice(keys: string[]): void
-  /** 用同一份音频导入到这些键 */
-  onImport(keys: string[], source: VoiceImportSource): void
+  /** 用同一份音频导入到这些键（切段绑键会串行 await 多次调用） */
+  onImport(keys: string[], source: VoiceImportSource): void | Promise<void>
   /**
    * 把这些键的配音设成**引用**（「引用资产」）：对等位置上写 `.ref`，不拷贝字节。
    *
@@ -179,8 +186,14 @@ type StudioSource =
       origin: 'drop' | 'record'
     }
 
-/** 上拉框里的顺序（固定音频 / 引用资产 / TTS / 录音） */
-const SOURCE_MODES: StudioSourceMode[] = ['fixed', 'ref', 'tts', 'record']
+/** 上拉框里的顺序（固定音频 / 引用资产 / TTS / 录音 / 切段绑键） */
+const SOURCE_MODES: StudioSourceMode[] = [
+  'fixed',
+  'ref',
+  'tts',
+  'record',
+  'slice',
+]
 
 /**
  * 配音方式的标签。
@@ -192,6 +205,7 @@ function sourceModeLabel(mode: StudioMode, source: StudioSourceMode): string {
   if (source === 'tts') return mode === 'batch' ? '批量 TTS' : 'TTS'
   if (source === 'record') return mode === 'batch' ? '批量录音' : '录音'
   if (source === 'ref') return mode === 'batch' ? '批量引用' : '引用资产'
+  if (source === 'slice') return '切段绑键'
   return '固定音频'
 }
 
@@ -202,6 +216,9 @@ function sourceModeTitle(mode: StudioMode, source: StudioSourceMode): string {
   if (source === 'record') return `录音 · 为${scope}逐条录制`
   if (source === 'ref') {
     return `引用资产 · 让${scope}指向同一份音频（不拷贝字节，改的是引用）`
+  }
+  if (source === 'slice') {
+    return '切段绑键 · 导入一条或多条单音轨，在波形上划段并绑到选中的键'
   }
   return `固定音频 · 同一份音频写进${scope}`
 }
@@ -321,6 +338,9 @@ export function RecordingStudio({
   const [trimStart, setTrimStart] = useState(0)
   const [trimEnd, setTrimEnd] = useState(1)
   const [trimming, setTrimming] = useState(false)
+  /** 切段绑键：子面板回传的确认能力（页脚共用「确认导入」） */
+  const [sliceStatus, setSliceStatus] = useState<SliceBindStatus | null>(null)
+  const sliceAddFilesRef = useRef<((files: File[]) => void) | null>(null)
   /** 「确认导入」之后在等下一个待录键出现 → 出现了就自动开录 */
   const awaitingNextRef = useRef(false)
   const recorderRef = useRef<VoiceRecorder | null>(null)
@@ -686,8 +706,13 @@ export function RecordingStudio({
    * 拖入外部文件：只当候选源，不直接导入（导入一律走「确认导入」这一步）。
    * 顺手把配音方式切回「固定音频」—— 拖文件进来就是要用它，
    * 停在录音 / TTS 那一栏只会让人以为"拖了没反应"。
+   * （切段绑键模式例外：多文件追加进切段面板，不改方式。）
    */
   const cacheDroppedFile = (file: File) => {
+    if (sourceMode === 'slice') {
+      sliceAddFilesRef.current?.([file])
+      return
+    }
     void file
       .arrayBuffer()
       .then((buffer) => {
@@ -708,6 +733,23 @@ export function RecordingStudio({
         setNotice(`读取「${file.name}」失败`)
       })
   }
+
+  const cacheDroppedFiles = (list: File[]) => {
+    if (list.length === 0) return
+    if (sourceMode === 'slice') {
+      sliceAddFilesRef.current?.(list)
+      return
+    }
+    cacheDroppedFile(list[0])
+  }
+
+  const handleSliceStatus = useCallback((status: SliceBindStatus) => {
+    setSliceStatus(status)
+  }, [])
+
+  useEffect(() => {
+    if (sourceMode !== 'slice') setSliceStatus(null)
+  }, [sourceMode])
 
   const previewBlobOf = (item: StudioSource | null) =>
     item?.kind === 'memory' ? item : null
@@ -774,6 +816,10 @@ export function RecordingStudio({
        * 先把内存候选清掉，否则 `source` 会继续优先那个（见下面的 source 求值顺序）。
        */
       if (assetPath) {
+        if (sourceMode === 'slice') {
+          setNotice('切段绑键请拖入外部音频文件（暂不直接吃工程资产）')
+          return
+        }
         setPicked(assetPath)
         setMemory(null)
         setNotice(null)
@@ -781,8 +827,7 @@ export function RecordingStudio({
       }
       // 本应用自己的其它拖拽（键名 / 脚本）落到录音棚没有对应语义，静默放过
       if (isInternalDrag(event.dataTransfer)) return
-      const file = files[0]
-      if (!file) {
+      if (files.length === 0) {
         /*
          * 拖进来了，但系统一个文件都没交出来：说清成因，别让它表现成"拖了没反应"。
          *
@@ -803,7 +848,7 @@ export function RecordingStudio({
         )
         return
       }
-      cacheDroppedFile(file)
+      cacheDroppedFiles(files)
     },
   })
 
@@ -852,6 +897,7 @@ export function RecordingStudio({
   const confirmTts = sourceMode === 'tts'
   /** 「引用资产」：确认 = 把这些键指向选中的那份资产（不拷贝字节） */
   const confirmRef = sourceMode === 'ref'
+  const confirmSlice = sourceMode === 'slice'
   /**
    * 单选模式下自动跟随出来的"候选源"可能就是它**自己当前的配音** ——
    * 那种情况导入只会白白报一句 already imported，所以直接禁用并说明。
@@ -871,22 +917,24 @@ export function RecordingStudio({
    * 而两次导入共用同一份进度与取消引用（见 `onGenerate` 的类型注释）。
    * 引用那条多一个 `source.kind === 'asset'`：外部文件没有包内路径，指不了。
    */
-  const canConfirm = confirmRecord
-    ? Boolean(recordTarget && take)
-    : confirmTts
-      ? Boolean(
-          tts?.canGenerate &&
-            !tts.busy &&
-            localeMatchesText &&
-            importTargets.length > 0,
-        )
-      : confirmRef
+  const canConfirm = confirmSlice
+    ? Boolean(sliceStatus?.canConfirm)
+    : confirmRecord
+      ? Boolean(recordTarget && take)
+      : confirmTts
         ? Boolean(
-            source?.kind === 'asset' &&
-              importTargets.length > 0 &&
-              !selfOnly,
+            tts?.canGenerate &&
+              !tts.busy &&
+              localeMatchesText &&
+              importTargets.length > 0,
           )
-        : Boolean(source && importTargets.length > 0 && !selfOnly)
+        : confirmRef
+          ? Boolean(
+              source?.kind === 'asset' &&
+                importTargets.length > 0 &&
+                !selfOnly,
+            )
+          : Boolean(source && importTargets.length > 0 && !selfOnly)
 
   const confirmLabel = confirmTts
     ? tts?.busy
@@ -894,7 +942,9 @@ export function RecordingStudio({
       : '生成配音'
     : confirmRef
       ? '确认引用'
-      : '确认导入'
+      : confirmSlice
+        ? '按段导入'
+        : '确认导入'
 
   /**
    * 按钮上方那句话。
@@ -903,6 +953,9 @@ export function RecordingStudio({
    * "先看这次能不能成、再看为什么不能"，而不是把模式的判断抄一遍。
    */
   const confirmHint = (() => {
+    if (confirmSlice) {
+      return sliceStatus?.hint ?? '拖入或选择音频，在波形上划段并绑键'
+    }
     if (confirmTts) {
       if (tts?.busy) return tts.status.kind === 'busy' ? tts.status.message : '正在生成…'
       if (importTargets.length === 0) {
@@ -960,6 +1013,10 @@ export function RecordingStudio({
 
   const handleConfirm = () => {
     if (!canConfirm) return
+    if (confirmSlice) {
+      void sliceStatus?.confirm()
+      return
+    }
     if (confirmTts) {
       // 生成之后仍然走 onImport —— 合成出来的字节与拖进来的文件是同一种输入，
       // 转码、落盘、试听都不需要第二条路
@@ -1133,7 +1190,17 @@ export function RecordingStudio({
       )}
 
       <div className="studio-body">
-        {sourceMode === 'tts' ? (
+        {sourceMode === 'slice' ? (
+          <SliceBindPanel
+            selectedKeys={selectedKeys}
+            textFor={textFor}
+            library={library}
+            addFilesRef={sliceAddFilesRef}
+            onStatusChange={handleSliceStatus}
+            onNotice={setNotice}
+            onImport={onImport}
+          />
+        ) : sourceMode === 'tts' ? (
           <div className="studio-tts">
             <div className="studio-field">
               <label className="studio-field-label" htmlFor="studio-tts-plan">

@@ -2,10 +2,12 @@ import type { Monaco } from '@monaco-editor/react'
 import type { editor } from 'monaco-editor'
 import { notify } from '../activity/activityStore'
 import {
+  escapeHsText,
   isHsSignalLine,
   matchSystemReturnChoice,
 } from '../hanshu/hsSyntaxRules'
 import { normalizeLocaleKey, type TextMap } from '../i18n/textMap'
+import { parseTextSpans } from './textSpans'
 
 const SPEAKER_LINE = /^([a-zA-Z_][a-zA-Z0-9_]*):(.*)$/
 const CHOICE_LINE = /^(-+)([\s\S]*?)\/\/\s*$/
@@ -189,33 +191,21 @@ export function extractChoiceParts(text: string): ChoicePart[] {
   return parts
 }
 
-/** 整段正文若是本地化键，则换成映射文本；否则原样返回。 */
-export function resolveDialogueLocaleText(
-  content: string,
-  lookup?: (key: string) => string | null,
-): string {
-  if (!lookup) return content
-  const key = normalizeLocaleKey(content)
-  if (!key) return content
-  return lookup(key) ?? content
-}
-
 /**
- * 纯文本导出：
+ * 纯文本导出（去掉 DSL）：
  * - 角色对白 + 选项答复 → 按 speaker 分组
  * - 选项文案单独「选项」组
- * - 传入 lookup 时，键名段会换成当前语言译文
+ * - 保留正文出现顺序（不去按键名／拼音重排）
  */
 export function formatDialoguePlainText(
   blocks: DialogueBlock[],
   choiceParts: ChoicePart[] = [],
-  lookup?: (key: string) => string | null,
 ): string {
   const order: string[] = []
   const groups = new Map<string, string[]>()
 
   const add = (speaker: string, content: string) => {
-    const body = resolveDialogueLocaleText(content, lookup).replace(/^\s+|\s+$/g, '')
+    const body = content.replace(/^\s+|\s+$/g, '')
     if (!body) return
     if (!groups.has(speaker)) {
       order.push(speaker)
@@ -229,25 +219,23 @@ export function formatDialoguePlainText(
   const labelSeen = new Set<string>()
   const labels: string[] = []
   for (const part of choiceParts) {
-    const content = resolveDialogueLocaleText(part.content, lookup)
     if (part.kind === 'label') {
-      if (labelSeen.has(content)) continue
-      labelSeen.add(content)
-      labels.push(content)
+      if (labelSeen.has(part.content)) continue
+      labelSeen.add(part.content)
+      labels.push(part.content)
       continue
     }
     // reply → 归角色；未知 speaker 时仍放「选项」以免丢文
     if (part.speaker) {
       add(part.speaker, part.content)
     } else {
-      if (labelSeen.has(content)) continue
-      labelSeen.add(content)
-      labels.push(content)
+      if (labelSeen.has(part.content)) continue
+      labelSeen.add(part.content)
+      labels.push(part.content)
     }
   }
 
   if (labels.length > 0) {
-    labels.sort((a, b) => a.localeCompare(b, 'zh-CN'))
     if (!groups.has('选项')) order.push('选项')
     groups.set('选项', labels)
   }
@@ -264,7 +252,6 @@ export function formatDialoguePlainText(
       seen.add(item)
       deduped.push(item)
     }
-    deduped.sort((a, b) => a.localeCompare(b, 'zh-CN'))
     groups.set(name, deduped)
   }
 
@@ -288,6 +275,33 @@ export function formatDialoguePlainText(
   return order
     .map((name) => `${name}\n${groups.get(name)!.join('\n\n')}`)
     .join('\n\n')
+}
+
+/**
+ * 保留 `.hs` DSL，只把可本地化键名换成映射文本。
+ * 缺译文的键原样留下；译文里的换行会写进正文（多行块仍是多行）。
+ */
+export function substituteLocaleKeysInSource(
+  source: string,
+  lookup: (key: string) => string | null,
+): { content: string; replaced: number; missing: string[] } {
+  const edits: Array<{ start: number; end: number; text: string }> = []
+  const missing: string[] = []
+  for (const span of parseTextSpans(source)) {
+    const key = normalizeLocaleKey(span.value)
+    if (!key) continue
+    const text = lookup(key)
+    if (text == null) {
+      missing.push(key)
+      continue
+    }
+    edits.push({ start: span.start, end: span.end, text: escapeHsText(text) })
+  }
+  let content = source
+  for (const edit of [...edits].sort((a, b) => b.start - a.start)) {
+    content = content.slice(0, edit.start) + edit.text + content.slice(edit.end)
+  }
+  return { content, replaced: edits.length, missing }
 }
 
 function getCopySource(ed: editor.IStandaloneCodeEditor): string {
@@ -322,20 +336,29 @@ async function writeClipboard(text: string): Promise<boolean> {
   }
 }
 
+/** 复制对白纯文本（去掉 DSL，按角色分组）。 */
 export async function copyDialoguePlainText(
   ed: editor.IStandaloneCodeEditor,
-  options: {
-    lookup?: (key: string) => string | null
-  } = {},
 ): Promise<boolean> {
   const source = getCopySource(ed)
   const text = formatDialoguePlainText(
     extractDialogueBlocks(source),
     extractChoiceParts(source),
-    options.lookup,
   )
   if (!text) return false
   return writeClipboard(text)
+}
+
+/** 复制 `.hs` 正文，仅把键名换成当前语言译文。 */
+export async function copyDialogueLocalizedSource(
+  ed: editor.IStandaloneCodeEditor,
+  lookup: (key: string) => string | null,
+): Promise<{ ok: boolean; replaced: number; missing: number }> {
+  const source = getCopySource(ed)
+  if (!source) return { ok: false, replaced: 0, missing: 0 }
+  const { content, replaced, missing } = substituteLocaleKeysInSource(source, lookup)
+  const ok = await writeClipboard(content)
+  return { ok, replaced, missing: missing.length }
 }
 
 export function bindCopyDialogueHotkey(
@@ -343,26 +366,6 @@ export function bindCopyDialogueHotkey(
   monaco: Monaco,
   getMap: () => TextMap | null | undefined = () => null,
 ) {
-  const run = async (localized: boolean) => {
-    const map = getMap() ?? null
-    const lookup =
-      localized && map ? (key: string) => map.get(key) : undefined
-    const ok = await copyDialoguePlainText(ed, { lookup })
-    if (localized) {
-      if (!map) {
-        notify(ok ? '当前没有语言文本映射，已按正文键名复制' : '没有可复制的对白', {
-          kind: 'warning',
-        })
-        return
-      }
-      notify(ok ? `已复制本地化对白（${map.locale}）` : '没有可复制的对白', {
-        kind: ok ? 'info' : 'warning',
-      })
-      return
-    }
-    if (!ok) notify('没有可复制的对白', { kind: 'warning' })
-  }
-
   ed.addAction({
     id: 'hanshu.copyDialogue',
     label: '复制对白',
@@ -371,7 +374,9 @@ export function bindCopyDialogueHotkey(
     contextMenuOrder: 1.5,
     precondition: 'editorTextFocus',
     run: () => {
-      void run(false)
+      void copyDialoguePlainText(ed).then((ok) => {
+        if (!ok) notify('没有可复制的对白', { kind: 'warning' })
+      })
     },
   })
   ed.addAction({
@@ -387,7 +392,29 @@ export function bindCopyDialogueHotkey(
     contextMenuOrder: 1.6,
     precondition: 'editorTextFocus',
     run: () => {
-      void run(true)
+      void (async () => {
+        const map = getMap() ?? null
+        if (!map) {
+          const source = getCopySource(ed)
+          if (!source) {
+            notify('没有可复制的正文', { kind: 'warning' })
+            return
+          }
+          const ok = await writeClipboard(source)
+          notify(ok ? '当前没有语言文本映射，已复制正文键名' : '复制失败', {
+            kind: 'warning',
+          })
+          return
+        }
+        const result = await copyDialogueLocalizedSource(ed, (key) => map.get(key))
+        if (!result.ok) {
+          notify('复制失败', { kind: 'warning' })
+          return
+        }
+        const missing =
+          result.missing > 0 ? `，${result.missing} 个键缺译文` : ''
+        notify(`已复制本地化正文（${map.locale}，替换 ${result.replaced} 处${missing}）`)
+      })()
     },
   })
 }
