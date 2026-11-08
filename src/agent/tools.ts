@@ -13,6 +13,13 @@
  *   assertWritable(path) → host 真正写入 → noteWritten(path)
  * assertWritable 同时承担「撤销日志 before-image」的记录，所以每个 write 分支都必须先调它；
  * 校验与写入之间不插入额外 await，避免 TOCTOU。
+ *
+ * 修正草案 D2「两把锁」：
+ * - `lock_source` 只锁源文件；语言译文文件用 `lock_lang` 单独锁；
+ * - 锁一直持有到 `unlock_source` / `unlock_lang` / Run 结束，**写成功不释放**，
+ *   所以同一 Run 里可以连续写，不需要反复 lock；
+ * - 语言类写工具（write_lang / delete_lang_keys / parse_hs）需要「源文件锁 + 每个目标语言的锁」，
+ *   由 guardedLangWrite 统一校验（缺语言锁时拒绝且不触达宿主）。
  */
 
 import type {
@@ -120,7 +127,7 @@ const TOOL_SPECS: ToolSpec[] = [
   defineTool(
     'read',
     'list_sources',
-    '【read / 只读，无需锁】列出所有工程与源文件（逻辑文件名、类别、大小、更新时间）。类别 hanshu/character/script/goal/progress/story/navigator/gift 对应 src/ 下源目录，meta 对应 meta/ 下的创作资料（.md 文档、.tts 配音方案、.ttsservice 服务定义）；旧 *.voice 可能仍在包根（root）。',
+    '【read / 只读，无需锁】列出所有工程与源文件（逻辑文件名、类别、大小、更新时间）。类别 hanshu/character/script/goal/progress/story/navigator/gift 对应 src/ 下源目录，meta 对应 meta/ 下的创作资料（.md 文档、.tts 配音方案、.ttsservice 服务定义）；旧 *.voice 可能仍在包根（root）。返回里 **detached:true** 表示该资源脱离了工程目录：只能读，不能写（lock / 写会被宿主拒绝）。',
     {
       package: str('只看某个包；省略则列出全部包'),
     },
@@ -128,11 +135,11 @@ const TOOL_SPECS: ToolSpec[] = [
   defineTool(
     'read',
     'read_source',
-    '【read / 只读但会登记版本】读取源文件内容，返回 content 与 version（内容哈希）。大文件用 offset / limit 分页读。**任何写入前都必须先用本工具读过该文件**（lock 的 not_read 判据）；version 不需要手动传给 write_source —— 版本前置条件由锁强制。',
+    '【read / 只读但会登记版本】读取源文件内容，返回 content 与 version（内容哈希）、totalLines（总行数）与 limitClamped（limit 是否被截到上限）。大文件用 offset / limit 分页读（都必须是正整数）；offset 超过总行数会返回 ok:false 并带 totalLines。**任何写入前都必须先用本工具读过该文件**（lock 的 not_read 判据）；version 不需要手动传给 write_source —— 版本前置条件由锁强制。',
     {
       source: str('逻辑文件名，如 序章.hs（不带 src/ 前缀）'),
-      offset: num('起始行号，1 起；默认 1'),
-      limit: num('最多读多少行，默认 400，上限 2000'),
+      offset: num('起始行号，必须是正整数（1 起）；默认 1'),
+      limit: num('最多读多少行，必须是正整数；默认 400，上限 2000'),
     },
     ['source'],
   ),
@@ -160,37 +167,39 @@ const TOOL_SPECS: ToolSpec[] = [
   defineTool(
     'read',
     'list_lang_keys',
-    '【read / 只读，无需锁】列出某个源文件里的本地化键，以及它在指定语言（默认当前语言）的译文与是否已翻译。读的是**工程文件**（S 权威），返回 version 与 localDraft（用户还有未保存草稿时 true）。翻译前先用它看清缺哪些键。',
+    '【read / 只读，无需锁】列出某个源文件里的本地化键，以及它在指定语言（默认当前语言）的译文与是否已翻译。读的是**本地草稿优先、其次工程文件**，返回 draft（是否来自未保存草稿）/ saved（是否已在工程文件里）/ version 与 localDraft；localeExists / active 表示该语言文件是否存在、是否为当前语言。分页：offset 1 起、limit 默认 200、上限 1000；offset 越界返回 ok:false 与 errorCode。翻译前先用它看清缺哪些键。',
     {
       source: str('逻辑文件名，如 序章.hs（键由该文件正文推导）'),
       locale: str('语言标签，如 zh_cn；省略用当前语言'),
       offset: num('起始序号，1 起；默认 1'),
-      limit: num('最多返回多少条，默认 200'),
+      limit: num('最多返回多少条，默认 200，上限 1000'),
     },
     ['source'],
   ),
   defineTool(
     'read',
     'list_voice_status',
-    '【read / 只读，无需锁】列出正文各键的对等配音状态：ok（单声道 Vorbis ogg）/ ref（该键是「引用资产」，指向包内另一份音频，refTarget 给出目标路径）/ missing（缺文件）/ not-ogg / invalid。agent 不能合成语音，缺配音时请如实告知用户。',
+    '【read / 只读，无需锁】列出正文各键的对等配音状态：ok（单声道 Vorbis ogg）/ ref（该键是「引用资产」，指向包内另一份音频，refTarget 给出目标路径）/ missing（缺文件）/ not-ogg / invalid。分页：offset 1 起、limit 默认 100、上限 500；返回 total / truncated，缺失用 missingCount + 至多 10 条 missingSample 汇总。agent 不能合成语音，缺配音时请如实告知用户。',
     {
       source: str('逻辑文件名，如 序章.hs'),
       locale: str('语言标签；省略用当前语言'),
+      offset: num('起始序号，1 起；默认 1'),
+      limit: num('最多返回多少条，默认 100，上限 500'),
     },
     ['source'],
   ),
   defineTool(
     'read',
     'check_export',
-    '【read / 只读，无需锁】预演导出：返回 combined PAK 与工程包各有几个文件、有哪些警告（不下载；分平面见帮助「导出 PAK」）。',
+    '【read / 只读，无需锁】预演导出：返回 combined PAK 与工程包各有几个文件、有哪些警告（不下载；分平面见帮助「导出 PAK」）。返回 truncated 表示警告列表被截断，warningTotal 是警告总数（可能大于 warnings.length）。',
     {},
   ),
 
-  /* ── lock 类：write 的唯一前置条件；多路径原子、不等待（§8） ── */
+  /* ── lock 类：write 的前置条件；多路径/多语言原子、不等待（§8、修正草案 D2） ── */
   defineTool(
     'lock',
     'lock_source',
-    '【lock / write 的前置条件】占住一个或多个路径。多路径原子：要么全部拿到，要么一个都不持有。前提：本 Run 已 read 过且最后读到的版本仍是当前版本、人类没有未提交的脏编辑。creating:true 表示「占住一个还不存在的名字」，create_source 与 rename_source 的目标名要用它。成功返回 { locked:true, version, content }；失败返回 { locked:false, reason, currentVersion, currentContent, hint }，reason ∈ version_stale | human_editing | not_read | not_found | held —— 按 reason 自愈，hint 就是下一步。锁不等待：拿不到立即失败；同一文件连续被拒 3 次就放弃并如实报告用户。',
+    '【lock / write 源文件的前置条件】占住一个或多个**源文件**（逻辑文件名）。多路径原子：要么全部拿到，要么一个都不持有。本工具**只锁源文件**；语言译文文件用 lock_lang 单独锁。前提：本 Run 已 read 过且最后读到的版本仍是当前版本。creating:true 表示「占住一个还不存在的名字」，**只给 create_source 用**。成功返回 { locked:true, version, content }；失败返回 { locked:false, reason, currentVersion, currentContent, hint, errorCode }，reason ∈ version_stale | not_read | not_found | already_exists | held —— 按 reason 自愈，hint 就是下一步。锁不等待：拿不到立即失败；同一文件连续被拒 3 次就放弃并如实报告用户。成功后锁一直持有到 unlock_source / Run 结束，**写成功也不释放**。**锁期间编辑器不会自动成键**（避免与你的写入抢正文）；写工具仍只写本地草稿。',
     {
       paths: {
         type: 'array',
@@ -198,17 +207,58 @@ const TOOL_SPECS: ToolSpec[] = [
         items: { type: 'string' },
       },
       creating: bool(
-        'true = 占住一个尚不存在的名字（新建文件、改名的目标名）；目标已存在时 lock 失败',
+        'true = 占住一个尚不存在的名字（仅 create_source 新建文件用）；目标已存在时 lock 失败（already_exists）',
       ),
     },
     ['paths'],
+  ),
+  defineTool(
+    'lock',
+    'unlock_source',
+    '【lock / 释放源文件锁】释放本 Run 持有的源文件锁，幂等。paths 可以是数组，也可以是单个逻辑文件名。只会释放本 Run 的锁，别人的锁不受影响。返回 { unlocked:[...], held:[...] }：unlocked 是真正释放的路径，held 是**调用后本 Run 仍持有的全部路径（源文件 + 语言资产）**。需要让用户或其他 Run 编辑这些文件时先解锁；Run 结束也会自动释放。',
+    {
+      paths: {
+        type: 'array',
+        description: '要释放的逻辑文件名列表；也可直接传单个字符串',
+        items: { type: 'string' },
+      },
+    },
+    ['paths'],
+  ),
+  defineTool(
+    'lock',
+    'lock_lang',
+    '【lock / 写语言的前置条件】锁住某个源文件在指定语言下的 .lang 译文文件（多语言原子：要么全拿到，要么一个都不持有）。locales 省略 = 工程已有语言 + 当前语言；语言文件不存在时按 creating 占位（首次写译文）。这些 .lang 锁独立于源文件的锁：写译文前要先 lock_source 拿源文件锁，再 lock_lang 拿每种目标语言的锁。成功返回 { locked:true, langs:[{ locale, path, existed, version }] }；失败返回 { locked:false, reason, locale?, path?, hint, errorCode }。写成功不会释放锁，可连续写多次。**返回体里的 locale 才是规范标签**（如 en→en_us 会被归一化），回执/日志以返回值为准。',
+    {
+      source: str('逻辑文件名，如 序章.hs（译文路径由它推导）'),
+      locales: {
+        type: 'array',
+        description: '语言标签列表，如 ["zh_cn","en_us"]；省略 = 工程已有语言 + 当前语言',
+        items: { type: 'string' },
+      },
+    },
+    ['source'],
+  ),
+  defineTool(
+    'lock',
+    'unlock_lang',
+    '【lock / 释放语言锁】释放某源文件在指定语言下的 .lang 锁，幂等。locales 省略 = 全部派生语言。只会释放本 Run 的锁。返回 { unlocked:[...], held:[...] }：unlocked 是真正释放的 .lang 路径，held 是**调用后本 Run 仍持有的全部路径（源文件 + 语言资产）**。',
+    {
+      source: str('逻辑文件名，如 序章.hs'),
+      locales: {
+        type: 'array',
+        description: '语言标签列表；省略 = 全部派生语言',
+        items: { type: 'string' },
+      },
+    },
+    ['source'],
   ),
 
   /* ── write 类：必须已持锁；未持锁的调用会被逐个拒绝（严格模式） ── */
   defineTool(
     'write',
     'create_source',
-    '【write / 必须先 lock】新建一个剧本类源文件（.hs/.md/.char）。**调用前必须** lock_source({ paths: [新文件名], creating: true }) 占住这个名字，否则会被拒绝。同名文件已存在会**失败**，绝不覆盖 —— 覆盖请用 write_source。脚本与游戏性类型请到游戏性工作区创建。语言文本不能走这里（用 write_lang）。成功后返回 version（内容哈希），供下一轮 lock。',
+    '【write / 必须先 lock】新建一个源文件（.hs/.md/.char，也接受脚本/游戏性/meta 类资源；.lang/.voice 不能走这里）。**调用前必须** lock_source({ paths: [新文件名], creating: true }) 占住这个名字，否则会被拒绝。同名文件已存在会**失败**，绝不覆盖 —— 覆盖请用 write_source。语言文本用 write_lang；配音映射由界面维护。成功后返回 version（内容哈希），供下一轮 lock。',
     {
       source: str('逻辑文件名，如 序章.hs'),
       content: str('完整文件正文'),
@@ -239,27 +289,8 @@ const TOOL_SPECS: ToolSpec[] = [
   ),
   defineTool(
     'write',
-    'rename_source',
-    '【write / 源与目标都要 lock】重命名源文件，并同步重命名它与**所有语言**对应的语言文本与配音目录。**源与目标都要持锁**：先 lock_source({ paths: [source] })，再 lock_source({ paths: [newSource], creating: true })；任一失败都不要调用本工具（多路径原子）。目标已存在会失败。成功后返回 version。',
-    {
-      source: str('当前逻辑文件名'),
-      newSource: str('新逻辑文件名（后缀须与源格式一致）'),
-    },
-    ['source', 'newSource'],
-  ),
-  defineTool(
-    'write',
-    'delete_source',
-    '【write / 必须先 lock】删除一个源文件，并连带删除它在**所有语言**下的语言文本与配音资产。**调用前必须** lock_source({ paths: [source] })。删掉无法自动恢复，删除前先跟用户确认。成功后返回 version。',
-    {
-      source: str('要删除的逻辑文件名，如 序章.hs'),
-    },
-    ['source'],
-  ),
-  defineTool(
-    'write',
     'write_lang',
-    '【write / 必须先 lock 源文件】一次写入多种语言的译文（多语言任务一次调用搞定）。**调用前必须** lock_source({ paths: [source] })；源文件的锁同时覆盖它**已存在**的派生语言资产（外部改过会以版本冲突拒绝）。译文会**立即写进工程文件**（不需要再保存工程），返回 writtenPaths 与 version。语言标签用「语言_地区」小写下划线形式（如 zh_cn / en_us / ja_jp）；工程里已有该语言时会自动沿用它的标签。键必须已存在于正文里（用 list_lang_keys 查）——单行语句写在行末 `narrator:7f3a91c2//`，多行块里键名单独占一行；新增台词要先 parse_hs 或 edit_source 把键写进正文。成功后返回 version。',
+    '【write / 必须先 lock 源文件】一次写入多种语言的译文（多语言任务一次调用搞定）。**调用前必须两把锁都拿到**：lock_source({ paths: [source] }) 锁源文件，再 lock_lang({ source, locales: [...目标语言] }) 锁每个目标语言的 .lang；缺语言锁会被拒绝。写入只到**本地草稿**（返回 draft:true、saved:false、version:null），需要**用户保存工程**后才进文件；写完要在回复里提醒用户保存。语言标签用「语言_地区」小写下划线形式（如 zh_cn / en_us / ja_jp）；工程里已有该语言时会自动沿用它的标签，**返回体里的 locale 才是规范标签**（如 en→en_us 会被归一化），回执以返回值为准。键必须已存在于正文里（用 list_lang_keys 查）——单行语句写在行末 `narrator:7f3a91c2//`，多行块里键名单独占一行；新增台词要先 parse_hs 或 edit_source 把键写进正文。成功后返回 writtenPaths 与草稿标记。',
     {
       source: str('逻辑文件名，如 序章.hs'),
       translations: {
@@ -285,7 +316,7 @@ const TOOL_SPECS: ToolSpec[] = [
   defineTool(
     'write',
     'delete_lang_keys',
-    '【write / 必须先 lock 源文件】删除指定键的译文（正文若仍在引用这些键，请先确认是否已废弃）。**调用前必须** lock_source({ paths: [source] })；源文件的锁覆盖派生的语言资产。删除**立即写进工程文件**，成功后返回 writtenPaths 与 version。',
+    '【write / 必须先 lock 源文件】删除指定键的译文。**调用前必须** lock_source({ paths: [source] }) + lock_lang({ source, locales: [目标语言] })；缺语言锁会被拒绝。**默认拒绝删除正文仍在引用的键**（返回 reason=keys_in_use 与 inUseKeys）；确需删除时显式传 force:true。删除只写**本地草稿**（返回 draft:true、saved:false、version:null），需要用户保存工程后才进文件；成功后返回 writtenPaths 与草稿标记。',
     {
       source: str('逻辑文件名，如 序章.hs'),
       locale: str('语言标签；省略用当前语言'),
@@ -294,13 +325,14 @@ const TOOL_SPECS: ToolSpec[] = [
         description: '要删除的键',
         items: { type: 'string' },
       },
+      force: bool('true = 即使正文仍在引用这些键也删除（危险，默认 false）'),
     },
     ['source', 'keys'],
   ),
   defineTool(
     'write',
     'parse_hs',
-    '【write / 必须先 lock 源文件】解析（自动成键）：把正文里还不是键名的可本地化文本换成**文本哈希键**，同时把原文写进该语言的映射。**调用前必须** lock_source({ paths: [source] })；源文件的锁覆盖派生的语言资产。译文映射立即写进工程文件（正文仍是草稿，等保存工程），成功后返回 writtenPaths 与 version。',
+    '【write / 必须先 lock 源文件】解析（自动成键）：把正文里还不是键名的可本地化文本换成**文本哈希键**，同时把原文写进该语言的映射。**调用前必须** lock_source({ paths: [source] }) + lock_lang({ source, locales: [该语言] })；缺语言锁会被拒绝。**键名是这段文本的哈希：只有用同一种语言的文本重新 parse_hs 才能拿回原来的键**；跨语言 parse 会生成新键，并把该语言文本当作原文灌进目标语言（逆解析用的哪个 locale，就必须用同一个 locale 再 parse_hs）。译文映射只写**本地草稿**（返回 draft:true、saved:false、version:null），正文与译文都要等**用户保存工程**才进文件；成功后返回 writtenPaths 与草稿标记。**返回体里的 locale 才是规范标签**（如 en→en_us 会被归一化），回执/日志以返回值为准。',
     {
       source: str('逻辑文件名，如 序章.hs'),
       locale: str('语言标签，如 zh_cn；省略用当前语言'),
@@ -310,7 +342,7 @@ const TOOL_SPECS: ToolSpec[] = [
   defineTool(
     'write',
     'unparse_hs',
-    '【write / 必须先 lock 源文件】逆解析：把正文里的键名换回该语言映射里的文本（键名被替换掉），常用来把某个语言的内容还原成可读正文。**会改写正文**，动手前先跟用户确认，且**调用前必须** lock_source({ paths: [source] })。多行译文与缺失译文不会处理，会如实报告。`#stopparse` 只影响解析成键，不拦逆解析。成功后返回 version。',
+    '【write / 必须先 lock 源文件】逆解析：把正文里的键名换回该语言映射里的文本（键名被替换掉），常用来把某个语言的内容还原成可读正文。**会改写正文**，动手前先跟用户确认，且**调用前必须** lock_source({ paths: [source] })。**键名是文本哈希：跨语言逆解析后原键无法恢复**（例如用 en_us 逆解析再 parse_hs(zh_cn)，会按英文文本生成新键、旧键变孤儿）；逆解析后请用**同一个 locale** 重新 parse_hs。多行译文与缺失译文不会处理，会如实报告。`#stopparse` 只影响解析成键，不拦逆解析。成功后返回 version 与英文 note。它只改正文，**只需要源文件锁（不需要 lock_lang）**。**返回体里的 locale 才是规范标签**（如 en→en_us 会被归一化），回执/日志以返回值为准。',
     {
       source: str('逻辑文件名，如 序章.hs'),
       locale: str('语言标签，如 zh_cn；省略用当前语言'),
@@ -339,55 +371,261 @@ export function toolKindsOf(name: string): AgentToolKind | undefined {
 
 /* ───────────────────────── 派发辅助 ───────────────────────── */
 
-function failJson(error: string, hint?: string): string {
-  return JSON.stringify(hint === undefined ? { ok: false, error } : { ok: false, error, hint })
+/* ───────────────────────── 错误载荷（B4 / 修正草案 §10） ───────────────────────── */
+
+/** 工具失败体的统一错误码（B4）：所有 `{ok:false}` / `{locked:false}` 都必须带一个 */
+export type AgentErrorCode =
+  | 'not_found'
+  | 'not_unique'
+  | 'detached'
+  | 'not_read'
+  | 'version_stale'
+  | 'held'
+  | 'already_exists'
+  | 'invalid_arguments'
+  | 'invalid_keys'
+  | 'keys_not_in_source'
+  | 'keys_in_use'
+  | 'write_failed'
+  | 'local_only'
+  | 'host_error'
+  | 'unknown_tool'
+
+const AGENT_ERROR_CODE_SET: ReadonlySet<string> = new Set<AgentErrorCode>([
+  'not_found',
+  'not_unique',
+  'detached',
+  'not_read',
+  'version_stale',
+  'held',
+  'already_exists',
+  'invalid_arguments',
+  'invalid_keys',
+  'keys_not_in_source',
+  'keys_in_use',
+  'write_failed',
+  'local_only',
+  'host_error',
+  'unknown_tool',
+])
+
+export function isAgentErrorCode(value: unknown): value is AgentErrorCode {
+  return typeof value === 'string' && AGENT_ERROR_CODE_SET.has(value)
+}
+
+/** 从宿主/仲裁失败体推断 errorCode：reason 优先，其次已知 error 形态，最后 host_error */
+function inferErrorCode(result: { error?: unknown; reason?: unknown }): AgentErrorCode {
+  if (isAgentErrorCode(result.reason)) return result.reason
+  const error = typeof result.error === 'string' ? result.error : ''
+  if (/not unique|duplicated? across|resource name is not unique/i.test(error)) return 'not_unique'
+  if (/detached/i.test(error)) return 'detached'
+  if (/keys? (?:are )?not in (?:the )?source|keys_not_in_source/i.test(error)) {
+    return 'keys_not_in_source'
+  }
+  if (/still (?:referenced|in use)|keys_in_use/i.test(error)) return 'keys_in_use'
+  if (/local[ -]only/i.test(error)) return 'local_only'
+  if (/not found|does not exist|no such/i.test(error)) return 'not_found'
+  if (/out of range|must be a positive integer|requires "|invalid translation keys/i.test(error)) {
+    return 'invalid_arguments'
+  }
+  if (/write failed|failed to write/i.test(error)) return 'write_failed'
+  return 'host_error'
 }
 
 /**
- * write 被拒时的统一返回体：`{ ok:false, error, hint }`。
+ * 失败体统一补 `errorCode`（B4）；成功体原样返回。
+ * - `reason` 原样保留（lock / write_lang 的兼容字段），`errorCode` 与它同值；
+ * - 宿主/仲裁没给 reason 时按 error 文本兜底；仍识别不了 → `host_error`。
+ */
+export function normalizeFailure<T extends { ok?: boolean; locked?: boolean }>(
+  result: T,
+): T & { errorCode?: AgentErrorCode } {
+  if (result.ok !== false && result.locked !== false) {
+    return result as T & { errorCode?: AgentErrorCode }
+  }
+  return {
+    ...result,
+    errorCode: inferErrorCode(result as { error?: unknown; reason?: unknown }),
+  }
+}
+
+function jsonResult<T extends { ok?: boolean; locked?: boolean }>(result: T): string {
+  return JSON.stringify(normalizeFailure(result))
+}
+
+function failJson(
+  error: string,
+  hint?: string,
+  errorCode: AgentErrorCode = 'host_error',
+): string {
+  return JSON.stringify({
+    ok: false,
+    error,
+    ...(hint === undefined ? {} : { hint }),
+    errorCode,
+  })
+}
+
+/**
+ * write 被拒时的统一返回体：`{ ok:false, error, hint, errorCode }`。
  *
  * 严格模式的关键：**拒绝时绝不调用 host**，否则就是"先改了再说"。
- * hint 里必须能直接看到 lock_source（§8：错误里给出可执行下一步）；
- * 仲裁层给了更具体 hint 时保留它，只在它没提到 lock_source 时补上兜底提示。
+ * B5-②：只有 `held | not_read | version_stale` 才追加 "Call lock_source…" 兜底；
+ * `already_exists` 等宿主的 hint 已自洽（例如改用 write_source），不再拼锁提示。
  */
+const LOCK_RECOVERY_REASONS: ReadonlySet<string> = new Set([
+  'held',
+  'not_read',
+  'version_stale',
+])
+
 function deniedJson(
   source: AgentPath,
-  denial: { error: string; hint?: string },
+  denial: { error: string; hint?: string; reason?: string },
 ): string {
-  const fallback = `请先调用 lock_source({ paths: ["${source}"] })（新建/改名目标用 creating: true），拿到锁再写。`
-  const hint =
-    denial.hint === undefined
-      ? fallback
-      : denial.hint.includes('lock_source')
-        ? denial.hint
-        : `${denial.hint} ${fallback}`
-  return JSON.stringify({ ok: false, error: denial.error, hint })
+  const fallback = `Call lock_source({ "paths": ["${source}"] }) (use creating: true for a new file) to get the lock before writing.`
+  let hint = denial.hint
+  if (denial.reason !== undefined && LOCK_RECOVERY_REASONS.has(denial.reason)) {
+    hint =
+      hint === undefined
+        ? fallback
+        : hint.includes('lock_source')
+          ? hint
+          : `${hint} ${fallback}`
+  }
+  return jsonResult({
+    ok: false,
+    error: denial.error,
+    ...(hint === undefined ? {} : { hint }),
+    ...(denial.reason === undefined ? {} : { reason: denial.reason }),
+  })
 }
 
 /**
- * write 成功后的统一收尾：
- * 1. `noteWritten` 让仲裁层重新读内容、登记本 Run 写出的版本并消费锁（§8 锁生命周期①）；
- * 2. 把宿主返回的 `version`（内容哈希）透传给模型，模型下一轮 lock 时不必自己算。
+ * 语言文件未持锁 / 版本不符时的拒绝体（修正草案 D5：工具返回的 error/hint 用英文）。
  *
- * 宿主没给 version 时退化为 assertWritable 返回的版本；两者都没有就省略字段
- * （不伪造版本，避免模型拿错哈希去 lock）。
+ * 语言锁是独立的第二把锁：源文件锁拿到了不代表能写 `.lang`，hint 必须直接给出
+ * `lock_lang({ source, locales })`，模型才知道下一步。**拒绝时不触达宿主**。
+ */
+function langDeniedJson(
+  source: AgentPath,
+  langTarget: { locale: string; path: AgentPath },
+  denial: { reason?: string },
+): string {
+  return jsonResult({
+    ok: false,
+    error: `Language file is not writable: ${langTarget.path}`,
+    source,
+    locale: langTarget.locale,
+    path: langTarget.path,
+    hint: `Call lock_lang({ "source": "${source}", "locales": ["${langTarget.locale}"] }) before writing language files, then retry.`,
+    ...(denial.reason === undefined ? {} : { reason: denial.reason }),
+  })
+}
+
+/**
+ * 草稿语义的统一提示（修正草案 D1 / D5）：
+ * 所有工具写入只落**本地草稿**，用户显式保存工程后才进文件。
+ * 按 D5，工具返回 JSON 内的文本用英文。
+ */
+const SAVE_PROJECT_HINT =
+  'Draft only: ask the user to save the project to write these changes into the project files.'
+
+/**
+ * 源文件写工具成功后的收尾（草稿语义）：
+ * 1. `noteWritten` 登记写后版本并**刷新锁锚点，不释放锁** —— 同一 Run 可以连续写（D2）；
+ * 2. 返回 draft:true / saved:false，明确「只是草稿」；version 是**本地内容哈希**，
+ *    只供下一轮 lock 参考，不代表已保存进工程文件；
+ * 3. create_source 的版本由 noteWritten 提供，不再是空串（D6）；
+ * 4. `changed` 以**写后版本 vs 持锁版本**为准（P7）：同内容重写为 false，避免把
+ *    「写了一遍」误报成「内容变了」；没有 permit 版本时才退回宿主给的值。
  */
 async function finishWrite(
   target: AgentToolTarget,
   paths: AgentPath[],
   result: AgentOpResult,
-  fallbackVersion?: ContentVersion,
+  permitVersion?: ContentVersion,
 ): Promise<string> {
   if (result.ok === false) {
-    // 宿主写入失败：不登记、不消费锁（锁会在本轮结束由 facade 的 endRound 释放）
-    return JSON.stringify({ ...result, ok: false })
+    // 宿主写入失败：不登记；锁仍由本 Run 持有（写失败不释放，D7 第 10 条）
+    return jsonResult({ ...result, ok: false })
   }
-  for (const path of paths) await target.arbiter.noteWritten(path)
-  const version = typeof result.version === 'string' ? result.version : fallbackVersion
+  const primary = paths[0]
+  let primaryVersion: ContentVersion | null = null
+  for (const path of paths) {
+    const version = await target.arbiter.noteWritten(path)
+    if (path === primary) primaryVersion = version
+  }
+  const hostVersion = typeof result.version === 'string' ? result.version : undefined
+  const version = primaryVersion ?? hostVersion ?? permitVersion ?? null
+  const hostChanged = typeof result.changed === 'boolean' ? result.changed : undefined
+  const changed =
+    permitVersion !== undefined && primaryVersion !== null
+      ? primaryVersion !== permitVersion
+      : hostChanged
   return JSON.stringify({
     ...result,
     ok: true,
-    ...(version === undefined ? {} : { version }),
+    draft: true,
+    saved: false,
+    hint: SAVE_PROJECT_HINT,
+    ...(version === null ? {} : { version }),
+    ...(changed === undefined ? {} : { changed }),
+  })
+}
+
+/**
+ * 语言写工具成功后的收尾（草稿语义，修正草案 D1）：
+ * - 保留宿主回报的 `writtenPaths`（哪些 `.lang` 的**草稿**被写），但宿主里任何
+ *   `saved:true` / `savedToProject:true` / `version` 的「已落盘」信号一律改写成
+ *   `draft:true, saved:false, version:null`；
+ * - 多语言逐条结果（`locales`）也逐条改成 `draft:true, saved:false`；
+ * - hint 用英文提醒用户保存工程（D5）。
+ *
+ * 仍然调 `noteWritten` 登记写后版本供锁表使用 —— 那是**本地草稿版本**，不出现在返回体里。
+ */
+async function finishLangWrite(
+  target: AgentToolTarget,
+  source: AgentPath,
+  registered: AgentPath[],
+  result: AgentOpResult,
+): Promise<string> {
+  if (result.ok === false) return jsonResult({ ...result, ok: false })
+
+  const writtenPaths: AgentPath[] = []
+  for (const path of [source, ...registered]) {
+    await target.arbiter.noteWritten(path)
+    if (path !== source) writtenPaths.push(path)
+  }
+
+  // 从宿主结果里剥掉所有「已保存」痕迹，再统一盖上草稿标记
+  const rest: Record<string, unknown> = { ...result }
+  delete rest.version
+  delete rest.versions
+  delete rest.draft
+  delete rest.saved
+  delete rest.hint
+  const locales = Array.isArray(rest.locales)
+    ? (rest.locales as unknown[]).map((entry) =>
+        entry !== null && typeof entry === 'object'
+          ? {
+              ...(entry as Record<string, unknown>),
+              draft: true,
+              saved: false,
+              savedToProject: false,
+            }
+          : entry,
+      )
+    : rest.locales
+  return JSON.stringify({
+    ...rest,
+    ok: true,
+    draft: true,
+    saved: false,
+    hint: SAVE_PROJECT_HINT,
+    version: null,
+    writtenPaths,
+    ...(locales === undefined ? {} : { locales }),
   })
 }
 
@@ -409,44 +647,40 @@ async function guardedWrite(
 }
 
 /**
- * 语言类写工具：源文件的锁 + 派生语言资产的版本守卫。
+ * 语言类写工具的前置（修正草案 D2「两把锁」）：
+ *   源文件锁（lock_source） + 每个目标语言的 .lang 锁（lock_lang）
  *
- * 源文件的锁在仲裁层已经展开到「已存在的语言资产」；这里在真正写入前
- * 再核对一遍：如果某个语言文件在 lock 之后被外部改过，就拒绝本次写入并告诉模型
- * 重新 lock + 重新读。**不能**用源文件版本没变冒充"语言文件没被改过"——
- * 这正是译文被悄悄覆盖率、而 agent 毫无察觉的根因（§8 派生资产、TOCTOU）。
+ * 缺任一锁就拒绝，**不触达宿主**；缺少语言锁的 hint 用英文（D5）并直接给出 lock_lang 调用。
+ * 目标语言来自参数（write_lang 的 translations 键 / delete_lang_keys、parse_hs 的 locale），
+ * 由 host.derivedLangTargets 解析成实际 `.lang` 路径；省略语言 = 工程已有 + 当前语言。
+ * 写入成功后登记源文件 + 宿主回报的实际写入路径（writtenPaths）的**草稿版本**，
+ * 返回体统一盖成 draft:true / saved:false（D1：语言只写本地草稿，用户保存工程才进文件）。
  */
 async function guardedLangWrite(
   target: AgentToolTarget,
   source: AgentPath,
+  locales: string[] | undefined,
   action: () => Promise<AgentOpResult>,
 ): Promise<string> {
-  const permit = await target.arbiter.assertWritable(source)
-  if (!permit.ok) return deniedJson(source, permit)
+  const sourcePermit = await target.arbiter.assertWritable(source)
+  if (!sourcePermit.ok) return deniedJson(source, sourcePermit)
 
-  for (const derived of target.host.derivedLangPaths?.(source) ?? []) {
-    const current = await target.host.readAssetText?.(derived)
-    if (current === null || current === undefined) continue // 还不存在：本次会新建
-    const sibling = await target.arbiter.assertWritable(derived)
-    if (!sibling.ok) {
-      return JSON.stringify({
-        ok: false,
-        error: `语言文件在 lock 之后被外部修改：${derived}`,
-        source,
-        path: derived,
-        hint:
-          `先 lock_source({ paths: ["${source}"] }) 重新取锁，` +
-          '再用 list_lang_keys 读最新译文后重试；不要覆盖别人的改动。',
-      })
-    }
+  const langTargets = target.host.derivedLangTargets?.(source, locales) ?? []
+  for (const langTarget of langTargets) {
+    const langPermit = await target.arbiter.assertWritable(langTarget.path)
+    if (!langPermit.ok) return langDeniedJson(source, langTarget, langPermit)
   }
 
   const result = await action()
   const rawWritten = (result as unknown as { writtenPaths?: unknown }).writtenPaths
   const written = Array.isArray(rawWritten)
-    ? (rawWritten as AgentPath[]).filter((path) => path !== source)
+    ? (rawWritten as unknown[]).filter(
+        (path): path is AgentPath => typeof path === 'string' && path !== source,
+      )
     : []
-  return finishWrite(target, [source, ...written], result, permit.version)
+  // 宿主没回 writtenPaths 时按「目标语言路径都写到了」登记
+  const registered = written.length > 0 ? written : langTargets.map((item) => item.path)
+  return finishLangWrite(target, source, [...new Set(registered)], result)
 }
 
 /* ───────────────────────── 参数归一化 ───────────────────────── */
@@ -460,9 +694,95 @@ function optionalText(args: Record<string, unknown>, key: string): string | unde
   return value == null || value === '' ? undefined : String(value)
 }
 
-function optionalNumber(args: Record<string, unknown>, key: string): number | undefined {
-  const value = args[key]
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+type PositiveIntegerArg =
+  | { ok: true; value: number | undefined }
+  | { ok: false; error: string; hint: string }
+
+/**
+ * `read_source` 的 offset / limit：只接受缺省或正整数（6-A 参数校验）。
+ * 0 / 负数 / 非整数 / 非数字都在**调用 arbiter / 宿主之前**拒绝 —— 别让模型用
+ * 「offset: 0」这种写法去试探宿主行为。
+ * offset 越界（> 总行数）不在这里判：由宿主返回 ok:false，工具原样透传（6-B）。
+ */
+function parsePositiveIntegerArg(
+  args: Record<string, unknown>,
+  key: 'offset' | 'limit',
+): PositiveIntegerArg {
+  const raw = args[key]
+  if (raw === undefined || raw === null) return { ok: true, value: undefined }
+  if (typeof raw !== 'number' || !Number.isInteger(raw) || raw < 1) {
+    return {
+      ok: false,
+      error: `${key} must be a positive integer`,
+      hint: `Call read_source with a positive integer ${key} (1-based), or omit ${key} to use the default.`,
+    }
+  }
+  return { ok: true, value: raw }
+}
+
+/** 译文键的规范格式：小写 8 位十六进制（与 list_lang_keys 返回一致，D6 / 6-A） */
+const LANG_KEY_PATTERN = /^[0-9a-f]{8}$/
+
+type LangKeyIssues = { invalidKeys: string[]; duplicates: string[] }
+
+function collectUnique(list: string[], value: string): void {
+  if (!list.includes(value)) list.push(value)
+}
+
+/**
+ * `write_lang` 的键检查。
+ * 同一 key 出现在不同语言里是**正常**的（同一句台词的多语言译文），所以重复只在
+ * 单个语言的列表内判；大写 / 非 8 位十六进制一律进 invalidKeys，**不再静默 toLowerCase**。
+ */
+function inspectTranslationKeys(value: unknown): LangKeyIssues {
+  const invalidKeys: string[] = []
+  const duplicates: string[] = []
+  if (!value || typeof value !== 'object') return { invalidKeys, duplicates }
+  for (const entries of Object.values(value as Record<string, unknown>)) {
+    if (!Array.isArray(entries)) continue
+    const seen = new Set<string>()
+    for (const item of entries) {
+      if (!item || typeof item !== 'object') continue
+      const key = String((item as Record<string, unknown>).key ?? '').trim()
+      if (!LANG_KEY_PATTERN.test(key)) {
+        collectUnique(invalidKeys, key)
+        continue
+      }
+      if (seen.has(key)) collectUnique(duplicates, key)
+      else seen.add(key)
+    }
+  }
+  return { invalidKeys, duplicates }
+}
+
+/** `delete_lang_keys` 的键检查：同一个 keys 数组内重复即 duplicates */
+function inspectKeyList(value: unknown): LangKeyIssues {
+  const invalidKeys: string[] = []
+  const duplicates: string[] = []
+  if (!Array.isArray(value)) return { invalidKeys, duplicates }
+  const seen = new Set<string>()
+  for (const item of value) {
+    const key = String(item ?? '').trim()
+    if (!LANG_KEY_PATTERN.test(key)) {
+      collectUnique(invalidKeys, key)
+      continue
+    }
+    if (seen.has(key)) collectUnique(duplicates, key)
+    else seen.add(key)
+  }
+  return { invalidKeys, duplicates }
+}
+
+/** 键格式问题统一返回体：有 invalidKeys / duplicates 时拒绝且不触达锁 / 宿主 */
+function invalidLangKeysJson(issues: LangKeyIssues): string {
+  return JSON.stringify({
+    ok: false,
+    error: 'invalid translation keys',
+    invalidKeys: issues.invalidKeys,
+    duplicates: issues.duplicates,
+    hint: 'Translation keys must be exactly 8 lowercase hex characters (for example "7f3a91c2"); call list_lang_keys to get the valid keys, then fix or remove the listed ones and retry.',
+    errorCode: 'invalid_keys' satisfies AgentErrorCode,
+  })
 }
 
 /** `lock_source` 的 paths 允许多种写法：数组（标准）、单个字符串（模型常犯的简化） */
@@ -472,6 +792,16 @@ function normalizePaths(value: unknown): string[] {
     return single ? [single] : []
   }
   return normalizeKeys(value)
+}
+
+/** `lock_lang` / `unlock_lang` 的 locales：省略或空 = 工程已有语言 + 当前语言 */
+function normalizeLocales(value: unknown): string[] | undefined {
+  if (typeof value === 'string') {
+    const single = value.trim()
+    return single ? [single] : undefined
+  }
+  const locales = normalizeKeys(value)
+  return locales.length > 0 ? locales : undefined
 }
 
 function normalizeTranslations(value: unknown): Record<string, LangEntry[]> {
@@ -520,7 +850,7 @@ export async function executeAgentTool(
       ? (JSON.parse(call.function.arguments) as Record<string, unknown>)
       : {}
   } catch {
-    return failJson('工具参数不是合法 JSON')
+    return failJson('tool arguments are not valid JSON', undefined, 'invalid_arguments')
   }
 
   const source = () => text(args, 'source')
@@ -529,54 +859,129 @@ export async function executeAgentTool(
     switch (call.function.name) {
       /* ── read 类 ── */
       case 'list_sources':
-        return JSON.stringify(target.host.listSources(optionalText(args, 'package')))
-      case 'read_source':
+        return jsonResult(target.host.listSources(optionalText(args, 'package')))
+      case 'read_source': {
+        // 参数校验先于任何仲裁 / 宿主调用（6-A）：非法分页参数不该产生 read 版本登记
+        const offset = parsePositiveIntegerArg(args, 'offset')
+        if (!offset.ok) return failJson(offset.error, offset.hint, 'invalid_arguments')
+        const limit = parsePositiveIntegerArg(args, 'limit')
+        if (!limit.ok) return failJson(limit.error, limit.hint, 'invalid_arguments')
         // 必须走 arbiter.read：它按完整正文算版本并登记「本 Run 读过这一版」，
         // 直接 host.readSource 会让随后的 lock 全部以 not_read 失败（§8「read」）。
-        return JSON.stringify(
-          await target.arbiter.read(
-            source(),
-            optionalNumber(args, 'offset'),
-            optionalNumber(args, 'limit'),
-          ),
-        )
+        // totalLines / limitClamped / offset 越界的 ok:false 都由仲裁层/宿主给出，原样透传。
+        return jsonResult(await target.arbiter.read(source(), offset.value, limit.value))
+      }
       case 'validate_source':
-        return JSON.stringify(target.host.validateSource(source()))
+        return jsonResult(target.host.validateSource(source()))
       case 'get_active_file_path':
-        return JSON.stringify(target.host.getActiveFilePath())
+        return jsonResult(target.host.getActiveFilePath())
       case 'list_locales':
-        return JSON.stringify(target.host.listLocales())
-      case 'list_lang_keys':
-        return JSON.stringify(
+        return jsonResult(target.host.listLocales())
+      case 'list_lang_keys': {
+        // B2：分页参数先校验（非法 → invalid_arguments，且不调宿主）；limit 上限 1000
+        const offset = parsePositiveIntegerArg(args, 'offset')
+        if (!offset.ok) return failJson(offset.error, offset.hint, 'invalid_arguments')
+        const limit = parsePositiveIntegerArg(args, 'limit')
+        if (!limit.ok) return failJson(limit.error, limit.hint, 'invalid_arguments')
+        if (limit.value !== undefined && limit.value > 1000) {
+          return failJson(
+            'limit must be <= 1000',
+            'Call list_lang_keys with a limit between 1 and 1000, or omit it for the default (200).',
+            'invalid_arguments',
+          )
+        }
+        // 宿主 offset 越界的错误体（ok:false）原样透传，由 normalizeFailure 补 errorCode
+        return jsonResult(
           await target.host.listLangKeys(
             source(),
             optionalText(args, 'locale'),
-            optionalNumber(args, 'offset'),
-            optionalNumber(args, 'limit'),
+            offset.value,
+            limit.value,
           ),
         )
-      case 'list_voice_status':
-        return JSON.stringify(
-          await target.host.listVoiceStatus(source(), optionalText(args, 'locale')),
+      }
+      case 'list_voice_status': {
+        // B3：voice 也分页（offset 1 起、limit 默认 100、上限 500）
+        const offset = parsePositiveIntegerArg(args, 'offset')
+        if (!offset.ok) return failJson(offset.error, offset.hint, 'invalid_arguments')
+        const limit = parsePositiveIntegerArg(args, 'limit')
+        if (!limit.ok) return failJson(limit.error, limit.hint, 'invalid_arguments')
+        if (limit.value !== undefined && limit.value > 500) {
+          return failJson(
+            'limit must be <= 500',
+            'Call list_voice_status with a limit between 1 and 500, or omit it for the default (100).',
+            'invalid_arguments',
+          )
+        }
+        return jsonResult(
+          await target.host.listVoiceStatus(
+            source(),
+            optionalText(args, 'locale'),
+            offset.value,
+            limit.value,
+          ),
         )
+      }
       case 'check_export':
-        return JSON.stringify(await target.host.checkExport())
+        return jsonResult(await target.host.checkExport())
 
       /* ── lock 类 ── */
       case 'lock_source': {
         const paths = normalizePaths(args.paths)
         if (paths.length === 0) {
           return failJson(
-            'lock_source 需要至少一个路径，例如 {"paths":["序章.hs"]}',
-            '先 read_source 确认逻辑文件名，再调 lock_source({ paths: ["序章.hs"] })',
+            'lock_source requires at least one path, for example {"paths":["chapter.hs"]}',
+            'Call read_source to confirm the logical file name first, then call lock_source({ "paths": ["chapter.hs"] }).',
+            'invalid_arguments',
           )
         }
-        // 成功/失败都直接透出：失败体带 currentVersion/currentContent/hint，供模型一次往返自愈
+        // 成功/失败都直接透出：失败体带 reason/currentVersion/currentContent/hint，
+        // normalizeFailure 另补 errorCode（reason 原样保留，兼容旧调用方）
         const locked = await target.arbiter.lock(
           paths,
           args.creating === true ? { creating: true } : undefined,
         )
-        return JSON.stringify(locked)
+        return jsonResult(locked)
+      }
+      case 'unlock_source': {
+        const paths = normalizePaths(args.paths)
+        if (paths.length === 0) {
+          return failJson(
+            'unlock_source requires "paths" (a logical file name or an array of them).',
+            'Call get_active_file_path or list_sources to get logical file names, then retry.',
+            'invalid_arguments',
+          )
+        }
+        // 幂等：未持有的路径不报错，只出现在 unlocked 里；
+        // held = 调用后本 Run 仍持有的**全部**路径（P3：含源文件与语言资产）
+        const unlocked = target.arbiter.unlock(paths)
+        return JSON.stringify({ unlocked, held: target.arbiter.heldPaths() })
+      }
+      case 'lock_lang': {
+        const file = source()
+        if (!file) {
+          return failJson(
+            'lock_lang requires "source" (the logical source file name).',
+            'Call get_active_file_path or list_sources first.',
+            'invalid_arguments',
+          )
+        }
+        // 成功/失败都直接透出：失败体带 reason/locale/path/hint，另补 errorCode
+        return jsonResult(await target.arbiter.lockLang(file, normalizeLocales(args.locales)))
+      }
+      case 'unlock_lang': {
+        const file = source()
+        if (!file) {
+          return failJson(
+            'unlock_lang requires "source" (the logical source file name).',
+            'Call get_active_file_path or list_sources first.',
+            'invalid_arguments',
+          )
+        }
+        const locales = normalizeLocales(args.locales)
+        // held = 调用后本 Run 仍持有的全部路径（P3：不再只能反查本次 locale 的派生目标）
+        const unlocked = target.arbiter.unlockLang(file, locales)
+        return JSON.stringify({ unlocked, held: target.arbiter.heldPaths() })
       }
 
       /* ── write 类：每个分支都先 assertWritable（未持锁则 host 不被调用） ── */
@@ -598,46 +1003,48 @@ export async function executeAgentTool(
             args.replaceAll === true,
           ),
         )
-      case 'rename_source': {
-        // 多路径原子：源 + 目标都拿到锁才允许调用宿主；任一失败都不产生任何改动（§8「特殊路径」）
-        const from = source()
-        const to = text(args, 'newSource')
-        const fromPermit = await target.arbiter.assertWritable(from)
-        if (!fromPermit.ok) return deniedJson(from, fromPermit)
-        const toPermit = await target.arbiter.assertWritable(to, { creating: true })
-        if (!toPermit.ok) return deniedJson(to, toPermit)
-        const result = await target.host.renameSource(from, to)
-        // 两个路径都变了：各自 noteWritten（撤销日志与后续版本校验都需要）
-        return finishWrite(target, [from, to], result, fromPermit.version)
+      /* 语言类写工具：源文件锁 + 每个目标语言的 .lang 锁（修正草案 D2「两把锁」） */
+      case 'write_lang': {
+        // 键格式校验先于加锁 / 宿主（6-A）：非法或重复的键不能触发部分写入
+        const issues = inspectTranslationKeys(args.translations)
+        if (issues.invalidKeys.length > 0 || issues.duplicates.length > 0) {
+          return invalidLangKeysJson(issues)
+        }
+        const translations = normalizeTranslations(args.translations)
+        return guardedLangWrite(target, source(), Object.keys(translations), async () =>
+          target.host.writeLang(source(), translations),
+        )
       }
-      case 'delete_source':
-        return guardedWrite(target, source(), undefined, () =>
-          target.host.deleteSource(source()),
+      case 'delete_lang_keys': {
+        const issues = inspectKeyList(args.keys)
+        if (issues.invalidKeys.length > 0 || issues.duplicates.length > 0) {
+          return invalidLangKeysJson(issues)
+        }
+        const locale = optionalText(args, 'locale')
+        return guardedLangWrite(
+          target,
+          source(),
+          locale === undefined ? undefined : [locale],
+          async () =>
+            target.host.deleteLangKeys(
+              source(),
+              normalizeKeys(args.keys),
+              locale,
+              args.force === true,
+            ),
         )
-      /*
-       * 语言类与解析类写工具改的是「源文件 + 派生资产」（.lang / .voice / .ogg）：
-       * 契约里宿主把这一次调用当作源文件的一次事务，因此这里只校验**源文件**的锁。
-       * 取舍：派生资产随源文件一起提交，源文件的锁覆盖它们；不额外锁 assets 路径，
-       * 否则模型要为每个语言/每个配音键 lock 一次，锁协议会退化成不可用。
-       * 这与 §8「多文件先全验后全写」不矛盾 —— 它们是同一事务的产物，不是独立资源。
-       */
-      case 'write_lang':
-        return guardedLangWrite(target, source(), async () =>
-          target.host.writeLang(source(), normalizeTranslations(args.translations)),
+      }
+      case 'parse_hs': {
+        const locale = optionalText(args, 'locale')
+        return guardedLangWrite(
+          target,
+          source(),
+          locale === undefined ? undefined : [locale],
+          async () => target.host.parseHs(source(), locale),
         )
-      case 'delete_lang_keys':
-        return guardedLangWrite(target, source(), async () =>
-          target.host.deleteLangKeys(
-            source(),
-            normalizeKeys(args.keys),
-            optionalText(args, 'locale'),
-          ),
-        )
-      case 'parse_hs':
-        return guardedLangWrite(target, source(), async () =>
-          target.host.parseHs(source(), optionalText(args, 'locale')),
-        )
+      }
       case 'unparse_hs':
+        // 逆解析只改正文：只要源文件锁，不需要 lock_lang（D2 锁前置条件表）
         return guardedWrite(target, source(), undefined, () =>
           target.host.unparseHs(source(), optionalText(args, 'locale')),
         )
@@ -645,10 +1052,18 @@ export async function executeAgentTool(
       default:
         return JSON.stringify({
           ok: false,
-          error: `未知工具: ${call.function.name}`,
+          error: `unknown tool: ${call.function.name}`,
+          errorCode: 'unknown_tool' satisfies AgentErrorCode,
         })
     }
   } catch (error) {
-    return failJson(error instanceof Error ? error.message : String(error))
+    // 结构化错误（6-A/B4）：宿主抛出的异常不能逃逸到模型侧（例如跨包同名
+    // `resource name is not unique: X`），统一转成 {ok:false, error, hint, errorCode}。
+    const message = error instanceof Error ? error.message : String(error)
+    return failJson(
+      message,
+      'The host raised an error. Retry with an explicit logical file name (include the package/folder when the name is duplicated across packages), or call list_sources first to disambiguate.',
+      'host_error',
+    )
   }
 }

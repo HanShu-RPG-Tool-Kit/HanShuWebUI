@@ -288,6 +288,14 @@ export type TextHost = {
   onUnitSelect?(request: TextUnitSelectRequest): void
   /** 录音棚模式下划框选中了一批键（框在空白处松开且没拖动时 keys 为空 = 清空） */
   onMarquee?(request: TextMarqueeRequest): void
+  /**
+   * 是否允许**自动成键**。省略 = 恒允许。
+   *
+   * Agent 持有当前源文件（或它派生的 `.lang`）的锁时返回 false：锁期间成键只能由
+   * agent 显式 `parse_hs` 或用户解锁后操作，编辑器不得擅自把正文换成键名。
+   * 解锁后下一次输入会自然恢复，**不补做**历史成键。
+   */
+  canAutoKey?(): boolean
 }
 
 /** 录音棚模式下点选一个键名 */
@@ -2762,6 +2770,9 @@ export function bindText(
    */
   const migrateNow = (options?: { skipEditing?: boolean }) => {
     if (disposed || migrating || ed.getOption(monaco.editor.EditorOption.readOnly)) return
+    // Agent 持锁期间禁止自动成键（成键只能由 agent 显式 parse_hs 或用户解锁后操作）。
+    // 放在 readOnly 判据之后：录音棚等既有只读路径不受影响。
+    if (host.canAutoKey && !host.canAutoKey()) return
     const model = ed.getModel()
     const map = host.getMap()
     if (!model || !map) return
@@ -2901,6 +2912,8 @@ export function bindText(
     if (timer != null) window.clearTimeout(timer)
     timer = window.setTimeout(() => {
       timer = null
+      // 锁期间不成键，也不重画（重画由下一次输入/刷新自然触发）；解锁后无需补做历史成键
+      if (host.canAutoKey && !host.canAutoKey()) return
       // 打字触发：光标还在语句里就不成键
       migrateNow({ skipEditing: true })
       render()

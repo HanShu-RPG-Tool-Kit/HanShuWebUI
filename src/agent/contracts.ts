@@ -30,16 +30,16 @@ export type AgentPath = string
 
 /** lock 失败原因（见文档 §8「lock 的返回」） */
 export type LockDenyReason =
-  /** 最后读到的版本 ≠ 当前版本 */
+  /** 最后读到的版本 ≠ 当前版本（人类继续编辑 / 别的 Run 改过都归这一类） */
   | 'version_stale'
-  /** 人类有未提交的脏编辑 */
-  | 'human_editing'
   /** 本 Run 内没读过该文件 */
   | 'not_read'
   /** 文件不存在（且调用方没有声明 create） */
   | 'not_found'
   /** 已被其他 Run / 人类持有 */
   | 'held'
+  /** creating 语义下路径**已经存在**（占名失败；改用 write_source 覆盖） */
+  | 'already_exists'
 
 export type LockGrant = {
   locked: true
@@ -57,6 +57,36 @@ export type LockDenial = {
 }
 
 export type LockResult = LockGrant | LockDenial
+
+/**
+ * 语言锁（`lock_lang`）的一条授予记录。
+ * `.lang` 的路径是**工程相对路径**（`assets/<locale>/lang_<ext>/…`），不是逻辑名；
+ * 锁表按字符串路径登记，两类路径共用同一张表。
+ */
+export type LangLockGrant = {
+  locale: string
+  path: AgentPath
+  /** 锁的时候文件是否已存在；false = creating 语义（首次写该语言） */
+  existed: boolean
+  /** 不存在时为 null */
+  version: ContentVersion | null
+}
+
+export type LangLockDenial = {
+  locked: false
+  /** 整批原子失败：一个都不持有 */
+  reason: LockDenyReason
+  /** 失败的那一条（能定位时给出） */
+  locale?: string
+  path?: AgentPath
+  currentVersion?: ContentVersion
+  currentContent?: string
+  hint: string
+}
+
+export type LangLockResult =
+  | { locked: true; langs: LangLockGrant[] }
+  | LangLockDenial
 
 /** 多路径原子：要么全拿到，要么一个都不持有 */
 export type LockRequest = {
@@ -76,6 +106,11 @@ export type AgentFileWorld = {
   isHumanDirty: (path: AgentPath) => boolean
   /** 撤销日志回放用：把内容写回工作区（null = 删除） */
   write: (path: AgentPath, content: string | null) => Promise<void>
+  /**
+   * 语言草稿通道：把 `.lang` 的 staged 草稿写回指定内容（null = 撤掉该草稿）。
+   * 省略表示宿主不支持语言回放，回滚时语言路径会报 `unavailable` 冲突。
+   */
+  writeLang?: (path: AgentPath, content: string | null) => Promise<void>
 }
 
 /* ───────────────────────── 工具三语义 ───────────────────────── */
@@ -111,25 +146,39 @@ export type AgentHost = {
    * 省略时运行时退化为 `readSource(source, 1, 2000)`（>2000 行的文件请务必实现）。
    */
   readFullSource?: (source: string) => AgentOpResult
-  /** 人类是否有未提交的脏编辑（编辑器缓冲）：lock 的 `human_editing` 判据 */
+  /**
+   * 人类是否有未提交的脏编辑（编辑器缓冲）。**只给撤销预演用**（回滚要覆盖内容，
+   * 人类改过就报 `human_editing` 冲突）；lock 不再看它（D8：锁只看版本）。
+   */
   isHumanDirty?: (source: string) => boolean
   /**
-   * 源文件派生的语言资产路径（按工程语言表推导）。
-   * 锁会覆盖这些路径：外部改了语言文件、源文件版本却没变时，
-   * 下一次写译文会以版本冲突被拒绝，而不是悄悄覆盖别人的改动（§8 派生资产）。
+   * 源文件派生的语言资产路径（`assets/<locale>/lang_<ext>/…`）。`lock_lang` 用它把
+   * `{ source, locales }` 解析成要锁的路径；`locales` 省略 = 工程已有语言 + 当前语言。
    */
-  derivedLangPaths?: (source: string) => AgentPath[]
+  derivedLangTargets?: (
+    source: string,
+    locales?: string[],
+  ) => Array<{ locale: string; path: AgentPath }>
   /**
-   * 读派生的语言资产正文（S 权威优先，退回本机缓存）；不存在返回 null。
-   * 供派生资产的锁版本与 `write_lang` 的写前校验使用。
+   * 读派生的语言资产正文：**本地草稿优先**（staged），没有草稿才读工程文件 / 本机缓存；
+   * 不存在返回 null。供语言锁的版本判断、`write_lang` 的写前校验与 `noteWritten` 的
+   * 写后版本使用 —— 必须和 agent 刚写进的草稿是同一份内容，否则版本信号会锚在旧文件上。
    */
   readAssetText?: (path: AgentPath) => Promise<string | null>
   /** 新建源文件；同名已存在时**失败**（改用 `writeSource`） */
   createSource: (source: string, content: string) => AgentOpResult
+  /**
+   * 只从本机工作区草稿里删掉一个文件（**不写 S**）。撤销日志回放「本 Run 新建的文件」时用。
+   * 与 `deleteSource` 的区别：后者会发结构事务，agent 工具层已经不再提供删除能力（D1b）。
+   */
+  discardDraftSource?: (source: string) => void | Promise<void>
+  /**
+   * 撤销日志回放「语言草稿」用：把 `.lang` 的 staged 草稿写回指定内容
+   * （`null` = 撤掉该语言草稿）。与 `readAssetText` 同一套草稿优先口径。
+   */
+  writeLangDraft?: (path: AgentPath, content: string | null) => void | Promise<void>
   /** 覆盖**已存在**的源文件；不存在时**失败**（改用 `createSource`）。`.lang` 交给 `writeLang` */
   writeSource: (source: string, content: string) => AgentOpResult
-  /** 删除源文件，并连带删除它在所有语言下的语言文本与配音 */
-  deleteSource: (source: string) => Promise<AgentOpResult>
   /** 精确字面替换 */
   editSource: (
     source: string,
@@ -137,8 +186,6 @@ export type AgentHost = {
     newText: string,
     replaceAll?: boolean,
   ) => AgentOpResult
-  /** 改名，并连带搬迁所有语言的 lang / voice */
-  renameSource: (source: string, newSource: string) => Promise<AgentOpResult>
   /** 语法诊断 + `.hsc` 编译校验 */
   validateSource: (source: string) => AgentOpResult
   /** 当前打开文件的名字、类别与项目相对路径 */
@@ -157,14 +204,20 @@ export type AgentHost = {
     source: string,
     translations: Record<string, LangEntry[]>,
   ) => Promise<AgentOpResult>
-  /** 删除译文键 */
+  /** 删除译文键；`force` 省略/false 时拒绝删除正文仍在引用的键（D10） */
   deleteLangKeys: (
     source: string,
     keys: string[],
     locale?: string,
+    force?: boolean,
   ) => Promise<AgentOpResult>
-  /** 对等配音是否存在、是否单声道 Vorbis ogg */
-  listVoiceStatus: (source: string, locale?: string) => Promise<AgentOpResult>
+  /** 对等配音是否存在、是否单声道 Vorbis ogg；分页返回（offset 1 起） */
+  listVoiceStatus: (
+    source: string,
+    locale?: string,
+    offset?: number,
+    limit?: number,
+  ) => Promise<AgentOpResult>
   /** 解析：把正文的可本地化文本换成键名，并把文本写进该语言的映射 */
   parseHs: (source: string, locale?: string) => Promise<AgentOpResult>
   /** 逆解析：把该语言映射里的文本换回正文（键名被替换掉） */
@@ -180,29 +233,97 @@ export type AgentHost = {
 export type AgentToolArbiter = {
   /** read：返回内容与版本，并把「本 Run 读过这一版」记进版本表 */
   read: (source: AgentPath, offset?: number, limit?: number) => Promise<AgentOpResult>
-  /** lock：多路径原子；失败回传当前内容 */
+  /** lock：多路径原子；失败回传当前内容。只锁传入的路径，不再展开派生语言资产 */
   lock: (paths: AgentPath[], options?: { creating?: boolean }) => Promise<LockResult>
+  /**
+   * lock_lang：锁某源文件在指定语言下的 `.lang`。多语言原子；不传 locales =
+   * 工程已有语言 + 当前语言。不存在的译文文件按 creating 允许（返回 existed:false）。
+   */
+  lockLang: (source: AgentPath, locales?: string[]) => Promise<LangLockResult>
+  /** unlock_source：释放本 Run 持有的路径锁；返回真正释放的路径 */
+  unlock: (paths: AgentPath[]) => AgentPath[]
+  /** unlock_lang：释放某源文件在指定语言下的语言锁；返回真正释放的路径 */
+  unlockLang: (source: AgentPath, locales?: string[]) => AgentPath[]
+  /** 该路径当前是否被本 Run 持有（编辑器只读 / 自动成键抑制用） */
+  isLocked: (path: AgentPath) => boolean
+  /** 本 Run 当前持有的全部路径（源文件 + 语言资产；unlock 的 `held` 用） */
+  heldPaths: () => AgentPath[]
   /** write 前的强制校验：未持锁 / 版本已变 → 拒绝执行 */
   assertWritable: (
     source: AgentPath,
     options?: { creating?: boolean },
   ) => Promise<
-    { ok: true; version: ContentVersion } | { ok: false; error: string; hint?: string }
+    | { ok: true; version: ContentVersion }
+    | { ok: false; error: string; hint?: string; reason?: LockDenyReason }
   >
-  /** write 成功后登记（供撤销日志与后续版本校验） */
-  noteWritten: (source: AgentPath) => void | Promise<void>
-  /** 本轮模型回复结束：释放未被 write 消费的锁 */
+  /** write 成功后登记（供撤销日志与后续版本校验）；**不再释放锁**，返回写后版本 */
+  noteWritten: (source: AgentPath) => Promise<ContentVersion | null>
+  /** Run 结束：释放本 Run 仍持有的锁 */
   endRound: () => void | Promise<void>
 }
 
 /* ───────────────────────── Run 撤销日志 ───────────────────────── */
 
+/** 写入通道：源文件（工作区草稿）或语言文本（staged 语言草稿） */
+export type UndoChannel = 'source' | 'lang'
+
+/** 写前快照：`content === null` 表示写前不存在（回放即删除） */
+export type UndoBeforeImage = {
+  content: string | null
+  version: ContentVersion | null
+}
+
+/** 有序操作日志的一条：一个文件的「写前 → 写后」 */
+export type UndoEntry = {
+  kind: 'write' | 'create'
+  channel: UndoChannel
+  path: AgentPath
+  before: UndoBeforeImage
+  /** 本 Run 最后一次写出的内容版本（回滚的版本守卫基准） */
+  after: ContentVersion
+}
+
+export type UndoConflictReason =
+  /** 当前内容已不是本 Run 写出的那一版（人类 / 另一个 Run 改过） */
+  | 'version_stale'
+  /** 日志里没有写前快照（例如旧实现没记） */
+  | 'no_before_image'
+  /** 该文件正被人类编辑（编辑器缓冲未保存） */
+  | 'human_editing'
+  /** 宿主不支持该通道（例如不支持语言草稿回放） */
+  | 'unavailable'
+
+export type UndoConflict = {
+  path: AgentPath
+  channel: UndoChannel
+  reason: UndoConflictReason
+}
+
+/** 回滚预演：安全时才允许自动回滚；有冲突则一个文件都不动 */
+export type UndoPreflight =
+  | { safe: true; entries: UndoEntry[] }
+  | { safe: false; conflicts: UndoConflict[]; entries: UndoEntry[] }
+
 /** 单个文件在 Run 失败时的回放结论 */
 export type UndoOutcome = {
   path: AgentPath
-  action: 'restored' | 'deleted' | 'skipped' | 'finished'
-  /** 跳过原因：被后续改动覆盖 / 已不存在等 */
+  /** 通道；省略按 source（旧调用方兼容） */
+  channel?: UndoChannel
+  action: 'restored' | 'deleted' | 'skipped' | 'finished' | 'conflict'
+  /** 跳过/冲突原因：被后续改动覆盖 / 已不存在等 */
   reason?: string
+}
+
+/** 失败卡片上的待处理回滚（活跃段内，封段即失效） */
+export type PendingRollback = {
+  status: 'pending' | 'failed'
+  /** 预演发现的冲突（全部安全时不会进入待处理，直接自动回滚） */
+  conflicts: UndoConflict[]
+  /** 强制/重试之后的逐项结果 */
+  outcomes?: UndoOutcome[]
+  /** 产生它的失败 Run 在面板条目里的 id（UI 定位卡片用） */
+  runItemId?: string
+  createdAt: number
 }
 
 /* ───────────────────────── 会话段与归档段 ───────────────────────── */
@@ -244,6 +365,18 @@ export type SnapshotInfo = {
   tailEntryId?: string
   /** 从该归档段 fork 出来的段（二期载入时回填） */
   sourceSnapshotId?: string
+  /**
+   * 归档段的**简化**改动记录（D4）：只存哈希，不存正文/资产。
+   * 由保存产出归档时从活跃段的详细日志裁剪而来，不可回滚。
+   */
+  filesChanged?: number
+  /** 这段里是否有过失败 Run 的回滚（有 = 至少一次改动被撤销） */
+  rolledBack?: boolean
+  rollbackLog?: Array<{
+    path: string
+    beforeHash: string | null
+    afterHash: string | null
+  }>
 }
 
 /** 归档段库的存储后端（IndexedDB 实现 + 测试用内存实现） */
@@ -287,6 +420,10 @@ export type AgentRuntimeView = {
   status: string
   /** 当前持有的锁（逻辑名），供编辑器转只读 */
   lockedPaths: string[]
+  /** 当前段是否已封存（保存后为 true；再发消息会自动开新段） */
+  segmentSealed: boolean
+  /** 失败 Run 留下的待处理回滚；null / 省略 = 没有 */
+  pendingRollback?: PendingRollback | null
   /** 用量/成本（可选，来自 pi-durable pi.usage） */
   usage?: { inputTokens?: number; outputTokens?: number; costUsd?: number }
 }
@@ -351,6 +488,15 @@ export type AgentRuntime = {
   run: (text: string) => Promise<AgentRunResult>
   /** 中止当前 Run（页面存活时按版本守卫回滚） */
   abort: () => Promise<void>
+  /**
+   * 强制回滚：把该 Run 涉及的所有文本恢复成 agent 工作前内容，丢弃之后的编辑。
+   * 仅供失败卡片上的待处理回滚使用。
+   */
+  forceRollback: () => Promise<UndoOutcome[]>
+  /** 放弃回滚：丢弃日志，什么都不恢复 */
+  abandonRollback: () => Promise<void>
+  /** 重新预演待处理回滚：全部安全则直接回滚，否则返回冲突清单 */
+  retryRollback: () => Promise<{ ok: boolean; outcomes: UndoOutcome[]; conflicts: UndoConflict[] }>
   /** 保存路径调用：把段自上次归档之后的新增条目追加进归档段库，产出一条归档记录 */
   archive: (title?: string) => Promise<SnapshotInfo | null>
   /** 归档段列表 */

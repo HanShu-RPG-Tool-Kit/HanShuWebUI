@@ -12,6 +12,7 @@ import type {
   AgentRunState,
   AgentRuntimeView,
   AgentViewItem,
+  PendingRollback,
   UndoOutcome,
 } from '../contracts'
 
@@ -203,6 +204,10 @@ export type BuildViewInput = {
   live: LiveState | undefined
   /** Run 收尾后追加的本地条目（失败记录 / 中断说明） */
   extraItems: AgentViewItem[]
+  /** 失败 Run 留下的待处理回滚（失败卡片三选项用） */
+  pendingRollback?: PendingRollback | null
+  /** 当前段是否已封存（保存后不可再写入/Run） */
+  segmentSealed?: boolean
 }
 
 export function buildRuntimeView(input: BuildViewInput): AgentRuntimeView {
@@ -217,5 +222,7 @@ export function buildRuntimeView(input: BuildViewInput): AgentRuntimeView {
       ...input.extraItems,
     ],
     lockedPaths: input.lockedPaths,
+    pendingRollback: input.pendingRollback ?? null,
+    segmentSealed: input.segmentSealed === true,
   }
 }
