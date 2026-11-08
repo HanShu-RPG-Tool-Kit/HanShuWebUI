@@ -197,7 +197,7 @@ done 的 `attributes` 为 `{protocol: "hanshu-entity-attributes-v2", operations:
 
 脚本编辑器在浏览器 Worker 内使用 TypeScript 的 tsserver 语言服务引擎，分析与补全不执行作者代码。游戏通过 `javascript.stubs` 提供 Java 公开签名的 `.d.ts` 类型库，通过 `javascript.classes.search` 提供类搜索，通过 `javascript.playerHooks` / `javascript.actorHooks` 和对应 `.changed` 通知提供 hook 注册表。
 
-类型声明按 `runtimeId` 缓存在编辑会话内，断线或游戏进程变化会清理，不保存到工程或 PAK。Java imports 经同行变换成为 `Java.type("FQCN")`，类型库中的 `JavaTypeMap` 为其提供静态类型；完整 MC API 不内联进每份作者缓冲区。详细语法、生命周期和验证入口见[JavaScript 编辑器与语言服务](#javascript-language)。
+类型声明按 `runtimeId` 缓存在编辑会话内，断线或游戏进程变化会清理，不保存到工程或 PAK。已连接时语言服务与类搜索走上述在线协议；本机同步的完整类型库只在断线后使用，在线按需结果不回写该缓存。Java imports 经同行变换成为 `Java.type("FQCN")`，类型库中的 `JavaTypeMap` 为其提供静态类型；完整 MC API 不内联进每份作者缓冲区。详细语法、生命周期和验证入口见[JavaScript 编辑器与语言服务](#javascript-language)。
 
 修饰器统一列表使用 `attribute.modifiers.replace` 操作，`rows` 每项包含目标 `bindingId`、`modifierId`、`value:{amount,operation}`，已有条目另携带 `origin:{bindingId,modifierId}`。origin 必须来自 open 快照且不可重复，用于跨属性移动或重命名时保留未知 NBT 字段；新条目省略 origin。该操作不得与单修饰器 set/remove 混用。新增属性须在同批操作显式设置基础值。
 

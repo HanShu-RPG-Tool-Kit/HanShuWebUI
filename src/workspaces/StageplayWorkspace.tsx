@@ -3613,7 +3613,10 @@ export const StageplayWorkspace = forwardRef<
                         onMount={(editor, monaco) => {
                           editorRef.current = editor
                           editor.updateOptions(scriptEditorAppearance(scriptViewFlags.get()))
-                          bindTaggedCommentHotkeys(editor, monaco)
+                          // # 注释快捷键只给对话／角色正文；脚本走 Monaco 的 // 行注释
+                          if (editorLanguageForFile(titleName) !== 'javascript') {
+                            bindTaggedCommentHotkeys(editor, monaco)
+                          }
                           if (isHanshuFile(titleName)) {
                             bindChoiceInsertHotkeys(editor, monaco)
                             bindSpeakerHotkeys(

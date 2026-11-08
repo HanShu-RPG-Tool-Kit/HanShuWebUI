@@ -31,7 +31,14 @@ try {
    const hook=transformDialect('@hook("tick")\nfunction tick(event: Player,board: any): void {}','editor').source
    await client.writeFiles({'/b.ts':'var isolated = 123;','/a.ts':'isolated;'})
    const isolation=await client.request('diagnostics',{file:'/a.ts'})
-   return {completion,diagnostics,hover,common,commonMembers,isolation,typed,runtime,typedDiagnostics,missing,hook}
+   const formatSource='import Player from "game.Player"\nrequire fx from "effects"\n@hook("tick")\nfunction tick(event: Player, board: Blackboard): void {\nif(true){fx.spark(event.player());}\n}\n'
+   const formatEdits=await client.request('format',{source:formatSource,options:{tabSize:4,insertSpaces:true}})
+   const toOffset=(source,line,column)=>{const lines=source.split('\n');return lines.slice(0,line-1).reduce((n,l)=>n+l.length+1,0)+Math.min(column-1,(lines[line-1]??'').length)}
+   let formatted=formatSource
+   for(const edit of [...formatEdits].sort((a,b)=>toOffset(formatSource,b.start.line,b.start.column)-toOffset(formatSource,a.start.line,a.start.column))){
+    formatted=formatted.slice(0,toOffset(formatSource,edit.start.line,edit.start.column))+edit.newText+formatted.slice(toOffset(formatSource,edit.end.line,edit.end.column))
+   }
+   return {completion,diagnostics,hover,common,commonMembers,isolation,typed,runtime,typedDiagnostics,missing,hook,format:{edits:formatEdits.length,formatted,dialect:transformDialect(formatted)}}
   }finally{client.dispose()}
  })
  assert(result.completion.some(x=>x.name==='level'))
@@ -47,7 +54,12 @@ try {
  assert(result.typedDiagnostics.some(x=>x.start.line===4&&x.message.includes('number')),'explicit return type must be checked')
  assert(result.missing.length>0,'missing author types must fail the dialect gate')
  assert(result.hook.startsWith('//@hook("tick")\n')&&!result.hook.includes('@param'),'hook virtual line must be only a comment, without inferred JSDoc')
- console.log('PASS browser TypeScript Worker: Java class/member/return types, source diagnostic line, common export inference, document isolation')
+ assert(result.format.edits>0,'format must produce edits')
+ assert(result.format.formatted.includes('require fx from "effects"'),'format must keep dialect require')
+ assert(result.format.formatted.includes('@hook("tick")'),'format must keep dialect @hook')
+ assert(result.format.formatted.includes('if (true)'),'format must insert control-flow spaces')
+ assert.deepEqual(result.format.dialect.diagnostics,[],'formatted dialect source must still pass the gate')
+ console.log('PASS browser TypeScript Worker: Java class/member/return types, source diagnostic line, common export inference, document isolation, author-source format')
  const fixture=JSON.parse(await readFile(process.env.JAVASCRIPT_STUB_FIXTURE??'../ModRPGToolKit/build/javascript-stubs-test.json','utf8'))
  const real=await page.evaluate(async fixture=>{
   const {TsserverClient}=await import('/src/monaco/javascript/tsserverClient.ts'),{buildJavaFiles}=await import('/src/monaco/javascript/stubs.ts')

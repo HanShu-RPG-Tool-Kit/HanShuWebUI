@@ -81,7 +81,9 @@ export class JavaScriptLanguage {
   })})
   const hover=monaco.languages.registerHoverProvider(LANGUAGE,{provideHover:(model,position)=>this.provide<Monaco.languages.Hover|null>('hover',model,position,null,async()=>{const doc=this.documents.get(model.uri.toString());if(!doc)return null;await this.update(doc);await this.hydrate(doc,position);const h=await this.client.request('hover',{file:doc.file,line:position.lineNumber,column:position.column});return h?{contents:[{value:'```javascript\n'+h.text+'\n```'},{value:h.documentation}]}:null})})
   const signatures=monaco.languages.registerSignatureHelpProvider(LANGUAGE,{signatureHelpTriggerCharacters:['(',','],signatureHelpRetriggerCharacters:[')'],provideSignatureHelp:(model,position)=>this.provide<Monaco.languages.SignatureHelpResult|null>('signature',model,position,null,async()=>{const doc=this.documents.get(model.uri.toString());if(!doc)return null;await this.update(doc);await this.hydrate(doc,position);const value=await this.client.request('signature',{file:doc.file,line:position.lineNumber,column:position.column});return value?{value,dispose(){}}:null})})
-  this.disposables.push(()=>completion.dispose(),()=>hover.dispose(),()=>signatures.dispose())
+  const formatting=monaco.languages.registerDocumentFormattingEditProvider(LANGUAGE,{provideDocumentFormattingEdits:(model,options)=>this.provideFormat(model,options)})
+  const rangeFormatting=monaco.languages.registerDocumentRangeFormattingEditProvider(LANGUAGE,{provideDocumentRangeFormattingEdits:(model,range,options)=>this.provideFormat(model,options,range)})
+  this.disposables.push(()=>completion.dispose(),()=>hover.dispose(),()=>signatures.dispose(),()=>formatting.dispose(),()=>rangeFormatting.dispose())
   const sync=()=>{void this.syncProject().catch(this.report)},connection=()=>{void this.reconnect().catch(this.report)}
   this.disposables.push(subscribeJavaLibrary(()=>{void this.reconnect(true).catch(this.report)}),subscribeProjectSession(sync),subscribeControlHub(connection),subscribeControlNotify(note=>{if(note.method===`javascript.${type}Hooks.changed`)void this.loadHooks().catch(this.report)}))
   sync();connection()
@@ -92,6 +94,30 @@ export class JavaScriptLanguage {
   recordLanguageDiagnostic(this.diagnosticId,'provider-start',context)
   try{const result=await request();recordLanguageDiagnostic(this.diagnosticId,'provider-result',{...context,durationMs:Date.now()-started,result});return result}
   catch(error){recordLanguageDiagnostic(this.diagnosticId,'provider-error',{...context,durationMs:Date.now()-started,error:diagnosticValue(error)});if(this.disposed||model.isDisposed()||!this.documents.has(model.uri.toString()))return empty;throw error}
+ }
+ private async provideFormat(model:Monaco.editor.ITextModel,options:Monaco.languages.FormattingOptions,range?:Monaco.IRange):Promise<Monaco.languages.TextEdit[]>{
+  if(model.isDisposed()||!this.documents.has(model.uri.toString()))return []
+  const started=Date.now(),context={kind:'format',uri:model.uri.with({query:'',fragment:''}).toString(),range:range??null,version:model.getVersionId()}
+  recordLanguageDiagnostic(this.diagnosticId,'provider-start',context)
+  try{
+   type FormatEdit={start:{line:number;column:number};end:{line:number;column:number};newText:string}
+   const edits=await this.client.request('format',{
+    source:model.getValue(),
+    options:{tabSize:options.tabSize,insertSpaces:options.insertSpaces},
+    ...(range?{startLine:range.startLineNumber,startColumn:range.startColumn,endLine:range.endLineNumber,endColumn:range.endColumn}:{}),
+   }) as FormatEdit[]
+   if(model.isDisposed()||!this.documents.has(model.uri.toString()))return []
+   const result=edits.map(edit=>({
+    range:new this.monaco.Range(edit.start.line,edit.start.column,edit.end.line,edit.end.column),
+    text:edit.newText,
+   }))
+   recordLanguageDiagnostic(this.diagnosticId,'provider-result',{...context,durationMs:Date.now()-started,edits:result.length})
+   return result
+  }catch(error){
+   recordLanguageDiagnostic(this.diagnosticId,'provider-error',{...context,durationMs:Date.now()-started,error:diagnosticValue(error)})
+   if(this.disposed||model.isDisposed()||!this.documents.has(model.uri.toString()))return []
+   throw error
+  }
  }
  private async requestControl(method:string,params:unknown){
   const started=Date.now();recordLanguageDiagnostic(this.diagnosticId,'control-request',{method,params})
@@ -116,7 +142,10 @@ export class JavaScriptLanguage {
   recordLanguageDiagnostic(this.diagnosticId,'connection',{generation,connected})
   clearTimeout(this.typeDiagnosticsTimer)
   this.classes.clear();this.missingClasses.clear();this.runtime='';this.hooks=[];this.hookClasses.clear();this.hookRevision=-1;this.hookRuntime='';this.library=undefined
-  this.libraryReady=readJavaLibrary(endpoint).then(library=>{if(this.endpoint===endpoint&&this.generation===generation)this.library=library}).catch(error=>{recordLanguageDiagnostic(this.diagnosticId,'local-library-error',error);this.library=undefined})
+  // 在线只走实时协议，不读本地快照；本地库仅供断线后使用，按需拉取不回写 IndexedDB
+  this.libraryReady=connected
+    ?Promise.resolve()
+    :readJavaLibrary(endpoint).then(library=>{if(this.endpoint===endpoint&&this.generation===generation)this.library=library}).catch(error=>{recordLanguageDiagnostic(this.diagnosticId,'local-library-error',error);this.library=undefined})
   await this.libraryReady
   await this.publishJava()
   if(this.disposed||this.generation!==generation||this.endpoint!==endpoint)return
@@ -125,15 +154,21 @@ export class JavaScriptLanguage {
   for(const doc of this.documents.values()){await this.refreshImports(doc.model);await this.diagnose(doc)}
  }
  private async loadHooks(){
-  if(this.library){const snapshot=this.type==='actor'?this.library.actor:this.type==='player'?this.library.player:undefined;if(snapshot){this.hookRuntime=snapshot.runtimeId;this.hookRevision=snapshot.revision;this.hooks=snapshot.hooks.map(h=>({id:h.id,cancellable:h.cancellable,eventClass:h.eventClass}));this.hookClasses=new Map(snapshot.hooks.filter(h=>h.eventClass).map(h=>[h.id,h.eventClass!]));}return}
-  if(!isControlConnected()||!['actor','player'].includes(this.type))return
-  const generation=controlConnectionGeneration(),r=await this.requestControl(`javascript.${this.type}Hooks`,{}) as {schemaVersion:number;runtimeId:string;revision:number;hooks:{id:string;cancellable:boolean;eventClass?:string}[]}
-  if(this.disposed||generation!==controlConnectionGeneration())return
-  if(r.schemaVersion!==1||typeof r.runtimeId!=='string'||!Number.isSafeInteger(r.revision)||!Array.isArray(r.hooks)||r.hooks.some(h=>typeof h.id!=='string'||typeof h.cancellable!=='boolean'))throw Error('不兼容的 hook 注册表')
-  if(this.hookRuntime===r.runtimeId&&this.hookRevision>=r.revision)return
-  this.hookRuntime=r.runtimeId;this.hookRevision=r.revision;this.hooks=r.hooks.map(h=>({id:h.id,cancellable:h.cancellable,eventClass:typeof h.eventClass==='string'?h.eventClass:undefined}))
-  this.hookClasses=new Map(r.hooks.filter(h=>typeof h.eventClass==='string').map(h=>[h.id,h.eventClass!]))
-  for(const doc of this.documents.values()){await this.refreshImports(doc.model);await this.update(doc)}
+  if(!['actor','player'].includes(this.type))return
+  if(isControlConnected()){
+   const generation=controlConnectionGeneration(),r=await this.requestControl(`javascript.${this.type}Hooks`,{}) as {schemaVersion:number;runtimeId:string;revision:number;hooks:{id:string;cancellable:boolean;eventClass?:string}[]}
+   if(this.disposed||generation!==controlConnectionGeneration())return
+   if(r.schemaVersion!==1||typeof r.runtimeId!=='string'||!Number.isSafeInteger(r.revision)||!Array.isArray(r.hooks)||r.hooks.some(h=>typeof h.id!=='string'||typeof h.cancellable!=='boolean'))throw Error('不兼容的 hook 注册表')
+   if(this.hookRuntime===r.runtimeId&&this.hookRevision>=r.revision)return
+   this.hookRuntime=r.runtimeId;this.hookRevision=r.revision;this.hooks=r.hooks.map(h=>({id:h.id,cancellable:h.cancellable,eventClass:typeof h.eventClass==='string'?h.eventClass:undefined}))
+   this.hookClasses=new Map(r.hooks.filter(h=>typeof h.eventClass==='string').map(h=>[h.id,h.eventClass!]))
+   for(const doc of this.documents.values()){await this.refreshImports(doc.model);await this.update(doc)}
+   return
+  }
+  if(!this.library)return
+  const snapshot=this.type==='actor'?this.library.actor:this.type==='player'?this.library.player:undefined
+  if(!snapshot)return
+  this.hookRuntime=snapshot.runtimeId;this.hookRevision=snapshot.revision;this.hooks=snapshot.hooks.map(h=>({id:h.id,cancellable:h.cancellable,eventClass:h.eventClass}));this.hookClasses=new Map(snapshot.hooks.filter(h=>h.eventClass).map(h=>[h.id,h.eventClass!]))
  }
  listHooks():HookCatalogEntry[]{return this.hooks.map(h=>({...h}))}
  private async hydrate(doc:{file:string;model:Monaco.editor.ITextModel},position:Monaco.Position){
@@ -175,15 +210,19 @@ export class JavaScriptLanguage {
  private async fetchClasses(names:string[]){
   await this.libraryReady
   if(this.disposed)return
-  if(this.library){const library=this.library,missing=[...new Set(names)].filter(n=>!this.classes.has(n)&&!this.missingClasses.has(n)),stubs=await readLibraryClasses(library,missing);if(this.disposed||this.library!==library)return;for(const stub of stubs)this.classes.set(stub.name,stub);for(const name of missing)if(!this.classes.has(name))this.missingClasses.add(name);this.runtime=library.runtimeId;await this.publishJava();return}
-  if(!isControlConnected())return
-  const generation=controlConnectionGeneration(),missing=[...new Set(names)].filter(n=>!this.classes.has(n)&&!this.missingClasses.has(n))
-  if(!missing.length&&this.runtime)return
-  for(let i=0;i<Math.max(1,missing.length);i+=24){const r=await this.requestControl('javascript.stubs',{classes:missing.slice(i,i+24)}) as StubResponse
-   if(this.disposed||generation!==controlConnectionGeneration())return
-   if(r.schemaVersion!==1||!Array.isArray(r.classes)||typeof r.runtimeId!=='string')throw Error('不兼容的 JavaScript 类型库协议')
-   if(this.runtime&&this.runtime!==r.runtimeId){this.classes.clear();this.missingClasses.clear()}this.runtime=r.runtimeId;for(const c of r.classes){this.classes.set(c.name,c);this.missingClasses.delete(c.name)}for(const name of r.missing??[])this.missingClasses.add(name)
-  }await this.publishJava()
+  if(isControlConnected()){
+   const generation=controlConnectionGeneration(),missing=[...new Set(names)].filter(n=>!this.classes.has(n)&&!this.missingClasses.has(n))
+   if(!missing.length&&this.runtime)return
+   for(let i=0;i<Math.max(1,missing.length);i+=24){const r=await this.requestControl('javascript.stubs',{classes:missing.slice(i,i+24)}) as StubResponse
+    if(this.disposed||generation!==controlConnectionGeneration())return
+    if(r.schemaVersion!==1||!Array.isArray(r.classes)||typeof r.runtimeId!=='string')throw Error('不兼容的 JavaScript 类型库协议')
+    if(this.runtime&&this.runtime!==r.runtimeId){this.classes.clear();this.missingClasses.clear()}this.runtime=r.runtimeId;for(const c of r.classes){this.classes.set(c.name,c);this.missingClasses.delete(c.name)}for(const name of r.missing??[])this.missingClasses.add(name)
+   }await this.publishJava();return
+  }
+  if(!this.library)return
+  const library=this.library,missing=[...new Set(names)].filter(n=>!this.classes.has(n)&&!this.missingClasses.has(n)),stubs=await readLibraryClasses(library,missing)
+  if(this.disposed||this.library!==library)return
+  for(const stub of stubs)this.classes.set(stub.name,stub);for(const name of missing)if(!this.classes.has(name))this.missingClasses.add(name);this.runtime=library.runtimeId;await this.publishJava()
  }
  async refreshImports(model:Monaco.editor.ITextModel){if(!this.documents.has(model.uri.toString()))return;const result=transformDialect(model.getValue()),names=[...result.imports,...result.hooks.map(h=>this.hookClasses.get(h.hook)).filter((n):n is string=>!!n)];this.queued=this.queued.catch(()=>{}).then(()=>this.fetchClasses([...this.profile.requiredClasses,...names]));await this.queued}
  attach(model:Monaco.editor.ITextModel){

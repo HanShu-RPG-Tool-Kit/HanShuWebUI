@@ -48,6 +48,21 @@ export function JavaScriptEditor({ onMount, beforeMount, scriptType='common', ..
       precondition:'editorTextFocus && !editorReadonly && editorLangId == hanshu-javascript',
       run:()=>editor.trigger('hanshu-javascript','editor.action.triggerSuggest',{}),
     })
+    const formatAction = editor.addAction({
+      id:'hanshu.javascript.formatDocument',label:'格式化文档',
+      keybindings:[monaco.KeyMod.Shift | monaco.KeyMod.Alt | monaco.KeyCode.KeyF],
+      contextMenuGroupId:'1_modification',contextMenuOrder:1.5,
+      precondition:'editorTextFocus && !editorReadonly && editorLangId == hanshu-javascript',
+      run:()=>editor.trigger('hanshu-javascript','editor.action.formatDocument',{}),
+    })
+    // 显式占用 Ctrl+/：避免宿主页把对话用的 # 注释快捷键盖到脚本上
+    const commentAction = editor.addAction({
+      id:'hanshu.javascript.toggleLineComment',label:'切换行注释',
+      keybindings:[monaco.KeyMod.CtrlCmd | monaco.KeyCode.Slash],
+      contextMenuGroupId:'1_modification',contextMenuOrder:1.4,
+      precondition:'editorTextFocus && !editorReadonly && editorLangId == hanshu-javascript',
+      run:()=>editor.trigger('hanshu-javascript','editor.action.commentLine',{}),
+    })
     const openDiagnostics = () => {
       const model=editor.getModel();if(!model||model.isDisposed())return
       setDiagnostics({name:model.uri.path.split('/').at(-1)??'script.js',report:captureJavaScriptDiagnostics(model,editor.getPosition(),editor.getSelection()),password:getControlHubSnapshot().prefs.password})
@@ -76,7 +91,7 @@ export function JavaScriptEditor({ onMount, beforeMount, scriptType='common', ..
       }
       controlConnected = next
     })
-    cleanup.current = () => { rebind.current=()=>{};stopControl(); editor.removeOverlayWidget(diagnosticWidget); diagnosticButton.onclick=null; diagnosticAction.dispose(); completionAction.dispose(); hookAction.dispose(); importAction.dispose(); listener.dispose(); binding?.dispose() }
+    cleanup.current = () => { rebind.current=()=>{};stopControl(); editor.removeOverlayWidget(diagnosticWidget); diagnosticButton.onclick=null; diagnosticAction.dispose(); commentAction.dispose(); formatAction.dispose(); completionAction.dispose(); hookAction.dispose(); importAction.dispose(); listener.dispose(); binding?.dispose() }
     onMount?.(editor, monaco)
   }
   return <><Editor {...props} language={JAVASCRIPT_LANGUAGE_ID} beforeMount={monaco=>{registerJavaScriptLanguage(monaco);beforeMount?.(monaco)}} onMount={mount} />{javaImport && <JavaImportDialog request={javaImport.request} monaco={javaImport.monaco} close={() => setJavaImport(null)} />}{hookInsert && <HookInsertDialog request={hookInsert.request} monaco={hookInsert.monaco} close={() => setHookInsert(null)} />}{diagnostics && <LanguageDiagnosticsDialog request={diagnostics} close={() => setDiagnostics(null)} />}</>

@@ -17,16 +17,25 @@ export function importRequestActive(request: ImportRequest, monaco: typeof Monac
   return !request.model.isDisposed() && request.editor.getModel() === request.model && !request.editor.getOption(monaco.editor.EditorOption.readOnly) && request.model.getVersionId() === request.version && getProjectSession().binding?.handle.client === request.project && (!request.endpoint||request.endpoint===libraryKey()) && controlConnectionGeneration() === request.connection
 }
 export async function searchJavaClasses(query: string): Promise<ClassSearch> {
+  if (isControlConnected()) {
+    const response = await controlRequest('javascript.classes.search', { query, limit: 30 }) as ClassSearch
+    if (!response || response.schemaVersion !== 1 || typeof response.runtimeId !== 'string' || typeof response.hasMore !== 'boolean' || !Array.isArray(response.classes) || response.classes.length > 50 || response.classes.some(c => !c || typeof c.name !== 'string' || typeof c.symbol !== 'string' || typeof c.packageName !== 'string' || typeof c.origin !== 'string')) throw new Error('不兼容的 Java 类搜索结果')
+    return response
+  }
   const library=await readJavaLibrary().catch(()=>undefined)
   if(library){const q=query.trim().toLowerCase(),matches=q.length<2?[]:library.classes.filter(c=>c.name.toLowerCase().includes(q)).sort((a,b)=>Number(b.symbol.toLowerCase()===q)-Number(a.symbol.toLowerCase()===q)||a.name.localeCompare(b.name));return {schemaVersion:1,runtimeId:library.id,classes:matches.slice(0,30),hasMore:matches.length>30}}
-  const response = await controlRequest('javascript.classes.search', { query, limit: 30 }) as ClassSearch
-  if (!response || response.schemaVersion !== 1 || typeof response.runtimeId !== 'string' || typeof response.hasMore !== 'boolean' || !Array.isArray(response.classes) || response.classes.length > 50 || response.classes.some(c => !c || typeof c.name !== 'string' || typeof c.symbol !== 'string' || typeof c.packageName !== 'string' || typeof c.origin !== 'string')) throw new Error('不兼容的 Java 类搜索结果')
-  return response
+  throw new Error('请先连接游戏或同步本地类型库')
 }
 export async function applyJavaImport(request: ImportRequest, entry: JavaClassEntry, alias: string, runtimeId: string, monaco: typeof Monaco, isCancelled: () => boolean = () => false) {
   if (isCancelled() || !importRequestActive(request, monaco)) throw new Error('文档、权限或游戏连接已变化，请重新打开导入窗口')
-  const library=await readJavaLibrary().catch(()=>undefined)
-  const response = library?{runtimeId:library.id,classes:await readLibraryClasses(library,[entry.name])}:await controlRequest('javascript.stubs', { classes: [entry.name] }) as StubResponse
+  let response: Pick<StubResponse, 'runtimeId' | 'classes'>
+  if (isControlConnected()) {
+    response = await controlRequest('javascript.stubs', { classes: [entry.name] }) as StubResponse
+  } else {
+    const library = await readJavaLibrary().catch(() => undefined)
+    if (!library) throw new Error('请先连接游戏或同步本地类型库')
+    response = { runtimeId: library.id, classes: await readLibraryClasses(library, [entry.name]) }
+  }
   if (response.runtimeId !== runtimeId || !response.classes?.some(c => c.name === entry.name)) throw new Error('当前游戏无法提供此类，请重新搜索')
   if (isCancelled() || !importRequestActive(request, monaco)) throw new Error('文档、权限或游戏连接已变化，请重新打开导入窗口')
   const source = request.model.getValue()

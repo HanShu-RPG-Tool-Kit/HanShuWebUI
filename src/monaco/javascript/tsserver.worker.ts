@@ -46,12 +46,30 @@ function completionEntries(file:string,pos:number){
 }
 function point(file:string,offset:number){const s=ts.createSourceFile(file,files.get(file)?.text??'',ts.ScriptTarget.ES5);const p=s.getLineAndCharacterOfPosition(offset);return {line:p.line+1,column:p.character+1}}
 function offset(file:string,line:number,column:number){const source=files.get(file)?.text??'',lines=source.split('\n');return lines.slice(0,line-1).reduce((n,l)=>n+l.length+1,0)+Math.min(column-1,lines[line-1]?.length??0)}
+function formatSettings(options?:{tabSize?:number;insertSpaces?:boolean;newLineCharacter?:string}):ts.FormatCodeSettings{
+ const defaults=ts.getDefaultFormatCodeSettings(options?.newLineCharacter??'\n')
+ return {...defaults,tabSize:options?.tabSize??defaults.tabSize,indentSize:options?.tabSize??defaults.indentSize,convertTabsToSpaces:options?.insertSpaces??defaults.convertTabsToSpaces}
+}
+function formatEdits(file:string,edits:readonly ts.TextChange[]){
+ return edits.map(edit=>({start:point(file,edit.span.start),end:point(file,edit.span.start+edit.span.length),newText:edit.newText}))
+}
 self.onmessage=({data})=>{
  const {id,method,params}=data
  try{
   let result:unknown
   if(method==='files'){for(const [name,text] of Object.entries(params as Record<string,string|null>))if(text===null)files.delete(name);else files.set(name,{text:name.startsWith('/common/')||name.startsWith('/common-edit/')?commonModule(text):text,version:(files.get(name)?.version??0)+1});result=true}
   else if(method==='snapshot')result={typescriptVersion:ts.version,compilerOptions:host.getCompilationSettings(),files:[...files].map(([name,file])=>({name,version:file.version,characters:file.text.length,...name.startsWith('/lib.')?{builtin:true}:{text:file.text}}))}
+  else if(method==='format'){
+   // Format author source, not the editor-transform virtual document, so dialect lines stay intact.
+   const file='/format.ts',source=String(params.source??''),settings=formatSettings(params.options)
+   files.set(file,{text:source,version:(files.get(file)?.version??0)+1})
+   try{
+    const edits=params.endLine==null
+     ?service.getFormattingEditsForDocument(file,settings)
+     :service.getFormattingEditsForRange(file,offset(file,params.startLine??1,params.startColumn??1),offset(file,params.endLine,params.endColumn??1),settings)
+    result=formatEdits(file,edits)
+   }finally{files.delete(file)}
+  }
   else{
    const file=params.file,pos=offset(file,params.line??1,params.column??1)
    if(method==='diagnostics')result=[...service.getSyntacticDiagnostics(file),...service.getSemanticDiagnostics(file)].map(d=>({code:d.code,message:readableJavaTypes(ts.flattenDiagnosticMessageText(d.messageText,'\n')),start:point(file,d.start??0),end:point(file,(d.start??0)+(d.length??1)),error:d.category===ts.DiagnosticCategory.Error}))

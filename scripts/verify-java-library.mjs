@@ -59,6 +59,44 @@ try{
  assert.equal(synced.library.classes.length,fixture.classes.length)
  assert(synced.failed&&synced.cancelled&&synced.preserved)
  console.log('PASS Edit menu dialog: explicit sync only, paged IndexedDB snapshot; failure/cancel retain previous complete library')
+ // With a local library still present, a live connection must prefer online protocols and not read the snapshot.
+ const onlinePrefer=await page.evaluate(async()=>{
+  const control=await import('/src/gameDevServer/controlHub.ts')
+  const ui=await import('/scripts/javascript-diagnostics-ui-fixture.ts')
+  // mount() 会关掉 autoConnect；测在线优先前先恢复连接
+  const editor=await ui.mount({source:'import ServerPlayer from "net.minecraft.server.level.ServerPlayer"\nfunction inspect(player: ServerPlayer): void {\n var level=player.level();\n}',readOnly:false,scriptType:'actor'})
+  control.updateGameDevServerPrefs({autoConnect:true})
+  for(let i=0;i<100&&!control.isControlConnected();i++)await new Promise(r=>setTimeout(r,20))
+  const {searchJavaClasses}=await import('/src/monaco/javascript/javaImportAction.ts')
+  const before=window.libTest.requests.length
+  const search=await searchJavaClasses('ServerPlayer')
+  const afterSearch=window.libTest.requests.slice(before)
+  const {captureJavaScriptDiagnostics,peekJavaScriptHooks}=await import('/src/monaco/javascript/javascriptLanguage.ts')
+  let report
+  for(let i=0;i<200;i++){
+   report=await captureJavaScriptDiagnostics(editor.getModel(),null,null)
+   if(report.service.loadedClasses?.includes('net.minecraft.server.level.ServerLevel')&&peekJavaScriptHooks(editor.getModel()).some(h=>h.id==='tick'))break
+   await new Promise(r=>setTimeout(r,30))
+  }
+  const related=window.libTest.requests.filter(r=>r.method==='javascript.stubs'||r.method==='javascript.actorHooks'||r.method==='javascript.classes.search')
+  return {
+   connected:control.isControlConnected(),
+   searchRuntime:search.runtimeId,
+   searchHit:search.classes.some(c=>c.symbol==='ServerPlayer'),
+   searchOnline:afterSearch.some(r=>r.method==='javascript.classes.search'),
+   hooks:peekJavaScriptHooks(editor.getModel()).map(h=>h.id),
+   loaded:report.service.loadedClasses,
+   usedOnline:related.some(r=>r.method==='javascript.stubs')&&related.some(r=>r.method==='javascript.actorHooks'),
+  }
+ })
+ assert.equal(onlinePrefer.connected,true)
+ assert.equal(onlinePrefer.searchRuntime,'library-fixture')
+ assert(onlinePrefer.searchHit)
+ assert(onlinePrefer.searchOnline)
+ assert.deepEqual(onlinePrefer.hooks,['tick'])
+ assert(onlinePrefer.loaded.includes('net.minecraft.server.level.ServerLevel'),JSON.stringify(onlinePrefer))
+ assert(onlinePrefer.usedOnline,JSON.stringify(onlinePrefer))
+ console.log('PASS connected with local library: online stubs/hooks/search preferred, snapshot not authoritative')
  // Reload drops all JavaScript memory; the persisted snapshot must work without a game.
  await page.reload()
  const offline=await page.evaluate(async()=>{

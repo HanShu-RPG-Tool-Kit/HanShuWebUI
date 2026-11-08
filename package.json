@@ -159,6 +159,7 @@
     "test:javascript-diagnostics": "node scripts/verify-javascript-diagnostics.mjs",
     "test:javascript-members": "node scripts/verify-javascript-members.mjs",
     "test:java-library": "node scripts/verify-java-library.mjs",
+    "test:java-library-online-prefer": "node scripts/verify-java-library-online-prefer.mjs",
     "test:java-callbacks": "node scripts/verify-java-callbacks.mjs",
     "test:world-editor:native": "tsx scripts/verify-native-world-editor.ts",
     "test:region-effects:export": "node scripts/verify-region-effect-export.mjs"

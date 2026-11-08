@@ -17,7 +17,7 @@ export function JavaLibraryDialog({close}:{close:()=>void}){
   <p>{library?`上次同步：${new Date(library.capturedAt).toLocaleString()} · Java ${library.javaVersion} · ${library.classes.length} 个类 · ${(library.bytes/1048576).toFixed(1)} MiB · ${library.skipped} 个不可用候选`:'当前游戏地址尚无本地类型库。'}</p>
   {!!library?.mods?.length&&<details><summary>同步时的游戏与模组版本</summary><p>{library.mods.join(' · ')}</p></details>}
   <p>缓存按游戏地址区分；更换游戏或模组版本后，请重新同步。新库完整保存成功后才替换旧库；失败或取消保留旧库。</p>
-  {!isControlConnected()&&<p>连接游戏开发服务器后可同步；已有缓存仍可离线使用。</p>}
+  <p>{isControlConnected()?'已连接时编辑器用游戏实时类型；本地库仅供断线后使用。':'连接游戏开发服务器后可同步；已有缓存仍可离线使用。'}</p>
   <p role="status">{status}</p>{error&&<p role="alert">{error}</p>}
   <footer><span>仅保存本机提示数据，不修改工程。</span>{busy?<button onClick={()=>abort.current?.abort()}>取消同步</button>:<button disabled={!isControlConnected()} onClick={()=>void start()}>开始同步</button>}</footer>
  </dialog>,document.body)

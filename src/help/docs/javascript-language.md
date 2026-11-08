@@ -25,9 +25,13 @@ function on_tick(event: PlayerEvent, board: Blackboard): void {
 
 方言变换严格一行换一行。编辑侧仅注释 hook / Goal 注解，保留参数与返回类型，交给 TS 子集虚拟文档；导出时同行剥掉签名类型，import / require 转成运行时绑定。作者文件与 PAK 均用 `.js`。作者、虚拟文档、PAK 源码和引擎报错保持相同行数，不产生 source map；hook 不再注入参数 JSDoc。
 
-`monaco/javascript/JavaScriptEditor` 使用独立浏览器 Worker 中 TypeScript 的 tsserver 语言服务引擎。它分析 JS、推导类型、提供成员补全、悬浮信息、调用签名和诊断，不执行作者脚本。相同工程与宿主类型共享 Worker；各文档保持模块隔离，最后一个编辑器关闭时释放。离线仍可分析普通 JavaScript 和工程 common 导出；同步本地类型库后也能分析 Java 类型。
+`monaco/javascript/JavaScriptEditor` 使用独立浏览器 Worker 中 TypeScript 的 tsserver 语言服务引擎。它分析 JS、推导类型、提供成员补全、悬浮信息、调用签名、诊断与代码格式化，不执行作者脚本。相同工程与宿主类型共享 Worker；各文档保持模块隔离，最后一个编辑器关闭时释放。离线仍可分析普通 JavaScript 和工程 common 导出；同步本地类型库后也能分析 Java 类型。
 
-`javascript.stubs` 返回工程级共享 `.d.ts` 虚拟文件，Java 类型按 `JavaTypeMap` 与 `Java.type` 关联，不把全量 Minecraft 类型插入每个缓冲区。显式 Java imports 同时提供值和签名可用的类型；相关 Java 类型按需加载。有本地完整类型库时优先使用该快照；没有时在线按需请求，断线和游戏进程变化清理在线临时类型。不同宿主仅拥有各自的全局变量：kit 的 kit/player/players/random，shop 的 shop/player，goal 的 cfg/st/pick_locale/update_satisfied_state/complete/fail。事件类型由作者签名明确声明，`Blackboard` 保持动态键。类型判断使用原生 `value instanceof JavaType`。
+格式化走 TypeScript Language Service 的 formatting API，直接整理**作者源码**（不是编辑侧虚拟文档），因此 `import` / `require`、`@hook` 等方言行保持原样。右键「格式化文档」或 **Shift+Alt+F**；选区格式化走同一路径。
+
+**Ctrl+/**（右键「切换行注释」）切换 `//` 行注释。对话正文的 `#` 注释快捷键不会绑到脚本编辑器。
+
+`javascript.stubs` 返回工程级共享 `.d.ts` 虚拟文件，Java 类型按 `JavaTypeMap` 与 `Java.type` 关联，不把全量 Minecraft 类型插入每个缓冲区。显式 Java imports 同时提供值和签名可用的类型；相关 Java 类型按需加载。已连接游戏时一律走在线按需请求（含 hooks 与类搜索），不读本地快照、也不把在线结果回写 IndexedDB；断线后才使用已同步的本地完整类型库。断线和游戏进程变化会清理在线临时类型。不同宿主仅拥有各自的全局变量：kit 的 kit/player/players/random，shop 的 shop/player，goal 的 cfg/st/pick_locale/update_satisfied_state/complete/fail。事件类型由作者签名明确声明，`Blackboard` 保持动态键。类型判断使用原生 `value instanceof JavaType`。
 
 ## Java 回调推导
 
@@ -39,9 +43,9 @@ Java 方法要求公开函数式接口（单一抽象方法，SAM）时，可以
 
 从菜单栏「编辑 → 同步游戏类型库…」打开同步窗口，连接游戏后点击「开始同步」。不会在打开窗口、打开工程或重连时自动下载完整库。窗口显示扫描进度、已获取类数量、声明大小和上次同步时间，支持取消；取消、断线或保存失败保留之前的完整快照。新版 WebUI 需要配套支持 `javascript.library.page` 的 Mod。
 
-同步覆盖当前游戏类索引中可反射的公开类型、依赖与 actor/player hook 快照；无法读取或非公开类计入不可用候选，不代表这些类有可用静态声明。新库分批下载到本机 IndexedDB 的 `hanshu.java-library.v1`，完整保存后原子替换当前快照。它是 C 侧提示缓存，不写工程、不上传 S。缓存按游戏 host:port 区分，不保存密码；清除网站数据会删除缓存，不同浏览器或 WebUI origin 不共享缓存。更换游戏／模组版本后须手动重新同步，旧快照不会自动更新。
+同步覆盖当前游戏类索引中可反射的公开类型、依赖与 actor/player hook 快照；无法读取或非公开类计入不可用候选，不代表这些类有可用静态声明。新库分批下载到本机 IndexedDB 的 `hanshu.java-library.v1`，完整保存后原子替换当前快照。它是 C 侧**离线**提示缓存，不写工程、不上传 S；在线编辑不会读取或更新这份快照。缓存按游戏 host:port 区分，不保存密码；清除网站数据会删除缓存，不同浏览器或 WebUI origin 不共享缓存。更换游戏／模组版本后，若仍需离线提示，须手动重新同步。
 
-刷新或重启 WebUI 后离线也可以补全、悬浮、查看重载参数、检查类型和搜索导入 Java 类。Worker 仅从本地库按需加载相关声明，不一次解析整个库。未同步、未收录或动态生成的类不保证离线可用。
+刷新或重启 WebUI 后，在未连接游戏时也可以用已同步库补全、悬浮、查看重载参数、检查类型和搜索导入 Java 类。Worker 仅从本地库按需加载相关声明，不一次解析整个库。未同步、未收录或动态生成的类不保证离线可用。
 
 通用脚本按 id 发布独立虚拟模块，`require fx from "effects"` 的类型来自该模块的 exports。其他宿主不能互相 require。类型检查不是运行时授权，工程保存依旧经 S 的原有文件事务。
 
@@ -51,7 +55,7 @@ Java 方法要求公开函数式接口（单一抽象方法，SAM）时，可以
 
 按 **Alt+/** 手动打开补全列表（原有 Ctrl+Space 仍可用）。悬浮和调用参数提示显示类型；重载方法的参数提示保留各个签名，可用提示框的上下箭头切换，并随当前参数更新提示。离线补全不因游戏开发服务器自动重连轮询而收起；仅在**已连接变为断开**时关闭补全／参数提示，避免沿用失效的在线结果。
 
-在 `@hook("` 内补全会列出宿主钩子 id，并在详情中显示注册表里的 `eventClass`（若有）。语言服务会按已写的 `@hook` **预加载**对应事件类型声明，但**不会改写**函数参数类型——`event`／`blackboard` 仍须作者签名声明；写对类型后才有成员补全。已连接游戏或已同步类型库时，还会对照注册表检查第一个参数类型是否等于该 hook 的 `eventClass`（允许 import 别名或简短类名；`any` 与错误基类会报方言错误）。player／actor 脚本可用右键或 **Ctrl+Alt+H**「插入钩子函数…」：从当前宿主／本地类型库钩子表选择一项，一次写入 `import`、`@hook` 与带事件类型的函数骨架。
+在 `@hook("` 内补全会列出宿主钩子 id，并在详情中显示注册表里的 `eventClass`（若有）。语言服务会按已写的 `@hook` **预加载**对应事件类型声明，但**不会改写**函数参数类型——`event`／`blackboard` 仍须作者签名声明；写对类型后才有成员补全。已连接游戏或（断线且）已同步类型库时，还会对照注册表检查第一个参数类型是否等于该 hook 的 `eventClass`（允许 import 别名或简短类名；`any` 与错误基类会报方言错误）。player／actor 脚本可用右键或 **Ctrl+Alt+H**「插入钩子函数…」：从当前在线注册表或离线本地钩子表选择一项，一次写入 `import`、`@hook` 与带事件类型的函数骨架。
 
 悬浮、参数提示和类型报错中的 Java 类型使用简短类名（例如 `ServerLevel`），隐藏虚拟类型库的 `jvm_…_d_…` 命名空间；数组和各个重载的类型仍保留。内部分析继续使用完整类型标识。
 
@@ -71,12 +75,12 @@ Java 方法要求公开函数式接口（单一抽象方法，SAM）时，可以
 
 ## 验证入口
 
-`test:javascript-dialect` 验证同行变换、红线与跨仓契约；`test:javascript-builtins` 验证全部内置目标；`test:javascript-language` 以真实浏览器 Worker 验证成员与返回类型、common 导出、诊断行号和多文档隔离。这些自动化不等于已在原生 Minecraft 客户端完成全部玩法验收。
+`test:javascript-dialect` 验证同行变换、红线与跨仓契约；`test:javascript-builtins` 验证全部内置目标；`test:javascript-language` 以真实浏览器 Worker 验证成员与返回类型、common 导出、诊断行号、多文档隔离，以及作者源码格式化后方言门禁仍通过。这些自动化不等于已在原生 Minecraft 客户端完成全部玩法验收。
 
 `test:javascript-diagnostics` 验证真实编辑器下载、只读/离线导出、Worker 超时与崩溃证据、凭据脱敏和资源释放。
 
 `test:javascript-members` 验证玩家模板无内置 JS 误报、Java 方法/字段按需加载、真实补全接受与括号/光标行为，以及未知成员仍正确报错。
 
-`test:java-library` 验证编辑菜单入口、手动分页同步、IndexedDB 持久化、失败/取消保留旧库，以及刷新后的真实离线类型链、悬浮、诊断和类搜索。
+`test:java-library` 验证编辑菜单入口、手动分页同步、IndexedDB 持久化、失败/取消保留旧库、**已连接时仍走在线 stubs/hooks/搜索**，以及刷新后的真实离线类型链、悬浮、诊断和类搜索。无 Mod 夹具时可用 `test:java-library-online-prefer` 单独验证在线优先与断线回退。
 
 `test:java-callbacks` 使用 Mod 实际反射生成的声明验证泛型回调参数与返回值、流式 map、重载、Java 接口对象兼容、错误返回与非 SAM 拒绝，以及冷启动 Monaco 回调依赖加载。
