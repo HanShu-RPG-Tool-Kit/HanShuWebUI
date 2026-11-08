@@ -75,6 +75,8 @@ import { indexForeignHsInjects } from '../hanshu/injectIndex'
 import { analyzeCharDiagnostics } from '../monaco/charDiagnostics'
 import { analyzeHsDiagnostics } from '../monaco/hsDiagnostics'
 import { parseCharTextSpans } from '../monaco/charTextSpans'
+import { parseTextSpans } from '../monaco/textSpans'
+import { assessLangValueRisks, type InlineContext } from '../hanshu/inlineText'
 import {
   HANSHU_THEME_ID,
   registerHanshuLanguage,
@@ -3053,6 +3055,34 @@ export const StageplayWorkspace = forwardRef<
   }
 
   /**
+   * A2：agent 传来的逻辑文件名统一校验（`lock_source(creating)` / `create_source` 共用）。
+   * 非法名（含路径分隔符 / `..` / 未知后缀）一律返回英文 invalid_arguments，**不抛异常**。
+   */
+  const invalidAgentSourceName = (name: string): {
+    ok: false
+    reason: 'invalid_arguments'
+    error: string
+    hint: string
+  } => ({
+    ok: false,
+    reason: 'invalid_arguments',
+    error: `invalid file name: ${name}; logical names cannot contain path separators or start with ".."`,
+    hint: 'use a logical file name like chapter.hs (no directories, no leading "..")',
+  })
+
+  const validateAgentSourceName = (
+    raw: string,
+  ): { name: string } | { error: ReturnType<typeof invalidAgentSourceName> } => {
+    try {
+      const checked = normalizeAgentSource(raw)
+      if ('error' in checked) return { error: invalidAgentSourceName(raw) }
+      return checked
+    } catch {
+      return { error: invalidAgentSourceName(raw) }
+    }
+  }
+
+  /**
    * 解析 agent 传来的 locale —— **工程优先**：工程里已有就沿用，其次按语言表规范化
    * （`en` → `en_us`、`ja` → `ja_jp`），最后才落地为自定义标签。
    * 裸语言码对应多个地区且都不常用（`de` → `de_de` / `de_at`）时不猜，回报候选。
@@ -3108,6 +3138,16 @@ export const StageplayWorkspace = forwardRef<
     'keys are text hashes: re-run parse_hs with the same locale to rebuild them; parsing a different locale will create new keys and drop the old ones'
 
   const agentHost: AgentHost = {
+    /** A2：工具在 lock_source(creating) / create_source 前统一校验逻辑名 */
+    validateSourceName: (name) => {
+      try {
+        const checked = normalizeAgentSource(name)
+        if ('error' in checked) return invalidAgentSourceName(name)
+        return { ok: true, name: checked.name }
+      } catch {
+        return invalidAgentSourceName(name)
+      }
+    },
     listSources: (packageName) => {
       const filter = packageName?.trim().toLowerCase()
       const files = workspaceRef.current.packages
@@ -3123,7 +3163,13 @@ export const StageplayWorkspace = forwardRef<
             detached: script.detached === true,
           })),
         )
-      return { ok: true, files, count: files.length }
+      return {
+        ok: true,
+        files,
+        count: files.length,
+        /** B12：工具看到的是工作区视角，包含未保存草稿 */
+        includesDrafts: true,
+      }
     },
     readSource: (source, offset, limit) => {
       const found = findAgentScript(source)
@@ -3186,7 +3232,8 @@ export const StageplayWorkspace = forwardRef<
       )
     },
     createSource: (source, content) => {
-      const checked = normalizeAgentSource(source)
+      // A2：`../evil.hs` / 带目录的名字一律 invalid_arguments，不能抛异常落到 host_error
+      const checked = validateAgentSourceName(source)
       if ('error' in checked) return checked.error
       // 剧本工作区现在接受非剧本类资源（脚本 / 游戏性 / meta），但仍不许新建语言与配音映射
       if (checked.name.toLowerCase().endsWith('.voice')) {
@@ -3547,6 +3594,9 @@ export const StageplayWorkspace = forwardRef<
         draft: target.draft,
         /** true = 内容已在工程文件里 */
         saved: target.saved,
+        /** B8：语义自解释 —— 该 `.lang` 已保存到工程文件 / 有本地草稿 */
+        hasSaved: target.saved,
+        hasDraft: target.draft,
         /** 兼容旧字段名 */
         localDraft: target.localDraft,
         /** 正文里已不存在的译文键（orphan）；可用 delete_lang_keys 清理 */
@@ -3556,6 +3606,7 @@ export const StageplayWorkspace = forwardRef<
         /** 尚未成键的可本地化文本数量与样例（最多 3 条） */
         unparsedTextCount: unparsed.count,
         unparsedSamples: unparsed.samples.slice(0, 3),
+        /** 本语言的正文键数量（不是 `.lang` 文件条目数） */
         total: keys.length,
         missing: keys.filter((item) => !(item.key in target.map)).length,
         offset: start,
@@ -3607,6 +3658,34 @@ export const StageplayWorkspace = forwardRef<
       const known = new Set(
         collectSourceKeys(content, hit.script.name).map((item) => item.key),
       )
+      // A5：按正文 span 判断该键是普通对白 / 选项文案 / 选项回复，再评估译文能否安全写回正文
+      const inlineContexts = new Map<string, InlineContext>()
+      for (const span of parseTextSpans(content)) {
+        const key = span.value.trim()
+        if (!key || inlineContexts.has(key)) continue
+        inlineContexts.set(
+          key,
+          span.kind === 'choice-label'
+            ? 'optionText'
+            : span.kind === 'choice-reply'
+              ? 'optionReply'
+              : 'dialogue',
+        )
+      }
+      const riskWarnings: Array<{ locale: string; key: string; reasons: string[] }> = []
+      for (const step of plan) {
+        for (const entry of step.entries) {
+          const reasons = assessLangValueRisks(
+            entry.text,
+            inlineContexts.get(entry.key) ?? 'dialogue',
+          )
+          if (reasons.length > 0) {
+            riskWarnings.push({ locale: step.locale, key: entry.key, reasons })
+          }
+        }
+      }
+      const riskHint =
+        'some values cannot be safely restored into the script by unparse_hs; edit the source text or avoid //, :, and leading structural characters'
       const results: Array<Record<string, unknown>> = []
       const writtenPaths: string[] = []
       const failures: string[] = []
@@ -3640,6 +3719,8 @@ export const StageplayWorkspace = forwardRef<
             written,
             skipped,
             writtenCount: 0,
+            fileTotal: Object.keys(next).length,
+            /** 兼容旧字段：与 fileTotal 同值 */
             total: Object.keys(next).length,
             draft: false,
             saved: false,
@@ -3656,6 +3737,7 @@ export const StageplayWorkspace = forwardRef<
             written,
             skipped,
             writtenCount: written.length,
+            fileTotal: Object.keys(next).length,
             total: Object.keys(next).length,
             draft: false,
             saved: false,
@@ -3676,6 +3758,7 @@ export const StageplayWorkspace = forwardRef<
           written,
           skipped,
           writtenCount: written.length,
+          fileTotal: Object.keys(next).length,
           total: Object.keys(next).length,
           /** D1：只是本地草稿，等用户保存工程才进文件 */
           draft: true,
@@ -3709,6 +3792,9 @@ export const StageplayWorkspace = forwardRef<
           locales: results,
           notes,
           writtenPaths,
+          ...(riskWarnings.length > 0
+            ? { warnings: riskWarnings, warningCount: riskWarnings.length }
+            : {}),
           hint:
             failedTotal > 0
               ? 'check write permission / network and retry; writing translations does not change the source text, but confirm the source keys exist in the draft or project file'
@@ -3726,7 +3812,14 @@ export const StageplayWorkspace = forwardRef<
         saved: false,
         version: null,
         ...(localOnly ? { localOnly: true } : {}),
-        ...(failures.length > 0 ? { warnings: failures } : {}),
+        ...(failures.length > 0 ? { writeFailures: failures } : {}),
+        ...(riskWarnings.length > 0
+          ? {
+              warnings: riskWarnings,
+              warningCount: riskWarnings.length,
+              hint: riskHint,
+            }
+          : {}),
       }
     },
     deleteLangKeys: async (source, keys, localeArg, force) => {
@@ -3950,6 +4043,8 @@ export const StageplayWorkspace = forwardRef<
       const unparsed = unparseSourceText(before, map, hit.script.name)
 
       if (unparsed.replaced === 0) {
+        const blocked =
+          unparsed.multiline.length > 0 || unparsed.unrepresentable.length > 0
         return {
           ok: false,
           reason: 'invalid_arguments',
@@ -3958,7 +4053,10 @@ export const StageplayWorkspace = forwardRef<
           locale: lang,
           missing: unparsed.missing,
           multiline: unparsed.multiline,
-          hint: 'use list_lang_keys to confirm this locale has translations; multi-line translations cannot be unparsed yet',
+          unrepresentable: unparsed.unrepresentable,
+          hint: blocked
+            ? 'multi-line keys were left as key names and values that cannot be inlined were skipped; use edit_source to edit those blocks, or unparse in the baseline language'
+            : 'use list_lang_keys to confirm this locale has translations; multi-line translations cannot be unparsed yet',
         }
       }
 
@@ -3974,6 +4072,8 @@ export const StageplayWorkspace = forwardRef<
           hint: 'edit_source can retry; the language draft was not changed',
         }
       }
+      const blocked =
+        unparsed.multiline.length > 0 || unparsed.unrepresentable.length > 0
       return {
         ok: true,
         source: written.file,
@@ -3981,7 +4081,13 @@ export const StageplayWorkspace = forwardRef<
         replaced: unparsed.replaced,
         missing: unparsed.missing,
         multiline: unparsed.multiline,
+        unrepresentable: unparsed.unrepresentable,
         note: LANG_KEY_IDENTITY_NOTE,
+        ...(blocked
+          ? {
+              hint: 'multi-line keys were left as key names and values that cannot be inlined were skipped; use edit_source to edit those blocks, or unparse in the baseline language',
+            }
+          : {}),
       }
     },
     checkExport: async () => {
@@ -4124,6 +4230,8 @@ export const StageplayWorkspace = forwardRef<
         warningTotal,
         truncated: warningTotal > warningLimit,
         missingTranslations: langReview.summaries,
+        /** B11：预检基于工作区，包含未保存草稿 */
+        includesDrafts: true,
         orphanAssets,
         orphanKeys: orphanKeySummaries,
         groups: {
