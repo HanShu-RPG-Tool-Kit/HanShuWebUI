@@ -15,7 +15,7 @@
 | 适配（唯一 import PI 的层） | `src/agent/pi/` | `facade` 装配 Harness / 活跃段 / 归档段库；`models` 注入本机密钥；`tools` 把工具包成 `defineTool`；`arbiter` 接锁与撤销日志；`view` 把 PI 视图映射成面板视图 |
 | 运行时支撑 | `src/agent/runtime/` | `version`（内容哈希）· `lockTable`（锁）· `runUndo`（Run 撤销日志） |
 | 本地存储 | `src/agent/store/` | `dbNames`（库命名）· `windowId`（窗口认领）· `snapshotStore`（归档段库）· `segmentPurge`（删除活跃段） |
-| 领域工具 | `src/agent/tools.ts` | 18 个工具按 read / lock / write 三类语义派发 |
+| 领域工具 | `src/agent/tools.ts` | 19 个工具按 read / lock / write 三类语义派发 |
 | 契约 | `src/agent/contracts.ts` | 上述各层之间唯一的类型耦合面 |
 
 **不变量：`@earendil-works/*` 只允许出现在 `src/agent/pi/`。** UI、工作区、工具层都不直接依赖 PI。
@@ -38,31 +38,71 @@
 
 | 语义 | 工具 | 规则 |
 |---|---|---|
-| read | `list_sources` `read_source` `validate_source` `get_active_file_path` `list_locales` `list_lang_keys` `list_voice_status` `check_export` | `read_source` 返回 `content` + `version`（内容哈希），并登记「本 Run 读过这一版」；`list_lang_keys` 读**工程文件**（S 权威），带 `version` 与 `localDraft` |
-| lock | `lock_source` | 多路径原子；前置：本 Run 读过 + 版本一致 + 非 human-dirty（+ create 时路径不存在）；**不等待，拿不到立即失败** |
-| write | `create_source` `write_source` `edit_source` `rename_source` `delete_source` `write_lang` `delete_lang_keys` `parse_hs` `unparse_hs` | 必须先持锁；未持锁直接拒绝，错误里带 `lock_source` 下一步 |
+| read | `list_sources` `read_source` `validate_source` `get_active_file_path` `list_locales` `list_lang_keys` `list_voice_status` `check_export` | `read_source` 返回 `content` + `version`（内容哈希），并登记「本 Run 读过这一版」；`list_lang_keys` / `check_export` **草稿优先**，带 `draft` / `saved` 与 `localeExists` / `active` |
+| lock | `lock_source` `unlock_source` `lock_lang` `unlock_lang` | 多路径原子；前置：本 Run 读过 + 版本一致（+ create 时路径不存在）；**不等待，拿不到立即失败**。锁**不看人类是否正在编辑**（D8）：人类未保存的编辑器缓冲算最新内容，读到了就能锁；读取后人类继续改导致版本变化 → `version_stale`。`lock_source` 只锁源文件，语言文本用 `lock_lang({ source, locales? })` 单独锁 |
+| write | `create_source` `write_source` `edit_source` `write_lang` `delete_lang_keys` `parse_hs` `unparse_hs` | 必须先持锁；未持锁直接拒绝，错误里带 `lock_source` / `lock_lang` 下一步。agent **没有**改名/删除工具（结构操作只允许用户自己做） |
 
 - 版本 = **内容哈希**（SHA-256）：改了又改回来不算冲突。
 - lock 失败也回传 `currentVersion` / `currentContent`，让模型一次往返内自愈。
-- `rename_source` 源 + 目标都要锁；`create_source` 的锁语义是「占住一个还不存在的名字」。
+- `create_source` 的锁语义是「占住一个还不存在的名字」；`lock_source` **不再**展开派生语言资产。
+- **写语言是两把锁**：`write_lang` / `delete_lang_keys` / `parse_hs` 需要源文件的锁 + 每个目标语言（`lock_lang`）的锁；
+  `unparse_hs` 只改正文，只要源文件的锁。
 - **写后哈希自更新**：write 成功即把「本 Run 读到的版本」更新为刚写出的内容哈希——
   agent 当然知道自己改完的文件长什么样，同一 Run 里再锁同一文件不会被判 `version_stale`，也不必重新读一遍。
-- 锁的释放：被 write 消费 → 立即释放；Run 结束/中止 → 兜底释放。
-- 人类侧：Agent 持锁的文件在编辑器里转只读（`agentWritingFile`）。
+- 锁的释放：**写成功不再释放**；持有到 `unlock_source` / `unlock_lang`、Run 结束或失败回滚。
+- `unlock_*` 的 `held` 是**调用后本 Run 仍持有的全部路径**（含没在本次参数里出现的语言锁），不要拿它当"本次涉及的路径"。
+- 人类侧：Agent 持锁的文件在编辑器里转只读（逐文件判断）；锁期间编辑器不自动成键。
+- **输出语言（D5）**：工具返回 JSON 内的文本（`error` / `hint` / `notes` / `warnings` / 诊断消息 / `reason`）一律英文；
+  工具描述、schema 描述、规则与界面文案保持中文；模型用中文向用户解释英文错误。
 
-### 语言资产：写入即落盘、锁覆盖派生文件
+### 语言资产：和正文一样只写草稿
 
-- `write_lang` / `delete_lang_keys` / `parse_hs` 的译文**立即提交一次 S 文件事务**（`client.apply`），
-  返回 `writtenPaths` / `version` 即代表工程文件里已经有了；不再出现"工具说写了、磁盘上没有"。
-  正文（`.hs`）仍是本窗口草稿，等「保存工程」；只有译文走立即落盘（它不在正文保存批次里）。
-- `list_lang_keys` / `check_export` 读的也是工程文件（S 权威），不是本机 IndexedDB 镜像。
-  镜像只在 S 写成功后同步一份给界面用。
-- **派生语言资产的锁覆盖**：`lock_source` 会把该源文件**已存在**的语言资产一起锁进去；
-  `write_lang` 等写前逐个核对版本 —— 外部改了 `.lang`、源文件版本却没变时，
-  会以「语言文件在 lock 之后被外部修改」拒绝，并提示重新 lock + `list_lang_keys` 后重试。
+- `write_lang` / `delete_lang_keys` / `parse_hs` 的译文**只写本窗口草稿**：`transactions.stageWrite`
+  （与编辑器语言暂存同一条通道）+ IndexedDB 镜像；`client.apply` 通道已删除。
+  工具返回 `draft: true` / `saved: false` 表示"草稿已写、还没进工程文件"，要用户保存工程才落盘。
+- 草稿的镜像写入会同步 `client.assetEpochs`（`putAssetBlob` 提升的缓存 epoch），
+  避免 `setProjectSession` 把它误判成"用户未保存草稿"（P0 的假 dirty）。
+- `list_lang_keys` / `check_export` **读草稿优先**（staged 文本），没有草稿才读工程文件；
+  返回值带 `draft` / `saved`，agent 不能把"读到草稿"当成"已经保存"。
+- **语言资产的锁是显式的**：`lock_source` 不再展开派生 `.lang`；写译文前用
+  `lock_lang({ source, locales? })` 单独取锁（不存在的新语言文件按 creating 处理）。
+  `write_lang` 写前逐个核对语言锁的版本 —— 外部改了 `.lang`、源文件版本却没变时，
+  会以「language file changed after locking」拒绝，并提示重新 `lock_lang` + `list_lang_keys` 后重试。
   这是「源版本没变就以为没人动过」的防线。
+- **programmatic 写入禁成键**：agent 写正文后，编辑器不会把这段内容自动成键成新的 `.lang` 草稿
+  （内容级抑制：内容仍是 agent 写出的那一版时不触发成键），避免"写一次正文多一份语言草稿"。
 - `check_export` 的预检会报告每种语言缺多少键（`warnings` + `missingTranslations`），
-  不再让用户靠肉眼翻 `.lang` 文件。
+  不再让用户靠肉眼翻 `.lang` 文件；顶层 `warnings` 最多 200 条，超出时带 `truncated: true` 与 `warningTotal`。
+  顶层只放**与当前工作区相关**的警告（缺译文 + orphan 资产/键），导出编译器的其余警告按
+  `groups { translations, assets, gameplay }` 分组、英文输出，避免游戏性噪声淹没译文问题。
+- **键稳定性与 orphan（D9）**：`parse_hs` 生成键时先复用「同文本已有的键」，不再因为 `.lang` 里有历史键
+  而换新键——`unparse_hs → parse_hs` 往返拿回同一个键，其他语言译文不会丢。正文不再引用的历史键
+  通过 `list_lang_keys.orphanKeys` 暴露，`delete_lang_keys` 可以删（它不要求键在正文里）；`check_export` 会统计 orphan。
+- **参数与键校验（D6）**：`read_source` 的 `offset` / `limit` 必须是正整数（0/负数/小数直接报错，不带病调用）；
+  `offset` 超过总行数返回 `offset out of range` + `totalLines`，不静默 clamp；`limit > 2000` 时截断并回 `limitClamped: true`。
+  译文键必须是 8 位小写十六进制（自动成键的形态），大写/非法进 `invalidKeys`、同一次调用重复进 `duplicates`，
+  **不再替模型做 trim/小写归一化**，有问题整次拒绝、不写草稿。
+- **detached 资源**：`list_sources` 会给已被移出工程的文件标 `detached: true`；读写工具仍可读，
+  但写（`write_source` / `edit_source`）一律拒绝并提示"请用户另存为新文件"。
+- **跨包同名**：按逻辑名命中多个包时不再抛异常，返回结构化英文错误 + hint（用带目录的完整逻辑名消歧）。
+- `validate_source` 在编辑器诊断之外**另跑 agent lint**（英文消息 + 行号）：非法角色名、全角冒号、
+  对白文本里未转义的 `-`、对白块内的选项行、以及**形似键但格式不对**的片段（如大写 `7F3A91C`）；不改编辑器波形。
+- **`changed` 用版本判断（D9）**：`write_source` / `edit_source` 的 `changed` 由"写后版本 ≠ 写前锁版本"得出，
+  内容完全一致地重写会返回 `changed:false`（工具 JSON 同时给出 `version`，以版本为准）。
+- **只读工具语义（D10）**：
+  - `list_lang_keys.localeExists` = **该源文件在该语言下的 `.lang` 文件是否已存在**（`version !== null || saved`）；
+    `localeInProject` 才表示"工程语言表里是否有该语言"。判断"已有译文"用 `version` / `saved`，不要用 `localeExists`。
+  - 分页语义统一：`read_source` / `list_lang_keys` 的 offset 越界都返回 `ok:false` + `total`（`list_lang_keys` 为 `total`，`read_source` 为 `totalLines`），不静默返回空页。
+  - `list_voice_status` 支持 `offset` / `limit`（默认 1/100，上限 500），返回 `total` / `missingCount` / `missingSample`（最多 10 条） / `truncated`，不再一次吐出全部 `entries` 与 `missing` 键名。
+  - **未成键检测**：`list_lang_keys` 返回 `unparsedTextCount` + `unparsedSamples`；`validate_source` 会为未成键正文追加一条 agent-lint 汇总。
+  - **错误码统一**：所有失败返回体带 `errorCode`（`not_found / not_unique / detached / not_read / version_stale / held / already_exists / invalid_arguments / invalid_keys / keys_not_in_source / keys_in_use / write_failed / host_error`），lock 另保留 `reason`；调用方按 `errorCode` 分支，不要做字符串匹配。
+- **`delete_lang_keys` 零破坏（D10）**：默认拒绝删除正文仍在引用的键（`reason:'keys_in_use'` + `inUseKeys`），要删必须显式 `force:true`。
+- **`version_stale` 只来自外部改动（C4）**：同一 Run 内写成功会刷新"本 Run 读到的版本"，因此同 Run 再锁不会 stale；
+  只有人类或其它 Run 改了文件才会触发。
+- **locale 以返回值为准（C1）**：请求的标签可能被归一化（`en` → `en_us`），`lock_lang` / `write_lang` / `parse_hs` 返回的 `locale` 才是工程实际标签。
+- **锁期间不自动成键**：本 Run 持锁的文件，编辑器不会自动成键（解锁后也不补做），agent 改正文不会与自动成键抢键位。
+- **逆解析必须同语言（C2）**：键名是文本哈希，`unparse_hs(locale)` 之后必须用**同一个 locale** 重新 `parse_hs`；
+  跨语言逆解析会生成新键、旧键变孤儿并把错误文本灌进目标语言。`unparse_hs` / `parse_hs` 的成功返回带 `note` 提醒。
 
 ## Run 生命周期
 
@@ -70,11 +110,15 @@
 submit(input) → 多轮模型回合（工具调用）→ 最终答案 = 一个 Run
 ```
 
-- 页面存活时**失败/中止** → 按版本守卫回滚工程文件：逆序回放 before-image，
-  每个路径先比对「当前哈希 == 本 Run 写出时的哈希」，被后续改动覆盖过的一律跳过并标记人工合并。
-- **只回滚工程文件，不回滚对话条目**：失败的 Run 在对话里留一条记录，用户能看到当时想做什么。
-- 刷新 / 崩溃后不回滚：工作区按镜像恢复，那半套改动当作用户的未保存草稿。
-- 撤销日志**只在内存**，不落盘。
+- 页面存活时**失败/中止** → 先**预演**有序操作日志（源文件 + 语言草稿），再决定：
+  - 全部可安全恢复 → 自动逆序回滚；
+  - 任一冲突（版本已变 / 人类正在编辑 / 没有写前快照 / 通道不可用）→ **一个文件都不动**，
+    在失败记录旁挂「待处理回滚」，给三个选项：**让 Agent 帮忙处理冲突** / **强制回滚** / **放弃回滚**；
+    回滚失败后还有「重试回滚」。
+- 强制回滚会丢弃 agent 工作之后的编辑（界面二次确认）；放弃 = 丢弃日志、什么都不恢复。
+- **保存 = 放弃回滚**：保存封段后待处理回滚自动消失，不弹提示。
+- **只回滚工程文件/草稿，不回滚对话条目**：失败的 Run 在对话里留一条记录，用户能看到当时想做什么。
+- 刷新 / 崩溃后：待处理回滚会从活跃段库（IndexedDB）恢复——预演已安全则直接自动回滚，否则挂回失败卡片。
 - 打开时不自动续跑：检测到未完成 Run → `abort()` 并标记中断，不续跑、不回滚。
 - **不设对话轮次上限**（`maxTurns` 不配置）：长任务不会被强制截断；要停只能停止或让模型自己收尾。
 - 对话里可查看模型**思考**：默认折叠，点「思考」展开；只展示厂商返回的可见思考，不额外请求。
@@ -94,14 +138,22 @@ submit(input) → 多轮模型回合（工具调用）→ 最终答案 = 一个 
 ① 文件草稿 → S 事务（版本校验 / 冲突对话框，现有流程）
      └ 失败 → 不产归档，活跃段原样保留
 ② 文件确认提交后 → 段自上次归档之后的新增条目追加进归档段库，写一条归档记录
+     └ 成功 → 当前活跃段**封存**（sealed）：不再接受 Run，下次发送自动开新段
      └ 失败 → 不回滚文件；告警「文件已保存、对话未落盘」，下次保存补写
 ```
 
 ## 活跃段与归档段
 
-- **活跃段**：窗口内可继续的对话，可跑 Run、可多次保存；保存**不封段**（缓存前缀稳定的关键）；
+- **活跃段**：窗口内可继续的对话，可跑 Run、可多次保存直到封存；
   可以新建、切换、**删除**（删除会连同该段对话一起消失，不可恢复；归档段库不受影响）。
-- **归档段**：不可变，按工程 scope 存归档段库，同工程所有窗口可读。UI 只展示时间与对话条数。
+- **保存即封段（D4）**：保存产出归档后当前段置为 `sealed`，面板显示「已封存」；
+  发送消息会自动开一个新的活跃段（不会立刻建空段）。封存段仍可查看历史，但不能再跑 Run。
+- **待处理回滚会在活跃段内持久化**（IndexedDB `hanshu.agent.undo.<scope>`）：
+  刷新/重开面板后仍能强制/放弃/重试；打开时若预演已安全则直接回滚并清日志，否则挂回失败卡片。
+  保存封段 / 切段 / 删段 / 放弃 / 强制成功都会清掉持久化日志。
+- **归档段**：不可变，按工程 scope 存归档段库，同工程所有窗口可读。
+  归档记录带**简化日志**：`filesChanged`、`rolledBack`、以及只含哈希的
+  `rollbackLog[{path, beforeHash, afterHash}]` —— **不存正文/资产，不提供回滚入口**。
   归档记录用 `parentSnapshotId` 串成谱系：同一段继续保存 → 父是该段上一次归档；
   从某个归档「继承对话」后新段产出的归档 → 父是被继承的那个归档。
 - 归档 ≠ 段结束；一个活跃段库可含 N 个段；切换工程只休眠、不封存。
@@ -135,26 +187,36 @@ submit(input) → 多轮模型回合（工具调用）→ 最终答案 = 一个 
 ## 验收
 
 ```bash
-node scripts/run-verification.mjs scripts/verify-agent-store.ts    # 版本/锁/撤销日志/归档段库/windowId（24 项）
-node scripts/run-verification.mjs scripts/verify-agent-tools.ts    # 三语义派发与严格模式（12 项）
-node scripts/run-verification.mjs scripts/verify-agent-arbiter.ts  # 写后哈希自更新、未锁拒绝、撤销回放（5 项）
+node scripts/run-verification.mjs scripts/verify-agent-store.ts    # 版本/锁/撤销日志/归档段库/windowId（28 项）
+node scripts/run-verification.mjs scripts/verify-agent-undo.ts     # 有序操作日志：预演/冲突/force/语言回放/restore（17 项）
+node scripts/run-verification.mjs scripts/verify-agent-undo-journal.ts # 待处理回滚持久化：roundtrip/体积保护/key（9 项）
+node scripts/run-verification.mjs scripts/verify-agent-rollback-ui.ts # 失败卡片三选项（SSR：按钮、禁用、动作映射）
+node scripts/run-verification.mjs scripts/verify-agent-segment-ui.ts  # 封段提示/段状态/归档简化日志（SSR）
+node scripts/run-verification.mjs scripts/verify-agent-tools.ts    # 三语义派发/严格模式/参数与键校验/无中文输出/errorCode（32 项）
+node scripts/run-verification.mjs scripts/verify-agent-ops.ts      # 分页边界、agent lint、编译错误英文映射、键复用/orphan/未成键/导出 warning 映射
+node scripts/run-verification.mjs scripts/verify-agent-arbiter.ts  # 两把锁、写后锁仍在、未锁拒绝、撤销回放、offset 越界、heldPaths（23 项）
 node scripts/run-verification.mjs scripts/verify-agent-panel.ts    # 视图派生/阈值/掩码
 node scripts/run-verification.mjs scripts/verify-agent-config.ts   # 两档模型、模型 id 校验
 node scripts/run-verification.mjs scripts/verify-agent-runtime.ts  # 真 Harness 闭环（MemoryStorage + faux 模型，5 项）
 node scripts/verify-agent-segment-purge.mjs                        # 删除活跃段（真实浏览器 IndexedDB，Playwright）
 node scripts/verify-agent-archive.mjs                              # 归档段打开/继承/级联删除（真实浏览器 + 真 Harness，不调模型）
-node scripts/verify-agent-lang-lock.ts                             # 语言资产锁覆盖/外部回写拦截/导出译文预检（5 项）
+node scripts/run-verification.mjs scripts/verify-agent-lang-lock.ts # 语言锁（lock_lang/unlock_lang）/外部回写拦截/导出译文预检（13 项）
+node scripts/run-verification.mjs scripts/verify-agent-lang-draft.ts # 语言草稿：草稿优先读、assetEpochs 同步、localOnly 分支、镜像失败撤销
+node scripts/run-verification.mjs scripts/verify-agent-lock-targets.ts # 锁目标映射：源锁/语言锁只读分离、成键抑制、路径归一
+node scripts/run-verification.mjs scripts/verify-agent-lock-ui.ts    # 锁状态驱动资源树按钮 + AssetPreview 只读（SSR）
 ```
+
+`run-verification.mjs` 支持一次传多个脚本：`node scripts/run-verification.mjs scripts/verify-a.ts scripts/verify-b.ts`。
 
 `verify-agent-runtime.ts` 走的是与生产同一套 Harness / Conversation / defineTool 代码路径：
 Run 作答、工具回合、刷新后可续、中止结算、失败不重试，全部不联网。
 
 ## 已知偏差与取舍
 
-1. **锁的持有上限是「一次 Run」，不是「一次模型回复」**：pi-durable 没有暴露「回合边界」回调，
-   `lock_source` 后若既不写也不释放，锁会持有到本 Run 结束（人类在该文件上一直只读）。
-   写操作成功会立即消费锁，所以实际长时间持锁只发生在「锁了却没写」的异常路径，Run 结束即兜底释放。
-2. **派生资产只覆盖语言文本，不覆盖配音二进制**：`lock_source` 会展开到该源文件**已存在**的各语言 `.lang`
+1. **锁的持有上限是「一次 Run」**：pi-durable 没有暴露「回合边界」回调，
+   `lock_source` / `lock_lang` 拿到的锁会一直持有到本 Run 结束（人类在这些文件上一直只读），
+   除非 agent 主动 `unlock_source` / `unlock_lang`。写成功**不会**释放锁。
+2. **语言锁是显式的，不覆盖配音二进制**：`lock_source` 不展开派生 `.lang`，语言用 `lock_lang` 单独锁
    并做版本校验（`readAssetText`）；配音（`.ogg` / `.ref`）仍不作版本覆盖 —— 它们由源文件的结构操作联动，
    文本工具不直接写它们。
 3. **工具顺序执行**（`toolExecution: 'sequential'`）：并行派发会让「读版本 → 加锁」在同轮工具之间交错，
