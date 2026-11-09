@@ -3970,6 +3970,11 @@ export const StageplayWorkspace = forwardRef<
       const map = state.map
       const before = agentSourceContent(hit.script.id) ?? hit.script.content
       const parsed = parseSourceText(before, map, hit.script.name)
+      // 同文件重复文本会复用同一个键：entries 已去重，replaced 是实际替换语句数
+      const parsedNote =
+        parsed.replaced > parsed.entries.length
+          ? `${LANG_KEY_IDENTITY_NOTE}; duplicate text in this script reuses the same key`
+          : LANG_KEY_IDENTITY_NOTE
 
       if (parsed.entries.length === 0) {
         return {
@@ -3977,8 +3982,9 @@ export const StageplayWorkspace = forwardRef<
           source: hit.script.name,
           locale: lang,
           created: 0,
+          replaced: parsed.replaced,
           skipped: parsed.skipped,
-          note: LANG_KEY_IDENTITY_NOTE,
+          note: parsedNote,
           hint: 'no localizable text left to key (everything is already keyed, or it is after #stopparse)',
         }
       }
@@ -3992,7 +3998,7 @@ export const StageplayWorkspace = forwardRef<
           error: 'parse_hs generated invalid language keys; nothing was written',
           invalidKeys: parsedKeys.invalidKeys,
           duplicates: parsedKeys.duplicates,
-          hint: 'please report this; the source text was not changed',
+          hint: 'this is unexpected; the source text was not changed — report it with the script name',
         }
       }
 
@@ -4035,9 +4041,10 @@ export const StageplayWorkspace = forwardRef<
         source: written.file,
         locale: lang,
         created: parsed.entries.length,
+        replaced: parsed.replaced,
         skipped: parsed.skipped,
         keys: parsed.entries.map(([key]) => key),
-        note: LANG_KEY_IDENTITY_NOTE,
+        note: parsedNote,
         writtenPaths: [path],
         draft: true,
         saved: false,
