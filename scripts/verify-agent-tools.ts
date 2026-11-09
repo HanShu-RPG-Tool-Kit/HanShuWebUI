@@ -1260,6 +1260,32 @@ await test('delete_lang_keys 的 force 参数透传宿主', async () => {
   assert.deepEqual(world.deleteForces, [true])
 })
 
+await test('B8/N1/N2：工具描述说明 savedVersion / fileTotal / 键身份语义', async () => {
+  const description = (name: string): string => {
+    const tool = AGENT_TOOLS.find((item) => item.function.name === name)
+    assert.ok(tool, `缺少工具 ${name}`)
+    return tool.function.description
+  }
+  const listDesc = description('list_lang_keys')
+  for (const keyword of [
+    'localeExists',
+    'hasSaved',
+    'savedVersion',
+    'hasDraft',
+    'localeInProject',
+    '正文键数',
+  ]) {
+    assert.ok(listDesc.includes(keyword), `list_lang_keys 描述缺少 ${keyword}`)
+  }
+  const writeDesc = description('write_lang')
+  for (const keyword of ['fileTotal', '孤儿键', 'warnings', '只警告不拒绝']) {
+    assert.ok(writeDesc.includes(keyword), `write_lang 描述缺少 ${keyword}`)
+  }
+  const deleteDesc = description('delete_lang_keys')
+  assert.ok(deleteDesc.includes('哈希'), 'delete_lang_keys 描述要说明键名是文本哈希')
+  assert.ok(deleteDesc.includes('别删该条目'), 'delete_lang_keys 描述要提醒保键身份')
+})
+
 await test('每个 write 工具描述都要求先 lock_source，语言写还要 lock_lang 且标草稿；read 工具标注只读', async () => {
   const langWrites = new Set(['write_lang', 'delete_lang_keys', 'parse_hs'])
   for (const tool of AGENT_TOOLS) {

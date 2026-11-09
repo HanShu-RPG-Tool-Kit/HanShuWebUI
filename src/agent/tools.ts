@@ -168,7 +168,7 @@ const TOOL_SPECS: ToolSpec[] = [
   defineTool(
     'read',
     'list_lang_keys',
-    '【read / 只读，无需锁】列出某个源文件里的本地化键，以及它在指定语言（默认当前语言）的译文与是否已翻译。读的是**本地草稿优先、其次工程文件**，返回 draft（是否来自未保存草稿）/ saved（是否已在工程文件里）/ version 与 localDraft；localeExists / active 表示该语言文件是否存在、是否为当前语言。分页：offset 1 起、limit 默认 200、上限 1000；offset 越界返回 ok:false 与 errorCode。翻译前先用它看清缺哪些键。',
+    '【read / 只读，无需锁】列出某个源文件里的本地化键，以及它在指定语言（默认当前语言）的译文与是否已翻译。读的是**本地草稿优先、其次工程文件**，但「草稿」与「已保存文件」是两件事：localeExists / hasSaved / saved = 工程里该语言的 .lang **已保存文件**是否存在（**与本地草稿无关**，只有草稿未保存时仍为 false；saved 与 hasSaved 同义）；draft / hasDraft = 本次内容是否来自**未保存草稿**；version / savedVersion = **已保存文件**的版本（有草稿时依然有值，二者同义）；active = 是否为当前语言；localeInProject = 工程语言表里是否有该语言；total = **正文键数**（不是文件条目数）。分页：offset 1 起、limit 默认 200、上限 1000；offset 越界返回 ok:false 与 errorCode。翻译前先用它看清缺哪些键。',
     {
       source: str('逻辑文件名，如 序章.hs（键由该文件正文推导）'),
       locale: str('语言标签，如 zh_cn；省略用当前语言'),
@@ -291,7 +291,7 @@ const TOOL_SPECS: ToolSpec[] = [
   defineTool(
     'write',
     'write_lang',
-    '【write / 必须先 lock 源文件】一次写入多种语言的译文（多语言任务一次调用搞定）。**调用前必须两把锁都拿到**：lock_source({ paths: [source] }) 锁源文件，再 lock_lang({ source, locales: [...目标语言] }) 锁每个目标语言的 .lang；缺语言锁会被拒绝。写入只到**本地草稿**（返回 draft:true、saved:false、version:null），需要**用户保存工程**后才进文件；写完要在回复里提醒用户保存。语言标签用「语言_地区」小写下划线形式（如 zh_cn / en_us / ja_jp）；工程里已有该语言时会自动沿用它的标签，**返回体里的 locale 才是规范标签**（如 en→en_us 会被归一化），回执以返回值为准。键必须已存在于正文里（用 list_lang_keys 查）——单行语句写在行末 `narrator:7f3a91c2//`，多行块里键名单独占一行；新增台词要先 parse_hs 或 edit_source 把键写进正文。成功后返回 writtenPaths 与草稿标记。',
+    '【write / 必须先 lock 源文件】一次写入多种语言的译文（多语言任务一次调用搞定）。**调用前必须两把锁都拿到**：lock_source({ paths: [source] }) 锁源文件，再 lock_lang({ source, locales: [...目标语言] }) 锁每个目标语言的 .lang；缺语言锁会被拒绝。写入只到**本地草稿**（返回 draft:true、saved:false、version:null），需要**用户保存工程**后才进文件；写完要在回复里提醒用户保存。语言标签用「语言_地区」小写下划线形式（如 zh_cn / en_us / ja_jp）；工程里已有该语言时会自动沿用它的标签，**返回体里的 locale 才是规范标签**（如 en→en_us 会被归一化），回执以返回值为准。键必须已存在于正文里（用 list_lang_keys 查）——单行语句写在行末 `narrator:7f3a91c2//`，多行块里键名单独占一行；新增台词要先 parse_hs 或 edit_source 把键写进正文。成功后返回 writtenPaths、fileTotal（**该语言文件的条目数，含正文已不再引用的孤儿键**；total 是同值兼容别名，注意 list_lang_keys.total 是正文键数，两者不同）与 warnings（"将来 unparse 无法安全还原"的风险：含 `//`、选项文案/回复里的 `:`、行首 `?`/`!`/`@`/`#`/`*`、行首 `>>`/`<<`、首尾空白；**只警告不拒绝**）。',
     {
       source: str('逻辑文件名，如 序章.hs'),
       translations: {
@@ -317,7 +317,7 @@ const TOOL_SPECS: ToolSpec[] = [
   defineTool(
     'write',
     'delete_lang_keys',
-    '【write / 必须先 lock 源文件】删除指定键的译文。**调用前必须** lock_source({ paths: [source] }) + lock_lang({ source, locales: [目标语言] })；缺语言锁会被拒绝。**默认拒绝删除正文仍在引用的键**（返回 reason=keys_in_use 与 inUseKeys）；确需删除时显式传 force:true。删除只写**本地草稿**（返回 draft:true、saved:false、version:null），需要用户保存工程后才进文件；成功后返回 writtenPaths 与草稿标记。',
+    '【write / 必须先 lock 源文件】删除指定键的译文。**调用前必须** lock_source({ paths: [source] }) + lock_lang({ source, locales: [目标语言] })；缺语言锁会被拒绝。**默认拒绝删除正文仍在引用的键**（返回 reason=keys_in_use 与 inUseKeys）；确需删除时显式传 force:true。**键身份**：键名是**创建时那段文本**的哈希（跨语言共用同一键）；删除某语言条目后，若之后用另一种语言 unparse→parse，会按当前文本重新哈希、旧键变孤儿；**需要保键身份就别删该条目**。删除只写**本地草稿**（返回 draft:true、saved:false、version:null），需要用户保存工程后才进文件；成功后返回 writtenPaths 与草稿标记。',
     {
       source: str('逻辑文件名，如 序章.hs'),
       locale: str('语言标签；省略用当前语言'),
