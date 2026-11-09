@@ -6,11 +6,18 @@
  */
 
 import { getAssetBlob, deleteAssetBlob, putAssetBlob } from '../assets/idb'
-import { HsCompileError, compileHsToHsc } from '../hanshu/compiler'
+import { HsCompileError, compileHsToHsc, type HsCompileErrorCode } from '../hanshu/compiler'
 import { stopParseLineOf } from '../hanshu/directives'
 import { escapeHsText, splitHsLines } from '../hanshu/hsSyntaxRules'
-import { collectSourceKeys, type SourceKeyEntry } from '../hanshu/sourceKeys'
-import { sourceExtension, textAssetPath } from '../i18n/localeLayout'
+import { collectInjectDefinitions, collectJumpTargets } from '../hanshu/injectRefs'
+import { unsafeInlineReason, type InlineContext, type UnsafeInlineReason } from '../hanshu/inlineText'
+import { collectSourceKeys, suspectKeySpans, type SourceKeyEntry } from '../hanshu/sourceKeys'
+import {
+  TEXT_ASSET_EXTENSION,
+  parseLocaleAssetPath,
+  sourceExtension,
+  textAssetPath,
+} from '../i18n/localeLayout'
 import {
   TEXT_ASSET_MIME,
   createLocaleKeyFromText,
@@ -20,7 +27,7 @@ import {
   stringifyTextFile,
   type TextFile,
 } from '../i18n/textMap'
-import { describeVoiceFormat, inspectOggBytes, isMonoVorbisOgg } from '../i18n/voiceBytes'
+import { inspectOggBytes, isMonoVorbisOgg } from '../i18n/voiceBytes'
 import { resolveVoiceBindingFor, voiceAssetDir } from '../i18n/voiceMap'
 import {
   analyzeCharDiagnostics,
@@ -76,22 +83,68 @@ export function activeFilePathOf(
   return null
 }
 
-/** 分页读：`offset` 1-based 行号，`limit` 行数 */
+/** 分页读：`offset` 1-based 行号，`limit` 行数；`limitClamped` = 请求超过 2000 行被截断 */
 export function paginateSource(
   content: string,
   offset = 1,
   limit = 400,
-): { content: string; totalLines: number; offset: number; truncated: boolean } {
+): {
+  content: string
+  totalLines: number
+  offset: number
+  truncated: boolean
+  limitClamped: boolean
+} {
   const lines = content.split('\n')
   const start = Math.min(Math.max(1, Math.floor(offset) || 1), Math.max(1, lines.length))
-  const count = Math.min(Math.max(1, Math.floor(limit) || 400), 2000)
+  const requested = Math.floor(limit) || 400
+  const limitClamped = requested > 2000
+  const count = Math.min(Math.max(1, requested), 2000)
   const slice = lines.slice(start - 1, start - 1 + count)
   return {
     content: slice.join('\n'),
     totalLines: lines.length,
     offset: start,
     truncated: start - 1 + slice.length < lines.length,
+    limitClamped,
   }
+}
+
+/** `read_source` 的 offset 越界判定（宿主兜底；工具层先挡非正整数） */
+export function sourceOffsetError(
+  totalLines: number,
+  offset?: number,
+): { ok: false; error: string; totalLines: number } | null {
+  const requested = Math.floor(offset ?? 1) || 1
+  return requested > totalLines
+    ? { ok: false, error: 'offset out of range', totalLines }
+    : null
+}
+
+/** 语言键的唯一合法形态：8 位小写十六进制（与自动成键生成的一致） */
+export const LANG_KEY_PATTERN = /^[0-9a-f]{8}$/
+
+/**
+ * 语言键校验（D6）：不再替模型做 trim/小写归一化。
+ * - `invalidKeys`：形态不合法（大写、长度不对、带空白等）；
+ * - `duplicates`：同一次调用里重复出现的键。
+ */
+export function validateLangKeys(keys: readonly string[]): {
+  invalidKeys: string[]
+  duplicates: string[]
+} {
+  const invalidKeys: string[] = []
+  const duplicates: string[] = []
+  const seen = new Set<string>()
+  for (const key of keys) {
+    if (!LANG_KEY_PATTERN.test(key)) {
+      invalidKeys.push(key)
+      continue
+    }
+    if (seen.has(key)) duplicates.push(key)
+    else seen.add(key)
+  }
+  return { invalidKeys, duplicates }
 }
 
 /** 精确字面替换：命中 0 处或（未开 `replaceAll` 时）多处都失败，逼模型重读 */
@@ -101,12 +154,12 @@ export function applyTextEdit(
   newText: string,
   replaceAll = false,
 ): { ok: true; content: string; count: number } | { ok: false; error: string } {
-  if (!oldText) return { ok: false, error: 'oldText 不能为空' }
+  if (!oldText) return { ok: false, error: 'oldText must not be empty' }
   const first = content.indexOf(oldText)
   if (first < 0) {
     return {
       ok: false,
-      error: 'oldText 在文件里找不到；文件可能已被修改，请重新 read_source 后再改',
+      error: `oldText not found (${oldText.length} chars); the file may have changed — call read_source again and retry`,
     }
   }
   if (!replaceAll) {
@@ -115,7 +168,7 @@ export function applyTextEdit(
       return {
         ok: false,
         error:
-          'oldText 在文件里命中多处；请给出更长的上下文，或显式传 replaceAll: true',
+          `oldText matched ${content.split(oldText).length - 1} times; provide more context or pass replaceAll: true`,
       }
     }
     return {
@@ -128,30 +181,266 @@ export function applyTextEdit(
   return { ok: true, content: content.split(oldText).join(newText), count }
 }
 
+/** agent 侧 lint（D6）：只在 `.hs` 上跑，不参与编辑器波形 */
+export type AgentLintDiagnostic = {
+  kind: 'agent-lint'
+  /** 1-based 行号 */
+  line: number
+  /** 英文消息，已带行号 */
+  message: string
+}
+
+const AGENT_SPEAKER_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
+/** 块内会被当成新结构、从而结束多行对白块的行首 */
+const AGENT_BLOCK_BREAK = /^(?:-|\+|@|\?|!|:)/
+/** 行首像 `名字:` 的行（名字允许非法字符，交给 lint 判断） */
+const AGENT_SPEAKER_LIKE = /^([^:]+?)\s*:/
+
+function isEscapedAt(text: string, index: number): boolean {
+  let backslashes = 0
+  for (let i = index - 1; i >= 0 && text[i] === '\\'; i--) backslashes += 1
+  return backslashes % 2 === 1
+}
+
+function hasUnescapedHyphen(text: string): boolean {
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] === '-' && !isEscapedAt(text, i)) return true
+  }
+  return false
+}
+
+/**
+ * `.hs` 的 agent lint（D6）：非法角色名 / 全角冒号 / 对白文本未转义的 `-` /
+ * 对白块内出现选项行。消息全英文并带行号；只做 agent 的 `validate_source`，
+ * 不进编辑器诊断（编辑器波形保持原样）。
+ */
+export function lintHsSource(source: string): AgentLintDiagnostic[] {
+  const out: AgentLintDiagnostic[] = []
+  const push = (index: number, message: string) => {
+    out.push({ kind: 'agent-lint', line: index + 1, message: `line ${index + 1}: ${message}` })
+  }
+  let inDialogueBlock = false
+  const lines = splitHsLines(source)
+  for (let i = 0; i < lines.length; i++) {
+    const text = lines[i]!.text
+    if (!text.trim()) continue
+    if (/^\s*#/.test(text)) continue
+    if (/^\/\/\s*$/.test(text)) {
+      inDialogueBlock = false
+      continue
+    }
+
+    if (inDialogueBlock) {
+      // 新对白 / 选项 / 信号会结束当前块，按正常行继续判定
+      if (AGENT_BLOCK_BREAK.test(text) || /^[A-Za-z_][A-Za-z0-9_]*\s*:/.test(text)) {
+        inDialogueBlock = false
+      } else {
+        if (/^\s*\*/.test(text)) {
+          push(i, 'choice line inside a dialogue block; move choices outside the block')
+          continue
+        }
+        if (hasUnescapedHyphen(text)) {
+          push(i, 'unescaped "-" in dialogue text; escape it as "\\-"')
+        }
+        continue
+      }
+    }
+
+    if (text.startsWith('@')) continue
+    if (AGENT_BLOCK_BREAK.test(text)) continue
+    if (/^\s*\*/.test(text)) continue
+
+    // 全角冒号只判角色行（`旁白：你好`）；正文里的中文标点不受影响
+    if (/^[^\s:：]+[：]/.test(text)) {
+      push(i, 'full-width colon "：" in speaker line; use ASCII ":"')
+      continue
+    }
+
+    const speaker = AGENT_SPEAKER_LIKE.exec(text)
+    if (!speaker) continue
+    const name = speaker[1]!.trim()
+    if (!AGENT_SPEAKER_NAME.test(name)) {
+      push(
+        i,
+        `invalid character name "${name}"; use [A-Za-z_][A-Za-z0-9_]*`,
+      )
+      continue
+    }
+    const rest = text.slice(speaker[0].length)
+    if (rest.trim() === '') inDialogueBlock = true
+  }
+  return out
+}
+
+/** agent 侧编译错误（D5：工具 JSON 英文）。编辑器 UI 仍直接用 `HsCompileError.message` 中文。 */
+export type AgentCompileError = {
+  /** 英文消息，已带行号 */
+  message: string
+  /** 机器可读分类（编译器的错误码） */
+  code?: HsCompileErrorCode
+  /** 1-based 行号 */
+  line?: number
+}
+
+function englishCompileError(error: HsCompileError): AgentCompileError {
+  const prefix = error.line === undefined ? '' : `line ${error.line}: `
+  switch (error.code) {
+    case 'key-outside-span':
+      return {
+        message: `${prefix}key must live inside a closed statement (speaker:<key>// or a multi-line block ending with // on its own line)`,
+        code: error.code,
+        line: error.line,
+      }
+    case 'multiple-keys-in-block':
+      return {
+        message: `${prefix}a multi-line dialogue block may contain only one key; split it into separate speaker: statements or remove the # comments inside the block`,
+        code: error.code,
+        line: error.line,
+      }
+    default:
+      return {
+        message: `${prefix}script compilation failed`,
+        ...(error.line === undefined ? {} : { line: error.line }),
+      }
+  }
+}
+
+/** 带行号与英文消息的源文件诊断（B9 + P4）：agent 侧统一补 line/message */
+export type AgentSourceDiagnostic =
+  | (HsDiagnostic & { line: number; message: string })
+  | (CharDiagnostic & { line: number; message: string })
+  | AgentLintDiagnostic
+
+/** offset（0 起）→ 行号（1 起） */
+function lineNumberAt(content: string, offset: number): number {
+  const limit = Math.max(0, Math.min(offset, content.length))
+  let line = 1
+  for (let index = 0; index < limit; index += 1) {
+    if (content[index] === '\n') line += 1
+  }
+  return line
+}
+
+/** P4：编辑器诊断（中文 UI 口径）→ agent 英文一句话 */
+function hsDiagnosticMessage(
+  content: string,
+  diagnostic: HsDiagnostic,
+  foreignInjects?: ReadonlyMap<string, string>,
+): string {
+  switch (diagnostic.kind) {
+    case 'missing-terminator':
+      return 'statement is missing its closing "//" terminator (put "//" at the end of the line, or on its own line for a multi-line block)'
+    case 'inline-terminator':
+      return 'terminator must be the last thing on the line; move the following text into a new statement or a multi-line block'
+    case 'speaker-needs-newline':
+      return 'multi-line dialogue must start with the speaker line alone ("speaker:" followed by a newline)'
+    case 'duplicate-sys-return':
+      return 'duplicate system return; each system return may only appear once'
+    case 'duplicate-inject': {
+      const line = lineNumberAt(content, diagnostic.offset)
+      const name =
+        collectInjectDefinitions(content).find((item) => item.line === line)?.name ?? 'unknown'
+      const owner = foreignInjects?.get(name.toLowerCase())
+      return owner === undefined
+        ? `duplicate inject point: ${name} (also defined earlier in this file)`
+        : `duplicate inject point: ${name} (also defined in ${owner})`
+    }
+    default:
+      return 'invalid statement structure'
+  }
+}
+
+function charDiagnosticMessage(diagnostic: CharDiagnostic): string {
+  return diagnostic.kind === 'missing-terminator'
+    ? 'character line is missing its closing "//" terminator'
+    : 'character line must be in the form "key:msg//"'
+}
+
+function withDiagnosticLine<T extends HsDiagnostic | CharDiagnostic>(
+  content: string,
+  diagnostics: ReadonlyArray<T>,
+  describe: (item: T) => string,
+): Array<T & { line: number; message: string }> {
+  return diagnostics.map((item) => ({
+    ...item,
+    line: lineNumberAt(content, item.offset),
+    message: describe(item),
+  }))
+}
+
 /** `.hs` / `.char` 语法诊断；`.hs` 另跑编译校验（注入点可带跨文件占用表） */
 export function validateSourceContent(
   name: string,
   content: string,
   options?: { foreignInjects?: ReadonlyMap<string, string> },
 ): {
-  diagnostics: Array<HsDiagnostic | CharDiagnostic>
-  compileError: { message: string } | null
+  diagnostics: AgentSourceDiagnostic[]
+  compileError: AgentCompileError | null
 } {
   if (isCharFile(name)) {
-    return { diagnostics: analyzeCharDiagnostics(content), compileError: null }
+    // B9/P4：.char 诊断也补 line 与英文 message
+    return {
+      diagnostics: withDiagnosticLine(
+        content,
+        analyzeCharDiagnostics(content),
+        charDiagnosticMessage,
+      ),
+      compileError: null,
+    }
   }
   if (!isHanshuFile(name)) return { diagnostics: [], compileError: null }
-  let compileError: { message: string } | null = null
+  let compileError: AgentCompileError | null = null
   try {
     compileHsToHsc(content)
   } catch (error) {
-    if (error instanceof HsCompileError) compileError = { message: error.message }
+    if (error instanceof HsCompileError) compileError = englishCompileError(error)
     else throw error
   }
+  // A4：`:>>name` 必须指向本文件或 foreignInjects 里存在的 @name（大小写不敏感）
+  const knownInjects = new Set<string>()
+  for (const definition of collectInjectDefinitions(content)) {
+    knownInjects.add(definition.name.toLowerCase())
+  }
+  const foreignInjects = options?.foreignInjects
+  if (foreignInjects !== undefined) {
+    for (const name of foreignInjects.keys()) knownInjects.add(name.toLowerCase())
+  }
+  const jumpDiagnostics = collectJumpTargets(content)
+    .filter((target) => !knownInjects.has(target.name.toLowerCase()))
+    .map((target) => ({
+      kind: 'agent-lint' as const,
+      line: target.line,
+      message: `jump target not found: ${target.name}`,
+    }))
+  const unparsed = countUnparsedTexts(content, name)
   return {
-    diagnostics: analyzeHsDiagnostics(content, {
-      foreignInjects: options?.foreignInjects,
-    }),
+    diagnostics: [
+      ...withDiagnosticLine(
+        content,
+        analyzeHsDiagnostics(content, {
+          foreignInjects: options?.foreignInjects,
+        }),
+        (item) => hsDiagnosticMessage(content, item, options?.foreignInjects),
+      ),
+      ...lintHsSource(content),
+      // P10：形似键但格式不对（大写 / 长度不对）→ agent lint，带行号英文消息
+      ...suspectKeySpans(content).map((item) => ({
+        kind: 'agent-lint' as const,
+        line: item.line,
+        message: `line ${item.line}: key "${item.text}" is not a valid 8-digit lowercase hex key`,
+      })),
+      ...jumpDiagnostics,
+      // B6：还没成键的可本地化正文（一条汇总，行号取第一条样本）
+      ...(unparsed.count === 0
+        ? []
+        : [
+            {
+              kind: 'agent-lint' as const,
+              line: unparsed.samples[0]?.line ?? 1,
+              message: `${unparsed.count} localizable text segment(s) are not keyed yet; run parse_hs to create keys`,
+            },
+          ]),
+    ],
     compileError,
   }
 }
@@ -162,6 +451,23 @@ export { collectSourceKeys, type SourceKeyEntry }
 /** 语言文本资产路径（由源文件的逻辑名 + 语言推导，调用方无需拼路径） */
 export function langAssetPathFor(source: string, locale: string): string {
   return textAssetPath(locale, source)
+}
+
+/**
+ * 语言资产路径 → 源文件逻辑名（`assets/<locale>/lang_<ext>/<dir>/<name>.lang`
+ * 反推 `<dir>/<name>.<ext>`）；不是语言资产时返回 null。
+ *
+ * `unlock_lang` 省略 locales 时用它从 heldPaths 里挑出「该源文件的全部语言锁」
+ * （包括工程语言表之外的标签），不再依赖 lock_lang 的派生集合。
+ */
+export function sourceNameFromLangPath(path: string): string | null {
+  const asset = parseLocaleAssetPath(path)
+  if (!asset || asset.kind !== 'text') return null
+  const suffix = `.${TEXT_ASSET_EXTENSION}`
+  if (!asset.rest.toLowerCase().endsWith(suffix)) return null
+  const stem = asset.rest.slice(0, -suffix.length)
+  if (!stem) return null
+  return `${stem}.${asset.sourceExt}`
 }
 
 /** 读语言文本；缺失返回空表（不是错误：该语言还没开始翻译） */
@@ -191,6 +497,110 @@ export async function writeLangAsset(
     blob.size,
   )
   return result?.workspace ?? workspace
+}
+
+export type MissingTranslationSummary = {
+  locale: string
+  /** 该语言缺少译文的键数 */
+  missing: number
+  /** 该语言对应的正文键总数 */
+  total: number
+  /** 涉及多少个源文件（只数缺译文的） */
+  sources: number
+}
+
+/**
+ * 导出预检：找出「正文有键、语言文件没文本」的情况。
+ *
+ * 为什么放在这里而不是导出器里：导出预检与编辑器全红用的是同一份判断
+ * （键来自正文、文本来自语言文件），导出器只负责打包。这里只做汇总，
+ * 真正读语言文件由调用方注入 —— 必须**草稿优先**（D1：agent / 用户刚写进本地草稿的
+ * 译文同样要参与缺译文判断），不能只读工程文件里的旧版本。
+ */
+export async function collectMissingTranslationWarnings(
+  sources: ReadonlyArray<{ name: string; content: string }>,
+  locales: readonly string[],
+  readLang: (sourceName: string, locale: string) => Promise<Record<string, string>>,
+): Promise<{ warnings: string[]; summaries: MissingTranslationSummary[] }> {
+  const warnings: string[] = []
+  const summaries: MissingTranslationSummary[] = []
+  for (const locale of locales) {
+    let missing = 0
+    let total = 0
+    let missingSources = 0
+    for (const source of sources) {
+      const keys = collectSourceKeys(source.content, source.name)
+      if (keys.length === 0) continue
+      const map = await readLang(source.name, locale)
+      let fileMissing = 0
+      for (const key of keys) {
+        total += 1
+        if (!String(map[key.key] ?? '').trim()) {
+          missing += 1
+          fileMissing += 1
+        }
+      }
+      if (fileMissing > 0) missingSources += 1
+    }
+    if (missing > 0) {
+      summaries.push({ locale, missing, total, sources: missingSources })
+      warnings.push(
+        `[${locale}] ${missing} of ${total} keys have no translation across ${missingSources} source file(s); ` +
+          'use list_lang_keys to find the gaps and write_lang to fill them',
+      )
+    }
+  }
+  return { warnings, summaries }
+}
+
+/**
+ * 语言映射里的「孤儿键」：map 有、正文已经不再引用（P8 / 面板清理用）。
+ * 按 key 排序返回，text 原样带回，便于 UI 展示与批量删除。
+ */
+export function collectOrphanKeys(
+  sourceKeys: readonly string[],
+  map: Record<string, string>,
+): Array<{ key: string; text: string }> {
+  const used = new Set(sourceKeys)
+  return Object.entries(map)
+    .filter(([key]) => !used.has(key))
+    .map(([key, text]) => ({ key, text }))
+    .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+}
+
+export type TranslatedExportWarning = {
+  group: 'assets' | 'gameplay' | 'other'
+  message: string
+}
+
+/**
+ * 把导出编译器的中文 warning 翻成英文并归类（panel-ui 的 D5 展示用）。
+ *
+ * 已知模式：
+ * - `符号 X 已提供但未被引用（path）` → gameplay；
+ * - `path: 找不到已导出的所属源文件，已跳过` → assets；
+ * - 其余 → other，message 用英文泛化（**不夹中文**）。
+ */
+export function translateExportWarning(message: string): TranslatedExportWarning {
+  const trimmed = message.trim()
+  const symbol = /^符号\s*(.+?)\s*已提供但未被引用（(.+)）$/.exec(trimmed)
+  if (symbol) {
+    return {
+      group: 'gameplay',
+      message: `symbol ${symbol[1]} was provided but never referenced (${symbol[2]})`,
+    }
+  }
+  const missingOwner = /^(.+?): 找不到已导出的所属源文件，已跳过$/.exec(trimmed)
+  if (missingOwner) {
+    return {
+      group: 'assets',
+      message: `${missingOwner[1]}: owning source file is not part of the export; skipped`,
+    }
+  }
+  return {
+    group: 'other',
+    message: 'export warning (details are only available in the export log)',
+  }
 }
 
 export type LocaleSummary = { locale: string; langFiles: number; voiceFiles: number }
@@ -301,19 +711,52 @@ export type VoiceState = 'ok' | 'missing' | 'not-ogg' | 'not-mono' | 'invalid' |
  * 独占一行的 `//`）把键名插成独立一行。空文本也照样成键（否则它永远拿不到键）。
  *
  * `skipped` 只统计因 `#stopparse` 指令而未成键的片段。
+ *
+ * 同文件重复台词：同文本第二次出现会**复用同一个键**，`entries` 因此按 key 去重
+ * （保留首次出现顺序）—— 否则宿主 `parseHs` 的 `validateLangKeys` 会把重复键判成
+ * `invalid_keys` 整篇拒绝。`replaced` 报告实际替换的 span 数（含重复出现），
+ * `reused` 报告复用已有键的次数。
  */
 export function parseSourceText(
   content: string,
   map: TextFile,
   sourceName?: string,
-): { content: string; entries: Array<[string, string]>; skipped: number } {
+): {
+  content: string
+  entries: Array<[string, string]>
+  skipped: number
+  reused: number
+  replaced: number
+} {
   const stopLine = stopParseLineOf(content)
-  const used = new Set<string>(Object.keys(map))
-  for (const item of collectSourceKeys(content, sourceName)) used.add(item.key)
+  // P1：只把「正文正在用的键 + 本次已分配键」当作占用；**不再**把 map 的全部历史键塞进来。
+  // 否则 unparse → parse（译文还原成正文后再成键）拿不到原来的键，同文本会被分到新键，
+  // 该语言之外的其他语言译文就丢了。
+  const used = new Set<string>(
+    collectSourceKeys(content, sourceName).map((item) => item.key),
+  )
+  // text → key 反查：同文本复用已有键（只收合法 8 位小写十六进制）。
+  // P3b：同一段文本在 map 里可能对应多个历史键（不同语言各自成键过），
+  // 固定取**键名最小**的那个，保证同输入永远同结果。
+  // 注意：这**不保证**是你期望的那个键；要保键身份，跨语言操作请用同一 locale 的流程。
+  const keysByText = new Map<string, string[]>()
+  for (const [key, text] of Object.entries(map)) {
+    if (!LANG_KEY_PATTERN.test(key)) continue
+    const keys = keysByText.get(text)
+    if (keys === undefined) keysByText.set(text, [key])
+    else keys.push(key)
+  }
+  const existingByText = new Map<string, string>()
+  for (const [text, keys] of keysByText) {
+    existingByText.set(text, keys.sort()[0]!)
+  }
 
   const edits: Array<{ start: number; end: number; text: string }> = []
   const entries: Array<[string, string]> = []
+  const entryKeys = new Set<string>()
   let skipped = 0
+  let reused = 0
+  let replaced = 0
 
   // 与编辑器同源：行末 offset 供"空体多行块把键名插成独立一行"用
   const eol = content.includes('\r\n') ? '\r\n' : '\n'
@@ -329,11 +772,23 @@ export function parseSourceText(
       continue
     }
     if (isLocaleKey(span.value)) continue
-    const key = createLocaleKeyFromText(span.value, (candidate) =>
-      used.has(candidate),
-    )
+    const existing = existingByText.get(span.value)
+    let key: string
+    if (existing !== undefined) {
+      key = existing
+      reused += 1
+    } else {
+      key = createLocaleKeyFromText(span.value, (candidate) => used.has(candidate))
+    }
     used.add(key)
-    entries.push([key, span.value])
+    // 同文件同文本的后续出现也复用本次分配的键（不必再走冲突重试）
+    if (!existingByText.has(span.value)) existingByText.set(span.value, key)
+    replaced += 1
+    // entries 按 key 去重：同文本重复台词只写一条映射（保留首次出现顺序）
+    if (!entryKeys.has(key)) {
+      entryKeys.add(key)
+      entries.push([key, span.value])
+    }
     edits.push(keyReplacementFor(span, key, eol, lineEndOf))
   }
 
@@ -341,23 +796,59 @@ export function parseSourceText(
   for (const edit of edits.sort((a, b) => b.start - a.start)) {
     next = next.slice(0, edit.start) + edit.text + next.slice(edit.end)
   }
-  return { content: next, entries, skipped }
+  return { content: next, entries, skipped, reused, replaced }
 }
+
+/**
+ * 未成键正文检测（B6）：用 `parseSourceText` 干跑，统计还有多少可本地化文本没拿到键，
+ * 并给前 3 条样本（行号 + 文本）。`#stopparse` 之后不计（与成键/键位扫描同口径）。
+ */
+export function countUnparsedTexts(
+  content: string,
+  sourceName?: string,
+): { count: number; samples: Array<{ line: number; text: string }> } {
+  const dryRun = parseSourceText(content, {}, sourceName)
+  // 用 replaced（实际替换的 span 数）而不是 entries.length：后者按 key 去重，
+  // 同文本重复出现时会把两个未成键片段数成一个。
+  if (dryRun.replaced === 0) return { count: 0, samples: [] }
+  const stopLine = stopParseLineOf(content)
+  const samples: Array<{ line: number; text: string }> = []
+  for (const span of localizedSpans(content, sourceName)) {
+    if (stopLine != null && span.endLine >= stopLine) continue
+    if (isLocaleKey(span.value)) continue
+    samples.push({ line: span.line, text: span.value })
+    if (samples.length >= 3) break
+  }
+  return { count: dryRun.replaced, samples }
+}
+
+export type UnrepresentableLangText = { key: string; reason: UnsafeInlineReason }
 
 /**
  * 逆解析：把正文里的键名换回该语言的映射文本（转义后写回）。
  * 多行译文与缺失译文不处理，原样报告给调用方 —— 不静默丢内容。
  * `#stopparse` 只控制**解析成键**，逆解析不受它影响：它要还原的是整个文件，
  * 指令往往就顶格写在第一行（Agent 的"关闭解析 → 逆解析 → 改稿 → 主动解析"流程）。
+ *
+ * A3：写回前先用 `unsafeInlineReason(text, context)` 做安全判定 —— 含 `//`、选项里的
+ * `:`、行首结构字符、空串等会拆坏语法的文本**不内联**，进 `unrepresentable` 让作者
+ * 用 `edit_source` 处理；安全文本才 `escapeHsText` 后替换。
  */
 export function unparseSourceText(
   content: string,
   map: TextFile,
   sourceName?: string,
-): { content: string; replaced: number; missing: string[]; multiline: string[] } {
+): {
+  content: string
+  replaced: number
+  missing: string[]
+  multiline: string[]
+  unrepresentable: UnrepresentableLangText[]
+} {
   const edits: Array<{ start: number; end: number; text: string }> = []
   const missing: string[] = []
   const multiline: string[] = []
+  const unrepresentable: UnrepresentableLangText[] = []
 
   for (const span of localizedSpans(content, sourceName)) {
     const key = normalizeLocaleKey(span.value)
@@ -371,6 +862,17 @@ export function unparseSourceText(
       multiline.push(key)
       continue
     }
+    const context: InlineContext =
+      span.kind === 'choice-label'
+        ? 'optionText'
+        : span.kind === 'choice-reply'
+          ? 'optionReply'
+          : 'dialogue'
+    const unsafe = unsafeInlineReason(text, context)
+    if (unsafe !== null) {
+      unrepresentable.push({ key, reason: unsafe })
+      continue
+    }
     edits.push({ start: span.start, end: span.end, text: escapeHsText(text) })
   }
 
@@ -378,7 +880,7 @@ export function unparseSourceText(
   for (const edit of edits.sort((a, b) => b.start - a.start)) {
     next = next.slice(0, edit.start) + edit.text + next.slice(edit.end)
   }
-  return { content: next, replaced: edits.length, missing, multiline }
+  return { content: next, replaced: edits.length, missing, multiline, unrepresentable }
 }
 
 export type VoiceStatusEntry = {
@@ -398,6 +900,22 @@ export type VoiceStatusEntry = {
  * 目标不存在 / 不是 ogg 时照实说 `invalid`，不要混进 `not-ogg` —— 那会把
  * "这个键用引用"说成"这个文件格式不对"，指错方向。
  */
+/**
+ * 配音格式的一行英文说明（P5 / D5）。
+ * - 合格（ok / ref）只说 `mono Vorbis Ogg`，不再出现 "mono required" 这种自相矛盾的提示；
+ * - invalid（含 not-mono）才给具体原因。
+ */
+export function voiceFormatNote(
+  info: ReturnType<typeof inspectOggBytes>,
+  state: VoiceState,
+): string {
+  if (state === 'ok' || state === 'ref') return 'mono Vorbis Ogg'
+  if (!info.ogg) return 'not an ogg container'
+  if (info.codec === 'opus') return 'ogg contains Opus; Vorbis is required'
+  if (info.codec === 'other') return 'ogg is neither Vorbis nor Opus'
+  return `Vorbis with ${info.channels ?? 'unknown'} channel(s); mono is required`
+}
+
 export async function voiceStatusOf(
   packageId: string,
   assets: Array<{ path: string; mime?: string; refTarget?: string | null }>,
@@ -420,7 +938,7 @@ export async function voiceStatusOf(
           key,
           state: 'invalid',
           fileName,
-          format: binding.reason ?? '引用解析不出来',
+          format: 'reference could not be resolved',
         })
         continue
       }
@@ -432,7 +950,7 @@ export async function voiceStatusOf(
           state: 'invalid',
           fileName,
           refTarget: target,
-          format: `引用目标不是 ogg：${targetName}`,
+          format: `reference target is not an ogg file: ${targetName}`,
         })
         continue
       }
@@ -443,17 +961,19 @@ export async function voiceStatusOf(
           state: 'invalid',
           fileName,
           refTarget: target,
-          format: '引用目标没有数据',
+          format: 'reference target has no data',
         })
         continue
       }
       const refHead = new Uint8Array(await refBlob.slice(0, 64 * 1024).arrayBuffer())
+      const refInfo = inspectOggBytes(refHead)
+      const refOk = isMonoVorbisOgg(refHead)
       out.push({
         key,
-        state: isMonoVorbisOgg(refHead) ? 'ref' : 'invalid',
+        state: refOk ? 'ref' : 'invalid',
         fileName,
         refTarget: target,
-        format: describeVoiceFormat(inspectOggBytes(refHead)),
+        format: voiceFormatNote(refInfo, refOk ? 'ref' : 'invalid'),
       })
       continue
     }
@@ -470,11 +990,12 @@ export async function voiceStatusOf(
     }
     const head = new Uint8Array(await blob.slice(0, 64 * 1024).arrayBuffer())
     const info = inspectOggBytes(head)
+    const ok = isMonoVorbisOgg(head)
     out.push({
       key,
-      state: isMonoVorbisOgg(head) ? 'ok' : 'invalid',
+      state: ok ? 'ok' : 'invalid',
       fileName,
-      format: describeVoiceFormat(info),
+      format: voiceFormatNote(info, ok ? 'ok' : 'invalid'),
     })
   }
   return out

@@ -288,6 +288,14 @@ export type TextHost = {
   onUnitSelect?(request: TextUnitSelectRequest): void
   /** 录音棚模式下划框选中了一批键（框在空白处松开且没拖动时 keys 为空 = 清空） */
   onMarquee?(request: TextMarqueeRequest): void
+  /**
+   * 是否允许**自动成键**。省略 = 恒允许。
+   *
+   * Agent 持有当前源文件（或它派生的 `.lang`）的锁时返回 false：锁期间成键只能由
+   * agent 显式 `parse_hs` 或用户解锁后操作，编辑器不得擅自把正文换成键名。
+   * 解锁后下一次输入会自然恢复，**不补做**历史成键。
+   */
+  canAutoKey?(): boolean
 }
 
 /** 录音棚模式下点选一个键名 */
@@ -2762,6 +2770,9 @@ export function bindText(
    */
   const migrateNow = (options?: { skipEditing?: boolean }) => {
     if (disposed || migrating || ed.getOption(monaco.editor.EditorOption.readOnly)) return
+    // Agent 持锁期间禁止自动成键（成键只能由 agent 显式 parse_hs 或用户解锁后操作）。
+    // 放在 readOnly 判据之后：录音棚等既有只读路径不受影响。
+    if (host.canAutoKey && !host.canAutoKey()) return
     const model = ed.getModel()
     const map = host.getMap()
     if (!model || !map) return
@@ -2770,7 +2781,14 @@ export function bindText(
     const stopLine = stopParseLineOf(model.getValue())
 
     const used = new Set<string>()
-    for (const [key] of map.entries()) used.add(key)
+    // 同文本复用已有键（只收合法 8 位小写十六进制；map 里同文本第一个键胜出）。
+    // 编辑器自动成键必须遵守“同一段文本永远得到同一个键”，否则同文件重复台词会生成
+    // 两个不同键、在 `.lang` 里留下两条同文本条目。
+    const byText = new Map<string, string>()
+    for (const [key, text] of map.entries()) {
+      used.add(key)
+      if (!byText.has(text) && /^[0-9a-f]{8}$/.test(key)) byText.set(text, key)
+    }
 
     const caretLine = options?.skipEditing
       ? (ed.getPosition()?.lineNumber ?? null)
@@ -2803,10 +2821,13 @@ export function bindText(
         const range = statementLineRange(span, next)
         if (caretLine >= range.from && caretLine <= range.to) continue
       }
-      const key = createLocaleKeyFromText(span.value, (candidate) =>
-        used.has(candidate),
-      )
-      used.add(key)
+      const existing = byText.get(span.value)
+      const key =
+        existing ??
+        createLocaleKeyFromText(span.value, (candidate) => used.has(candidate))
+      // 新分配的键才登记占用；复用键本来就在 used 里（同文件重复文本共用同一个键）
+      if (existing === undefined) used.add(key)
+      byText.set(span.value, key)
       plan.push({
         span,
         key,
@@ -2891,6 +2912,8 @@ export function bindText(
     if (timer != null) window.clearTimeout(timer)
     timer = window.setTimeout(() => {
       timer = null
+      // 锁期间不成键，也不重画（重画由下一次输入/刷新自然触发）；解锁后无需补做历史成键
+      if (host.canAutoKey && !host.canAutoKey()) return
       // 打字触发：光标还在语句里就不成键
       migrateNow({ skipEditing: true })
       render()

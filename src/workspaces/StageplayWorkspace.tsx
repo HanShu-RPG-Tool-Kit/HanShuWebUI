@@ -28,6 +28,12 @@ import {
   type EditorPage,
 } from './stageplay/EditorTabs'
 import { SecondaryDockPage } from './stageplay/SecondaryDockPage'
+import {
+  folderHasLockedAsset,
+  isLockedAssetPath,
+  sourceNameFromLangAssetPath,
+  splitAgentLockPaths,
+} from './stageplay/agentLockTargets'
 
 const STAGEPLAY_EDITOR_DOCK_KEY = 'hanshu.stageplayEditorDock.v1'
 import {
@@ -69,6 +75,8 @@ import { indexForeignHsInjects } from '../hanshu/injectIndex'
 import { analyzeCharDiagnostics } from '../monaco/charDiagnostics'
 import { analyzeHsDiagnostics } from '../monaco/hsDiagnostics'
 import { parseCharTextSpans } from '../monaco/charTextSpans'
+import { parseTextSpans } from '../monaco/textSpans'
+import { assessLangValueRisks, type InlineContext } from '../hanshu/inlineText'
 import {
   HANSHU_THEME_ID,
   registerHanshuLanguage,
@@ -100,7 +108,6 @@ import {
   ALLOWED_EXTENSIONS_LABEL,
   MANUAL_FILE_EXTENSIONS_LABEL,
   isManualFileName,
-  isStageplayExplorerSource,
   registerAsset,
   removeAssetMeta,
   removeAssetFolder,
@@ -130,7 +137,11 @@ import {
   parseVoiceRefContent,
 } from '../i18n/voiceMap'
 import { createVoiceOps, type VoiceOps } from '../i18n/voiceOps'
-import { voiceRootDir } from '../i18n/localeLayout'
+import {
+  normalizeSourcePath,
+  parseLocaleAssetPath,
+  voiceRootDir,
+} from '../i18n/localeLayout'
 import { buildResourcePackZip } from '../export/resourcePack'
 import { buildProjectPackZip } from '../export/projectPack'
 import { assetFileName, normalizeAssetPath, normalizeFolderPath } from '../assets/paths'
@@ -140,6 +151,7 @@ import {
   renameScriptAssets,
 } from '../workspaceMove'
 import {
+  assetCacheEpoch,
   deleteAssetBlob,
   getAssetBlob,
   putAssetBlob,
@@ -155,15 +167,20 @@ import {
 import {
   activeFilePathOf,
   applyTextEdit,
+  collectMissingTranslationWarnings,
+  collectOrphanKeys,
   collectSourceKeys,
+  countUnparsedTexts,
   deleteSourceAssets,
   langAssetPathFor,
   listLocalesOf,
   paginateSource,
   parseSourceText,
-  readLangAsset,
   sourceKindOf,
+  sourceOffsetError,
+  translateExportWarning,
   unparseSourceText,
+  validateLangKeys,
   validateSourceContent,
   voiceStatusOf,
   writeLangAsset,
@@ -172,6 +189,10 @@ import { MarkdownPreview } from '../MarkdownPreview'
 import { HscPreview } from '../HscPreview'
 import { AssetPreview } from '../AssetPreview'
 import { AgentPanel } from '../AgentPanel'
+import { createAgentRuntime } from '../agent/pi/facade'
+import { claimWindowId } from '../agent/store/windowId'
+import { getAgentApiKey, getAgentModelId } from '../agent/config'
+import type { AgentRuntime, AgentRuntimeView } from '../agent/contracts'
 import {
   AgentDiffModal,
   type AgentDiffSnapshot,
@@ -195,10 +216,16 @@ import { TextEditBox } from '../TextEditBox'
 import {
   TextMap,
   TEXT_ASSET_MIME,
+  parseTextFile,
   stringifyTextFile,
   textAssetPath,
 } from '../i18n/textMap'
 import { createTextSink } from '../i18n/textSink'
+import {
+  discardLangDraft,
+  readLangDraft,
+  writeLangDraft,
+} from '../i18n/langDraft'
 import {
   createVoiceLibrary,
   type VoiceLibrary,
@@ -291,6 +318,9 @@ export const StageplayWorkspace = forwardRef<
   const tabsHydratedRef = useRef(false)
   const [project, setProject] = useState<BoundProject | null>(null)
   const [projectBusy, setProjectBusy] = useState(false)
+  /** 保存事务是否进行中：Agent Run 的启动闸门要读最新值（闭包里的 state 会是旧值） */
+  const projectBusyRef = useRef(projectBusy)
+  projectBusyRef.current = projectBusy
   const active = useMemo(
     () => findScript(workspace, workspace.activeScriptId),
     [workspace],
@@ -324,6 +354,35 @@ export const StageplayWorkspace = forwardRef<
   const setAgentOpen = (next: boolean | ((open: boolean) => boolean)) => {
     assignViewFlag(scriptViewFlags, 'agent', next)
   }
+
+  /** Agent 运行时（pi-durable facade）：只在面板打开且工程就绪时创建 */
+  const [agentRuntime, setAgentRuntime] = useState<AgentRuntime | null>(null)
+  /** 订阅到的会话视图：Run 状态、锁列表、流式条目都从这里来 */
+  const [agentView, setAgentView] = useState<AgentRuntimeView | null>(null)
+  /** 面板里改了网关/模型 → 重建运行时（Key 是惰性读的，不需要重建） */
+  const [agentRuntimeNonce, setAgentRuntimeNonce] = useState(0)
+  const agentRuntimeRef = useRef<AgentRuntime | null>(null)
+  const agentHostRef = useRef<AgentHost | null>(null)
+  /**
+   * 稳定宿主代理：运行时只创建一次，但工具调用要拿到**当前渲染**的宿主实现
+   * （宿主方法里会读 locale、活动文件这类每次渲染都可能变的值）。
+   */
+  const agentHostProxyRef = useRef<AgentHost | null>(null)
+  if (!agentHostProxyRef.current) {
+    agentHostProxyRef.current = new Proxy({} as AgentHost, {
+      get: (_target, property) => {
+        const host = agentHostRef.current as unknown as
+          | Record<PropertyKey, unknown>
+          | null
+        const value = host?.[property]
+        return typeof value === 'function'
+          ? (value as (...args: unknown[]) => unknown).bind(host)
+          : value
+      },
+    })
+  }
+  /** Run 活跃：保存按钮/快捷键/自动保存全部禁用（文档 §7 双向互斥） */
+  const agentRunning = agentView?.runState === 'running'
   const [agentDiffs, setAgentDiffs] = useState<AgentDiffSnapshot[]>([])
   const [diffOpen, setDiffOpen] = useState(false)
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null)
@@ -339,6 +398,19 @@ export const StageplayWorkspace = forwardRef<
    * 所以写入前一律核对归属（见 `persistActiveContent`），不一致就拒写。
    */
   const bufferOwnerRef = useRef<string | null>(workspace.activeScriptId)
+  /**
+   * 自动成键抑制集合（源文件锁 + 派生 `.lang` 锁所属的源文件）。
+   * 供 `bindText` 的 `canAutoKey` 在成键防抖回调里读**最新**值 —— 那个回调
+   * 只在挂载时创建一次，不能闭包捕获渲染期的 Set。
+   */
+  const agentLockedSourceNamesRef = useRef<ReadonlySet<string>>(new Set())
+  /** 原始锁路径里的资产路径（`.lang` 等），供译文编辑浮层在锁期间拒绝编辑 */
+  const agentLockedAssetPathsRef = useRef<ReadonlySet<string>>(new Set())
+  /**
+   * 程序化写入（agent）后的正文快照：正文仍等于它时不做自动成键。
+   * 这是内容级抑制 —— 解锁 / 编辑器重挂载 / 刷新都不会把 agent 刚写出的正文再成键一遍。
+   */
+  const agentWrittenContentRef = useRef<Map<string, string>>(new Map())
   const projectRef = useRef(project)
   rolesRef.current = roles
   valueRef.current = value
@@ -379,6 +451,29 @@ export const StageplayWorkspace = forwardRef<
   const packageName = viewingAsset
     ? activeAssetHit!.pkg.name
     : (active?.pkg.name ?? '')
+  /**
+   * Agent 锁涉及的文件（文档 D2：「锁只对被锁的文件生效」）。
+   *
+   * - `agentLockedSourceNames`：**源文件锁**（`lock_source`），只让源编辑器只读；
+   * - `agentLockedAssetPaths`：**语言/资产锁**（`lock_lang` 的 `.lang` 等），只让该资产只读；
+   * - `agentAutoKeyBlockedSources`：自动成键抑制集合 = 源文件锁 + 派生 `.lang` 锁所属的源文件
+   *   （lang 锁期间源文件仍可编辑正文，但不能再自动成键）。
+   *
+   * 拆分口径与反解布局都在 `stageplay/agentLockTargets.ts`（纯函数，有单测）。
+   */
+  const agentLockTargets = splitAgentLockPaths(
+    agentView?.lockedPaths ?? [],
+    (candidate) => findScriptByName(workspaceRef.current, candidate)?.script.name ?? null,
+  )
+  const agentLockedSourceNames = agentLockTargets.sourceNames
+  const agentLockedAssetPaths = agentLockTargets.assetPaths
+  const agentAutoKeyBlockedSources = agentLockTargets.autoKeyBlockedSources
+  agentLockedSourceNamesRef.current = agentAutoKeyBlockedSources
+  agentLockedAssetPathsRef.current = agentLockedAssetPaths
+  /** 当前打开的**源文件**被源锁命中 → 编辑器只读（语言锁不锁源正文） */
+  const agentWritingFile = agentLockedSourceNames.has(titleName)
+  /** 当前打开的资产被锁（`.lang` 的只读靠 lang 锁，不靠源文件锁） */
+  const agentLockedViewingAsset = viewingAsset && isLockedAssetPath(agentLockedAssetPaths, titleName)
   const SourceEditor=editorLanguageForFile(titleName)==='javascript'?JavaScriptEditor:Editor
   const editingMarkdown = !viewingAsset && isMarkdownFile(titleName)
   const editingHanshu = !viewingAsset && isHanshuFile(titleName)
@@ -445,7 +540,11 @@ export const StageplayWorkspace = forwardRef<
    */
   const flushEditorInto = (base: Workspace): Workspace => {
     const id = bufferOwnerRef.current
-    if (!id || !findScript(base, id)) return base
+    if (!id) return base
+    const hit = findScript(base, id)
+    if (!hit) return base
+    // P4：正文没变时不要 commit —— updateScriptContent 会刷新 updatedAt，造成无变更的“更新时间”跳变
+    if (hit.script.content === valueRef.current) return base
     return updateScriptContent(base, id, valueRef.current)
   }
 
@@ -502,6 +601,25 @@ export const StageplayWorkspace = forwardRef<
   /** 当前语言文本资产的原始内容（TextSink.read 是同步接口，所以要用缓存兜住） */
   const textCacheRef = useRef<string | null>(null)
   const textBindingRef = useRef<TextBinding | null>(null)
+  /**
+   * 当前正在编辑的**语言文本**（`.lang`）是否被 Agent 锁住。
+   *
+   * 译文编辑浮层是自绘 UI，不受 Monaco `readOnly` 约束；锁期间必须在这里拒绝，
+   * 否则用户仍能改译文，产生与 agent 写入冲突的草稿（「语言文件看 lang 锁」）。
+   */
+  const rejectLockedLangEdit = (): boolean => {
+    const langPath = textMapRef.current?.fileName
+    if (
+      !langPath ||
+      !agentLockedAssetPathsRef.current.has(normalizeSourcePath(langPath))
+    ) {
+      return false
+    }
+    void alertDialog(
+      '这篇语言文本正被 Agent 修改（锁未释放），暂时不能改译文；等这一轮结束或 Agent 释放锁后再编辑。',
+    )
+    return true
+  }
   const langEditSeqRef = useRef(0)
   const voiceLibraryRef = useRef<VoiceLibrary | null>(null)
   /** 音频映射管理的渲染态镜像（ref 给编辑器用，state 给弹窗用） */
@@ -601,6 +719,10 @@ export const StageplayWorkspace = forwardRef<
   const handleSaveTextAsset = async (content: string) => {
     const hit = activeAssetHit
     if (!hit) return
+    if (agentRuntimeRef.current?.view().runState === 'running') {
+      void alertDialog('Agent 运行中，暂不可保存。等这一轮结束（或点停止）再保存。')
+      return
+    }
     const { pkg, asset } = hit
     const mime = asset.mime || TEXT_ASSET_MIME
     const blob = new Blob([content], { type: mime })
@@ -608,6 +730,9 @@ export const StageplayWorkspace = forwardRef<
     const mirror = async () => {
     if (projectRef.current?.handle.client !== sourceClient) throw new Error('工程已切换，原语言草稿保留在原工程')
     await putAssetBlob(pkg.id, asset.path, blob)
+    // putAssetBlob 会提升 IDB 缓存 epoch；同步到 client.assetEpochs，避免保存前把
+    // 「镜像刚写进去」误判成别的端改过资源（P0 假 dirty）。
+    sourceClient?.assetEpochs.set(asset.path, assetCacheEpoch(pkg.id, asset.path))
     if (projectRef.current?.handle.client !== sourceClient) throw new Error('工程已切换，原语言草稿保留在原工程')
     const result = registerAsset(
       workspaceRef.current,
@@ -691,6 +816,8 @@ export const StageplayWorkspace = forwardRef<
 
       const migrated = new Blob([legacy.content], { type: TEXT_ASSET_MIME })
       await putAssetBlob(hit.pkg.id, fileName, migrated)
+      // 镜像提升的缓存 epoch 要同步到 client，避免保存前把镜像写入误判成远端改动（P0）
+      sourceClient?.assetEpochs.set(fileName, assetCacheEpoch(hit.pkg.id, fileName))
       const withAsset = registerAsset(
         base,
         hit.pkg.id,
@@ -717,6 +844,8 @@ export const StageplayWorkspace = forwardRef<
         const blob = new Blob([content], { type: TEXT_ASSET_MIME })
         return putAssetBlob(hit.pkg.id, fileName, blob).then(() => {
           if (projectRef.current?.handle.client !== sourceClient) throw new Error('工程已切换，原语言草稿保留在原工程')
+          // 手改语言文本的镜像同样提升缓存 epoch：同步 client.assetEpochs（P0 假 dirty）
+          sourceClient?.assetEpochs.set(fileName, assetCacheEpoch(hit.pkg.id, fileName))
           const result = registerAsset(
             workspaceRef.current,
             hit.pkg.id,
@@ -1784,6 +1913,15 @@ export const StageplayWorkspace = forwardRef<
       setProject(saved)
       setBoundProject(saved)
       setDiskSavedAt(Date.now())
+      // ② 文件已确认提交 → 才把段的新增条目追加进快照库。
+      // 失败只告警、不回滚文件：档案是本机副本，文件才是服务端权威（文档 §9「保存路径」）
+      try {
+        await agentRuntimeRef.current?.archive()
+      } catch (error) {
+        void alertDialog(
+          `文件已保存，但对话快照未落盘：${error instanceof Error ? error.message : String(error)}。下次保存会补写。`,
+        )
+      }
     } finally {
       setProjectBusy(false)
     }
@@ -1810,6 +1948,11 @@ export const StageplayWorkspace = forwardRef<
   }
 
   const persistNow = () => {
+    // 文档 §7：Run 活跃 → 保存按钮、快捷键、自动保存全部禁用
+    if (agentRuntimeRef.current?.view().runState === 'running') {
+      void alertDialog('Agent 运行中，暂不可保存。等这一轮结束（或点停止）再保存。')
+      return
+    }
     const text = valueRef.current
     // 落点用正文的归属：Ctrl+S 保存的是"你正在看的那份"，它属于谁就写给谁
     const id = bufferOwnerRef.current ?? activeIdRef.current
@@ -2142,6 +2285,10 @@ export const StageplayWorkspace = forwardRef<
   const handleShellRename = (scriptId: string, base: string): string | null => {
     const hit = findScript(workspaceRef.current, scriptId)
     if (!hit) return '文件不存在'
+    // 改名会连带搬迁该文件的 `.lang` / 配音，agent 持锁期间一律不让改
+    if (agentAutoKeyBlockedSources.has(hit.script.name)) {
+      return '该资源正被 Agent 使用（锁未释放），暂不能改名；等解锁后再试。'
+    }
     if (!isManualFileName(hit.script.name)) return '语言表和配音映射跟着剧本名走，不能单独改名'
     const ext = getExtension(hit.script.name)
     const type =
@@ -2247,11 +2394,24 @@ export const StageplayWorkspace = forwardRef<
       return hit ? [hit] : []
     })
     if (!hits.length) return
-    const message = hits.length === 1
-      ? `删除「${hits[0]!.script.name}」及其各语言的译文 / 配音？`
-      : `删除 ${hits.length} 个剧本资源及其各语言的译文 / 配音？`
+    // 删除会连带删掉该文件的 `.lang` / 配音：源锁或任一派生语言锁都挡住；
+    // 其余（未锁）资源照常删，不做整次静默失败。
+    const locked = hits.filter((hit) => agentAutoKeyBlockedSources.has(hit.script.name))
+    if (locked.length > 0) {
+      notify(
+        `以下资源正被 Agent 使用（锁未释放），暂不能删除：${locked
+          .map((hit) => hit.script.name)
+          .join('、')}；等解锁后再试。`,
+        { kind: 'error' },
+      )
+    }
+    const deletable = hits.filter((hit) => !agentAutoKeyBlockedSources.has(hit.script.name))
+    if (!deletable.length) return
+    const message = deletable.length === 1
+      ? `删除「${deletable[0]!.script.name}」及其各语言的译文 / 配音？`
+      : `删除 ${deletable.length} 个剧本资源及其各语言的译文 / 配音？`
     if (!(await confirmDialog({ message, danger: true }))) return
-    for (const hit of hits) {
+    for (const hit of deletable) {
       if (!(await deleteScriptWithAssets(hit.script.id))) break
     }
   }
@@ -2259,6 +2419,13 @@ export const StageplayWorkspace = forwardRef<
   const handleDeleteAsset = (assetId: string) => {
     const hit = findAsset(workspaceRef.current, assetId)
     if (!hit) return
+    // 资源树按行禁用了；这里再兜一层，防止从其它入口删到被锁的语言文件
+    if (isLockedAssetPath(agentLockedAssetPathsRef.current, hit.asset.path)) {
+      void alertDialog(
+        `「${hit.asset.path}」正被 Agent 使用（锁未释放），暂不能删除；等解锁后再试。`,
+      )
+      return
+    }
     void confirmDialog({ message: `删除资产「${hit.asset.path}」？`, danger: true }).then(async (ok) => {
       if (!ok) return
       try {
@@ -2293,6 +2460,13 @@ export const StageplayWorkspace = forwardRef<
 
   const handleDeleteAssetFolder = (packageId: string, folderPath: string) => {
     if (folderPath === 'assets') return
+    // 删除目录 = 删除其下全部资产；有被锁语言文件时整目录都别动
+    if (folderHasLockedAsset(agentLockedAssetPathsRef.current, folderPath)) {
+      void alertDialog(
+        `「${folderPath}」内有正被 Agent 使用的资产（锁未释放），暂不能删除；等解锁后再试。`,
+      )
+      return
+    }
     void confirmDialog({ message: `删除文件夹「${folderPath}」及其下全部资产？`, danger: true }).then((ok) => {
       if (!ok) return
       const client = projectRef.current?.handle.client
@@ -2319,6 +2493,7 @@ export const StageplayWorkspace = forwardRef<
     let next = ensureAssetFolder(workspaceRef.current, packageId, baseDir)
     let lastAssetId: string | null = null
     const failed: string[] = []
+    const lockedFiles: string[] = []
 
     for (const file of list) {
       const withPath = file as File & { webkitRelativePath?: string }
@@ -2329,6 +2504,11 @@ export const StageplayWorkspace = forwardRef<
       const path = normalizeAssetPath(`${baseDir}/${rel}`)
       if (!path) {
         failed.push(file.name)
+        continue
+      }
+      // 导入到被锁资产路径会覆盖 Agent 正在写的文件：跳过并统一告知
+      if (isLockedAssetPath(agentLockedAssetPathsRef.current, path)) {
+        lockedFiles.push(path)
         continue
       }
       try {
@@ -2356,8 +2536,15 @@ export const StageplayWorkspace = forwardRef<
       activeAssetId: lastAssetId ?? next.activeAssetId,
     })
 
-    if (failed.length > 0) {
-      void alertDialog(`部分文件导入失败：\n${failed.join('\n')}`)
+    if (failed.length > 0 || lockedFiles.length > 0) {
+      const problems: string[] = []
+      if (lockedFiles.length > 0) {
+        problems.push(
+          `以下资产正被 Agent 使用（锁未释放），未导入：\n${lockedFiles.join('\n')}\n等解锁后再试。`,
+        )
+      }
+      if (failed.length > 0) problems.push(`部分文件导入失败：\n${failed.join('\n')}`)
+      void alertDialog(problems.join('\n\n'))
     }
   }
 
@@ -2656,14 +2843,6 @@ export const StageplayWorkspace = forwardRef<
     clearAgentDiffs()
   }
 
-  const getEditorSelection = () => {
-    const ed = editorRef.current
-    const model = ed?.getModel()
-    const sel = ed?.getSelection()
-    if (!ed || !model || !sel || sel.isEmpty()) return ''
-    return model.getValueInRange(sel)
-  }
-
   /** Agent 写入已有文件：并回编辑器、记 diff；工程历史由 S 在提交成功时记录。 */
   const applyAgentFileWrite = (
     scriptId: string,
@@ -2674,11 +2853,15 @@ export const StageplayWorkspace = forwardRef<
     // "编辑器里这份正文就是它" —— 判据是正文归属
     const inEditor = hit.script.id === bufferOwnerRef.current
     const before = inEditor ? valueRef.current : hit.script.content
+    // P4：内容相同 → 不 commit、不记 diff（updatedAt 不跳变；P7 据此报 changed:false）
+    if (before === content) return { file: hit.script.name }
     commitWorkspace(updateScriptContent(workspaceRef.current, scriptId, content))
     if (inEditor) {
       loadEditorContent(scriptId, content)
     }
     pushAgentDiff({ fileName: hit.script.name, before, after: content })
+    // 内容级成键抑制：这份正文是程序化写入的，用户没改之前不要自动成键
+    agentWrittenContentRef.current.set(hit.script.name, content)
     return { file: hit.script.name }
   }
 
@@ -2691,14 +2874,162 @@ export const StageplayWorkspace = forwardRef<
       : hit.script.content
   }
 
+  /**
+   * staged 草稿的路径查找：事务 key 可能是 `handle.resolve()` 之后的工程内路径，
+   * 而工具与资产接口拿到的是包内相对路径（`assets/…`），两种都要认。
+   */
+  const stagedLangText = (path: string): string | undefined => {
+    const project = projectRef.current
+    const client = project?.handle.client
+    if (!client) return undefined
+    const direct = client.transactions.stagedText(path)
+    if (direct !== undefined) return direct
+    if (!project) return undefined
+    const resolved = project.handle.resolve(path)
+    return resolved === path ? undefined : client.transactions.stagedText(resolved)
+  }
+
+  /** 已保存版本：绑定工程优先读 S（带内容哈希），读不到退回本机镜像（无版本） */
+  const readLangSaved = async (
+    pkgId: string,
+    path: string,
+  ): Promise<{ text: string | null; version: string | null }> => {
+    const project = projectRef.current
+    const client = project?.handle.client
+    // 工程可能挂在 S 根的子目录下：优先读 resolve 后的真实工程内路径
+    const resolved = project ? project.handle.resolve(path) : path
+    const lookup = resolved !== path && client?.entry(resolved) ? resolved : path
+    if (client?.entry(lookup)) {
+      try {
+        const { file, version } = await client.readSnapshot(lookup, false)
+        return { text: await file.text(), version }
+      } catch {
+        /* 读不到就退回本机缓存，至少不要阻断工具 */
+      }
+    }
+    const blob = await getAssetBlob(pkgId, path)
+    return { text: blob ? await blob.text() : null, version: null }
+  }
+
+  /**
+   * 语言文本的权威读取：**本地草稿优先**（与编辑器手改同一通道），其次工程文件 / 本机镜像。
+   *
+   * `version` 只在读到 S 的已保存版本时有值；`draft=true` 表示读到的是尚未保存的草稿，
+   * 工具层必须据此标注（D1：不把草稿伪装成已保存）。
+   */
+  const readLangState = async (
+    pkgId: string,
+    path: string,
+  ): Promise<{
+    map: Record<string, string>
+    version: string | null
+    draft: boolean
+    saved: boolean
+    /** R1：本机有镜像但 S 无已保存版本（常见于新建工程渲染过当前语言） */
+    hasLocalMirror: boolean
+    /** 兼容旧字段名：等价于 draft */
+    localDraft: boolean
+  }> => {
+    const state = await readLangDraft(stagedLangText, path, () => readLangSaved(pkgId, path))
+    return {
+      map: state.map,
+      version: state.savedVersion,
+      draft: state.draft,
+      // B8/R1：saved 只表示“S 里已有已保存版本”，本机镜像不算
+      saved: state.hasSaved,
+      hasLocalMirror: state.hasLocalMirror,
+      localDraft: state.draft,
+    }
+  }
+
+  /**
+   * 语言文本写入 = **本地草稿**（D1）：stageWrite 草稿 + IndexedDB 镜像，不再写 S。
+   * 返回 `ok:true` 只表示草稿已写；未绑定工程时额外标 `localOnly`（没有工程文件可保存）。
+   */
+  const stageLangWrite = async (
+    pkgId: string,
+    path: string,
+    map: Record<string, string>,
+    options?: { allowUnwritable?: boolean },
+  ): Promise<
+    | { ok: true; localOnly: boolean; draft: true; saved: false; version: null }
+    | { ok: false; error: string }
+  > => {
+    const project = projectRef.current
+    const client = project?.handle.client ?? null
+    return writeLangDraft({
+      client:
+        client && project
+          ? {
+              writable: client.writable,
+              online: client.online,
+              resolvePath: (candidate) => project.handle.resolve(candidate),
+              transactions: client.transactions,
+              assetEpochs: client.assetEpochs,
+            }
+          : null,
+      path,
+      map,
+      ...(options?.allowUnwritable ? { allowUnwritable: true } : {}),
+      mirror: async () => {
+        const workspace = await writeLangAsset(workspaceRef.current, pkgId, path, map)
+        if (projectRef.current?.handle.client !== client) {
+          throw new Error('project switched; the language draft stayed in the previous project')
+        }
+        commitWorkspace(workspace)
+      },
+      cacheEpoch: () => assetCacheEpoch(pkgId, path),
+    })
+  }
+
+  /** 跨包同名时 `findScriptByName` 会抛异常：宿主统一转成稳定的英文错误，不再让异常逃逸 */
+  const agentDuplicateNameError = (source: string): AgentOpResult => ({
+    ok: false,
+    reason: 'not_unique',
+    error: `resource name is not unique: ${source}`,
+    hint: 'pass the full project path (with directory) to disambiguate',
+  })
+
+  type AgentScriptHit = NonNullable<ReturnType<typeof findScriptByName>>
+  const findAgentScript = (
+    source: string,
+  ): { hit: AgentScriptHit } | { error: AgentOpResult; notFound?: boolean } => {
+    try {
+      const hit = findScriptByName(workspaceRef.current, source)
+      return hit
+        ? { hit }
+        : {
+            error: {
+              ok: false,
+              reason: 'not_found',
+              error: `file not found: ${source}`,
+            },
+            notFound: true,
+          }
+    } catch {
+      return { error: agentDuplicateNameError(source) }
+    }
+  }
+
   /** 语言工具的目标：源文件 + 语言 → 所属包、资产路径与当前译文表 */
   const langTargetOf = async (sourceName: string, localeArg?: string) => {
-    const hit = findScriptByName(workspaceRef.current, sourceName)
-    if (!hit) return null
+    const found = findAgentScript(sourceName)
+    if ('error' in found) return found
+    const hit = found.hit
     const lang = localeArg?.trim() || locale
     const path = langAssetPathFor(hit.script.name, lang)
-    const map = await readLangAsset(hit.pkg.id, path)
-    return { hit, lang, path, map }
+    const state = await readLangState(hit.pkg.id, path)
+    return {
+      hit,
+      lang,
+      path,
+      map: state.map,
+      version: state.version,
+      draft: state.draft,
+      saved: state.saved,
+      hasLocalMirror: state.hasLocalMirror,
+      localDraft: state.localDraft,
+    }
   }
 
   /** Agent 写源文件名前的校验：`.lang` 不当普通文件写（走 write_lang） */
@@ -2710,7 +3041,8 @@ export const StageplayWorkspace = forwardRef<
       return {
         error: {
           ok: false,
-          error: `文件名无效，后缀须为 ${ALLOWED_EXTENSIONS_LABEL}`,
+          reason: 'invalid_arguments',
+          error: `invalid file name; extensions allowed: ${ALLOWED_EXTENSIONS_LABEL}`,
         },
       }
     }
@@ -2718,12 +3050,41 @@ export const StageplayWorkspace = forwardRef<
       return {
         error: {
           ok: false,
-          error: '语言文本不能当普通文件写',
-          hint: '用 list_lang_keys 看键、用 write_lang 写译文（键来自正文）',
+          reason: 'invalid_arguments',
+          error: 'language text cannot be written as a normal file',
+          hint: 'use list_lang_keys to inspect keys and write_lang to write translations (keys come from the source text)',
         },
       }
     }
     return { name: normalized }
+  }
+
+  /**
+   * A2：agent 传来的逻辑文件名统一校验（`lock_source(creating)` / `create_source` 共用）。
+   * 非法名（含路径分隔符 / `..` / 未知后缀）一律返回英文 invalid_arguments，**不抛异常**。
+   */
+  const invalidAgentSourceName = (name: string): {
+    ok: false
+    reason: 'invalid_arguments'
+    error: string
+    hint: string
+  } => ({
+    ok: false,
+    reason: 'invalid_arguments',
+    error: `invalid file name: ${name}; logical names cannot contain path separators or start with ".."`,
+    hint: 'use a logical file name like chapter.hs (no directories, no leading "..")',
+  })
+
+  const validateAgentSourceName = (
+    raw: string,
+  ): { name: string } | { error: ReturnType<typeof invalidAgentSourceName> } => {
+    try {
+      const checked = normalizeAgentSource(raw)
+      if ('error' in checked) return { error: invalidAgentSourceName(raw) }
+      return checked
+    } catch {
+      return { error: invalidAgentSourceName(raw) }
+    }
   }
 
   /**
@@ -2748,8 +3109,9 @@ export const StageplayWorkspace = forwardRef<
       return {
         error: {
           ok: false,
-          error: `语言标签无效：${requested}`,
-          hint: '用「语言_地区」的小写下划线形式，如 zh_cn / en_us / ja_jp',
+          reason: 'invalid_arguments',
+          error: `invalid locale tag: ${requested}`,
+          hint: 'use a lowercase language-region tag such as zh_cn / en_us / ja_jp',
         },
       }
     }
@@ -2758,9 +3120,10 @@ export const StageplayWorkspace = forwardRef<
       return {
         error: {
           ok: false,
-          error: `语言标签不够明确：${requested}`,
+          reason: 'invalid_arguments',
+          error: `ambiguous locale tag: ${requested}`,
           candidates: resolved.ambiguous,
-          hint: '请从候选中挑一个明确的标签重试',
+          hint: 'pick one of the candidates and retry',
         },
       }
     }
@@ -2770,12 +3133,94 @@ export const StageplayWorkspace = forwardRef<
       (item) => item.toLowerCase() === resolved.tag.toLowerCase(),
     )
     if (equivalent) {
-      return { locale: equivalent, note: `${requested} → ${equivalent}（工程已有）` }
+      return { locale: equivalent, note: `${requested} → ${equivalent} (already in the project)` }
     }
     return { locale: resolved.tag, note: resolved.note }
   }
 
+  /** P2：键名是文本哈希；同一 locale 重新 parse 会按该语言映射同文本复用键，换 locale 才重新哈希 */
+  const LANG_KEY_IDENTITY_NOTE =
+    'keys are text hashes; re-running parse_hs in the same locale reuses keys by matching text in that language\'s mapping, while parsing in another locale hashes the new text and creates new keys'
+
+  /** P7：`assets/<locale>/voice_<ext>/<dir>/<key>.ogg|.ref` → 语言、源逻辑名、键名 */
+  const voiceAssetTargetOf = (
+    assetPath: string,
+  ): { locale: string; source: string; key: string } | null => {
+    const parsed = parseLocaleAssetPath(assetPath)
+    if (!parsed || parsed.kind !== 'voice') return null
+    const rest = parsed.rest.replace(/\\/g, '/')
+    if (!/\.(ogg|ref)$/i.test(rest)) return null
+    const withoutExt = rest.slice(0, rest.lastIndexOf('.'))
+    const slash = withoutExt.lastIndexOf('/')
+    if (slash <= 0) return null
+    const key = withoutExt.slice(slash + 1)
+    if (!key) return null
+    return {
+      locale: parsed.locale,
+      source: `${withoutExt.slice(0, slash)}.${parsed.sourceExt}`,
+      key,
+    }
+  }
+
+  type OrphanVoiceAsset = {
+    path: string
+    locale: string
+    source: string
+    key: string
+    reason: 'source_missing' | 'key_missing'
+  }
+
+  /** P7：工程里不属于任何现存源/键的配音资产 */
+  const orphanVoiceAssetsOf = (targetWorkspace: Workspace): OrphanVoiceAsset[] => {
+    const out: OrphanVoiceAsset[] = []
+    const cache = new Map<string, Set<string> | null | 'ambiguous'>()
+    for (const pkg of targetWorkspace.packages) {
+      for (const asset of pkg.assets) {
+        const target = voiceAssetTargetOf(asset.path)
+        if (!target) continue
+        if (!cache.has(target.source)) {
+          try {
+            const hit = findScriptByName(targetWorkspace, target.source)
+            cache.set(
+              target.source,
+              hit
+                ? new Set(
+                    collectSourceKeys(hit.script.content, hit.script.name).map(
+                      (item) => item.key,
+                    ),
+                  )
+                : null,
+            )
+          } catch {
+            cache.set(target.source, 'ambiguous')
+          }
+        }
+        const keys = cache.get(target.source)
+        // 跨包同名时无法判断归属：宁可不算 orphan，避免误报
+        if (keys === 'ambiguous' || keys === undefined) continue
+        if (keys === null) {
+          out.push({ ...target, path: asset.path, reason: 'source_missing' })
+          continue
+        }
+        if (!keys.has(target.key)) {
+          out.push({ ...target, path: asset.path, reason: 'key_missing' })
+        }
+      }
+    }
+    return out.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+  }
+
   const agentHost: AgentHost = {
+    /** A2：工具在 lock_source(creating) / create_source 前统一校验逻辑名 */
+    validateSourceName: (name) => {
+      try {
+        const checked = normalizeAgentSource(name)
+        if ('error' in checked) return invalidAgentSourceName(name)
+        return { ok: true, name: checked.name }
+      } catch {
+        return invalidAgentSourceName(name)
+      }
+    },
     listSources: (packageName) => {
       const filter = packageName?.trim().toLowerCase()
       const files = workspaceRef.current.packages
@@ -2787,44 +3232,107 @@ export const StageplayWorkspace = forwardRef<
             kind: sourceKindOf(script.name, script.srcKind),
             bytes: script.content.length,
             updatedAt: script.updatedAt,
+            /** 已从工程移除、只剩本机恢复草稿的文件：可读，但不能再写 */
+            detached: script.detached === true,
           })),
         )
-      return { ok: true, files, count: files.length }
+      return {
+        ok: true,
+        files,
+        count: files.length,
+        /** B12：工具看到的是工作区视角，包含未保存草稿 */
+        includesDrafts: true,
+      }
     },
     readSource: (source, offset, limit) => {
-      const hit = findScriptByName(workspaceRef.current, source)
-      if (!hit) return { ok: false, error: `未找到文件：${source}` }
+      const found = findAgentScript(source)
+      if ('error' in found) return found.error
+      const hit = found.hit
       const content = agentSourceContent(hit.script.id) ?? hit.script.content
+      const totalLines = content.split('\n').length
+      const offsetError = sourceOffsetError(totalLines, offset)
+      if (offsetError) return { ...offsetError, reason: 'invalid_arguments' }
       const page = paginateSource(content, offset, limit)
       return {
         ok: true,
         source: hit.script.name,
         kind: sourceKindOf(hit.script.name, hit.script.srcKind),
-        version: hit.script.updatedAt,
         ...page,
       }
     },
+    /** 锁协议要完整正文：版本哈希按全文算（截断会让锁校验错位） */
+    readFullSource: (source) => {
+      const found = findAgentScript(source)
+      if ('error' in found) return found.error
+      const hit = found.hit
+      return {
+        ok: true,
+        source: hit.script.name,
+        content: agentSourceContent(hit.script.id) ?? hit.script.content,
+      }
+    },
+    /**
+     * 人类是否正在改这个文件（文档 §8 human_editing）。
+     *
+     * 两种形态：
+     * - 源文件：编辑器缓冲的归属就是判据 —— 归属匹配且缓冲内容与已提交正文不同；
+     * - 语言文本（`.lang`）：语言编辑器的译文改动经 textSink `stageWrite` 登记进工程事务，
+     *   所以看该语言文件有没有**未保存的工程草稿**（`transactions.hasDraft`）。
+     *   以前这里按源逻辑名找脚本，`.lang` 永远找不到 → `lock_lang` 的 human_editing 永不触发。
+     */
+    isHumanDirty: (source) => {
+      const normalized = normalizeSourcePath(source)
+      if (parseLocaleAssetPath(normalized)?.kind === 'text') {
+        const project = projectRef.current
+        const client = project?.handle.client
+        if (!project || !client) return false
+        // 事务里的 key 可能是 `handle.resolve()` 之后的工程内路径（带子目录前缀），
+        // 两种形态都查，避免因为路径规范化差异漏掉草稿。
+        const candidates = new Set([normalized, project.handle.resolve(normalized)])
+        return [...candidates].some((path) => client.transactions.hasDraft(path))
+      }
+      const hit = (() => {
+        try {
+          return findScriptByName(workspaceRef.current, source)
+        } catch {
+          return null
+        }
+      })()
+      if (!hit) return false
+      return (
+        hit.script.id === bufferOwnerRef.current &&
+        valueRef.current !== hit.script.content
+      )
+    },
     createSource: (source, content) => {
-      const checked = normalizeAgentSource(source)
+      // A2：`../evil.hs` / 带目录的名字一律 invalid_arguments，不能抛异常落到 host_error
+      const checked = validateAgentSourceName(source)
       if ('error' in checked) return checked.error
-      if (!isStageplayExplorerSource({ name: checked.name })) {
+      // 剧本工作区现在接受非剧本类资源（脚本 / 游戏性 / meta），但仍不许新建语言与配音映射
+      if (checked.name.toLowerCase().endsWith('.voice')) {
         return {
           ok: false,
-          error: `剧本工作区不能新建「${checked.name}」`,
-          hint: '脚本与游戏性类型请到游戏性工作区创建；此处只建 .hs / .char / meta 资料',
+          reason: 'invalid_arguments',
+          error: 'voice mapping files cannot be created with create_source',
+          hint: 'use the UI or the write_voice workflow for voice mappings',
         }
       }
-      if (findScriptByName(workspaceRef.current, checked.name)) {
+      const existing = findAgentScript(checked.name)
+      if ('error' in existing && existing.notFound !== true) return existing.error
+      if ('hit' in existing) {
         return {
           ok: false,
-          error: `文件已存在：${checked.name}`,
-          hint: '覆盖用 write_source，局部修改用 edit_source；不要靠改名字新建来"试一下"',
+          reason: 'already_exists',
+          error: `file already exists: ${checked.name}`,
+          hint: 'Use write_source to overwrite the existing file, or edit_source for a partial edit.',
         }
       }
       const pkgId =
         findScript(workspaceRef.current, activeIdRef.current)?.pkg.id ??
         workspaceRef.current.packages[0]?.id
-      if (!pkgId) return { ok: false, error: '没有可用的包' }
+      if (!pkgId) {
+        return { ok: false, reason: 'host_error', error: 'no project package available' }
+      }
 
       let base = flushEditorInto(workspaceRef.current)
       const script = createScript(checked.name, content)
@@ -2844,83 +3352,114 @@ export const StageplayWorkspace = forwardRef<
         after: content,
         created: true,
       })
-      return { ok: true, source: checked.name, created: true, activeUnchanged: true }
+      // 新建正文同样算程序化写入：内容未改前不要自动成键
+      agentWrittenContentRef.current.set(checked.name, content)
+      return { ok: true, source: checked.name, created: true, changed: true, activeUnchanged: true }
     },
-    writeSource: (source, content, expectedVersion) => {
+    writeSource: (source, content) => {
       const checked = normalizeAgentSource(source)
       if ('error' in checked) return checked.error
 
-      const existing = findScriptByName(workspaceRef.current, checked.name)
-      if (!existing) {
+      const found = findAgentScript(checked.name)
+      if ('error' in found) {
+        return found.notFound === true
+          ? {
+              ...found.error,
+              hint: 'use create_source to create a new file; write_source only overwrites existing files',
+            }
+          : found.error
+      }
+      const existing = found.hit
+      if (existing.script.detached === true) {
         return {
           ok: false,
-          error: `文件不存在：${checked.name}`,
-          hint: '新建请用 create_source；write_source 只覆盖已有文件',
+          reason: 'detached',
+          error: 'resource was removed from the project; ask the user to save it as a new file',
+          hint: 'detached drafts can be read but not written; let the user save it as a new file first',
         }
       }
-      if (
-        expectedVersion != null &&
-        existing.script.updatedAt !== expectedVersion
-      ) {
-        return {
-          ok: false,
-          error: '文件已被改动，写入被拒绝',
-          hint: '重新 read_source 拿到新的 version 再写',
-        }
-      }
+      // 版本前置条件不在这里校验：严格模式由锁协议保证（未持锁在 tools.ts 就被拒）
+      const before = agentSourceContent(existing.script.id) ?? existing.script.content
       const written = applyAgentFileWrite(
         existing.script.id,
         content,
       )
-      if (!written) return { ok: false, error: '写入失败' }
-      return { ok: true, source: written.file, created: false, changed: true }
+      if (!written) {
+        return {
+          ok: false,
+          reason: 'write_failed',
+          error: 'write failed: could not apply the new content',
+        }
+      }
+      return {
+        ok: true,
+        source: written.file,
+        created: false,
+        changed: content !== before,
+      }
     },
     editSource: (source, oldText, newText, replaceAll) => {
-      const hit = findScriptByName(workspaceRef.current, source)
-      if (!hit) return { ok: false, error: `未找到文件：${source}` }
+      const found = findAgentScript(source)
+      if ('error' in found) return found.error
+      const hit = found.hit
+      if (hit.script.detached === true) {
+        return {
+          ok: false,
+          reason: 'detached',
+          error: 'resource was removed from the project; ask the user to save it as a new file',
+          hint: 'detached drafts can be read but not written; let the user save it as a new file first',
+        }
+      }
       const content = agentSourceContent(hit.script.id) ?? hit.script.content
       const edited = applyTextEdit(content, oldText, newText, replaceAll)
-      if (!edited.ok) return { ok: false, error: edited.error }
+      if (!edited.ok) {
+        return { ok: false, reason: 'invalid_arguments', error: edited.error }
+      }
       const written = applyAgentFileWrite(
         hit.script.id,
         edited.content,
       )
-      if (!written) return { ok: false, error: '写入失败' }
-      return { ok: true, source: written.file, changed: true, replaced: edited.count }
-    },
-    renameSource: async (source, newSource) => {
-      const hit = findScriptByName(workspaceRef.current, source)
-      if (!hit) return { ok: false, error: `未找到文件：${source}` }
-      const normalized = normalizeResourceName(newSource)
-      if (!normalized || !isManualFileName(normalized)) {
+      if (!written) {
         return {
           ok: false,
-          error: `新文件名无效，后缀须为 ${MANUAL_FILE_EXTENSIONS_LABEL}`,
+          reason: 'write_failed',
+          error: 'edit failed: could not apply the edited content',
         }
       }
-      const result = await applyScriptRename(hit.script.id, normalized)
-      if (!result.ok) return { ok: false, error: result.error }
       return {
         ok: true,
-        source: normalized,
-        previous: hit.script.name,
-        movedFiles: result.moves,
+        source: written.file,
+        changed: edited.content !== content,
+        replaced: edited.count,
       }
     },
-    deleteSource: async (source) => {
-      const hit = findScriptByName(workspaceRef.current, source)
-      if (!hit) return { ok: false, error: `文件不存在：${source}` }
-      const deleted = await deleteScriptWithAssets(hit.script.id)
-      if (!deleted) return { ok: false, error: '删除失败' }
-      return {
-        ok: true,
-        source: hit.script.name,
-        removedAssets: deleted.removedAssets,
-      }
+    /**
+     * 只从**本机工作区草稿**里移除文件（不写 S）：撤销日志回放「本 Run 新建的文件」。
+     * 与界面删除不同：不删资产、不发结构事务，也不弹确认。
+     */
+    discardDraftSource: (source) => {
+      const found = findAgentScript(source)
+      if ('error' in found) return
+      const hit = found.hit
+      removeScriptSilent(hit.script.id)
+      // 刚被撤销的新建不该继续留在「Agent 修改」待审列表里
+      setAgentDiffs((previous) => {
+        const next = previous.filter((item) => item.fileName !== hit.script.name)
+        if (next.length === 0) setDiffOpen(false)
+        return next
+      })
     },
     validateSource: (source) => {
-      const hit = findScriptByName(workspaceRef.current, source)
-      if (!hit) return { ok: false, error: `未找到文件：${source}` }
+      const found = findAgentScript(source)
+      if ('error' in found) {
+        return found.error.reason === 'not_found'
+          ? {
+              ...found.error,
+              hint: 'use list_sources to find the file; names are logical (no directories)',
+            }
+          : found.error
+      }
+      const hit = found.hit
       const content = agentSourceContent(hit.script.id) ?? hit.script.content
       const result = validateSourceContent(hit.script.name, content, {
         foreignInjects: indexForeignHsInjects(
@@ -2928,22 +3467,30 @@ export const StageplayWorkspace = forwardRef<
           hit.script.name,
         ),
       })
+      // P10：编辑器诊断与 agent lint 分开；ok 只反映编译结果（lint 不再让 ok=false）
+      const diagnostics = result.diagnostics.filter(
+        (item) => item.kind !== 'agent-lint',
+      )
+      const agentLint = result.diagnostics.filter(
+        (item) => item.kind === 'agent-lint',
+      )
       return {
-        ok: result.diagnostics.length === 0 && !result.compileError,
+        ok: result.compileError === null,
         source: hit.script.name,
-        diagnostics: result.diagnostics,
+        diagnostics,
+        agentLint,
         compileError: result.compileError,
       }
     },
     getActiveFilePath: () => {
       const active = activeFilePathOf(workspaceRef.current, activeIdRef.current)
-      if (!active) return { ok: false, error: '当前没有打开的文件' }
+      if (!active) return { ok: false, error: 'no file is currently open' }
       return {
         ok: true,
         source: active.name,
         kind: active.kind,
         path: active.path,
-        hint: 'path 只用于理解结构；工具参数仍只写逻辑名 source',
+        hint: 'path is informational only; tool arguments still use the logical source name',
       }
     },
     listLocales: () => ({
@@ -2964,28 +3511,201 @@ export const StageplayWorkspace = forwardRef<
         label: entry.nativeName,
       })),
     }),
+    /**
+     * 源文件派生的语言资产目标（`lock_lang` 用，文档 D2）：
+     * 省略 `locales` = 工程已有语言 + 当前语言；传入时按传入顺序/筛选解析。
+     */
+    derivedLangTargets: (source, locales) => {
+      const found = findAgentScript(source)
+      if ('error' in found) return []
+      const hit = found.hit
+      const projectLocales = listLocalesOf(workspaceRef.current).map((item) => item.locale)
+      const tags: string[] = []
+      const seen = new Set<string>()
+      const push = (raw: string) => {
+        const requested = raw.trim()
+        if (!requested) return
+        // 工程优先（与 resolveAgentLocale 同口径）：工程里有裸标签 `en` 时不能被
+        // 语言表改写成 `en_us`，否则会锁到一个不存在的资产路径。
+        const projectMatch = projectLocales.find(
+          (tag) => tag.toLowerCase() === requested.toLowerCase(),
+        )
+        const resolved = projectMatch ?? resolveLocaleTag(requested).tag
+        if (!resolved || seen.has(resolved)) return
+        seen.add(resolved)
+        tags.push(resolved)
+      }
+      if (locales && locales.length > 0) {
+        for (const requested of locales) push(requested)
+      } else {
+        for (const tag of projectLocales) push(tag)
+        if (locale) push(locale)
+      }
+      return tags.map((tag) => ({ locale: tag, path: langAssetPathFor(hit.script.name, tag) }))
+    },
+    /** 读派生语言资产正文（S 权威优先）：锁版本与 write_lang 写前校验用 */
+    readAssetText: async (path) => {
+      // 草稿优先：锁版本 / noteWritten 必须看到 agent 刚写进 staged 的内容，
+      // 否则写后版本会和锁表锚点对不上（下一轮误判 version_stale）。
+      const staged = stagedLangText(path)
+      if (staged !== undefined) return staged
+      const client = projectRef.current?.handle.client
+      if (client?.entry(path)) {
+        try {
+          const { file } = await client.readSnapshot(path, false)
+          return await file.text()
+        } catch {
+          return null
+        }
+      }
+      const packageId =
+        client?.assetPackageId ??
+        projectRef.current?.manifest.id ??
+        workspaceRef.current.packages[0]?.id
+      if (!packageId) return null
+      const blob = await getAssetBlob(packageId, path)
+      return blob ? blob.text() : null
+    },
+    /**
+     * 撤销日志回放「语言草稿」（D3 / 阶段 4）：
+     * - `content` 非空：把该 `.lang` 的 staged 草稿写回写前内容（同一 stageWrite 通道）；
+     * - `content === null`：这个语言文件是本 Run 新建的 → 撤掉 staged 草稿，
+     *   并把 agent 写进镜像 / 工作区的这份新建资产一并移除（否则保存会把它再写回去）。
+     *
+     * 由 runtime 在回滚时调用，必须幂等：重复调用只会落到同一份草稿 / 已是空操作。
+     */
+    writeLangDraft: async (path, content) => {
+      const normalized = normalizeSourcePath(path)
+      const project = projectRef.current
+      const client = project?.handle.client ?? null
+      const pkgId =
+        client?.assetPackageId ??
+        project?.manifest.id ??
+        workspaceRef.current.packages[0]?.id
+      if (!pkgId) {
+        throw new Error(`language draft replay failed: no project available (${normalized})`)
+      }
+
+      if (content === null) {
+        // staged key 可能是原始资产路径，也可能是 handle.resolve() 后的工程内路径
+        if (client && project) {
+          try {
+            discardLangDraft(client.transactions, [
+              normalized,
+              project.handle.resolve(normalized),
+            ])
+          } catch (error) {
+            throw new Error(
+              `language draft replay failed: ${error instanceof Error ? error.message : String(error)}`,
+            )
+          }
+        }
+        const existing = workspaceRef.current.packages
+          .flatMap((pkg) => pkg.assets)
+          .find((asset) => normalizeSourcePath(asset.path) === normalized)
+        if (!existing) return
+        await deleteAssetBlob(pkgId, existing.path)
+        if (projectRef.current?.handle.client !== client) {
+          throw new Error('language draft replay failed: project switched')
+        }
+        client?.assetEpochs.delete(existing.path)
+        commitWorkspace(removeAssetMeta(workspaceRef.current, existing.id))
+        if (textMapRef.current?.fileName.toLowerCase() === existing.path.toLowerCase()) {
+          textCacheRef.current = ''
+          textMapRef.current.load()
+        }
+        return
+      }
+
+      const staged = await stageLangWrite(pkgId, normalized, parseTextFile(content), {
+        // 回放只动本地草稿：断线 / 暂时只读时也应允许恢复，否则失败后反而回滚不了
+        allowUnwritable: true,
+      })
+      if (!staged.ok) throw new Error(`language draft replay failed: ${staged.error}`)
+      if (textMapRef.current?.fileName.toLowerCase() === normalized.toLowerCase()) {
+        textCacheRef.current = content
+        textMapRef.current.load()
+      }
+    },
     listLangKeys: async (source, localeArg, offset, limit) => {
       const resolved = resolveAgentLocale(localeArg)
       if ('error' in resolved) return resolved.error
       const target = await langTargetOf(source, resolved.locale)
-      if (!target) return { ok: false, error: `未找到文件：${source}` }
+      if ('error' in target) return target.error
       const content =
         agentSourceContent(target.hit.script.id) ?? target.hit.script.content
       const keys = collectSourceKeys(content, target.hit.script.name)
       const start = Math.max(1, Math.floor(offset ?? 1) || 1)
+      // B2：与 read_source 对齐，越界不要返回 ok:true + 空 entries
+      if (start > Math.max(1, keys.length)) {
+        return {
+          ok: false,
+          reason: 'invalid_arguments',
+          error: 'offset out of range',
+          total: keys.length,
+          hint: 'use offset <= total',
+        }
+      }
       const count = Math.min(Math.max(1, Math.floor(limit ?? 200) || 200), 1000)
       const page = keys.slice(start - 1, start - 1 + count)
-      const entries = page.map((item) => ({
-        key: item.key,
-        line: item.line,
-        text: target.map[item.key] ?? '',
-        translated: item.key in target.map,
-      }))
+      const entries = page.map((item) => {
+        const hasEntry = item.key in target.map
+        const text = hasEntry ? target.map[item.key]! : null
+        return {
+          key: item.key,
+          line: item.line,
+          /** 缺失条目为 null；空串条目保留 '' */
+          text,
+          hasEntry,
+          /** 空串不算已翻译（与 check_export 的 trim 口径一致） */
+          translated: text !== null && text.trim() !== '',
+        }
+      })
+      // P9：map 里有、正文已经没有的键（翻译记忆残留）；截断 200，同时给总数
+      const orphan = collectOrphanKeys(
+        keys.map((item) => item.key),
+        target.map,
+      )
+      const orphanLimit = 200
+      // B6：正文里还能成键、但尚未成键的文本（只统计，不修改正文）
+      const unparsed = countUnparsedTexts(content, target.hit.script.name)
+      const localeInProject = listLocalesOf(workspaceRef.current).some(
+        (item) => item.locale.toLowerCase() === target.lang.toLowerCase(),
+      )
       return {
         ok: true,
         source: target.hit.script.name,
         locale: target.lang,
+        /** 该源文件在该语言下的 `.lang` 是否已保存在工程里（只认 S 已保存版本） */
+        localeExists: target.saved,
+        /** 工程语言表里是否有该语言（其它源文件有该语言资产也算） */
+        localeInProject,
+        /** 是否是编辑器当前正在编辑的语言 */
+        active: target.lang.toLowerCase() === locale.toLowerCase(),
         path: target.path,
+        /** 已保存工程文件里的内容哈希；null = S 里没有已保存版本 */
+        version: target.version,
+        /** B8：`version` 的显式别名，避免被误读成“当前生效内容版本” */
+        savedVersion: target.version,
+        /** true = 读到的内容来自本地未保存草稿（D1） */
+        draft: target.draft,
+        /** true = S 里已有已保存版本（有草稿也 true；本机镜像不算） */
+        saved: target.saved,
+        /** B8：语义自解释 —— 该 `.lang` 已保存到工程文件（本机镜像不算） */
+        hasSaved: target.saved,
+        /** R1：本机有镜像/缓存但 S 无已保存版本（新建工程渲染过该语言常见） */
+        hasLocalMirror: target.hasLocalMirror,
+        hasDraft: target.draft,
+        /** 兼容旧字段名 */
+        localDraft: target.localDraft,
+        /** 正文里已不存在的译文键（orphan）；可用 delete_lang_keys 清理 */
+        orphanKeys: orphan.slice(0, orphanLimit),
+        orphanTotal: orphan.length,
+        orphanTruncated: orphan.length > orphanLimit,
+        /** 尚未成键的可本地化文本数量与样例（最多 3 条） */
+        unparsedTextCount: unparsed.count,
+        unparsedSamples: unparsed.samples.slice(0, 3),
+        /** 本语言的正文键数量（不是 `.lang` 文件条目数） */
         total: keys.length,
         missing: keys.filter((item) => !(item.key in target.map)).length,
         offset: start,
@@ -2994,8 +3714,9 @@ export const StageplayWorkspace = forwardRef<
       }
     },
     writeLang: async (source, translations) => {
-      const hit = findScriptByName(workspaceRef.current, source)
-      if (!hit) return { ok: false, error: `未找到文件：${source}` }
+      const found = findAgentScript(source)
+      if ('error' in found) return found.error
+      const hit = found.hit
       const plan: Array<{ locale: string; entries: LangEntry[] }> = []
       const notes: string[] = []
       for (const requested of Object.keys(translations)) {
@@ -3008,27 +3729,83 @@ export const StageplayWorkspace = forwardRef<
         if (hit) hit.entries.push(...entries)
         else plan.push({ locale: resolved.locale, entries: [...entries] })
       }
-      if (plan.length === 0) return { ok: false, error: 'translations 为空' }
+      if (plan.length === 0) {
+        return { ok: false, reason: 'invalid_arguments', error: 'translations is empty' }
+      }
+
+      // D6：不做 trim / 小写归一化；键必须已存在于正文，且形态严格 8 位小写十六进制。
+      // 任一键有问题都整次失败，不写半份草稿。
+      const invalidKeys: string[] = []
+      const duplicates: string[] = []
+      for (const step of plan) {
+        const check = validateLangKeys(step.entries.map((entry) => entry.key))
+        invalidKeys.push(...check.invalidKeys)
+        duplicates.push(...check.duplicates)
+      }
+      if (invalidKeys.length > 0 || duplicates.length > 0) {
+        return {
+          ok: false,
+          reason: 'invalid_keys',
+          error: 'invalid language keys; nothing was written',
+          invalidKeys,
+          duplicates,
+          hint: 'keys must be exactly 8 lowercase hex characters generated from the source text',
+        }
+      }
 
       const content = agentSourceContent(hit.script.id) ?? hit.script.content
       const known = new Set(
         collectSourceKeys(content, hit.script.name).map((item) => item.key),
       )
-      let workspace = workspaceRef.current
+      // A5：按正文 span 判断该键是普通对白 / 选项文案 / 选项回复，再评估译文能否安全写回正文
+      const inlineContexts = new Map<string, InlineContext>()
+      for (const span of parseTextSpans(content)) {
+        const key = span.value.trim()
+        if (!key || inlineContexts.has(key)) continue
+        inlineContexts.set(
+          key,
+          span.kind === 'choice-label'
+            ? 'optionText'
+            : span.kind === 'choice-reply'
+              ? 'optionReply'
+              : 'dialogue',
+        )
+      }
+      const riskWarnings: Array<{ locale: string; key: string; reasons: string[] }> = []
+      for (const step of plan) {
+        for (const entry of step.entries) {
+          const reasons = assessLangValueRisks(
+            entry.text,
+            inlineContexts.get(entry.key) ?? 'dialogue',
+          )
+          if (reasons.length > 0) {
+            riskWarnings.push({ locale: step.locale, key: entry.key, reasons })
+          }
+        }
+      }
+      const riskHint =
+        'some values cannot be safely restored into the script by unparse_hs; edit the source text or avoid //, :, and leading structural characters'
       const results: Array<Record<string, unknown>> = []
+      const writtenPaths: string[] = []
+      const failures: string[] = []
       let writtenTotal = 0
+      let failedTotal = 0
+      let localOnly = false
+      /** 所有被跳过（正文里不存在）的键；P8 用来区分“键不在正文”与“写失败” */
+      const skippedAll = new Set<string>()
 
       for (const step of plan) {
         const locale = step.locale
         const path = langAssetPathFor(hit.script.name, locale)
-        const map = await readLangAsset(hit.pkg.id, path)
-        const next = { ...map }
+        const state = await readLangState(hit.pkg.id, path)
+        const next = { ...state.map }
         const written: string[] = []
         const skipped: string[] = []
         for (const entry of step.entries) {
-          const key = entry.key.trim().toLowerCase()
+          const key = entry.key
           if (!known.has(key)) {
             skipped.push(entry.key)
+            skippedAll.add(entry.key)
             continue
           }
           next[key] = entry.text
@@ -3041,12 +3818,35 @@ export const StageplayWorkspace = forwardRef<
             written,
             skipped,
             writtenCount: 0,
+            fileTotal: Object.keys(next).length,
+            /** 兼容旧字段：与 fileTotal 同值 */
             total: Object.keys(next).length,
+            draft: false,
+            saved: false,
           })
           continue
         }
-        workspace = await writeLangAsset(workspace, hit.pkg.id, path, next)
+        const staged = await stageLangWrite(hit.pkg.id, path, next)
+        if (!staged.ok) {
+          failedTotal += written.length
+          failures.push(`${locale}: ${staged.error}`)
+          results.push({
+            locale,
+            path,
+            written,
+            skipped,
+            writtenCount: written.length,
+            fileTotal: Object.keys(next).length,
+            total: Object.keys(next).length,
+            draft: false,
+            saved: false,
+            error: staged.error,
+          })
+          continue
+        }
+        writtenPaths.push(path)
         writtenTotal += written.length
+        if (staged.localOnly) localOnly = true
         if (textMapRef.current?.fileName.toLowerCase() === path.toLowerCase()) {
           textCacheRef.current = stringifyTextFile(next)
           textMapRef.current.load()
@@ -3057,44 +3857,145 @@ export const StageplayWorkspace = forwardRef<
           written,
           skipped,
           writtenCount: written.length,
+          fileTotal: Object.keys(next).length,
           total: Object.keys(next).length,
+          /** D1：只是本地草稿，等用户保存工程才进文件 */
+          draft: true,
+          saved: false,
+          version: null,
+          ...(staged.localOnly ? { localOnly: true, savedToProject: false } : {}),
         })
       }
 
-      if (writtenTotal > 0) commitWorkspace(workspace)
       if (writtenTotal === 0) {
+        // P8：没有写失败、全是“正文里没有这个键”时，给模型一个明确的 reason，别再让它猜
+        if (failedTotal === 0 && skippedAll.size > 0) {
+          return {
+            ok: false,
+            error: 'none of the provided keys exist in the source text',
+            reason: 'keys_not_in_source',
+            missingKeys: [...skippedAll],
+            locales: results,
+            notes,
+            writtenPaths,
+            hint: 'run list_lang_keys to see the keys that exist in the source text, or parse_hs to create keys from new text',
+          }
+        }
         return {
           ok: false,
-          error: '没有任何键存在于正文里',
+          reason: failedTotal > 0 ? 'write_failed' : 'invalid_arguments',
+          error:
+            failedTotal > 0
+              ? `language drafts were not written: ${failures.join('; ')}`
+              : 'no keys from the source text were provided',
           locales: results,
           notes,
-          hint: '键写在正文里（单行 `narrator:7f3a91c2//`；多行块里键名单独占一行）；用 list_lang_keys 查，或先 parse_hs 成键',
+          writtenPaths,
+          ...(riskWarnings.length > 0
+            ? { warnings: riskWarnings, warningCount: riskWarnings.length }
+            : {}),
+          hint:
+            failedTotal > 0
+              ? 'check write permission / network and retry; writing translations does not change the source text, but confirm the source keys exist in the draft or project file'
+              : 'keys live in the source text (inline `narrator:7f3a91c2//`, or a key alone on its line inside a multi-line block); use list_lang_keys to inspect them, or run parse_hs first',
         }
       }
-      return { ok: true, source: hit.script.name, locales: results, notes }
+      return {
+        ok: true,
+        source: hit.script.name,
+        locales: results,
+        notes,
+        /** 哪些 `.lang` 的**本地草稿**被写（工具层据此更新锁版本） */
+        writtenPaths,
+        draft: true,
+        saved: false,
+        version: null,
+        ...(localOnly ? { localOnly: true } : {}),
+        ...(failures.length > 0 ? { writeFailures: failures } : {}),
+        ...(riskWarnings.length > 0
+          ? {
+              warnings: riskWarnings,
+              warningCount: riskWarnings.length,
+              hint: riskHint,
+            }
+          : {}),
+      }
     },
-    deleteLangKeys: async (source, keys, localeArg) => {
+    deleteLangKeys: async (source, keys, localeArg, force) => {
       const resolved = resolveAgentLocale(localeArg)
       if ('error' in resolved) return resolved.error
       const target = await langTargetOf(source, resolved.locale)
-      if (!target) return { ok: false, error: `未找到文件：${source}` }
+      if ('error' in target) return target.error
+      // D6：键必须是 8 位小写十六进制；非法/重复整次失败，不写半份草稿
+      const keyCheck = validateLangKeys(keys)
+      if (keyCheck.invalidKeys.length > 0 || keyCheck.duplicates.length > 0) {
+        return {
+          ok: false,
+          reason: 'invalid_keys',
+          error: 'invalid language keys; nothing was deleted',
+          invalidKeys: keyCheck.invalidKeys,
+          duplicates: keyCheck.duplicates,
+          hint: 'keys must be exactly 8 lowercase hex characters returned by list_lang_keys',
+        }
+      }
+      // C3：默认不删正文仍在引用的键（force:true 才允许，用于清理/改名前的显式覆盖）
+      const content =
+        agentSourceContent(target.hit.script.id) ?? target.hit.script.content
+      const known = new Set(
+        collectSourceKeys(content, target.hit.script.name).map((item) => item.key),
+      )
+      const inUseKeys = keys.filter((key) => known.has(key))
+      if (force !== true && inUseKeys.length > 0) {
+        return {
+          ok: false,
+          reason: 'keys_in_use',
+          error: 'keys are still referenced by the source text',
+          inUseKeys,
+          hint: 'remove or rename them in the text first, or pass force:true to delete anyway',
+        }
+      }
+      // N1：键身份来自创建时文本哈希；删除后重新 parse 可能换键
+      const deleteNote =
+        'key identity comes from the text hash at creation time; re-running parse_hs in this language after deleting entries will hash the current text and may produce new keys, leaving the deleted ones orphan in other languages'
+      const stillReferencedWarnings =
+        force === true
+          ? inUseKeys.map((key) => ({ reason: 'still-referenced', key }))
+          : []
       const next = { ...target.map }
       const removed: string[] = []
-      for (const raw of keys) {
-        const key = raw.trim().toLowerCase()
+      for (const key of keys) {
         if (!(key in next)) continue
         delete next[key]
         removed.push(key)
       }
-      if (removed.length === 0) return { ok: true, removed: [], total: Object.keys(next).length }
+      if (removed.length === 0) {
+        return {
+          ok: true,
+          removed: [],
+          total: Object.keys(next).length,
+          draft: true,
+          saved: false,
+          version: null,
+          note: deleteNote,
+          ...(stillReferencedWarnings.length > 0
+            ? { warnings: stillReferencedWarnings }
+            : {}),
+        }
+      }
 
-      const workspace = await writeLangAsset(
-        workspaceRef.current,
-        target.hit.pkg.id,
-        target.path,
-        next,
-      )
-      commitWorkspace(workspace)
+      const staged = await stageLangWrite(target.hit.pkg.id, target.path, next)
+      if (!staged.ok) {
+        return {
+          ok: false,
+          reason: 'write_failed',
+          error: `language draft was not written: ${staged.error}`,
+          source: target.hit.script.name,
+          locale: target.lang,
+          removed,
+          total: Object.keys(target.map).length,
+          hint: 'check write permission / network and retry',
+        }
+      }
       if (
         textMapRef.current?.fileName.toLowerCase() === target.path.toLowerCase()
       ) {
@@ -3107,11 +4008,21 @@ export const StageplayWorkspace = forwardRef<
         locale: target.lang,
         removed,
         total: Object.keys(next).length,
+        writtenPaths: [target.path],
+        draft: true,
+        saved: false,
+        version: null,
+        note: deleteNote,
+        ...(stillReferencedWarnings.length > 0
+          ? { warnings: stillReferencedWarnings }
+          : {}),
+        ...(staged.localOnly ? { localOnly: true } : {}),
       }
     },
-    listVoiceStatus: async (source, localeArg) => {
-      const hit = findScriptByName(workspaceRef.current, source)
-      if (!hit) return { ok: false, error: `未找到文件：${source}` }
+    listVoiceStatus: async (source, localeArg, offset, limit, orphanOnly) => {
+      const found = findAgentScript(source)
+      if ('error' in found) return found.error
+      const hit = found.hit
       const content = agentSourceContent(hit.script.id) ?? hit.script.content
       const keys = collectSourceKeys(content, hit.script.name).map(
         (item) => item.key,
@@ -3119,33 +4030,71 @@ export const StageplayWorkspace = forwardRef<
       const resolved = resolveAgentLocale(localeArg)
       if ('error' in resolved) return resolved.error
       const lang = resolved.locale
-      const entries = await voiceStatusOf(
+      const start = Math.max(1, Math.floor(offset ?? 1) || 1)
+      const count = Math.min(Math.max(1, Math.floor(limit ?? 100) || 100), 500)
+
+      // P7：orphanOnly = 只看“不属于任何现存源/键”的配音；显式给 locale 时按语言筛选
+      if (orphanOnly === true) {
+        const explicitLocale = localeArg?.trim()
+        const orphans = orphanVoiceAssetsOf(workspaceRef.current).filter(
+          (item) =>
+            !explicitLocale || item.locale.toLowerCase() === lang.toLowerCase(),
+        )
+        const page = orphans.slice(start - 1, start - 1 + count)
+        return {
+          ok: true,
+          source: hit.script.name,
+          locale: lang,
+          orphan: true,
+          note: 'these voice assets do not belong to any existing source/key; they may be leftovers from renamed or deleted text',
+          total: orphans.length,
+          missingCount: orphans.length,
+          missingSample: orphans.slice(0, 10).map((item) => item.key),
+          offset: start,
+          truncated: start - 1 + page.length < orphans.length,
+          entries: page.map((item) => ({ ...item, state: 'orphan' as const })),
+        }
+      }
+
+      const allEntries = await voiceStatusOf(
         hit.pkg.id,
         hit.pkg.assets,
         hit.script.name,
         lang,
         keys,
       )
-      const missing = entries.filter((item) => item.state === 'missing')
+      // B3：分页；不再回传完整 missing 数组，只给数量 + 最多 10 个样例
+      const page = allEntries.slice(start - 1, start - 1 + count)
+      const missing = allEntries.filter((item) => item.state === 'missing')
       return {
         ok: true,
         source: hit.script.name,
         locale: lang,
-        total: entries.length,
-        missing: missing.map((item) => item.key),
-        entries,
+        total: allEntries.length,
+        missingCount: missing.length,
+        missingSample: missing.slice(0, 10).map((item) => item.key),
+        offset: start,
+        truncated: start - 1 + page.length < allEntries.length,
+        entries: page,
       }
     },
     parseHs: async (source, localeArg) => {
-      const hit = findScriptByName(workspaceRef.current, source)
-      if (!hit) return { ok: false, error: `未找到文件：${source}` }
+      const found = findAgentScript(source)
+      if ('error' in found) return found.error
+      const hit = found.hit
       const resolved = resolveAgentLocale(localeArg)
       if ('error' in resolved) return resolved.error
       const lang = resolved.locale
       const path = langAssetPathFor(hit.script.name, lang)
-      const map = await readLangAsset(hit.pkg.id, path)
+      const state = await readLangState(hit.pkg.id, path)
+      const map = state.map
       const before = agentSourceContent(hit.script.id) ?? hit.script.content
       const parsed = parseSourceText(before, map, hit.script.name)
+      // 同文件重复文本会复用同一个键：entries 已去重，replaced 是实际替换语句数
+      const parsedNote =
+        parsed.replaced > parsed.entries.length
+          ? `${LANG_KEY_IDENTITY_NOTE}; duplicate text in this script reuses the same key`
+          : LANG_KEY_IDENTITY_NOTE
 
       if (parsed.entries.length === 0) {
         return {
@@ -3153,21 +4102,44 @@ export const StageplayWorkspace = forwardRef<
           source: hit.script.name,
           locale: lang,
           created: 0,
+          replaced: parsed.replaced,
+          changed: false,
           skipped: parsed.skipped,
-          hint: '已经没有可成键的文本（要么都已成键，要么在 #stopparse 之后）',
+          note: parsedNote,
+          hint: 'no localizable text left to key (everything is already keyed, or it is after #stopparse)',
         }
       }
 
-      // 先写映射再改正文：万一正文写入失败，只是多出几条孤儿译文，不会出现"有键无译文"
+      // 自动成键生成的键也必须是 8 位小写十六进制（防御：解析器若漂移，不要写出非法 .lang）
+      const parsedKeys = validateLangKeys(parsed.entries.map(([key]) => key))
+      if (parsedKeys.invalidKeys.length > 0 || parsedKeys.duplicates.length > 0) {
+        return {
+          ok: false,
+          reason: 'invalid_keys',
+          error: 'parse_hs generated invalid language keys; nothing was written',
+          invalidKeys: parsedKeys.invalidKeys,
+          duplicates: parsedKeys.duplicates,
+          hint: 'this is unexpected; the source text was not changed — report it with the script name',
+        }
+      }
+
+      // 先把译文写进本地草稿，再改正文草稿：正文写入失败最多留下孤儿译文，
+      // 不会出现"正文有键、语言草稿没有"（那正是导出预检和编辑器全红的状态）
       const next = { ...map }
       for (const [key, text] of parsed.entries) next[key] = text
-      const workspace = await writeLangAsset(
-        workspaceRef.current,
-        hit.pkg.id,
-        path,
-        next,
-      )
-      commitWorkspace(workspace)
+      const staged = await stageLangWrite(hit.pkg.id, path, next)
+      if (!staged.ok) {
+        return {
+          ok: false,
+          reason: 'write_failed',
+          error: `keying failed: ${staged.error}`,
+          source: hit.script.name,
+          locale: lang,
+          created: 0,
+          skipped: parsed.skipped,
+          hint: 'the source text was not changed; check write permission / network and retry',
+        }
+      }
       if (textMapRef.current?.fileName.toLowerCase() === path.toLowerCase()) {
         textCacheRef.current = stringifyTextFile(next)
         textMapRef.current.load()
@@ -3177,36 +4149,58 @@ export const StageplayWorkspace = forwardRef<
         hit.script.id,
         parsed.content,
       )
-      if (!written) return { ok: false, error: '写入失败' }
+      if (!written) {
+        return {
+          ok: false,
+          reason: 'write_failed',
+          error: 'failed to update the source draft after writing translations',
+          hint: 'the language draft was written; retry edit_source or ask the user to save',
+        }
+      }
       return {
         ok: true,
         source: written.file,
         locale: lang,
         created: parsed.entries.length,
+        replaced: parsed.replaced,
         skipped: parsed.skipped,
         keys: parsed.entries.map(([key]) => key),
+        note: parsedNote,
+        writtenPaths: [path],
+        draft: true,
+        saved: false,
+        version: null,
+        ...(staged.localOnly ? { localOnly: true } : {}),
       }
     },
     unparseHs: async (source, localeArg) => {
-      const hit = findScriptByName(workspaceRef.current, source)
-      if (!hit) return { ok: false, error: `未找到文件：${source}` }
+      const found = findAgentScript(source)
+      if ('error' in found) return found.error
+      const hit = found.hit
       const resolved = resolveAgentLocale(localeArg)
       if ('error' in resolved) return resolved.error
       const lang = resolved.locale
       const path = langAssetPathFor(hit.script.name, lang)
-      const map = await readLangAsset(hit.pkg.id, path)
+      const state = await readLangState(hit.pkg.id, path)
+      const map = state.map
       const before = agentSourceContent(hit.script.id) ?? hit.script.content
       const unparsed = unparseSourceText(before, map, hit.script.name)
 
       if (unparsed.replaced === 0) {
+        const blocked =
+          unparsed.multiline.length > 0 || unparsed.unrepresentable.length > 0
         return {
           ok: false,
-          error: '没有可逆解析的键',
+          reason: 'invalid_arguments',
+          error: 'no reversible keys found',
           source: hit.script.name,
           locale: lang,
           missing: unparsed.missing,
           multiline: unparsed.multiline,
-          hint: '先用 list_lang_keys 确认该语言有译文；多行译文目前不支持逆解析',
+          unrepresentable: unparsed.unrepresentable,
+          hint: blocked
+            ? 'multi-line keys were left as key names and values that cannot be inlined were skipped; use edit_source to edit those blocks, or unparse in the baseline language'
+            : 'use list_lang_keys to confirm this locale has translations; multi-line translations cannot be unparsed yet',
         }
       }
 
@@ -3214,7 +4208,16 @@ export const StageplayWorkspace = forwardRef<
         hit.script.id,
         unparsed.content,
       )
-      if (!written) return { ok: false, error: '写入失败' }
+      if (!written) {
+        return {
+          ok: false,
+          reason: 'write_failed',
+          error: 'failed to update the source draft while removing keys',
+          hint: 'edit_source can retry; the language draft was not changed',
+        }
+      }
+      const blocked =
+        unparsed.multiline.length > 0 || unparsed.unrepresentable.length > 0
       return {
         ok: true,
         source: written.file,
@@ -3222,6 +4225,13 @@ export const StageplayWorkspace = forwardRef<
         replaced: unparsed.replaced,
         missing: unparsed.missing,
         multiline: unparsed.multiline,
+        unrepresentable: unparsed.unrepresentable,
+        note: LANG_KEY_IDENTITY_NOTE,
+        ...(blocked
+          ? {
+              hint: 'multi-line keys were left as key names and values that cannot be inlined were skipped; use edit_source to edit those blocks, or unparse in the baseline language',
+            }
+          : {}),
       }
     },
     checkExport: async () => {
@@ -3238,17 +4248,229 @@ export const StageplayWorkspace = forwardRef<
          */
         return {
           ok: false,
+          reason: 'host_error',
           error: error instanceof Error ? error.message : String(error),
         }
       }
       const project = await buildProjectPackZip(workspace)
+      // 译文完整性：导出预检必须能发现"正文有键、语言文件没文本"，
+      // 否则用户在看不懂全红的编辑器里，还得靠肉眼翻 .lang 文件
+      const localizable = workspace.packages.flatMap((pkg) =>
+        pkg.scripts
+          .filter(
+            (script) =>
+              !script.detached &&
+              (script.name.toLowerCase().endsWith('.hs') ||
+                script.name.toLowerCase().endsWith('.char')),
+          )
+          .map((script) => ({ name: script.name, content: script.content })),
+      )
+      const langReview = await collectMissingTranslationWarnings(
+        localizable,
+        listLocalesOf(workspace).map((item) => item.locale),
+        async (sourceName, langTag) => {
+          // 跨包同名时这里可能抛：预检不能让异常逃逸，退回空表（该文件的缺译文会由其它语言目标覆盖）
+          const hit = (() => {
+            try {
+              return findScriptByName(workspace, sourceName)
+            } catch {
+              return null
+            }
+          })()
+          if (!hit) return {}
+          const path = langAssetPathFor(hit.script.name, langTag)
+          const state = await readLangState(hit.pkg.id, path)
+          return state.map
+        },
+      )
+      // P9：每个语言资产做 orphan 统计；源文件不存在 / 源存在但译文键已不在正文
+      const warningLimit = 200
+      const translationsWarnings = langReview.warnings
+      const orphanAssets: Array<{ path: string; locale?: string }> = []
+      const orphanKeySummaries: Array<{ locale: string; source: string; count: number }> = []
+      const orphanWarnings: string[] = []
+      const localAssetWarnings: Array<{ code: string; message: string; path?: string }> = []
+      for (const pkg of workspace.packages) {
+        for (const asset of pkg.assets) {
+          const parsed = parseLocaleAssetPath(asset.path)
+          if (!parsed || parsed.kind !== 'text') continue
+          const sourceName = sourceNameFromLangAssetPath(asset.path)
+          if (!sourceName) continue
+          // 跨包同名时 findScriptByName 会抛：这里只是统计，不能让预检整体失败
+          const sourceHit = (() => {
+            try {
+              return findScriptByName(workspace, sourceName)
+            } catch {
+              return null
+            }
+          })()
+          if (!sourceHit) {
+            orphanAssets.push({ path: asset.path, locale: parsed.locale })
+            const message = `[${parsed.locale}] language asset has no source file: ${asset.path}`
+            orphanWarnings.push(message)
+            localAssetWarnings.push({
+              code: 'orphan_asset',
+              message,
+              path: asset.path,
+            })
+            continue
+          }
+          const sourceKeys = collectSourceKeys(
+            sourceHit.script.content,
+            sourceHit.script.name,
+          ).map((item) => item.key)
+          const state = await readLangState(pkg.id, asset.path)
+          const count = collectOrphanKeys(sourceKeys, state.map).length
+          if (count === 0) continue
+          orphanKeySummaries.push({
+            locale: parsed.locale,
+            source: sourceHit.script.name,
+            count,
+          })
+          const message = `[${parsed.locale}] ${count} orphan translation key(s) in ${sourceHit.script.name}; delete_lang_keys can remove them`
+          orphanWarnings.push(message)
+          localAssetWarnings.push({
+            code: 'orphan_keys',
+            message,
+            path: asset.path,
+          })
+        }
+      }
+
+      // P7：孤儿配音（来源文件已不存在 / 键已不在来源正文）
+      const orphanVoiceList = orphanVoiceAssetsOf(workspace)
+      const orphanVoice = {
+        total: orphanVoiceList.length,
+        sample: orphanVoiceList.slice(0, 20).map((item) => item.path),
+        truncated: orphanVoiceList.length > 20,
+      }
+
+      // P6：顶层 warnings 只留 translations + assets（orphan）；导出编译器 warning 全部归组
+      const topWarningsAll = [...translationsWarnings, ...orphanWarnings]
+      const warnings = topWarningsAll.slice(0, warningLimit)
+      const warningTotal = topWarningsAll.length
+
+      const exportedAssets: Array<{ code: string; message: string; path?: string }> = []
+      const exportedGameplay: Array<{ code: string; message: string; path?: string }> = []
+      const rawGameplaySample: string[] = []
+      const seenExport = new Set<string>()
+      for (const raw of [...pak.warnings, ...project.warnings]) {
+        const translated = translateExportWarning(raw)
+        const key = `${translated.group}:${translated.message}`
+        if (seenExport.has(key)) continue
+        seenExport.add(key)
+        if (translated.group === 'assets') {
+          exportedAssets.push({ code: 'export_asset', message: translated.message })
+        } else {
+          if (rawGameplaySample.length < 10) rawGameplaySample.push(raw)
+          exportedGameplay.push({
+            code: translated.group === 'gameplay' ? 'export_gameplay' : 'export_other',
+            message: translated.message,
+          })
+        }
+      }
+      const assetsAll = [...localAssetWarnings, ...exportedAssets]
+      const truncateGroup = <T,>(items: T[]) => ({
+        items: items.slice(0, warningLimit),
+        total: items.length,
+        truncated: items.length > warningLimit,
+      })
+      const translationsGroup = truncateGroup(translationsWarnings)
+      const assetsGroup = truncateGroup(assetsAll)
+      const gameplayGroup = truncateGroup(exportedGameplay)
       return {
         ok: true,
-        pak: { files: pak.fileCount, warnings: pak.warnings },
-        project: { files: project.fileCount, warnings: project.warnings },
+        warnings,
+        warningTotal,
+        truncated: warningTotal > warningLimit,
+        missingTranslations: langReview.summaries,
+        /** B11：预检基于工作区，包含未保存草稿 */
+        includesDrafts: true,
+        orphanAssets,
+        orphanKeys: orphanKeySummaries,
+        /** P7：孤儿配音（同时放在顶层与 groups 里，便于工具描述引用 groups.orphanVoice） */
+        orphanVoice,
+        groups: {
+          translations: translationsGroup.items,
+          assets: assetsGroup.items,
+          gameplay: {
+            items: gameplayGroup.items,
+            sample: rawGameplaySample,
+            total: gameplayGroup.total,
+            truncated: gameplayGroup.truncated,
+          },
+          orphanVoice,
+          totals: {
+            translations: translationsGroup.total,
+            assets: assetsGroup.total,
+            gameplay: gameplayGroup.total,
+          },
+          truncated: {
+            translations: translationsGroup.truncated,
+            assets: assetsGroup.truncated,
+            gameplay: gameplayGroup.truncated,
+          },
+        },
+        // 只保留计数：pak/project.warnings 原串可能夹中文/游戏性噪声，工具 JSON 改走 groups
+        pak: { files: pak.fileCount },
+        project: { files: project.fileCount },
       }
     },
   }
+
+  // 工具派发时读最新宿主：runtime 只创建一次，宿主随渲染更新（避免每次渲染重建运行时）
+  agentHostRef.current = agentHost
+
+  const agentScope = project?.manifest.id ?? workspace.packages[0]?.id ?? 'local'
+
+  useEffect(() => {
+    if (!agentOpen || !agentHostRef.current) return
+    let disposed = false
+    let cleanup: (() => void) | null = null
+
+    void (async () => {
+      try {
+        const windowId = await claimWindowId()
+        // 每个窗口一个独立段库（文档 §9）：windowId 跨刷新稳定，复制标签页会拿到新 id
+        const runtime = createAgentRuntime({
+          scope: agentScope,
+          windowId,
+          host: agentHostProxyRef.current as AgentHost,
+          apiKey: getAgentApiKey(),
+          model: getAgentModelId(),
+          // 文档 §7：保存事务进行中禁止启动 Run
+          canStartRun: () => !projectBusyRef.current,
+        })
+        await runtime.open()
+        if (disposed) {
+          await runtime.close()
+          return
+        }
+        agentRuntimeRef.current = runtime
+        setAgentRuntime(runtime)
+        setAgentView(runtime.view())
+        const unsubscribe = runtime.subscribe((next) => setAgentView(next))
+        cleanup = () => {
+          unsubscribe()
+          agentRuntimeRef.current = null
+          void runtime.close()
+        }
+      } catch (error) {
+        if (!disposed) {
+          console.warn('[hanshu] Agent 运行时启动失败', error)
+        }
+      }
+    })()
+
+    return () => {
+      disposed = true
+      if (cleanup) cleanup()
+      setAgentRuntime(null)
+      setAgentView(null)
+    }
+    // 宿主与配置都通过 ref/闭包读取，不重建运行时；只有工程 scope 变了才换段库
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [agentOpen, agentScope, agentRuntimeNonce])
 
   useImperativeHandle(ref, () => ({
     handleMenuAction,
@@ -3298,6 +4520,12 @@ export const StageplayWorkspace = forwardRef<
             activeAssetId={workspace.activeAssetId}
             newFileMenuRequest={newFileMenuRequest}
             renameRequest={renameRequest}
+            /*
+             * 逐目标锁：改名/删除源文件会连带搬迁或删除它的派生 `.lang`，
+             * 所以这里用「源锁 + 派生语言锁」的并集；资产删除只看该资产自己的锁。
+             */
+            lockedSourceNames={agentAutoKeyBlockedSources}
+            lockedAssetPaths={agentLockedAssetPaths}
             onOpenScript={openScript}
             onOpenAsset={openAsset}
             onCreate={handleExplorerCreate}
@@ -3338,17 +4566,14 @@ export const StageplayWorkspace = forwardRef<
       render: (dock) => (
         <AgentPanel
           open={agentOpen}
-          host={agentHost}
+          runtime={agentRuntime}
           onClose={() => setAgentOpen(false)}
+          saveBlockedByRun={agentRunning}
+          contextLabel={titleName}
+          onConfigChanged={() => setAgentRuntimeNonce((value) => value + 1)}
           placement={dock.placement}
           onTitlePointerDown={dock.onTitlePointerDown}
           onRedock={dock.onRedock}
-          getContext={() => ({
-            packageName,
-            fileName: titleName,
-            content: valueRef.current,
-            selection: getEditorSelection(),
-          })}
         />
       ),
     },
@@ -3519,11 +4744,19 @@ export const StageplayWorkspace = forwardRef<
               const activeKey = visible ? editorPageKey(visible) : null
               if (!page || !editorPageExists(workspace, page)) return null
               if (pageId !== activeKey) {
+                const pageScript =
+                  page.kind === 'script' ? findScript(workspace, page.id) : null
                 return (
                   <SecondaryDockPage
                     page={page}
                     workspace={workspace}
-                    readOnly={projectBusy || serviceSession.binding?.handle.client.snapshot.role === 'viewer'}
+                    readOnly={
+                      projectBusy ||
+                      Boolean(
+                        pageScript && agentLockedSourceNames.has(pageScript.script.name),
+                      ) ||
+                      serviceSession.binding?.handle.client.snapshot.role === 'viewer'
+                    }
                     onChangeScript={writeScriptContent}
                   />
                 )
@@ -3552,6 +4785,11 @@ export const StageplayWorkspace = forwardRef<
                   <AssetPreview
                     packageId={activeAssetHit.pkg.id}
                     asset={activeAssetHit.asset}
+                    /*
+                     * `.lang` 的只读按「lang 锁」判断（文档 D2：语言文件看 lang 锁）；
+                     * 源文件锁不阻止人类编辑译文。只读时仍用 Monaco 呈现，只是保存入口不可用。
+                     */
+                    readOnly={agentLockedViewingAsset}
                     onSaveText={handleSaveTextAsset}
                   />
                 ) : ttsUseForm ? (
@@ -3647,19 +4885,34 @@ export const StageplayWorkspace = forwardRef<
                                 : undefined,
                             getVoice: () => voiceLibraryRef.current,
                             onEditRequest: (request) => {
+                              // 语言文本被 Agent 锁住：不给改译文（含改键名 / 改文本）
+                              if (rejectLockedLangEdit()) return
                               langEditSeqRef.current += 1
                               setLangEdit({
                                 id: langEditSeqRef.current,
                                 request,
                               })
                             },
-                            onUnitMenu: (request) => setUnitMenu(request),
-                            onUnitDrop: (request) => handleUnitDrop(request),
+                            onUnitMenu: (request) => {
+                              if (rejectLockedLangEdit()) return
+                              setUnitMenu(request)
+                            },
+                            onUnitDrop: (request) => {
+                              if (rejectLockedLangEdit()) return
+                              handleUnitDrop(request)
+                            },
                             // 缺失 / 无效态点按钮 = 去录音棚配一条
                             onEditVoice: (key) => editVoiceInStudio(key),
                             // 录音棚：左键点键名 / 划框都会走到这里
                             onUnitSelect: (request) => handleUnitSelect(request),
                             onMarquee: (request) => handleMarquee(request),
+                            // Agent 持锁期间禁止自动成键；解锁后也不把 agent 刚写出的正文再成键一遍
+                            // （内容级抑制：正文仍等于程序化写入的内容就跳过，用户一改就恢复）
+                            canAutoKey: () => {
+                              if (agentLockedSourceNamesRef.current.has(titleName)) return false
+                              const programmatic = agentWrittenContentRef.current.get(titleName)
+                              return !(programmatic !== undefined && valueRef.current === programmatic)
+                            },
                           })
                           // 绑定重建后，把录音棚的模式与选中态重新灌回去
                           setTextBindingSeq((seq) => seq + 1)
@@ -3682,7 +4935,11 @@ export const StageplayWorkspace = forwardRef<
                            * 录音棚打开时编辑器是**只读**的：那会儿左键点键名是"选中"、
                            * 空白处按下是"划框"，不允许再改正文（正常交互整体让位）。
                            */
-                          readOnly: projectBusy || studioOpen || serviceSession.binding?.handle.client.snapshot.role === 'viewer',
+                          readOnly:
+                            projectBusy ||
+                            studioOpen ||
+                            Boolean(agentWritingFile) ||
+                            serviceSession.binding?.handle.client.snapshot.role === 'viewer',
                           domReadOnly: studioOpen,
                           scrollBeyondLastLine: false,
                           automaticLayout: true,

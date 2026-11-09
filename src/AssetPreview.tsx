@@ -21,6 +21,11 @@ type AssetPreviewProps = {
    * 提供后文本资产用**可写** JSON 编辑器打开；不提供则只读呈现。
    */
   onSaveText?: (content: string) => void | Promise<void>
+  /**
+   * 只读：仍用 Monaco 呈现文本资产（可看语法高亮、可滚动），但不可编辑、不显示保存入口。
+   * 用于 Agent 持锁期间（文档 D2：锁只对被锁的文件生效）。
+   */
+  readOnly?: boolean
 }
 
 /** 只读呈现时尽量格式化；解析失败就原样显示（损坏的 lang 也要能看见） */
@@ -47,6 +52,7 @@ export function AssetPreview({
   packageId,
   asset,
   onSaveText,
+  readOnly = false,
 }: AssetPreviewProps) {
   const [url, setUrl] = useState<string | null>(null)
   const [text, setText] = useState<string | null>(null)
@@ -57,7 +63,9 @@ export function AssetPreview({
 
   const json = isJsonAsset(asset.path, asset.mime)
   const texty = isTextAsset(asset.path, asset.mime)
-  const editable = texty && onSaveText != null
+  /** 文本资产有保存入口时用 Monaco；被 Agent 锁住时 Monaco 只读 */
+  const showEditor = texty && onSaveText != null
+  const editable = showEditor && !readOnly
 
   useEffect(() => {
     let cancelled = false
@@ -110,7 +118,7 @@ export function AssetPreview({
   const syntaxError = dirty ? jsonErrorOf(current, json) : null
 
   const save = async () => {
-    if (!onSaveText || !dirty || syntaxError) return
+    if (!editable || !onSaveText || !dirty || syntaxError) return
     setSaving(true)
     try {
       await onSaveText(current)
@@ -136,6 +144,11 @@ export function AssetPreview({
           <code>{asset.path}</code>
           <span>{formatBytes(asset.size)}</span>
           <span>{asset.mime || 'unknown'}</span>
+          {readOnly && showEditor && (
+            <span title="Agent 正在使用该语言文件；锁释放后自动恢复编辑">
+              只读：Agent 使用中
+            </span>
+          )}
           {editable && (
             <button
               type="button"
@@ -161,7 +174,7 @@ export function AssetPreview({
         {url && syntaxError && (
           <p className="asset-preview-error">JSON 语法错误：{syntaxError}</p>
         )}
-        {url && !audio && !image && editable && (
+        {url && !audio && !image && showEditor && (
           <div className="asset-preview-editor">
             <Editor
               height="100%"
@@ -169,10 +182,13 @@ export function AssetPreview({
               theme={HANSHU_THEME_ID}
               beforeMount={registerHanshuLanguage}
               value={current}
-              onChange={(next) => setDraft(next ?? '')}
+              onChange={(next) => {
+                // 只读时 Monaco 不会再发变更；这里再兜一层，避免外部模型更新产生草稿
+                if (editable) setDraft(next ?? '')
+              }}
               onMount={handleMount}
               options={{
-                readOnly: false,
+                readOnly: !editable,
                 minimap: { enabled: false },
                 fontSize: 13,
                 scrollBeyondLastLine: false,
@@ -183,7 +199,7 @@ export function AssetPreview({
             />
           </div>
         )}
-        {url && !audio && !image && !editable && texty && (
+        {url && !audio && !image && !showEditor && texty && (
           <pre className="asset-preview-text">
             {json ? formatJsonText(text ?? '') : text ?? ''}
           </pre>

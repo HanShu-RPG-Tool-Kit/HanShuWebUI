@@ -29,11 +29,24 @@ import {
  * - 不再生成 `.lines`：hash → 原文的映射已经被正文里的键名取代。
  */
 
+/** 编译错误分类：agent 侧据此映射成英文（编辑器 UI 仍直接用中文 message） */
+export type HsCompileErrorCode = 'key-outside-span' | 'multiple-keys-in-block'
+
 /** 编译错误：含键名内容没闭合 / 一个多行块里摊了多个键名 */
 export class HsCompileError extends Error {
-  constructor(message: string) {
+  /** 机器可读分类（可选，保持向后兼容：不传时构造方式与旧版一致） */
+  readonly code?: HsCompileErrorCode
+  /** 1-based 行号（可选；编辑器 UI 用不到，agent 的英文错误要带行号） */
+  readonly line?: number
+
+  constructor(
+    message: string,
+    options?: { code?: HsCompileErrorCode; line?: number },
+  ) {
     super(message)
     this.name = 'HsCompileError'
+    if (options?.code !== undefined) this.code = options.code
+    if (options?.line !== undefined) this.line = options.line
   }
 }
 
@@ -156,6 +169,7 @@ function normalizeKeyedContent(hsText: string): string {
       if (!span || !isKeyedSpan(span)) {
         throw new HsCompileError(
           `第 ${i + 1} 行：键名必须写在闭合的语句里（\`speaker:<键>//\`，或多行块 \`speaker:\` + \`<键>\` + 独占一行的 \`//\`）`,
+          { code: 'key-outside-span', line: i + 1 },
         )
       }
     }
@@ -170,6 +184,7 @@ function normalizeKeyedContent(hsText: string): string {
     if (!hasBodyBefore(lines, span)) continue
     throw new HsCompileError(
       `第 ${span.line} 行：一个多行对白块只能有一个键名 —— 块里的 \`#\` 注释把正文切成了好几段，紧凑化只折第一段，后面的段落会掉成没有语句归属的裸键名。请把它拆成两条 \`speaker:\` 语句，或去掉块里的注释`,
+      { code: 'multiple-keys-in-block', line: span.line },
     )
   }
 
