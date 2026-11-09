@@ -104,6 +104,9 @@
 - **锁期间不自动成键**：本 Run 持锁的文件，编辑器不会自动成键（解锁后也不补做），agent 改正文不会与自动成键抢键位。
 - **逆解析必须同语言（C2）**：键名是文本哈希，`unparse_hs(locale)` 之后必须用**同一个 locale** 重新 `parse_hs`；
   跨语言逆解析会生成新键、旧键变孤儿并把错误文本灌进目标语言。`unparse_hs` / `parse_hs` 的成功返回带 `note` 提醒。
+- **重复文本共用同一个键（D13）**：同一文件内同一段文本出现多次时，`parse_hs`（以及编辑器自动成键）复用同一个键；
+  `parse_hs` 回执的 `created` 是新建的**唯一键数**、`replaced` 是替换的语句数（重复台词时 `replaced > created`），正文多处引用同一个键是合法的。
+  想分别翻译重复文本，改写其中一处文本或手动换键。
 - **只读/写入语义补充（D11）**：
   - `unlock_lang` 省略 `locales` = 释放**本 Run 为该源文件持有的全部语言锁**（含工程语言表之外的手写 locale，如 `fr_fr`）；显式传 locales 只释放对应语言。`unlock_source` 同理只放本 Run 的源锁。
   - `lock_source` 在占名前先经 `validateSourceName` 校验逻辑名（非法名字直接 `invalid_arguments`，**不会白占名字**）；`create_source` 对非法名字同样返回 `invalid_arguments`。
