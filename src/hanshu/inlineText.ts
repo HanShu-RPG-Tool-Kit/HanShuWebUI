@@ -23,6 +23,11 @@ export type UnsafeInlineReason =
   | 'line-break'
   /** 空串：逆解析成空正文会改变语句形态 */
   | 'empty'
+  /**
+   * 首尾有空白：内联后空白会落在键段之外（如 `…呢？ //`），再次 parse 时
+   * 文本已不是原值 → 换键，且空白再也回不到译文里（P3）。
+   */
+  | 'edge-space'
 
 /**
  * 返回不能安全内联回正文的原因；`null` 表示可以内联（`>>`/`<<`/`-` 由调用方先转义）。
@@ -34,6 +39,7 @@ export function unsafeInlineReason(
 ): UnsafeInlineReason | null {
   if (text.length === 0) return 'empty'
   if (text.includes('\n') || text.includes('\r')) return 'line-break'
+  if (text.trim() !== text) return 'edge-space'
   if (text.includes('//')) return 'line-terminator'
   if (context !== 'dialogue' && text.includes(':')) return 'option-colon'
   if (/^[?!@#*:]/.test(text)) return 'leading-structure'

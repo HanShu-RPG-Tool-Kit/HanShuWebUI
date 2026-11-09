@@ -60,6 +60,7 @@ test('assessLangValueRisks 汇总风险并标注首尾空白', () => {
     'line-terminator',
   ])
   assert.deepEqual(assessLangValueRisks(' x ', 'dialogue'), [
+    'edge-space',
     'leading-space',
     'trailing-space',
   ])
@@ -67,6 +68,12 @@ test('assessLangValueRisks 汇总风险并标注首尾空白', () => {
     'option-colon',
   ])
   assert.deepEqual(assessLangValueRisks('正常译文', 'dialogue'), [])
+})
+
+test('首尾空白不能内联（P3：内联后会污染正文并导致换键）', () => {
+  assert.equal(unsafeInlineReason('好 ', 'dialogue'), 'edge-space')
+  assert.equal(unsafeInlineReason(' 好', 'dialogue'), 'edge-space')
+  assert.equal(unsafeInlineReason('好', 'dialogue'), null)
 })
 
 test('以 >> / << 开头的译文给 leading-jump / leading-rewind 警告（A5 覆盖）', () => {
