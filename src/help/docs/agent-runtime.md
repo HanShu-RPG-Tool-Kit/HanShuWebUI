@@ -102,11 +102,22 @@
   只有人类或其它 Run 改了文件才会触发。
 - **locale 以返回值为准（C1）**：请求的标签可能被归一化（`en` → `en_us`），`lock_lang` / `write_lang` / `parse_hs` 返回的 `locale` 才是工程实际标签。
 - **锁期间不自动成键**：本 Run 持锁的文件，编辑器不会自动成键（解锁后也不补做），agent 改正文不会与自动成键抢键位。
-- **逆解析必须同语言（C2）**：键名是文本哈希，`unparse_hs(locale)` 之后必须用**同一个 locale** 重新 `parse_hs`；
-  跨语言逆解析会生成新键、旧键变孤儿并把错误文本灌进目标语言。`unparse_hs` / `parse_hs` 的成功返回带 `note` 提醒。
+- **逆解析后同 locale 再解析会复用键（C2 修正）**：`parse_hs(locale)` 会在该语言的映射里按"值 == 这段文本"反查已有键，所以
+  `unparse_hs(ja_jp)` 之后 `parse_hs(ja_jp)` 通常原样复用原来的键（即使这段文本不是源语言写的）；只有**换到另一个 locale** 再 parse
+  时那份映射里没有这段文本，才会按文本重新哈希生成新键。`unparse_hs` / `parse_hs` 的成功返回带 `note` 提醒。
+  同语言里两个键译文相同的情况下，复用哪个键是确定但不可推断的（实现取键名最小者），不要依赖具体是哪一个。
 - **重复文本共用同一个键（D13）**：同一文件内同一段文本出现多次时，`parse_hs`（以及编辑器自动成键）复用同一个键；
   `parse_hs` 回执的 `created` 是新建的**唯一键数**、`replaced` 是替换的语句数（重复台词时 `replaced > created`），正文多处引用同一个键是合法的。
   想分别翻译重复文本，改写其中一处文本或手动换键。
+- **回执/错误信封统一（D14）**：
+  - `list_lang_keys` 的条目：缺失键 `text:null` + `hasEntry:false`；空串保留 `text:""` 但 `translated:false`（与 `check_export` 的 `trim()` 缺失口径一致）。
+  - `lock_source` / `lock_lang` 的失败体同时带 `locked:false` 与 `ok:false`（`reason`/`errorCode`/hint 照旧）；
+    **`not_held`** = 写工具时本 Run 没持锁（先 lock_source）；**`held`** = 目标被其他 Run/人类占着。
+  - `write_lang` 的 `duplicates` 失败 hint 会提示去重；`delete_lang_keys` 对不存在的键返回 `unknownKeys`（`removed` 只含真正删掉的）。
+  - `validate_source`：`ok` 只反映**编译**（`compileError === null`）；`diagnostics` 只含编辑器诊断；agent 专属检查（未成键正文、跳转目标、角色名、全角冒号等）在 `agentLint`；每条诊断都带 `line` 与英文 `message`（duplicate-inject 会写名字与另一处所在文件）。
+  - `check_export`：`groups.orphanVoice` = 不属于任何现存源/键的配音（`total`/`sample`/`truncated`）；gameplay 组带 `sample`/`total`，不再只有一句"看导出日志"。
+  - `parse_hs` 无可解析内容时返回 `changed:false`（不写草稿/正文）；creating 锁成功的 `version`/`content` 是 `null`（不是空串）。
+  - `list_voice_status` 支持 `orphanOnly:true`：只看孤儿配音（对应的源/键已不存在）。
 - **只读/写入语义补充（D11）**：
   - `unlock_lang` 省略 `locales` = 释放**本 Run 为该源文件持有的全部语言锁**（含工程语言表之外的手写 locale，如 `fr_fr`）；显式传 locales 只释放对应语言。`unlock_source` 同理只放本 Run 的源锁。
   - `lock_source` 在占名前先经 `validateSourceName` 校验逻辑名（非法名字直接 `invalid_arguments`，**不会白占名字**）；`create_source` 对非法名字同样返回 `invalid_arguments`。
