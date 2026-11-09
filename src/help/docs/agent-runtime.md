@@ -89,9 +89,10 @@
   对白文本里未转义的 `-`、对白块内的选项行、以及**形似键但格式不对**的片段（如大写 `7F3A91C`）；不改编辑器波形。
 - **`changed` 用版本判断（D9）**：`write_source` / `edit_source` 的 `changed` 由"写后版本 ≠ 写前锁版本"得出，
   内容完全一致地重写会返回 `changed:false`（工具 JSON 同时给出 `version`，以版本为准）。
-- **只读工具语义（D10）**：
-  - `list_lang_keys.localeExists` = **该源文件在该语言下的 `.lang` 文件是否已存在**（`version !== null || saved`）；
-    `localeInProject` 才表示"工程语言表里是否有该语言"。判断"已有译文"用 `version` / `saved`，不要用 `localeExists`。
+- **只读工具语义（D10/D12）**：
+  - `list_lang_keys.localeExists` / `hasSaved` / `saved` = **工程里该 `.lang` 已保存文件是否存在**（与本地草稿无关；有未保存草稿时依然为 true）；
+    `draft` / `hasDraft` 才表示"当前内容来自未保存草稿"；`savedVersion`（与 `version` 同值）是已保存版本，草稿不影响它；
+    `localeInProject` 表示"工程语言表里是否有该语言"。
   - 分页语义统一：`read_source` / `list_lang_keys` 的 offset 越界都返回 `ok:false` + `total`（`list_lang_keys` 为 `total`，`read_source` 为 `totalLines`），不静默返回空页。
   - `list_voice_status` 支持 `offset` / `limit`（默认 1/100，上限 500），返回 `total` / `missingCount` / `missingSample`（最多 10 条） / `truncated`，不再一次吐出全部 `entries` 与 `missing` 键名。
   - **未成键检测**：`list_lang_keys` 返回 `unparsedTextCount` + `unparsedSamples`；`validate_source` 会为未成键正文追加一条 agent-lint 汇总。
@@ -108,10 +109,12 @@
   - `lock_source` 在占名前先经 `validateSourceName` 校验逻辑名（非法名字直接 `invalid_arguments`，**不会白占名字**）；`create_source` 对非法名字同样返回 `invalid_arguments`。
   - `unparse_hs` 遇到**不能安全内联**的译文（含 `//`、选项文案/回复含 `:`、行首 `?`/`!`/`@`/`#`/`*`）不替换，返回 `unrepresentable`；`multiline` 与 `unrepresentable` 都带 hint 提示用 `edit_source` 处理。
   - `validate_source` 现在会校验 `:>>name` 的跳转目标是否存在（本文件 `@name` + 跨文件注入点），缺失报 `agent-lint: jump target not found: name`；诊断统一带 `line`（保留 `offset`）。
-  - `write_lang` 对将来无法安全逆解析的译文给 `warnings`（`{locale,key,reasons}`，只警告不拒绝），避免把 `//`、`:`、行首结构字符写进语言文件。
+  - `write_lang` 对将来无法安全逆解析的译文给 `warnings`（`{locale,key,reasons}`，只警告不拒绝），避免把 `//`、`:`、行首结构字符写进语言文件；以 `>>` / `<<` 开头的译文会标 `leading-jump` / `leading-rewind`（`<<` 是「回整树根」控制符，尤其不能出现在选项回复开头）。
   - `lock_source` 的 `already_exists` 失败体不再回传整篇 `currentContent`（只给 `currentVersion` + `contentOmitted:true`），减少长文件 payload。
-  - `write_lang` 逐语言结果用 `fileTotal`（语言文件条目数，含 orphan），`list_lang_keys.total` 是正文键数；`list_lang_keys` 另有 `hasSaved` / `hasDraft` 自解释字段。
+  - `write_lang` 逐语言结果用 `fileTotal`（语言文件条目数，**含正文已不再引用的孤儿键**；`total` 是同值兼容别名），`list_lang_keys.total` 是正文键数；`list_lang_keys` 另有 `hasSaved` / `hasDraft` 自解释字段。
   - `check_export` / `list_sources` 返回 `includesDrafts: true`：它们按**工作区视角**统计，包含尚未保存的草稿。
+- **键身份的前提（D12）**：键名是**创建它时那段文本**的哈希，跨语言共用；「逆解析 → 同语言重新解析拿回同一个键」只在"同一语言、同一段文本、旧映射仍在"时成立。
+  删除某语言的映射条目后（或跨语言 unparse→parse），重新 parse 会按当前语言文本哈希生成新键，旧键在其它语言里变孤儿——需要保留键身份就不要删该条目；`delete_lang_keys` 成功返回会带 `note` 提示。
 
 ## Run 生命周期
 
