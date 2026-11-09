@@ -27,8 +27,10 @@ import type {
   ContentVersion,
   LangLockDenial,
   LangLockGrant,
+  LangLockResult,
   LockDenial,
-  LockGrant,
+  LockDenyReason,
+  LockResult,
   UndoChannel,
   VersionedFile,
 } from '../contracts'
@@ -111,28 +113,15 @@ type ArbiterOptions = {
 /**
  * 写前拒绝：契约 `AgentToolArbiter.assertWritable` 的 `{ok:false,error,hint?}` 之外再带 `reason`，
  * 供 tools 的 `deniedJson` 判断是否追加「先 lock_source」兜底、并统一映射 `errorCode`（B4/B5）。
- * 返回类型比契约更具体（多一个字段），结构上仍满足契约 —— 契约补 `reason?` 后本别名可删。
+ *
+ * P5：`not_held` = 本 Run 自己没持有锁（该去 lock）；`held` 只用于「被其他 Run / 人类占着」的 lock 失败。
  */
 export type WriteDenial = {
   ok: false
   error: string
   hint?: string
-  reason: 'held' | 'already_exists' | 'version_stale'
+  reason: LockDenyReason
 }
-
-/**
- * lock 失败的返回体（B10）：契约 `LockDenial` 之上允许 `contentOmitted` 标记。
- *
- * 为什么只对 `already_exists` 省内容：create 占名撞上已存在时，模型下一步是「改用 write_source」，
- * 不需要整篇正文（长文件 payload 膨胀）；而 `version_stale` / `held` 需要回内容才能一次往返自愈。
- */
-export type LockDenialBody = LockDenial & { contentOmitted?: true }
-
-/** lock_lang 的失败体：与 `LockDenialBody` 同口径（语言路径极少走到 already_exists，但保持一致） */
-export type LangLockDenialBody = LangLockDenial & { contentOmitted?: true }
-
-/** lock_lang 的返回体（契约结果 + B10 标记） */
-export type LangLockResultBody = { locked: true; langs: LangLockGrant[] } | LangLockDenialBody
 
 export class RuntimeArbiter implements AgentToolArbiter {
   private readonly options: ArbiterOptions
@@ -176,27 +165,31 @@ export class RuntimeArbiter implements AgentToolArbiter {
    * 源文件锁不再替语言锁兜底（避免锁徽标暴露 `.lang` 内部路径，也避免误锁一堆文件）。
    *
    * B10：`already_exists` 只回 `currentVersion` + `contentOmitted:true`（不给整篇正文）。
+   * P8：creating 是「占住一个还不存在的名字」，成功时 `version` / `content` 用 **null**（不是空串，
+   * 否则模型会把空串当成空文件的哈希）。
    */
   async lock(
     paths: AgentPath[],
     options?: { creating?: boolean },
-  ): Promise<LockGrant | LockDenialBody> {
+  ): Promise<LockResult> {
     const result = await this.options.locks.acquire(this.options.runKey(), paths, options)
     if (result.locked) {
       this.options.onLockChange?.()
+      if (options?.creating === true) return { locked: true, version: null, content: null }
       return result
     }
-    if (result.reason === 'already_exists') {
-      const denied: LockDenialBody = {
-        locked: false,
-        reason: result.reason,
-        hint: result.hint,
-        contentOmitted: true,
-      }
-      if (result.currentVersion !== undefined) denied.currentVersion = result.currentVersion
-      return denied
+    const denied: LockDenial = {
+      locked: false,
+      reason: result.reason,
+      hint: result.hint,
     }
-    return result
+    if (result.currentVersion !== undefined) denied.currentVersion = result.currentVersion
+    if (result.reason === 'already_exists') {
+      denied.contentOmitted = true
+    } else if (result.currentContent !== undefined) {
+      denied.currentContent = result.currentContent
+    }
+    return denied
   }
 
   /**
@@ -207,7 +200,7 @@ export class RuntimeArbiter implements AgentToolArbiter {
    * - 不存在的 `.lang`：按 creating 占名（译文文件常常还没建）；
    * - 整批原子：任一条失败，一个都不持有（`acquireEach` 保证）。
    */
-  async lockLang(source: AgentPath, locales?: string[]): Promise<LangLockResultBody> {
+  async lockLang(source: AgentPath, locales?: string[]): Promise<LangLockResult> {
     const resolve = this.options.host.derivedLangTargets
     if (resolve === undefined) {
       return {
@@ -247,7 +240,7 @@ export class RuntimeArbiter implements AgentToolArbiter {
     if (!result.locked) {
       const failed = grants[result.index]
       const omitContent = result.denial.reason === 'already_exists'
-      const denied: LangLockDenialBody = {
+      const denied: LangLockDenial = {
         locked: false,
         reason: result.denial.reason,
         hint: result.denial.hint,
@@ -322,7 +315,7 @@ export class RuntimeArbiter implements AgentToolArbiter {
         return {
           ok: false,
           error: 'lock is not held for this path',
-          reason: 'held',
+          reason: 'not_held',
           hint: `Call lock_source({ "paths": ["${source}"] }) to hold the name before creating it.`,
         }
       }
@@ -345,7 +338,7 @@ export class RuntimeArbiter implements AgentToolArbiter {
       return {
         ok: false,
         error: 'write without holding the lock',
-        reason: 'held',
+        reason: 'not_held',
         hint: `Call lock_source({ "paths": ["${source}"] }) first.`,
       }
     }

@@ -119,12 +119,12 @@ await test('read 返回内容哈希，并让同一 Run 可以按这一版加锁'
   assert.equal(writable.ok, true)
 })
 
-await test('未持锁的写被拒绝：英文 + reason held', async () => {
+await test('未持锁的写被拒绝：英文 + reason not_held（P5）', async () => {
   seedSource('角色.hs', '旧卡\\n')
   const denied = await arbiter.assertWritable('角色.hs')
   assert.equal(denied.ok, false)
   if (!denied.ok) {
-    assert.equal(denied.reason, 'held')
+    assert.equal(denied.reason, 'not_held', 'P5：「自己没持锁」用 not_held，held 只留给被他人占用')
     assert.equal(denied.error, 'write without holding the lock')
     assert.ok(denied.hint?.includes('lock_source'), denied.hint)
     assertEnglish('未持锁写 hint', denied.hint, ['角色.hs'])
@@ -293,6 +293,11 @@ await test('写后版本自更新：不重新 read 也能再 lock，且内容是
 await test('新建：先占名（creating）再写；写完锁保留，noteWritten 返回写后版本', async () => {
   const locked = await arbiter.lock(['新建.hs'], { creating: true })
   assert.equal(locked.locked, true)
+  if (locked.locked) {
+    // P8：creating 是「占住一个还不存在的名字」，没有版本/内容，用 null 而不是空串
+    assert.equal(locked.version, null, 'creating grant 的 version 必须是 null')
+    assert.equal(locked.content, null, 'creating grant 的 content 必须是 null')
+  }
   assert.equal(arbiter.isLocked('新建.hs'), true, 'create 锁占名后应持有')
   assert.equal((await arbiter.assertWritable('新建.hs', { creating: true })).ok, true)
   sources.set('新建.hs', '内容\\n')

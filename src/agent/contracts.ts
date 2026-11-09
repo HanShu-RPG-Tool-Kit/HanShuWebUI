@@ -40,11 +40,17 @@ export type LockDenyReason =
   | 'held'
   /** creating 语义下路径**已经存在**（占名失败；改用 write_source 覆盖） */
   | 'already_exists'
+  /**
+   * 本 Run **没有**持有该路径的锁就写（写前置检查）；`held` 才表示被其他 Run / 人类占着。
+   * 只在 `assertWritable` 的拒绝体里出现，`lock` / `lock_lang` 本身不会返回它。
+   */
+  | 'not_held'
 
 export type LockGrant = {
   locked: true
-  version: ContentVersion
-  content: string
+  /** creating 占名时文件还不存在：version / content 为 null（不是空串，避免与空文件混淆） */
+  version: ContentVersion | null
+  content: string | null
 }
 
 export type LockDenial = {
@@ -222,12 +228,13 @@ export type AgentHost = {
     locale?: string,
     force?: boolean,
   ) => Promise<AgentOpResult>
-  /** 对等配音是否存在、是否单声道 Vorbis ogg；分页返回（offset 1 起） */
+  /** 对等配音是否存在、是否单声道 Vorbis ogg；分页返回（offset 1 起）。`orphanOnly` = 只看孤儿配音（P7） */
   listVoiceStatus: (
     source: string,
     locale?: string,
     offset?: number,
     limit?: number,
+    orphanOnly?: boolean,
   ) => Promise<AgentOpResult>
   /** 解析：把正文的可本地化文本换成键名，并把文本写进该语言的映射 */
   parseHs: (source: string, locale?: string) => Promise<AgentOpResult>
