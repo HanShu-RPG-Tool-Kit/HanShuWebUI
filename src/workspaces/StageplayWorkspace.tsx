@@ -2933,7 +2933,8 @@ export const StageplayWorkspace = forwardRef<
       map: state.map,
       version: state.savedVersion,
       draft: state.draft,
-      saved: !state.draft && state.savedVersion !== null,
+      // B8：saved 只表示“工程文件存在”，与是否读草稿解耦（有同值草稿时仍为 true）
+      saved: state.hasSaved,
       localDraft: state.draft,
     }
   }
@@ -3581,18 +3582,20 @@ export const StageplayWorkspace = forwardRef<
         ok: true,
         source: target.hit.script.name,
         locale: target.lang,
-        /** 该源文件在该语言下的 `.lang` 是否已存在（看已保存版本或草稿） */
-        localeExists: target.version !== null || target.saved,
+        /** 该源文件在该语言下的 `.lang` 是否已保存在工程里（有草稿也 true） */
+        localeExists: target.saved,
         /** 工程语言表里是否有该语言（其它源文件有该语言资产也算） */
         localeInProject,
         /** 是否是编辑器当前正在编辑的语言 */
         active: target.lang.toLowerCase() === locale.toLowerCase(),
         path: target.path,
-        /** 已保存工程文件里的内容哈希；null = 读的是草稿 / 还没有文件 */
+        /** 已保存工程文件里的内容哈希；null = 还没有已保存文件（有草稿也不影响） */
         version: target.version,
+        /** B8：`version` 的显式别名，避免被误读成“当前生效内容版本” */
+        savedVersion: target.version,
         /** true = 读到的内容来自本地未保存草稿（D1） */
         draft: target.draft,
-        /** true = 内容已在工程文件里 */
+        /** true = 内容已在工程文件里（有草稿也 true） */
         saved: target.saved,
         /** B8：语义自解释 —— 该 `.lang` 已保存到工程文件 / 有本地草稿 */
         hasSaved: target.saved,
@@ -3840,23 +3843,28 @@ export const StageplayWorkspace = forwardRef<
         }
       }
       // C3：默认不删正文仍在引用的键（force:true 才允许，用于清理/改名前的显式覆盖）
-      if (force !== true) {
-        const content =
-          agentSourceContent(target.hit.script.id) ?? target.hit.script.content
-        const known = new Set(
-          collectSourceKeys(content, target.hit.script.name).map((item) => item.key),
-        )
-        const inUseKeys = keys.filter((key) => known.has(key))
-        if (inUseKeys.length > 0) {
-          return {
-            ok: false,
-            reason: 'keys_in_use',
-            error: 'keys are still referenced by the source text',
-            inUseKeys,
-            hint: 'remove or rename them in the text first, or pass force:true to delete anyway',
-          }
+      const content =
+        agentSourceContent(target.hit.script.id) ?? target.hit.script.content
+      const known = new Set(
+        collectSourceKeys(content, target.hit.script.name).map((item) => item.key),
+      )
+      const inUseKeys = keys.filter((key) => known.has(key))
+      if (force !== true && inUseKeys.length > 0) {
+        return {
+          ok: false,
+          reason: 'keys_in_use',
+          error: 'keys are still referenced by the source text',
+          inUseKeys,
+          hint: 'remove or rename them in the text first, or pass force:true to delete anyway',
         }
       }
+      // N1：键身份来自创建时文本哈希；删除后重新 parse 可能换键
+      const deleteNote =
+        'key identity comes from the text hash at creation time; re-running parse_hs in this language after deleting entries will hash the current text and may produce new keys, leaving the deleted ones orphan in other languages'
+      const stillReferencedWarnings =
+        force === true
+          ? inUseKeys.map((key) => ({ reason: 'still-referenced', key }))
+          : []
       const next = { ...target.map }
       const removed: string[] = []
       for (const key of keys) {
@@ -3872,6 +3880,10 @@ export const StageplayWorkspace = forwardRef<
           draft: true,
           saved: false,
           version: null,
+          note: deleteNote,
+          ...(stillReferencedWarnings.length > 0
+            ? { warnings: stillReferencedWarnings }
+            : {}),
         }
       }
 
@@ -3904,6 +3916,10 @@ export const StageplayWorkspace = forwardRef<
         draft: true,
         saved: false,
         version: null,
+        note: deleteNote,
+        ...(stillReferencedWarnings.length > 0
+          ? { warnings: stillReferencedWarnings }
+          : {}),
         ...(staged.localOnly ? { localOnly: true } : {}),
       }
     },
