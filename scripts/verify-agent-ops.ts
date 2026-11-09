@@ -214,13 +214,23 @@ assert.notEqual(multiText.entries[1]![0], 'bbbbbbbb', '不用没对上的历史�
 assert.notEqual(multiText.entries[1]![0], 'aaaaaaaa')
 assert.match(multiText.entries[1]![0], LANG_KEY_PATTERN)
 
-// 同文件同文本两处 → 同键
+// 同文件同文本两处 → 同键；entries 按 key 去重（否则宿主 validateLangKeys 判重复）
 const repeated = parseSourceText(
   ['narrator:', '重复台词', '//', 'narrator:', '重复台词', '//'].join('\n'),
   {},
 )
-assert.equal(repeated.entries.length, 2)
-assert.equal(repeated.entries[0]![0], repeated.entries[1]![0], '同文本两处必须同键')
+assert.equal(repeated.entries.length, 1, 'entries 按 key 去重（同文本只写一条映射）')
+assert.equal(repeated.entries[0]![1], '重复台词')
+assert.equal(repeated.reused, 1, '第二次出现复用第一次分配的键')
+assert.equal(repeated.replaced, 2, '两处 span 都要替换（replaced=2）')
+const repeatedKey = repeated.entries[0]![0]
+assert.match(repeatedKey, LANG_KEY_PATTERN)
+assert.equal(
+  repeated.content.split(repeatedKey).length - 1,
+  2,
+  '正文两处必须是同一个键',
+)
+assert.ok(!repeated.content.includes('重复台词'), '原文都已被键名替换')
 
 // 非法（大写）的历史键不参与复用
 const invalidHistory = { 'ABCDEF12': '历史译文' }
@@ -350,6 +360,13 @@ const manyTexts = countUnparsedTexts(
 )
 assert.equal(manyTexts.count, 4)
 assert.equal(manyTexts.samples.length, 3, '样本最多 3 条')
+
+// entries 去重后仍要按**片段**计数：同文本出现两次算两个未成键片段
+const repeatedUnparsed = countUnparsedTexts(
+  ['narrator:', '重复', '//', 'narrator:', '重复', '//'].join('\n'),
+  'chapter.hs',
+)
+assert.equal(repeatedUnparsed.count, 2, '同文本重复出现按 span 计数，不受 entries 去重影响')
 
 const validateUnkeyed = validateSourceContent(
   'chapter.hs',

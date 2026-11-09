@@ -666,6 +666,11 @@ export type VoiceState = 'ok' | 'missing' | 'not-ogg' | 'not-mono' | 'invalid' |
  * 独占一行的 `//`）把键名插成独立一行。空文本也照样成键（否则它永远拿不到键）。
  *
  * `skipped` 只统计因 `#stopparse` 指令而未成键的片段。
+ *
+ * 同文件重复台词：同文本第二次出现会**复用同一个键**，`entries` 因此按 key 去重
+ * （保留首次出现顺序）—— 否则宿主 `parseHs` 的 `validateLangKeys` 会把重复键判成
+ * `invalid_keys` 整篇拒绝。`replaced` 报告实际替换的 span 数（含重复出现），
+ * `reused` 报告复用已有键的次数。
  */
 export function parseSourceText(
   content: string,
@@ -676,6 +681,7 @@ export function parseSourceText(
   entries: Array<[string, string]>
   skipped: number
   reused: number
+  replaced: number
 } {
   const stopLine = stopParseLineOf(content)
   // P1：只把「正文正在用的键 + 本次已分配键」当作占用；**不再**把 map 的全部历史键塞进来。
@@ -693,8 +699,10 @@ export function parseSourceText(
 
   const edits: Array<{ start: number; end: number; text: string }> = []
   const entries: Array<[string, string]> = []
+  const entryKeys = new Set<string>()
   let skipped = 0
   let reused = 0
+  let replaced = 0
 
   // 与编辑器同源：行末 offset 供"空体多行块把键名插成独立一行"用
   const eol = content.includes('\r\n') ? '\r\n' : '\n'
@@ -721,7 +729,12 @@ export function parseSourceText(
     used.add(key)
     // 同文件同文本的后续出现也复用本次分配的键（不必再走冲突重试）
     if (!existingByText.has(span.value)) existingByText.set(span.value, key)
-    entries.push([key, span.value])
+    replaced += 1
+    // entries 按 key 去重：同文本重复台词只写一条映射（保留首次出现顺序）
+    if (!entryKeys.has(key)) {
+      entryKeys.add(key)
+      entries.push([key, span.value])
+    }
     edits.push(keyReplacementFor(span, key, eol, lineEndOf))
   }
 
@@ -729,7 +742,7 @@ export function parseSourceText(
   for (const edit of edits.sort((a, b) => b.start - a.start)) {
     next = next.slice(0, edit.start) + edit.text + next.slice(edit.end)
   }
-  return { content: next, entries, skipped, reused }
+  return { content: next, entries, skipped, reused, replaced }
 }
 
 /**
@@ -741,7 +754,9 @@ export function countUnparsedTexts(
   sourceName?: string,
 ): { count: number; samples: Array<{ line: number; text: string }> } {
   const dryRun = parseSourceText(content, {}, sourceName)
-  if (dryRun.entries.length === 0) return { count: 0, samples: [] }
+  // 用 replaced（实际替换的 span 数）而不是 entries.length：后者按 key 去重，
+  // 同文本重复出现时会把两个未成键片段数成一个。
+  if (dryRun.replaced === 0) return { count: 0, samples: [] }
   const stopLine = stopParseLineOf(content)
   const samples: Array<{ line: number; text: string }> = []
   for (const span of localizedSpans(content, sourceName)) {
@@ -750,7 +765,7 @@ export function countUnparsedTexts(
     samples.push({ line: span.line, text: span.value })
     if (samples.length >= 3) break
   }
-  return { count: dryRun.entries.length, samples }
+  return { count: dryRun.replaced, samples }
 }
 
 export type UnrepresentableLangText = { key: string; reason: UnsafeInlineReason }
