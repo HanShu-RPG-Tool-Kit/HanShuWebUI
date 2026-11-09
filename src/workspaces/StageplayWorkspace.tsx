@@ -2925,6 +2925,8 @@ export const StageplayWorkspace = forwardRef<
     version: string | null
     draft: boolean
     saved: boolean
+    /** R1：本机有镜像但 S 无已保存版本（常见于新建工程渲染过当前语言） */
+    hasLocalMirror: boolean
     /** 兼容旧字段名：等价于 draft */
     localDraft: boolean
   }> => {
@@ -2933,8 +2935,9 @@ export const StageplayWorkspace = forwardRef<
       map: state.map,
       version: state.savedVersion,
       draft: state.draft,
-      // B8：saved 只表示“工程文件存在”，与是否读草稿解耦（有同值草稿时仍为 true）
+      // B8/R1：saved 只表示“S 里已有已保存版本”，本机镜像不算
       saved: state.hasSaved,
+      hasLocalMirror: state.hasLocalMirror,
       localDraft: state.draft,
     }
   }
@@ -3024,6 +3027,7 @@ export const StageplayWorkspace = forwardRef<
       version: state.version,
       draft: state.draft,
       saved: state.saved,
+      hasLocalMirror: state.hasLocalMirror,
       localDraft: state.localDraft,
     }
   }
@@ -3582,23 +3586,25 @@ export const StageplayWorkspace = forwardRef<
         ok: true,
         source: target.hit.script.name,
         locale: target.lang,
-        /** 该源文件在该语言下的 `.lang` 是否已保存在工程里（有草稿也 true） */
+        /** 该源文件在该语言下的 `.lang` 是否已保存在工程里（只认 S 已保存版本） */
         localeExists: target.saved,
         /** 工程语言表里是否有该语言（其它源文件有该语言资产也算） */
         localeInProject,
         /** 是否是编辑器当前正在编辑的语言 */
         active: target.lang.toLowerCase() === locale.toLowerCase(),
         path: target.path,
-        /** 已保存工程文件里的内容哈希；null = 还没有已保存文件（有草稿也不影响） */
+        /** 已保存工程文件里的内容哈希；null = S 里没有已保存版本 */
         version: target.version,
         /** B8：`version` 的显式别名，避免被误读成“当前生效内容版本” */
         savedVersion: target.version,
         /** true = 读到的内容来自本地未保存草稿（D1） */
         draft: target.draft,
-        /** true = 内容已在工程文件里（有草稿也 true） */
+        /** true = S 里已有已保存版本（有草稿也 true；本机镜像不算） */
         saved: target.saved,
-        /** B8：语义自解释 —— 该 `.lang` 已保存到工程文件 / 有本地草稿 */
+        /** B8：语义自解释 —— 该 `.lang` 已保存到工程文件（本机镜像不算） */
         hasSaved: target.saved,
+        /** R1：本机有镜像/缓存但 S 无已保存版本（新建工程渲染过该语言常见） */
+        hasLocalMirror: target.hasLocalMirror,
         hasDraft: target.draft,
         /** 兼容旧字段名 */
         localDraft: target.localDraft,
