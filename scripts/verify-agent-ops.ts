@@ -467,6 +467,65 @@ assert.ok(badChar, '.char 诊断要保留 kind/offset 并补 line')
 assert.equal((badChar as { offset: number }).offset > 0, true)
 assert.equal(badChar.line, 2)
 
+/* ── ⑮ P3b 同文本多键 tie-break：固定取键名最小者（可复现） ── */
+const tieBreakA = parseSourceText(['narrator:', '同文本', '//'].join('\n'), {
+  '22222222': '同文本',
+  '11111111': '同文本',
+})
+assert.equal(tieBreakA.entries[0]![0], '11111111', '同文本多键时固定取最小键名')
+assert.equal(tieBreakA.reused, 1)
+const tieBreakB = parseSourceText(['narrator:', '同文本', '//'].join('\n'), {
+  '11111111': '同文本',
+  '22222222': '同文本',
+})
+assert.equal(tieBreakB.entries[0]![0], '11111111', 'map 插入顺序不影响 tie-break')
+
+/* ── ⑯ P3a edge-space：首尾空白文本不内联 ── */
+const edgeSpace = unparseSourceText('narrator:55555555//', { '55555555': '好 ' })
+assert.equal(edgeSpace.replaced, 0, '尾随空格的译文不能内联')
+assert.deepEqual(edgeSpace.unrepresentable, [{ key: '55555555', reason: 'edge-space' }])
+assert.match(edgeSpace.content, /narrator:55555555\/\//)
+
+/* ── ⑰ P4 诊断统一英文 message ── */
+const missingTerm = validateSourceContent('a.hs', ['narrator:', '正文'].join('\n'))
+const missingTermDiag = missingTerm.diagnostics.find((item) => item.kind === 'missing-terminator')
+assert.ok(missingTermDiag, '缺收尾要报 missing-terminator')
+assert.match(missingTermDiag.message, /missing its closing "\/\/" terminator/)
+
+const dupInject = validateSourceContent('a.hs', ['@start', '@start'].join('\n'))
+const dupInjectDiag = dupInject.diagnostics.find((item) => item.kind === 'duplicate-inject')
+assert.ok(dupInjectDiag, '同文件重复注入点要报 duplicate-inject')
+assert.equal(
+  dupInjectDiag.message,
+  'duplicate inject point: start (also defined earlier in this file)',
+)
+
+const foreignDup = validateSourceContent('a.hs', '@start', {
+  foreignInjects: new Map([['start', 'other.hs']]),
+})
+const foreignDupDiag = foreignDup.diagnostics.find((item) => item.kind === 'duplicate-inject')
+assert.ok(foreignDupDiag, '跨文件撞名要报 duplicate-inject')
+assert.match(foreignDupDiag.message, /also defined in other\.hs/)
+
+const charInvalid = validateSourceContent('role.char', 'broken line')
+const charInvalidDiag = charInvalid.diagnostics.find((item) => item.kind === 'invalid-char-line')
+assert.ok(charInvalidDiag)
+assert.match(charInvalidDiag.message, /key:msg\/\//)
+for (const item of [
+  ...missingTerm.diagnostics,
+  ...dupInject.diagnostics,
+  ...foreignDup.diagnostics,
+  ...charInvalid.diagnostics,
+]) {
+  assert.equal(typeof item.message, 'string', `${item.kind} 诊断必须带 message`)
+  assert.ok(item.message.length > 0)
+  assert.equal(
+    /[\u4e00-\u9fff]/.test(item.message),
+    false,
+    `诊断 message 必须是英文：${item.message}`,
+  )
+}
+
 console.log(
   '通过：宿主层（分页/lint/语言键/编译映射/P1/P5/P10/panel 纯函数/B6/路径反推/A3 安全内联/A4 跳转 lint/B9 行号）',
 )

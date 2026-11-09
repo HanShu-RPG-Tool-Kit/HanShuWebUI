@@ -147,7 +147,7 @@ const TOOL_SPECS: ToolSpec[] = [
   defineTool(
     'read',
     'validate_source',
-    '【read / 只读，无需锁】校验 .hs 剧本：返回语法诊断（未闭合 / 终结符 / 说话人换行等）与 .hsc 编译错误。改完剧本应调用一次。',
+    '【read / 只读，无需锁】校验 .hs 剧本：`ok` **只反映编译**（等价于 compileError === null，不代表没有 lint 问题）；`diagnostics` 只含**编辑器诊断**（语法 / 结构问题，带 kind、offset、line 与英文 message）；`agentLint` 是 agent 专属检查（未成键正文、跳转目标缺失、角色名、键格式等，带 line/message，**不影响 ok**）。文件不存在时返回 ok:false 与 hint。改完剧本应调用一次。',
     {
       source: str('逻辑文件名，如 序章.hs'),
     },
@@ -168,7 +168,7 @@ const TOOL_SPECS: ToolSpec[] = [
   defineTool(
     'read',
     'list_lang_keys',
-    '【read / 只读，无需锁】列出某个源文件里的本地化键，以及它在指定语言（默认当前语言）的译文与是否已翻译。读的是**本地草稿优先、其次工程文件**，但「草稿」「本机镜像」「工程已保存版本」是三件事：localeExists / saved / hasSaved = **工程（S）里该 .lang 已保存版本**是否存在（等价于 `savedVersion !== null`；**本机镜像/缓存不算**，所以 saved:true 时 savedVersion 一定非 null，二者自洽）；hasLocalMirror = 本机有镜像/缓存但工程里还没保存过（新建工程常见）；savedVersion / version = **S 已保存版本**哈希（null = 没保存过，二者同值；有本地草稿时依然有值）；draft / hasDraft = 本次内容是否来自**未保存草稿**（与上面两个独立）；active = 是否为当前语言；localeInProject = 工程语言表里是否有该语言；total = **正文键数**（不是文件条目数）。分页：offset 1 起、limit 默认 200、上限 1000；offset 越界返回 ok:false 与 errorCode。翻译前先用它看清缺哪些键。',
+    '【read / 只读，无需锁】列出某个源文件里的本地化键，以及它在指定语言（默认当前语言）的译文与是否已翻译。读的是**本地草稿优先、其次工程文件**，但「草稿」「本机镜像」「工程已保存版本」是三件事：localeExists / saved / hasSaved = **工程（S）里该 .lang 已保存版本**是否存在（等价于 `savedVersion !== null`；**本机镜像/缓存不算**，所以 saved:true 时 savedVersion 一定非 null，二者自洽）；hasLocalMirror = 本机有镜像/缓存但工程里还没保存过（新建工程常见）；savedVersion / version = **S 已保存版本**哈希（null = 没保存过，二者同值；有本地草稿时依然有值）；draft / hasDraft = 本次内容是否来自**未保存草稿**（与上面两个独立）；active = 是否为当前语言；localeInProject = 工程语言表里是否有该语言；total = **正文键数**（不是文件条目数）；keys 条目里缺失译文的 text 为 null、translated 为 false；text 是空串时 translated 也是 false；hasEntry 表示该语言映射里是否有这个键。分页：offset 1 起、limit 默认 200、上限 1000；offset 越界返回 ok:false 与 errorCode。翻译前先用它看清缺哪些键。',
     {
       source: str('逻辑文件名，如 序章.hs（键由该文件正文推导）'),
       locale: str('语言标签，如 zh_cn；省略用当前语言'),
@@ -180,19 +180,20 @@ const TOOL_SPECS: ToolSpec[] = [
   defineTool(
     'read',
     'list_voice_status',
-    '【read / 只读，无需锁】列出正文各键的对等配音状态：ok（单声道 Vorbis ogg）/ ref（该键是「引用资产」，指向包内另一份音频，refTarget 给出目标路径）/ missing（缺文件）/ not-ogg / invalid。分页：offset 1 起、limit 默认 100、上限 500；返回 total / truncated，缺失用 missingCount + 至多 10 条 missingSample 汇总。agent 不能合成语音，缺配音时请如实告知用户。',
+    '【read / 只读，无需锁】列出正文各键的对等配音状态：ok（单声道 Vorbis ogg）/ ref（该键是「引用资产」，指向包内另一份音频，refTarget 给出目标路径）/ missing（缺文件）/ not-ogg / invalid。**orphanOnly:true** 看「孤儿配音」视图：entries 为 { path, locale, source, key, reason, state:"orphan" }（不属于任何现存源文件/键的配音），复用 total / missingCount / missingSample / offset / truncated，并带 orphan:true 与英文 note；此时 locale 省略 = 扫全部语言。分页：offset 1 起、limit 默认 100、上限 500；返回 total / truncated，缺失用 missingCount + 至多 10 条 missingSample 汇总。agent 不能合成语音，缺配音时请如实告知用户。',
     {
       source: str('逻辑文件名，如 序章.hs'),
-      locale: str('语言标签；省略用当前语言'),
+      locale: str('语言标签；省略用当前语言（orphanOnly:true 时省略 = 全部语言）'),
       offset: num('起始序号，1 起；默认 1'),
       limit: num('最多返回多少条，默认 100，上限 500'),
+      orphanOnly: bool('true = 只看孤儿配音（不属于任何现存源文件/键的配音）'),
     },
     ['source'],
   ),
   defineTool(
     'read',
     'check_export',
-    '【read / 只读，无需锁】预演导出：返回 combined PAK 与工程包各有几个文件、有哪些警告（不下载；分平面见帮助「导出 PAK」）。返回 truncated 表示警告列表被截断，warningTotal 是警告总数（可能大于 warnings.length）。',
+    '【read / 只读，无需锁】预演导出：返回 combined PAK 与工程包各有几个文件、警告分组与总数（不下载；分平面见帮助「导出 PAK」）。`groups` 里每组有 items / sample / total / truncated；**orphanVoice**（顶层 orphanVoice 与 groups.orphanVoice 同内容）= 不属于任何现存源文件/键的**孤儿配音**，含 total / sample（至多 10 条原始路径）/ truncated；`groups.gameplay` 是对象 { items, sample（前 10 条原始 warning）, total, truncated }（不是纯数组），其它 groups 保持原状。返回 truncated 表示警告列表被截断，warningTotal 是警告总数（可能大于 warnings.length）。',
     {},
   ),
 
@@ -200,7 +201,7 @@ const TOOL_SPECS: ToolSpec[] = [
   defineTool(
     'lock',
     'lock_source',
-    '【lock / write 源文件的前置条件】占住一个或多个**源文件**（逻辑文件名）。多路径原子：要么全部拿到，要么一个都不持有。本工具**只锁源文件**；语言译文文件用 lock_lang 单独锁。前提：本 Run 已 read 过且最后读到的版本仍是当前版本。creating:true 表示「占住一个还不存在的名字」，**只给 create_source 用**。成功返回 { locked:true, version, content }；失败返回 { locked:false, reason, currentVersion, currentContent, hint, errorCode }，reason ∈ version_stale | not_read | not_found | already_exists | held —— 按 reason 自愈，hint 就是下一步。锁不等待：拿不到立即失败；同一文件连续被拒 3 次就放弃并如实报告用户。成功后锁一直持有到 unlock_source / Run 结束，**写成功也不释放**。**锁期间编辑器不会自动成键**（避免与你的写入抢正文）；写工具仍只写本地草稿。',
+    '【lock / write 源文件的前置条件】占住一个或多个**源文件**（逻辑文件名）。多路径原子：要么全部拿到，要么一个都不持有。本工具**只锁源文件**；语言译文文件用 lock_lang 单独锁。前提：本 Run 已 read 过且最后读到的版本仍是当前版本。creating:true 表示「占住一个还不存在的名字」，**只给 create_source 用**。成功返回 { locked:true, version, content }；失败返回 { ok:false, locked:false, reason, currentVersion, currentContent, hint, errorCode }，reason ∈ version_stale | not_read | not_found | already_exists | held | not_held（not_held = 该路径不在本 Run 手里）—— 按 reason 自愈，hint 就是下一步。锁不等待：拿不到立即失败；同一文件连续被拒 3 次就放弃并如实报告用户。成功后锁一直持有到 unlock_source / Run 结束，**写成功也不释放**。**锁期间编辑器不会自动成键**（避免与你的写入抢正文）；写工具仍只写本地草稿。',
     {
       paths: {
         type: 'array',
@@ -229,7 +230,7 @@ const TOOL_SPECS: ToolSpec[] = [
   defineTool(
     'lock',
     'lock_lang',
-    '【lock / 写语言的前置条件】锁住某个源文件在指定语言下的 .lang 译文文件（多语言原子：要么全拿到，要么一个都不持有）。locales 省略 = 工程已有语言 + 当前语言；语言文件不存在时按 creating 占位（首次写译文）。这些 .lang 锁独立于源文件的锁：写译文前要先 lock_source 拿源文件锁，再 lock_lang 拿每种目标语言的锁。成功返回 { locked:true, langs:[{ locale, path, existed, version }] }；失败返回 { locked:false, reason, locale?, path?, hint, errorCode }。写成功不会释放锁，可连续写多次。**返回体里的 locale 才是规范标签**（如 en→en_us 会被归一化），回执/日志以返回值为准。',
+    '【lock / 写语言的前置条件】锁住某个源文件在指定语言下的 .lang 译文文件（多语言原子：要么全拿到，要么一个都不持有）。locales 省略 = 工程已有语言 + 当前语言；语言文件不存在时按 creating 占位（首次写译文）。这些 .lang 锁独立于源文件的锁：写译文前要先 lock_source 拿源文件锁，再 lock_lang 拿每种目标语言的锁。成功返回 { locked:true, langs:[{ locale, path, existed, version }] }；失败返回 { ok:false, locked:false, reason, locale?, path?, hint, errorCode }（reason 含 held / not_held 等）。写成功不会释放锁，可连续写多次。**返回体里的 locale 才是规范标签**（如 en→en_us 会被归一化），回执/日志以返回值为准。',
     {
       source: str('逻辑文件名，如 序章.hs（译文路径由它推导）'),
       locales: {
@@ -291,7 +292,7 @@ const TOOL_SPECS: ToolSpec[] = [
   defineTool(
     'write',
     'write_lang',
-    '【write / 必须先 lock 源文件】一次写入多种语言的译文（多语言任务一次调用搞定）。**调用前必须两把锁都拿到**：lock_source({ paths: [source] }) 锁源文件，再 lock_lang({ source, locales: [...目标语言] }) 锁每个目标语言的 .lang；缺语言锁会被拒绝。写入只到**本地草稿**（返回 draft:true、saved:false、version:null），需要**用户保存工程**后才进文件；写完要在回复里提醒用户保存。语言标签用「语言_地区」小写下划线形式（如 zh_cn / en_us / ja_jp）；工程里已有该语言时会自动沿用它的标签，**返回体里的 locale 才是规范标签**（如 en→en_us 会被归一化），回执以返回值为准。键必须已存在于正文里（用 list_lang_keys 查）——单行语句写在行末 `narrator:7f3a91c2//`，多行块里键名单独占一行；新增台词要先 parse_hs 或 edit_source 把键写进正文。成功后返回 writtenPaths、fileTotal（**该语言文件的条目数，含正文已不再引用的孤儿键**；total 是同值兼容别名，注意 list_lang_keys.total 是正文键数，两者不同）与 warnings（"将来 unparse 无法安全还原"的风险：含 `//`、选项文案/回复里的 `:`、行首 `?`/`!`/`@`/`#`/`*`、行首 `>>`/`<<`、首尾空白；**只警告不拒绝**）。',
+    '【write / 必须先 lock 源文件】一次写入多种语言的译文（多语言任务一次调用搞定）。**调用前必须两把锁都拿到**：lock_source({ paths: [source] }) 锁源文件，再 lock_lang({ source, locales: [...目标语言] }) 锁每个目标语言的 .lang；缺语言锁会被拒绝。写入只到**本地草稿**（返回 draft:true、saved:false、version:null），需要**用户保存工程**后才进文件；写完要在回复里提醒用户保存。语言标签用「语言_地区」小写下划线形式（如 zh_cn / en_us / ja_jp）；工程里已有该语言时会自动沿用它的标签，**返回体里的 locale 才是规范标签**（如 en→en_us 会被归一化），回执以返回值为准。键必须已存在于正文里（用 list_lang_keys 查）——单行语句写在行末 `narrator:7f3a91c2//`，多行块里键名单独占一行；新增台词要先 parse_hs 或 edit_source 把键写进正文。同一 locale 的 translations 里同一 key 出现两次会**整体拒绝**（errorCode=invalid_keys，hint 会说明 send each key once）；跨语言同键是正常的。成功后返回 writtenPaths、fileTotal（**该语言文件的条目数，含正文已不再引用的孤儿键**；total 是同值兼容别名，注意 list_lang_keys.total 是正文键数，两者不同）与 warnings（"将来 unparse 无法安全还原"的风险：含 `//`、选项文案/回复里的 `:`、行首 `?`/`!`/`@`/`#`/`*`、行首 `>>`/`<<`、首尾空白；**只警告不拒绝**）。',
     {
       source: str('逻辑文件名，如 序章.hs'),
       translations: {
@@ -317,7 +318,7 @@ const TOOL_SPECS: ToolSpec[] = [
   defineTool(
     'write',
     'delete_lang_keys',
-    '【write / 必须先 lock 源文件】删除指定键的译文。**调用前必须** lock_source({ paths: [source] }) + lock_lang({ source, locales: [目标语言] })；缺语言锁会被拒绝。**默认拒绝删除正文仍在引用的键**（返回 reason=keys_in_use 与 inUseKeys）；确需删除时显式传 force:true。**键身份**：键名是**创建时那段文本**的哈希（跨语言共用同一键）；删除某语言条目后，若之后用另一种语言 unparse→parse，会按当前文本重新哈希、旧键变孤儿；**需要保键身份就别删该条目**。删除只写**本地草稿**（返回 draft:true、saved:false、version:null），需要用户保存工程后才进文件；成功后返回 writtenPaths 与草稿标记。',
+    '【write / 必须先 lock 源文件】删除指定键的译文。**调用前必须** lock_source({ paths: [source] }) + lock_lang({ source, locales: [目标语言] })；缺语言锁会被拒绝。**默认拒绝删除正文仍在引用的键**（返回 reason=keys_in_use 与 inUseKeys）；确需删除时显式传 force:true。**键身份**：键名是**创建时那段文本**的哈希（跨语言共用同一键）；删除某语言条目后，若之后用另一种语言 unparse→parse，会按当前文本重新哈希、旧键变孤儿；**需要保键身份就别删该条目**。删除只写**本地草稿**（返回 draft:true、saved:false、version:null），需要用户保存工程后才进文件；成功后返回 removed（真正删除的条数）、unknownKeys（请求里在该语言映射中不存在的键，可能为空数组）与 writtenPaths。',
     {
       source: str('逻辑文件名，如 序章.hs'),
       locale: str('语言标签；省略用当前语言'),
@@ -333,7 +334,7 @@ const TOOL_SPECS: ToolSpec[] = [
   defineTool(
     'write',
     'parse_hs',
-    '【write / 必须先 lock 源文件】解析（自动成键）：把正文里还不是键名的可本地化文本换成**文本哈希键**，同时把原文写进该语言的映射。**调用前必须** lock_source({ paths: [source] }) + lock_lang({ source, locales: [该语言] })；缺语言锁会被拒绝。**键名是这段文本的哈希：只有用同一种语言的文本重新 parse_hs 才能拿回原来的键**；跨语言 parse 会生成新键，并把该语言文本当作原文灌进目标语言（逆解析用的哪个 locale，就必须用同一个 locale 再 parse_hs）。译文映射只写**本地草稿**（返回 draft:true、saved:false、version:null），正文与译文都要等**用户保存工程**才进文件；成功后返回 writtenPaths 与草稿标记。**返回字段**：created = 本次去重后的**唯一键数**（实际写进映射的条目数）；replaced = 实际被换成键名的**正文语句数**——同文本重复台词共用同一个键时 replaced > created，它**不是**"覆盖了多少条旧译文"，而是"替换了多少处正文"。**返回体里的 locale 才是规范标签**（如 en→en_us 会被归一化），回执/日志以返回值为准。',
+    '【write / 必须先 lock 源文件】解析（自动成键）：把正文里还不是键名的可本地化文本换成**文本哈希键**，同时把原文写进该语言的映射。**调用前必须** lock_source({ paths: [source] }) + lock_lang({ source, locales: [该语言] })；缺语言锁会被拒绝。**键名是这段文本的哈希：只有用同一种语言的文本重新 parse_hs 才能拿回原来的键**；跨语言 parse 会生成新键，并把该语言文本当作原文灌进目标语言（逆解析用的哪个 locale，就必须用同一个 locale 再 parse_hs）。译文映射只写**本地草稿**（返回 draft:true、saved:false、version:null），正文与译文都要等**用户保存工程**才进文件；成功后返回 writtenPaths 与草稿标记。**返回字段**：created = 本次去重后的**唯一键数**（实际写进映射的条目数）；replaced = 实际被换成键名的**正文语句数**——同文本重复台词共用同一个键时 replaced > created，它**不是**"覆盖了多少条旧译文"，而是"替换了多少处正文"；若没有可解析内容（全部已键化 / 被 #stopparse 拦住），changed:false 且 created/replaced 为 0，**不是失败**。**返回体里的 locale 才是规范标签**（如 en→en_us 会被归一化），回执/日志以返回值为准。',
     {
       source: str('逻辑文件名，如 序章.hs'),
       locale: str('语言标签，如 zh_cn；省略用当前语言'),
@@ -382,6 +383,7 @@ export type AgentErrorCode =
   | 'not_read'
   | 'version_stale'
   | 'held'
+  | 'not_held'
   | 'already_exists'
   | 'invalid_arguments'
   | 'invalid_keys'
@@ -399,6 +401,7 @@ const AGENT_ERROR_CODE_SET: ReadonlySet<string> = new Set<AgentErrorCode>([
   'not_read',
   'version_stale',
   'held',
+  'not_held',
   'already_exists',
   'invalid_arguments',
   'invalid_keys',
@@ -452,6 +455,18 @@ export function normalizeFailure<T extends { ok?: boolean; locked?: boolean }>(
 
 function jsonResult<T extends { ok?: boolean; locked?: boolean }>(result: T): string {
   return JSON.stringify(normalizeFailure(result))
+}
+
+/**
+ * 锁工具失败体补 `ok:false`（P5-①）：模型只读一个 `ok` 就够判断失败，
+ * 同时保留 locked:false / reason / hint / errorCode 兼容旧调用方。
+ * 成功体保持原样（不额外塞 ok:true）。
+ */
+function lockResultJson<T extends { ok?: boolean; locked?: boolean }>(result: T): string {
+  if (result.locked === false) {
+    return JSON.stringify({ ...normalizeFailure(result), ok: false })
+  }
+  return JSON.stringify(result)
 }
 
 function failJson(
@@ -776,12 +791,16 @@ function inspectKeyList(value: unknown): LangKeyIssues {
 
 /** 键格式问题统一返回体：有 invalidKeys / duplicates 时拒绝且不触达锁 / 宿主 */
 function invalidLangKeysJson(issues: LangKeyIssues): string {
+  const hint =
+    issues.duplicates.length > 0
+      ? 'The same key appears more than once in this call; send each key once (a key may appear once per locale, but not twice in the same locale).'
+      : 'Translation keys must be exactly 8 lowercase hex characters (for example "7f3a91c2"); call list_lang_keys to get the valid keys, then fix or remove the listed ones and retry.'
   return JSON.stringify({
     ok: false,
     error: 'invalid translation keys',
     invalidKeys: issues.invalidKeys,
     duplicates: issues.duplicates,
-    hint: 'Translation keys must be exactly 8 lowercase hex characters (for example "7f3a91c2"); call list_lang_keys to get the valid keys, then fix or remove the listed ones and retry.',
+    hint,
     errorCode: 'invalid_keys' satisfies AgentErrorCode,
   })
 }
@@ -920,6 +939,7 @@ export async function executeAgentTool(
             optionalText(args, 'locale'),
             offset.value,
             limit.value,
+            args.orphanOnly === true ? true : undefined,
           ),
         )
       }
@@ -957,7 +977,7 @@ export async function executeAgentTool(
           paths,
           args.creating === true ? { creating: true } : undefined,
         )
-        return jsonResult(locked)
+        return lockResultJson(locked)
       }
       case 'unlock_source': {
         const paths = normalizePaths(args.paths)
@@ -982,8 +1002,8 @@ export async function executeAgentTool(
             'invalid_arguments',
           )
         }
-        // 成功/失败都直接透出：失败体带 reason/locale/path/hint，另补 errorCode
-        return jsonResult(await target.arbiter.lockLang(file, normalizeLocales(args.locales)))
+        // 成功/失败都直接透出：失败体带 reason/locale/path/hint，另补 ok:false / errorCode
+        return lockResultJson(await target.arbiter.lockLang(file, normalizeLocales(args.locales)))
       }
       case 'unlock_lang': {
         const file = source()

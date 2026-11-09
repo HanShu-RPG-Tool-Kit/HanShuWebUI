@@ -21,6 +21,7 @@ import {
   AGENT_TOOL_KINDS,
   AGENT_TOOL_NAMES,
   executeAgentTool,
+  normalizeFailure,
   type AgentToolCall,
 } from '../src/agent/tools'
 import type { AgentHost, AgentToolArbiter } from '../src/agent/contracts'
@@ -73,6 +74,8 @@ function makeWorld(
   const assertWritableCalls: string[] = []
   /** list_voice_status 收到的分页参数（B3 透传） */
   const voicePageArgs: Array<{ offset: number | undefined; limit: number | undefined }> = []
+  /** list_voice_status 收到的 orphanOnly 参数（P7） */
+  const voiceOrphanArgs: Array<boolean | undefined> = []
   /** delete_lang_keys 收到的 force 参数 */
   const deleteForces: Array<boolean | undefined> = []
   /** validateSourceName 的调用记录（A2：占名前校验） */
@@ -232,9 +235,10 @@ function makeWorld(
       assets.set(path, '')
       return { ok: true, source, removed: keys.length, writtenPaths: [path], saved: true, version: 'host-version' }
     },
-    listVoiceStatus: async (source, locale, offset, limit) => {
+    listVoiceStatus: async (source, locale, offset, limit, orphanOnly) => {
       counters.listVoiceStatus += 1
       voicePageArgs.push({ offset, limit })
+      voiceOrphanArgs.push(orphanOnly)
       return {
         ok: true,
         source,
@@ -461,6 +465,7 @@ function makeWorld(
     arbiterReadArgs,
     assertWritableCalls,
     voicePageArgs,
+    voiceOrphanArgs,
     deleteForces,
     validateNameCalls,
     lockPaths,
@@ -924,6 +929,7 @@ await test('write_lang 同语言重复键进 duplicates；跨语言同键不算�
   assert.equal(dup.ok, false)
   assert.deepEqual(dup.duplicates, ['7f3a91c2'])
   assert.deepEqual(dup.invalidKeys, [])
+  assert.match(String(dup.hint), /same key appears more than once/, 'duplicates 要专门 hint')
   assert.equal(world.counters.writeLang, 0)
 
   // 跨语言同一个 key 是正常的（同一句台词的多语言译文），应进入锁校验而不是键校验
@@ -1202,6 +1208,45 @@ await test('B5 already_exists 的 hint 不再拼 lock_source；not_read 仍保�
   assert.match(String(writeDenial.hint), /lock_source/)
 })
 
+await test('P5 lock 失败体补 ok:false；not_held 错误码可映射', async () => {
+  const world = makeWorld({ 'existing.hs': '正文' })
+  const exists = await run(world, 'lock_source', { paths: ['existing.hs'], creating: true })
+  assert.equal(exists.ok, false, '失败体必须带 ok:false')
+  assert.equal(exists.locked, false)
+  assert.equal(exists.reason, 'already_exists')
+  assert.equal(exists.errorCode, 'already_exists')
+
+  const notFound = await run(world, 'lock_source', { paths: ['missing.hs'] })
+  assert.equal(notFound.ok, false)
+  assert.equal(notFound.locked, false)
+  assert.equal(notFound.reason, 'not_found')
+
+  const mapped = normalizeFailure({ ok: false, error: 'path is not held', reason: 'not_held' })
+  assert.equal(mapped.errorCode, 'not_held')
+  assert.equal(mapped.reason, 'not_held')
+})
+
+await test('P6 delete_lang_keys 透传 unknownKeys（removed 只含真正删除的）', async () => {
+  const world = makeWorld({ '序章.hs': '正文' })
+  await readAndLock(world, '序章.hs')
+  await lockLangFor(world, '序章.hs', ['zh_cn'])
+  world.host.deleteLangKeys = async () => ({
+    ok: true,
+    source: '序章.hs',
+    removed: 1,
+    unknownKeys: ['deadbeef'],
+    writtenPaths: [langPath('序章.hs', 'zh_cn')],
+  })
+  const output = await run(world, 'delete_lang_keys', {
+    source: '序章.hs',
+    locale: 'zh_cn',
+    keys: ['7f3a91c2', 'deadbeef'],
+  })
+  assert.equal(output.ok, true, JSON.stringify(output))
+  assert.equal(output.removed, 1)
+  assert.deepEqual(output.unknownKeys, ['deadbeef'])
+})
+
 await test('B2 list_lang_keys 参数校验与 limit 上限，不合法不触达宿主', async () => {
   const world = makeWorld({ 'chapter.hs': '正文' })
   const badArgs: Array<Record<string, unknown>> = [
@@ -1242,6 +1287,13 @@ await test('B3 list_voice_status 分页参数校验并透传宿主', async () =>
   })
   assert.equal(page.ok, true)
   assert.deepEqual(world.voicePageArgs, [{ offset: 2, limit: 10 }], '分页参数要透传')
+  assert.deepEqual(world.voiceOrphanArgs, [undefined], '默认不传 orphanOnly')
+  const orphanPage = await run(world, 'list_voice_status', {
+    source: 'chapter.hs',
+    orphanOnly: true,
+  })
+  assert.equal(orphanPage.ok, true)
+  assert.deepEqual(world.voiceOrphanArgs, [undefined, true], 'orphanOnly 要透传宿主')
   assert.equal(page.total, 0)
   assert.equal(page.truncated, false)
 })
@@ -1294,6 +1346,36 @@ await test('B8/N1/N2：工具描述说明 savedVersion / fileTotal / 键身份�
   const deleteDesc = description('delete_lang_keys')
   assert.ok(deleteDesc.includes('哈希'), 'delete_lang_keys 描述要说明键名是文本哈希')
   assert.ok(deleteDesc.includes('别删该条目'), 'delete_lang_keys 描述要提醒保键身份')
+})
+
+await test('P1/P7/P8/P10：工具描述覆盖缺失译文 / 孤儿配音 / agentLint / changed:false / 锁失败形状', async () => {
+  const description = (name: string): string => {
+    const tool = AGENT_TOOLS.find((item) => item.function.name === name)
+    assert.ok(tool, `缺少工具 ${name}`)
+    return tool.function.description
+  }
+  const listDesc = description('list_lang_keys')
+  for (const keyword of ['text 为 null', '空串', 'hasEntry']) {
+    assert.ok(listDesc.includes(keyword), `list_lang_keys 描述缺少 ${keyword}`)
+  }
+  const voiceDesc = description('list_voice_status')
+  for (const keyword of ['orphanOnly', 'state:"orphan"', '孤儿配音']) {
+    assert.ok(voiceDesc.includes(keyword), `list_voice_status 描述缺少 ${keyword}`)
+  }
+  const exportDesc = description('check_export')
+  for (const keyword of ['orphanVoice', 'groups.gameplay', '不是纯数组']) {
+    assert.ok(exportDesc.includes(keyword), `check_export 描述缺少 ${keyword}`)
+  }
+  const validateDesc = description('validate_source')
+  for (const keyword of ['agentLint', 'compileError', '英文 message', 'line']) {
+    assert.ok(validateDesc.includes(keyword), `validate_source 描述缺少 ${keyword}`)
+  }
+  assert.ok(description('parse_hs').includes('changed:false'), 'parse_hs 描述要说明 changed:false')
+  assert.ok(description('delete_lang_keys').includes('unknownKeys'))
+  assert.ok(description('write_lang').includes('send each key once'))
+  const lockSourceDesc = description('lock_source')
+  assert.ok(lockSourceDesc.includes('ok:false') && lockSourceDesc.includes('not_held'))
+  assert.ok(description('lock_lang').includes('not_held'))
 })
 
 await test('每个 write 工具描述都要求先 lock_source，语言写还要 lock_lang 且标草稿；read 工具标注只读', async () => {

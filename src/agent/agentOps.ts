@@ -305,10 +305,10 @@ function englishCompileError(error: HsCompileError): AgentCompileError {
   }
 }
 
-/** 带行号的源文件诊断（B9）：旧诊断只有 offset，agent 侧统一补 1 起 line */
+/** 带行号与英文消息的源文件诊断（B9 + P4）：agent 侧统一补 line/message */
 export type AgentSourceDiagnostic =
-  | (HsDiagnostic & { line: number })
-  | (CharDiagnostic & { line: number })
+  | (HsDiagnostic & { line: number; message: string })
+  | (CharDiagnostic & { line: number; message: string })
   | AgentLintDiagnostic
 
 /** offset（0 起）→ 行号（1 起） */
@@ -321,11 +321,51 @@ function lineNumberAt(content: string, offset: number): number {
   return line
 }
 
-function withDiagnosticLine(
+/** P4：编辑器诊断（中文 UI 口径）→ agent 英文一句话 */
+function hsDiagnosticMessage(
   content: string,
-  diagnostics: ReadonlyArray<HsDiagnostic | CharDiagnostic>,
-): Array<(HsDiagnostic & { line: number }) | (CharDiagnostic & { line: number })> {
-  return diagnostics.map((item) => ({ ...item, line: lineNumberAt(content, item.offset) }))
+  diagnostic: HsDiagnostic,
+  foreignInjects?: ReadonlyMap<string, string>,
+): string {
+  switch (diagnostic.kind) {
+    case 'missing-terminator':
+      return 'statement is missing its closing "//" terminator (put "//" at the end of the line, or on its own line for a multi-line block)'
+    case 'inline-terminator':
+      return 'terminator must be the last thing on the line; move the following text into a new statement or a multi-line block'
+    case 'speaker-needs-newline':
+      return 'multi-line dialogue must start with the speaker line alone ("speaker:" followed by a newline)'
+    case 'duplicate-sys-return':
+      return 'duplicate system return; each system return may only appear once'
+    case 'duplicate-inject': {
+      const line = lineNumberAt(content, diagnostic.offset)
+      const name =
+        collectInjectDefinitions(content).find((item) => item.line === line)?.name ?? 'unknown'
+      const owner = foreignInjects?.get(name.toLowerCase())
+      return owner === undefined
+        ? `duplicate inject point: ${name} (also defined earlier in this file)`
+        : `duplicate inject point: ${name} (also defined in ${owner})`
+    }
+    default:
+      return 'invalid statement structure'
+  }
+}
+
+function charDiagnosticMessage(diagnostic: CharDiagnostic): string {
+  return diagnostic.kind === 'missing-terminator'
+    ? 'character line is missing its closing "//" terminator'
+    : 'character line must be in the form "key:msg//"'
+}
+
+function withDiagnosticLine<T extends HsDiagnostic | CharDiagnostic>(
+  content: string,
+  diagnostics: ReadonlyArray<T>,
+  describe: (item: T) => string,
+): Array<T & { line: number; message: string }> {
+  return diagnostics.map((item) => ({
+    ...item,
+    line: lineNumberAt(content, item.offset),
+    message: describe(item),
+  }))
 }
 
 /** `.hs` / `.char` 语法诊断；`.hs` 另跑编译校验（注入点可带跨文件占用表） */
@@ -338,9 +378,13 @@ export function validateSourceContent(
   compileError: AgentCompileError | null
 } {
   if (isCharFile(name)) {
-    // B9：.char 诊断也补 line
+    // B9/P4：.char 诊断也补 line 与英文 message
     return {
-      diagnostics: withDiagnosticLine(content, analyzeCharDiagnostics(content)),
+      diagnostics: withDiagnosticLine(
+        content,
+        analyzeCharDiagnostics(content),
+        charDiagnosticMessage,
+      ),
       compileError: null,
     }
   }
@@ -376,6 +420,7 @@ export function validateSourceContent(
         analyzeHsDiagnostics(content, {
           foreignInjects: options?.foreignInjects,
         }),
+        (item) => hsDiagnosticMessage(content, item, options?.foreignInjects),
       ),
       ...lintHsSource(content),
       // P10：形似键但格式不对（大写 / 长度不对）→ agent lint，带行号英文消息
@@ -690,11 +735,20 @@ export function parseSourceText(
   const used = new Set<string>(
     collectSourceKeys(content, sourceName).map((item) => item.key),
   )
-  // text → key 反查：同文本复用已有键（只收合法 8 位小写十六进制；第一个同文本键胜出）。
-  const existingByText = new Map<string, string>()
+  // text → key 反查：同文本复用已有键（只收合法 8 位小写十六进制）。
+  // P3b：同一段文本在 map 里可能对应多个历史键（不同语言各自成键过），
+  // 固定取**键名最小**的那个，保证同输入永远同结果。
+  // 注意：这**不保证**是你期望的那个键；要保键身份，跨语言操作请用同一 locale 的流程。
+  const keysByText = new Map<string, string[]>()
   for (const [key, text] of Object.entries(map)) {
     if (!LANG_KEY_PATTERN.test(key)) continue
-    if (!existingByText.has(text)) existingByText.set(text, key)
+    const keys = keysByText.get(text)
+    if (keys === undefined) keysByText.set(text, [key])
+    else keys.push(key)
+  }
+  const existingByText = new Map<string, string>()
+  for (const [text, keys] of keysByText) {
+    existingByText.set(text, keys.sort()[0]!)
   }
 
   const edits: Array<{ start: number; end: number; text: string }> = []
