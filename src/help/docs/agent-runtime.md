@@ -90,9 +90,9 @@
 - **`changed` 用版本判断（D9）**：`write_source` / `edit_source` 的 `changed` 由"写后版本 ≠ 写前锁版本"得出，
   内容完全一致地重写会返回 `changed:false`（工具 JSON 同时给出 `version`，以版本为准）。
 - **只读工具语义（D10/D12）**：
-  - `list_lang_keys.localeExists` / `hasSaved` / `saved` = **工程里该 `.lang` 已保存文件是否存在**（与本地草稿无关；有未保存草稿时依然为 true）；
-    `draft` / `hasDraft` 才表示"当前内容来自未保存草稿"；`savedVersion`（与 `version` 同值）是已保存版本，草稿不影响它；
-    `localeInProject` 表示"工程语言表里是否有该语言"。
+  - `list_lang_keys.localeExists` / `hasSaved` / `saved` = **工程（S）里该 `.lang` 的已保存版本是否存在**（等价 `savedVersion !== null`；本机镜像/缓存不算，与 `lock_lang.existed` 同口径）；有未保存草稿不影响它。
+    `hasLocalMirror` = 本机有镜像/缓存、但工程里从未保存过该语言（新建工程常见）；`draft` / `hasDraft` = 当前内容来自未保存草稿；
+    `savedVersion`（与 `version` 同值）= 已保存版本哈希，null = 没保存过；`localeInProject` = 工程语言表里是否有该语言。
   - 分页语义统一：`read_source` / `list_lang_keys` 的 offset 越界都返回 `ok:false` + `total`（`list_lang_keys` 为 `total`，`read_source` 为 `totalLines`），不静默返回空页。
   - `list_voice_status` 支持 `offset` / `limit`（默认 1/100，上限 500），返回 `total` / `missingCount` / `missingSample`（最多 10 条） / `truncated`，不再一次吐出全部 `entries` 与 `missing` 键名。
   - **未成键检测**：`list_lang_keys` 返回 `unparsedTextCount` + `unparsedSamples`；`validate_source` 会为未成键正文追加一条 agent-lint 汇总。
