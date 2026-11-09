@@ -69,6 +69,16 @@ test('assessLangValueRisks 汇总风险并标注首尾空白', () => {
   assert.deepEqual(assessLangValueRisks('正常译文', 'dialogue'), [])
 })
 
+test('以 >> / << 开头的译文给 leading-jump / leading-rewind 警告（A5 覆盖）', () => {
+  assert.deepEqual(assessLangValueRisks('>>test_inject', 'dialogue'), [
+    'leading-jump',
+  ])
+  assert.deepEqual(assessLangValueRisks('<<回整树根', 'optionReply'), [
+    'leading-rewind',
+  ])
+  assert.deepEqual(assessLangValueRisks('go >> later', 'dialogue'), [])
+})
+
 /* ── 注入点 / 跳转引用扫描 ── */
 
 test('收集 @name 注入点：忽略 @@、注释与有前导空格的 @', () => {

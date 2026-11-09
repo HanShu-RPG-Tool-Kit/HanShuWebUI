@@ -41,11 +41,21 @@ export function unsafeInlineReason(
 }
 
 /** 语言文本值的风险（写译文时给 warning 用；比 unsafeInlineReason 更细） */
-export type LangValueRisk = UnsafeInlineReason | 'leading-space' | 'trailing-space'
+export type LangValueRisk =
+  | UnsafeInlineReason
+  /** 以 `>>` 开头：能被转义，但明显是跳转标记，写进译文几乎一定是误操作 */
+  | 'leading-jump'
+  /** 以 `<<` 开头：选项回复里的「回整树根」控制符，写进译文会改变选项语义 */
+  | 'leading-rewind'
+  | 'leading-space'
+  | 'trailing-space'
 
 /**
  * 评估一条译文写进 `.lang` 之后、将来被 `unparse_hs` 写回正文的潜在风险。
  * 只用于**警告**，不阻止写入（译文本身合法，风险在于"之后能否安全还原成正文"）。
+ *
+ * 注意：`>>`/`<<` 内联时会被 `escapeHsText` 转义，所以不算 unsafe；但出现在译文开头
+ * 基本都说明作者把结构符误写进了文本，因此单独给 `leading-jump` / `leading-rewind`。
  */
 export function assessLangValueRisks(
   text: string,
@@ -54,6 +64,8 @@ export function assessLangValueRisks(
   const risks: LangValueRisk[] = []
   const unsafe = unsafeInlineReason(text, context)
   if (unsafe) risks.push(unsafe)
+  if (text.startsWith('>>')) risks.push('leading-jump')
+  if (text.startsWith('<<')) risks.push('leading-rewind')
   if (/^\s/.test(text)) risks.push('leading-space')
   if (/\s$/.test(text)) risks.push('trailing-space')
   return risks
