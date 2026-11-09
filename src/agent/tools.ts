@@ -168,7 +168,7 @@ const TOOL_SPECS: ToolSpec[] = [
   defineTool(
     'read',
     'list_lang_keys',
-    '【read / 只读，无需锁】列出某个源文件里的本地化键，以及它在指定语言（默认当前语言）的译文与是否已翻译。读的是**本地草稿优先、其次工程文件**，但「草稿」与「已保存文件」是两件事：localeExists / hasSaved / saved = 工程里该语言的 .lang **已保存文件**是否存在（**与本地草稿无关**，只有草稿未保存时仍为 false；saved 与 hasSaved 同义）；draft / hasDraft = 本次内容是否来自**未保存草稿**；version / savedVersion = **已保存文件**的版本（有草稿时依然有值，二者同义）；active = 是否为当前语言；localeInProject = 工程语言表里是否有该语言；total = **正文键数**（不是文件条目数）。分页：offset 1 起、limit 默认 200、上限 1000；offset 越界返回 ok:false 与 errorCode。翻译前先用它看清缺哪些键。',
+    '【read / 只读，无需锁】列出某个源文件里的本地化键，以及它在指定语言（默认当前语言）的译文与是否已翻译。读的是**本地草稿优先、其次工程文件**，但「草稿」「本机镜像」「工程已保存版本」是三件事：localeExists / saved / hasSaved = **工程（S）里该 .lang 已保存版本**是否存在（等价于 `savedVersion !== null`；**本机镜像/缓存不算**，所以 saved:true 时 savedVersion 一定非 null，二者自洽）；hasLocalMirror = 本机有镜像/缓存但工程里还没保存过（新建工程常见）；savedVersion / version = **S 已保存版本**哈希（null = 没保存过，二者同值；有本地草稿时依然有值）；draft / hasDraft = 本次内容是否来自**未保存草稿**（与上面两个独立）；active = 是否为当前语言；localeInProject = 工程语言表里是否有该语言；total = **正文键数**（不是文件条目数）。分页：offset 1 起、limit 默认 200、上限 1000；offset 越界返回 ok:false 与 errorCode。翻译前先用它看清缺哪些键。',
     {
       source: str('逻辑文件名，如 序章.hs（键由该文件正文推导）'),
       locale: str('语言标签，如 zh_cn；省略用当前语言'),
@@ -333,7 +333,7 @@ const TOOL_SPECS: ToolSpec[] = [
   defineTool(
     'write',
     'parse_hs',
-    '【write / 必须先 lock 源文件】解析（自动成键）：把正文里还不是键名的可本地化文本换成**文本哈希键**，同时把原文写进该语言的映射。**调用前必须** lock_source({ paths: [source] }) + lock_lang({ source, locales: [该语言] })；缺语言锁会被拒绝。**键名是这段文本的哈希：只有用同一种语言的文本重新 parse_hs 才能拿回原来的键**；跨语言 parse 会生成新键，并把该语言文本当作原文灌进目标语言（逆解析用的哪个 locale，就必须用同一个 locale 再 parse_hs）。译文映射只写**本地草稿**（返回 draft:true、saved:false、version:null），正文与译文都要等**用户保存工程**才进文件；成功后返回 writtenPaths 与草稿标记。**返回体里的 locale 才是规范标签**（如 en→en_us 会被归一化），回执/日志以返回值为准。',
+    '【write / 必须先 lock 源文件】解析（自动成键）：把正文里还不是键名的可本地化文本换成**文本哈希键**，同时把原文写进该语言的映射。**调用前必须** lock_source({ paths: [source] }) + lock_lang({ source, locales: [该语言] })；缺语言锁会被拒绝。**键名是这段文本的哈希：只有用同一种语言的文本重新 parse_hs 才能拿回原来的键**；跨语言 parse 会生成新键，并把该语言文本当作原文灌进目标语言（逆解析用的哪个 locale，就必须用同一个 locale 再 parse_hs）。译文映射只写**本地草稿**（返回 draft:true、saved:false、version:null），正文与译文都要等**用户保存工程**才进文件；成功后返回 writtenPaths 与草稿标记。**返回字段**：created = 本次去重后的**唯一键数**（实际写进映射的条目数）；replaced = 实际被换成键名的**正文语句数**——同文本重复台词共用同一个键时 replaced > created，它**不是**"覆盖了多少条旧译文"，而是"替换了多少处正文"。**返回体里的 locale 才是规范标签**（如 en→en_us 会被归一化），回执/日志以返回值为准。',
     {
       source: str('逻辑文件名，如 序章.hs'),
       locale: str('语言标签，如 zh_cn；省略用当前语言'),

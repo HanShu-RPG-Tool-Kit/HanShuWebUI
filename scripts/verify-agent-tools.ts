@@ -1270,7 +1270,9 @@ await test('B8/N1/N2：工具描述说明 savedVersion / fileTotal / 键身份�
   for (const keyword of [
     'localeExists',
     'hasSaved',
+    'hasLocalMirror',
     'savedVersion',
+    'savedVersion !== null',
     'hasDraft',
     'localeInProject',
     '正文键数',
@@ -1281,6 +1283,14 @@ await test('B8/N1/N2：工具描述说明 savedVersion / fileTotal / 键身份�
   for (const keyword of ['fileTotal', '孤儿键', 'warnings', '只警告不拒绝']) {
     assert.ok(writeDesc.includes(keyword), `write_lang 描述缺少 ${keyword}`)
   }
+  const parseDesc = description('parse_hs')
+  for (const keyword of ['created', 'replaced', '唯一键数', '正文语句数']) {
+    assert.ok(parseDesc.includes(keyword), `parse_hs 描述缺少 ${keyword}`)
+  }
+  assert.ok(
+    parseDesc.includes('不是') && parseDesc.includes('旧译文'),
+    'parse_hs 描述要澄清 replaced 不是覆盖旧译文条数',
+  )
   const deleteDesc = description('delete_lang_keys')
   assert.ok(deleteDesc.includes('哈希'), 'delete_lang_keys 描述要说明键名是文本哈希')
   assert.ok(deleteDesc.includes('别删该条目'), 'delete_lang_keys 描述要提醒保键身份')
