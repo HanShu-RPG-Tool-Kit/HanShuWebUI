@@ -3138,9 +3138,77 @@ export const StageplayWorkspace = forwardRef<
     return { locale: resolved.tag, note: resolved.note }
   }
 
-  /** C2：键名是文本哈希；逆解析后必须用**同一语言**重新 parse_hs 才能拿回原键 */
+  /** P2：键名是文本哈希；同一 locale 重新 parse 会按该语言映射同文本复用键，换 locale 才重新哈希 */
   const LANG_KEY_IDENTITY_NOTE =
-    'keys are text hashes: re-run parse_hs with the same locale to rebuild them; parsing a different locale will create new keys and drop the old ones'
+    'keys are text hashes; re-running parse_hs in the same locale reuses keys by matching text in that language\'s mapping, while parsing in another locale hashes the new text and creates new keys'
+
+  /** P7：`assets/<locale>/voice_<ext>/<dir>/<key>.ogg|.ref` → 语言、源逻辑名、键名 */
+  const voiceAssetTargetOf = (
+    assetPath: string,
+  ): { locale: string; source: string; key: string } | null => {
+    const parsed = parseLocaleAssetPath(assetPath)
+    if (!parsed || parsed.kind !== 'voice') return null
+    const rest = parsed.rest.replace(/\\/g, '/')
+    if (!/\.(ogg|ref)$/i.test(rest)) return null
+    const withoutExt = rest.slice(0, rest.lastIndexOf('.'))
+    const slash = withoutExt.lastIndexOf('/')
+    if (slash <= 0) return null
+    const key = withoutExt.slice(slash + 1)
+    if (!key) return null
+    return {
+      locale: parsed.locale,
+      source: `${withoutExt.slice(0, slash)}.${parsed.sourceExt}`,
+      key,
+    }
+  }
+
+  type OrphanVoiceAsset = {
+    path: string
+    locale: string
+    source: string
+    key: string
+    reason: 'source_missing' | 'key_missing'
+  }
+
+  /** P7：工程里不属于任何现存源/键的配音资产 */
+  const orphanVoiceAssetsOf = (targetWorkspace: Workspace): OrphanVoiceAsset[] => {
+    const out: OrphanVoiceAsset[] = []
+    const cache = new Map<string, Set<string> | null | 'ambiguous'>()
+    for (const pkg of targetWorkspace.packages) {
+      for (const asset of pkg.assets) {
+        const target = voiceAssetTargetOf(asset.path)
+        if (!target) continue
+        if (!cache.has(target.source)) {
+          try {
+            const hit = findScriptByName(targetWorkspace, target.source)
+            cache.set(
+              target.source,
+              hit
+                ? new Set(
+                    collectSourceKeys(hit.script.content, hit.script.name).map(
+                      (item) => item.key,
+                    ),
+                  )
+                : null,
+            )
+          } catch {
+            cache.set(target.source, 'ambiguous')
+          }
+        }
+        const keys = cache.get(target.source)
+        // 跨包同名时无法判断归属：宁可不算 orphan，避免误报
+        if (keys === 'ambiguous' || keys === undefined) continue
+        if (keys === null) {
+          out.push({ ...target, path: asset.path, reason: 'source_missing' })
+          continue
+        }
+        if (!keys.has(target.key)) {
+          out.push({ ...target, path: asset.path, reason: 'key_missing' })
+        }
+      }
+    }
+    return out.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
+  }
 
   const agentHost: AgentHost = {
     /** A2：工具在 lock_source(creating) / create_source 前统一校验逻辑名 */
@@ -3383,7 +3451,14 @@ export const StageplayWorkspace = forwardRef<
     },
     validateSource: (source) => {
       const found = findAgentScript(source)
-      if ('error' in found) return found.error
+      if ('error' in found) {
+        return found.error.reason === 'not_found'
+          ? {
+              ...found.error,
+              hint: 'use list_sources to find the file; names are logical (no directories)',
+            }
+          : found.error
+      }
       const hit = found.hit
       const content = agentSourceContent(hit.script.id) ?? hit.script.content
       const result = validateSourceContent(hit.script.name, content, {
@@ -3392,10 +3467,18 @@ export const StageplayWorkspace = forwardRef<
           hit.script.name,
         ),
       })
+      // P10：编辑器诊断与 agent lint 分开；ok 只反映编译结果（lint 不再让 ok=false）
+      const diagnostics = result.diagnostics.filter(
+        (item) => item.kind !== 'agent-lint',
+      )
+      const agentLint = result.diagnostics.filter(
+        (item) => item.kind === 'agent-lint',
+      )
       return {
-        ok: result.diagnostics.length === 0 && !result.compileError,
+        ok: result.compileError === null,
         source: hit.script.name,
-        diagnostics: result.diagnostics,
+        diagnostics,
+        agentLint,
         compileError: result.compileError,
       }
     },
@@ -3565,12 +3648,19 @@ export const StageplayWorkspace = forwardRef<
       }
       const count = Math.min(Math.max(1, Math.floor(limit ?? 200) || 200), 1000)
       const page = keys.slice(start - 1, start - 1 + count)
-      const entries = page.map((item) => ({
-        key: item.key,
-        line: item.line,
-        text: target.map[item.key] ?? '',
-        translated: item.key in target.map,
-      }))
+      const entries = page.map((item) => {
+        const hasEntry = item.key in target.map
+        const text = hasEntry ? target.map[item.key]! : null
+        return {
+          key: item.key,
+          line: item.line,
+          /** 缺失条目为 null；空串条目保留 '' */
+          text,
+          hasEntry,
+          /** 空串不算已翻译（与 check_export 的 trim 口径一致） */
+          translated: text !== null && text.trim() !== '',
+        }
+      })
       // P9：map 里有、正文已经没有的键（翻译记忆残留）；截断 200，同时给总数
       const orphan = collectOrphanKeys(
         keys.map((item) => item.key),
@@ -3929,7 +4019,7 @@ export const StageplayWorkspace = forwardRef<
         ...(staged.localOnly ? { localOnly: true } : {}),
       }
     },
-    listVoiceStatus: async (source, localeArg, offset, limit) => {
+    listVoiceStatus: async (source, localeArg, offset, limit, orphanOnly) => {
       const found = findAgentScript(source)
       if ('error' in found) return found.error
       const hit = found.hit
@@ -3940,6 +4030,32 @@ export const StageplayWorkspace = forwardRef<
       const resolved = resolveAgentLocale(localeArg)
       if ('error' in resolved) return resolved.error
       const lang = resolved.locale
+      const start = Math.max(1, Math.floor(offset ?? 1) || 1)
+      const count = Math.min(Math.max(1, Math.floor(limit ?? 100) || 100), 500)
+
+      // P7：orphanOnly = 只看“不属于任何现存源/键”的配音；显式给 locale 时按语言筛选
+      if (orphanOnly === true) {
+        const explicitLocale = localeArg?.trim()
+        const orphans = orphanVoiceAssetsOf(workspaceRef.current).filter(
+          (item) =>
+            !explicitLocale || item.locale.toLowerCase() === lang.toLowerCase(),
+        )
+        const page = orphans.slice(start - 1, start - 1 + count)
+        return {
+          ok: true,
+          source: hit.script.name,
+          locale: lang,
+          orphan: true,
+          note: 'these voice assets do not belong to any existing source/key; they may be leftovers from renamed or deleted text',
+          total: orphans.length,
+          missingCount: orphans.length,
+          missingSample: orphans.slice(0, 10).map((item) => item.key),
+          offset: start,
+          truncated: start - 1 + page.length < orphans.length,
+          entries: page.map((item) => ({ ...item, state: 'orphan' as const })),
+        }
+      }
+
       const allEntries = await voiceStatusOf(
         hit.pkg.id,
         hit.pkg.assets,
@@ -3948,8 +4064,6 @@ export const StageplayWorkspace = forwardRef<
         keys,
       )
       // B3：分页；不再回传完整 missing 数组，只给数量 + 最多 10 个样例
-      const start = Math.max(1, Math.floor(offset ?? 1) || 1)
-      const count = Math.min(Math.max(1, Math.floor(limit ?? 100) || 100), 500)
       const page = allEntries.slice(start - 1, start - 1 + count)
       const missing = allEntries.filter((item) => item.state === 'missing')
       return {
@@ -3989,6 +4103,7 @@ export const StageplayWorkspace = forwardRef<
           locale: lang,
           created: 0,
           replaced: parsed.replaced,
+          changed: false,
           skipped: parsed.skipped,
           note: parsedNote,
           hint: 'no localizable text left to key (everything is already keyed, or it is after #stopparse)',
@@ -4222,6 +4337,14 @@ export const StageplayWorkspace = forwardRef<
         }
       }
 
+      // P7：孤儿配音（来源文件已不存在 / 键已不在来源正文）
+      const orphanVoiceList = orphanVoiceAssetsOf(workspace)
+      const orphanVoice = {
+        total: orphanVoiceList.length,
+        sample: orphanVoiceList.slice(0, 20).map((item) => item.path),
+        truncated: orphanVoiceList.length > 20,
+      }
+
       // P6：顶层 warnings 只留 translations + assets（orphan）；导出编译器 warning 全部归组
       const topWarningsAll = [...translationsWarnings, ...orphanWarnings]
       const warnings = topWarningsAll.slice(0, warningLimit)
@@ -4229,6 +4352,7 @@ export const StageplayWorkspace = forwardRef<
 
       const exportedAssets: Array<{ code: string; message: string; path?: string }> = []
       const exportedGameplay: Array<{ code: string; message: string; path?: string }> = []
+      const rawGameplaySample: string[] = []
       const seenExport = new Set<string>()
       for (const raw of [...pak.warnings, ...project.warnings]) {
         const translated = translateExportWarning(raw)
@@ -4238,6 +4362,7 @@ export const StageplayWorkspace = forwardRef<
         if (translated.group === 'assets') {
           exportedAssets.push({ code: 'export_asset', message: translated.message })
         } else {
+          if (rawGameplaySample.length < 10) rawGameplaySample.push(raw)
           exportedGameplay.push({
             code: translated.group === 'gameplay' ? 'export_gameplay' : 'export_other',
             message: translated.message,
@@ -4263,10 +4388,18 @@ export const StageplayWorkspace = forwardRef<
         includesDrafts: true,
         orphanAssets,
         orphanKeys: orphanKeySummaries,
+        /** P7：孤儿配音（同时放在顶层与 groups 里，便于工具描述引用 groups.orphanVoice） */
+        orphanVoice,
         groups: {
           translations: translationsGroup.items,
           assets: assetsGroup.items,
-          gameplay: gameplayGroup.items,
+          gameplay: {
+            items: gameplayGroup.items,
+            sample: rawGameplaySample,
+            total: gameplayGroup.total,
+            truncated: gameplayGroup.truncated,
+          },
+          orphanVoice,
           totals: {
             translations: translationsGroup.total,
             assets: assetsGroup.total,
