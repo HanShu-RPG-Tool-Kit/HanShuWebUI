@@ -60,9 +60,20 @@ const SAVED_VERSION = 'sha256:saved'
   )
   assert.deepEqual(
     missing,
-    { map: {}, savedVersion: null, hasSaved: false, draft: false },
-    '文件不存在 → 空映射、未保存',
+    { map: {}, savedVersion: null, hasSaved: false, hasLocalMirror: false, draft: false },
+    '文件不存在 → 空映射、未保存、无镜像',
   )
+
+  // R1：本机镜像（有文本、无 S 版本）不能算"已保存"，否则 hasSaved:true + savedVersion:null 自相矛盾
+  const mirror = await readLangDraft(
+    () => undefined,
+    PATH,
+    async () => ({ text: DRAFT_TEXT, version: null }),
+  )
+  assert.equal(mirror.hasSaved, false, '只有本机镜像 → 未保存')
+  assert.equal(mirror.hasLocalMirror, true, '本机镜像要单独标注')
+  assert.equal(mirror.savedVersion, null)
+  assert.deepEqual(mirror.map, MAP, '镜像内容仍可作为当前内容读取')
 }
 
 /** 假事务层：stageWrite 立即准备镜像（与 EditTransactions 一致），stagedText 可读 */

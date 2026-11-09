@@ -26,8 +26,16 @@ export type LangDraftRead = {
    * 草稿是否生效看 `draft`，不要把 savedVersion 当成"当前生效内容"的版本。
    */
   savedVersion: string | null
-  /** 工程里是否已有已保存的语言文件（**与草稿无关**，用于 localeExists / hasSaved） */
+  /**
+   * 工程（S）里是否已有**已保存版本**的语言文件：`savedVersion !== null`。
+   * 只看本机 IndexedDB 镜像的那份**不算**已保存（R1：与 savedVersion 保持自洽）。
+   */
   hasSaved: boolean
+  /**
+   * 本机有镜像/缓存但 S 里没有已保存版本（`text !== null && version === null`）。
+   * 常见于新建工程尚未保存：界面上渲染过某个语言后本机留了空 `.lang` 镜像。
+   */
+  hasLocalMirror: boolean
   /** true = 内容来自本地 staged 草稿（尚未保存进工程文件） */
   draft: boolean
 }
@@ -36,6 +44,9 @@ export type LangDraftRead = {
  * 草稿优先读取语言文本：stagedText 有内容就用它（draft=true，map 取草稿），
  * 但**仍读一次已保存内容**，因为「工程文件是否存在」与「当前生效内容来自哪里」
  * 是两件事——有草稿不代表没有已保存文件（B8）。
+ *
+ * 「已保存」的判据是 **S 给了内容哈希**（`version !== null`）：本机镜像也能读到文本，
+ * 但它不构成"工程里已有该语言文件"，否则会出现 hasSaved:true + savedVersion:null 的矛盾（R1）。
  *
  * `stagedText` 由调用方注入（要同时兼容 `handle.resolve()` 后的路径与原始路径），
  * 这样这个函数在 node 里可以直接用假函数测。
@@ -47,17 +58,19 @@ export async function readLangDraft(
 ): Promise<LangDraftRead> {
   const staged = stagedText(path)
   const saved = await readSaved()
-  const hasSaved = saved.text !== null
+  const hasSaved = saved.version !== null
+  const hasLocalMirror = saved.text !== null && !hasSaved
   const map =
     staged !== undefined
       ? parseTextFile(staged)
-      : hasSaved
-        ? parseTextFile(saved.text as string)
+      : saved.text !== null
+        ? parseTextFile(saved.text)
         : {}
   return {
     map,
     savedVersion: saved.version,
     hasSaved,
+    hasLocalMirror,
     draft: staged !== undefined,
   }
 }
