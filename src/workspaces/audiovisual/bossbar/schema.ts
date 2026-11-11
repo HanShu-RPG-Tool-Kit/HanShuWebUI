@@ -3,7 +3,6 @@ import {
   BOSSBAR_BAR_DIRECTIONS,
   BOSSBAR_COMPONENT_TYPES,
   BOSSBAR_DEFAULTS,
-  BOSSBAR_DOCK,
   BOSSBAR_FITS,
   BOSSBAR_FORMAT,
   BOSSBAR_ID_MAX_LENGTH,
@@ -338,7 +337,7 @@ export const BOSSBAR_V2_SCHEMA = {
     '唯一 display_region，全部组件的 box 位于显示区域内。',
   type: 'object',
   additionalProperties: false,
-  required: ['format', 'version', 'id', 'priority', 'texture', 'layout', 'variables', 'components'],
+  required: ['format', 'version', 'id', 'priority', 'texture', 'variables', 'components'],
   properties: {
     format: { const: BOSSBAR_FORMAT },
     version: { const: BOSSBAR_VERSION },
@@ -358,24 +357,6 @@ export const BOSSBAR_V2_SCHEMA = {
       maxLength: Math.ceil((BOSSBAR_LIMITS.texture.maxBytes / 3) * 4) + 4,
       pattern: '^[A-Za-z0-9+/]+={0,2}$',
     },
-    layout: {
-      type: 'object',
-      additionalProperties: false,
-      required: ['dock', 'scale', 'safeMargin'],
-      properties: {
-        dock: { enum: [...BOSSBAR_DOCK] },
-        scale: {
-          type: 'number',
-          minimum: BOSSBAR_LIMITS.layout.minScale,
-          maximum: BOSSBAR_LIMITS.layout.maxScale,
-        },
-        safeMargin: {
-          type: 'number',
-          minimum: BOSSBAR_LIMITS.layout.minSafeMargin,
-          maximum: BOSSBAR_LIMITS.layout.maxSafeMargin,
-        },
-      },
-    },
     variables: {
       type: 'object',
       maxProperties: BOSSBAR_LIMITS.variables,
@@ -393,9 +374,6 @@ export const BOSSBAR_V2_SCHEMA = {
 
 /** 默认值摘要，供编辑器新建组件与两端对拍 */
 export const BOSSBAR_SCHEMA_DEFAULTS = {
-  dock: BOSSBAR_DEFAULTS.dock,
-  scale: BOSSBAR_DEFAULTS.scale,
-  safeMargin: BOSSBAR_DEFAULTS.safeMargin,
   displayRegion: BOSSBAR_DEFAULTS.displayRegion,
   visible: BOSSBAR_DEFAULTS.visible,
   opacity: BOSSBAR_DEFAULTS.opacity,

@@ -6,7 +6,7 @@ import { Button } from './BossbarEditorUi'
 import { paintAt, textureSrc, type BossbarUvTarget } from './BossbarAtlasPanel'
 
 const ZOOM_MIN = 0.1
-const ZOOM_MAX = 16
+const ZOOM_MAX = 64
 const RULER = 22
 const HANDLES = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'] as const
 type UvHandle = (typeof HANDLES)[number] | 'move'

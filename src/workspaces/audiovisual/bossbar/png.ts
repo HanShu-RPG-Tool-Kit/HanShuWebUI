@@ -5,7 +5,7 @@
  * 校验规则就是协议规则（标准字母表、带填充、无空白、无 data: 前缀）。
  */
 
-import { Inflate, type ZStream } from 'pako'
+import { Deflate, Inflate, type ZStream } from 'pako'
 
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
 const LOOKUP = new Int16Array(256).fill(-1)
@@ -275,4 +275,118 @@ export function validatePngPixels(bytes: Uint8Array): boolean {
 /** 单张图集的解码内存：宽 × 高 × 4 */
 export function decodedTextureBytes(width: number, height: number): number {
   return width * height * 4
+}
+
+export type PngRgba = {
+  width: number
+  height: number
+  rgba: Uint8Array
+}
+
+function writeChunk(type: string, data: Uint8Array): Uint8Array {
+  const out = new Uint8Array(12 + data.length)
+  const view = new DataView(out.buffer)
+  view.setUint32(0, data.length)
+  for (let index = 0; index < 4; index += 1) out[4 + index] = type.charCodeAt(index)
+  out.set(data, 8)
+  view.setUint32(8 + data.length, crc32(out, 4, 8 + data.length))
+  return out
+}
+
+/** 编码 8-bit 非隔行 RGBA PNG（filter None） */
+export function encodePngRgba(image: PngRgba): Uint8Array {
+  const { width, height, rgba } = image
+  if (!width || !height || width > 0x7fffffff || height > 0x7fffffff) {
+    throw new Error('PNG 尺寸无效')
+  }
+  if (rgba.length !== width * height * 4) throw new Error('RGBA 长度与尺寸不符')
+  const rowBytes = width * 4
+  const raw = new Uint8Array((rowBytes + 1) * height)
+  for (let y = 0; y < height; y += 1) {
+    const dest = y * (rowBytes + 1)
+    raw[dest] = 0
+    raw.set(rgba.subarray(y * rowBytes, (y + 1) * rowBytes), dest + 1)
+  }
+  const deflator = new Deflate({ level: 6 })
+  deflator.push(raw, true)
+  if (deflator.err || !deflator.result) throw new Error('PNG 压缩失败')
+  const compressed = deflator.result instanceof Uint8Array
+    ? deflator.result
+    : new Uint8Array(deflator.result)
+
+  const ihdr = new Uint8Array(13)
+  const ihdrView = new DataView(ihdr.buffer)
+  ihdrView.setUint32(0, width)
+  ihdrView.setUint32(4, height)
+  ihdr[8] = 8
+  ihdr[9] = 6
+  ihdr[10] = 0
+  ihdr[11] = 0
+  ihdr[12] = 0
+
+  const signature = Uint8Array.from(PNG_SIGNATURE)
+  const parts = [signature, writeChunk('IHDR', ihdr), writeChunk('IDAT', compressed), writeChunk('IEND', new Uint8Array(0))]
+  const total = parts.reduce((sum, part) => sum + part.length, 0)
+  const out = new Uint8Array(total)
+  let offset = 0
+  for (const part of parts) {
+    out.set(part, offset)
+    offset += part.length
+  }
+  return out
+}
+
+/**
+ * 解码 8-bit 非隔行真彩 PNG 为 RGBA。
+ * 仅支持色型 2（RGB）与 6（RGBA）；其它格式返回 null，交给宿主解码器。
+ */
+export function decodePngRgba(bytes: Uint8Array): PngRgba | null {
+  const info = pngStructure(bytes)
+  if (!info || info.apng || info.interlace || info.depth !== 8 || (info.color !== 2 && info.color !== 6)) {
+    return null
+  }
+  const channels = info.color === 6 ? 4 : 3
+  const rowBytes = info.width * channels
+  const packed = new Uint8Array(info.imageData.reduce((sum, part) => sum + part.length, 0))
+  let packedOffset = 0
+  for (const part of info.imageData) {
+    packed.set(part, packedOffset)
+    packedOffset += part.length
+  }
+  const inflater = new Inflate({ windowBits: 15 })
+  inflater.push(packed, true)
+  if (inflater.err || !inflater.result) return null
+  const raw = inflater.result instanceof Uint8Array ? inflater.result : new Uint8Array(inflater.result)
+  if (raw.length !== (rowBytes + 1) * info.height) return null
+
+  const rgba = new Uint8Array(info.width * info.height * 4)
+  const previous = new Uint8Array(rowBytes)
+  const current = new Uint8Array(rowBytes)
+  for (let y = 0; y < info.height; y += 1) {
+    const rowStart = y * (rowBytes + 1)
+    const filter = raw[rowStart]
+    if (filter > 4) return null
+    current.set(raw.subarray(rowStart + 1, rowStart + 1 + rowBytes))
+    for (let index = 0; index < rowBytes; index += 1) {
+      const left = index >= channels ? current[index - channels] : 0
+      const up = previous[index]
+      const upperLeft = index >= channels ? previous[index - channels] : 0
+      const predictor = filter === 1 ? left
+        : filter === 2 ? up
+          : filter === 3 ? Math.floor((left + up) / 2)
+            : filter === 4 ? paeth(left, up, upperLeft)
+              : 0
+      current[index] = (current[index] + predictor) & 255
+    }
+    for (let x = 0; x < info.width; x += 1) {
+      const src = x * channels
+      const dest = (y * info.width + x) * 4
+      rgba[dest] = current[src]
+      rgba[dest + 1] = current[src + 1]
+      rgba[dest + 2] = current[src + 2]
+      rgba[dest + 3] = channels === 4 ? current[src + 3] : 255
+    }
+    previous.set(current)
+  }
+  return { width: info.width, height: info.height, rgba }
 }

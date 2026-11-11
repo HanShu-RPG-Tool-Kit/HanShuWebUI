@@ -8,6 +8,13 @@ import { BOSSBAR_DEFAULT_TEXTURE } from '../src/workspaces/audiovisual/bossbar/p
 import { sampleAnimation, stepAnimationFrame } from '../src/workspaces/audiovisual/bossbar/rules/frames'
 import { resolveValues } from '../src/workspaces/audiovisual/bossbar/rules/values'
 import { animationFramesAtFps, gridAnimationFrames } from '../src/workspaces/audiovisual/bossbar/editor/animationTools'
+import { appendAtlasFromPngBytes, appendAtlasFromRgba, packAtlasImages } from '../src/workspaces/audiovisual/bossbar/editor/atlasPack'
+import {
+  applyAtlasDetectSlices,
+  detectAtlasRegions,
+  slicesFromRegions,
+} from '../src/workspaces/audiovisual/bossbar/editor/atlasDetect'
+import { decodePngRgba, encodePngRgba } from '../src/workspaces/audiovisual/bossbar/png'
 import { buildScenarios, loadEditorViewState, parseVariableInput, saveEditorViewState, simulateVariable, variableSimulationMode } from '../src/workspaces/audiovisual/bossbar/editor/editorState'
 import { BossbarVariablesPanel } from '../src/workspaces/audiovisual/bossbar/editor/BossbarVariablesPanel'
 import { BossbarProgressEditor } from '../src/workspaces/audiovisual/bossbar/editor/BossbarProgressEditor'
@@ -61,7 +68,7 @@ for (const invalid of ['Infinity', 'NaN', '1e309', '', ' ', '0x10']) assert.equa
 assert.deepEqual(parseVariableInput({ type: 'string', default: '', maxLength: 10 }, ' a '), { type: 'string', value: ' a ' })
 const document: BossbarDocument = {
   format: 'hanshu.bossbar', version: 2, id: 'simulation-test', priority: 7, texture: BOSSBAR_DEFAULT_TEXTURE,
-  layout: { dock: 'top-center', scale: 0.5, safeMargin: 12 }, variables: { health: double },
+  variables: { health: double },
   components: [{ id: 'region', type: 'display_region', box: { x: 0, y: 0, width: 768, height: 72 } }],
 }
 const good = { health: { type: 'double' as const, value: 20 } }
@@ -230,4 +237,100 @@ try {
   slots = []
 } finally { delete (globalThis as any)[hooksKey] }
 console.log('通过：设计和 JSON 共用撤销/重做历史，内部回写不重复记步')
+
+{
+  const solid = (width: number, height: number, rgba: [number, number, number, number]) => {
+    const pixels = new Uint8Array(width * height * 4)
+    for (let index = 0; index < width * height; index += 1) {
+      pixels.set(rgba, index * 4)
+    }
+    return { width, height, rgba: pixels }
+  }
+  const red = solid(2, 2, [255, 0, 0, 255])
+  const green = solid(3, 1, [0, 255, 0, 255])
+  const blue = solid(1, 2, [0, 0, 255, 255])
+  const encoded = encodePngRgba(red)
+  const decoded = decodePngRgba(encoded)!
+  assert.equal(decoded.width, 2)
+  assert.equal(decoded.height, 2)
+  assert.deepEqual([...decoded.rgba.subarray(0, 4)], [255, 0, 0, 255])
+
+  const fresh = appendAtlasFromPngBytes(BOSSBAR_DEFAULT_TEXTURE, [encodePngRgba(red), encodePngRgba(green)])
+  assert.equal(fresh.ok, true)
+  if (!fresh.ok) throw new Error(fresh.error)
+  assert.equal(fresh.width, 3)
+  assert.equal(fresh.height, 4, '默认底图丢弃后：2 高红块 + 1 间距 + 1 高绿块')
+  assert.deepEqual(fresh.appended, [
+    { x: 0, y: 0, width: 2, height: 2 },
+    { x: 0, y: 3, width: 3, height: 1 },
+  ])
+
+  const kept = appendAtlasFromRgba('custom-base', red, [green, blue])
+  assert.equal(kept.ok, true)
+  if (!kept.ok) throw new Error(kept.error)
+  assert.equal(kept.width, 3, '取最宽追加块')
+  assert.equal(kept.height, 7, '基底 2 + 间距 + 绿 1 + 间距 + 蓝 2')
+  assert.deepEqual(kept.appended, [
+    { x: 0, y: 3, width: 3, height: 1 },
+    { x: 0, y: 5, width: 1, height: 2 },
+  ])
+  const pixel = (x: number, y: number) => [...kept.rgba.subarray((y * kept.width + x) * 4, (y * kept.width + x) * 4 + 4)]
+  assert.deepEqual(pixel(0, 0), [255, 0, 0, 255], '基底左上保留')
+  assert.deepEqual(pixel(0, 3), [0, 255, 0, 255], '追加绿块')
+  assert.deepEqual(pixel(0, 5), [0, 0, 255, 255], '追加蓝块')
+
+  const oversize = packAtlasImages(null, [solid(5, 5, [1, 2, 3, 255])], { maxSide: 4 })
+  assert.equal(oversize.ok, false)
+  console.log('通过：图集追加拼合保留基底 UV，并丢弃默认 1×1 底图')
+}
+
+{
+  const paint = (width: number, height: number, fill: (x: number, y: number) => [number, number, number, number]) => {
+    const rgba = new Uint8Array(width * height * 4)
+    for (let y = 0; y < height; y += 1) {
+      for (let x = 0; x < width; x += 1) {
+        rgba.set(fill(x, y), (y * width + x) * 4)
+      }
+    }
+    return { width, height, rgba }
+  }
+  const atlas = paint(16, 12, (x, y) => {
+    if (x >= 1 && x <= 6 && y >= 1 && y <= 4) return [255, 0, 0, 255]
+    if (x >= 9 && x <= 14 && y >= 6 && y <= 9) return [0, 255, 0, 255]
+    if (x === 0 && y === 11) return [0, 0, 255, 255]
+    return [0, 0, 0, 0]
+  })
+  const regions = detectAtlasRegions(atlas)
+  assert.deepEqual(regions, [
+    { x: 1, y: 1, width: 6, height: 4 },
+    { x: 9, y: 6, width: 6, height: 4 },
+  ], '连通域 AABB；单像素碎块被过滤')
+  assert.deepEqual(detectAtlasRegions(atlas, { minSide: 8 }), [], '最小边长约束可整批丢弃')
+
+  const slices = slicesFromRegions(regions)
+  slices[1].kind = 'bar'
+  const seeded: BossbarDocument = {
+    format: 'hanshu.bossbar',
+    version: 2,
+    id: 'detect-test',
+    priority: 0,
+    texture: BOSSBAR_DEFAULT_TEXTURE,
+    variables: {},
+    components: [{ id: 'region', type: 'display_region', box: { x: 10, y: 20, width: 40, height: 10 } }],
+  }
+  const next = applyAtlasDetectSlices(seeded, slices)
+  const backgrounds = next.components.filter((component) => component.type === 'background')
+  const bars = next.components.filter((component) => component.type === 'bar')
+  assert.equal(backgrounds.length, 1)
+  assert.equal(bars.length, 1)
+  assert.deepEqual(backgrounds[0].box, { x: 10, y: 20, width: 6, height: 4 })
+  assert.deepEqual(bars[0].box, { x: 18, y: 25, width: 6, height: 4 })
+  assert.equal(backgrounds[0].paint.kind, 'texture')
+  assert.deepEqual(backgrounds[0].paint.kind === 'texture' ? backgrounds[0].paint.uv : null, regions[0])
+  assert.equal(bars[0].fill.kind, 'texture')
+  assert.deepEqual(bars[0].fill.kind === 'texture' ? bars[0].fill.uv : null, regions[1])
+  const region = next.components.find((component) => component.type === 'display_region')!
+  assert.deepEqual(region.box, { x: 10, y: 20, width: 40, height: 10 }, '已有显示区域足够大时不改尺寸')
+  console.log('通过：图集连通域 AABB 过滤碎块，并按背景/数值条写入组件')
+}
 console.log('PASS verify-bossbar-editor-tools')

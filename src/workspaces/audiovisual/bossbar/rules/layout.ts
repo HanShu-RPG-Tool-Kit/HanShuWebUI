@@ -1,10 +1,9 @@
 import type {
   BossbarBarDirection,
   BossbarBox,
-  BossbarLayout,
   BossbarUv,
 } from '../protocol'
-import { BOSSBAR_LIMITS } from '../protocol'
+import { BOSSBAR_LIMITS, BOSSBAR_VIEW } from '../protocol'
 
 /** 矩形（设计像素或 GUI 逻辑像素，由调用方约定） */
 export type Rect = { x: number; y: number; width: number; height: number }
@@ -58,21 +57,20 @@ export function containsBox(region: BossbarBox, box: BossbarBox): boolean {
   )
 }
 
-/** s = min(scale, max(0, G - 2 × safeMargin) / rw)；s=0 时不绘制 */
-export function layoutScale(layout: BossbarLayout, regionWidth: number, guiWidth: number): number {
-  const available = Math.max(0, guiWidth - layout.safeMargin * 2)
+/** s = min(BOSSBAR_VIEW.scale, max(0, G - 2 × safeMargin) / rw)；s=0 时不绘制 */
+export function layoutScale(regionWidth: number, guiWidth: number): number {
+  const available = Math.max(0, guiWidth - BOSSBAR_VIEW.safeMargin * 2)
   if (!(regionWidth > 0)) return 0
   const limit = available / regionWidth
-  return Math.min(layout.scale, limit)
+  return Math.min(BOSSBAR_VIEW.scale, limit)
 }
 
 export function placeRegion(
-  layout: BossbarLayout,
   region: BossbarBox,
   guiWidth: number,
   rowY: number = BOSSBAR_LIMITS.rowTopMargin,
 ): RegionPlacement | null {
-  const scale = layoutScale(layout, region.width, guiWidth)
+  const scale = layoutScale(region.width, guiWidth)
   if (!(scale > 0) || !Number.isFinite(scale)) return null
   const width = region.width * scale
   const height = region.height * scale

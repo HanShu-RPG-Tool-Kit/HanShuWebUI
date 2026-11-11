@@ -1244,6 +1244,108 @@
   pointer-events: none;
 }
 
+.bb-detect-picker {
+  width: min(920px, calc(100% - 48px));
+  height: min(600px, calc(100% - 48px));
+}
+
+.bb-detect-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+.bb-detect-side {
+  display: flex;
+  flex: 0 0 220px;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px;
+  border-right: 1px solid var(--border, #1a1a1a);
+  background: var(--av-panel, #303030);
+}
+
+.bb-detect-side-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-size: var(--bb-font-label);
+}
+
+.bb-detect-list {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.bb-detect-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-left: 3px solid #5a9;
+  background: rgb(255 255 255 / 4%);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.bb-detect-item[data-kind='bar'] {
+  border-left-color: #e8a04a;
+}
+
+.bb-detect-item.is-active {
+  border-color: #6af;
+  background: rgb(100 160 255 / 14%);
+}
+
+.bb-detect-item-title {
+  font-size: var(--bb-font-label);
+}
+
+.bb-detect-editor {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.bb-detect-kind {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--bb-font-label);
+}
+
+.bb-detect-kind select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.bb-detect-rect.is-bg {
+  border-color: #5c9;
+  background: rgba(80, 200, 140, 0.12);
+}
+
+.bb-detect-rect.is-bar {
+  border-color: #e8a04a;
+  background: rgba(232, 160, 74, 0.16);
+}
+
+.bb-detect-rect.is-current {
+  z-index: 2;
+}
+
 /* 编辑视口内的模拟控制 */
 
 .bb-simulation-controls {

@@ -182,14 +182,7 @@ function DisplaySettings({ document, readOnly, onChange }: {
         <NumberField value={document.priority} min={BOSSBAR_LIMITS.priority.min} max={BOSSBAR_LIMITS.priority.max} disabled={readOnly}
           onCommit={(priority) => onChange({ ...document, priority: Math.trunc(priority) })} />
       </Row>
-      <Row label="缩放">
-        <NumberField value={document.layout.scale} min={BOSSBAR_LIMITS.layout.minScale} max={BOSSBAR_LIMITS.layout.maxScale}
-          step={0.1} disabled={readOnly} onCommit={(scale) => onChange({ ...document, layout: { ...document.layout, scale } })} />
-      </Row>
-      <Row label="安全边距">
-        <NumberField value={document.layout.safeMargin} min={0} max={BOSSBAR_LIMITS.layout.maxSafeMargin} disabled={readOnly}
-          onCommit={(safeMargin) => onChange({ ...document, layout: { ...document.layout, safeMargin } })} />
-      </Row>
+      <p className="bb-hint">屏幕摆放由客户端固定：顶部居中、缩放 0.5、左右安全边距 12。</p>
     </Section>
   )
 }

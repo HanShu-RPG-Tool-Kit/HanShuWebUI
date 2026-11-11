@@ -7,7 +7,6 @@ import {
   BOSSBAR_VERSION,
   bossbarDiagnostic,
   defaultValueOf,
-  defaultLayout,
   normalizeName,
   normalizeTemplateId,
   type BossbarAnimation,
@@ -17,7 +16,6 @@ import {
   type BossbarDiagnostic,
   type BossbarDocument,
   type BossbarDocumentV1,
-  type BossbarLayout,
   type BossbarPaint,
   type BossbarTextRun,
   type BossbarUv,
@@ -135,13 +133,6 @@ function normalizeVariable(raw: unknown): unknown {
 export function normalizeBossbarDocument(raw: Record<string, unknown>): unknown {
   const next: Record<string, unknown> = { ...raw }
   fill(next, 'priority', BOSSBAR_DEFAULTS.priority)
-  if (isRecord(raw.layout)) {
-    const layout: Record<string, unknown> = { ...raw.layout }
-    fill(layout, 'dock', BOSSBAR_DEFAULTS.dock)
-    fill(layout, 'scale', BOSSBAR_DEFAULTS.scale)
-    fill(layout, 'safeMargin', BOSSBAR_DEFAULTS.safeMargin)
-    next.layout = layout
-  }
   if (isRecord(raw.texture) === false && typeof raw.texture === 'string') {
     next.texture = normalizeBase64(raw.texture) ?? raw.texture
   }
@@ -164,6 +155,13 @@ function schemaDiagnostics(raw: Record<string, unknown>): BossbarDiagnostic[] {
 
 function obsoleteFieldDiagnostics(raw: Record<string, unknown>): BossbarDiagnostic[] {
   const diagnostics: BossbarDiagnostic[] = []
+  if ('layout' in raw) {
+    diagnostics.push(bossbarDiagnostic(
+      'obsolete_field',
+      'layout',
+      'layout 已移除：客户端固定顶部居中、scale=0.5、左右安全边距 12',
+    ))
+  }
   if (!Array.isArray(raw.components)) return diagnostics
   raw.components.forEach((component, index) => {
     if (!isRecord(component)) return
@@ -655,18 +653,12 @@ export function toCanonicalDocument(document: BossbarDocument): BossbarDocument 
       .sort()
       .map((key) => [key, orderedVariable(document.variables[key])]),
   )
-  const layout: BossbarLayout = {
-    dock: document.layout?.dock ?? BOSSBAR_DEFAULTS.dock,
-    scale: document.layout?.scale ?? BOSSBAR_DEFAULTS.scale,
-    safeMargin: document.layout?.safeMargin ?? BOSSBAR_DEFAULTS.safeMargin,
-  }
   return {
     format: BOSSBAR_FORMAT,
     version: BOSSBAR_VERSION,
     id: document.id,
     priority: document.priority ?? BOSSBAR_DEFAULTS.priority,
     texture: document.texture,
-    layout,
     variables: variables as Record<string, BossbarVariable>,
     components: (document.components ?? []).map((component) => orderedComponent(component) as BossbarComponent),
   }
@@ -686,7 +678,6 @@ export function createBossbar(id = ''): BossbarDocument {
     id: normalizeTemplateId(trimmed) ?? trimmed,
     priority: BOSSBAR_DEFAULTS.priority,
     texture: BOSSBAR_DEFAULT_TEXTURE,
-    layout: defaultLayout(),
     variables: {},
     components: [
       {

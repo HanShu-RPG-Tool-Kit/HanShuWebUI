@@ -170,13 +170,12 @@ export function buildBossbarFixtures(): Record<string, unknown> {
   }))
 
   const layout = LAYOUT_CASES.map((entry) => {
-    const placement = placeRegion(entry.layout, entry.region, entry.guiWidth, entry.rowY)
+    const placement = placeRegion(entry.region, entry.guiWidth, entry.rowY)
     return {
       guiWidth: entry.guiWidth,
-      layout: entry.layout,
       region: entry.region,
       rowY: entry.rowY,
-      scale: round(layoutScale(entry.layout, entry.region.width, entry.guiWidth)),
+      scale: round(layoutScale(entry.region.width, entry.guiWidth)),
       placement: placement
         ? {
             x: round(placement.x),

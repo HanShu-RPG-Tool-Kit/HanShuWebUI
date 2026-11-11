@@ -49,6 +49,8 @@ import { BossbarInspector, type BossbarPaintSlot } from './BossbarInspector'
 import { BossbarVariablesPanel } from './BossbarVariablesPanel'
 import { BossbarAtlasPanel, type BossbarUvTarget } from './BossbarAtlasPanel'
 import { BossbarUvPickerPanel } from './BossbarUvPickerPanel'
+import { BossbarAtlasDetectPanel } from './BossbarAtlasDetectPanel'
+import { applyAtlasDetectSlices, type AtlasDetectSlice } from './atlasDetect'
 import { BossbarSimulationControls } from './BossbarSimulationControls'
 import { Button } from './BossbarEditorUi'
 import { useBossbarTexture } from './useBossbarImages'
@@ -163,6 +165,7 @@ export function BossbarDesignView({
   const [problems, setProblems] = useState<string[]>([])
   const [uvTarget, setUvTarget] = useState<BossbarUvTarget | null>(null)
   const [uvDraft, setUvDraft] = useState<BossbarUv | null>(null)
+  const [detectSlices, setDetectSlices] = useState<AtlasDetectSlice[] | null>(null)
   const uvTargetRef = useRef(uvTarget)
   const uvDraftRef = useRef(uvDraft)
   uvTargetRef.current = uvTarget
@@ -599,8 +602,17 @@ export function BossbarDesignView({
                 target={uvTarget}
                 readOnly={!editable}
                 onProblems={setProblems}
-                onTextureChange={(base64) => {
-                  applyDocument({ ...document, texture: base64 })
+                onOpenDetect={(slices) => {
+                  commitUvSession()
+                  setUvTarget(null)
+                  setUvDraft(null)
+                  setDetectSlices(slices)
+                }}
+                onTextureChange={(change) => {
+                  let next = { ...document, texture: change.base64 }
+                  const first = change.appended?.[0]
+                  if (first && uvTarget) next = documentWithUv(next, uvTarget, first)
+                  applyDocument(next)
                 }}
               />
             </aside>
@@ -674,7 +686,7 @@ export function BossbarDesignView({
                 <span className="bb-toolbar-group">
                   <Button onClick={() => setView({ zoom: Math.max(0.1, view.zoom / 1.25) })}>−</Button>
                   <span className="bb-tag">{Math.round(view.zoom * 100)}%</span>
-                  <Button onClick={() => setView({ zoom: Math.min(16, view.zoom * 1.25) })}>＋</Button>
+                  <Button onClick={() => setView({ zoom: Math.min(64, view.zoom * 1.25) })}>＋</Button>
                   <Button
                     onClick={() => setFitRequest((request) => request + 1)}
                   >
@@ -803,6 +815,27 @@ export function BossbarDesignView({
                 readOnly={!editable}
                 onPreview={setUvDraft}
                 onClose={closeUvPicker}
+              />
+            </div>
+          )}
+          {detectSlices && document && (
+            <div
+              className="bb-uv-picker-backdrop"
+              onPointerDown={(event) => {
+                if (event.button !== 0 || event.target !== event.currentTarget) return
+                setDetectSlices(null)
+              }}
+            >
+              <BossbarAtlasDetectPanel
+                textureBase64={document.texture}
+                textureSize={texture.size}
+                initialSlices={detectSlices}
+                readOnly={!editable}
+                onClose={() => setDetectSlices(null)}
+                onConfirm={(slices) => {
+                  applyDocument(applyAtlasDetectSlices(document, slices))
+                  setDetectSlices(null)
+                }}
               />
             </div>
           )}

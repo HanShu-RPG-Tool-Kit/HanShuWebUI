@@ -5,7 +5,6 @@ import { BOSSBAR_DEFAULT_TEXTURE, BOSSBAR_SAMPLE_TEXTURE, BOSSBAR_TEST_TEXTURE_1
 export const DEMO_EMBER_GUARD = {
   format: 'hanshu.bossbar', version: 2, id: 'hanshu:ember_guard', priority: 0,
   texture: BOSSBAR_SAMPLE_TEXTURE,
-  layout: { dock: 'top-center', scale: 0.5, safeMargin: 12 },
   variables: {
     healthProgress: { type: 'double', default: 0 },
     shieldProgress: { type: 'double', default: 0 },
@@ -46,7 +45,7 @@ export const DEMO_EMBER_GUARD = {
 
 export const MINIMAL_V2 = {
   format: 'hanshu.bossbar', version: 2, id: 'hanshu:minimal',
-  texture: BOSSBAR_DEFAULT_TEXTURE, layout: { dock: 'top-center', scale: 1, safeMargin: 8 },
+  texture: BOSSBAR_DEFAULT_TEXTURE,
   variables: {}, components: [{ id: 'region', type: 'display_region', box: { x: 0, y: 0, width: 320, height: 40 } }],
 }
 
@@ -145,8 +144,7 @@ export const INVALID_CASES: { name: string, path: string, input: unknown }[] = [
   { name: 'no-display-region', path: 'components', input: { ...MINIMAL_V2, components: [background] } },
   { name: 'duplicate-display-region', path: 'components[1].type', input: { ...MINIMAL_V2, components: [...regionOnly, { ...regionOnly[0], id: 'region2' }] } },
   { name: 'id-leading-space', path: 'id', input: { ...MINIMAL_V2, id: ' hanshu:x' } },
-  { name: 'dock-unsupported', path: 'layout.dock', input: { ...MINIMAL_V2, layout: { ...MINIMAL_V2.layout, dock: 'bottom-left' } } },
-  { name: 'scale-over', path: 'layout.scale', input: { ...MINIMAL_V2, layout: { ...MINIMAL_V2.layout, scale: 4.5 } } },
+  { name: 'legacy-layout', path: 'layout', input: { ...MINIMAL_V2, layout: { dock: 'top-center', scale: 0.5, safeMargin: 12 } } },
   { name: 'priority-overflow', path: 'priority', input: { ...MINIMAL_V2, priority: 2147483648 } },
   { name: 'priority-fraction', path: 'priority', input: { ...MINIMAL_V2, priority: 0.5 } },
   { name: 'component-zero-width', path: 'components[1].box.width', input: withComponents({ ...background, box: { ...background.box, width: 0 } }) },
@@ -284,17 +282,15 @@ export const TRUNCATE_CASES: { text: string, maxWidth: number }[] = [
   { text: 'abcdef', maxWidth: 5 },
 ]
 
-/** 布局表：显示区域可能位于负坐标，GUI 宽度不同时按显示区域宽度缩放 */
+/** 布局表：显示区域可能位于负坐标，GUI 宽度不同时按客户端固定 BOSSBAR_VIEW 缩放 */
 export const LAYOUT_CASES: {
   guiWidth: number
-  layout: { dock: 'top-center', scale: number, safeMargin: number }
   region: { x: number, y: number, width: number, height: number }
   rowY: number
   boxes: { x: number, y: number, width: number, height: number }[]
 }[] = [
   {
     guiWidth: 320,
-    layout: { dock: 'top-center', scale: 0.5, safeMargin: 12 },
     region: { x: -384, y: -36, width: 768, height: 72 },
     rowY: 12,
     boxes: [
@@ -304,14 +300,12 @@ export const LAYOUT_CASES: {
   },
   {
     guiWidth: 1920,
-    layout: { dock: 'top-center', scale: 0.5, safeMargin: 12 },
     region: { x: -384, y: -36, width: 768, height: 72 },
     rowY: 12,
     boxes: [{ x: -364, y: -32, width: 60, height: 60 }],
   },
   {
     guiWidth: 20,
-    layout: { dock: 'top-center', scale: 0.5, safeMargin: 12 },
     region: { x: 0, y: 0, width: 768, height: 72 },
     rowY: 12,
     boxes: [{ x: 0, y: 0, width: 10, height: 10 }],
@@ -322,7 +316,7 @@ export const LAYOUT_CASES: {
 export const NORMALIZE_CASES: { name: string, input: unknown }[] = [
   { name: 'minimal-v2', input: MINIMAL_V2 }, { name: 'demo-ember-guard', input: DEMO_EMBER_GUARD },
   { name: 'defaults-filled', input: {
-    format: 'hanshu.bossbar', version: 2, id: 'hanshu:defaults', texture: ' ' + BOSSBAR_TEST_TEXTURE_16 + '\n', layout: {},
+    format: 'hanshu.bossbar', version: 2, id: 'hanshu:defaults', texture: ' ' + BOSSBAR_TEST_TEXTURE_16 + '\n',
     variables: { note: { type: 'string', default: 'x' }, big: { type: 'string', default: '0', maxLength: 64 } },
     components: [
       { id: 'region', type: 'display_region', box: { x: -10, y: -10, width: 100, height: 40 } },

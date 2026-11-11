@@ -11,7 +11,6 @@
     "id",
     "priority",
     "texture",
-    "layout",
     "variables",
     "components"
   ],
@@ -45,32 +44,6 @@
       "minLength": 4,
       "maxLength": 5592410,
       "pattern": "^[A-Za-z0-9+/]+={0,2}$"
-    },
-    "layout": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": [
-        "dock",
-        "scale",
-        "safeMargin"
-      ],
-      "properties": {
-        "dock": {
-          "enum": [
-            "top-center"
-          ]
-        },
-        "scale": {
-          "type": "number",
-          "minimum": 0.1,
-          "maximum": 4
-        },
-        "safeMargin": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 1024
-        }
-      }
     },
     "variables": {
       "type": "object",

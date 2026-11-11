@@ -543,7 +543,7 @@ export function BossbarCanvasStage({
       const localX = event.clientX - rect.left
       const localY = event.clientY - rect.top
       const factor = event.deltaY < 0 ? 1.25 : 1 / 1.25
-      const zoom = Math.max(0.1, Math.min(16, current.zoom * factor))
+      const zoom = Math.max(0.1, Math.min(64, current.zoom * factor))
       if (zoom === current.zoom) return
       const designX = (localX - current.panX) / current.zoom
       const designY = (localY - current.panY) / current.zoom

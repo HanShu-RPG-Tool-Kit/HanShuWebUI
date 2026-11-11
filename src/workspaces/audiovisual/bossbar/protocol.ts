@@ -37,14 +37,6 @@ export const BOSSBAR_SAMPLE_TEXTURE =
 
 /** 预算与几何限制（设计文档 9.5 节）；超限必须给诊断，不能静默裁剪 */
 export const BOSSBAR_LIMITS = {
-  layout: {
-    defaultScale: 0.5,
-    minScale: 0.1,
-    maxScale: 4,
-    defaultSafeMargin: 12,
-    minSafeMargin: 0,
-    maxSafeMargin: 1024,
-  },
   components: 128,
   variables: 64,
   sequenceFrames: 256,
@@ -80,9 +72,6 @@ export const BOSSBAR_LIMITS = {
   batchTimeoutMs: 2000,
 } as const
 
-export const BOSSBAR_DOCK = ['top-center'] as const
-export type BossbarDock = (typeof BOSSBAR_DOCK)[number]
-
 export const BOSSBAR_COMPONENT_TYPES = ['display_region', 'background', 'bar', 'text'] as const
 export type BossbarComponentType = (typeof BOSSBAR_COMPONENT_TYPES)[number]
 
@@ -111,11 +100,17 @@ export type BossbarTextVerticalAlign = (typeof BOSSBAR_TEXT_VERTICAL_ALIGNS)[num
 export const BOSSBAR_VARIABLE_TYPES = ['double', 'bool', 'string'] as const
 export type BossbarVariableType = (typeof BOSSBAR_VARIABLE_TYPES)[number]
 
-/** 默认值表：解析补齐、保存显式输出都由它驱动 */
-export const BOSSBAR_DEFAULTS = {
-  dock: 'top-center' as BossbarDock,
+/**
+ * 客户端屏幕摆放（不进文档）：顶部居中，按显示区域宽度缩放，左右留白。
+ * 作者只需设计 display_region 与组件；缩放与边距由客户端固定。
+ */
+export const BOSSBAR_VIEW = {
   scale: 0.5,
   safeMargin: 12,
+} as const
+
+/** 默认值表：解析补齐、保存显式输出都由它驱动 */
+export const BOSSBAR_DEFAULTS = {
   displayRegion: { x: 0, y: 0, width: 768, height: 72 },
   visible: true,
   opacity: 1,
@@ -140,12 +135,6 @@ export type BossbarBox = { x: number; y: number; width: number; height: number }
 
 /** 图集内的整数像素区域：左上角起点，[x,x+width) × [y,y+height) */
 export type BossbarUv = { x: number; y: number; width: number; height: number }
-
-export type BossbarLayout = {
-  dock: BossbarDock
-  scale: number
-  safeMargin: number
-}
 
 /** 值携带明确类型标签；需要精确显示的数字使用 string。 */
 export type BossbarDoubleValue = { type: 'double'; value: number }
@@ -256,7 +245,6 @@ export type BossbarDocument = {
   priority: number
   /** 纯 Base64 PNG（无前缀、无空白） */
   texture: string
-  layout: BossbarLayout
   variables: Record<string, BossbarVariable>
   components: BossbarComponent[]
 }
@@ -297,14 +285,6 @@ export function isPaintable(
   component: BossbarComponent,
 ): component is BossbarPaintableComponent {
   return component.type !== 'display_region'
-}
-
-export function defaultLayout(): BossbarLayout {
-  return {
-    dock: BOSSBAR_DEFAULTS.dock,
-    scale: BOSSBAR_LIMITS.layout.defaultScale,
-    safeMargin: BOSSBAR_LIMITS.layout.defaultSafeMargin,
-  }
 }
 
 export function doubleValue(value: number): BossbarDoubleValue {
