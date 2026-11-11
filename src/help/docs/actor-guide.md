@@ -12,6 +12,18 @@
   "despawn": "persistent",
   "display": { "mode": "set", "title": "&a卫兵", "subtitle": "&7东门" },
   "reputation": { "mode": "set", "id": "village_guard" },
+  "sounds": {
+    "hurt": { "mode": "set", "id": "minecraft:entity.ravager.hurt" },
+    "death": { "mode": "mute" },
+    "ambient": { "mode": "set", "id": "minecraft:entity.ravager.ambient" },
+    "melee": { "mode": "set", "id": "minecraft:entity.player.attack.strong" },
+    "move": {
+      "mode": "set",
+      "ground": "minecraft:block.stone.step",
+      "water": "minecraft:entity.generic.swim",
+      "air": "minecraft:entity.phantom.flap"
+    }
+  },
   "loot": {
     "xp": { "mode": "giveXp", "amount": 25 },
     "item": {
@@ -37,7 +49,7 @@
 ## 字段
 
 - **必填**：`format` / `version` / `scripts` / `tags` / `freezeAi`
-- **可选**（可省略或 `null`；未知键拒载）：`despawn` / `display` / `reputation` / `loot` / `dialogue` / `interactService`
+- **可选**（可省略或 `null`；未知键拒载）：`despawn` / `display` / `reputation` / `sounds` / `loot` / `dialogue` / `interactService`
 
 ### `despawn`（消失行为）
 
@@ -70,6 +82,17 @@
 | `reputation.mode` | `leave` 不动成员；`set` 需 `id`（已发布阵营）；`clear` 清除成员 |
 
 `leave`／`clear` 不得附带 `title`／`subtitle` 或 `id`。Boss 血条是脚本 API（`event.api().bossBar()`），**不能**写进 `.actor`。
+
+### 音效覆盖（`sounds`）
+
+在会话 **init** 时应用（与名牌／声誉同时机）。解绑 **不**自动回滚。整键省略／`null` 或空对象等同全部跟原版；各槽位也可单独省略（跟原版）。有槽位对象时 **`mode` 必填**：`leave`｜`set`｜`mute`。
+
+| 槽位 | 形态 |
+| --- | --- |
+| `hurt`／`death`／`ambient`／`melee` | `set` 需 `id`（原版音效事件，如 `minecraft:entity.ravager.hurt`）；`mute` 静音；`leave` 跟原版 |
+| `move` | `set` 需同时给 `ground`／`water`／`air` 三个音效事件；`mute` 静音全部移动音；`leave` 跟原版 |
+
+`leave`／`mute` 不得附带 `id` 或 `ground`／`water`／`air`。未知槽位键拒载。
 
 ### 对话路由
 

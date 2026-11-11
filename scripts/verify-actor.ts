@@ -20,6 +20,18 @@ const doc = {
   freezeAi: true,
   display: { mode: 'set' as const, title: '&a卫兵', subtitle: '&7东门' },
   reputation: { mode: 'set' as const, id: 'village_guard' },
+  sounds: {
+    hurt: { mode: 'set' as const, id: 'minecraft:entity.ravager.hurt' },
+    death: { mode: 'mute' as const },
+    ambient: { mode: 'set' as const, id: 'minecraft:entity.ravager.ambient' },
+    melee: { mode: 'set' as const, id: 'minecraft:entity.player.attack.strong' },
+    move: {
+      mode: 'set' as const,
+      ground: 'minecraft:block.stone.step',
+      water: 'minecraft:entity.generic.swim',
+      air: 'minecraft:entity.phantom.flap',
+    },
+  },
   loot: {
     xp: { mode: 'giveXp' as const, amount: 25 },
     item: {
@@ -76,6 +88,7 @@ assert.equal(
 assert.equal(JSON.parse(stringifyActor(doc, { plane: 'pak' })).dialogue.entries[1].when, '')
 assert.equal(stringifyActor(createActor()).includes('display'), false)
 assert.equal(stringifyActor(createActor()).includes('loot'), false)
+assert.equal(stringifyActor(createActor()).includes('sounds'), false)
 assert.deepEqual(parseActor(JSON.stringify({ ...createActor(), display: { mode: 'clear' } })).display, { mode: 'clear' })
 assert.deepEqual(parseActor(JSON.stringify({ ...createActor(), reputation: { mode: 'leave' } })).reputation, { mode: 'leave' })
 assert.deepEqual(parseActor(JSON.stringify({ ...createActor(), loot: {} })).loot, {})
@@ -84,6 +97,9 @@ assert.deepEqual(parseActor(JSON.stringify({
   ...createActor(),
   loot: { item: { items: [{ item: 'kit_blade' }] } },
 })).loot, { item: { leave: true, items: [{ item: 'kit_blade', id: '', count: 1, components: {}, chance: 1, playerKill: false }] } })
+assert.deepEqual(parseActor(JSON.stringify({ ...createActor(), sounds: {} })).sounds, {})
+assert.deepEqual(parseActor(JSON.stringify({ ...createActor(), sounds: { death: { mode: 'mute' } } })).sounds, { death: { mode: 'mute' } })
+assert.deepEqual(parseActor(JSON.stringify({ ...createActor(), sounds: { hurt: { mode: 'leave' } } })).sounds, { hurt: { mode: 'leave' } })
 for (const bad of [
   { scripts: ['x', 'x'] },
   { scripts: ['../x'] },
@@ -109,6 +125,11 @@ for (const bad of [
   { loot: { item: { items: [{ item: 'a', id: 'minecraft:stick' }] } } },
   { loot: { item: { items: [{ id: 'minecraft:stick', chance: 2 }] } } },
   { loot: { bonus: true } },
+  { sounds: { boom: { mode: 'mute' } } },
+  { sounds: { hurt: { mode: 'set' } } },
+  { sounds: { hurt: { mode: 'mute', id: 'minecraft:entity.ravager.hurt' } } },
+  { sounds: { move: { mode: 'set', ground: 'minecraft:block.stone.step' } } },
+  { sounds: { move: { mode: 'mute', ground: 'minecraft:block.stone.step', water: 'a', air: 'b' } } },
 ]) assert.throws(() => parseActor(JSON.stringify({ ...createActor(), ...bad })))
 const richTitle = stringifyFeedbackText([{ text: '卫兵', color: '#55FF55' }])
 assert.equal(richTitle.startsWith('{'), true)
@@ -132,6 +153,7 @@ assert.equal(
 assert.deepEqual(parseActor(JSON.stringify({ ...createActor(), display: null })).display, null)
 assert.deepEqual(parseActor(JSON.stringify({ ...createActor(), reputation: null })).reputation, null)
 assert.deepEqual(parseActor(JSON.stringify({ ...createActor(), loot: null })).loot, null)
+assert.deepEqual(parseActor(JSON.stringify({ ...createActor(), sounds: null })).sounds, null)
 
 const scripts = [
   { id: 'template', name: 'village.actor', content: stringifyActor(doc), updatedAt: 1 },

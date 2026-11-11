@@ -43,6 +43,32 @@ export type ActorLootSpec = {
   xp?: ActorLootXp | null
   item?: ActorLootItemSpec | null
 }
+/** 音效槽位：leave 跟原版／set 替换／mute 静音。 */
+export type ActorSoundMode = 'leave' | 'set' | 'mute'
+export type ActorSimpleSoundSpec =
+  | { mode: 'leave' | 'mute' }
+  | { mode: 'set'; id: string }
+export type ActorMoveSoundSpec =
+  | { mode: 'leave' | 'mute' }
+  | { mode: 'set'; ground: string; water: string; air: string }
+export type ActorSoundsSpec = {
+  hurt?: ActorSimpleSoundSpec
+  death?: ActorSimpleSoundSpec
+  ambient?: ActorSimpleSoundSpec
+  melee?: ActorSimpleSoundSpec
+  move?: ActorMoveSoundSpec
+}
+export const ACTOR_SOUND_SLOTS: readonly {
+  id: keyof ActorSoundsSpec
+  label: string
+  kind: 'simple' | 'move'
+}[] = [
+  { id: 'hurt', label: '受伤', kind: 'simple' },
+  { id: 'death', label: '死亡', kind: 'simple' },
+  { id: 'ambient', label: '环境', kind: 'simple' },
+  { id: 'melee', label: '近战', kind: 'simple' },
+  { id: 'move', label: '移动', kind: 'move' },
+]
 /** 模板级消失行为；缺省 inherit 表示不动原版判定。 */
 export type ActorDespawnMode = 'inherit' | 'persistent' | 'despawn'
 export const ACTOR_DESPAWN_MODES: readonly { id: ActorDespawnMode; label: string; hint: string }[] = [
@@ -62,12 +88,15 @@ export type ActorDocument = {
   dialogue?: ActorDialogue | null
   interactService?: ActorInteractService | null
   loot?: ActorLootSpec | null
+  sounds?: ActorSoundsSpec | null
 }
 
 const REQUIRED_KEYS = ['format', 'version', 'scripts', 'tags', 'freezeAi'] as const
-const OPTIONAL_KEYS = ['despawn', 'dialogue', 'interactService', 'display', 'reputation', 'loot'] as const
+const OPTIONAL_KEYS = ['despawn', 'dialogue', 'interactService', 'display', 'reputation', 'loot', 'sounds'] as const
 const ALL_KEYS = new Set<string>([...REQUIRED_KEYS, ...OPTIONAL_KEYS])
 const SIDE_EFFECT_MODES = new Set<ActorSideEffectMode>(['leave', 'set', 'clear'])
+const SOUND_MODES = new Set<ActorSoundMode>(['leave', 'set', 'mute'])
+const SOUND_SLOT_KEYS = new Set<string>(ACTOR_SOUND_SLOTS.map(slot => slot.id))
 const LOOT_XP_MODES = new Set<ActorLootXpMode>(['leave', 'dropXp', 'giveXp', 'giveLv'])
 
 export function actorLootRowToKitItem(row: ActorLootItemRow): KitItem {
@@ -139,7 +168,28 @@ export function stringifyActor(doc: ActorDocument, options?: { plane?: 'source' 
       : { type: 'vault', param: {} }
   }
   if (doc.loot != null) out.loot = writeLoot(doc.loot)
+  if (doc.sounds != null) out.sounds = writeSounds(doc.sounds)
   return JSON.stringify(out, null, 2)
+}
+
+function writeSimpleSound(spec: ActorSimpleSoundSpec): Record<string, unknown> {
+  return spec.mode === 'set' ? { mode: 'set', id: spec.id } : { mode: spec.mode }
+}
+
+function writeMoveSound(spec: ActorMoveSoundSpec): Record<string, unknown> {
+  return spec.mode === 'set'
+    ? { mode: 'set', ground: spec.ground, water: spec.water, air: spec.air }
+    : { mode: spec.mode }
+}
+
+function writeSounds(sounds: ActorSoundsSpec): Record<string, unknown> {
+  const out: Record<string, unknown> = {}
+  if (sounds.hurt) out.hurt = writeSimpleSound(sounds.hurt)
+  if (sounds.death) out.death = writeSimpleSound(sounds.death)
+  if (sounds.ambient) out.ambient = writeSimpleSound(sounds.ambient)
+  if (sounds.melee) out.melee = writeSimpleSound(sounds.melee)
+  if (sounds.move) out.move = writeMoveSound(sounds.move)
+  return out
 }
 
 function writeLoot(loot: ActorLootSpec): Record<string, unknown> {
@@ -392,6 +442,70 @@ function parseLoot(value: unknown): ActorLootSpec {
   return loot
 }
 
+function parseSoundMode(value: unknown, label: string): ActorSoundMode {
+  if (typeof value !== 'string') throw new Error(`${label}.mode 必须是 leave|set|mute`)
+  const mode = value.trim().toLowerCase() as ActorSoundMode
+  if (!SOUND_MODES.has(mode)) throw new Error(`${label}.mode 必须是 leave|set|mute`)
+  return mode
+}
+
+function parseSoundEventId(value: unknown, label: string): string {
+  const id = requireString(value, label).trim()
+  if (!id) throw new Error(`${label} 不能为空`)
+  return id
+}
+
+function parseSimpleSound(value: unknown, label: string): ActorSimpleSoundSpec {
+  if (!isObject(value)) throw new Error(`${label} 必须是对象`)
+  for (const key of Object.keys(value)) if (key !== 'mode' && key !== 'id') {
+    throw new Error(`${label} 未知字段：${key}`)
+  }
+  if (!('mode' in value) || value.mode == null) throw new Error(`${label}.mode 必填`)
+  const mode = parseSoundMode(value.mode, label)
+  if (mode !== 'set') {
+    if ('id' in value) throw new Error(`${label}.id 仅允许 mode=set`)
+    return { mode }
+  }
+  if (!('id' in value) || value.id == null) throw new Error(`${label}.id 在 mode=set 时必填`)
+  return { mode: 'set', id: parseSoundEventId(value.id, `${label}.id`) }
+}
+
+function parseMoveSound(value: unknown): ActorMoveSoundSpec {
+  if (!isObject(value)) throw new Error('sounds.move 必须是对象')
+  for (const key of Object.keys(value)) if (!['mode', 'ground', 'water', 'air'].includes(key)) {
+    throw new Error(`sounds.move 未知字段：${key}`)
+  }
+  if (!('mode' in value) || value.mode == null) throw new Error('sounds.move.mode 必填')
+  const mode = parseSoundMode(value.mode, 'sounds.move')
+  if (mode !== 'set') {
+    if ('ground' in value || 'water' in value || 'air' in value) {
+      throw new Error('sounds.move ground/water/air 仅允许 mode=set')
+    }
+    return { mode }
+  }
+  requireExactKeys(value, new Set(['mode', 'ground', 'water', 'air']), 'sounds.move')
+  return {
+    mode: 'set',
+    ground: parseSoundEventId(value.ground, 'sounds.move.ground'),
+    water: parseSoundEventId(value.water, 'sounds.move.water'),
+    air: parseSoundEventId(value.air, 'sounds.move.air'),
+  }
+}
+
+function parseSounds(value: unknown): ActorSoundsSpec {
+  if (!isObject(value)) throw new Error('sounds 必须是对象或 null')
+  for (const key of Object.keys(value)) if (!SOUND_SLOT_KEYS.has(key)) {
+    throw new Error(`未知 sounds 字段：${key}`)
+  }
+  const sounds: ActorSoundsSpec = {}
+  if ('hurt' in value) sounds.hurt = parseSimpleSound(value.hurt, 'sounds.hurt')
+  if ('death' in value) sounds.death = parseSimpleSound(value.death, 'sounds.death')
+  if ('ambient' in value) sounds.ambient = parseSimpleSound(value.ambient, 'sounds.ambient')
+  if ('melee' in value) sounds.melee = parseSimpleSound(value.melee, 'sounds.melee')
+  if ('move' in value) sounds.move = parseMoveSound(value.move)
+  return sounds
+}
+
 function parseDespawn(value: unknown): ActorDespawnMode {
   if (value === undefined || value === null) return 'inherit'
   if (typeof value !== 'string' || !ACTOR_DESPAWN_MODES.some(mode => mode.id === value)) {
@@ -431,5 +545,6 @@ export function parseActor(source: string): ActorDocument {
     dialogue: parseOptionalObject(raw, 'dialogue', parseDialogue),
     interactService: parseOptionalObject(raw, 'interactService', parseInteractService),
     loot: parseOptionalObject(raw, 'loot', parseLoot),
+    sounds: parseOptionalObject(raw, 'sounds', parseSounds),
   }
 }

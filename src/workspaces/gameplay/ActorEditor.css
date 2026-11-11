@@ -486,9 +486,62 @@
 
 .actor-shop-note { margin-top: -2px; }
 
+/* ---------- sounds ---------- */
+.actor-sound-slots {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.actor-sound-slot {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--kit-radius);
+  background: #2a2a2a;
+}
+
+.actor-sound-slot.is-off {
+  opacity: 0.72;
+}
+
+.actor-sound-slot-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.actor-sound-slot-label {
+  flex: none;
+  min-width: 3em;
+  color: var(--text-bright);
+  font-size: calc(12.5px * var(--fl-s, 1.25) / 1.1);
+}
+
+.actor-sound-slot-head > .sheet-select {
+  width: auto;
+  min-width: 7em;
+}
+
+.actor-sound-slot > .sheet-field,
+.actor-sound-slot > .sheet-note,
+.actor-sound-slot > .sheet-off,
+.actor-sound-move {
+  margin-top: 8px;
+}
+
+.actor-sound-move {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
 @container (max-width: 620px) {
   .actor-dialogue-roles,
   .actor-service-types { grid-template-columns: 1fr; }
+  .actor-sound-move { grid-template-columns: 1fr; }
   .actor-entry-when-summary { display: none; }
 }
 

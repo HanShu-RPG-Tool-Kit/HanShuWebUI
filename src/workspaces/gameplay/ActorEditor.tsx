@@ -1,4 +1,5 @@
 import { useState, type MouseEvent } from 'react'
+import { GameResourceInput } from '../../gameDevServer/EditingAssistance'
 import { AddButton, ItemCatalogContext, ItemList, KitTagField, Panel, RemoveButton } from './KitEditor'
 import { ConditionRulesEditor } from './ConditionRulesEditor'
 import { FeedbackTextEditor } from './FeedbackTextEditor'
@@ -6,6 +7,7 @@ import { actorDisplayLineForEditor } from './actorDisplayText'
 import { IconButton, JsonRepairPane, PendingBanner, RefBadge, SheetField, SheetToggle, useSheetDraft } from './SheetParts'
 import {
   ACTOR_DESPAWN_MODES,
+  ACTOR_SOUND_SLOTS,
   actorLootRowToKitItem,
   createActor,
   createActorLootItemRow,
@@ -23,7 +25,10 @@ import {
   type ActorLootSpec,
   type ActorLootXp,
   type ActorLootXpMode,
+  type ActorMoveSoundSpec,
   type ActorReputationSpec,
+  type ActorSimpleSoundSpec,
+  type ActorSoundsSpec,
   type ProgressConditionRule,
 } from './actor'
 import type { ItemCatalog } from './kit'
@@ -41,6 +46,20 @@ const SIDE_EFFECT_UI_MODES: { id: SideEffectUiMode; label: string }[] = [
   { id: 'omit', label: '不修改' },
   { id: 'set', label: '写入' },
   { id: 'clear', label: '清除' },
+]
+
+type SoundUiMode = 'omit' | 'set' | 'mute'
+
+const SOUND_UI_MODES: { id: SoundUiMode; label: string }[] = [
+  { id: 'omit', label: '跟原版' },
+  { id: 'set', label: '替换' },
+  { id: 'mute', label: '静音' },
+]
+
+const MOVE_CHANNELS: readonly { id: 'ground' | 'water' | 'air'; label: string }[] = [
+  { id: 'ground', label: '地面' },
+  { id: 'water', label: '水中' },
+  { id: 'air', label: '空中' },
 ]
 
 const LOOT_XP_MODES: { id: ActorLootXpMode; label: string; unit: string }[] = [
@@ -90,6 +109,41 @@ function nextLootXp(mode: ActorLootXpMode, previous: ActorLootXp | null): ActorL
 function nextLootItem(mode: LootItemMode, previous: ActorLootItemSpec | null, stashed: ActorLootItemRow[]): ActorLootItemSpec | undefined {
   if (mode === 'vanilla') return undefined
   return { leave: mode === 'append', items: previous?.items ?? stashed }
+}
+
+function soundModeOf(value: ActorSimpleSoundSpec | ActorMoveSoundSpec | undefined): SoundUiMode {
+  return !value || value.mode === 'leave' ? 'omit' : value.mode
+}
+
+function nextSimpleSound(mode: SoundUiMode, previous: ActorSimpleSoundSpec | undefined): ActorSimpleSoundSpec | undefined {
+  if (mode === 'omit') return undefined
+  if (mode === 'set') return previous?.mode === 'set' ? previous : { mode: 'set', id: '' }
+  return { mode: 'mute' }
+}
+
+function nextMoveSound(mode: SoundUiMode, previous: ActorMoveSoundSpec | undefined): ActorMoveSoundSpec | undefined {
+  if (mode === 'omit') return undefined
+  if (mode === 'set') {
+    return previous?.mode === 'set' ? previous : { mode: 'set', ground: '', water: '', air: '' }
+  }
+  return { mode: 'mute' }
+}
+
+function patchSounds(sounds: ActorSoundsSpec | null, patch: Partial<ActorSoundsSpec>): ActorSoundsSpec {
+  const next: ActorSoundsSpec = { ...(sounds ?? {}) }
+  for (const [key, value] of Object.entries(patch) as [keyof ActorSoundsSpec, ActorSoundsSpec[keyof ActorSoundsSpec] | undefined][]) {
+    if (value === undefined) delete next[key]
+    else next[key] = value as never
+  }
+  return next
+}
+
+function soundsActive(sounds: ActorSoundsSpec | null | undefined): boolean {
+  if (!sounds) return false
+  return ACTOR_SOUND_SLOTS.some(slot => {
+    const value = sounds[slot.id]
+    return !!value && value.mode !== 'leave'
+  })
 }
 
 const percentOf = (chance: number) => Number((chance * 100).toFixed(2))
@@ -219,6 +273,7 @@ export function ActorEditor({
   const service = doc.interactService ?? null
   const loot = doc.loot ?? null
   const lootItem = loot?.item ?? null
+  const sounds = doc.sounds ?? null
   const setDialogue = (next: Partial<ActorDialogue>) => { if (dialogue) update({ dialogue: { ...dialogue, ...next } }) }
   const setEntries = (entries: ActorDialogueEntry[]) => {
     setDialogue({ entries })
@@ -518,6 +573,71 @@ export function ActorEditor({
     </div> : <p className="sheet-off">未启用 · 掉落完全跟原版，脚本 hook 仍可改写</p>}
   </Panel>
 
+  const setSounds = (next: ActorSoundsSpec | null) => update({ sounds: next })
+  const patchSoundSlot = <K extends keyof ActorSoundsSpec>(key: K, value: ActorSoundsSpec[K] | undefined) => {
+    setSounds(patchSounds(sounds, { [key]: value }))
+  }
+  const soundsPanel = <Panel title="音效覆盖" subtitle="绑定时套用 · 覆盖原版实体音效" className={`sheet-panel actor-sounds${sounds ? '' : ' is-off'}`}
+    action={<SheetToggle label="启用" ariaLabel="启用音效覆盖" checked={sounds != null} disabled={disabled} onChange={on => setSounds(on ? {} : null)} />}>
+    {sounds ? <div className="sheet-panel-body">
+      <ul className="actor-sound-slots">
+        {ACTOR_SOUND_SLOTS.map(slot => {
+          const value = sounds[slot.id]
+          const mode = soundModeOf(value as ActorSimpleSoundSpec | ActorMoveSoundSpec | undefined)
+          const simple = slot.kind === 'simple' ? value as ActorSimpleSoundSpec | undefined : undefined
+          const move = slot.kind === 'move' ? value as ActorMoveSoundSpec | undefined : undefined
+          const simpleId = simple?.mode === 'set' ? simple.id : ''
+          const simpleIssue = simple?.mode === 'set' && !simpleId.trim() ? '替换时必填音效 ID' : ''
+          return <li key={slot.id} className={`actor-sound-slot${mode === 'omit' ? ' is-off' : ''}`}>
+            <div className="actor-sound-slot-head">
+              <span className="actor-sound-slot-label">{slot.label}</span>
+              <select
+                className="sheet-select"
+                aria-label={`${slot.label}音效模式`}
+                disabled={disabled}
+                value={mode}
+                onChange={e => {
+                  const next = e.target.value as SoundUiMode
+                  if (slot.kind === 'simple') patchSoundSlot(slot.id, nextSimpleSound(next, simple))
+                  else patchSoundSlot('move', nextMoveSound(next, move))
+                }}
+              >
+                {SOUND_UI_MODES.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}
+              </select>
+            </div>
+            {slot.kind === 'simple' && simple?.mode === 'set' && <SheetField label="音效" invalid={!!simpleIssue} hint={simpleIssue || '原版音效事件 ID，可连接游戏搜索试听。'}>
+              <GameResourceInput
+                kind="sounds"
+                value={simpleId}
+                disabled={disabled}
+                label={`${slot.label}音效`}
+                onChange={id => patchSoundSlot(slot.id, { mode: 'set', id })}
+              />
+            </SheetField>}
+            {slot.kind === 'move' && move?.mode === 'set' && <div className="actor-sound-move">
+              {MOVE_CHANNELS.map(channel => {
+                const channelId = move[channel.id]
+                const channelIssue = !channelId.trim() ? '必填' : ''
+                return <SheetField key={channel.id} label={channel.label} invalid={!!channelIssue} hint={channelIssue || undefined}>
+                  <GameResourceInput
+                    kind="sounds"
+                    value={channelId}
+                    disabled={disabled}
+                    label={`移动${channel.label}音效`}
+                    onChange={id => patchSoundSlot('move', { ...move, [channel.id]: id })}
+                  />
+                </SheetField>
+              })}
+            </div>}
+            {mode === 'mute' && <p className="sheet-note">该槽位静音，不再播放原版音效。</p>}
+            {mode === 'omit' && <p className="sheet-off">跟原版</p>}
+          </li>
+        })}
+      </ul>
+      {!soundsActive(sounds) && <p className="sheet-note">五个槽位都跟原版，当前等同未启用。</p>}
+    </div> : <p className="sheet-off">未启用 · 音效完全跟原版</p>}
+  </Panel>
+
   const body = <div className="flow-kit-pane sheet-editor actor-editor" aria-label="演员模板编辑器"><div className="kit-editor"><div className="kit-page sheet-page">
     <header className="kit-header sheet-header">
       <div className="sheet-heading">
@@ -548,7 +668,8 @@ export function ActorEditor({
       {displayPanel}
       {reputationPanel}
     </div>
-    <p className="sheet-note is-info"><span>名牌／声誉副作用在有脚本时于会话 init 应用，无脚本时于绑定时应用；模板可显式 <code>clear</code>。<b>解绑本身不会回滚</b>这两项。</span></p>
+    {soundsPanel}
+    <p className="sheet-note is-info"><span>名牌／声誉／音效副作用在有脚本时于会话 init 应用，无脚本时于绑定时应用；名牌与声誉可显式 <code>clear</code>，音效可 <code>mute</code>。<b>解绑本身不会回滚</b>这些副作用。</span></p>
     <div className="sheet-columns">
       {dialoguePanel}
       {servicePanel}
