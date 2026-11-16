@@ -24,6 +24,7 @@ import {
   formatClock,
   formatDateTime,
   maskApiKey,
+  prettyToolText,
   runStateLabel,
   segmentOptionLabel,
   segmentStateLabel,
@@ -232,14 +233,28 @@ const toolHtml = renderToStaticMarkup(
 assert.ok(toolHtml.includes('agent-tool-row'), '工具调用渲染成一行')
 assert.ok(toolHtml.includes('agent-tool-tag">工具<'), '一行里带“工具”标签')
 assert.ok(toolHtml.includes('read_source'), '一行里带工具名')
-assert.ok(toolHtml.includes('>输入<'), '有调用参数时提供「输入」入口')
-assert.ok(toolHtml.includes('>输出<'), '有输出时提供「输出」入口')
+assert.ok(toolHtml.includes('输入</button>'), '有调用参数时提供「输入」入口')
+assert.ok(toolHtml.includes('输出</button>'), '有输出时提供「输出」入口')
+assert.ok(toolHtml.includes('agent-tool-caret'), '展开入口带三角符号')
+assert.ok(toolHtml.includes('▸'), '默认收起时三角朝右')
+const actionsAt = toolHtml.indexOf('agent-tool-actions')
+const statusAt = toolHtml.indexOf('agent-tool-status')
+assert.ok(actionsAt > 0 && statusAt > actionsAt, '输入/输出入口在状态左边')
 assert.ok(toolHtml.includes('成功'), 'done 状态显示「成功」而不是「完成」')
 assert.ok(toolHtml.includes('运行中'), 'running 状态显示「运行中」')
 assert.equal((toolHtml.match(/agent-tool-row/g) ?? []).length, 2, '每个工具调用只占一行')
 assert.ok(!toolHtml.includes('agent-msg-role">工具'), '不再使用独立的角色行')
 assert.ok(!toolHtml.includes('agent-tool-pane'), '输入/输出默认收起')
 assert.ok(!toolHtml.includes('序章.hs'), '收起时不把参数内容铺到对话流里')
+
+/* ── 工具输入/输出的 JSON 展示：两空格缩进；非 JSON 原样 ── */
+assert.equal(
+  prettyToolText('{"source":"阿拉丁神灯.hs"}'),
+  '{\n  "source": "阿拉丁神灯.hs"\n}',
+  '合法 JSON 按两空格缩进格式化',
+)
+assert.equal(prettyToolText('第一行\n第二行'), '第一行\n第二行', '非 JSON 文本原样返回')
+assert.equal(prettyToolText(undefined), undefined, '没有内容时不产生展示文本')
 
 console.log(
   '通过：Agent 面板视图派生（行 id/流式/工具状态、失败记录与回滚摘要、占用阈值、Key 掩码、时间与文案）',

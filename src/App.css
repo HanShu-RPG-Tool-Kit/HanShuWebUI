@@ -2077,6 +2077,7 @@ body.is-resizing .monaco-editor {
 }
 
 .agent-tool-name {
+  flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2085,24 +2086,37 @@ body.is-resizing .monaco-editor {
   color: var(--text-bright);
 }
 
+/* 输入/输出入口固定在右侧、状态左边；带三角符号表示展开状态 */
+.agent-tool-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+}
+
 .agent-tool-toggle {
   appearance: none;
+  display: inline-flex;
   flex-shrink: 0;
-  padding: 0 4px;
-  border: 1px solid transparent;
+  align-items: center;
+  gap: 2px;
+  padding: 0 5px;
+  border: 1px solid var(--border-soft);
   border-radius: 3px;
   background: transparent;
   color: var(--text-dim);
   font-family: inherit;
   font-size: 11px;
-  line-height: 16px;
+  line-height: 15px;
   cursor: pointer;
-  text-decoration: underline dotted;
+  text-decoration: none;
 }
 
 .agent-tool-toggle:hover {
+  border-color: var(--accent);
   color: var(--text-bright);
-  background: rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .agent-tool-toggle.on {
@@ -2111,8 +2125,15 @@ body.is-resizing .monaco-editor {
   color: #9ec9ea;
 }
 
+.agent-tool-caret {
+  display: inline-block;
+  width: 8px;
+  font-size: 10px;
+  line-height: 1;
+  text-align: center;
+}
+
 .agent-tool-status {
-  margin-left: auto;
   flex-shrink: 0;
 }
 

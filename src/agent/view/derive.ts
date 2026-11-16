@@ -152,6 +152,19 @@ export type ToolRow = {
 }
 
 /**
+ * 工具输入/输出的展示文本：合法 JSON 时格式化成 2 空格缩进（对话流里可读），
+ * 否则原样返回（有些工具输出是普通文本，不能按 JSON 解析）。
+ */
+export function prettyToolText(text: string | undefined): string | undefined {
+  if (text === undefined) return undefined
+  try {
+    return JSON.stringify(JSON.parse(text), null, 2)
+  } catch {
+    return text
+  }
+}
+
+/**
  * 一条可渲染的对话行。`id` 直接来自 `AgentViewItem.id`——
  * 订阅到新视图时 React 按 id 复用节点，流式更新只改 assist 文本，不整棵重挂。
  */

@@ -10,7 +10,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { AgentMarkdown } from '../AgentMarkdown'
-import { clipText, type MessageRow, type ToolRow } from './derive'
+import { clipText, prettyToolText, type MessageRow, type ToolRow } from './derive'
 
 const TOOL_STATUS_LABEL = {
   running: '运行中',
@@ -64,12 +64,15 @@ export function MessageList({ rows, status, resetKey, empty }: Props) {
 }
 
 /**
- * 工具调用压成一行：`工具 | 名称  输入 输出  状态`。
- * 输入/输出是独立的就地展开开关，展开内容限制高度并单独滚动，避免 JSON 撑爆对话流。
+ * 工具调用压成一行：`工具 | 名称 … 输入 输出  状态`。
+ * 输入/输出按钮固定在右侧、状态左边，带三角符号表示展开状态；
+ * 展开内容限制高度并单独滚动，JSON 按两空格缩进，避免撑爆对话流。
  */
 function ToolLine({ tool }: { tool: ToolRow }) {
   const [inputOpen, setInputOpen] = useState(false)
   const [outputOpen, setOutputOpen] = useState(false)
+  const inputText = prettyToolText(tool.input)
+  const outputText = prettyToolText(tool.output)
   return (
     <div className="agent-msg tool">
       <div className="agent-tool">
@@ -78,37 +81,47 @@ function ToolLine({ tool }: { tool: ToolRow }) {
           <span className="agent-tool-name" title={tool.name}>
             {tool.name}
           </span>
-          {tool.input ? (
-            <button
-              type="button"
-              className={`agent-tool-toggle${inputOpen ? ' on' : ''}`}
-              aria-expanded={inputOpen}
-              title={inputOpen ? '收起调用参数' : '查看调用参数'}
-              onClick={() => setInputOpen((open) => !open)}
-            >
-              输入
-            </button>
-          ) : null}
-          {tool.output ? (
-            <button
-              type="button"
-              className={`agent-tool-toggle${outputOpen ? ' on' : ''}`}
-              aria-expanded={outputOpen}
-              title={outputOpen ? '收起输出' : '查看输出'}
-              onClick={() => setOutputOpen((open) => !open)}
-            >
-              输出
-            </button>
+          {inputText || outputText ? (
+            <span className="agent-tool-actions">
+              {inputText ? (
+                <button
+                  type="button"
+                  className={`agent-tool-toggle${inputOpen ? ' on' : ''}`}
+                  aria-expanded={inputOpen}
+                  title={inputOpen ? '收起调用参数' : '查看调用参数'}
+                  onClick={() => setInputOpen((open) => !open)}
+                >
+                  <span className="agent-tool-caret" aria-hidden="true">
+                    {inputOpen ? '▾' : '▸'}
+                  </span>
+                  输入
+                </button>
+              ) : null}
+              {outputText ? (
+                <button
+                  type="button"
+                  className={`agent-tool-toggle${outputOpen ? ' on' : ''}`}
+                  aria-expanded={outputOpen}
+                  title={outputOpen ? '收起输出' : '查看输出'}
+                  onClick={() => setOutputOpen((open) => !open)}
+                >
+                  <span className="agent-tool-caret" aria-hidden="true">
+                    {outputOpen ? '▾' : '▸'}
+                  </span>
+                  输出
+                </button>
+              ) : null}
+            </span>
           ) : null}
           <span className={`agent-tool-status ${tool.status}`}>
             {TOOL_STATUS_LABEL[tool.status]}
           </span>
         </div>
-        {inputOpen && tool.input ? (
-          <pre className="agent-tool-pane">{clipText(tool.input)}</pre>
+        {inputOpen && inputText ? (
+          <pre className="agent-tool-pane">{clipText(inputText)}</pre>
         ) : null}
-        {outputOpen && tool.output ? (
-          <pre className="agent-tool-pane">{clipText(tool.output)}</pre>
+        {outputOpen && outputText ? (
+          <pre className="agent-tool-pane">{clipText(outputText)}</pre>
         ) : null}
       </div>
     </div>
