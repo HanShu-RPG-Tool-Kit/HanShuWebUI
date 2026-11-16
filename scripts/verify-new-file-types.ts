@@ -291,8 +291,8 @@ assert.ok(
   '分类入口的类型过滤只能在剧本类型子集里挑',
 )
 assert.ok(
-  /<CategoryExplorer\b/.test(stageplayExplorerSource) && /StageplayAssetsAddon/.test(stageplayExplorerSource),
-  '剧本资源树应基于 CategoryExplorer，并保留 assets 附加件',
+  /<CategoryExplorer\b/.test(stageplayExplorerSource) && !/StageplayAssetsAddon|AssetManagerPanel/.test(stageplayExplorerSource),
+  '剧本资源树应基于 CategoryExplorer，且不挂载 assets 管理视图',
 )
 for (const [name, source] of [['explorerCategories.ts', categorySource], ['explorerMenus.tsx', explorerSource]] as const) {
   assert.ok(

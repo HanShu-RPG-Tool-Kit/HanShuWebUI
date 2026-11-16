@@ -3,6 +3,7 @@ import { createViewFlags } from '../ui/viewFlags'
 /** 剧本大栏的查看开关。别的工作区不要写这份，各自 createViewFlags。 */
 export type ScriptViewFlags = {
   explorer: boolean
+  assetManager: boolean
   agent: boolean
   roles: boolean
   /** 录音棚是编辑模式，不记住到下次打开。 */
@@ -20,6 +21,7 @@ export const scriptViewFlags = createViewFlags<ScriptViewFlags>(
   'hanshu.view.script',
   {
     explorer: true,
+    assetManager: false,
     agent: true,
     roles: true,
     studio: false,
@@ -44,6 +46,7 @@ export const SCRIPT_FONT_MAX = FONT_MAX
 
 const VIEW_MENU = {
   'explorer-panel': 'explorer',
+  'asset-manager-panel': 'assetManager',
   'agent-panel': 'agent',
   'roles-panel': 'roles',
   'voice-studio': 'studio',

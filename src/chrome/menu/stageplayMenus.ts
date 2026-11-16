@@ -54,6 +54,7 @@ export const stageplayMenuContribution: MenuContribution = {
       label: '查看',
       items: [
         cmd('explorer-panel', '资源管理器', { checked: () => scriptViewFlags.get().explorer }),
+        cmd('asset-manager-panel', '资产管理器', { checked: () => scriptViewFlags.get().assetManager }),
         cmd('agent-panel', 'Agent 窗口', { checked: () => scriptViewFlags.get().agent }),
         cmd('roles-panel', '备选角色', { checked: () => scriptViewFlags.get().roles }),
         cmd('voice-studio', '录音棚', { checked: () => scriptViewFlags.get().studio }),

@@ -21,6 +21,7 @@ export function scriptPaletteChoices(): DialogChoice[] {
     { id: 'prev-problem', label: '上一个问题' },
     { id: 'next-problem', label: '下一个问题' },
     { id: 'explorer-panel', label: '资源管理器', detail: shown(view.explorer) },
+    { id: 'asset-manager-panel', label: '资产管理器', detail: shown(view.assetManager) },
     { id: 'agent-panel', label: 'Agent 窗口', detail: shown(view.agent) },
     { id: 'roles-panel', label: '备选角色', detail: shown(view.roles) },
     { id: 'voice-studio', label: '录音棚', detail: shown(view.studio) },

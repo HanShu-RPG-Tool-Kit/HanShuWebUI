@@ -1,4 +1,4 @@
-import { useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import {
   assetFileName,
   buildAssetTree,
@@ -9,16 +9,17 @@ import { endDrag, writeDragPayload, type DragSource } from "../../drag/dragPaylo
 import { useFolderDropTarget } from "../../drag/useFolderDropTarget";
 import { ExplorerIcon, fileIconKind } from "../../explorerIcons";
 import type { ExplorerContextItem } from "./explorerMenus";
+import { ExplorerContextMenu } from "./explorerMenus";
 import type { AssetFile, Project } from "../../workspace";
 
 /**
- * 剧本资源树的 `assets/` 真实目录（**临时特例**）。
+ * `assets/` 真实目录管理面板。
  *
  * 通用资源管理器底座只认「分类 → 共享虚拟文件夹 → 源文件」；`assets/` 是磁盘上的真实目录树，
  * 新建 / 删除文件夹会改工程路径，不能按共享虚拟文件夹处理，也不进入底座核心。
- * 剧本工作区把它挂在分类树之后；资产工作区接管 `assets/` 后整体卸载本组件，见帮助「通用资源管理器底座」。
+ * 与分类资源树分离；物理目录操作仍由工作区经 ProjectClient 事务执行。
  */
-export function StageplayAssetsAddon({
+export function AssetManagerPanel({
   project,
   activeAssetId,
   onToggleRoot,
@@ -28,8 +29,7 @@ export function StageplayAssetsAddon({
   onDeleteAssetFolder,
   onImportAssets,
   onDropIntoFolder,
-  onRequestImport,
-  showContext,
+  dock,
 }: {
   project: Project;
   activeAssetId: string | null;
@@ -48,9 +48,16 @@ export function StageplayAssetsAddon({
     targetDir: string,
     source: DragSource,
   ) => void;
-  onRequestImport: (dir: string) => void;
-  showContext: (event: ReactMouseEvent, items: ExplorerContextItem[]) => void;
+  dock: import('../../explorerShell').ExplorerDockProps;
 }) {
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; items: ExplorerContextItem[] } | null>(null);
+  const showContext = (event: ReactMouseEvent, items: ExplorerContextItem[]) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setContextMenu({ x: event.clientX, y: event.clientY, items });
+  };
+  const importInputRef = useRef<HTMLInputElement>(null);
+  const importDirRef = useRef('assets');
   const [collapsedDirs, setCollapsedDirs] = useState<Record<string, boolean>>(
     {},
   );
@@ -58,8 +65,26 @@ export function StageplayAssetsAddon({
     () => buildAssetTree(project.assets, project.assetFolders ?? []),
     [project.assets, project.assetFolders],
   );
+  const requestImport = (dir: string) => {
+    importDirRef.current = dir;
+    if (!importInputRef.current) return;
+    importInputRef.current.value = '';
+    importInputRef.current.click();
+  };
   return (
-    <AssetFolderBlock
+    <section className="stageplay-asset-manager stageplay-explorer-assets">
+      <header className="stageplay-asset-manager-heading">
+        <strong
+          title="资产管理器"
+          onPointerDown={(event) => {
+            if (event.target instanceof Element && event.target.closest('button, input')) return;
+            dock.onTitlePointerDown?.(event);
+          }}
+        >资产管理器</strong>
+        <button type="button" title="导入到 assets/" onClick={() => requestImport('assets')}>导入</button>
+        {dock.onRedock && <button type="button" title="停靠回上次位置" onClick={dock.onRedock}>停靠</button>}
+      </header>
+      <AssetFolderBlock
       pkgId={project.id}
       dir={tree}
       depth={0}
@@ -76,9 +101,16 @@ export function StageplayAssetsAddon({
       onDeleteAssetFolder={onDeleteAssetFolder}
       onImportAssets={onImportAssets}
       onDropIntoFolder={onDropIntoFolder}
-      onRequestImport={onRequestImport}
+      onRequestImport={requestImport}
       showContext={showContext}
-    />
+      />
+      <input ref={importInputRef} type="file" multiple hidden onChange={(event) => {
+        const files = event.currentTarget.files;
+        if (files?.length) onImportAssets(project.id, files, importDirRef.current);
+        event.currentTarget.value = '';
+      }} />
+      {contextMenu && <ExplorerContextMenu x={contextMenu.x} y={contextMenu.y} items={contextMenu.items} onClose={() => setContextMenu(null)} />}
+    </section>
   );
 }
 
