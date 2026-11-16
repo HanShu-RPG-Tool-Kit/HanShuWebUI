@@ -146,6 +146,8 @@ export function describeError(error: unknown): string {
 export type ToolRow = {
   name: string
   status: 'running' | 'done' | 'error'
+  /** 调用参数（紧凑 JSON 文本）；默认收起，点「输入」才展开 */
+  input?: string
   output?: string
 }
 
@@ -171,7 +173,12 @@ export function deriveMessageRows(items: AgentViewItem[]): MessageRow[] {
         id: item.id,
         kind: 'tool',
         roleLabel: '工具',
-        tool: { name: item.name, status: item.status, output: item.output },
+        tool: {
+          name: item.name,
+          status: item.status,
+          input: item.input,
+          output: item.output,
+        },
       }
     }
     if (item.kind === 'assistant') {

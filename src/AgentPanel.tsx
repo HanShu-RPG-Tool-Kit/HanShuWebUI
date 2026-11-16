@@ -234,12 +234,17 @@ export function RollbackCard({
 }: RollbackCardProps) {
   if (!pending) return null
   const locked = busy !== null || disabled
+  const stopped = pending.reason === 'stopped'
   const failures = formatRollbackFailures(pending.outcomes ?? [])
   const shown = pending.conflicts.slice(0, 5)
   return (
-    <div className="agent-rollback" role="alert" aria-label="回滚待处理">
+    <div
+      className={`agent-rollback${stopped ? ' stopped' : ''}`}
+      role="alert"
+      aria-label={stopped ? '停止后待处理' : '回滚待处理'}
+    >
       <div className="agent-rollback-head">
-        <span>回滚待处理</span>
+        <span>{stopped ? '已停止，改动保留为草稿' : '回滚待处理'}</span>
         {pending.status === 'failed' && <span className="agent-rollback-tag">回滚失败</span>}
       </div>
       {shown.length > 0 && (
@@ -258,22 +263,44 @@ export function RollbackCard({
         <div className="agent-rollback-failures">未恢复：{failures.join('；')}</div>
       )}
       {notice && <div className="agent-rollback-notice">{notice}</div>}
-      <div className="agent-rollback-actions">
-        <button type="button" disabled={locked} onClick={onHelp}>
-          {busy === 'help' ? '提交中…' : '让 Agent 帮忙处理冲突'}
-        </button>
-        <button type="button" disabled={locked} onClick={onForce}>
-          {busy === 'force' ? '回滚中…' : '强制回滚'}
-        </button>
-        <button type="button" disabled={locked} onClick={onAbandon}>
-          {busy === 'abandon' ? '处理中…' : '放弃回滚'}
-        </button>
-        {pending.status === 'failed' && (
+      {stopped ? (
+        <div className="agent-rollback-actions">
           <button type="button" disabled={locked} onClick={onRetry}>
-            {busy === 'retry' ? '重试中…' : '重试回滚'}
+            {busy === 'retry' ? '回滚中…' : '回滚本次改动'}
           </button>
-        )}
-      </div>
+          <button type="button" disabled={locked} onClick={onAbandon}>
+            {busy === 'abandon' ? '处理中…' : '保留改动'}
+          </button>
+          {/* 重试失败后才提供强制手段，避免用户一停止就被“强制回滚”误导 */}
+          {pending.status === 'failed' && (
+            <>
+              <button type="button" disabled={locked} onClick={onHelp}>
+                {busy === 'help' ? '提交中…' : '让 Agent 帮忙处理冲突'}
+              </button>
+              <button type="button" disabled={locked} onClick={onForce}>
+                {busy === 'force' ? '回滚中…' : '强制回滚'}
+              </button>
+            </>
+          )}
+        </div>
+      ) : (
+        <div className="agent-rollback-actions">
+          <button type="button" disabled={locked} onClick={onHelp}>
+            {busy === 'help' ? '提交中…' : '让 Agent 帮忙处理冲突'}
+          </button>
+          <button type="button" disabled={locked} onClick={onForce}>
+            {busy === 'force' ? '回滚中…' : '强制回滚'}
+          </button>
+          <button type="button" disabled={locked} onClick={onAbandon}>
+            {busy === 'abandon' ? '处理中…' : '放弃回滚'}
+          </button>
+          {pending.status === 'failed' && (
+            <button type="button" disabled={locked} onClick={onRetry}>
+              {busy === 'retry' ? '重试中…' : '重试回滚'}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   )
 }
@@ -318,6 +345,8 @@ export function AgentPanel({
   const [modelIds, setModelIdsState] = useState(() => getAgentModelIds())
   const [thinkingLevels, setThinkingLevelsState] = useState(() => getAgentThinkingLevels())
   const [deletingSegment, setDeletingSegment] = useState(false)
+  /** 重命名请求进行中：段条上的其它操作按钮禁用 */
+  const [renamingSegment, setRenamingSegment] = useState(false)
   /** 归档段只读查看 */
   const [openedArchive, setOpenedArchive] = useState<OpenedArchive | null>(null)
   const [openedLoading, setOpenedLoading] = useState(false)
@@ -494,8 +523,13 @@ export function AgentPanel({
         setRollbackNotice('')
         try {
           const result = await executeRollbackAction(runtime, action)
-          if (result.ok) setRollbackNotice(result.message)
-          else setPanelError(result.message)
+          if (result.ok) {
+            setRollbackNotice(
+              action === 'abandon' && pendingRollback?.reason === 'stopped'
+                ? '已保留改动'
+                : result.message,
+            )
+          } else setPanelError(result.message)
         } catch (error: unknown) {
           setPanelError(`回滚失败：${describeError(error)}。`)
         } finally {
@@ -503,7 +537,7 @@ export function AgentPanel({
         }
       })()
     },
-    [runtime, rollbackBusy],
+    [runtime, rollbackBusy, pendingRollback?.reason],
   )
 
   /** 失败卡片：`pendingRollback` 存在时才有内容（组件内部判空） */
@@ -578,6 +612,30 @@ export function AgentPanel({
         .finally(() => setDeletingSegment(false))
     },
     [runtime, refreshSegments],
+  )
+
+  const renameSegment = useCallback(
+    (segmentId: string, title: string) => {
+      if (!runtime || renamingSegment) return
+      const nextTitle = title.trim()
+      if (!nextTitle) {
+        setPanelError('段标题不能为空。')
+        return
+      }
+      setRenamingSegment(true)
+      setPanelError('')
+      runtime
+        .renameSegment(segmentId, nextTitle)
+        .then(() => {
+          setPanelInfo('已重命名')
+          void refreshSegments()
+        })
+        .catch((error: unknown) => {
+          setPanelError(`重命名失败：${describeError(error)}。可重试。`)
+        })
+        .finally(() => setRenamingSegment(false))
+    },
+    [runtime, renamingSegment, refreshSegments],
   )
 
   const openSnapshot = useCallback(
@@ -811,10 +869,12 @@ export function AgentPanel({
           loading={segmentsLoading}
           creating={creatingSegment}
           deleting={deletingSegment}
+          renaming={renamingSegment}
           canDelete={!running && !deletingSegment}
           onSelect={selectSegment}
           onCreate={createSegment}
           onDelete={removeSegment}
+          onRename={renameSegment}
         />
       )}
 

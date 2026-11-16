@@ -7,14 +7,14 @@
  * - 滚动只在“本来就贴着底部”时跟随，用户往上翻历史时不会被拽下来。
  */
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { AgentMarkdown } from '../AgentMarkdown'
-import { clipText, type MessageRow } from './derive'
+import { clipText, type MessageRow, type ToolRow } from './derive'
 
 const TOOL_STATUS_LABEL = {
   running: '运行中',
-  done: '完成',
+  done: '成功',
   error: '失败',
 } as const
 
@@ -63,29 +63,63 @@ export function MessageList({ rows, status, resetKey, empty }: Props) {
   )
 }
 
+/**
+ * 工具调用压成一行：`工具 | 名称  输入 输出  状态`。
+ * 输入/输出是独立的就地展开开关，展开内容限制高度并单独滚动，避免 JSON 撑爆对话流。
+ */
+function ToolLine({ tool }: { tool: ToolRow }) {
+  const [inputOpen, setInputOpen] = useState(false)
+  const [outputOpen, setOutputOpen] = useState(false)
+  return (
+    <div className="agent-msg tool">
+      <div className="agent-tool">
+        <div className="agent-tool-row">
+          <span className="agent-tool-tag">工具</span>
+          <span className="agent-tool-name" title={tool.name}>
+            {tool.name}
+          </span>
+          {tool.input ? (
+            <button
+              type="button"
+              className={`agent-tool-toggle${inputOpen ? ' on' : ''}`}
+              aria-expanded={inputOpen}
+              title={inputOpen ? '收起调用参数' : '查看调用参数'}
+              onClick={() => setInputOpen((open) => !open)}
+            >
+              输入
+            </button>
+          ) : null}
+          {tool.output ? (
+            <button
+              type="button"
+              className={`agent-tool-toggle${outputOpen ? ' on' : ''}`}
+              aria-expanded={outputOpen}
+              title={outputOpen ? '收起输出' : '查看输出'}
+              onClick={() => setOutputOpen((open) => !open)}
+            >
+              输出
+            </button>
+          ) : null}
+          <span className={`agent-tool-status ${tool.status}`}>
+            {TOOL_STATUS_LABEL[tool.status]}
+          </span>
+        </div>
+        {inputOpen && tool.input ? (
+          <pre className="agent-tool-pane">{clipText(tool.input)}</pre>
+        ) : null}
+        {outputOpen && tool.output ? (
+          <pre className="agent-tool-pane">{clipText(tool.output)}</pre>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
 function MessageRowView({ row }: { row: MessageRow }) {
   if (row.kind === 'tool') {
     const tool = row.tool
     if (!tool) return null
-    return (
-      <div className="agent-msg tool">
-        <div className="agent-msg-role">工具</div>
-        <div className="agent-tool">
-          <div className="agent-tool-head">
-            <span className="agent-tool-name">{tool.name}</span>
-            <span className={`agent-tool-status ${tool.status}`}>
-              {TOOL_STATUS_LABEL[tool.status]}
-            </span>
-          </div>
-          {tool.output ? (
-            <details className="agent-tool-output">
-              <summary>输出</summary>
-              <pre>{clipText(tool.output)}</pre>
-            </details>
-          ) : null}
-        </div>
-      </div>
-    )
+    return <ToolLine tool={tool} />
   }
 
   if (row.kind === 'assistant') {

@@ -1358,6 +1358,11 @@ body.is-resizing .monaco-editor {
   margin-bottom: 14px;
 }
 
+/* 工具调用只占一行，展开的输入/输出在自己的滚动区里，不撑高对话流 */
+.agent-msg.tool {
+  margin-bottom: 5px;
+}
+
 .agent-msg-role {
   font-size: 12px;
   color: var(--text-dim);
@@ -1577,6 +1582,8 @@ body.is-resizing .monaco-editor {
 
 .agent-seg-new,
 .agent-seg-del,
+.agent-seg-rename-toggle,
+.agent-seg-rename button,
 .agent-seg-confirm button,
 .agent-snapshots-actions button,
 .agent-persist button,
@@ -1595,6 +1602,8 @@ body.is-resizing .monaco-editor {
 
 .agent-seg-new:hover:not(:disabled),
 .agent-seg-del:hover:not(:disabled),
+.agent-seg-rename-toggle:hover:not(:disabled),
+.agent-seg-rename button:hover:not(:disabled),
 .agent-seg-confirm button:hover:not(:disabled),
 .agent-snapshots-actions button:hover:not(:disabled),
 .agent-input-context button:hover:not(:disabled),
@@ -1604,6 +1613,8 @@ body.is-resizing .monaco-editor {
 
 .agent-seg-new:disabled,
 .agent-seg-del:disabled,
+.agent-seg-rename-toggle:disabled,
+.agent-seg-rename button:disabled,
 .agent-seg-confirm button:disabled,
 .agent-snapshots-actions button:disabled,
 .agent-persist button:disabled,
@@ -1626,6 +1637,28 @@ body.is-resizing .monaco-editor {
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
+}
+
+/* 段标题内联编辑：只改标题，不打断对话 */
+.agent-seg-rename {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+.agent-seg-rename-input {
+  width: 150px;
+  min-width: 72px;
+  padding: 2px 5px;
+  border: 1px solid var(--accent);
+  border-radius: 3px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  outline: none;
 }
 
 /* 两档模型名并排：窄面板里也放得下 */
@@ -1711,6 +1744,17 @@ body.is-resizing .monaco-editor {
   border-left: 3px solid var(--danger);
   border-radius: 4px;
   background: rgb(232 101 109 / 8%);
+}
+
+/* 用户主动停止：不是失败，用提醒色区分「回滚本次改动 / 保留改动」 */
+.agent-rollback.stopped {
+  border-color: rgb(216 180 90 / 40%);
+  border-left-color: var(--warn);
+  background: rgb(216 180 90 / 8%);
+}
+
+.agent-rollback.stopped .agent-rollback-head {
+  color: var(--warn);
 }
 
 .agent-rollback-head {
@@ -2010,20 +2054,61 @@ body.is-resizing .monaco-editor {
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-s);
   background: rgba(255, 255, 255, 0.025);
-  padding: 5px 8px;
-  font-size: 12px;
+  padding: 2px 7px;
+  font-size: 11px;
+  line-height: 1.6;
 }
 
-.agent-tool-head {
+.agent-tool-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  min-width: 0;
+}
+
+.agent-tool-tag {
+  flex-shrink: 0;
+  padding: 0 4px;
+  border: 1px solid var(--border-soft);
+  border-radius: 3px;
+  color: var(--text-dim);
+  font-size: 10px;
+  line-height: 15px;
 }
 
 .agent-tool-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: Consolas, 'Sarasa Mono SC', monospace;
   color: var(--text-bright);
-  word-break: break-all;
+}
+
+.agent-tool-toggle {
+  appearance: none;
+  flex-shrink: 0;
+  padding: 0 4px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 16px;
+  cursor: pointer;
+  text-decoration: underline dotted;
+}
+
+.agent-tool-toggle:hover {
+  color: var(--text-bright);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.agent-tool-toggle.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: #9ec9ea;
 }
 
 .agent-tool-status {
@@ -2043,15 +2128,9 @@ body.is-resizing .monaco-editor {
   color: var(--danger);
 }
 
-.agent-tool-output summary {
-  margin-top: 4px;
-  color: var(--text-dim);
-  cursor: pointer;
-}
-
-.agent-tool-output pre {
-  margin: 4px 0 0;
-  max-height: 180px;
+.agent-tool-pane {
+  margin: 5px 0 0;
+  max-height: 220px;
   overflow: auto;
   padding: 6px 8px;
   border-radius: 3px;
