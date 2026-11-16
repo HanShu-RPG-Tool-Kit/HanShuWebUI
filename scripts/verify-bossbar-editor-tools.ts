@@ -82,17 +82,22 @@ assert.equal(resolveValues(document, wrong).values.health.value, 10)
 assert.equal(resolveValues(document, wrong).issues[0].code, 'value_type')
 assert.deepEqual(simulateVariable(wrong, 'health', double, 'value').health, { type: 'double', value: 10 })
 assert.deepEqual(good.health, { type: 'double', value: 20 }, '模拟状态切换不改写原始输入')
-const html = renderToStaticMarkup(createElement(BossbarVariablesPanel, {
+const variablesHtml = renderToStaticMarkup(createElement(BossbarVariablesPanel, {
   document, values: good, readOnly: true, onDocumentChange() { throw new Error('viewer changed document') },
   onValuesChange() {}, onSelectComponent() {},
 }))
-const simulatedInput = html.match(/模拟值<\/span><span[^>]*>(<input[^>]+>)/)?.[1]
+assert.doesNotMatch(variablesHtml, /blackboard|Map 键|服务端键|putDouble/)
+assert.doesNotMatch(variablesHtml, /long（|int64|64 位整数/, '变量面板只列出 double、bool、string')
+assert.match(variablesHtml, /类型<\/span><span[^>]*>名字<\/span><span[^>]*>默认值<\/span><span[^>]*>模拟值/, '变量面板是 类型|名字|默认值|模拟值 紧凑列表')
+const inputFor = (label: string) => variablesHtml.match(new RegExp('<(?:input|select)[^>]*aria-label="' + label + '"[^>]*>'))?.[0]
+for (const label of ['health 类型', 'health 名字', 'health 默认值']) {
+  assert.match(inputFor(label) ?? '', /disabled/, 'viewer 不能改文档字段：' + label)
+}
+const simulatedInput = inputFor('health 模拟值')
 assert.ok(simulatedInput, 'viewer 可看到模拟值输入')
 assert.doesNotMatch(simulatedInput, /disabled/, 'viewer 的本机模拟输入可以编辑')
-assert.match(html, /缺失变量/)
-assert.match(html, /类型不符/)
-assert.doesNotMatch(html, /blackboard|Map 键|服务端键|putDouble/)
-assert.doesNotMatch(html, /long（|int64|64 位整数/, '变量面板只列出 double、bool、string')
+assert.match(simulatedInput, /value="20"/, '模拟值显示本机 values 而非默认值')
+assert.doesNotMatch(variablesHtml, /缺失变量|类型不符|模拟状态|新变量名/)
 console.log('通过：完整有限 double、缺失/错误类型回落及 viewer 本机模拟输入')
 
 const bound: BossbarDocument = {
@@ -149,15 +154,16 @@ try {
   const view = loadEditorViewState('prefs-project', 'prefs-file')
   assert.equal(view.zoom, 1.5)
   assert.equal(view.panX, -20)
-  assert.equal(view.playbackSpeed, 1.3)
+  assert.ok(!('playbackSpeed' in view), '播放速度固定 1×，不再写入本机偏好')
   assert.ok(Object.keys(view).every((name) => !name.startsWith('preview')))
   saveEditorViewState('prefs-project', 'prefs-file', view)
-  assert.doesNotMatch(storage.get(key)!, /previewOpen|previewGuiWidth|previewGuiHeight/)
+  assert.doesNotMatch(storage.get(key)!, /previewOpen|previewGuiWidth|previewGuiHeight|playbackSpeed/)
+  assert.doesNotMatch(storage.get(key)!, /"grid":/)
 } finally {
   if (previousStorage) Object.defineProperty(globalThis, 'localStorage', previousStorage)
   else delete (globalThis as any).localStorage
 }
-console.log('通过：单视口偏好保留相机与播放状态，忽略旧游戏预览尺寸')
+console.log('通过：单视口偏好保留相机，忽略旧预览尺寸、播放速度与网格尺寸')
 
 // 为真实 hook 提供同步 React 调度器，验证正文来源切换后的行为；不复制历史实现。
 const hooksKey = '__bossbarEditorToolsHooks'

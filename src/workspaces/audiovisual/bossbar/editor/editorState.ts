@@ -16,34 +16,26 @@ import {
  * They are not written into .bossbar and are not shared project data.
  */
 
-export type BossbarInspectorTab = 'component' | 'variables'
-
 export type BossbarEditorViewState = {
   zoom: number
   panX: number
   panY: number
-  grid: number
   showGrid: boolean
   showRulers: boolean
   /** 本机临时锁定（不影响游戏） */
   locked: string[]
   /** 本机临时隐藏（不影响游戏显隐） */
   hidden: string[]
-  playbackSpeed: number
-  inspectorTab: BossbarInspectorTab
 }
 
 export const DEFAULT_EDITOR_VIEW: BossbarEditorViewState = {
   zoom: 1,
   panX: 0,
   panY: 0,
-  grid: 8,
   showGrid: true,
   showRulers: true,
   locked: [],
   hidden: [],
-  playbackSpeed: 1,
-  inspectorTab: 'component',
 }
 
 const STORAGE_PREFIX = 'hanshu.bossbarEditor.v2::'
@@ -58,13 +50,10 @@ function editorViewState(input: Partial<BossbarEditorViewState>): BossbarEditorV
     zoom: Math.max(0.1, finite(input.zoom, 1)),
     panX: finite(input.panX, 0),
     panY: finite(input.panY, 0),
-    grid: Math.max(1, finite(input.grid, 8)),
     showGrid: typeof input.showGrid === 'boolean' ? input.showGrid : true,
     showRulers: typeof input.showRulers === 'boolean' ? input.showRulers : true,
     locked: Array.isArray(input.locked) ? input.locked.filter((id): id is string => typeof id === 'string') : [],
     hidden: Array.isArray(input.hidden) ? input.hidden.filter((id): id is string => typeof id === 'string') : [],
-    playbackSpeed: Math.max(0.1, Math.min(2, finite(input.playbackSpeed, 1))),
-    inspectorTab: input.inspectorTab === 'variables' ? 'variables' : 'component',
   }
 }
 

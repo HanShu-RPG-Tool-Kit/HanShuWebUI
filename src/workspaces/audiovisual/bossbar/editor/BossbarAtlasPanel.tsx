@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
+import { createPortal } from 'react-dom'
 import {
   BOSSBAR_LIMITS,
   isDisplayRegion,
@@ -15,11 +16,11 @@ import {
   slicesFromRegions,
   type AtlasDetectSlice,
 } from './atlasDetect'
-import { Button, Empty, Row, Section, TextField } from './BossbarEditorUi'
+import { useBlockBrowserMouseGestures } from '../../../../ui/blockBrowserMouseGestures'
+import { Button, Empty, TextField } from './BossbarEditorUi'
 
 /**
- * Atlas panel: replace or append into the single PNG and show a fit preview of the current UV.
- * Editing happens in the UV picker dock, not here.
+ * 图集面板：预览、替换/追加、识别；放大镜打开大图弹窗。
  */
 
 export type BossbarTextureChange = {
@@ -107,6 +108,179 @@ function validateAtlasPng(bytes: Uint8Array): string | null {
   return null
 }
 
+function AtlasEnlargeDialog({
+  src,
+  textureSize,
+  currentUv,
+  onClose,
+}: {
+  src: string
+  textureSize: { width: number; height: number }
+  currentUv: BossbarUv | null
+  onClose: () => void
+}) {
+  const stageRef = useRef<HTMLDivElement | null>(null)
+  useBlockBrowserMouseGestures(stageRef)
+  const [zoom, setZoom] = useState(1)
+  const [pan, setPan] = useState({ x: 0, y: 0 })
+  const [panning, setPanning] = useState(false)
+  const [showGrid, setShowGrid] = useState(true)
+  const fittedRef = useRef(false)
+  const viewRef = useRef({ zoom: 1, panX: 0, panY: 0 })
+  const dragRef = useRef<{ pointerId: number; lastX: number; lastY: number } | null>(null)
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
+  viewRef.current = { zoom, panX: pan.x, panY: pan.y }
+
+  useEffect(() => {
+    fittedRef.current = false
+    const stage = stageRef.current
+    if (!stage) return
+    const fit = () => {
+      if (fittedRef.current) return
+      const rect = stage.getBoundingClientRect()
+      if (rect.width <= 0 || rect.height <= 0) return
+      const nextZoom = Math.max(0.1, Math.min(64, Math.min(rect.width / textureSize.width, rect.height / textureSize.height)))
+      setZoom(nextZoom)
+      setPan({
+        x: (rect.width - textureSize.width * nextZoom) / 2,
+        y: (rect.height - textureSize.height * nextZoom) / 2,
+      })
+      fittedRef.current = true
+    }
+    fit()
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver(() => fit())
+    observer.observe(stage)
+    return () => observer.disconnect()
+  }, [textureSize.height, textureSize.width])
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      event.stopImmediatePropagation()
+      onCloseRef.current()
+    }
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
+  }, [])
+
+  useEffect(() => {
+    const stage = stageRef.current
+    if (!stage) return
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault()
+      const current = viewRef.current
+      const rect = stage.getBoundingClientRect()
+      const localX = event.clientX - rect.left
+      const localY = event.clientY - rect.top
+      const nextZoom = Math.max(0.1, Math.min(64, current.zoom * (event.deltaY < 0 ? 1.25 : 1 / 1.25)))
+      if (nextZoom === current.zoom) return
+      const texX = (localX - current.panX) / current.zoom
+      const texY = (localY - current.panY) / current.zoom
+      setZoom(nextZoom)
+      setPan({ x: localX - texX * nextZoom, y: localY - texY * nextZoom })
+    }
+    stage.addEventListener('wheel', onWheel, { passive: false })
+    return () => stage.removeEventListener('wheel', onWheel)
+  }, [])
+
+  return (
+    <div
+      className="bb-atlas-enlarge-backdrop"
+      onPointerDown={(event) => {
+        if (event.button !== 0 || event.target !== event.currentTarget) return
+        onClose()
+      }}
+    >
+      <aside className="bb-atlas-enlarge" role="dialog" aria-modal="true" aria-label="图集放大预览">
+        <div className="bb-atlas-enlarge-header">
+          <strong>图集预览</strong>
+          <span className="bb-tag">
+            {textureSize.width}×{textureSize.height}
+          </span>
+          <label className="bb-toggle">
+            <input
+              type="checkbox"
+              checked={showGrid}
+              onChange={(event) => setShowGrid(event.target.checked)}
+            />
+            <span>网格</span>
+          </label>
+          <span className="bb-atlas-enlarge-spacer" />
+          <Button onClick={onClose}>关闭</Button>
+        </div>
+        <div
+          className="bb-atlas-enlarge-stage"
+          ref={stageRef}
+          data-panning={panning ? 'true' : undefined}
+          onContextMenu={(event) => event.preventDefault()}
+          onPointerDown={(event) => {
+            if (event.button !== 0 && event.button !== 2) return
+            event.preventDefault()
+            event.currentTarget.setPointerCapture(event.pointerId)
+            dragRef.current = { pointerId: event.pointerId, lastX: event.clientX, lastY: event.clientY }
+            setPanning(true)
+          }}
+          onPointerMove={(event) => {
+            const drag = dragRef.current
+            if (!drag || drag.pointerId !== event.pointerId) return
+            const dx = event.clientX - drag.lastX
+            const dy = event.clientY - drag.lastY
+            drag.lastX = event.clientX
+            drag.lastY = event.clientY
+            setPan((previous) => ({ x: previous.x + dx, y: previous.y + dy }))
+          }}
+          onPointerUp={(event) => {
+            if (dragRef.current?.pointerId !== event.pointerId) return
+            dragRef.current = null
+            if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+              event.currentTarget.releasePointerCapture(event.pointerId)
+            }
+            setPanning(false)
+          }}
+          onPointerCancel={(event) => {
+            if (dragRef.current?.pointerId !== event.pointerId) return
+            dragRef.current = null
+            setPanning(false)
+          }}
+        >
+          <div
+            className="bb-atlas-enlarge-world"
+            style={{
+              left: pan.x,
+              top: pan.y,
+              width: textureSize.width * zoom,
+              height: textureSize.height * zoom,
+            }}
+          >
+            <img className="bb-atlas-enlarge-image" alt="" draggable={false} src={src} />
+            {currentUv && (
+              <div
+                className="bb-atlas-uv"
+                style={{
+                  left: currentUv.x * zoom,
+                  top: currentUv.y * zoom,
+                  width: Math.max(1, currentUv.width * zoom),
+                  height: Math.max(1, currentUv.height * zoom),
+                }}
+              />
+            )}
+            {showGrid && (
+              <div
+                className="bb-atlas-enlarge-grid"
+                style={{ backgroundSize: `${zoom}px ${zoom}px` }}
+              />
+            )}
+          </div>
+          <div className="bb-atlas-enlarge-hud">滚轮缩放 · 拖动平移 · Esc 关闭</div>
+        </div>
+      </aside>
+    </div>
+  )
+}
+
 export function BossbarAtlasPanel({
   document,
   textureSize,
@@ -125,18 +299,24 @@ export function BossbarAtlasPanel({
   onOpenDetect?: (slices: AtlasDetectSlice[]) => void
 }) {
   const wrapRef = useRef<HTMLDivElement | null>(null)
+  const replaceInputRef = useRef<HTMLInputElement | null>(null)
+  const appendInputRef = useRef<HTMLInputElement | null>(null)
   const loadVersionRef = useRef(0)
   const [viewSize, setViewSize] = useState({ width: 0, height: 0 })
-  const [stageHeight, setStageHeight] = useState(220)
+  const [stageHeight, setStageHeight] = useState(180)
   const [stageResizing, setStageResizing] = useState(false)
   const stageDragRef = useRef<{ pointerId: number; startY: number; startH: number } | null>(null)
   const [paste, setPaste] = useState('')
   const [pasteError, setPasteError] = useState('')
   const [atlasBusy, setAtlasBusy] = useState(false)
+  const [enlarged, setEnlarged] = useState(false)
 
   const currentUv = target ? uvOfTarget(document, target) : null
   const fitted = containRect(viewSize, textureSize)
   const src = textureSrc(document.texture)
+  const portalRoot =
+    (wrapRef.current?.closest('.bb-design') as HTMLElement | null) ??
+    (typeof window !== 'undefined' ? window.document.body : null)
 
   useEffect(() => () => { loadVersionRef.current += 1 }, [document])
 
@@ -173,7 +353,6 @@ export function BossbarAtlasPanel({
     return additions
   }
 
-  /** 单张直接替换；多张先竖排拼成新图集再替换。 */
   const replaceFiles = async (files: FileList | File[]) => {
     const list = Array.from(files)
     if (!list.length) return
@@ -241,17 +420,50 @@ export function BossbarAtlasPanel({
     }
   }
 
+  const runDetect = () => {
+    void (async () => {
+      const version = ++loadVersionRef.current
+      setAtlasBusy(true)
+      try {
+        const image = await loadAtlasRgba(document.texture)
+        if (loadVersionRef.current !== version) return
+        if (!image) {
+          onProblems(['当前图集无法解码，无法自动识别'])
+          return
+        }
+        const regions = detectAtlasRegions(image)
+        if (!regions.length) {
+          onProblems(['未识别到足够大的不透明图块（宽高≥4、面积≥16）'])
+          return
+        }
+        onProblems([])
+        onOpenDetect?.(slicesFromRegions(regions))
+      } finally {
+        if (loadVersionRef.current === version) setAtlasBusy(false)
+      }
+    })()
+  }
+
   return (
     <div className="bb-atlas">
-      <Section
-        className="bb-atlas-view"
-        title="图集预览"
-        extra={
+      <div className="bb-atlas-view">
+        <div className="bb-atlas-view-head">
+          <strong>预览</strong>
           <span className="bb-tag">
             {textureSize.width}×{textureSize.height}
           </span>
-        }
-      >
+          <span className="bb-atlas-view-spacer" />
+          <button
+            type="button"
+            className="bb-atlas-zoom-btn"
+            title="放大预览"
+            aria-label="放大预览"
+            disabled={!src}
+            onClick={() => setEnlarged(true)}
+          >
+            🔍
+          </button>
+        </div>
         <div className="bb-atlas-preview" ref={wrapRef} style={{ height: stageHeight }}>
           {src ? (
             <img
@@ -309,7 +521,7 @@ export function BossbarAtlasPanel({
             const drag = stageDragRef.current
             if (!drag || drag.pointerId !== event.pointerId) return
             const next = drag.startH + (event.clientY - drag.startY)
-            setStageHeight(Math.max(120, Math.min(960, Math.round(next))))
+            setStageHeight(Math.max(100, Math.min(960, Math.round(next))))
           }}
           onPointerUp={(event) => {
             if (stageDragRef.current?.pointerId !== event.pointerId) return
@@ -322,13 +534,15 @@ export function BossbarAtlasPanel({
             setStageResizing(false)
           }}
         />
-      </Section>
+      </div>
 
-      <Section title="替换图集">
+      <div className="bb-atlas-actions">
         <input
+          ref={replaceInputRef}
           type="file"
           accept="image/png"
           multiple
+          hidden
           disabled={readOnly || atlasBusy}
           onChange={(event) => {
             const files = event.target.files
@@ -336,20 +550,44 @@ export function BossbarAtlasPanel({
             event.target.value = ''
           }}
         />
-        <p className="bb-hint">
-          可多选 PNG（≤4MiB、≤4096）。单张直接替换并尽量保留旧 UV；多张会先竖排拼成新图集再替换。
-        </p>
-        <Row label="粘贴 Base64">
-          <TextField
-            mono
-            value={paste}
-            placeholder="data:image/png;base64,… 或纯 Base64"
-            disabled={readOnly}
-            onCommit={(text) => setPaste(text)}
-          />
-        </Row>
+        <input
+          ref={appendInputRef}
+          type="file"
+          accept="image/png"
+          multiple
+          hidden
+          disabled={readOnly || atlasBusy}
+          onChange={(event) => {
+            const files = event.target.files
+            if (files?.length) void appendFiles(files)
+            event.target.value = ''
+          }}
+        />
+        <Button disabled={readOnly || atlasBusy} onClick={() => replaceInputRef.current?.click()}>
+          替换…
+        </Button>
+        <Button disabled={readOnly || atlasBusy} onClick={() => appendInputRef.current?.click()}>
+          追加…
+        </Button>
         <Button
-          disabled={readOnly || !paste.trim()}
+          disabled={readOnly || atlasBusy || !onOpenDetect || !document.texture}
+          onClick={runDetect}
+        >
+          识别图块…
+        </Button>
+      </div>
+
+      <div className="bb-atlas-paste">
+        <TextField
+          mono
+          label="粘贴 Base64"
+          value={paste}
+          placeholder="Base64 / data URL"
+          disabled={readOnly || atlasBusy}
+          onCommit={(text) => setPaste(text)}
+        />
+        <Button
+          disabled={readOnly || atlasBusy || !paste.trim()}
           onClick={() => {
             setPasteError('')
             const bytes = base64ToBytes(paste)
@@ -362,62 +600,27 @@ export function BossbarAtlasPanel({
             setPaste('')
           }}
         >
-          应用粘贴的图集
+          应用
         </Button>
-        {pasteError && <p className="bb-warn">{pasteError}</p>}
-      </Section>
+      </div>
+      {pasteError && <p className="bb-warn">{pasteError}</p>}
+      {atlasBusy ? (
+        <p className="bb-hint">正在处理图集…</p>
+      ) : (
+        <p className="bb-hint">PNG ≤4MiB / ≤4096；多选竖排拼接；识别忽略过小碎块。</p>
+      )}
 
-      <Section title="追加图集">
-        <input
-          type="file"
-          accept="image/png"
-          multiple
-          disabled={readOnly || atlasBusy}
-          onChange={(event) => {
-            const files = event.target.files
-            if (files?.length) void appendFiles(files)
-            event.target.value = ''
-          }}
-        />
-        <p className="bb-hint">
-          多选 PNG，按选择顺序竖排拼到现有图集下方（间距 1px）。旧 UV 保留；若已选中纹理目标，会把第一张追加图的 UV 写进去。
-        </p>
-        {atlasBusy && <p className="bb-hint">正在处理图集…</p>}
-      </Section>
-
-      <Section title="自动识别">
-        <Button
-          disabled={readOnly || atlasBusy || !onOpenDetect || !document.texture}
-          onClick={() => {
-            void (async () => {
-              const version = ++loadVersionRef.current
-              setAtlasBusy(true)
-              try {
-                const image = await loadAtlasRgba(document.texture)
-                if (loadVersionRef.current !== version) return
-                if (!image) {
-                  onProblems(['当前图集无法解码，无法自动识别'])
-                  return
-                }
-                const regions = detectAtlasRegions(image)
-                if (!regions.length) {
-                  onProblems(['未识别到足够大的不透明图块（宽高≥4、面积≥16）'])
-                  return
-                }
-                onProblems([])
-                onOpenDetect?.(slicesFromRegions(regions))
-              } finally {
-                if (loadVersionRef.current === version) setAtlasBusy(false)
-              }
-            })()
-          }}
-        >
-          识别图块…
-        </Button>
-        <p className="bb-hint">
-          按透明度连通域切 AABB，忽略过小碎块。弹窗里可调整框、指定背景或数值条后再写入画布。
-        </p>
-      </Section>
+      {enlarged && src && portalRoot
+        ? createPortal(
+            <AtlasEnlargeDialog
+              src={src}
+              textureSize={textureSize}
+              currentUv={currentUv}
+              onClose={() => setEnlarged(false)}
+            />,
+            portalRoot,
+          )
+        : null}
     </div>
   )
 }

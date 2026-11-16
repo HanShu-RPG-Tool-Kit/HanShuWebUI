@@ -32,6 +32,7 @@ export function NumberField({
   max,
   suffix,
   disabled,
+  label,
 }: {
   value: number
   onCommit: (value: number) => void
@@ -40,6 +41,7 @@ export function NumberField({
   max?: number
   suffix?: string
   disabled?: boolean
+  label?: string
 }) {
   const [text, setText] = useState(String(value))
   const [focused, setFocused] = useState(false)
@@ -68,6 +70,7 @@ export function NumberField({
         max={max}
         value={text}
         disabled={disabled}
+        aria-label={label}
         onFocus={() => setFocused(true)}
         onChange={(event) => setText(event.target.value)}
         onBlur={(event) => {
@@ -97,12 +100,14 @@ export function TextField({
   placeholder,
   mono,
   disabled,
+  label,
 }: {
   value: string
   onCommit: (value: string) => void
   placeholder?: string
   mono?: boolean
   disabled?: boolean
+  label?: string
 }) {
   const [text, setText] = useState(value)
   const [focused, setFocused] = useState(false)
@@ -116,6 +121,7 @@ export function TextField({
       value={text}
       placeholder={placeholder}
       disabled={disabled}
+      aria-label={label}
       onFocus={() => setFocused(true)}
       onChange={(event) => setText(event.target.value)}
       onBlur={() => {
@@ -182,17 +188,20 @@ export function SelectField<T extends string>({
   options,
   onCommit,
   disabled,
+  label,
 }: {
   value: T
   options: readonly { value: T; label: string }[]
   onCommit: (value: T) => void
   disabled?: boolean
+  label?: string
 }) {
   return (
     <select
       className="bb-input"
       value={value}
       disabled={disabled}
+      aria-label={label}
       onChange={(event) => onCommit(event.target.value as T)}
     >
       {options.map((option) => (

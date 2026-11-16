@@ -83,8 +83,6 @@ export function BossbarCanvasStage({
   textureHeight,
   view,
   fitRequest,
-  homeRequest,
-  grid,
   showGrid,
   showRulers,
   locked,
@@ -103,8 +101,6 @@ export function BossbarCanvasStage({
   textureHeight: number
   view: ViewTransform
   fitRequest: number
-  homeRequest: number
-  grid: number
   showGrid: boolean
   showRulers: boolean
   locked: readonly string[]
@@ -116,12 +112,12 @@ export function BossbarCanvasStage({
 }) {
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const gridMaskRef = useRef<HTMLCanvasElement | null>(null)
   const surfaceRef = useRef<HTMLDivElement | null>(null)
   useBlockBrowserMouseGestures(surfaceRef)
   const dragRef = useRef<DragState | null>(null)
   const [size, setSize] = useState({ width: 0, height: 0 })
   const lastFitRequestRef = useRef<number | null>(null)
-  const lastHomeRequestRef = useRef(0)
   const [marquee, setMarquee] = useState<BossbarBox | null>(null)
   const [guides, setGuides] = useState<{ x: number[]; y: number[] }>({ x: [], y: [] })
   const [panning, setPanning] = useState(false)
@@ -162,22 +158,6 @@ export function BossbarCanvasStage({
     })
   }, [fitRequest, onViewChange, region, size.height, size.width, view.panX, view.panY, view.zoom])
 
-  useEffect(() => {
-    if (!homeRequest || size.width <= 0 || size.height <= 0) return
-    if (lastHomeRequestRef.current === homeRequest) return
-    lastHomeRequestRef.current = homeRequest
-    const zoom = view.zoom
-    if (!region) {
-      onViewChange({ zoom, panX: 0, panY: 0 })
-      return
-    }
-    onViewChange({
-      zoom,
-      panX: size.width / 2 - (region.box.x + region.box.width / 2) * zoom,
-      panY: size.height / 2 - (region.box.y + region.box.height / 2) * zoom,
-    })
-  }, [homeRequest, onViewChange, region, size.height, size.width, view.zoom])
-
   const effectiveDocument = useMemo(() => {
     if (!hiddenSet.size) return document
     return {
@@ -198,28 +178,6 @@ export function BossbarCanvasStage({
     if (!ctx) return
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0)
     ctx.clearRect(0, 0, size.width, size.height)
-
-    if (showGrid) {
-      const step = grid * view.zoom
-      if (step >= 4) {
-        const startX = Math.floor(-view.panX / step) * step + view.panX
-        const startY = Math.floor(-view.panY / step) * step + view.panY
-        ctx.save()
-        ctx.strokeStyle = 'rgba(255,255,255,0.055)'
-        ctx.lineWidth = 1
-        ctx.beginPath()
-        for (let x = startX; x < size.width; x += step) {
-          ctx.moveTo(Math.round(x) + 0.5, 0)
-          ctx.lineTo(Math.round(x) + 0.5, size.height)
-        }
-        for (let y = startY; y < size.height; y += step) {
-          ctx.moveTo(0, Math.round(y) + 0.5)
-          ctx.lineTo(size.width, Math.round(y) + 0.5)
-        }
-        ctx.stroke()
-        ctx.restore()
-      }
-    }
 
     ctx.save()
     ctx.strokeStyle = 'rgba(120,180,255,0.5)'
@@ -247,12 +205,66 @@ export function BossbarCanvasStage({
       origin: { x: view.panX, y: view.panY },
     })
     drawBossbarScene(ctx, scene, { texture, measure })
+
+    // 固定 1 文档像素网格。透明区淡线，实心像素再叠 difference。
+    if (showGrid) {
+      const step = view.zoom
+      if (step >= 1) {
+        const startX = Math.floor(-view.panX / step) * step + view.panX
+        const startY = Math.floor(-view.panY / step) * step + view.panY
+        const strokeGrid = (target: CanvasRenderingContext2D, color: string, composite?: GlobalCompositeOperation) => {
+          target.save()
+          if (composite) target.globalCompositeOperation = composite
+          target.strokeStyle = color
+          target.lineWidth = 1
+          target.beginPath()
+          for (let x = startX; x < size.width; x += step) {
+            target.moveTo(Math.round(x) + 0.5, 0)
+            target.lineTo(Math.round(x) + 0.5, size.height)
+          }
+          for (let y = startY; y < size.height; y += step) {
+            target.moveTo(0, Math.round(y) + 0.5)
+            target.lineTo(size.width, Math.round(y) + 0.5)
+          }
+          target.stroke()
+          target.restore()
+        }
+
+        let mask = gridMaskRef.current
+        if (!mask) {
+          mask = window.document.createElement('canvas')
+          gridMaskRef.current = mask
+        }
+        if (mask.width !== canvas.width || mask.height !== canvas.height) {
+          mask.width = canvas.width
+          mask.height = canvas.height
+        }
+        const maskCtx = mask.getContext('2d')
+        if (maskCtx) {
+          maskCtx.setTransform(1, 0, 0, 1, 0, 0)
+          maskCtx.clearRect(0, 0, mask.width, mask.height)
+          maskCtx.drawImage(canvas, 0, 0)
+          maskCtx.setTransform(ratio, 0, 0, ratio, 0, 0)
+          strokeGrid(maskCtx, 'rgba(255,255,255,0.45)', 'difference')
+          maskCtx.setTransform(1, 0, 0, 1, 0, 0)
+          maskCtx.globalCompositeOperation = 'destination-in'
+          maskCtx.drawImage(canvas, 0, 0)
+          maskCtx.globalCompositeOperation = 'source-over'
+        }
+
+        strokeGrid(ctx, 'rgba(255,255,255,0.07)')
+        if (maskCtx) {
+          ctx.setTransform(1, 0, 0, 1, 0, 0)
+          ctx.drawImage(mask, 0, 0)
+          ctx.setTransform(ratio, 0, 0, ratio, 0, 0)
+        }
+      }
+    }
   }, [
     bars,
     effectiveDocument,
-    grid,
     measure,
-      showGrid,
+    showGrid,
     size.height,
     size.width,
     texture,
@@ -429,7 +441,7 @@ export function BossbarCanvasStage({
       const lines = collectSnapLines(
         snapTargets,
         region ? region.box : { x: -10000, y: -10000, width: 20000, height: 20000 },
-        grid,
+        1,
         showGrid,
       )
       const skipSnap = event.altKey
@@ -484,7 +496,6 @@ export function BossbarCanvasStage({
     [
       boundsOf,
       document,
-      grid,
       hiddenSet,
       onBoxesChange,
       onViewChange,

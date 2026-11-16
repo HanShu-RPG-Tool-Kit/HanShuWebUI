@@ -26,7 +26,6 @@ import {
   fitRegionToComponents,
   moveComponent,
   removeComponent,
-  resetDisplayRegionOrigin,
   translateAll,
   updateComponent,
 } from '../document'
@@ -35,12 +34,10 @@ import { resolveValues } from '../rules/values'
 import type { BossbarBarView } from '../render/scene'
 import { ALIGN_ACTIONS, alignBoxes, clampMoveDelta, movableSelection, unionBox, type AlignAction, type ViewTransform } from './editorGeometry'
 import {
-  buildScenarios,
   defaultsForVariables,
   loadEditorViewState,
   saveEditorViewState,
   useBossbarHistory,
-  edgeCaseScenarios,
   type BossbarEditorViewState,
 } from './editorState'
 import { BossbarCanvasStage } from './BossbarCanvasStage'
@@ -51,7 +48,6 @@ import { BossbarAtlasPanel, type BossbarUvTarget } from './BossbarAtlasPanel'
 import { BossbarUvPickerPanel } from './BossbarUvPickerPanel'
 import { BossbarAtlasDetectPanel } from './BossbarAtlasDetectPanel'
 import { applyAtlasDetectSlices, type AtlasDetectSlice } from './atlasDetect'
-import { BossbarSimulationControls } from './BossbarSimulationControls'
 import { Button } from './BossbarEditorUi'
 import { useBossbarTexture } from './useBossbarImages'
 import { updatePaintUv } from './editorPaint'
@@ -174,10 +170,8 @@ export function BossbarDesignView({
   const [values, setValues] = useState<BossbarValueMap>(() =>
     document ? defaultsForVariables(document) : {},
   )
-  const [playing, setPlaying] = useState(true)
   const [timeMs, setTimeMs] = useState(0)
   const [fitRequest, setFitRequest] = useState(0)
-  const [homeRequest, setHomeRequest] = useState(0)
 
   const history = useBossbarHistory(content)
 
@@ -215,18 +209,18 @@ export function BossbarDesignView({
   }, [document, timeMs, resolved.values])
 
   useEffect(() => {
-    if (!playing || !active) return
+    if (!active) return
     let frame = 0
     let last = performance.now()
     const tick = (now: number) => {
       const delta = now - last
       last = now
-      setTimeMs((value) => value + delta * view.playbackSpeed)
+      setTimeMs((value) => value + delta)
       frame = requestAnimationFrame(tick)
     }
     frame = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(frame)
-  }, [active, playing, view.playbackSpeed])
+  }, [active])
 
   const effectiveDocument = useMemo<BossbarDocument | null>(() => {
     if (!document) return null
@@ -402,11 +396,6 @@ export function BossbarDesignView({
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [active, duplicateSelected, history, nudge, onChange, readOnly, removeSelected, selection, uvTarget])
 
-  const scenarios = useMemo(
-    () => (document ? [...buildScenarios(document), ...edgeCaseScenarios(document)] : []),
-    [document],
-  )
-
   if (!document && inspection.status !== 'v1') {
     return (
       <div className="bb-design bb-design-broken">
@@ -526,56 +515,53 @@ export function BossbarDesignView({
                 onTitlePointerDown={dock.onTitlePointerDown}
                 onRedock={dock.onRedock}
               />
-              <div className="bb-tabs">
-                {(
-                  [
-                    ['component', '属性'],
-                    ['variables', '变量'],
-                  ] as const
-                ).map(([id, label]) => (
-                  <button
-                    key={id}
-                    type="button"
-                    className={view.inspectorTab === id ? 'is-active' : undefined}
-                    onClick={() => setView({ inspectorTab: id })}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
               <div className="bb-tab-body">
-                {view.inspectorTab === 'component' && (
-                  <BossbarInspector
-                    document={effectiveDocument ?? document}
-                    selection={selection}
-                    texture={texture.size}
-                    readOnly={!editable}
-                    onChange={applyDocument}
-                    onMoveAll={(dx, dy) => applyDocument(translateAll(document, dx, dy))}
-                    onFitRegion={() => {
-                      const result = fitRegionToComponents(document)
-                      if (result.ok) applyDocument(result.document)
-                    }}
-                    onFocusRegion={() => setFitRequest((request) => request + 1)}
-                    onPickUv={(slot, frameIndex) => {
-                      if (selection.length !== 1) return
-                      requestUvTarget({ componentId: selection[0], slot, frameIndex })
-                    }}
-                  />
-                )}
-                {view.inspectorTab === 'variables' && (
-                  <BossbarVariablesPanel
-                    document={document}
-                    values={values}
-                    readOnly={!editable}
-                    onDocumentChange={applyDocument}
-                    onValuesChange={setValues}
-                    onSelectComponent={(id) => {
-                      setSelection([id])
-                      setView({ inspectorTab: 'component' })
-                    }}
-                  />
-                )}
+                <BossbarInspector
+                  document={effectiveDocument ?? document}
+                  selection={selection}
+                  texture={texture.size}
+                  readOnly={!editable}
+                  onChange={applyDocument}
+                  onMoveAll={(dx, dy) => applyDocument(translateAll(document, dx, dy))}
+                  onFitRegion={() => {
+                    const result = fitRegionToComponents(document)
+                    if (result.ok) applyDocument(result.document)
+                  }}
+                  onFocusRegion={() => setFitRequest((request) => request + 1)}
+                  onPickUv={(slot, frameIndex) => {
+                    if (selection.length !== 1) return
+                    requestUvTarget({ componentId: selection[0], slot, frameIndex })
+                  }}
+                />
+              </div>
+            </aside>
+            ),
+          },
+          {
+            id: 'variables',
+            title: '变量',
+            defaultPlacement: 'right',
+            defaultSize: 344,
+            minSize: 220,
+            defaultStack: { with: 'inspector', side: 'bottom' },
+            defaultFloat: { ...BOSSBAR_FLOAT, x: 120, y: 84 },
+            render: (dock) => (
+            <aside className="bb-side">
+              <DockPanelTitle
+                title="变量"
+                placement={dock.placement}
+                onTitlePointerDown={dock.onTitlePointerDown}
+                onRedock={dock.onRedock}
+              />
+              <div className="bb-tab-body">
+                <BossbarVariablesPanel
+                  document={document}
+                  values={values}
+                  readOnly={!editable}
+                  onDocumentChange={applyDocument}
+                  onValuesChange={setValues}
+                  onSelectComponent={(id) => setSelection([id])}
+                />
               </div>
             </aside>
             ),
@@ -586,7 +572,7 @@ export function BossbarDesignView({
             defaultPlacement: 'right',
             defaultSize: 344,
             minSize: 220,
-            defaultStack: { with: 'inspector', side: 'bottom' },
+            defaultStack: { with: 'variables', side: 'bottom' },
             defaultFloat: { ...BOSSBAR_FLOAT, x: 144, y: 96 },
             render: (dock) => (
             <aside className="bb-side">
@@ -694,7 +680,7 @@ export function BossbarDesignView({
                   </Button>
                 </span>
                 <span className="bb-toolbar-group">
-                  <label className="bb-toggle">
+                  <label className="bb-toggle" title="1 文档像素网格">
                     <input
                       type="checkbox"
                       checked={view.showGrid}
@@ -702,25 +688,6 @@ export function BossbarDesignView({
                     />
                     <span>网格</span>
                   </label>
-                  <input
-                    className="bb-grid-size"
-                    type="number"
-                    min={1}
-                    max={64}
-                    value={view.grid}
-                    onChange={(event) => setView({ grid: Math.max(1, Number(event.target.value) || 1) })}
-                  />
-                  <Button
-                    onClick={() => {
-                      if (document && editable) {
-                        const next = resetDisplayRegionOrigin(document)
-                        if (next !== document) applyDocument(next)
-                      }
-                      setHomeRequest((request) => request + 1)
-                    }}
-                  >
-                    回到原点
-                  </Button>
                 </span>
                 {selection.length > 1 && (
                   <span className="bb-toolbar-group bb-toolbar-align">
@@ -764,8 +731,6 @@ export function BossbarDesignView({
                 textureHeight={texture.size.height}
                 view={{ zoom: view.zoom, panX: view.panX, panY: view.panY } as ViewTransform}
                 fitRequest={fitRequest}
-                homeRequest={homeRequest}
-                grid={view.grid}
                 showGrid={view.showGrid}
                 showRulers={view.showRulers}
                 locked={view.locked}
@@ -776,27 +741,6 @@ export function BossbarDesignView({
                 onViewChange={(next) =>
                   setView({ zoom: next.zoom, panX: next.panX, panY: next.panY })
                 }
-              />
-              <BossbarSimulationControls
-                document={document}
-                timeMs={timeMs}
-                playing={playing}
-                speed={view.playbackSpeed}
-                issues={[...(texture.error ? [texture.error] : []), ...resolved.issues.map(describeDiagnostic)]}
-                scenarios={scenarios}
-                onPlayingChange={setPlaying}
-                onTimeChange={(nextTime) => {
-                  if (nextTime < timeMs) animationRef.current = null
-                  setTimeMs(nextTime)
-                }}
-                onSpeedChange={(speed) => setView({ playbackSpeed: speed })}
-                onScenario={(scenario) => {
-                  const toggleName = scenario.id.startsWith('toggle-') ? scenario.id.slice('toggle-'.length) : null
-                  setValues(toggleName
-                    ? { ...values, [toggleName]: { type: 'bool', value: resolved.values[toggleName]?.value !== true } }
-                    : { ...scenario.values })
-                  setPlaying(true)
-                }}
               />
             </div>
           </PanelDock>

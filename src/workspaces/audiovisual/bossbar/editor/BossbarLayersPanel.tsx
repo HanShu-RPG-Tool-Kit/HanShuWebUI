@@ -4,7 +4,6 @@ import { isDisplayRegion, type BossbarComponent, type BossbarDocument } from '..
 import type { DockPlacement } from '../../../../ui/PanelDock'
 import { DockPanelTitle } from '../../../../ui/DockPanelTitle'
 import { NodeContextMenu, type NodeMenuItem } from '../../../../nodeEditor/ContextMenu'
-import { Button } from './BossbarEditorUi'
 
 const TYPE_LABEL: Record<BossbarComponent['type'], string> = {
   display_region: '显示区域',
@@ -281,11 +280,39 @@ export function BossbarLayersPanel({
 
   const dragged = dragId ? paintables.find((component) => component.id === dragId) : null
 
-  const createItems: NodeMenuItem[] = [
+  const menuTargetId =
+    selection.length === 1 && selection[0] !== region?.id ? selection[0] : null
+  const menuVisualIndex = menuTargetId ? visualIds.indexOf(menuTargetId) : -1
+  const menuItems: NodeMenuItem[] = [
     { label: '新建背景', action: () => onAdd('background'), disabled: readOnly },
     { label: '新建数值条', action: () => onAdd('bar'), disabled: readOnly },
     { label: '新建文本', action: () => onAdd('text'), disabled: readOnly },
   ]
+  if (menuTargetId) {
+    menuItems.push(
+      {
+        label: '上移',
+        action: () => onReorder(menuTargetId, 1),
+        disabled: readOnly || menuVisualIndex <= 0,
+      },
+      {
+        label: '下移',
+        action: () => onReorder(menuTargetId, -1),
+        disabled: readOnly || menuVisualIndex < 0 || menuVisualIndex >= visualIds.length - 1,
+      },
+      {
+        label: '复制',
+        action: () => onDuplicate(menuTargetId),
+        disabled: readOnly,
+      },
+      {
+        label: '删除',
+        action: () => onRemove(menuTargetId),
+        disabled: readOnly,
+        className: 'is-danger',
+      },
+    )
+  }
 
   return (
     <div className="bb-layers">
@@ -372,29 +399,13 @@ export function BossbarLayersPanel({
           )
         })}
       </ul>
-      {selection.length === 1 && selection[0] !== region?.id && (
-        <div className="bb-layers-tools">
-          <Button disabled={readOnly} onClick={() => onReorder(selection[0], 1)} title="向前一层">
-            ↑ 上移
-          </Button>
-          <Button disabled={readOnly} onClick={() => onReorder(selection[0], -1)} title="向后一层">
-            ↓ 下移
-          </Button>
-          <Button disabled={readOnly} onClick={() => onDuplicate(selection[0])}>
-            复制
-          </Button>
-          <Button disabled={readOnly} variant="danger" onClick={() => onRemove(selection[0])}>
-            删除
-          </Button>
-        </div>
-      )}
       {menu ? (
         <NodeContextMenu
           x={menu.x}
           y={menu.y}
           title="图层"
           label="图层操作"
-          items={createItems}
+          items={menuItems}
           onClose={() => setMenu(null)}
         />
       ) : null}

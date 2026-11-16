@@ -359,7 +359,7 @@ export function BossbarUvPickerPanel({
 
   const src = textureSrc(document.texture)
   const step = rulerStep(zoom)
-  const gridStep = zoom >= 8 ? 1 : zoom >= 4 ? 2 : 8
+  const gridStep = 1
   const ticksX: number[] = []
   const ticksY: number[] = []
   for (let x = 0; x <= textureSize.width; x += step) ticksX.push(x)
@@ -491,14 +491,6 @@ export function BossbarUvPickerPanel({
           {src && (
             <img className="bb-uv-texture" alt="" draggable={false} src={src} />
           )}
-          {showGrid && (
-            <div
-              className="bb-uv-grid-overlay"
-              style={{
-                backgroundSize: gridStep * zoom + 'px ' + gridStep * zoom + 'px',
-              }}
-            />
-          )}
           <div className="bb-uv-rect is-original" style={boxStyle(origin, zoom)} />
           <div
             className="bb-uv-rect is-current"
@@ -509,6 +501,14 @@ export function BossbarUvPickerPanel({
               <i key={handle} className="bb-uv-handle" data-handle={handle} />
             ))}
           </div>
+          {showGrid && (
+            <div
+              className="bb-uv-grid-overlay"
+              style={{
+                backgroundSize: gridStep * zoom + 'px ' + gridStep * zoom + 'px',
+              }}
+            />
+          )}
         </div>
         <div className="bb-uv-hud">
           像素 {hover ? hover.x + ', ' + hover.y : '—'}
