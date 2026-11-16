@@ -2054,7 +2054,8 @@ body.is-resizing .monaco-editor {
   border: 1px solid var(--border-soft);
   border-radius: var(--radius-s);
   background: rgba(255, 255, 255, 0.025);
-  padding: 2px 7px;
+  /* 左侧留白压到最小：标签贴住卡片左缘，和上方助手正文左对齐 */
+  padding: 2px 6px 2px 2px;
   font-size: 11px;
   line-height: 1.6;
 }
@@ -2068,7 +2069,7 @@ body.is-resizing .monaco-editor {
 
 .agent-tool-tag {
   flex-shrink: 0;
-  padding: 0 4px;
+  padding: 0 2px;
   border: 1px solid var(--border-soft);
   border-radius: 3px;
   color: var(--text-dim);
