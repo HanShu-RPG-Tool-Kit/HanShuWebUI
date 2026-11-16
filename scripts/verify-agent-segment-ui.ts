@@ -5,7 +5,8 @@
  * ① `segmentSealed` 时输入区上方有短提示（不禁止发送，提示本身不是禁用控件）；
  * ② 段列表：sealed 段显示「已封存」、不再标成活跃；下拉选项带（已封存）；
  * ③ 归档摘要：`改动 N 个文件`、`· 有回滚`；旧归档没有字段则完全不显示；
- * ④ 简化日志：只读 path + 短哈希（beforeHash → afterHash），没有任何回滚入口。
+ * ④ 段标题重命名：入口仅在当前段可编辑时出现，重命名中禁用其它操作，标题归一化；
+ * ⑤ 简化日志：只读 path + 短哈希（beforeHash → afterHash），没有任何回滚入口。
  *
  * 跑法：node scripts/run-verification.mjs scripts/verify-agent-segment-ui.ts
  */
@@ -14,7 +15,7 @@ import assert from 'node:assert/strict'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { SegmentSealedHint } from '../src/AgentPanel'
-import { SegmentBar } from '../src/agent/view/SegmentBar'
+import { SegmentBar, normalizeSegmentTitle } from '../src/agent/view/SegmentBar'
 import { SnapshotList } from '../src/agent/view/SnapshotList'
 import { segmentOptionLabel } from '../src/agent/view/derive'
 import type { SegmentInfo, SnapshotInfo } from '../src/agent/contracts'
@@ -71,10 +72,12 @@ const sealedBar = renderToStaticMarkup(
     loading: false,
     creating: false,
     deleting: false,
+    renaming: false,
     canDelete: true,
     onSelect: noop,
     onCreate: noop,
     onDelete: noop,
+    onRename: noop,
   }),
 )
 assert.ok(sealedBar.includes('已封存段'), '当前选中的 sealed 段直接标「已封存段」')
@@ -89,16 +92,62 @@ const activeBar = renderToStaticMarkup(
     loading: false,
     creating: false,
     deleting: false,
+    renaming: false,
     canDelete: true,
     onSelect: noop,
     onCreate: noop,
     onDelete: noop,
+    onRename: noop,
   }),
 )
 assert.ok(activeBar.includes('活跃段'), '活跃段照旧显示活跃')
 assert.ok(!activeBar.includes('已封存'), '活跃段不带封存文案')
 assert.equal(segmentOptionLabel(SEGMENT), '第一段 · 3 轮（已封存）')
 assert.equal(segmentOptionLabel(ACTIVE), '第二段 · 1 轮')
+
+/* ── ②′ 段标题重命名：入口、编辑中的禁用、标题归一化 ── */
+assert.ok(activeBar.includes('>重命名<'), '当前段提供「重命名」入口')
+
+const renamingBar = renderToStaticMarkup(
+  createElement(SegmentBar, {
+    segments: [ACTIVE],
+    currentId: ACTIVE.id,
+    loading: false,
+    creating: false,
+    deleting: false,
+    renaming: true,
+    canDelete: true,
+    onSelect: noop,
+    onCreate: noop,
+    onDelete: noop,
+    onRename: noop,
+  }),
+)
+assert.equal(
+  (renamingBar.match(/disabled=""/g) ?? []).length,
+  4,
+  '重命名进行中禁用下拉/重命名/新建/删除四个操作',
+)
+assert.equal(normalizeSegmentTitle('  第一段  '), '第一段', '重命名标题会去掉首尾空白')
+assert.equal(normalizeSegmentTitle('   '), '', '纯空白不可提交')
+assert.equal(normalizeSegmentTitle('长'.repeat(100)).length, 80, '标题最长 80 字')
+
+const loadingBar = renderToStaticMarkup(
+  createElement(SegmentBar, {
+    segments: [ACTIVE],
+    currentId: ACTIVE.id,
+    loading: true,
+    creating: false,
+    deleting: false,
+    renaming: false,
+    canDelete: false,
+    onSelect: noop,
+    onCreate: noop,
+    onDelete: noop,
+    onRename: noop,
+  }),
+)
+assert.ok(!loadingBar.includes('>重命名<'), '加载中不显示重命名入口')
 
 /* ── ③ 归档列表摘要 + ④ 简化日志 ── */
 const listHtml = renderToStaticMarkup(
@@ -171,5 +220,5 @@ const legacyOpenedHtml = renderToStaticMarkup(
 assert.ok(!legacyOpenedHtml.includes('改动'), '旧归档无摘要/日志')
 
 console.log(
-  '通过：封段提示、段状态（已封存）、归档简化日志（改动数/有回滚/短哈希，只读无回滚入口）',
+  '通过：封段提示、段状态（已封存）、段重命名入口/禁用、归档简化日志（改动数/有回滚/短哈希，只读无回滚入口）',
 )

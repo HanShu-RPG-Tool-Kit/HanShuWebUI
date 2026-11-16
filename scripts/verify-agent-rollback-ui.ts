@@ -6,7 +6,8 @@
  * ② `status === 'failed'` 才多出「重试回滚」，并逐项展示未恢复文件；
  * ③ 点击映射到对应 runtime 方法（用假 runtime 断言调用次数与结果文案）；
  * ④ 「让 Agent 帮忙处理冲突」拼出的中文消息包含文件路径与原因；
- * ⑤ 进行中态下所有按钮互斥禁用。
+ * ⑤ 用户主动停止：卡片标题「已停止，改动保留为草稿」，只提供回滚本次改动 / 保留改动；
+ * ⑥ 进行中态下所有按钮互斥禁用。
  *
  * 跑法：node scripts/run-verification.mjs scripts/verify-agent-rollback-ui.ts
  */
@@ -71,6 +72,40 @@ assert.ok(!html.includes('重试回滚'), 'status=pending 时没有重试回滚'
 assert.ok(!html.includes('回滚失败'), 'status=pending 时不显示失败标签')
 assert.ok(html.includes('序章.hs'), '冲突文件路径可见')
 assert.ok(html.includes('编辑器里还有未保存修改'), '冲突原因用中文展示')
+
+/* ── ①′ 用户主动停止：只问「回滚本次改动 / 保留改动」，不是失败 ── */
+const stoppedHtml = renderCard(pending({ reason: 'stopped', conflicts: [] }))
+assert.ok(stoppedHtml.includes('已停止，改动保留为草稿'), '停止卡片标题说明改动已保留为草稿')
+assert.ok(stoppedHtml.includes('停止后待处理'), '停止卡片与失败卡片的 aria-label 区分')
+assert.ok(stoppedHtml.includes('回滚本次改动'), '停止后可以主动回滚本次改动')
+assert.ok(stoppedHtml.includes('保留改动'), '停止后可以保留改动')
+assert.ok(!stoppedHtml.includes('回滚待处理'), '停止不是失败，不显示失败标题')
+assert.ok(!stoppedHtml.includes('让 Agent 帮忙处理冲突'), '停止后默认不引入 Agent 处理冲突')
+assert.ok(!stoppedHtml.includes('强制回滚'), '停止后默认不显示强制回滚')
+assert.ok(!stoppedHtml.includes('放弃回滚'), '停止后按钮文案是「保留改动」')
+assert.equal(
+  (stoppedHtml.match(/disabled=""/g) ?? []).length,
+  0,
+  '停止卡片默认两个操作都可用',
+)
+
+const stoppedBusyHtml = renderCard(pending({ reason: 'stopped', conflicts: [] }), 'retry')
+assert.equal((stoppedBusyHtml.match(/disabled=""/g) ?? []).length, 2, '停止卡片回滚中两个按钮都禁用')
+
+const stoppedFailedHtml = renderCard(
+  pending({ reason: 'stopped', status: 'failed', conflicts: [] }),
+  null,
+  false,
+  '回滚未完成',
+)
+assert.ok(stoppedFailedHtml.includes('让 Agent 帮忙处理冲突'), '停止后回滚失败仍可让 Agent 处理冲突')
+assert.ok(stoppedFailedHtml.includes('强制回滚'), '停止后回滚失败仍可强制回滚')
+assert.ok(stoppedFailedHtml.includes('保留改动'), '回滚失败后仍可保留改动')
+assert.equal(
+  (stoppedFailedHtml.match(/disabled=""/g) ?? []).length,
+  0,
+  '停止后回滚失败卡片按钮都可用',
+)
 
 /* ── ② failed 才多出重试，并逐项展示未恢复文件 ── */
 const failedOutcomes: UndoOutcome[] = [
@@ -195,5 +230,5 @@ assert.deepEqual(
 )
 
 console.log(
-  '通过：失败卡片三选项（仅 pending 出现、failed 才有重试、动作映射 runtime、冲突消息、互斥禁用）',
+  '通过：失败卡片三选项（仅 pending 出现、failed 才有重试、动作映射 runtime、冲突消息、互斥禁用）；停止卡片（回滚/保留、失败后才出现强制与 Agent）',
 )

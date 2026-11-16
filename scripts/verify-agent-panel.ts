@@ -9,6 +9,9 @@
  */
 
 import assert from 'node:assert/strict'
+import { createElement } from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import { MessageList } from '../src/agent/view/MessageList'
 import {
   STORAGE_DANGER_BYTES,
   STORAGE_WARN_BYTES,
@@ -35,7 +38,7 @@ import type { AgentRunResult, AgentViewItem, SegmentInfo, UndoOutcome } from '..
 const items: AgentViewItem[] = [
   { id: 'u1', kind: 'user', text: '把序章.hs 的第二行改一下' },
   { id: 'a1', kind: 'assistant', text: '好的，先读文件。', streaming: true },
-  { id: 't1', kind: 'tool', name: 'read_source', status: 'running', output: '第一行\n第二行' },
+  { id: 't1', kind: 'tool', name: 'read_source', status: 'running', input: '{"source":"序章.hs"}', output: '第一行\n第二行' },
   { id: 't2', kind: 'tool', name: 'write_source', status: 'done' },
   { id: 'e1', kind: 'error', text: '版本已变，write 被拒绝' },
   { id: 'n1', kind: 'notice', text: '已按版本守卫回滚' },
@@ -56,6 +59,7 @@ assert.equal(rows[1].streaming, true, 'assistant.streaming 要透传，面板据
 assert.equal(rows[1].thinking, undefined, '没有思考内容时不渲染思考块')
 assert.equal(rows[2].tool?.name, 'read_source')
 assert.equal(rows[2].tool?.status, 'running')
+assert.equal(rows[2].tool?.input, '{"source":"序章.hs"}', '工具调用参数要透传给展开区')
 assert.equal(rows[2].tool?.output, '第一行\n第二行')
 assert.equal(rows[4].roleLabel, '错误')
 assert.equal(rows[5].roleLabel, '提示')
@@ -215,6 +219,27 @@ assert.equal(contextReference(' 序章.hs '), '（当前文件：序章.hs）')
 assert.equal(describeError(new Error('网络断了')), '网络断了')
 assert.equal(describeError('自定义错误'), '自定义错误')
 assert.equal(describeError(42), '42')
+
+/* ── 工具行：压成一行，输入/输出是可展开入口，状态用“成功” ── */
+const toolHtml = renderToStaticMarkup(
+  createElement(MessageList, {
+    // 只渲染工具行，避免 SSR 走到 AgentMarkdown（DOMPurify 在 Node 下不可用）
+    rows: rows.filter((row) => row.kind === 'tool'),
+    status: '',
+    resetKey: null,
+  }),
+)
+assert.ok(toolHtml.includes('agent-tool-row'), '工具调用渲染成一行')
+assert.ok(toolHtml.includes('agent-tool-tag">工具<'), '一行里带“工具”标签')
+assert.ok(toolHtml.includes('read_source'), '一行里带工具名')
+assert.ok(toolHtml.includes('>输入<'), '有调用参数时提供「输入」入口')
+assert.ok(toolHtml.includes('>输出<'), '有输出时提供「输出」入口')
+assert.ok(toolHtml.includes('成功'), 'done 状态显示「成功」而不是「完成」')
+assert.ok(toolHtml.includes('运行中'), 'running 状态显示「运行中」')
+assert.equal((toolHtml.match(/agent-tool-row/g) ?? []).length, 2, '每个工具调用只占一行')
+assert.ok(!toolHtml.includes('agent-msg-role">工具'), '不再使用独立的角色行')
+assert.ok(!toolHtml.includes('agent-tool-pane'), '输入/输出默认收起')
+assert.ok(!toolHtml.includes('序章.hs'), '收起时不把参数内容铺到对话流里')
 
 console.log(
   '通过：Agent 面板视图派生（行 id/流式/工具状态、失败记录与回滚摘要、占用阈值、Key 掩码、时间与文案）',

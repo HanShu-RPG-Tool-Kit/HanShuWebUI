@@ -195,6 +195,41 @@ await test('IndexedDB 后端：Node 下可构造，只有真正读写才报 unav
   await assert.rejects(scoped.save(sampleRecord()), /scope 不一致/)
 })
 
+await test('reason：stopped 跨序列化保留（用户主动停止的日志刷新后仍是停止）', async () => {
+  const record = sampleRecord({ reason: 'stopped' })
+  const text = serializeUndoJournal(record)
+  assert.match(text, /"reason":"stopped"/, '序列化文本里应出现 stopped，格式必须与契约一致')
+  assert.equal(deserializeUndoJournal(text)?.reason, 'stopped', '反序列化应保留 stopped')
+
+  const backend = new MemoryUndoJournalBackend()
+  await backend.save(record)
+  const loaded = await backend.load(undoJournalKey(record.scope, record.windowId, record.segmentId))
+  assert.equal(loaded?.reason, 'stopped', '后端往返后 reason 必须仍是 stopped')
+})
+
+await test('reason：failure 与缺省在反序列化后都不产生字段', async () => {
+  // 生产里失败路径调用 persistPendingRollback(runKey) 不传 reason（facade.ts:792），
+  // 序列化就是普通 JSON.stringify；所以「failure 不产生字段」由两处共同保证：
+  // ① 调用方不传；② 反序列化把历史 / 手工数据里的 failure 归一化成「无 reason」。
+  const plainText = serializeUndoJournal(sampleRecord())
+  assert.equal(plainText.includes('"reason"'), false, '缺省时序列化文本里不应出现 reason 键')
+
+  const failureLoaded = deserializeUndoJournal(
+    serializeUndoJournal(sampleRecord({ reason: 'failure' })),
+  )
+  assert.ok(failureLoaded)
+  assert.equal(Object.hasOwn(failureLoaded, 'reason'), false, 'failure 不应反序列化出 reason 字段')
+
+  const plainLoaded = deserializeUndoJournal(plainText)
+  assert.ok(plainLoaded)
+  assert.equal(Object.hasOwn(plainLoaded, 'reason'), false, '缺省也不应产生 reason 字段')
+
+  // 手工构造的旧日志（带 failure）同样要归一化成「无 reason」，否则下游会多出一个分支
+  const manual = deserializeUndoJournal(JSON.stringify({ ...sampleRecord(), reason: 'failure' }))
+  assert.ok(manual)
+  assert.equal(Object.hasOwn(manual, 'reason'), false)
+})
+
 /* ───────────────────────── 汇总 ───────────────────────── */
 
 console.log(`\n通过 ${checks} 项，失败 ${failures.length} 项。`)
