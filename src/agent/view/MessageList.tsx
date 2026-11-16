@@ -128,6 +128,52 @@ function ToolLine({ tool }: { tool: ToolRow }) {
   )
 }
 
+/**
+ * 思考块：默认收起，只给想查看推理过程的用户一个入口。
+ *
+ * 按钮本身无边框；图标三态由 CSS 切换：
+ * - 收起且未悬停：科学图标
+ * - 收起且悬停：右向三角
+ * - 展开：下向三角
+ */
+function ThinkingBlock({ text }: { text: string }) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div className="agent-thinking">
+      <button
+        type="button"
+        className="agent-thinking-toggle"
+        aria-expanded={open}
+        title={open ? '收起思考' : '展开思考'}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="agent-thinking-icon" aria-hidden="true">
+          <svg
+            className="agent-thinking-science"
+            viewBox="0 0 16 16"
+            width="12"
+            height="12"
+            focusable="false"
+          >
+            <path
+              d="M6.2 2h3.6v1h-.7v2.9l3.5 6.1c.4.8-.1 1.7-1 1.7H4.4c-.9 0-1.4-.9-1-1.7l3.5-6.1V3h-.7V2Z"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.2"
+              strokeLinejoin="round"
+            />
+            <path d="M5.6 9.6h4.8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+          </svg>
+          <span className="agent-thinking-caret right">▸</span>
+          <span className="agent-thinking-caret down">▾</span>
+        </span>
+        思考
+      </button>
+      {open ? <div className="agent-thinking-body">{text}</div> : null}
+    </div>
+  )
+}
+
 function MessageRowView({ row }: { row: MessageRow }) {
   if (row.kind === 'tool') {
     const tool = row.tool
@@ -140,13 +186,7 @@ function MessageRowView({ row }: { row: MessageRow }) {
     return (
       <div className="agent-msg assistant">
         <div className="agent-msg-role">{row.roleLabel}</div>
-        {row.thinking ? (
-          // 思考默认不展开：只给想看过程的用户一个入口
-          <details className="agent-thinking">
-            <summary>思考</summary>
-            <div className="agent-thinking-body">{row.thinking}</div>
-          </details>
-        ) : null}
+        {row.thinking ? <ThinkingBlock text={row.thinking} /> : null}
         {text ? <AgentMarkdown source={text} /> : null}
         {row.streaming && text.length > 0 && (
           <span className="agent-cursor" aria-hidden="true">
