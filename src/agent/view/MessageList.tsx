@@ -155,14 +155,27 @@ function ThinkingBlock({ text }: { text: string }) {
             height="12"
             focusable="false"
           >
-            <path
-              d="M6.2 2h3.6v1h-.7v2.9l3.5 6.1c.4.8-.1 1.7-1 1.7H4.4c-.9 0-1.4-.9-1-1.7l3.5-6.1V3h-.7V2Z"
+            <circle cx="8" cy="8" r="1.45" fill="currentColor" />
+            <ellipse
+              cx="8"
+              cy="8"
+              rx="6.3"
+              ry="2.5"
               fill="none"
               stroke="currentColor"
-              strokeWidth="1.2"
-              strokeLinejoin="round"
+              strokeWidth="1.1"
+              transform="rotate(45 8 8)"
             />
-            <path d="M5.6 9.6h4.8" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+            <ellipse
+              cx="8"
+              cy="8"
+              rx="6.3"
+              ry="2.5"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.1"
+              transform="rotate(-45 8 8)"
+            />
           </svg>
           <span className="agent-thinking-caret right">▸</span>
           <span className="agent-thinking-caret down">▾</span>
