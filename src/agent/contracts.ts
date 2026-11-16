@@ -335,6 +335,11 @@ export type UndoOutcome = {
 /** 失败卡片上的待处理回滚（活跃段内，封段即失效） */
 export type PendingRollback = {
   status: 'pending' | 'failed'
+  /**
+   * 产生原因：`failure`（默认，Run 失败时的自动回滚预演不安全）或
+   * `stopped`（用户主动停止，**不自动回滚**，等用户选择回滚或保留）。
+   */
+  reason?: 'failure' | 'stopped'
   /** 预演发现的冲突（全部安全时不会进入待处理，直接自动回滚） */
   conflicts: UndoConflict[]
   /** 强制/重试之后的逐项结果 */
@@ -420,7 +425,15 @@ export type AgentViewItem =
       /** 模型思考内容（默认不展开；为空表示这一轮没有思考或厂商不返回） */
       thinking?: string
     }
-  | { id: string; kind: 'tool'; name: string; status: 'running' | 'done' | 'error'; output?: string }
+  | {
+      id: string
+      kind: 'tool'
+      name: string
+      status: 'running' | 'done' | 'error'
+      /** 调用参数（紧凑 JSON 文本）；模型请求里的 ToolCall.arguments，供 UI 展开查看 */
+      input?: string
+      output?: string
+    }
   | { id: string; kind: 'error'; text: string }
   | { id: string; kind: 'notice'; text: string }
 
@@ -491,6 +504,8 @@ export type AgentRuntime = {
   listSegments: () => Promise<SegmentInfo[]>
   /** 新建并切换到空段 */
   createSegment: (title?: string) => Promise<SegmentInfo>
+  /** 重命名一个活跃段（只改段标题，不动对话条目）；空标题会被拒绝 */
+  renameSegment: (segmentId: string, title: string) => Promise<SegmentInfo>
   /** 切换到已有段（同窗口） */
   selectSegment: (segmentId: string) => Promise<void>
   /**
@@ -504,7 +519,7 @@ export type AgentRuntime = {
   subscribe: (listener: (view: AgentRuntimeView) => void) => () => void
   /** 发起一个 Run（用户输入）；返回后 Run 可能仍在跑，进度走订阅 */
   run: (text: string) => Promise<AgentRunResult>
-  /** 中止当前 Run（页面存活时按版本守卫回滚） */
+  /** 中止当前 Run（**不自动回滚**：改动保留为草稿，由用户在回滚卡片里选择回滚或保留） */
   abort: () => Promise<void>
   /**
    * 强制回滚：把该 Run 涉及的所有文本恢复成 agent 工作前内容，丢弃之后的编辑。

@@ -150,6 +150,8 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
   let pendingRollback: PendingRollback | null = null
   /** 产生 pendingRollback 的 Run key（撤销日志按它分组） */
   let pendingRunKey: string | null = null
+  /** 用户点了「停止」：本轮收尾**不自动回滚**，改动留给用户选择回滚或保留 */
+  let abortRequested = false
   let opened = false
   let lastRunKey: string | null = null
   /** 每个段上次归档到哪个条目，用于增量补写（进程内即可，归档段记录里也存了 tailEntryId） */
@@ -212,7 +214,10 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
   }
 
   /** 把待处理回滚写进活跃段库；体积/环境不支持时降级为"只在内存" */
-  async function persistPendingRollback(runKey: string): Promise<void> {
+  async function persistPendingRollback(
+    runKey: string,
+    reason?: 'failure' | 'stopped',
+  ): Promise<void> {
     const key = segmentJournalKey()
     if (!key || !segmentId) return
     try {
@@ -221,6 +226,7 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
         windowId: options.windowId,
         segmentId,
         runKey,
+        ...(reason ? { reason } : {}),
         createdAt: Date.now(),
         entries: undo.entriesOf(runKey),
       })
@@ -284,6 +290,18 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
     if (!record) return
     undo.restore(record.runKey, record.entries)
     const preflight = await undo.preflight(record.runKey)
+    // 用户停止留下的待处理回滚：恢复后**不自动回滚**，等用户选择（与本次会话内一致）
+    if (record.reason === 'stopped') {
+      pendingRunKey = record.runKey
+      pendingRollback = {
+        status: 'pending',
+        reason: 'stopped',
+        conflicts: preflight.safe ? [] : preflight.conflicts,
+        createdAt: record.createdAt,
+      }
+      emit()
+      return
+    }
     if (preflight.safe) {
       try {
         await undo.rollback(record.runKey)
@@ -594,6 +612,33 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
       }
     },
 
+    async renameSegment(id: string, title: string): Promise<SegmentInfo> {
+      if (!opened) await open()
+      const trimmed = title.trim()
+      if (!trimmed) throw new Error('段标题不能为空')
+      if (trimmed.length > 80) throw new Error('段标题过长（最多 80 个字符）')
+      const meta = metaStore[id] ?? {
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        runCount: 0,
+      }
+      meta.title = trimmed
+      meta.updatedAt = Date.now()
+      metaStore[id] = meta
+      writeSegmentMeta(options.scope, options.windowId, metaStore)
+      emit()
+      return {
+        id,
+        title: trimmed,
+        createdAt: meta.createdAt,
+        updatedAt: meta.updatedAt,
+        windowId: options.windowId,
+        state: meta.sealed ? 'sealed' : id === segmentId ? 'active' : 'dormant',
+        runCount: meta.runCount,
+        sourceSnapshotId: meta.sourceSnapshotId,
+      }
+    },
+
     async selectSegment(id: string): Promise<void> {
       if (!opened) await open()
       if (id === segmentId) return
@@ -627,6 +672,14 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
         await runtime.createSegment()
       }
 
+      abortRequested = false
+      // 上一轮「停止」留下的改动：用户继续发消息 = 保留这些草稿，清掉回滚卡片与日志
+      if (pendingRollback?.reason === 'stopped') {
+        if (pendingRunKey) appendSegmentLog(pendingRunKey)
+        clearPendingRollback()
+        await clearPendingJournal()
+      }
+
       const runKey = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
       lastRunKey = runKey
       extraItems = []
@@ -635,6 +688,8 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
       emit()
 
       let failureText: string | undefined
+      /** 用户主动停止：不当作失败，也**不自动回滚**（改动保留为草稿，由用户选择） */
+      let stopped = false
 
       try {
         // 模型选择是"下次 Run 生效"的：每轮前按当前配置改一次（configure 只写 pi.agent 文档，不产生对话条目）
@@ -648,11 +703,13 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
         const submission = await conversation.submit({ type: 'input', content: text }, ctx)
         const settled = await submission.wait(ctx)
         if (settled.status !== 'done') {
-          failureText = runFailureText(settled.reason)
+          if (settled.reason === 'aborted' || abortRequested) stopped = true
+          else failureText = runFailureText(settled.reason)
         }
       } catch (error) {
         failureText = error instanceof Error ? error.message : String(error)
       }
+      abortRequested = false
 
       // Run 收尾：未消费的锁一律释放（文档 §8 第三档兜底）
       await Promise.resolve(locks.releaseRun(runKey))
@@ -664,6 +721,37 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
         meta.updatedAt = Date.now()
         meta.runCount += 1
         writeSegmentMeta(options.scope, options.windowId, metaStore)
+      }
+
+      // 用户停止：不自动回滚。改动已在草稿里，保留撤销日志并挂出「回滚 / 保留」选择
+      if (stopped) {
+        const hasChanges = undo.has(runKey)
+        if (hasChanges) {
+          pendingRunKey = runKey
+          pendingRollback = {
+            status: 'pending',
+            reason: 'stopped',
+            conflicts: [],
+            createdAt: Date.now(),
+          }
+          await persistPendingRollback(runKey, 'stopped')
+        } else {
+          clearPendingRollback()
+        }
+        extraItems = [
+          ...extraItems,
+          {
+            id: `stopped:${Date.now()}`,
+            kind: 'notice',
+            text: hasChanges
+              ? '已停止：本次改动保留为本地草稿，可在下方选择回滚本次改动或保留。'
+              : '已停止。',
+          },
+        ]
+        runState = 'aborted'
+        statusText = ''
+        emit()
+        return { ok: true }
       }
 
       if (!failureText) {
@@ -719,6 +807,12 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
 
     async abort(): Promise<void> {
       if (!conversation) return
+      // 标记为用户停止：收尾时跳过自动回滚（D3 修订：停止不撤销改动，由用户主动选择）
+      if (runState === 'running') {
+        abortRequested = true
+        statusText = '正在停止…'
+        emit()
+      }
       await conversation.abort(ctx)
       emit()
     },
@@ -791,6 +885,8 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
           .filter((item) => item.segmentId === segmentId)
           .sort((a, b) => b.createdAt - a.createdAt)[0]
 
+      // 待处理回滚（失败或用户停止）在保存时=放弃回滚，但改动仍要进本段简化日志
+      if (pendingRunKey) appendSegmentLog(pendingRunKey)
       const segmentMeta = metaStore[segmentId]
       const rollbackLog = segmentMeta?.rollbackLog ?? []
       const info: SnapshotInfo = {

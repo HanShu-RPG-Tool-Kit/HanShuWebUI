@@ -5,7 +5,12 @@
  * 它只吃这个纯函数的输出。纯函数也方便验收脚本直接断言（不渲染 React）。
  */
 
-import type { AssistantMessage, ToolResultMessage, UserMessage } from '@earendil-works/pi-ai'
+import type {
+  AssistantMessage,
+  ToolCall,
+  ToolResultMessage,
+  UserMessage,
+} from '@earendil-works/pi-ai'
 import type { ConversationView, EntryRecord } from '@earendil-works/pi-durable'
 import type { LiveState } from '@earendil-works/pi-durable'
 import type {
@@ -57,6 +62,27 @@ function toolResultText(message: ToolResultMessage | undefined): string {
     .join('')
 }
 
+/**
+ * 工具调用参数：从助手消息里的 ToolCall 建 callId → 紧凑 JSON 文本的映射。
+ * 工具结果条目只带 toolCallId，参数只在发出请求的那条助手消息里（`entriesToItems` 顺序扫描时收集）。
+ * 没有参数（`{}`）时不返回，避免 UI 里多一个空的「输入」入口。
+ */
+export function toolCallInputsOf(message: AssistantMessage | undefined): Map<string, string> {
+  const out = new Map<string, string>()
+  if (!message) return out
+  for (const part of message.content) {
+    if (part.type !== 'toolCall') continue
+    const call = part as ToolCall
+    if (Object.keys(call.arguments ?? {}).length === 0) continue
+    try {
+      out.set(call.id, JSON.stringify(call.arguments))
+    } catch {
+      /* 参数不是可序列化值时不给输入入口，不影响工具结果渲染 */
+    }
+  }
+  return out
+}
+
 function firstMessageOf<T>(entry: { model?: readonly unknown[] } | undefined): T | undefined {
   return entry?.model?.[0] as T | undefined
 }
@@ -74,6 +100,8 @@ export function entryRecordsToItems(
   entries: readonly EntryRecord[],
 ): AgentViewItem[] {
   const items: AgentViewItem[] = []
+  /** 工具调用参数：助手条目在前、结果条目在后，顺序扫描即可对上 */
+  const callInputs = new Map<string, string>()
   for (const entry of entries) {
     const entryId = String(entry.id)
     switch (entry.kind) {
@@ -84,6 +112,7 @@ export function entryRecordsToItems(
       }
       case KIND_ASSISTANT: {
         const message = firstMessageOf<AssistantMessage>(entry)
+        for (const [callId, input] of toolCallInputsOf(message)) callInputs.set(callId, input)
         const text = assistantTextOf(message)
         const thinking = assistantThinkingOf(message)
         // 只有工具调用的助手消息不产生条目：工具状态由 live.tools / 工具结果条目呈现，
@@ -102,6 +131,7 @@ export function entryRecordsToItems(
           kind: 'tool',
           name: message?.toolName ?? 'tool',
           status: message?.isError ? 'error' : 'done',
+          input: message?.toolCallId ? callInputs.get(message.toolCallId) : undefined,
           output: output || undefined,
         })
         break
@@ -130,6 +160,7 @@ export function liveToItems(live: LiveState | undefined): AgentViewItem[] {
   const items: AgentViewItem[] = []
 
   const partial = live.generation?.message as AssistantMessage | undefined
+  const callInputs = toolCallInputsOf(partial)
   const partialText = assistantTextOf(partial)
   const partialThinking = assistantThinkingOf(partial)
   if (partialText || partialThinking) {
@@ -149,6 +180,7 @@ export function liveToItems(live: LiveState | undefined): AgentViewItem[] {
       kind: 'tool',
       name: slot.name,
       status: slot.status === 'done' ? 'done' : 'running',
+      input: callInputs.get(slot.callId),
       output: slot.output || undefined,
     })
   }

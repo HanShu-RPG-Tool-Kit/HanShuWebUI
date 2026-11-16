@@ -21,6 +21,11 @@ export type UndoJournalRecord = {
   segmentId: string
   /** 产生这条日志的 Run（`pi.live.run.taskId` 的本地映射） */
   runKey: string
+  /**
+   * 待处理回滚的原因：`failure`（默认，失败 Run；恢复时安全则自动回滚）或
+   * `stopped`（用户停止；恢复时**不自动回滚**，等用户选择回滚或保留）。
+   */
+  reason?: 'failure' | 'stopped'
   createdAt: number
   entries: UndoEntry[]
 }
@@ -80,6 +85,7 @@ export function deserializeUndoJournal(text: string): UndoJournalRecord | null {
       windowId: record.windowId,
       segmentId: record.segmentId,
       runKey: record.runKey,
+      ...(record.reason === 'stopped' ? { reason: 'stopped' as const } : {}),
       createdAt: record.createdAt,
       entries: record.entries.filter(isUndoEntry).map(cloneEntry),
     }
