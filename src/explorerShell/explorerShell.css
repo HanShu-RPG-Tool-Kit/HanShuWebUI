@@ -343,20 +343,19 @@ body.is-panel-dragging .explorer-shell-heading.is-draggable {
   list-style: none;
 }
 
+/* 面板本身不滚动：标题栏是普通工具栏，只有目录树滚动，拖动手柄永远留在顶上。 */
 .stageplay-asset-manager {
   display: flex;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
   height: 100%;
-  overflow: auto;
+  overflow: hidden;
   background: var(--xs-panel, #303030);
 }
 
 .stageplay-asset-manager-heading {
-  position: sticky;
-  top: 0;
-  z-index: 1;
+  flex: none;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -374,6 +373,9 @@ body.is-panel-dragging .explorer-shell-heading.is-draggable {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.stageplay-asset-manager-heading.is-draggable strong {
   cursor: grab;
 }
 
@@ -394,6 +396,13 @@ body.is-panel-dragging .explorer-shell-heading.is-draggable {
 .stageplay-asset-manager-empty {
   padding: 12px;
   color: var(--text-muted, #aaa);
+}
+
+/* 只有一个滚动容器：树。目录之间嵌套，滚动跟着最外层走。 */
+.stageplay-asset-manager > .explorer-assets {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 
 .stageplay-explorer-assets .explorer-assets-row,

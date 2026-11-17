@@ -190,6 +190,28 @@ export function StageplayExplorer({
     </>
   ) : null;
 
+  const createButton = (
+    <button
+      ref={headerButtonRef}
+      type="button"
+      className="stageplay-explorer-new"
+      data-newfile-trigger
+      title="新建文件…（选类型后立即创建，可再改名）"
+      disabled={Boolean(project) && readOnly}
+      onClick={(event) => {
+        if (!project) {
+          promptCreateOrImport();
+          return;
+        }
+        // 菜单的"点外部关闭"会跳过触发器，所以开关只能由触发器自己管
+        if (typeMenu && typeMenu.trigger === event.currentTarget) setTypeMenu(null);
+        else openTypeMenuBeside(event.currentTarget);
+      }}
+    >
+      +剧
+    </button>
+  );
+
   return (
     <>
       <CategoryExplorer
@@ -222,27 +244,7 @@ export function StageplayExplorer({
           rootClass: "stageplay-explorer",
           prepend: emptyProjectHint,
           blankMenuItems,
-          tools: (
-            <button
-              ref={headerButtonRef}
-              type="button"
-              className="stageplay-explorer-new"
-              data-newfile-trigger
-              title="新建文件…（选类型后立即创建，可再改名）"
-              disabled={Boolean(project) && readOnly}
-              onClick={(event) => {
-                if (!project) {
-                  promptCreateOrImport();
-                  return;
-                }
-                // 菜单的"点外部关闭"会跳过触发器，所以开关只能由触发器自己管
-                if (typeMenu && typeMenu.trigger === event.currentTarget) setTypeMenu(null);
-                else openTypeMenuBeside(event.currentTarget);
-              }}
-            >
-              +剧
-            </button>
-          ),
+          tools: createButton,
         }}
         dock={dock}
       />

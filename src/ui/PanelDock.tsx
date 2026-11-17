@@ -126,6 +126,11 @@ type ResizeSession = {
 
 type Session = TitleSession | SashSession | ResizeSession
 
+/**
+ * **一个视图一份布局**：每个工作区（以及嵌在文档里的设计视图）传自己的
+ * `storageKey`，互不影响——各视图的栏宽、浮窗、标签组合、恢复默认都独立。
+ * 这里的默认值只给历史调用方（剧本）用，新视图请显式传键。
+ */
 const STORAGE_KEY = "hanshu.panelDock"
 export const PANEL_DOCK_RESET_EVENT = "hanshu:panel-dock-reset"
 const LEGACY_EXPLORER_KEYS = [

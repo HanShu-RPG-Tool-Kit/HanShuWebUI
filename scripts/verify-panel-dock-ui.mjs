@@ -28,7 +28,6 @@ try {
   assert.equal(await root.getByRole('region', { name: '录音棚', exact: true }).isVisible(), true)
   await menu('查看', '录音棚')
   console.log('PASS view menu toggles Explorer and Recording Studio')
-
   const header = root.locator('.stageplay-explorer .explorer-shell-heading')
   const from = await header.boundingBox()
   const dock = await root.locator('.panel-dock').boundingBox()
@@ -39,6 +38,19 @@ try {
   await root.locator('.panel-dock-band.is-float .stageplay-explorer').waitFor()
   const saved = await page.evaluate(() => localStorage.getItem('hanshu.panelDock'))
   assert.equal(JSON.parse(saved).panels.explorer.placement, 'float')
+  // 一个视图一份布局：在剧本里浮起的资源管理器，不该把游戏性也变成浮窗。
+  // （用上面已经浮起的 explorer 验证，不再多拖一次，避免依赖拖拽落点。）
+  await page.getByRole('tab', { name: '游戏性', exact: true }).click()
+  const gameplay = page.locator('.app-workspace-pane.active')
+  const gameplayExplorer = gameplay.locator('.panel-dock-band[data-panel-id="explorer"]')
+  await gameplayExplorer.waitFor()
+  assert.equal(await gameplay.locator('.panel-dock-band.is-float[data-panel-id="explorer"]').count(), 0, '游戏性不能继承剧本里浮起的资源管理器')
+  assert.equal(await gameplay.locator('.panel-dock-band[data-panel-id="asset-manager"]').count(), 0, '别的视图的面板不跟着搬过来')
+  assert.equal(await page.evaluate(() => localStorage.getItem('hanshu.panelDock.gameplay')), null, '游戏性还没改布局，不该凭空写一份')
+  assert.equal(JSON.parse(await page.evaluate(() => localStorage.getItem('hanshu.panelDock'))).panels.explorer.placement, 'float', '剧本自己的布局不受影响')
+  await page.getByRole('tab', { name: '剧本', exact: true }).click()
+  await root.locator('.panel-dock-band.is-float .stageplay-explorer').waitFor()
+  console.log('PASS each workspace keeps its own dock layout; floating in one view does not leak into another')
   await page.reload()
   await waitProject(page, '统一工程验收')
   await page.getByRole('tab', { name: '剧本', exact: true }).click()

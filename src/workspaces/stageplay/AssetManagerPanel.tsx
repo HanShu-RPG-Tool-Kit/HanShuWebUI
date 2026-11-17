@@ -10,6 +10,7 @@ import { useFolderDropTarget } from "../../drag/useFolderDropTarget";
 import { ExplorerIcon, fileIconKind } from "../../explorerIcons";
 import type { ExplorerContextItem } from "./explorerMenus";
 import { ExplorerContextMenu } from "./explorerMenus";
+import { dockTitleHint, type ExplorerDockProps } from "../../explorerShell";
 import type { AssetFile, Project } from "../../workspace";
 
 /**
@@ -48,7 +49,7 @@ export function AssetManagerPanel({
     targetDir: string,
     source: DragSource,
   ) => void;
-  dock: import('../../explorerShell').ExplorerDockProps;
+  dock: ExplorerDockProps;
 }) {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; items: ExplorerContextItem[] } | null>(null);
   const showContext = (event: ReactMouseEvent, items: ExplorerContextItem[]) => {
@@ -73,10 +74,11 @@ export function AssetManagerPanel({
   };
   return (
     <section className="stageplay-asset-manager stageplay-explorer-assets">
-      <header className="stageplay-asset-manager-heading">
+      <header className={`stageplay-asset-manager-heading${dock.onTitlePointerDown ? " is-draggable" : ""}`}>
         <strong
-          title="资产管理器"
+          title={dockTitleHint(dock)}
           onPointerDown={(event) => {
+            if (event.button !== 0) return;
             if (event.target instanceof Element && event.target.closest('button, input')) return;
             dock.onTitlePointerDown?.(event);
           }}
