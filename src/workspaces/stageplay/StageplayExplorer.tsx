@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { CategoryExplorer, type CreateAnchor, type ExplorerDockProps } from "../../explorerShell";
 import { ExplorerTreeRow } from "../../explorerShell/ExplorerTreeRow";
-import { endDrag, writeDragPayload, type DragSource } from "../../drag/dragPayload";
+import { endDrag, writeDragPayload } from "../../drag/dragPayload";
 import { assetFileName } from "../../assets/paths";
 import { ExplorerIcon, sourceIconKind } from "../../explorerIcons";
 import type { NewFileType, NewFileTypeId } from "../../newFileTypes";
@@ -10,7 +10,6 @@ import type { ExplorerOrganization } from "../../project/explorerOrganization";
 import { openProjectUi } from "../../project/projectUi";
 import { chooseDialog } from "../../ui/dialogs";
 import { isVoiceMapFile, sourcePathOf, type Project } from "../../workspace";
-import { StageplayAssetsAddon } from "./StageplayAssetsAddon";
 import {
   STAGEPLAY_EXPLORER_CATEGORIES,
   stageplayLooseSources,
@@ -47,22 +46,14 @@ export function StageplayExplorer({
   organization,
   readOnly,
   activeScriptId,
-  activeAssetId,
   newFileMenuRequest = 0,
   renameRequest,
   onOpenScript,
-  onOpenAsset,
   onCreate,
   onRename,
   onDelete,
   onOrganize,
-  onToggleAssets,
-  onDeleteAsset,
-  onNewAssetFolder,
-  onDeleteAssetFolder,
-  onImportAssets,
   onGeneratePlaceholderVoice,
-  onDropIntoFolder,
   dock,
 }: {
   project: Project | null;
@@ -70,31 +61,21 @@ export function StageplayExplorer({
   organization: ExplorerOrganization | null;
   readOnly: boolean;
   activeScriptId: string | null;
-  activeAssetId: string | null;
   /** 应用菜单「新建剧本」：值变化即在 `+剧` 旁打开类型菜单（0 = 从未请求） */
   newFileMenuRequest?: number;
   renameRequest: { id: string; seq: number } | null;
   onOpenScript: (scriptId: string) => void;
-  onOpenAsset: (assetId: string) => void;
   /** 选类型即创建；folderKey 非空时创建后登记到该共享文件夹。失败原因由工作区提示。 */
   onCreate: (typeId: NewFileTypeId, folderKey: string | null) => void;
   onRename: (scriptId: string, base: string) => string | null;
   onDelete: (scriptIds: string[]) => void;
   onOrganize: (next: ExplorerOrganization, label: string) => void;
-  onToggleAssets: (projectId: string) => void;
-  onDeleteAsset: (assetId: string) => void;
-  onNewAssetFolder: (packageId: string, parentPath: string) => void;
-  onDeleteAssetFolder: (packageId: string, folderPath: string) => void;
-  onImportAssets: (packageId: string, files: FileList | File[], targetDir?: string) => void;
   onGeneratePlaceholderVoice: (scriptId: string) => void;
-  onDropIntoFolder: (targetPackageId: string, targetDir: string, source: DragSource) => void;
   dock: ExplorerDockProps;
 }) {
   const [typeMenu, setTypeMenu] = useState<TypeMenu | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; items: ExplorerContextItem[] } | null>(null);
   const headerButtonRef = useRef<HTMLButtonElement>(null);
-  const importInputRef = useRef<HTMLInputElement>(null);
-  const importDirRef = useRef("assets");
   const handledRequestRef = useRef(newFileMenuRequest);
   const promptingProjectRef = useRef(false);
 
@@ -166,14 +147,6 @@ export function StageplayExplorer({
     setContextMenu({ x: event.clientX, y: event.clientY, items });
   };
 
-  const requestImport = (dir: string) => {
-    importDirRef.current = dir;
-    const input = importInputRef.current;
-    if (!input) return;
-    input.value = "";
-    input.click();
-  };
-
   const createInCategory = (category: string, folderKey: string | null, anchor: CreateAnchor | null) => {
     const types = stageplayTypesForCategory(category);
     if (types.length === 1) onCreate(types[0]!.id, folderKey);
@@ -189,7 +162,6 @@ export function StageplayExplorer({
             hint: "选剧本类型后立即创建，落在对应分类根下",
             action: () => openTypeMenuAt(anchor),
           },
-          { label: "导入资源…", disabled: readOnly, hint: "导入到 assets/", action: () => requestImport("assets") },
         ]
       : [
           { label: "创建工程…", action: () => openProjectUi("create") },
@@ -215,32 +187,6 @@ export function StageplayExplorer({
           showContext={showContext}
         />
       )}
-      <div className="stageplay-explorer-assets">
-        <StageplayAssetsAddon
-          project={project}
-          activeAssetId={activeAssetId}
-          onToggleRoot={() => onToggleAssets(project.id)}
-          onOpenAsset={onOpenAsset}
-          onDeleteAsset={onDeleteAsset}
-          onNewAssetFolder={onNewAssetFolder}
-          onDeleteAssetFolder={onDeleteAssetFolder}
-          onImportAssets={onImportAssets}
-          onDropIntoFolder={onDropIntoFolder}
-          onRequestImport={requestImport}
-          showContext={showContext}
-        />
-      </div>
-      <input
-        ref={importInputRef}
-        type="file"
-        multiple
-        hidden
-        onChange={(event) => {
-          const list = event.target.files;
-          if (list?.length) onImportAssets(project.id, list, importDirRef.current);
-          event.target.value = "";
-        }}
-      />
     </>
   ) : null;
 

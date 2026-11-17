@@ -343,6 +343,59 @@ body.is-panel-dragging .explorer-shell-heading.is-draggable {
   list-style: none;
 }
 
+.stageplay-asset-manager {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: auto;
+  background: var(--xs-panel, #303030);
+}
+
+.stageplay-asset-manager-heading {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 6px 0 9px;
+  color: var(--text-bright, #fff);
+  background: var(--xs-heading, #383838);
+  border-bottom: 1px solid var(--border-subtle, #242424);
+  user-select: none;
+}
+
+.stageplay-asset-manager-heading strong {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: grab;
+}
+
+.stageplay-asset-manager-heading button {
+  min-height: 20px;
+  padding: 0 6px;
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--border-subtle, #555);
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.stageplay-asset-manager-heading button:hover {
+  background: var(--xs-hover, #454545);
+}
+
+.stageplay-asset-manager-empty {
+  padding: 12px;
+  color: var(--text-muted, #aaa);
+}
+
 .stageplay-explorer-assets .explorer-assets-row,
 .stageplay-explorer-assets .explorer-asset-files {
   padding-left: 0;

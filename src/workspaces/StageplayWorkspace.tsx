@@ -12,6 +12,7 @@ import {
 } from 'react'
 import Editor, { type OnMount } from '@monaco-editor/react'
 import { StageplayExplorer } from './stageplay/StageplayExplorer'
+import { AssetManagerPanel } from './stageplay/AssetManagerPanel'
 import { commitOrganization, placeSource, relocatedExplorer, withExplorer } from '../explorerShell'
 import { emptyOrganization } from '../project/explorerOrganization'
 import { sourcePathKnownToServer } from '../project/projectFs'
@@ -3295,11 +3296,9 @@ export const StageplayWorkspace = forwardRef<
             organization={project && workspace.packages[0] ? (workspace.packages[0].explorer ?? emptyOrganization()) : null}
             readOnly={!workspace.packages[0] || serviceSession.binding?.handle.client.snapshot.role === 'viewer'}
             activeScriptId={workspace.activeScriptId}
-            activeAssetId={workspace.activeAssetId}
             newFileMenuRequest={newFileMenuRequest}
             renameRequest={renameRequest}
             onOpenScript={openScript}
-            onOpenAsset={openAsset}
             onCreate={handleExplorerCreate}
             onRename={handleShellRename}
             onDelete={(ids) => {
@@ -3313,20 +3312,34 @@ export const StageplayWorkspace = forwardRef<
                 ),
               )
             }}
-            onToggleAssets={handleToggleAssets}
-            onDeleteAsset={handleDeleteAsset}
-            onNewAssetFolder={handleNewAssetFolder}
-            onDeleteAssetFolder={handleDeleteAssetFolder}
-            onImportAssets={(packageId, files, targetDir) => {
-              void handleImportAssets(packageId, files, targetDir)
-            }}
             onGeneratePlaceholderVoice={(scriptId) => {
               void handleGeneratePlaceholderVoice(scriptId)
             }}
-            onDropIntoFolder={handleDropIntoFolder}
             dock={dock}
           />
       ),
+    },
+    {
+      id: 'asset-manager',
+      title: '资产管理器',
+      visible: view.assetManager,
+      defaultPlacement: 'left' as const,
+      defaultSize: 300,
+      minSize: 220,
+      render: (dock) => workspace.packages[0] ? (
+        <AssetManagerPanel
+          project={workspace.packages[0]}
+          activeAssetId={workspace.activeAssetId}
+          onToggleRoot={() => handleToggleAssets(workspace.packages[0]!.id)}
+          onOpenAsset={openAsset}
+          onDeleteAsset={handleDeleteAsset}
+          onNewAssetFolder={handleNewAssetFolder}
+          onDeleteAssetFolder={handleDeleteAssetFolder}
+          onImportAssets={(packageId, files, targetDir) => { void handleImportAssets(packageId, files, targetDir) }}
+          onDropIntoFolder={handleDropIntoFolder}
+          dock={dock}
+        />
+      ) : <div className="stageplay-asset-manager-empty">请先打开工程</div>,
     },
     {
       id: 'agent',
