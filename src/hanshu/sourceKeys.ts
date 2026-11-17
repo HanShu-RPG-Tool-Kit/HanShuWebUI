@@ -18,6 +18,52 @@ import { stopParseLineOf } from './directives'
 
 export type SourceKeyEntry = { key: string; line: number }
 
+/** 形似键但格式不对的正文片段（P10：大写 / 长度不对的十六进制） */
+export type SuspectKeySpan = {
+  /** 1-based 行号 */
+  line: number
+  /** 片段文本（已 trim） */
+  text: string
+  /** 英文原因（agent lint 之外的调用方可直接用） */
+  reason: string
+}
+
+/** 严格合法键：8 位小写十六进制（与 agentOps.LANG_KEY_PATTERN 同口径） */
+const STRICT_KEY = /^[0-9a-f]{8}$/
+/** 形似键：6–10 位十六进制（任意大小写） */
+const HEX_LIKE = /^[0-9a-fA-F]{6,10}$/
+const HAS_UPPER_HEX = /[A-F]/
+
+/**
+ * 扫描「形似键但格式不对」的可本地化文本片段（P10）。
+ *
+ * 典型误写：`narrator:7F3A91C2//`（大写）、`narrator:7F3A91C//`（长度不对）。
+ * 只认**整段可本地化文本**，因此纯小写数字台词（`narrator:123456//`）不会误报；
+ * `#stopparse` 之后不参与本地化，那里也不检查。
+ */
+export function suspectKeySpans(source: string): SuspectKeySpan[] {
+  const stopLine = stopParseLineOf(source)
+  const out: SuspectKeySpan[] = []
+  const seen = new Set<string>()
+  for (const span of parseTextSpans(source)) {
+    if (stopLine != null && span.endLine >= stopLine) continue
+    const text = span.value.trim()
+    if (!text || STRICT_KEY.test(text)) continue
+    let reason = ''
+    if (/^[0-9a-fA-F]{8}$/.test(text)) {
+      reason = '8 hex digits but not lowercase'
+    } else if (HEX_LIKE.test(text) && HAS_UPPER_HEX.test(text)) {
+      reason = 'hex-looking text but not an 8-digit lowercase key'
+    }
+    if (!reason) continue
+    const id = `${span.line}:${text}`
+    if (seen.has(id)) continue
+    seen.add(id)
+    out.push({ line: span.line, text, reason })
+  }
+  return out
+}
+
 function spansForSource(source: string, sourceName?: string): TextSpan[] {
   if (sourceName && getExtension(sourceName) === '.char') {
     return parseCharTextSpans(source)

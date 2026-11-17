@@ -8,6 +8,7 @@ import {
 import { endDrag, writeDragPayload, type DragSource } from "../../drag/dragPayload";
 import { useFolderDropTarget } from "../../drag/useFolderDropTarget";
 import { ExplorerIcon, fileIconKind } from "../../explorerIcons";
+import { folderHasLockedAsset, isLockedAssetPath } from "./agentLockTargets";
 import type { ExplorerContextItem } from "./explorerMenus";
 import type { AssetFile, Project } from "../../workspace";
 
@@ -21,6 +22,7 @@ import type { AssetFile, Project } from "../../workspace";
 export function StageplayAssetsAddon({
   project,
   activeAssetId,
+  lockedAssetPaths,
   onToggleRoot,
   onOpenAsset,
   onDeleteAsset,
@@ -33,6 +35,8 @@ export function StageplayAssetsAddon({
 }: {
   project: Project;
   activeAssetId: string | null;
+  /** Agent 正持锁的资产路径（`.lang` 等）：删除入口按目标路径禁用 */
+  lockedAssetPaths: ReadonlySet<string>;
   onToggleRoot: () => void;
   onOpenAsset: (assetId: string) => void;
   onDeleteAsset: (assetId: string) => void;
@@ -65,6 +69,7 @@ export function StageplayAssetsAddon({
       depth={0}
       rootCollapsed={project.assetsCollapsed}
       activeAssetId={activeAssetId}
+      lockedAssetPaths={lockedAssetPaths}
       isDirCollapsed={(path) => Boolean(collapsedDirs[path])}
       onToggleRoot={onToggleRoot}
       onToggleDir={(path) =>
@@ -88,6 +93,7 @@ function AssetFolderBlock({
   depth,
   rootCollapsed,
   activeAssetId,
+  lockedAssetPaths,
   isDirCollapsed,
   onToggleRoot,
   onToggleDir,
@@ -105,6 +111,7 @@ function AssetFolderBlock({
   depth: number;
   rootCollapsed: boolean;
   activeAssetId: string | null;
+  lockedAssetPaths: ReadonlySet<string>;
   isDirCollapsed: (path: string) => boolean;
   onToggleRoot: () => void;
   onToggleDir: (path: string) => void;
@@ -127,6 +134,8 @@ function AssetFolderBlock({
 }) {
   const isRoot = dir.path === "assets";
   const collapsed = isRoot ? rootCollapsed : isDirCollapsed(dir.path);
+  const isLockedAsset = (path: string) => isLockedAssetPath(lockedAssetPaths, path);
+  const lockedFolder = !isRoot && folderHasLockedAsset(lockedAssetPaths, dir.path);
   // 目录行就是"拖到哪个文件夹"的判定框：外部文件导入、内部载荷移动
   const dirDrop = useFolderDropTarget({
     onFiles: (files) => onImportAssets(pkgId, files, dir.path),
@@ -159,6 +168,10 @@ function AssetFolderBlock({
               id: "delete",
               label: "删除",
               danger: true,
+              disabled: lockedFolder,
+              hint: lockedFolder
+                ? "文件夹内有 Agent 正锁定的资产，暂不能删除；等解锁后再试"
+                : undefined,
               separatorBefore: true,
               onSelect: () => onDeleteAssetFolder(pkgId, dir.path),
             },
@@ -221,8 +234,16 @@ function AssetFolderBlock({
           {!isRoot && (
             <button
               type="button"
-              title="删除文件夹"
-              onClick={() => onDeleteAssetFolder(pkgId, dir.path)}
+              title={
+                lockedFolder
+                  ? "文件夹内有 Agent 正锁定的资产，暂不能删除；等解锁后再试"
+                  : "删除文件夹"
+              }
+              disabled={lockedFolder}
+              onClick={() => {
+                if (lockedFolder) return;
+                onDeleteAssetFolder(pkgId, dir.path);
+              }}
             >
               ×
             </button>
@@ -241,6 +262,7 @@ function AssetFolderBlock({
                   depth={depth + 1}
                   rootCollapsed={false}
                   activeAssetId={activeAssetId}
+                  lockedAssetPaths={lockedAssetPaths}
                   isDirCollapsed={isDirCollapsed}
                   onToggleRoot={onToggleRoot}
                   onToggleDir={onToggleDir}
@@ -260,6 +282,7 @@ function AssetFolderBlock({
                 packageId={pkgId}
                 asset={node.asset as AssetFile}
                 active={node.asset.id === activeAssetId}
+                locked={isLockedAsset(node.asset.path)}
                 onOpen={() => onOpenAsset(node.asset.id)}
                 onDelete={() => onDeleteAsset(node.asset.id)}
                 showContext={showContext}
@@ -286,6 +309,7 @@ function AssetRow({
   packageId,
   asset,
   active,
+  locked,
   onOpen,
   onDelete,
   showContext,
@@ -293,16 +317,19 @@ function AssetRow({
   packageId: string;
   asset: AssetFile;
   active: boolean;
+  /** Agent 正持锁：删除入口禁用 */
+  locked: boolean;
   onOpen: () => void;
   onDelete: () => void;
   showContext: (event: ReactMouseEvent, items: ExplorerContextItem[]) => void;
 }) {
+  const lockedHint = "该资产正被 Agent 使用（锁未释放），暂不能删除；等解锁后再试";
   return (
     <li>
       <div
         className={`explorer-row explorer-file-row explorer-asset-row${
           active ? " active" : ""
-        }`}
+        }${locked ? " is-agent-locked" : ""}`}
         draggable
         onContextMenu={(event) => {
           showContext(event, [
@@ -316,6 +343,8 @@ function AssetRow({
               id: "delete",
               label: "删除",
               danger: true,
+              disabled: locked,
+              hint: locked ? lockedHint : undefined,
               separatorBefore: true,
               onSelect: onDelete,
             },
@@ -335,13 +364,20 @@ function AssetRow({
           type="button"
           className="explorer-label"
           onClick={onOpen}
-          title={`${asset.path}\n右键：打开或删除`}
+          title={`${asset.path}\n右键：打开${locked ? "（删除被 Agent 锁禁用）" : "或删除"}`}
         >
           <ExplorerIcon kind={fileIconKind(asset.path)} />
           <span className="explorer-name">{assetFileName(asset.path)}</span>
         </button>
         <div className="explorer-row-actions">
-          <button type="button" title="删除资产" onClick={onDelete}>
+          <button
+            type="button"
+            title={locked ? lockedHint : "删除资产"}
+            disabled={locked}
+            onClick={() => {
+              if (!locked) onDelete();
+            }}
+          >
             ×
           </button>
         </div>
