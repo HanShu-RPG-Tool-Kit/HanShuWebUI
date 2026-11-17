@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import type { AgentHost } from '../../agent/tools'
 import { AgentPanel } from '../../AgentPanel'
-import { AssetManagerPanel } from './AssetManagerPanel'
+import { AssetManagerPanel } from '../assetManager/AssetManagerPanel'
 import { emptyOrganization } from '../../project/explorerOrganization'
 import type { ExplorerOrganization } from '../../project/explorerOrganization'
 import { StageplayExplorer } from './StageplayExplorer'
@@ -150,7 +150,7 @@ export function stageplayDockPanels(host: StageplayDockHost): DockPanelSpec[] {
             dock={dock}
           />
         ) : (
-          <div className="stageplay-asset-manager-empty">请先打开工程</div>
+          <div className="asset-manager-empty">请先打开工程</div>
         ),
     },
     {

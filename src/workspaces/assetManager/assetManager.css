@@ -1,0 +1,243 @@
+/*
+ * 资产管理器：剧本 / 游戏性 / 视听共用同一份外观（模块在 workspaces/assetManager/）。
+ *
+ * 三条约束都是踩过的坑，改之前先看完：
+ *
+ * 1. 令牌定义在自己身上，不向宿主祖先借。此前这里用的是 `.explorer-shell` 上的 `--xs-*`；
+ *    面板挂进工作区自己的停靠栏后（不在资源管理器内部），`--xs-icon` 无定义，
+ *    `width: var(--xs-icon)` 在计算值阶段整条失效，`svg` 退回 100% 宽 —— 一行被 244px
+ *    的图标撑满，观感就是「渲染完全不对」。
+ *
+ * 2. 选择器一律带 `.asset-manager` 前缀（(0,2,0) 起）。游戏性工作区有
+ *    `:is(.gameplay-workspace) button { border; background; padding }`（(0,1,1)），
+ *    只写 `.explorer-label { border: 0 }` 会被它压掉，行内按钮就变成一块带边框的灰方块。
+ *
+ * 3. 字号 / 行高 / 图标显式写出，不继承宿主工作区的字号。
+ */
+.asset-manager {
+  --am-s: var(--app-ui-scale, 1.25);
+  --am-font-sm: calc(14px * var(--am-s));
+  --am-font-xs: calc(12px * var(--am-s));
+  --am-icon: calc(16px * var(--am-s));
+  --am-row-h: calc(24px * var(--am-s));
+  --am-panel: var(--fl-panel, #303030);
+  --am-panel-2: var(--fl-panel-2, #232323);
+  --am-head: var(--fl-head, #383838);
+  --am-hover: var(--fl-hover, #3d3d3d);
+  --am-active: var(--fl-active, #3a5278);
+  --am-faint: var(--fl-faint, #888888);
+  --am-accent: var(--accent, #4772b3);
+  --am-border: var(--border, #1a1a1a);
+  --am-border-soft: var(--border-soft, #404040);
+  --am-text: var(--text, #e6e6e6);
+  --am-text-dim: var(--text-dim, #b0b0b0);
+  --am-text-bright: var(--text-bright, #ffffff);
+  /* 面板本身不滚动：标题栏是工具栏，只有目录树滚动，拖动手柄永远留在顶上 */
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--am-panel);
+  color: var(--am-text);
+  font-family: -apple-system, 'PingFang SC', 'Segoe UI', sans-serif;
+  font-size: var(--am-font-sm);
+  line-height: 1.4;
+}
+
+.asset-manager-empty {
+  padding: 12px;
+  color: var(--am-faint);
+  font-size: var(--am-font-sm);
+}
+
+/* ---- 标题条：拖动手柄 + 导入 ---- */
+.asset-manager .asset-manager-heading {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: calc(28px * var(--am-s));
+  padding: 0 6px 0 9px;
+  background: var(--am-head);
+  border-bottom: 1px solid var(--am-border);
+  color: var(--am-text-bright);
+  font-size: var(--am-font-sm);
+  user-select: none;
+}
+
+.asset-manager .asset-manager-heading strong {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.asset-manager .asset-manager-heading.is-draggable strong { cursor: grab; }
+
+.asset-manager .asset-manager-heading button {
+  flex: none;
+  appearance: none;
+  min-height: calc(20px * var(--am-s));
+  margin: 0;
+  padding: 0 6px;
+  background: transparent;
+  border: 1px solid var(--am-border-soft);
+  border-radius: 0;
+  color: inherit;
+  font: inherit;
+  font-size: var(--am-font-xs);
+  line-height: 1.2;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.asset-manager .asset-manager-heading button:hover { background: var(--am-hover); }
+
+/* ---- 目录树：唯一滚动容器，目录之间嵌套 ---- */
+.asset-manager > .explorer-assets {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.asset-manager .explorer-assets { margin: 0; }
+
+.asset-manager .explorer-assets-row,
+.asset-manager .explorer-asset-files {
+  padding-left: 0;
+}
+
+.asset-manager .explorer-files {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.asset-manager .explorer-row {
+  display: flex;
+  align-items: center;
+  height: auto;
+  min-height: var(--am-row-h);
+  padding-right: 4px;
+  font-size: var(--am-font-sm);
+}
+
+.asset-manager .explorer-row:hover { background: var(--am-hover); }
+.asset-manager .explorer-file-row.active { background: var(--am-active); }
+.asset-manager .explorer-row.explorer-file-row.active .explorer-label { color: var(--am-text-bright); }
+.asset-manager .explorer-file-row { padding-left: 8px; }
+
+.asset-manager .explorer-row .explorer-twist {
+  appearance: none;
+  flex: none;
+  width: calc(18px * var(--am-s));
+  height: var(--am-row-h);
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: #9a9aa5;
+  font-size: var(--am-font-xs);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.asset-manager .explorer-row .explorer-label {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: calc(6px * var(--am-s));
+  flex: 1;
+  min-width: 0;
+  height: var(--am-row-h);
+  margin: 0;
+  padding: 0 4px 0 0;
+  overflow: hidden;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--am-text);
+  font: inherit;
+  font-size: var(--am-font-sm);
+  text-align: left;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+/* 文件行没有预览区时标签是 `span`，不该有按钮光标 */
+.asset-manager .explorer-row span.explorer-label { cursor: default; }
+
+.asset-manager .explorer-row .explorer-icon {
+  flex: none;
+  width: var(--am-icon);
+  height: var(--am-icon);
+  stroke-width: 1.5;
+}
+
+.asset-manager .explorer-row .explorer-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.asset-manager .explorer-row .explorer-count {
+  flex: none;
+  margin-left: calc(6px * var(--am-s));
+  color: var(--am-faint);
+  font-size: var(--am-font-xs);
+}
+
+.asset-manager .explorer-empty {
+  margin: 0;
+  padding: 4px 14px 4px 32px;
+  color: var(--am-faint);
+  font-size: var(--am-font-xs);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---- 行内动作：悬停才出现 ---- */
+.asset-manager .explorer-row .explorer-row-actions {
+  display: none;
+  flex: none;
+  align-items: center;
+}
+
+.asset-manager .explorer-row:hover .explorer-row-actions { display: flex; }
+
+.asset-manager .explorer-row .explorer-row-actions button,
+.asset-manager .explorer-row .explorer-upload {
+  appearance: none;
+  margin: 0;
+  padding: 4px 6px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--am-text-dim);
+  font: inherit;
+  font-size: var(--am-font-xs);
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.asset-manager .explorer-row .explorer-row-actions button:hover,
+.asset-manager .explorer-row .explorer-upload:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--am-text);
+}
+
+/* 投放高亮：框式（只动 outline，不和选中 / 悬停态混淆） */
+.asset-manager .is-drop-target > .explorer-row {
+  background: rgba(71, 114, 179, 0.28);
+  outline: 1px solid var(--am-accent);
+  outline-offset: -1px;
+}

@@ -2650,21 +2650,8 @@ body.is-resizing .stageplay-workspace .split-handle { background: var(--accent);
 .stageplay-workspace .tab-action:hover { background: var(--sw-hover); border-color: var(--border-soft); color: var(--text-bright); }
 .stageplay-workspace .tab-action.on { background: rgba(74, 108, 247, 0.16); border-color: var(--border-soft); color: #9db4f0; }
 
-/* 资源管理器：主树由通用壳（explorerShell.css，游戏性同款观感）绘制；以下只服务 assets/ 附加件与右键菜单 */
-.stageplay-workspace .explorer-row:hover { background: var(--sw-hover); }
-.stageplay-workspace .explorer-file-row.active { background: var(--sw-active); }
-.stageplay-workspace .explorer-file-row.active .explorer-label { color: var(--text-bright); }
-.stageplay-workspace .explorer-label { font-size: var(--sw-font-sm); }
-.stageplay-workspace .explorer-asset-row .explorer-label { font-size: var(--sw-font-sm); }
-.stageplay-workspace .explorer-twist { width: 14px; font-size: var(--sw-font-xs); color: #9a9aa5; }
-.stageplay-workspace .explorer-file-row { padding-left: 18px; }
-.stageplay-workspace .explorer-icon { width: calc(16px * var(--sw-s)); height: calc(16px * var(--sw-s)); }
-.stageplay-workspace .explorer-count { font-size: var(--sw-font-xs); color: #888888; }
-.stageplay-workspace .explorer-empty { font-size: var(--sw-font-xs); color: #888888; }
-.stageplay-workspace .explorer-row-actions button,
-.stageplay-workspace .explorer-upload { border-radius: 0; font-size: var(--sw-font-xs); }
-.stageplay-workspace .explorer-row-actions button:hover,
-.stageplay-workspace .explorer-upload:hover { background: rgba(255, 255, 255, 0.1); }
+/* 资源管理器：主树与 assets/ 目录都由通用壳绘制（explorerShell.css / workspaces/assetManager/assetManager.css，
+   游戏性与剧本同款观感）；这里只剩右键菜单的剧本配色。 */
 .stageplay-workspace .explorer-context-menu { padding: 4px; background: var(--sw-panel-2); border: 1px solid var(--border); box-shadow: 0 10px 32px rgba(0, 0, 0, 0.55); font-size: var(--sw-font-sm); }
 .stageplay-workspace .explorer-context-menu li button { padding: 5px 10px; }
 .stageplay-workspace .explorer-context-menu li button:hover { background: var(--sw-hover); }

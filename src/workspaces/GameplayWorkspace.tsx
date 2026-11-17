@@ -71,6 +71,10 @@ import { FlowDocumentProperties } from "./gameplay/FlowDocumentProperties";
 import { FlowExplorer } from "./gameplay/FlowExplorer";
 import { PanelDock, resetPanelDock, type DockPanelSpec } from "../ui/PanelDock";
 import { confirmDialog } from "../ui/dialogs";
+import { useViewFlags } from "../ui/viewFlags";
+import { AssetManagerPanel } from "./assetManager/AssetManagerPanel";
+import { createAssetActions } from "./assetManager/assetActions";
+import { gameplayViewFlags } from "./gameplay/viewFlags";
 import { EditorDock, resetEditorDock } from "../ui/EditorDock";
 import {
   closeInGroup,
@@ -2101,6 +2105,10 @@ export function GameplayWorkspace({
   }
   useImperativeHandle(workspaceRef, () => ({
     handleMenuAction(item) {
+      if (item === "asset-manager-panel") {
+        gameplayViewFlags.toggle("assetManager");
+        return;
+      }
       if (item === "editor-layout") {
         void confirmDialog({
           title: "编辑器布局",
@@ -2926,6 +2934,14 @@ export function GameplayWorkspace({
   }
 
 
+  const viewFlags = useViewFlags(gameplayViewFlags);
+  /** assets/ 的写操作与剧本、视听共用同一个能力模块（见 workspaces/assetManager）。 */
+  const assetActions = createAssetActions({
+    workspaceRef: { current: session.workspace },
+    projectRef: { current: session.binding },
+    commitWorkspace: (next) => setProjectSession({ workspace: next }),
+  });
+
   const dockPanels: DockPanelSpec[] = [
     {
       id: "explorer",
@@ -2998,6 +3014,35 @@ export function GameplayWorkspace({
           onRedock={dock.onRedock}
         />
       ),
+    },
+    {
+      id: "asset-manager",
+      title: "资产管理器",
+      visible: viewFlags.assetManager,
+      defaultPlacement: "left",
+      defaultSize: 300,
+      minSize: 220,
+      render: (dock) => {
+        const project = session.workspace.packages[0];
+        return project ? (
+          <AssetManagerPanel
+            project={project}
+            onToggleRoot={() => assetActions.toggleAssets(project.id)}
+            onDeleteAsset={assetActions.deleteAsset}
+            onNewAssetFolder={assetActions.newFolder}
+            onDeleteAssetFolder={assetActions.deleteFolder}
+            onImportAssets={(packageId, files, targetDir) => {
+              void assetActions.importAssets(packageId, files, targetDir);
+            }}
+            onDropIntoFolder={(pkgId, dir, source) => {
+              if (source.kind === "asset") assetActions.moveAsset(source.assetId, pkgId, dir);
+            }}
+            dock={dock}
+          />
+        ) : (
+          <div className="asset-manager-empty">请先打开工程</div>
+        );
+      },
     },
   ];
 

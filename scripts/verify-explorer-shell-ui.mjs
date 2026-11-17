@@ -22,10 +22,10 @@ try{
  assert.equal(await pane.getByRole('button',{name:'+包',exact:true}).count(),0)
  assert.equal(await pane.locator('button[title="删除包"]').count(),0)
  assert.equal(await sp.getByRole('button',{name:'+剧',exact:true}).count(),1)
- assert.equal(await sp.locator('.stageplay-asset-manager').count(),0,'asset manager must not be mounted inside the stageplay category tree')
+ assert.equal(await sp.locator('.asset-manager').count(),0,'asset manager must not be mounted inside the stageplay category tree')
  await page.getByRole('navigation',{name:'主菜单'}).getByRole('button',{name:'查看',exact:true}).click()
  await page.getByRole('menuitemcheckbox',{name:'资产管理器',exact:true}).click()
- const assets=pane.locator('.stageplay-asset-manager')
+ const assets=pane.locator('.asset-manager')
  const assetRow=assets.locator('.explorer-assets-row').filter({hasText:'assets'}).first()
  await assetRow.waitFor()
  assert.equal(await pane.locator('.explorer-shell[aria-label="剧本工具"]').count(),0,'树外杂项不再单独占一栏（没内容时会变成空面板）')
@@ -49,7 +49,7 @@ try{
  await until(async()=>Number(await assetRow.locator('.explorer-count').innerText())===assetsBefore,'删除后 assets 根目录计数要回落')
  console.log('PASS stageplay: asset import and delete go through the S transaction and update the panel')
  // 标题栏就是拖动手柄（此前整块面板是滚动容器，sticky 标题被滚走，才迫使拆成独立窗口）
- const title=assets.locator('.stageplay-asset-manager-heading.is-draggable strong').first()
+ const title=assets.locator('.asset-manager-heading.is-draggable strong').first()
  await title.waitFor()
  const from=await title.boundingBox()
  const dock=await pane.locator('.panel-dock').boundingBox()
@@ -89,6 +89,26 @@ try{
  await page.getByRole('tab',{name:'游戏性',exact:true}).click()
  await pane.locator('[role=treeitem][title="共享章节"]').waitFor()
  console.log('PASS gameplay: legacy v1 folder read through shell rows')
+ // 资产管理器不是剧本专属：游戏性与视听的查看菜单也应能呼出同一份 assets/ 视图
+ for (const tab of ['游戏性','视听效果']) {
+   await page.getByRole('tab',{name:tab,exact:true}).click()
+   const current=pane.locator('.asset-manager')
+   assert.equal(await current.isVisible(),false,`${tab}默认不占一栏资产管理器`) // 面板常驻挂载，靠 band 显隐
+   await page.getByRole('navigation',{name:'主菜单'}).getByRole('button',{name:'查看',exact:true}).click()
+   await page.getByRole('menuitemcheckbox',{name:'资产管理器',exact:true}).click()
+   await current.locator('.explorer-assets-row').filter({hasText:'assets'}).first().waitFor()
+   // 面板自带样式：图标不能靠祖先 --xs-* 撑开（曾经退回 100% 宽，一行被 244px 图标填满），
+   // 行内按钮也不能被宿主工作区的 button 通用样式描边
+   const iconBox=await current.locator('.explorer-icon').first().boundingBox()
+   assert.ok(iconBox.width<=32&&iconBox.height<=32,`${tab}资产管理器图标尺寸正常（拿到 ${iconBox.width}x${iconBox.height}）`)
+   const labelChrome=await current.locator('.explorer-row .explorer-label').first().evaluate(n=>{const cs=getComputedStyle(n);return {border:cs.borderTopWidth,background:cs.backgroundColor,height:n.getBoundingClientRect().height}})
+   assert.equal(labelChrome.border,'0px',`${tab}资产行标签不带宿主按钮边框`)
+   assert.ok(labelChrome.height<=48,`${tab}资产行高度正常（拿到 ${labelChrome.height}）`)
+   await page.getByRole('navigation',{name:'主菜单'}).getByRole('button',{name:'查看',exact:true}).click()
+   await page.getByRole('menuitemcheckbox',{name:'资产管理器',exact:true}).click()
+   await current.waitFor({state:'hidden'})
+ }
+ console.log('PASS gameplay and audiovisual can open the shared asset manager from the view menu')
  await page.getByRole('tab',{name:'视听效果',exact:true}).click()
  const av=pane.locator('.explorer-shell')
  await av.getByText('BOSS血条',{exact:true}).first().waitFor()

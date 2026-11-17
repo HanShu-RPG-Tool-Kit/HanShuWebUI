@@ -1,5 +1,6 @@
 import type { MenuContribution, MenuCommand } from './types'
 import { isAutoItemSnapshotRefreshEnabled } from '../../workspaces/gameplay/itemSnapshotCache'
+import { gameplayViewFlags } from '../../workspaces/gameplay/viewFlags'
 
 const always = () => true
 
@@ -45,6 +46,9 @@ export const gameplayMenuContribution: MenuContribution = {
       id: 'view',
       label: '查看',
       items: [
+        cmd('asset-manager-panel', '资产管理器', {
+          checked: () => gameplayViewFlags.get().assetManager,
+        }),
         cmd('editor-layout', '编辑器布局'),
       ],
     },

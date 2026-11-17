@@ -8,10 +8,11 @@ import {
 import { endDrag, writeDragPayload, type DragSource } from "../../drag/dragPayload";
 import { useFolderDropTarget } from "../../drag/useFolderDropTarget";
 import { ExplorerIcon, fileIconKind } from "../../explorerIcons";
-import type { ExplorerContextItem } from "./explorerMenus";
-import { ExplorerContextMenu } from "./explorerMenus";
+import type { ExplorerContextItem } from "../stageplay/explorerMenus";
+import { ExplorerContextMenu } from "../stageplay/explorerMenus";
 import { dockTitleHint, type ExplorerDockProps } from "../../explorerShell";
 import type { AssetFile, Project } from "../../workspace";
+import "./assetManager.css";
 
 /**
  * `assets/` 真实目录管理面板。
@@ -33,9 +34,10 @@ export function AssetManagerPanel({
   dock,
 }: {
   project: Project;
-  activeAssetId: string | null;
+  activeAssetId?: string | null;
   onToggleRoot: () => void;
-  onOpenAsset: (assetId: string) => void;
+  /** 没有预览区的视图（游戏性 / 视听）可以不给：资产行只用于整理与删除。 */
+  onOpenAsset?: (assetId: string) => void;
   onDeleteAsset: (assetId: string) => void;
   onNewAssetFolder: (projectId: string, parentPath: string) => void;
   onDeleteAssetFolder: (projectId: string, folderPath: string) => void;
@@ -73,8 +75,8 @@ export function AssetManagerPanel({
     importInputRef.current.click();
   };
   return (
-    <section className="stageplay-asset-manager stageplay-explorer-assets">
-      <header className={`stageplay-asset-manager-heading${dock.onTitlePointerDown ? " is-draggable" : ""}`}>
+    <section className="asset-manager">
+      <header className={`asset-manager-heading${dock.onTitlePointerDown ? " is-draggable" : ""}`}>
         <strong
           title={dockTitleHint(dock)}
           onPointerDown={(event) => {
@@ -91,7 +93,7 @@ export function AssetManagerPanel({
       dir={tree}
       depth={0}
       rootCollapsed={project.assetsCollapsed}
-      activeAssetId={activeAssetId}
+      activeAssetId={activeAssetId ?? null}
       isDirCollapsed={(path) => Boolean(collapsedDirs[path])}
       onToggleRoot={onToggleRoot}
       onToggleDir={(path) =>
@@ -142,7 +144,7 @@ function AssetFolderBlock({
   isDirCollapsed: (path: string) => boolean;
   onToggleRoot: () => void;
   onToggleDir: (path: string) => void;
-  onOpenAsset: (assetId: string) => void;
+  onOpenAsset?: (assetId: string) => void;
   onDeleteAsset: (assetId: string) => void;
   onNewAssetFolder: (packageId: string, parentPath: string) => void;
   onDeleteAssetFolder: (packageId: string, folderPath: string) => void;
@@ -294,7 +296,7 @@ function AssetFolderBlock({
                 packageId={pkgId}
                 asset={node.asset as AssetFile}
                 active={node.asset.id === activeAssetId}
-                onOpen={() => onOpenAsset(node.asset.id)}
+                onOpen={onOpenAsset ? () => onOpenAsset(node.asset.id) : undefined}
                 onDelete={() => onDeleteAsset(node.asset.id)}
                 showContext={showContext}
               />
@@ -327,10 +329,17 @@ function AssetRow({
   packageId: string;
   asset: AssetFile;
   active: boolean;
-  onOpen: () => void;
+  /** 没有预览区时为 undefined：文件名不再是按钮，右键菜单也不给「打开」。 */
+  onOpen?: () => void;
   onDelete: () => void;
   showContext: (event: ReactMouseEvent, items: ExplorerContextItem[]) => void;
 }) {
+  const label = (
+    <>
+      <ExplorerIcon kind={fileIconKind(asset.path)} />
+      <span className="explorer-name">{assetFileName(asset.path)}</span>
+    </>
+  )
   return (
     <li>
       <div
@@ -340,12 +349,16 @@ function AssetRow({
         draggable
         onContextMenu={(event) => {
           showContext(event, [
-            {
-              id: "open",
-              label: "打开",
-              hint: "在编辑器中显示",
-              onSelect: onOpen,
-            },
+            ...(onOpen
+              ? [
+                  {
+                    id: "open",
+                    label: "打开",
+                    hint: "在编辑器中显示",
+                    onSelect: onOpen,
+                  },
+                ]
+              : []),
             {
               id: "delete",
               label: "删除",
@@ -365,15 +378,20 @@ function AssetRow({
         }}
         onDragEnd={() => endDrag()}
       >
-        <button
-          type="button"
-          className="explorer-label"
-          onClick={onOpen}
-          title={`${asset.path}\n右键：打开或删除`}
-        >
-          <ExplorerIcon kind={fileIconKind(asset.path)} />
-          <span className="explorer-name">{assetFileName(asset.path)}</span>
-        </button>
+        {onOpen ? (
+          <button
+            type="button"
+            className="explorer-label"
+            onClick={onOpen}
+            title={`${asset.path}\n右键：打开或删除`}
+          >
+            {label}
+          </button>
+        ) : (
+          <span className="explorer-label" title={`${asset.path}\n右键：删除`}>
+            {label}
+          </span>
+        )}
         <div className="explorer-row-actions">
           <button type="button" title="删除资产" onClick={onDelete}>
             ×

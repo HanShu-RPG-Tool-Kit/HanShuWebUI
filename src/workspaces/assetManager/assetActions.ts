@@ -5,7 +5,6 @@ import {
   putAssetBlob,
 } from '../../assets/idb'
 import { normalizeAssetPath, normalizeFolderPath } from '../../assets/paths'
-import type { FileEdit } from '../../project/serviceClient'
 import { alertDialog, confirmDialog, promptDialog } from '../../ui/dialogs'
 import { moveAssetToDir } from '../../workspaceMove'
 import {
@@ -14,36 +13,29 @@ import {
   registerAsset,
   removeAssetFolder,
   toggleAssetsCollapsed,
-  type Workspace,
 } from '../../workspace'
-import type { VoiceOps } from '../../i18n/voiceOps'
+import { removeAssetMeta, type Workspace } from '../../workspace'
+import { createVoiceDiskSink } from '../../project/voiceDiskSink'
+import type { ProjectDirectory } from '../../project/serviceClient'
 
 /**
  * `assets/` 真实目录的全部写操作。**不持有状态**：工作区怎么存、工程句柄在哪、
- * 配音资产怎么连带删，全部由调用方通过 {@link StageplayAssetDeps} 注入。
+ * 资产变了要通知谁，全部由调用方通过 {@link AssetActionDeps} 注入。
  *
- * 抽出来的理由与 `dockPanels.tsx` 相同：这些操作此前是工作区组件里的闭包，
- * 面板拿不到、别的宿主也复用不了。现在它是一份能力对象——资产管理器面板只要有
- * 这些回调就能工作，不需要知道剧本工作区长什么样。
+ * 三个工作区（剧本 / 游戏性 / 视听）共用这一份：它只依赖工作区投影与工程句柄，
+ * 不认识任何工作区自己的编辑器或文档模型。
  */
-export type StageplayAssetDeps = {
+export type AssetActionDeps = {
   workspaceRef: RefObject<Workspace>
-  projectRef: RefObject<{ handle: { client: AssetProjectClient } } | null>
+  projectRef: RefObject<{ handle: ProjectDirectory } | null>
   commitWorkspace: (next: Workspace) => void
-  /** 打开资产前先把编辑器里的正文落回工作区投影。 */
-  flushEditorInto: (base: Workspace) => Workspace
-  /** 配音 / 文本资产要跟着一起删除（见 `i18n/voiceOps`）。 */
-  voiceOps: () => Pick<VoiceOps, 'removeAssetEverywhere'>
+  /** 打开资产前先把编辑器里的正文落回工作区投影（带编辑缓冲的工作区才需要）。 */
+  flushEditorInto?: (base: Workspace) => Workspace
+  /** 资产集合变了：配音库 / 文本绑定之类要刷新（可选）。 */
+  onAssetsChanged?: () => void
 }
 
-/** 只依赖事务与条目这几样，不把整个 ProjectClient 形状搬进来。 */
-export type AssetProjectClient = {
-  transactions: { stagedWrites: () => FileEdit[] }
-  entry: (path: string) => unknown
-  apply: (edits: FileEdit[], label?: string) => Promise<void>
-}
-
-export type StageplayAssetActions = {
+export type AssetActions = {
   toggleAssets: (projectId: string) => void
   openAsset: (assetId: string) => void
   deleteAsset: (assetId: string) => void
@@ -54,8 +46,8 @@ export type StageplayAssetActions = {
   moveAsset: (assetId: string, targetProjectId: string, targetDir: string) => void
 }
 
-export function createStageplayAssetActions(deps: StageplayAssetDeps): StageplayAssetActions {
-  const clientOf = (): AssetProjectClient | null => deps.projectRef.current?.handle.client ?? null
+export function createAssetActions(deps: AssetActionDeps): AssetActions {
+  const clientOf = () => deps.projectRef.current?.handle.client ?? null
 
   const toggleAssets = (projectId: string) => {
     deps.commitWorkspace(toggleAssetsCollapsed(deps.workspaceRef.current, projectId))
@@ -63,20 +55,26 @@ export function createStageplayAssetActions(deps: StageplayAssetDeps): Stageplay
 
   const openAsset = (assetId: string) => {
     if (!findAsset(deps.workspaceRef.current, assetId)) return
-    // 先落盘当前剧本
-    deps.commitWorkspace({
-      ...deps.flushEditorInto(deps.workspaceRef.current),
-      activeAssetId: assetId,
-    })
+    const base = deps.flushEditorInto ? deps.flushEditorInto(deps.workspaceRef.current) : deps.workspaceRef.current
+    deps.commitWorkspace({ ...base, activeAssetId: assetId })
   }
 
+  /**
+   * 删除资产 = 磁盘上的实文件 + 本机 blob + 投影里的条目，三步同一份确认。
+   * 不走 `voiceOps`：那条路带了配音库的刷新，别的视图没有配音库。
+   */
   const deleteAsset = (assetId: string) => {
     const hit = findAsset(deps.workspaceRef.current, assetId)
     if (!hit) return
-    void confirmDialog({ message: `删除资产「${hit.asset.path}」？`, danger: true }).then(async (ok) => {
+    const { path } = hit.asset
+    const packageId = hit.pkg.id
+    void confirmDialog({ message: `删除资产「${path}」？`, danger: true }).then(async (ok) => {
       if (!ok) return
       try {
-        await deps.voiceOps().removeAssetEverywhere(hit.pkg.id, [hit.asset.path])
+        await createVoiceDiskSink(deps.projectRef.current?.handle ?? null).removeMany([path])
+        await deleteAssetBlob(packageId, path)
+        deps.commitWorkspace(removeAssetMeta(deps.workspaceRef.current, assetId))
+        deps.onAssetsChanged?.()
       } catch (error) {
         await alertDialog(`资产未删除：${String(error)}`)
       }

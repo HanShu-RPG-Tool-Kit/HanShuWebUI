@@ -34,6 +34,7 @@ import {
   useProjectSession,
 } from '../project/projectSession'
 import { confirmDialog } from '../ui/dialogs'
+import { useViewFlags } from '../ui/viewFlags'
 import { EditorDock, resetEditorDock } from '../ui/EditorDock'
 import { PanelDock, resetPanelDock, type DockPanelSpec } from '../ui/PanelDock'
 import {
@@ -43,6 +44,9 @@ import {
   type SourceFile,
   type Workspace,
 } from '../workspace'
+import { AssetManagerPanel } from './assetManager/AssetManagerPanel'
+import { createAssetActions } from './assetManager/assetActions'
+import { audiovisualViewFlags } from './audiovisual/viewFlags'
 import { AudiovisualExplorer } from './audiovisual/AudiovisualExplorer'
 import { audiovisualSources } from './audiovisual/explorerCategories'
 import { BossbarDesignView } from './audiovisual/bossbar/editor/BossbarDesignView'
@@ -415,6 +419,10 @@ export function AudiovisualWorkspace({
           void saveDraft()
           return
         }
+        if (item === 'asset-manager-panel') {
+          audiovisualViewFlags.toggle('assetManager')
+          return
+        }
         if (item === 'editor-layout') {
           void confirmDialog({
             title: '编辑器布局',
@@ -444,6 +452,13 @@ export function AudiovisualWorkspace({
     return () => window.removeEventListener('keydown', onKey)
   }, [active, saveDraft])
 
+  const view = useViewFlags(audiovisualViewFlags)
+  /** assets/ 的写操作与剧本共用同一个能力模块（见 workspaces/assetManager）。 */
+  const assetActions = createAssetActions({
+    workspaceRef: { current: session.workspace },
+    projectRef: { current: session.binding },
+    commitWorkspace: (next) => setProjectSession({ workspace: next }),
+  })
   const project = session.workspace.packages[0] ?? null
   const activeFile = ui.activeKey ? fileById.get(ui.activeKey) ?? null : null
   const presencePath =
@@ -479,6 +494,33 @@ export function AudiovisualWorkspace({
           dock={dock}
         />
       ),
+    },
+    {
+      id: 'asset-manager',
+      title: '资产管理器',
+      visible: view.assetManager,
+      defaultPlacement: 'left',
+      defaultSize: 300,
+      minSize: 220,
+      render: (dock) =>
+        project ? (
+          <AssetManagerPanel
+            project={project}
+            onToggleRoot={() => assetActions.toggleAssets(project.id)}
+            onDeleteAsset={assetActions.deleteAsset}
+            onNewAssetFolder={assetActions.newFolder}
+            onDeleteAssetFolder={assetActions.deleteFolder}
+            onImportAssets={(packageId, files, targetDir) => {
+              void assetActions.importAssets(packageId, files, targetDir)
+            }}
+            onDropIntoFolder={(_pkgId, dir, source) => {
+              if (source.kind === 'asset') assetActions.moveAsset(source.assetId, _pkgId, dir)
+            }}
+            dock={dock}
+          />
+        ) : (
+          <div className="asset-manager-empty">请先打开工程</div>
+        ),
     },
   ]
 

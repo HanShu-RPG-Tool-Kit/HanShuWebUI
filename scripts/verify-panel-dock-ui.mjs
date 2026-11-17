@@ -45,7 +45,8 @@ try {
   const gameplayExplorer = gameplay.locator('.panel-dock-band[data-panel-id="explorer"]')
   await gameplayExplorer.waitFor()
   assert.equal(await gameplay.locator('.panel-dock-band.is-float[data-panel-id="explorer"]').count(), 0, '游戏性不能继承剧本里浮起的资源管理器')
-  assert.equal(await gameplay.locator('.panel-dock-band[data-panel-id="asset-manager"]').count(), 0, '别的视图的面板不跟着搬过来')
+  // 游戏性也有资产管理器，但默认关着：别的视图的「打开/浮起」状态不跟过来
+  assert.equal(await gameplay.locator('.panel-dock-band[data-panel-id="asset-manager"]').isVisible(), false, '游戏性的资产管理器默认不显示')
   assert.equal(await page.evaluate(() => localStorage.getItem('hanshu.panelDock.gameplay')), null, '游戏性还没改布局，不该凭空写一份')
   assert.equal(JSON.parse(await page.evaluate(() => localStorage.getItem('hanshu.panelDock'))).panels.explorer.placement, 'float', '剧本自己的布局不受影响')
   await page.getByRole('tab', { name: '剧本', exact: true }).click()

@@ -19,8 +19,8 @@
 | 宿主 | 文件 | 面板数 | 布局键 |
 | --- | --- | --- | --- |
 | 剧本 | `src/workspaces/StageplayWorkspace.tsx` | 5（资源管理器、资产管理器、Agent、备选角色、录音棚） | `hanshu.panelDock`（历史默认键） |
-| 游戏性 | `src/workspaces/GameplayWorkspace.tsx` | 1（资源管理器） | `hanshu.panelDock.gameplay` |
-| 视听效果 | `src/workspaces/AudiovisualWorkspace.tsx` | 1（资源管理器） | `hanshu.audiovisualDock.v1` |
+| 游戏性 | `src/workspaces/GameplayWorkspace.tsx` | 2（资源管理器、资产管理器） | `hanshu.panelDock.gameplay` |
+| 视听效果 | `src/workspaces/AudiovisualWorkspace.tsx` | 2（资源管理器、资产管理器） | `hanshu.audiovisualDock.v1` |
 | 皮肤管理器 | `src/skin/SkinWorkspace.tsx` | 2（皮肤库、详情） | `hanshu.panelDock.skin` |
 | BOSS 血条设计视图 | `src/workspaces/audiovisual/bossbar/editor/BossbarDesignView.tsx` | 4 | `hanshu.panelDock.bossbar` |
 
@@ -61,7 +61,8 @@ App ── activeWorkspaceId（视图作用域）──┬─ 菜单分派 handl
 | --- | --- | --- |
 | 1 | 面板声明搬出工作区组件：`dockPanels.tsx` 导出 `stageplayDockPanels(host)`，依赖集中在 `StageplayDockHost` | `verify-panel-dock`：工作区不得内联 `DockPanelSpec[]` |
 | 2 | 每个视图一份独立布局键（`verify-panel-dock` 校验五个键互不相同） | `verify-panel-dock:ui`：剧本里浮起的资源管理器不会让游戏性也变浮窗 |
-| 3 | assets 写操作抽成能力模块 `stageplay/assetActions.ts` | `verify-explorer-shell:ui`：真实导入 / 删除；`verify-panel-dock`：处理函数不得回到工作区 |
+| 3 | assets 写操作抽成能力模块 `assetManager/assetActions.ts`，面板在三个视图共用 | `verify-explorer-shell:ui`：真实导入 / 删除 + 三个视图里的渲染尺寸；`verify-panel-dock`：处理函数不得回到工作区 |
+| 4 | 共用面板自带样式令牌（`assetManager/assetManager.css`），观感不靠宿主祖先类名 | `verify-panel-dock`：面板样式不得引用 `--xs-*` |
 
 这三步都是「声明 / 能力 / 布局数据」的分层，与是否做混合布局无关，因此长期保留。`verify-panel-dock` 的守卫守的是**这个已获得的结构**，不是某个待完成的迁移。
 
@@ -78,9 +79,9 @@ export function stageplayDockPanels(host: StageplayDockHost): DockPanelSpec[]
 能力模块同一模式（factory + 显式 deps，不持有状态）：
 
 ```ts
-// src/workspaces/stageplay/assetActions.ts
-export type StageplayAssetDeps = { workspaceRef, projectRef, commitWorkspace, flushEditorInto, voiceOps }
-export function createStageplayAssetActions(deps): StageplayAssetActions
+// src/workspaces/assetManager/assetActions.ts（剧本 / 游戏性 / 视听共用）
+export type AssetActionDeps = { workspaceRef, projectRef, commitWorkspace, flushEditorInto?, onAssetsChanged? }
+export function createAssetActions(deps): AssetActions
 ```
 
 新增能力时照这个来：工作区只注入「怎么存、句柄在哪、提示怎么弹」，逻辑留在模块里；面板拿到的是一组回调，不需要整个工作区。
@@ -92,9 +93,10 @@ export function createStageplayAssetActions(deps): StageplayAssetActions
 - 面板 `id` 只在同一份布局内定位：改名等于换记录（旧记录让位给默认位置）。不同视图可以重名，互不影响。
 - 布局偏好只存本机；「查看 → 编辑器布局」用 `resetPanelDock(storageKey)` 恢复默认，**只重置当前视图**。
 - 新增视图时同时加一个布局键常量并传给 `PanelDock`；不要复用别人的键，也不要依赖默认值。
+- **跨视图共用的面板自带样式**：用量表自己定义（命名带前缀，如 `--am-*`），选择器都带自己的根类名（`.asset-manager .explorer-row …`）。不要借宿主壳上的变量（`.explorer-shell` 的 `--xs-*` 只在资源管理器内部有定义，面板挂进别的视图的停靠栏时会整条失效——`width: var(--xs-icon)` 失效后 `svg` 退回 100% 宽，一行被图标填满）；也要盖过宿主的通用元素规则（游戏性有 `:is(.gameplay-workspace) button { border; background; padding }`）。
 
 ## 验证
 
 `npm run test:panel-dock:ui` 覆盖拖动浮起、刷新后布局持久化、停靠回边缘、标签合并与隐藏、恢复默认布局，以及「在剧本里浮起的资源管理器不会让游戏性也变浮窗」。舞台剧增加/减少面板时同步扩这条用例。
 
-`npm run test:explorer-shell:ui` 覆盖资产管理器标题栏可拖动、树外杂项不占空栏，以及真实资产导入 / 删除。`npm run test:panel-dock` 是静态守卫：面板声明与 assets 能力都不得回到工作区组件里，五个 `PanelDock` 必须各传一个互不相同的布局键。
+`npm run test:explorer-shell:ui` 覆盖资产管理器标题栏可拖动、游戏性与视听也能呼出同一份面板（并校验图标尺寸与行样式，防止样式再次依赖宿主祖先）、树外杂项不占空栏，以及真实资产导入 / 删除。`npm run test:panel-dock` 是静态守卫：面板声明与 assets 能力都不得回到工作区组件里，assets 能力不得依赖配音模块，三个视图都必须用共享的 `assetManager/assetActions`，五个 `PanelDock` 必须各传一个互不相同的布局键。

@@ -12,7 +12,7 @@ import {
 } from 'react'
 import Editor, { type OnMount } from '@monaco-editor/react'
 import { stageplayDockPanels, type StageplayDockHost } from './stageplay/dockPanels'
-import { createStageplayAssetActions } from './stageplay/assetActions'
+import { createAssetActions } from './assetManager/assetActions'
 import { commitOrganization, placeSource, relocatedExplorer, withExplorer } from '../explorerShell'
 import { emptyOrganization } from '../project/explorerOrganization'
 import { sourcePathKnownToServer } from '../project/projectFs'
@@ -1107,12 +1107,16 @@ export const StageplayWorkspace = forwardRef<
    * `assets/` 的写操作住在 `stageplay/assetActions.ts`：这里只注入工作区投影、工程句柄与
    * 配音资产连带删除，面板拿到的是一份能力对象。每次渲染重建闭包，和原先的内联写法一致。
    */
-  const assetActions = createStageplayAssetActions({
+  const assetActions = createAssetActions({
     workspaceRef,
     projectRef,
     commitWorkspace,
     flushEditorInto,
-    voiceOps,
+    // 配音库与文本绑定跟着资产集合走：删掉一份音频，录音棚的列表要立刻反映
+    onAssetsChanged: () => {
+      voiceLibraryRef.current?.notifyAssetsChanged()
+      textBindingRef.current?.refreshVoice()
+    },
   })
 
   // ——————————————————————————————————————————————————————————————
