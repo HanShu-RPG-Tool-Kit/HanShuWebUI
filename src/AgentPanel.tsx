@@ -30,13 +30,14 @@ import type {
   AgentRunResult,
   AgentRuntime,
   AgentRuntimeView,
+  AgentRollbackResult,
   PendingRollback,
   SegmentInfo,
   SnapshotInfo,
   UndoConflict,
   UndoOutcome,
 } from './agent/contracts'
-import { confirmDialog } from './ui/dialogs'
+import { chooseDialog, confirmDialog } from './ui/dialogs'
 import {
   clearAgentApiKey,
   getAgentApiKey,
@@ -207,6 +208,22 @@ export async function executeRollbackAction(
   }
 }
 
+/** 手动回滚失败时给用户看的摘要：保留 error，并把冲突文件列到前 5 个。 */
+export function describeManualRollbackFailure(result: AgentRollbackResult): string {
+  const parts: string[] = []
+  if (result.error) parts.push(result.error)
+  if (result.conflicts.length > 0) {
+    const shown = result.conflicts
+      .slice(0, 5)
+      .map((conflict) => `${conflict.path}（${describeConflictReason(conflict.reason)}）`)
+    parts.push(`冲突：${shown.join('；')}`)
+    if (result.conflicts.length > shown.length) {
+      parts.push(`……等 ${result.conflicts.length} 个文件`)
+    }
+  }
+  return parts.length > 0 ? parts.join('；') : '回滚未完成'
+}
+
 export type RollbackCardProps = {
   pending: PendingRollback | null
   /** 正在执行的动作：所有按钮互斥禁用并显示进行中态 */
@@ -305,13 +322,119 @@ export function RollbackCard({
   )
 }
 
-/** 保存封段后的输入区提示（不禁止发送：facade 会自动开新段） */
+/** 手动回滚失败：记录范围以便「强制回滚」用同一目标重试 */
+type ManualRollbackFailure = {
+  kind: 'run' | 'from' | 'all'
+  runKey?: string
+  message: string
+}
+
+export type ManualRollbackFailureCardProps = {
+  failure: { message: string } | null
+  /** 手动回滚进行中：两个按钮都禁用，避免重复提交 */
+  busy: boolean
+  /** 二次确认后按同一范围强制重试 */
+  onForce: () => void
+  /** 只关闭卡片，不做任何回滚 */
+  onClose: () => void
+}
+
+/** 手动回滚失败卡片：说明失败原因，并给出「强制回滚 / 关闭」两个明确出口 */
+export function ManualRollbackFailureCard({
+  failure,
+  busy,
+  onForce,
+  onClose,
+}: ManualRollbackFailureCardProps) {
+  if (!failure) return null
+  return (
+    <div
+      className="agent-rollback agent-manual-rollback-failure"
+      role="alert"
+      aria-label="手动回滚未完成"
+    >
+      <div className="agent-rollback-head">回滚未完成</div>
+      <div className="agent-manual-rollback-failure-msg">{failure.message}</div>
+      <div className="agent-rollback-actions">
+        <button type="button" className="danger" disabled={busy} onClick={onForce}>
+          强制回滚
+        </button>
+        <button type="button" disabled={busy} onClick={onClose}>
+          关闭
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/** 保存封段后的输入区提示（不禁止发送：facade 会自动继承该会话开新段） */
 export function SegmentSealedHint() {
   return (
     <div className="agent-banner sealed" role="status">
-      本次保存已封存当前会话；发送消息将开始新会话
+      本次保存已封存所有活跃会话；发送消息将继承当前会话
     </div>
   )
+}
+
+/** 输入区「分支」按钮：从当前会话末尾复制出一个新段；导出便于 UI 测试点击回调。 */
+export function ForkButton({
+  disabled,
+  onClick,
+  title = '从当前会话末尾分支出一个新段',
+}: {
+  disabled: boolean
+  onClick: () => void
+  title?: string
+}) {
+  return (
+    <button
+      type="button"
+      className="agent-fork"
+      disabled={disabled}
+      title={title}
+      onClick={onClick}
+    >
+      分支
+    </button>
+  )
+}
+
+/** 从当前会话末尾分支：运行中/无运行时直接返回 null，由调用方处理错误提示。 */
+export function forkCurrentSegment(
+  runtime: AgentRuntime | null,
+  running: boolean,
+): Promise<SegmentInfo> | null {
+  if (!runtime || running) return null
+  return runtime.forkSegment({ label: 'branch' })
+}
+
+/** 从某一轮之后分支：有下一轮时复制到该轮为止，没有则复制全部；运行中/无运行时返回 null。 */
+export function forkAfterRun(
+  runtime: AgentRuntime | null,
+  running: boolean,
+  beforeEntryId?: string,
+): Promise<SegmentInfo> | null {
+  if (!runtime || running) return null
+  return runtime.forkSegment(
+    beforeEntryId ? { beforeEntryId, label: 'branch' } : { label: 'branch' },
+  )
+}
+
+/** 消息旁回滚图标的确认文案：只回滚后缀轮，不再让用户选择范围。 */
+export const MANUAL_ROLLBACK_MESSAGE =
+  '将回滚该轮及之后所有轮次对工程草稿的改动，不会删除对话消息。确认回滚吗？'
+
+/**
+ * 只读归档段内发送：先继承归档段，再在继承出的活跃段里开 Run。
+ * 继承失败时不 run（由调用方保留输入并提示）。
+ */
+export async function runAfterInheritingArchive(
+  runtime: Pick<AgentRuntime, 'forkSnapshot' | 'run'>,
+  archiveId: string,
+  text: string,
+): Promise<AgentRunResult> {
+  await runtime.forkSnapshot(archiveId)
+  return runtime.run(text.trim())
 }
 
 export function AgentPanel({
@@ -356,6 +479,11 @@ export function AgentPanel({
   const [panelInfo, setPanelInfo] = useState('')
   /** 失败卡片回滚动作的进行中态（互斥禁用三/四个按钮） */
   const [rollbackBusy, setRollbackBusy] = useState<RollbackBusy | null>(null)
+  /** 手动回滚（按轮 / 整段）进行中：输入区按钮与消息图标互斥禁用 */
+  const [manualRollbackBusy, setManualRollbackBusy] = useState(false)
+  /** 手动回滚失败卡片：保留范围与原因的摘要，供「强制回滚」重试 */
+  const [manualRollbackFailure, setManualRollbackFailure] =
+    useState<ManualRollbackFailure | null>(null)
   const [rollbackNotice, setRollbackNotice] = useState('')
   const startingRef = useRef(false)
 
@@ -438,6 +566,22 @@ export function AgentPanel({
     () => appendRunFailure(deriveMessageRows(view?.items ?? []), runFailure, view?.runId ?? null),
     [view, runFailure],
   )
+  /** 最近一个仍可回滚的 Run：输入区「回滚最近一轮」用它，没有时按钮禁用 */
+  const lastRollbackRunKey = useMemo(() => {
+    const items = view?.items ?? []
+    for (let index = items.length - 1; index >= 0; index -= 1) {
+      const item = items[index]
+      if (
+        item.kind === 'user' &&
+        item.runKey &&
+        item.rollbackable === true &&
+        item.rolledBack !== true
+      ) {
+        return item.runKey
+      }
+    }
+    return null
+  }, [view])
   /** 锁徽标用：`.lang` 锁归回源文件逻辑名，去重；空数组 = 当前没有可展示的锁 */
   const lockedLabels = useMemo(
     () => lockedSourceLabels(view?.lockedPaths ?? []),
@@ -492,10 +636,45 @@ export function AgentPanel({
   )
 
   const send = useCallback(() => {
-    if (!input.trim()) return
+    const text = input
+    if (!text.trim() || !runtime || running || startingRef.current) return
+    if (openedArchive) {
+      if (!keyConfigured) {
+        setPanelError('先填写 API Key，再发送。')
+        return
+      }
+      setPanelError('')
+      setPanelInfo('')
+      setRunFailure(null)
+      setRollbackNotice('')
+      startingRef.current = true
+      void (async () => {
+        try {
+          const result = await runAfterInheritingArchive(runtime, openedArchive.id, text)
+          setOpenedArchive(null)
+          setSnapshotOpen(false)
+          setInput('')
+          if (!result.ok) setRunFailure(result)
+          void refreshSegments()
+        } catch (error: unknown) {
+          setPanelError(`继承归档段失败：${describeError(error)}。可重试。`)
+        } finally {
+          startingRef.current = false
+        }
+      })()
+      return
+    }
     setInput('')
-    void submit(input)
-  }, [input, submit])
+    void submit(text)
+  }, [
+    input,
+    runtime,
+    running,
+    openedArchive,
+    keyConfigured,
+    refreshSegments,
+    submit,
+  ])
 
   /** D3 第一个选项：把冲突清单拼成一条中文用户消息，开一个新 Run（不封段） */
   const helpWithConflicts = useCallback(() => {
@@ -540,18 +719,233 @@ export function AgentPanel({
     [runtime, rollbackBusy, pendingRollback?.reason],
   )
 
+  /** 手动回滚统一入口：失败挂可操作卡片；`force` 用同一范围跳过守卫重试 */
+  const runManualRollback = useCallback(
+    (kind: ManualRollbackFailure['kind'], runKey?: string, force = false) => {
+      if (!runtime || manualRollbackBusy || rollbackBusy) return
+      if (kind !== 'all' && !runKey) return
+      if (!force) setManualRollbackFailure(null)
+      setManualRollbackBusy(true)
+      setPanelError('')
+      setPanelInfo('')
+      const options = { force }
+      const request =
+        kind === 'all'
+          ? runtime.rollbackAll(options)
+          : kind === 'from'
+            ? runtime.rollbackFromRun(runKey as string, options)
+            : runtime.rollbackRun(runKey as string, options)
+      const failureBase = { kind, ...(runKey ? { runKey } : {}) }
+      void request
+        .then((result) => {
+          if (result.ok) {
+            const skipped = result.outcomes.filter((outcome) => outcome.action === 'skipped').length
+            setManualRollbackFailure(null)
+            setPanelInfo(
+              `已回滚 ${result.rolledBackRuns.length} 轮改动（仅工程草稿）` +
+                (skipped > 0 ? `；${skipped} 个文件无法恢复` : ''),
+            )
+            return
+          }
+          setManualRollbackFailure({
+            ...failureBase,
+            message: describeManualRollbackFailure(result),
+          })
+        })
+        .catch((error: unknown) => {
+          const message = `回滚失败：${describeError(error)}`
+          setManualRollbackFailure((previous) =>
+            force && previous ? { ...previous, message } : { ...failureBase, message },
+          )
+        })
+        .finally(() => setManualRollbackBusy(false))
+    },
+    [runtime, manualRollbackBusy, rollbackBusy],
+  )
+
+  /** 失败卡片「强制回滚」：二次确认后按原范围带 force 重试 */
+  const forceManualRollback = useCallback(() => {
+    const failure = manualRollbackFailure
+    if (
+      !failure ||
+      !runtime ||
+      manualRollbackBusy ||
+      rollbackBusy ||
+      running ||
+      view?.segmentSealed
+    ) {
+      return
+    }
+    void confirmDialog({
+      title: '强制回滚',
+      message:
+        '强制回滚会丢弃 Agent 工作之后这些文件的所有编辑（包括你或其它 Run 之后的改动），且不能撤销。确认强制回滚吗？',
+      confirmLabel: '强制回滚',
+      cancelLabel: '取消',
+      danger: true,
+    }).then((ok) => {
+      if (ok) runManualRollback(failure.kind, failure.runKey, true)
+    })
+  }, [
+    manualRollbackFailure,
+    runtime,
+    manualRollbackBusy,
+    rollbackBusy,
+    running,
+    view?.segmentSealed,
+    runManualRollback,
+  ])
+
+  /** 失败卡片「关闭」：只收起卡片，不执行任何回滚 */
+  const closeManualRollbackFailure = useCallback(() => {
+    setManualRollbackFailure(null)
+  }, [])
+
+  /** 点用户消息左侧图标：最后一轮可选「仅回滚这一轮」；更早的轮只能连同后面一起回滚 */
+  const handleRollbackRun = useCallback(
+    (runKey: string) => {
+      if (!runtime || running || view?.segmentSealed || manualRollbackBusy || rollbackBusy) return
+      void confirmDialog({
+        title: '回滚改动',
+        message: MANUAL_ROLLBACK_MESSAGE,
+        confirmLabel: '回滚',
+        cancelLabel: '取消',
+      }).then((confirmed) => {
+        if (confirmed) runManualRollback('from', runKey)
+      })
+    },
+    [
+      runtime,
+      running,
+      view?.segmentSealed,
+      manualRollbackBusy,
+      rollbackBusy,
+      runManualRollback,
+    ],
+  )
+
+  /** 点 Run 统计行左侧的分支图标：有下一轮时复制到这一轮为止，最后一轮复制全部 */
+  const handleForkFromRun = useCallback(
+    (beforeEntryId?: string) => {
+      if (!runtime || running) return
+      const request = forkAfterRun(runtime, running, beforeEntryId)
+      if (!request) return
+      setPanelError('')
+      setPanelInfo('')
+      void request
+        .then(() => {
+          setRunFailure(null)
+          setPanelInfo(
+            beforeEntryId
+              ? '已从此轮之后分支出新会话。'
+              : '已从当前会话末尾分支出新会话。',
+          )
+          void refreshSegments()
+        })
+        .catch((error: unknown) => {
+          setPanelError(`分支失败：${describeError(error)}。可重试。`)
+        })
+    },
+    [runtime, running, refreshSegments],
+  )
+
+  /** 输入区「分支」：查看归档段时先继承归档段；否则从当前会话末尾分支（复制全部对话） */
+  const handleForkCurrent = useCallback(() => {
+    if (!runtime || running) return
+    setPanelError('')
+    setPanelInfo('')
+    if (openedArchive) {
+      void runtime
+        .forkSnapshot(openedArchive.id)
+        .then(() => {
+          setOpenedArchive(null)
+          setSnapshotOpen(false)
+          setRunFailure(null)
+          setPanelInfo('已从归档段继承出新对话。')
+          void refreshSegments()
+        })
+        .catch((error: unknown) => {
+          setPanelError(`继承归档段失败：${describeError(error)}。可重试。`)
+        })
+      return
+    }
+    void runtime
+      .forkSegment({ label: 'branch' })
+      .then(() => {
+        setRunFailure(null)
+        setPanelInfo('已从当前会话末尾分支出新会话。')
+        void refreshSegments()
+      })
+      .catch((error: unknown) => {
+        setPanelError(`分支失败：${describeError(error)}。可重试。`)
+      })
+  }, [runtime, running, openedArchive, refreshSegments])
+
+  /** 输入区「回滚」按钮：最近一轮 / 整个活跃段 */
+  const openManualRollback = useCallback(() => {
+    if (
+      !runtime ||
+      running ||
+      view?.segmentSealed ||
+      manualRollbackBusy ||
+      rollbackBusy ||
+      !lastRollbackRunKey
+    ) {
+      return
+    }
+    void chooseDialog({
+      title: '回滚改动',
+      message: '回滚只撤销对工程草稿的改动，不会删除对话消息。选择回滚范围：',
+      cancelLabel: '取消',
+      options: [
+        { id: 'last', label: '回滚最近一轮' },
+        { id: 'all', label: '回滚整个活跃段' },
+      ],
+    }).then((choice) => {
+      if (choice === 'last' && lastRollbackRunKey) {
+        runManualRollback('run', lastRollbackRunKey)
+      } else if (choice === 'all') {
+        runManualRollback('all')
+      }
+    })
+  }, [
+    runtime,
+    running,
+    view?.segmentSealed,
+    manualRollbackBusy,
+    rollbackBusy,
+    lastRollbackRunKey,
+    runManualRollback,
+  ])
+
+  const manualRollbackBlocked =
+    !runtime ||
+    running ||
+    view?.segmentSealed === true ||
+    manualRollbackBusy ||
+    rollbackBusy !== null ||
+    !lastRollbackRunKey
+
   /** 失败卡片：`pendingRollback` 存在时才有内容（组件内部判空） */
   const rollbackCard = (
-    <RollbackCard
-      pending={pendingRollback}
-      busy={rollbackBusy}
-      disabled={running || !runtime}
-      notice={rollbackNotice}
-      onHelp={helpWithConflicts}
-      onForce={() => runRollback('force')}
-      onAbandon={() => runRollback('abandon')}
-      onRetry={() => runRollback('retry')}
-    />
+    <>
+      <RollbackCard
+        pending={pendingRollback}
+        busy={rollbackBusy}
+        disabled={running || !runtime}
+        notice={rollbackNotice}
+        onHelp={helpWithConflicts}
+        onForce={() => runRollback('force')}
+        onAbandon={() => runRollback('abandon')}
+        onRetry={() => runRollback('retry')}
+      />
+      <ManualRollbackFailureCard
+        failure={manualRollbackFailure}
+        busy={manualRollbackBusy}
+        onForce={forceManualRollback}
+        onClose={closeManualRollbackFailure}
+      />
+    </>
   )
 
   const stop = useCallback(() => {
@@ -940,6 +1334,8 @@ export function AgentPanel({
             status={running ? view?.status ?? '' : panelInfo || view?.status || ''}
             resetKey={view?.segmentId ?? null}
             empty={emptyState}
+            onRollbackRun={handleRollbackRun}
+            onForkRun={handleForkFromRun}
           />
           {!rollbackAtTop && rollbackCard}
         </>
@@ -979,7 +1375,9 @@ export function AgentPanel({
               ? '先在 API 设置里填写 Key'
               : running
                 ? '正在回答，可点「停止」'
-                : '输入问题，Enter 发送'
+                : openedArchive
+                  ? '输入问题，发送时先继承该归档段'
+                  : '输入问题，Enter 发送'
           }
           disabled={!runtime || !keyConfigured || running}
           onChange={(event) => setInput(event.target.value)}
@@ -991,6 +1389,34 @@ export function AgentPanel({
           }}
         />
         <div className="agent-input-actions">
+          <ForkButton
+            disabled={!runtime || running || openedLoading}
+            title={
+              openedArchive
+                ? '继承该归档段并分支出新对话'
+                : '从当前会话末尾分支出一个新段'
+            }
+            onClick={handleForkCurrent}
+          />
+          <button
+            type="button"
+            className="agent-manual-rollback"
+            disabled={manualRollbackBlocked}
+            title={
+              view?.segmentSealed
+                ? '当前段已封存，改动已归档，不能手动回滚'
+                : lastRollbackRunKey === null
+                  ? '没有可回滚的改动'
+                  : running
+                    ? '运行中不能回滚'
+                    : manualRollbackBusy
+                      ? '正在回滚…'
+                      : '回滚最近一轮或整个活跃段的工程草稿改动'
+            }
+            onClick={openManualRollback}
+          >
+            {manualRollbackBusy ? '回滚中…' : '回滚'}
+          </button>
           {running ? (
             <button
               type="button"

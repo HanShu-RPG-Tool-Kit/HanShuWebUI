@@ -68,6 +68,55 @@ export function formatBytes(bytes: number): string {
   return `${text.replace(/\.0$/, '')} ${units[unit]}`
 }
 
+/** 三位有效数字（整数/1 位小数/2 位小数），四舍五入后去掉多余的 0 */
+function roundSignificant3(value: number): number {
+  if (value >= 100) return Math.round(value)
+  if (value >= 10) return Math.round(value * 10) / 10
+  return Math.round(value * 100) / 100
+}
+
+/**
+ * Token 计数 → 紧凑文案：0–999 原样，之后用大写 K/M/B，保留三位有效数字。
+ * 例：12300 → `12.3K`，123456 → `123K`，1234567 → `1.23M`，999950 → `1M`。
+ */
+export function formatTokenCount(value: number): string {
+  const count = Number.isFinite(value) ? Math.max(0, value) : 0
+  const rounded = Math.round(count)
+  if (rounded < 1000) return String(rounded)
+  const units = ['', 'K', 'M', 'B']
+  let unit = 0
+  let scaled = count
+  while (scaled >= 1000 && unit < units.length - 1) {
+    scaled /= 1000
+    unit += 1
+  }
+  scaled = roundSignificant3(scaled)
+  // 999.95K 四舍五入成 1000K 时进位到下一个单位，避免出现 `1000K`
+  if (scaled >= 1000 && unit < units.length - 1) {
+    scaled /= 1000
+    unit += 1
+  }
+  return `${Number(scaled.toFixed(2))}${units[unit]}`
+}
+
+/**
+ * Run 用时 → 紧凑文案：不足 1 秒用毫秒，不足 1 分钟保留 1 位小数，之后 `2m05s`。
+ * 例：950 → `950ms`，12345 → `12.3s`，125000 → `2m05s`。
+ */
+export function formatRunDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return '0ms'
+  const totalMs = Math.round(ms)
+  if (totalMs < 1000) return `${totalMs}ms`
+  if (totalMs < 60_000) {
+    const seconds = Math.round(totalMs / 100) / 10
+    if (seconds < 60) return `${seconds}s`
+  }
+  const totalSeconds = Math.round(totalMs / 1000)
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `${minutes}m${String(seconds).padStart(2, '0')}s`
+}
+
 /* ───────────────────────── Key 掩码（文档 §2 / §10） ───────────────────────── */
 
 /** 只显示 `sk-…后四位`；**任何情况下都不返回完整 Key** */
@@ -177,6 +226,31 @@ export type MessageRow = {
   /** 模型思考内容：默认折叠展示 */
   thinking?: string
   tool?: ToolRow
+  /** 用户行：触发这一轮的 Run id（手动回滚以它为单位） */
+  runKey?: string
+  /** 用户行：这一轮的改动是否还能回滚（归档 / 已回滚 / 运行中时为 false） */
+  rollbackable?: boolean
+  /** 用户行：这一轮的改动是否已经回滚过 */
+  rolledBack?: boolean
+  /** 这一行属于一个已被回滚的 Run（UI 画左侧红线 + 「已回滚」小字） */
+  rolledBackRun?: boolean
+  /** 回滚通知行：可展开的回滚卡片数据 */
+  rollback?: {
+    createdAt: number
+    forced?: boolean
+    auto?: boolean
+    runs: Array<{ userIndex: number; userText?: string; files: string[] }>
+    outcomes: UndoOutcome[]
+  }
+  /** Run 统计行：用时、轮次、token 与分支点（渲染在 Agent 回复之后） */
+  runMeta?: {
+    durationMs: number
+    turns: number
+    inputTokens: number
+    cachedTokens: number
+    outputTokens: number
+    forkBeforeEntryId?: string
+  }
 }
 
 export function deriveMessageRows(items: AgentViewItem[]): MessageRow[] {
@@ -186,6 +260,7 @@ export function deriveMessageRows(items: AgentViewItem[]): MessageRow[] {
         id: item.id,
         kind: 'tool',
         roleLabel: '工具',
+        rolledBackRun: item.rolledBackRun,
         tool: {
           name: item.name,
           status: item.status,
@@ -202,15 +277,58 @@ export function deriveMessageRows(items: AgentViewItem[]): MessageRow[] {
         text: item.text,
         streaming: item.streaming === true,
         thinking: item.thinking,
+        rolledBackRun: item.rolledBackRun,
       }
     }
     if (item.kind === 'notice') {
       return { id: item.id, kind: 'notice', roleLabel: '提示', text: item.text }
     }
+    if (item.kind === 'rollback') {
+      return {
+        id: item.id,
+        kind: 'rollback',
+        roleLabel: '回滚',
+        rollback: {
+          createdAt: item.createdAt,
+          forced: item.forced,
+          auto: item.auto,
+          runs: item.runs,
+          outcomes: item.outcomes,
+        },
+      }
+    }
+    if (item.kind === 'run-meta') {
+      return {
+        id: item.id,
+        kind: 'run-meta',
+        roleLabel: 'Run',
+        rolledBackRun: item.rolledBackRun,
+        runMeta: {
+          durationMs: item.durationMs,
+          turns: item.turns,
+          inputTokens: item.inputTokens,
+          cachedTokens: item.cachedTokens,
+          outputTokens: item.outputTokens,
+          forkBeforeEntryId: item.forkBeforeEntryId,
+        },
+      }
+    }
+    if (item.kind === 'user') {
+      return {
+        id: item.id,
+        kind: 'user',
+        roleLabel: '你',
+        text: item.text,
+        runKey: item.runKey,
+        rollbackable: item.rollbackable,
+        rolledBack: item.rolledBack,
+        rolledBackRun: item.rolledBackRun,
+      }
+    }
     return {
       id: item.id,
       kind: item.kind,
-      roleLabel: item.kind === 'user' ? '你' : '错误',
+      roleLabel: '错误',
       text: item.text,
     }
   })

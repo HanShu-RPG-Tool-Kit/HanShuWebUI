@@ -78,7 +78,7 @@ export function SegmentBar({
         className="agent-seg-label"
         title={
           current?.state === 'sealed'
-            ? '已封存段：只读查看历史；发送消息会开始新会话'
+            ? '已封存段：只读查看历史；发送消息会继承该会话开新段'
             : '活跃段：本窗口的对话，可继续聊；保存会产出一条归档段'
         }
       >
