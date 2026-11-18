@@ -368,6 +368,17 @@ export type SegmentInfo = {
   sourceSnapshotId?: string
 }
 
+/** `forkSegment` 的可选参数；见 `AgentRuntime.forkSegment` */
+export type ForkSegmentOptions = {
+  /** 只复制该条目之前（不含）的条目；省略=复制全部 */
+  beforeEntryId?: string
+  /**
+   * 段标题后缀：`inherit`（封存后自动继承）/ `branch`（手动分支）。
+   * 省略时按 `beforeEntryId` 是否存在推断（有=分支，无=继承）。
+   */
+  label?: 'inherit' | 'branch'
+}
+
 /**
  * 归档段（保存点）：不可变，存**归档段库**；同一工程 scope 的所有窗口可读。
  * 归档 ≠ 段结束：保存产出归档段后，活跃段仍可继续。
@@ -415,8 +426,76 @@ export type SnapshotBackend = {
 
 /* ───────────────────────── 会话视图（给 UI） ───────────────────────── */
 
+/** 一次回滚通知里被回滚的一轮 Run 的摘要（`hanshu.rollback` 条目的 data.runs[]） */
+export type RollbackNoticeRun = {
+  /** 用户消息在「用户消息序列」里的下标（从 0 起）；归档/继承后仍能对上同一条消息 */
+  userIndex: number
+  /** 该轮用户消息的首行摘要（给卡片展示；模型侧另有完整说明） */
+  userText?: string
+  /** 这一轮写过、已被回滚涉及的文件（逻辑名） */
+  files: string[]
+}
+
+/**
+ * 一个已完成 Run 的统计行（渲染在 Agent 回复之后，单起一行）。
+ *
+ * 分支按钮也放在这一行：`forkBeforeEntryId` 是下一条用户条目 id，
+ * 传给 `forkSegment({ beforeEntryId })` 即「复制到这一轮为止」；省略表示复制全部。
+ * 统计只用于展示：用时按条目时间戳差、轮次 = 该 Run 的 assistant 条目数、
+ * token 取各 assistant 消息 `usage` 的累计（input 不含缓存，缓存 = cacheRead）。
+ */
+export type RunMetaItem = {
+  id: string
+  kind: 'run-meta'
+  /** 从用户消息到最后一条模型/工具消息的用时（毫秒；时间戳缺失时为 0） */
+  durationMs: number
+  /** 该 Run 的模型轮次（assistant 条目数） */
+  turns: number
+  /** 未命中缓存的输入 token 累计 */
+  inputTokens: number
+  /** 命中缓存的输入 token 累计（cacheRead） */
+  cachedTokens: number
+  /** 输出 token 累计 */
+  outputTokens: number
+  /** 到此 Run（含）为止分支：下一条用户条目 id；undefined = 复制全部 */
+  forkBeforeEntryId?: string
+  /** 这一行属于一个已被回滚的 Run（UI 画左侧红线） */
+  rolledBackRun?: boolean
+}
+
+/**
+ * 一次回滚写入对话的「回滚通知」条目（kind = `hanshu.rollback`）。
+ *
+ * - `data` 给 UI：渲染成一张可展开的回滚卡片，并给被回滚的整轮打红线/「已回滚」标注；
+ * - `model` 给模型：user 说明 + 空 assistant 占位，保持 user/assistant 严格交替（见 agent-runtime.md）。
+ * 归档段与 fork 继承都会原样复制该条目，因此归档里也能看到回滚记录与标注。
+ */
+export type RollbackNoticeItem = {
+  id: string
+  kind: 'rollback'
+  createdAt: number
+  /** 这次回滚是否由「强制回滚」触发 */
+  forced?: boolean
+  /** 是否由 Run 失败时的自动回滚触发（否则是用户主动回滚） */
+  auto?: boolean
+  runs: RollbackNoticeRun[]
+  outcomes: UndoOutcome[]
+}
+
 export type AgentViewItem =
-  | { id: string; kind: 'user'; text: string }
+  | {
+      id: string
+      kind: 'user'
+      text: string
+      /** 触发这一轮的 Run id；只有活跃段内、有撤销记录的 Run 才有 */
+      runKey?: string
+      /** 该 Run 的改动是否还能回滚（归档 / 已回滚 / 进行中时为 false） */
+      rollbackable?: boolean
+      /** 该 Run 的改动是否已经回滚过 */
+      rolledBack?: boolean
+      /** 这一行属于一个已被回滚的 Run（UI 画左侧红线 + 「已回滚」小字） */
+      rolledBackRun?: boolean
+    }
   | {
       id: string
       kind: 'assistant'
@@ -424,6 +503,8 @@ export type AgentViewItem =
       streaming?: boolean
       /** 模型思考内容（默认不展开；为空表示这一轮没有思考或厂商不返回） */
       thinking?: string
+      /** 这一行属于一个已被回滚的 Run（UI 画左侧红线） */
+      rolledBackRun?: boolean
     }
   | {
       id: string
@@ -433,7 +514,11 @@ export type AgentViewItem =
       /** 调用参数（紧凑 JSON 文本）；模型请求里的 ToolCall.arguments，供 UI 展开查看 */
       input?: string
       output?: string
+      /** 这一行属于一个已被回滚的 Run（UI 画左侧红线） */
+      rolledBackRun?: boolean
     }
+  | RunMetaItem
+  | RollbackNoticeItem
   | { id: string; kind: 'error'; text: string }
   | { id: string; kind: 'notice'; text: string }
 
@@ -494,6 +579,30 @@ export type AgentRunResult = {
 }
 
 /**
+ * 活跃段「手动回滚」的结果（按用户消息左侧图标 / 输入框旁按钮触发）。
+ *
+ * 回滚只撤销 Agent 在这些 Run 里对**工程草稿**的改动，不动对话条目，也不修改已保存的工程；
+ * 归档段与封存段不可回滚，继承来的归档条目没有撤销记录，也不可回滚。
+ */
+export type AgentRollbackResult = {
+  ok: boolean
+  /** 实际回滚的 Run（旧 → 新；冲突/失败时为空，一个文件都不动） */
+  rolledBackRuns: string[]
+  outcomes: UndoOutcome[]
+  conflicts: UndoConflict[]
+  error?: string
+}
+
+/**
+ * 手动回滚选项。
+ *
+ * `force:true` = 强制回滚：跳过「当前版本必须等于该轮写后版本」与「人类正在编辑」的守卫，
+ * 直接按写前快照恢复；会**丢弃 Agent 之后对这些文件的所有编辑**，调用方必须先弹二次确认。
+ * 仍无法恢复的条目（没有写前快照 / 语言通道不可用）以 skipped 结果返回。
+ */
+export type ManualRollbackOptions = { force?: boolean }
+
+/**
  * 会话段与归档段的管理面。
  * Save 路径（工作区「保存」）在文件事务确认提交后调用 `archive()`。
  */
@@ -506,6 +615,13 @@ export type AgentRuntime = {
   createSegment: (title?: string) => Promise<SegmentInfo>
   /** 重命名一个活跃段（只改段标题，不动对话条目）；空标题会被拒绝 */
   renameSegment: (segmentId: string, title: string) => Promise<SegmentInfo>
+  /**
+   * 从**当前段**「分支 / 继承」出一个新段：复制对话条目到新段并切换过去。
+   * - 省略 options（或 `beforeEntryId` 为空）：复制当前段的全部条目（输入框「分支」、封存段保存后发送时的自动「继承」）
+   * - `beforeEntryId`：只复制该条目**之前（不含）**的条目（消息旁的「分支」按钮）
+   * 封存段允许作为来源；运行中的段拒绝。复制出的新段自包含（源段被删也不影响）。
+   */
+  forkSegment: (options?: ForkSegmentOptions) => Promise<SegmentInfo>
   /** 切换到已有段（同窗口） */
   selectSegment: (segmentId: string) => Promise<void>
   /**
@@ -530,6 +646,20 @@ export type AgentRuntime = {
   abandonRollback: () => Promise<void>
   /** 重新预演待处理回滚：全部安全则直接回滚，否则返回冲突清单 */
   retryRollback: () => Promise<{ ok: boolean; outcomes: UndoOutcome[]; conflicts: UndoConflict[] }>
+  /**
+   * 手动回滚**单轮** Run：只撤销这一轮 Agent 对工程草稿的改动。
+   * 只允许回滚**最后一轮**（后缀回滚约束）；更早的轮次会返回 `ok:false`，应改用 `rollbackFromRun`。
+   * 若后续轮次改过同一文件，预演会报冲突（一个文件都不动）；`force:true` 时跳过版本/人类编辑守卫、
+   * 直接写回写前内容（会丢弃这些文件在 Agent 之后的所有编辑，界面须二次确认）。
+   */
+  rollbackRun: (runKey: string, options?: ManualRollbackOptions) => Promise<AgentRollbackResult>
+  /**
+   * 手动回滚**从该轮起**：撤销这一轮及之后的全部可回滚 Run（从新到旧逐轮回放）。
+   * 对应用户消息左侧的回滚图标；`force` 语义同上。
+   */
+  rollbackFromRun: (runKey: string, options?: ManualRollbackOptions) => Promise<AgentRollbackResult>
+  /** 手动回滚**整个活跃段**的全部可回滚 Run（从新到旧逐轮回放）；`force` 语义同上 */
+  rollbackAll: (options?: ManualRollbackOptions) => Promise<AgentRollbackResult>
   /** 保存路径调用：把段自上次归档之后的新增条目追加进归档段库，产出一条归档记录 */
   archive: (title?: string) => Promise<SnapshotInfo | null>
   /** 归档段列表 */

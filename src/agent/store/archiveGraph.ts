@@ -36,8 +36,18 @@ export type ForkSourceEntry = {
   data?: unknown
 }
 
-/** 可继承的条目种类：对话内容；`pi.compaction` / `pi.reset` 是上下文分界，复制会破坏历史语义，跳过 */
-const FORK_KINDS = new Set(['pi.user', 'pi.assistant', 'pi.tool-result', 'pi.system'])
+/**
+ * 可继承的条目种类：对话内容；`pi.compaction` / `pi.reset` 是上下文分界，复制会破坏历史语义，跳过。
+ * `hanshu.rollback` 是回滚通知（UI 卡片 + 模型可见的 user/assistant 序列）；继承/分支时必须一起带走，
+ * 否则新段里既有「已回滚的旧工具结果」却没有说明，模型会误信失效内容。
+ */
+const FORK_KINDS = new Set([
+  'pi.user',
+  'pi.assistant',
+  'pi.tool-result',
+  'pi.system',
+  'hanshu.rollback',
+])
 
 /**
  * 归档条目 → 新会话的 entry 草稿。

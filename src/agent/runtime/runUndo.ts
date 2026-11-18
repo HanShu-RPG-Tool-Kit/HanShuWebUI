@@ -232,6 +232,138 @@ export class RunUndoLog {
     return outcomes
   }
 
+  /**
+   * 手动回滚多轮 Run（消息左侧「回滚到此处」/ 输入框旁「回滚全部」）。
+   *
+   * `runs` 按**旧 → 新**传入，内部从新到旧做**模拟预演**：
+   * - 同一个文件被后续 Run 改过时，用上一轮回滚后的"虚拟内容"继续判断，而不是当前磁盘内容；
+   * - 任一文件版本对不上 → 一个文件都不动，返回冲突（all-or-nothing）；
+   * - 全部通过才按从新到旧的顺序写回写前内容（同一文件最终落回最早那一轮的写前内容）。
+   */
+  async rollbackMany(
+    runs: Array<{ runId: string; entries: UndoEntry[] }>,
+  ): Promise<{ ok: boolean; outcomes: UndoOutcome[]; conflicts: UndoConflict[] }> {
+    const virtual = new Map<AgentPath, { content: string | null; version: string | null }>()
+    const plan: Array<{ entry: UndoEntry; runId: string }> = []
+    const conflicts: UndoConflict[] = []
+
+    const pushConflict = (entry: UndoEntry, reason: UndoConflictReason): void => {
+      if (
+        conflicts.some(
+          (item) => item.path === entry.path && item.channel === entry.channel && item.reason === reason,
+        )
+      ) {
+        return
+      }
+      conflicts.push({ path: entry.path, channel: entry.channel, reason })
+    }
+
+    for (let ri = runs.length - 1; ri >= 0; ri--) {
+      const run = runs[ri]
+      for (let ei = run.entries.length - 1; ei >= 0; ei--) {
+        const entry = run.entries[ei]
+        if (entry.channel === 'lang' && this.world.writeLang === undefined) {
+          pushConflict(entry, 'unavailable')
+          continue
+        }
+        if (entry.kind === 'write' && entry.before.content === null && entry.before.version === null) {
+          pushConflict(entry, 'no_before_image')
+          continue
+        }
+        const base = virtual.get(entry.path)
+        const current = base === undefined ? await versionedFile(this.world, entry.path) : base
+        const content = current === null ? null : current.content
+        // 已经等于写前内容（含本轮之前的回滚）：无需动作
+        if (content === entry.before.content) continue
+        if (current !== null && current.version === entry.after) {
+          virtual.set(entry.path, { content: entry.before.content, version: entry.before.version })
+          plan.push({ entry, runId: run.runId })
+          continue
+        }
+        if (this.world.isHumanDirty(entry.path)) {
+          pushConflict(entry, 'human_editing')
+          continue
+        }
+        pushConflict(entry, 'version_stale')
+      }
+    }
+
+    if (conflicts.length > 0) {
+      return {
+        ok: false,
+        conflicts,
+        outcomes: conflicts.map((conflict) => ({
+          path: conflict.path,
+          channel: conflict.channel,
+          action: 'conflict',
+          reason: conflict.reason,
+        })),
+      }
+    }
+
+    const outcomes: UndoOutcome[] = []
+    // plan 已是「新 → 旧」顺序：逐条写回，同一文件的最终内容会落回最早那一轮的写前内容。
+    for (const { entry } of plan) {
+      await this.apply(entry)
+      outcomes.push({
+        path: entry.path,
+        channel: entry.channel,
+        action: entry.before.content === null ? 'deleted' : 'restored',
+      })
+    }
+    return { ok: true, outcomes, conflicts: [] }
+  }
+
+  /**
+   * 强制回滚多轮 Run（手动回滚失败后用户选择「强制回滚」）。
+   *
+   * 与 `rollbackMany` 的区别：**跳出版本守卫与人类编辑判断**，直接按写前快照从新到旧写回，
+   * 因此会丢弃这些文件在 Agent 之后的所有编辑（调用方必须先弹二次确认）。
+   * 仍跳过无法恢复的条目：没有写前快照（`no_before_image`）、语言通道不可用（`unavailable`），
+   * 以 `skipped` 结果返回，不静默成功。`runs` 旧 → 新传入；同一文件最终落回最早一轮的写前内容。
+   */
+  async forceMany(
+    runs: Array<{ runId: string; entries: UndoEntry[] }>,
+  ): Promise<{ outcomes: UndoOutcome[] }> {
+    const outcomes: UndoOutcome[] = []
+    for (let ri = runs.length - 1; ri >= 0; ri--) {
+      const run = runs[ri]
+      for (let ei = run.entries.length - 1; ei >= 0; ei--) {
+        const entry = run.entries[ei]
+        if (entry.channel === 'lang' && this.world.writeLang === undefined) {
+          outcomes.push({
+            path: entry.path,
+            channel: entry.channel,
+            action: 'skipped',
+            reason: 'unavailable',
+          })
+          continue
+        }
+        if (entry.kind === 'write' && entry.before.content === null && entry.before.version === null) {
+          outcomes.push({
+            path: entry.path,
+            channel: entry.channel,
+            action: 'skipped',
+            reason: 'no_before_image',
+          })
+          continue
+        }
+        const current = await versionedFile(this.world, entry.path)
+        if ((current === null ? null : current.content) === entry.before.content) {
+          outcomes.push({ path: entry.path, channel: entry.channel, action: 'finished' })
+          continue
+        }
+        await this.apply(entry)
+        outcomes.push({
+          path: entry.path,
+          channel: entry.channel,
+          action: entry.before.content === null ? 'deleted' : 'restored',
+        })
+      }
+    }
+    return { outcomes }
+  }
+
   /** Run 成功 / 放弃回滚 → 丢弃日志（§7「成功 → 丢弃日志」，D3「放弃回滚」） */
   discard(runId: string): void {
     this.runs.delete(runId)

@@ -16,6 +16,7 @@
  */
 
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
+import type { AssistantMessage, Message, UserMessage } from '@earendil-works/pi-ai'
 import {
   Harness,
   createRegistry,
@@ -44,21 +45,29 @@ import syntaxDocs from '../../help/docs/hanshu-syntax.md?raw'
 import { createFileWorld, RuntimeArbiter } from './arbiter'
 import { buildModels, normalizeModelId } from './models'
 import { buildAgentTools } from './tools'
-import { buildRuntimeView, entryRecordsToItems, failureItem, statusOf } from './view'
+import { buildRuntimeView, entryRecordsToItems, failureItem, statusOf, userTextOf } from './view'
 import { LockTable } from '../runtime/lockTable'
 import { RunUndoLog } from '../runtime/runUndo'
 import { IndexedDbUndoJournalBackend, undoJournalKey } from '../store/undoJournal'
+import {
+  IndexedDbRunRollbackBackend,
+  runRollbackKey,
+  type RunRollbackRecord,
+} from '../store/runRollbackStore'
 import { segmentDbName } from '../store/dbNames'
 import { descendantSnapshotIds, forkEntryDrafts, type ForkSourceEntry } from '../store/archiveGraph'
 import { deleteSegmentRecords } from '../store/segmentPurge'
 import { IndexedDbSnapshotBackend, SnapshotStore, persistStorage } from '../store/snapshotStore'
 import type {
+  AgentRollbackResult,
   AgentRunResult,
   AgentRunState,
   AgentRuntime,
   AgentRuntimeOptions,
   AgentRuntimeView,
   AgentViewItem,
+  ForkSegmentOptions,
+  ManualRollbackOptions,
   PendingRollback,
   SegmentInfo,
   SnapshotInfo,
@@ -163,6 +172,12 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
   const undo = new RunUndoLog(world)
   // 待处理回滚的持久化（刷新后仍能强制/放弃/重试）；一个实例绑定一个工程 scope
   const undoJournal = new IndexedDbUndoJournalBackend({ scope: options.scope })
+  // 活跃段「历史 Run 回滚记录」：每轮改动一份撤销日志，供消息左侧/输入框旁主动回滚
+  const runRollbackDb = new IndexedDbRunRollbackBackend({ scope: options.scope })
+  /** 当前段可回滚的 Run（runKey → 记录）；切段时按段重新加载 */
+  let runRollbacks = new Map<string, RunRollbackRecord>()
+  /** runKey → 触发这一轮的 user 条目 id（停止/失败转「保留」时补建记录用） */
+  const runUserEntryIds = new Map<string, string>()
   const arbiter = new RuntimeArbiter({
     host: options.host,
     locks,
@@ -186,7 +201,7 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
 
   function emit(): void {
     lockedPaths = locks.lockedPaths()
-    currentView = buildRuntimeView({
+    const view = buildRuntimeView({
       segmentId,
       runId,
       runState,
@@ -198,6 +213,8 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
       pendingRollback,
       segmentSealed: Boolean(segmentId && metaStore[segmentId]?.sealed),
     })
+    // 历史 Run 回滚入口：按 user 条目 id 挂 runKey，归档段/已回滚的按钮置灰
+    currentView = { ...view, items: annotateRollbacks(view.items) }
     for (const listener of listeners) listener(currentView)
   }
 
@@ -242,6 +259,328 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
       await undoJournal.clear(key)
     } catch {
       /* 清不掉只是残留，下次打开会按预演结果处理 */
+    }
+  }
+
+  /* ───────────── 历史 Run 回滚记录（活跃段手动回滚） ───────────── */
+
+  function runRollbackSegmentKey(): string | null {
+    return segmentId
+      ? runRollbackKey(options.scope, options.windowId, segmentId)
+      : null
+  }
+
+  /** 切段/打开时加载该段可回滚的 Run；失败只降级为"这次会话内不能回滚" */
+  async function loadRunRollbacks(): Promise<void> {
+    runRollbacks = new Map()
+    const key = runRollbackSegmentKey()
+    if (!key || !segmentId) return
+    try {
+      const record = await runRollbackDb.load(key)
+      if (!record || record.segmentId !== segmentId) return
+      for (const run of record.runs) runRollbacks.set(run.runKey, run)
+    } catch {
+      /* 打开失败：不影响对话，只是回滚图标不出现 */
+    }
+  }
+
+  /** 整段重写回滚记录；条数/体积超限时 store 会裁掉最旧的，仍失败则只在内存 */
+  async function persistRunRollbacks(): Promise<void> {
+    const key = runRollbackSegmentKey()
+    if (!key || !segmentId) return
+    try {
+      const runs = [...runRollbacks.values()]
+      if (runs.length === 0) {
+        await runRollbackDb.clear(key)
+        return
+      }
+      await runRollbackDb.save({
+        scope: options.scope,
+        windowId: options.windowId,
+        segmentId,
+        runs,
+      })
+    } catch {
+      /* 体积超限 / 没有 IndexedDB：本次不持久化，当前会话内仍可回滚 */
+    }
+  }
+
+  /** 把一轮 Run 的撤销日志收进"可主动回滚"集合（成功 Run / 用户选择保留改动的停止、失败） */
+  async function recordRollbackRun(runKey: string, userEntryId: string | undefined): Promise<void> {
+    if (!userEntryId || !undo.has(runKey)) return
+    const entries = undo.entriesOf(runKey)
+    if (entries.length === 0) return
+    runRollbacks.set(runKey, {
+      runKey,
+      userEntryId,
+      createdAt: runRollbacks.get(runKey)?.createdAt ?? Date.now(),
+      entries,
+    })
+    await persistRunRollbacks()
+  }
+
+  /** 给 user 条目标注是否可主动回滚 */
+  function annotateRollbacks(items: AgentViewItem[]): AgentViewItem[] {
+    if (runRollbacks.size === 0 && !items.some((item) => item.kind === 'user')) return items
+    const sealed = Boolean(segmentId && metaStore[segmentId]?.sealed)
+    const byUserEntry = new Map<string, RunRollbackRecord>()
+    for (const record of runRollbacks.values()) byUserEntry.set(record.userEntryId, record)
+    return items.map((item) => {
+      if (item.kind !== 'user') return item
+      const record = byUserEntry.get(item.id)
+      if (!record) return item
+      return {
+        ...item,
+        runKey: record.runKey,
+        rollbackable: !sealed && record.rolledBack !== true,
+        ...(record.rolledBack === true ? { rolledBack: true } : {}),
+      }
+    })
+  }
+
+  /**
+   * 手动回滚一组 Run（消息左侧「回滚该轮及之后」/ 输入框旁「回滚全部」）。
+   * 只撤销工程草稿，不动对话条目；多轮一起回滚时从新到旧模拟，冲突则一个文件都不动。
+   */
+  async function runManualRollback(
+    runKeys: string[],
+    options?: ManualRollbackOptions,
+  ): Promise<AgentRollbackResult> {
+    if (segmentId && metaStore[segmentId]?.sealed) {
+      return {
+        ok: false,
+        rolledBackRuns: [],
+        outcomes: [],
+        conflicts: [],
+        error: '归档段不可回滚',
+      }
+    }
+    const selected = runKeys
+      .map((key) => runRollbacks.get(key))
+      .filter((record): record is RunRollbackRecord => record !== undefined && record.rolledBack !== true)
+    if (selected.length === 0) {
+      return { ok: true, rolledBackRuns: [], outcomes: [], conflicts: [] }
+    }
+    const ordered = [...selected].sort((a, b) => a.createdAt - b.createdAt)
+    const runs = ordered.map((record) => ({ runId: record.runKey, entries: record.entries }))
+    let outcomes: UndoOutcome[]
+    let conflicts: UndoConflict[]
+    if (options?.force === true) {
+      // 强制回滚：跳过版本/人类编辑守卫，按写前快照覆盖（界面已二次确认）
+      outcomes = (await undo.forceMany(runs)).outcomes
+      conflicts = []
+    } else {
+      const result = await undo.rollbackMany(runs)
+      if (!result.ok) {
+        return {
+          ok: false,
+          rolledBackRuns: [],
+          outcomes: result.outcomes,
+          conflicts: result.conflicts,
+          error: '部分文件已被修改，未执行回滚',
+        }
+      }
+      outcomes = result.outcomes
+      conflicts = []
+    }
+    for (const record of ordered) {
+      const current = runRollbacks.get(record.runKey)
+      if (current) runRollbacks.set(record.runKey, { ...current, rolledBack: true })
+    }
+    // 同一轮如果还挂着失败/停止的回滚卡片，手动回滚后一并收掉，避免重复入口
+    if (pendingRunKey && ordered.some((record) => record.runKey === pendingRunKey)) {
+      clearPendingRollback()
+      await clearPendingJournal()
+    }
+    await persistRunRollbacks()
+    // 通知用户与模型：这些 Run 的改动已被撤回了（归档段会连同这条通知一起带走）
+    await appendRollbackNotice({
+      runs: ordered.map((record) => ({
+        runKey: record.runKey,
+        userEntryId: record.userEntryId,
+        files: record.entries.map((entry) => entry.path),
+      })),
+      outcomes,
+      forced: options?.force === true,
+    })
+    emit()
+    return {
+      ok: true,
+      rolledBackRuns: ordered.map((record) => record.runKey),
+      outcomes,
+      conflicts,
+    }
+  }
+
+  /* ───────────── 回滚通知条目（同时告知用户与模型：这些改动已被撤回） ───────────── */
+
+  /** 当前上下文里最后一条模型消息（判定尾部角色，决定回滚通知的交替序列） */
+  function lastModelMessage(): Message | undefined {
+    const entries = conversationView?.entries ?? []
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const model = entries[index]?.model
+      if (model && model.length > 0) return model[model.length - 1]
+    }
+    return undefined
+  }
+
+  /** 当前上下文里最后一条 assistant 消息（空 assistant 占位消息的元数据模板） */
+  function lastAssistantMessage(): AssistantMessage | undefined {
+    const entries = conversationView?.entries ?? []
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const model = entries[index]?.model
+      if (!model) continue
+      for (let messageIndex = model.length - 1; messageIndex >= 0; messageIndex -= 1) {
+        const message = model[messageIndex]
+        if (message?.role === 'assistant') return message as AssistantMessage
+      }
+    }
+    return undefined
+  }
+
+  /**
+   * 空 assistant 消息：只为保持 pi 上下文里 user/assistant 严格交替。
+   * pi-ai 的 OpenAI-compatible 适配器会在发请求时丢掉「无正文、无工具调用」的 assistant，
+   * DeepSeek 实测接受相邻 user，因此这里不需要可见占位文本（用户 2026-11-17 拍板「A 字面空」）。
+   */
+  function emptyAssistantMessage(last: AssistantMessage | undefined): AssistantMessage {
+    return {
+      role: 'assistant',
+      content: [],
+      api: last?.api ?? 'openai-completions',
+      provider: last?.provider ?? 'deepseek',
+      model: last?.model ?? normalizeModelId(getAgentModelId()),
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      },
+      stopReason: 'stop',
+      timestamp: Date.now(),
+    }
+  }
+
+  /** 某条 user 条目在「用户消息序列」里的下标（与视图里的 userIndex 同口径） */
+  function userIndexOfEntry(entryId: string | undefined): number {
+    if (!entryId || !conversationView) return -1
+    let index = -1
+    for (const entry of conversationView.entries) {
+      if (entry.kind === 'pi.user') index += 1
+      if (String(entry.id) === entryId) return index
+    }
+    return -1
+  }
+
+  /** 取 user 条目的首行摘要（卡片里展示「回滚的是哪一轮」） */
+  function rollbackUserTextOf(entryId: string | undefined): string | undefined {
+    if (!entryId || !conversationView) return undefined
+    const entry = conversationView.entries.find((item) => String(item.id) === entryId)
+    if (!entry || entry.kind !== 'pi.user') return undefined
+    const text = userTextOf(entry.model?.[0] as UserMessage | undefined).trim()
+    if (!text) return undefined
+    const firstLine = text.split('\n')[0] ?? text
+    return firstLine.length > 60 ? `${firstLine.slice(0, 60)}…` : firstLine
+  }
+
+  /** 回滚通知的模型侧说明（中文；要求模型把旧工具结果当成失效内容） */
+  function rollbackNoticeText(
+    runs: Array<{ userText?: string; files: string[] }>,
+    outcomes: UndoOutcome[],
+    input: { forced?: boolean; auto?: boolean },
+  ): string {
+    const header = input.auto
+      ? '【回滚通知】上一轮 Run 失败后，系统已自动回滚它对这些工程草稿的改动：'
+      : input.forced
+        ? '【回滚通知】用户执行了强制回滚，以下 Run 对工程草稿的改动已被还原（之后对这些文件的编辑被丢弃）：'
+        : '【回滚通知】用户已主动回滚以下 Run 对工程草稿的改动：'
+    const lines = [header]
+    runs.forEach((run, index) => {
+      const files = run.files.length > 0 ? run.files.join('、') : '（没有文件改动）'
+      const user = run.userText ? `（用户消息：“${run.userText}”）` : ''
+      lines.push(`- 第 ${index + 1} 轮${user}：${files}`)
+    })
+    const restored = outcomes.filter(
+      (outcome) => outcome.action === 'restored' || outcome.action === 'deleted',
+    )
+    const skipped = outcomes.filter((outcome) => outcome.action === 'skipped')
+    if (restored.length > 0) {
+      lines.push(`已恢复：${[...new Set(restored.map((outcome) => outcome.path))].join('、')}`)
+    }
+    if (skipped.length > 0) {
+      lines.push(
+        `无法恢复：${[...new Set(skipped.map((outcome) => outcome.path))].join('、')}（原因：${
+          skipped.find((outcome) => outcome.reason)?.reason ?? '文件已不可写'
+        }）`,
+      )
+    }
+    lines.push(
+      '这些改动已还原为更早的版本；上述 Run 里的工具结果不再代表当前文件内容。' +
+        '继续工作前请重新读取相关文件（read_source / list_lang_keys / read_lang 等），不要基于旧内容继续。',
+    )
+    return lines.join('\n')
+  }
+
+  /**
+   * 把一次回滚写进对话：一条 `hanshu.rollback` 条目。
+   * - `data` 供 UI 渲染回滚卡片、给整轮画红线 / 「已回滚」标注；
+   * - `model` 供模型：user 说明 + 空 assistant 占位，保持严格交替（见 agent-runtime.md）。
+   * 只含 kind+data 的 write 不触发 Run；带 model 的 write 在 idle 时立即追加（不产生新 Run）。
+   */
+  async function appendRollbackNotice(input: {
+    runs: Array<{ runKey: string; userEntryId?: string; files: string[] }>
+    outcomes: UndoOutcome[]
+    forced?: boolean
+    auto?: boolean
+  }): Promise<void> {
+    if (!conversation || runState === 'running') return
+    const lastAssistant = lastAssistantMessage()
+    const runs: Array<{ userIndex: number; userText?: string; files: string[] }> = []
+    for (const run of input.runs) {
+      const userIndex = userIndexOfEntry(run.userEntryId)
+      if (userIndex < 0) continue
+      const userText = rollbackUserTextOf(run.userEntryId)
+      runs.push({
+        userIndex,
+        ...(userText ? { userText } : {}),
+        files: [...new Set(run.files)],
+      })
+    }
+    if (runs.length === 0) return
+    const data = {
+      createdAt: Date.now(),
+      ...(input.forced ? { forced: true } : {}),
+      ...(input.auto ? { auto: true } : {}),
+      runs,
+      outcomes: input.outcomes.map((outcome) => ({
+        path: outcome.path,
+        action: outcome.action,
+        ...(outcome.reason ? { reason: outcome.reason } : {}),
+      })),
+    }
+    const notice: UserMessage = {
+      role: 'user',
+      content: rollbackNoticeText(runs, input.outcomes, input),
+      timestamp: Date.now(),
+    }
+    // 尾部必须是 assistant：上下文以 user 结尾时先补一个空 assistant 再写通知
+    const tailRole = lastModelMessage()?.role
+    const sequence: Message[] =
+      tailRole === 'user'
+        ? [emptyAssistantMessage(lastAssistant), notice, emptyAssistantMessage(lastAssistant)]
+        : [notice, emptyAssistantMessage(lastAssistant)]
+    try {
+      await conversation.submit(
+        {
+          type: 'write',
+          entry: { kind: 'hanshu.rollback', model: sequence, data },
+        },
+        ctx,
+      )
+    } catch {
+      /* 会话忙/存储失败：回滚本身已经生效，通知写不进去不影响草稿状态 */
     }
   }
 
@@ -384,6 +723,7 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
     }
     conversation = target
     segmentId = String(target.id)
+    await loadRunRollbacks()
 
     // 打开时不自动续跑（文档 §7）：检测到未完成 Run → 主动 abort，标记失败，**不回滚**
     const liveState = (await harness!.snapshot(LiveDoc, target.id, ctx)) as
@@ -452,6 +792,8 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
     storage = null
     opened = false
     segmentId = null
+    runRollbacks = new Map()
+    runUserEntryIds.clear()
   }
 
   function forgetCurrentSegment(): void {
@@ -558,6 +900,90 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
     return out
   }
 
+  /**
+   * 保存时归档一个段：按 archivedTail 只追加新增条目，写快照、封段、清掉该段的回滚记录。
+   * 当前段与其它活跃段共用；返回 null 表示这段没有新增条目可归档。
+   */
+  async function archiveSegment(
+    targetId: string,
+    target: Conversation,
+    title?: string,
+  ): Promise<SnapshotInfo | null> {
+    const entries = await collectEntries(target)
+    if (entries.length === 0) return null
+    const segmentMeta = metaStore[targetId]
+
+    // 其它段的待处理回滚只存在 journal 里；当前段的内存日志在调用前已 append 进 meta
+    let journalLog: Array<{ path: string; beforeHash: string | null; afterHash: string | null }> = []
+    if (targetId !== segmentId) {
+      const journalKey = undoJournalKey(options.scope, options.windowId, targetId)
+      try {
+        const record = await undoJournal.load(journalKey)
+        if (record && record.entries.length > 0) {
+          journalLog = record.entries.map((entry) => ({
+            path: entry.path,
+            beforeHash: entry.before?.version ?? null,
+            afterHash: entry.after,
+          }))
+        }
+        await undoJournal.clear(journalKey)
+      } catch {
+        /* 读不到 journal 不影响归档 */
+      }
+    }
+    const rollbackLog = [...(segmentMeta?.rollbackLog ?? []), ...journalLog]
+
+    const previous = archivedTail.get(targetId)
+    const tail = entries[entries.length - 1]!
+    const fresh = previous
+      ? entries.filter((entry) => Number(entry.id) > previous.tail)
+      : entries
+    if (fresh.length === 0) return null
+
+    // 父归档段 = 该段最近一次归档段（跨库谱系走自有元数据，文档 §9）
+    const existing = await snapshots!.list()
+    // 谱系：继承来的段 → 父是「被继承的归档」；否则父是该段上一次归档
+    const inheritedFrom = segmentMeta?.sourceSnapshotId
+    const parent =
+      (inheritedFrom
+        ? existing.find((item) => item.id === inheritedFrom)
+        : undefined) ??
+      existing
+        .filter((item) => item.segmentId === targetId)
+        .sort((a, b) => b.createdAt - a.createdAt)[0]
+
+    const info: SnapshotInfo = {
+      id: `snap-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      scope: options.scope,
+      segmentId: targetId,
+      parentSnapshotId: parent?.id,
+      title: title || (await segmentTitle(targetId)),
+      createdAt: Date.now(),
+      entryCount: fresh.length,
+      tailEntryId: String(tail.id),
+      // 归档段只留简化日志：哈希 + 汇总，不存正文/资产（D4）
+      filesChanged: rollbackLog.length,
+      rolledBack: segmentMeta?.rolledBack === true,
+      rollbackLog: rollbackLog.length > 0 ? rollbackLog : undefined,
+    }
+    await snapshots!.append(info, fresh)
+    archivedTail.set(targetId, { snapshotId: info.id, tail: Number(tail.id) })
+    // 保存封段：活跃段置为 sealed，下次发送自动开新段（D4）
+    if (segmentMeta) {
+      segmentMeta.sealed = true
+      delete segmentMeta.rollbackLog
+      delete segmentMeta.rolledBack
+      segmentMeta.updatedAt = Date.now()
+    }
+    // 归档段不可主动回滚：清掉该段的历史 Run 记录（刷新后也不会再出现回滚图标）
+    try {
+      await runRollbackDb.clear(runRollbackKey(options.scope, options.windowId, targetId))
+    } catch {
+      /* 清不掉只是残留，下次打开会先当作不可回滚处理 */
+    }
+    return info
+  }
+
   const runtime: AgentRuntime = {
     open,
 
@@ -639,6 +1065,67 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
       }
     },
 
+    async forkSegment(forkOptions?: ForkSegmentOptions): Promise<SegmentInfo> {
+      if (!opened) await open()
+      if (!conversation || segmentId === null) throw new Error('会话段未就绪')
+      if (runState === 'running') throw new Error('运行中的会话不能分支，请先停止本轮')
+      const sourceId = segmentId
+      const source = conversation
+      // 复制条目而不是原生 fork：新段自包含，源段（含封存段）被删也不丢历史。
+      const entries = await collectEntries(source)
+      let kept = entries
+      if (forkOptions?.beforeEntryId) {
+        const index = entries.findIndex((entry) => String(entry.id) === String(forkOptions.beforeEntryId))
+        if (index < 0) throw new Error('找不到要分支的消息，可能已被删除')
+        kept = entries.slice(0, index)
+      }
+      const drafts = forkEntryDrafts(kept as ForkSourceEntry[])
+      const target = await harness!.createConversation(
+        { ownership: { kind: 'ownerless' } },
+        ctx,
+      )
+      if (drafts.length > 0) {
+        // 一次性提交：分支的对话要么整段进来，要么一条都不进
+        await target.commit(async (tx) => {
+          for (const draft of drafts) {
+            await tx.appendEntry(target.id, draft as never)
+          }
+        }, ctx)
+      }
+
+      const label = forkOptions?.label ?? (forkOptions?.beforeEntryId ? 'branch' : 'inherit')
+      const suffix = label === 'inherit' ? '（继承）' : '（分支）'
+      const base = ((await segmentTitle(sourceId)) || '对话').trim() || '对话'
+      const id = String(target.id)
+      const now = Date.now()
+      const latestSnapshot = snapshots
+        ? (await snapshots.list())
+            .filter((item) => item.segmentId === sourceId)
+            .sort((a, b) => b.createdAt - a.createdAt)[0]
+        : undefined
+      metaStore[id] = {
+        createdAt: now,
+        updatedAt: now,
+        title: base.slice(0, Math.max(0, 80 - suffix.length)) + suffix,
+        runCount: 0,
+        ...(latestSnapshot ? { sourceSnapshotId: latestSnapshot.id } : {}),
+      }
+      writeSegmentMeta(options.scope, options.windowId, metaStore)
+      clearPendingRollback()
+      await attach(target)
+      rememberCurrentSegment()
+      return {
+        id,
+        title: metaStore[id]!.title!,
+        createdAt: now,
+        updatedAt: now,
+        windowId: options.windowId,
+        state: 'active',
+        runCount: 0,
+        sourceSnapshotId: metaStore[id]!.sourceSnapshotId,
+      }
+    },
+
     async selectSegment(id: string): Promise<void> {
       if (!opened) await open()
       if (id === segmentId) return
@@ -667,15 +1154,20 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
       if (options.canStartRun && !options.canStartRun()) {
         return { ok: false, error: '工程正在保存，暂不可启动 Agent Run' }
       }
-      // 已封存的段不再接受 Run（D4）：发送即自动开一个新活跃段
+      // 已封存的段不再接受 Run（D4）：发送即自动开一个**继承该段**的新活跃段
+      // （不是空段——用户默认预期是接着刚才的对话继续，而不是从零开始）
       if (segmentId && metaStore[segmentId]?.sealed) {
-        await runtime.createSegment()
+        await runtime.forkSegment({ label: 'inherit' })
       }
 
       abortRequested = false
       // 上一轮「停止」留下的改动：用户继续发消息 = 保留这些草稿，清掉回滚卡片与日志
       if (pendingRollback?.reason === 'stopped') {
-        if (pendingRunKey) appendSegmentLog(pendingRunKey)
+        if (pendingRunKey) {
+          appendSegmentLog(pendingRunKey)
+          // 保留改动：这一轮之后仍可通过消息左侧图标回滚
+          await recordRollbackRun(pendingRunKey, runUserEntryIds.get(pendingRunKey))
+        }
         clearPendingRollback()
         await clearPendingJournal()
       }
@@ -702,6 +1194,10 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
         )
         const submission = await conversation.submit({ type: 'input', content: text }, ctx)
         const settled = await submission.wait(ctx)
+        // 记下触发这一轮的 user 条目 id：成功/停止/失败「保留」时把撤销日志挂到这条消息上
+        if ('entry' in settled && settled.entry !== undefined) {
+          runUserEntryIds.set(runKey, String(settled.entry))
+        }
         if (settled.status !== 'done') {
           if (settled.reason === 'aborted' || abortRequested) stopped = true
           else failureText = runFailureText(settled.reason)
@@ -756,6 +1252,8 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
 
       if (!failureText) {
         appendSegmentLog(runKey)
+        // 成功 Run 也留一份撤销日志：用户可事后从消息左侧主动回滚
+        await recordRollbackRun(runKey, runUserEntryIds.get(runKey))
         undo.discard(runKey)
         runState = 'idle'
         statusText = ''
@@ -765,10 +1263,19 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
 
       // 页面存活时的失败/中止：先预演；全部安全才自动回滚，否则一个文件都不动、挂成待处理回滚
       let undoOutcomes: UndoOutcome[] | undefined
+      /** 自动回滚成功后要写进对话的回滚通知（用户与模型都需要知道改动被撤回） */
+      let autoRollbackNotice:
+        | { runKey: string; userEntryId?: string; files: string[] }
+        | undefined
       if (undo.has(runKey)) {
         const preflight = await undo.preflight(runKey)
         if (preflight.safe) {
           try {
+            autoRollbackNotice = {
+              runKey,
+              userEntryId: runUserEntryIds.get(runKey),
+              files: undo.entriesOf(runKey).map((entry) => entry.path),
+            }
             undoOutcomes = await undo.rollback(runKey)
             // 回放后只清写出记录；真正释放 before-image 要 discard（日志只存内存，不落盘）
             undo.discard(runKey)
@@ -796,6 +1303,13 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
       extraItems = [...extraItems, failedItem]
       runState = 'failed'
       statusText = ''
+      if (autoRollbackNotice) {
+        await appendRollbackNotice({
+          runs: [autoRollbackNotice],
+          outcomes: undoOutcomes ?? [],
+          auto: true,
+        })
+      }
       emit()
       return {
         ok: false,
@@ -819,23 +1333,71 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
 
     async forceRollback(): Promise<UndoOutcome[]> {
       if (!pendingRunKey || !pendingRollback) return []
-      const outcomes = await undo.force(pendingRunKey)
-      undo.discard(pendingRunKey)
+      const forcedRunKey = pendingRunKey
+      const forcedUserEntryId = runUserEntryIds.get(forcedRunKey)
+      const forcedFiles = undo.has(forcedRunKey)
+        ? undo.entriesOf(forcedRunKey).map((entry) => entry.path)
+        : []
+      const outcomes = await undo.force(forcedRunKey)
+      undo.discard(forcedRunKey)
       pendingRunKey = null
       pendingRollback = { ...pendingRollback, status: 'failed', conflicts: [], outcomes }
       markSegmentRolledBack()
       await clearPendingJournal()
+      // 告知用户与模型：这次强制回滚撤销了哪些改动
+      await appendRollbackNotice({
+        runs: [{ runKey: forcedRunKey, userEntryId: forcedUserEntryId, files: forcedFiles }],
+        outcomes,
+        forced: true,
+      })
       emit()
       return outcomes
     },
 
     async abandonRollback(): Promise<void> {
       if (!pendingRollback && !pendingRunKey) return
-      // 放弃回滚 = 这些改动留在草稿里，归档简化日志要带上
-      if (pendingRunKey) appendSegmentLog(pendingRunKey)
+      // 放弃回滚 = 这些改动留在草稿里，归档简化日志要带上；同时保留成可主动回滚的 Run
+      if (pendingRunKey) {
+        appendSegmentLog(pendingRunKey)
+        await recordRollbackRun(pendingRunKey, runUserEntryIds.get(pendingRunKey))
+      }
       clearPendingRollback()
       await clearPendingJournal()
       emit()
+    },
+
+    async rollbackRun(runKey: string, options?: ManualRollbackOptions): Promise<AgentRollbackResult> {
+      // 只允许回滚后缀轮：单轮回滚若目标之后还有记录，会留下后续轮次的改动。
+      // 界面只对最后一轮提供「仅回滚这一轮」，这里做防御，避免其它入口绕过。
+      const target = runRollbacks.get(runKey)
+      if (target) {
+        const hasNewer = [...runRollbacks.values()].some(
+          (record) => record.createdAt > target.createdAt,
+        )
+        if (hasNewer) {
+          return {
+            ok: false,
+            rolledBackRuns: [],
+            outcomes: [],
+            conflicts: [],
+            error: '只能回滚最后一轮；更早的轮次请使用「回滚这一轮及之后」',
+          }
+        }
+      }
+      return runManualRollback([runKey], options)
+    },
+
+    async rollbackFromRun(runKey: string, options?: ManualRollbackOptions): Promise<AgentRollbackResult> {
+      const base = runRollbacks.get(runKey)
+      if (!base) return { ok: true, rolledBackRuns: [], outcomes: [], conflicts: [] }
+      const keys = [...runRollbacks.values()]
+        .filter((record) => record.createdAt >= base.createdAt)
+        .map((record) => record.runKey)
+      return runManualRollback(keys, options)
+    },
+
+    async rollbackAll(options?: ManualRollbackOptions): Promise<AgentRollbackResult> {
+      return runManualRollback([...runRollbacks.keys()], options)
     },
 
     async retryRollback(): Promise<{
@@ -850,12 +1412,21 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
         emit()
         return { ok: false, outcomes: [], conflicts: preflight.conflicts }
       }
-      const outcomes = await undo.rollback(pendingRunKey)
-      undo.discard(pendingRunKey)
+      const retryRunKey = pendingRunKey
+      const retryUserEntryId = runUserEntryIds.get(retryRunKey)
+      const retryFiles = undo.has(retryRunKey)
+        ? undo.entriesOf(retryRunKey).map((entry) => entry.path)
+        : []
+      const outcomes = await undo.rollback(retryRunKey)
+      undo.discard(retryRunKey)
       pendingRunKey = null
       pendingRollback = { ...pendingRollback, conflicts: [], outcomes }
       markSegmentRolledBack()
       await clearPendingJournal()
+      await appendRollbackNotice({
+        runs: [{ runKey: retryRunKey, userEntryId: retryUserEntryId, files: retryFiles }],
+        outcomes,
+      })
       emit()
       return { ok: true, outcomes, conflicts: [] }
     },
@@ -863,61 +1434,34 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
     async archive(title?: string): Promise<SnapshotInfo | null> {
       if (!opened) await open()
       if (!conversation || !snapshots || !segmentId) return null
-      const entries = await collectEntries(conversation)
-      if (entries.length === 0) return null
-
-      const previous = archivedTail.get(segmentId)
-      const tail = entries[entries.length - 1]!
-      const fresh = previous
-        ? entries.filter((entry) => Number(entry.id) > previous.tail)
-        : entries
-      if (fresh.length === 0) return null
-
-      // 父归档段 = 该段最近一次归档段（跨库谱系走自有元数据，文档 §9）
-      const existing = await snapshots.list()
-      // 谱系：继承来的段 → 父是「被继承的归档」；否则父是该段上一次归档
-      const inheritedFrom = metaStore[segmentId]?.sourceSnapshotId
-      const parent =
-        (inheritedFrom
-          ? existing.find((item) => item.id === inheritedFrom)
-          : undefined) ??
-        existing
-          .filter((item) => item.segmentId === segmentId)
-          .sort((a, b) => b.createdAt - a.createdAt)[0]
-
-      // 待处理回滚（失败或用户停止）在保存时=放弃回滚，但改动仍要进本段简化日志
+      // 当前段的待处理回滚（失败或用户停止）在保存时=放弃回滚，但改动仍要进本段简化日志
       if (pendingRunKey) appendSegmentLog(pendingRunKey)
-      const segmentMeta = metaStore[segmentId]
-      const rollbackLog = segmentMeta?.rollbackLog ?? []
-      const info: SnapshotInfo = {
-        id: `snap-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        scope: options.scope,
-        segmentId,
-        parentSnapshotId: parent?.id,
-        title: title || (await segmentTitle(segmentId)),
-        createdAt: Date.now(),
-        entryCount: fresh.length,
-        tailEntryId: String(tail.id),
-        // 归档段只留简化日志：哈希 + 汇总，不存正文/资产（D4）
-        filesChanged: rollbackLog.length,
-        rolledBack: segmentMeta?.rolledBack === true,
-        rollbackLog: rollbackLog.length > 0 ? rollbackLog : undefined,
+      const currentInfo = await archiveSegment(segmentId, conversation, title)
+
+      // 保存 = 归档**所有**活跃段，而不只是当前段：否则其它活跃段仍可继续写，
+      // 下次保存/继承时会出现「一部分归档、一部分还在跑」的割裂状态。
+      const records = await listOwnerlessConversations()
+      for (const record of records) {
+        const id = String(record.id)
+        if (id === segmentId || metaStore[id]?.sealed) continue
+        const target = await harness!.conversation(record.id, ctx)
+        if (!target) continue
+        try {
+          await archiveSegment(id, target)
+        } catch {
+          /* 单个段归档失败不阻断保存与其它段 */
+        }
       }
-      await snapshots.append(info, fresh)
-      archivedTail.set(segmentId, { snapshotId: info.id, tail: Number(tail.id) })
-      // 保存封段：活跃段置为 sealed，下次发送自动开新段（D4）
-      if (segmentMeta) {
-        segmentMeta.sealed = true
-        delete segmentMeta.rollbackLog
-        delete segmentMeta.rolledBack
-        segmentMeta.updatedAt = Date.now()
-        writeSegmentMeta(options.scope, options.windowId, metaStore)
-      }
+
       // 保存封段后这次 Run 不再可回滚（D3：保存 = 放弃回滚，不弹提示）
       clearPendingRollback()
       await clearPendingJournal()
+      runRollbacks = new Map()
+      runUserEntryIds.clear()
+      // 段元数据统一落盘一次
+      writeSegmentMeta(options.scope, options.windowId, metaStore)
       emit()
-      return info
+      return currentInfo
     },
 
     async snapshotItems(snapshotId: string): Promise<AgentViewItem[]> {
@@ -1053,6 +1597,7 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
       const isCurrent = id === segmentId
       const conversationId = Number(id)
       if (!Number.isFinite(conversationId)) throw new Error(`活跃段 id 无效：${id}`)
+      const rollbackRecordKey = runRollbackKey(options.scope, options.windowId, id)
 
       // pi-durable 要求一个库只有一个 owner，删除记录前必须关掉 Harness
       await teardownHarness()
@@ -1068,6 +1613,7 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
         void undoJournal
           .clear(undoJournalKey(options.scope, options.windowId, id))
           .catch(() => undefined)
+        void runRollbackDb.clear(rollbackRecordKey).catch(() => undefined)
         if (isCurrent) {
           forgetCurrentSegment()
           clearPendingRollback()
