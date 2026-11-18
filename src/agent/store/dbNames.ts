@@ -31,6 +31,15 @@ export function undoJournalDbName(scope: string): string {
   return `hanshu.agent.undo.${safePart(scope)}`
 }
 
+/**
+ * 活跃段历史 Run 的回滚记录库（手动回滚用）：按工程 scope 分区，库内 key 同样按
+ * windowId + segmentId 区分。与 `undoJournal`（待处理回滚）分开：这里是"已经结束、
+ * 之后仍可主动回滚"的每一轮撤销日志。
+ */
+export function runRollbackDbName(scope: string): string {
+  return `hanshu.agent.rollback.${safePart(scope)}`
+}
+
 /** 只留 `[A-Za-z0-9._-]`；空串回退 `unknown`，否则库名会退化成 `hanshu.agent.archive.` 这种残缺形式 */
 function safePart(part: string): string {
   const cleaned = part.replace(/[^A-Za-z0-9._-]/g, '_')
