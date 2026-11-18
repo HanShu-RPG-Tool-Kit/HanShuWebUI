@@ -18,6 +18,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import {
   RollbackCard,
   composeConflictMessage,
+  describeManualRollbackFailure,
   executeRollbackAction,
   formatRollbackFailures,
 } from '../src/AgentPanel'
@@ -229,6 +230,34 @@ assert.deepEqual(
   ['skip.hs（当前不支持回滚该文件）'],
 )
 
+/* ── ⑥ 手动回滚失败摘要：保留 error + 只列前 5 个冲突 + 总数 ── */
+assert.equal(
+  describeManualRollbackFailure({
+    ok: false,
+    rolledBackRuns: [],
+    outcomes: [],
+    conflicts: [],
+  }),
+  '回滚未完成',
+  '没有 error/冲突时给兜底文案',
+)
+const manyConflicts = Array.from({ length: 7 }, (_, index) => ({
+  path: `f${index}.hs`,
+  channel: 'source' as const,
+  reason: 'human_editing' as const,
+}))
+const manualFailure = describeManualRollbackFailure({
+  ok: false,
+  rolledBackRuns: [],
+  outcomes: [],
+  conflicts: manyConflicts,
+  error: '有文件被后续轮次改过',
+})
+assert.ok(manualFailure.includes('有文件被后续轮次改过'), '保留 runtime error')
+assert.ok(manualFailure.includes('f0.hs'), '展示冲突文件')
+assert.ok(!manualFailure.includes('f5.hs'), '只列前 5 个冲突文件')
+assert.ok(manualFailure.includes('……等 7 个文件'), '冲突总数仍然可见')
+
 console.log(
-  '通过：失败卡片三选项（仅 pending 出现、failed 才有重试、动作映射 runtime、冲突消息、互斥禁用）；停止卡片（回滚/保留、失败后才出现强制与 Agent）',
+  '通过：失败卡片三选项（仅 pending 出现、failed 才有重试、动作映射 runtime、冲突消息、互斥禁用）；停止卡片（回滚/保留、失败后才出现强制与 Agent）；手动回滚失败摘要',
 )

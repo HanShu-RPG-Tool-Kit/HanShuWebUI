@@ -14,11 +14,17 @@
 import assert from 'node:assert/strict'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { SegmentSealedHint } from '../src/AgentPanel'
+import { AgentPanel, SegmentSealedHint } from '../src/AgentPanel'
 import { SegmentBar, normalizeSegmentTitle } from '../src/agent/view/SegmentBar'
 import { SnapshotList } from '../src/agent/view/SnapshotList'
 import { segmentOptionLabel } from '../src/agent/view/derive'
-import type { SegmentInfo, SnapshotInfo } from '../src/agent/contracts'
+import type {
+  AgentRuntime,
+  AgentRuntimeView,
+  AgentViewItem,
+  SegmentInfo,
+  SnapshotInfo,
+} from '../src/agent/contracts'
 
 const SEGMENT: SegmentInfo = {
   id: 'seg-1',
@@ -61,7 +67,10 @@ const noop = () => undefined
 
 /* ── ① 封段提示 ── */
 const hint = renderToStaticMarkup(createElement(SegmentSealedHint))
-assert.ok(hint.includes('本次保存已封存当前会话；发送消息将开始新会话'), '封段提示文案')
+assert.ok(
+  hint.includes('本次保存已封存所有活跃会话；发送消息将继承当前会话'),
+  '封段提示文案（保存封存所有活跃会话、发送继承当前会话）',
+)
 assert.ok(!hint.includes('<button'), '只是提示，不禁用发送')
 
 /* ── ② 段状态：sealed 显示已封存，不显示活跃 ── */
@@ -219,6 +228,42 @@ const legacyOpenedHtml = renderToStaticMarkup(
 )
 assert.ok(!legacyOpenedHtml.includes('改动'), '旧归档无摘要/日志')
 
+/* ── ⑤ 封存段与手动回滚的联动：已封存时输入区回滚按钮禁用 ── */
+const RB_ITEMS: AgentViewItem[] = [
+  { id: 'u1', kind: 'user', text: '改一下序章', runKey: 'run-1', rollbackable: true },
+]
+const makePanel = (items: AgentViewItem[], segmentSealed: boolean): string => {
+  const view: AgentRuntimeView = {
+    segmentId: ACTIVE.id,
+    runId: null,
+    runState: 'idle',
+    items,
+    status: '',
+    lockedPaths: [],
+    segmentSealed,
+  }
+  const runtime = {
+    view: () => view,
+    subscribe: () => () => {},
+  } as unknown as AgentRuntime
+  return renderToStaticMarkup(
+    createElement(AgentPanel, {
+      open: true,
+      runtime,
+      onClose: noop,
+      saveBlockedByRun: false,
+    }),
+  )
+}
+const rollbackTag = (html: string): string | null => html.match(/<button[^>]*agent-manual-rollback[^>]*>/)?.[0] ?? null
+const activePanel = makePanel(RB_ITEMS, false)
+assert.ok(rollbackTag(activePanel)?.includes('agent-manual-rollback'), '活跃段有回滚按钮')
+assert.ok(!rollbackTag(activePanel)?.includes('disabled'), '活跃段有可回滚 Run 时可用')
+assert.ok(
+  rollbackTag(makePanel(RB_ITEMS, true))?.includes('disabled'),
+  '已封存段不能手动回滚（改动已归档）',
+)
+
 console.log(
-  '通过：封段提示、段状态（已封存）、段重命名入口/禁用、归档简化日志（改动数/有回滚/短哈希，只读无回滚入口）',
+  '通过：封段提示、段状态（已封存）、段重命名入口/禁用、归档简化日志（改动数/有回滚/短哈希，只读无回滚入口）、封存段回滚禁用',
 )

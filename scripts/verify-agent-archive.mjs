@@ -168,7 +168,8 @@ try {
 
     return {
       segmentsBefore: segmentsBefore.length,
-      items: items.length,
+      // 视图里每个已结束 Run 都会多一条 run-meta 统计行；这里只数对话消息。
+      items: items.filter((item) => item.kind !== 'run-meta').length,
       forkedId: forked.id,
       forkedSource: forked.sourceSnapshotId,
       forkedArchiveParent: forkedArchive?.parentSnapshotId,
