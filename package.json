@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "test:panel-dock": "node scripts/run-verification.mjs scripts/verify-panel-dock.ts",
+    "test:plugin-sdk": "node scripts/run-verification.mjs scripts/verify-plugin-sdk.ts",
     "test:voice-dialogs": "node scripts/run-verification.mjs scripts/verify-voice-dialogs.ts",
     "test:dialogs": "node scripts/run-verification.mjs scripts/verify-dialogs.ts",
     "test:panel-dock:ui": "node scripts/verify-panel-dock-ui.mjs",
