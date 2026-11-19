@@ -16,6 +16,7 @@ import {
 } from '../../workspace'
 import { removeAssetMeta, type Workspace } from '../../workspace'
 import { createVoiceDiskSink } from '../../project/voiceDiskSink'
+import type { FileEdit } from '../../project/serviceClient'
 import type { ProjectDirectory } from '../../project/serviceClient'
 
 /**
@@ -36,6 +37,7 @@ export type AssetActionDeps = {
 }
 
 export type AssetActions = {
+  transfer: (projectId: string, sourcePath: string, targetDir: string, cut: boolean) => Promise<void>
   toggleAssets: (projectId: string) => void
   openAsset: (assetId: string) => void
   /** 文本 / JSON 资产（`.lang` 等）写回 IndexedDB；语言文本另走 stageWrite 合批保存。 */
@@ -155,6 +157,8 @@ export function createAssetActions(deps: AssetActionDeps): AssetActions {
   }
 
   const importAssets = async (projectId: string, files: FileList | File[], targetDir = 'assets') => {
+    const sourceClient = clientOf()
+    if (!sourceClient?.writable) { await alertDialog('当前工程不可写'); return }
     const list = Array.from(files)
     if (list.length === 0) return
 
@@ -166,13 +170,24 @@ export function createAssetActions(deps: AssetActionDeps): AssetActions {
     for (const file of list) {
       const withPath = file as File & { webkitRelativePath?: string }
       const rel = withPath.webkitRelativePath && withPath.webkitRelativePath.length > 0 ? withPath.webkitRelativePath : file.name
-      const path = normalizeAssetPath(`${baseDir}/${rel}`)
+      let path = normalizeAssetPath(`${baseDir}/${rel}`)
       if (!path) {
         failed.push(file.name)
         continue
       }
       try {
+        if (clientOf() !== sourceClient) throw new Error('工程已切换')
+        const original = path
+        const dot = original.lastIndexOf('.')
+        const split = dot > original.lastIndexOf('/') ? dot : original.length
+        let n = 1
+        while (sourceClient.entry(path) || next.packages.find(p => p.id === projectId)?.assets.some(a => a.path.toLowerCase() === path!.toLowerCase())) {
+          path = `${original.slice(0, split)} (${n++})${original.slice(split)}`
+        }
+        await sourceClient.apply([{op: 'write', path, data: file, version: null}], '导入资产')
+        if (clientOf() !== sourceClient) return
         await putAssetBlob(projectId, path, file)
+        next = ensureAssetFolder(deps.workspaceRef.current, projectId, baseDir)
         const result = registerAsset(next, projectId, path, file.type || 'application/octet-stream', file.size)
         if (!result) {
           failed.push(file.name)
@@ -180,12 +195,15 @@ export function createAssetActions(deps: AssetActionDeps): AssetActions {
         }
         next = result.workspace
         lastAssetId = result.asset.id
+        deps.commitWorkspace(next)
       } catch {
         failed.push(file.name)
       }
     }
 
+    if (clientOf() !== sourceClient) return
     deps.commitWorkspace({ ...next, activeAssetId: lastAssetId ?? next.activeAssetId })
+    deps.onAssetsChanged?.()
     if (failed.length > 0) void alertDialog(`部分文件导入失败：\n${failed.join('\n')}`)
   }
 
@@ -220,5 +238,56 @@ export function createAssetActions(deps: AssetActionDeps): AssetActions {
     })
   }
 
-  return { toggleAssets, openAsset, saveTextAsset, deleteAsset, newFolder, deleteFolder, importAssets, moveAsset }
+  const transfer = async (projectId: string, sourcePath: string, targetDir: string, cut: boolean) => {
+    const client = clientOf()
+    if (!client?.writable) throw new Error('当前工程不可写')
+    const pkg = deps.workspaceRef.current.packages.find(p => p.id === projectId)
+    if (!pkg || sourcePath === 'assets' || !sourcePath.startsWith('assets/')) throw new Error('资产路径无效')
+    const dir = normalizeFolderPath(targetDir)
+    if (!dir || dir === sourcePath || dir.startsWith(sourcePath + '/')) throw new Error('不能复制或移动到自身内部')
+    const assets = pkg.assets.filter(a => a.path === sourcePath || a.path.startsWith(sourcePath + '/'))
+    const folders = (pkg.assetFolders ?? []).filter(p => p === sourcePath || p.startsWith(sourcePath + '/'))
+    if (!assets.length && !folders.length) throw new Error('源资产已不存在')
+    const occupied = new Set([...client.tree.entries.map(e => e.path.toLowerCase()), ...pkg.assets.map(a => a.path.toLowerCase()), ...(pkg.assetFolders ?? []).map(p => p.toLowerCase())])
+    const name = sourcePath.slice(sourcePath.lastIndexOf('/') + 1)
+    let destination = `${dir}/${name}`
+    if (cut && destination === sourcePath) return
+    const dot = name.lastIndexOf('.')
+    const stem = assets.some(a => a.path === sourcePath) && dot > 0 ? name.slice(0, dot) : name
+    const ext = stem === name ? '' : name.slice(dot)
+    for (let n = 1; occupied.has(destination.toLowerCase()); n++) destination = `${dir}/${stem} (${n})${ext}`
+    if ([...client.transactions.stagedWrites().map(e => e.path), ...client.transactions.editorDirtyPaths()].some(path => path === sourcePath || path.startsWith(sourcePath + '/'))) throw new Error('请先保存源资产的修改')
+    const sourceEntry = client.entry(sourcePath)
+    const contents = await Promise.all(assets.map(async asset => {
+      const entry = client.entry(asset.path)
+      const snapshot = entry ? await client.readSnapshot(asset.path, false, entry.version) : null
+      const blob = snapshot?.file ?? await getAssetBlob(projectId, asset.path)
+      if (!blob) throw new Error(`无法读取 ${asset.path}`)
+      return { asset, blob, version: snapshot?.version }
+    }))
+    if (clientOf() !== client) throw new Error('工程已切换')
+    const to = (path: string) => destination + path.slice(sourcePath.length)
+    const movingDirectory = cut && sourceEntry?.kind === 'directory'
+    const edits: FileEdit[] = folders.map(path => ({ op: 'mkdir', path: to(path) }))
+    for (const {asset, blob, version} of contents) {
+      if (cut && version) edits.push({ op: 'move', path: asset.path, destination: to(asset.path), version, destinationVersion: null })
+      else edits.push({ op: 'write', path: to(asset.path), data: blob, version: null })
+    }
+    if (movingDirectory) edits.splice(0, edits.length, {op: 'move', path: sourcePath, destination, version: sourceEntry.version, destinationVersion: null})
+    await client.apply(edits, cut ? '剪切资产' : '复制资产')
+    if (clientOf() !== client) return
+    let next = deps.workspaceRef.current
+    for (const path of folders) next = ensureAssetFolder(next, projectId, to(path))
+    for (const {asset, blob} of contents) {
+      await putAssetBlob(projectId, to(asset.path), blob)
+      const result = registerAsset(next, projectId, to(asset.path), asset.mime, blob.size)
+      if (result) next = result.workspace
+      if (cut) { next = removeAssetMeta(next, asset.id); await deleteAssetBlob(projectId, asset.path) }
+    }
+    if (cut && folders.length) next = removeAssetFolder(next, projectId, sourcePath).workspace
+    deps.commitWorkspace(next)
+    deps.onAssetsChanged?.()
+  }
+
+  return { transfer, toggleAssets, openAsset, saveTextAsset, deleteAsset, newFolder, deleteFolder, importAssets, moveAsset }
 }

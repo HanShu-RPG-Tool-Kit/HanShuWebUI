@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import {
   assetFileName,
   buildAssetTree,
@@ -14,7 +14,13 @@ import type { ExplorerContextItem } from "../stageplay/explorerMenus";
 import { ExplorerContextMenu } from "../stageplay/explorerMenus";
 import { dockTitleHint, type ExplorerDockProps } from "../../explorerShell";
 import type { AssetFile, Project } from "../../workspace";
+import { alertDialog } from '../../ui/dialogs';
+import type { AssetActions } from './assetActions';
+import { getProjectSession } from '../../project/projectSession';
 import "./assetManager.css";
+
+const TransferContext = createContext<{ menu: (path: string, directory?: boolean) => ExplorerContextItem[]; select: (path: string) => void } | null>(null);
+
 
 type BrowserView = "list" | "icons";
 const VIEW_STORAGE_KEY = "hanshu.assetManager.view.v1";
@@ -44,6 +50,7 @@ function saveBrowserView(view: BrowserView) {
  */
 export function AssetManagerPanel({
   project,
+  onTransfer,
   activeAssetId,
   onOpenAsset,
   onDeleteAsset,
@@ -53,6 +60,7 @@ export function AssetManagerPanel({
   onDropIntoFolder,
   dock,
 }: {
+  onTransfer: AssetActions["transfer"];
   project: Project;
   activeAssetId?: string | null;
   /** 点开资产：剧本 / 游戏性 / 视听都接到主编辑区的 AssetPreview。 */
@@ -72,11 +80,37 @@ export function AssetManagerPanel({
   ) => void;
   dock: ExplorerDockProps;
 }) {
+  const [clipboard, setClipboard] = useState<{ path: string; cut: boolean; projectId: string } | null>(null);
+  const selected = useRef<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const busyRef = useRef(false);
+  const run = async (task: () => Promise<void>) => {
+    if (busyRef.current) return;
+    busyRef.current = true; setBusy(true);
+    try { await task(); } catch (error) { await alertDialog(String(error)); }
+    finally { busyRef.current = false; setBusy(false); }
+  };
+  const paste = (dir: string) => run(async () => {
+    const item = clipboard;
+    if (!item || item.projectId !== project.id) return;
+    await onTransfer(project.id, item.path, dir, item.cut);
+    if (item.cut) setClipboard(current => current === item ? null : current);
+  });
+  const transferMenu = (path: string, directory = false): ExplorerContextItem[] => [
+    ...(path !== 'assets' ? [
+      { id: 'copy', label: '复制', hint: 'Ctrl+C', onSelect: () => { setClipboard({ path, cut: false, projectId: project.id }); } },
+      { id: 'cut', label: '剪切', hint: 'Ctrl+X', onSelect: () => { setClipboard({ path, cut: true, projectId: project.id }); } },
+    ] : []),
+    ...(directory ? [{ id: 'paste', label: '粘贴到这里', hint: 'Ctrl+V', disabled: busy || clipboard?.projectId !== project.id, onSelect: () => { void paste(path); } }] : []),
+  ];
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; items: ExplorerContextItem[] } | null>(null);
   const showContext = (event: ReactMouseEvent, items: ExplorerContextItem[]) => {
     event.preventDefault();
     event.stopPropagation();
-    setContextMenu({ x: event.clientX, y: event.clientY, items });
+    const element = event.currentTarget as HTMLElement;
+    const path = element.closest<HTMLElement>('[data-asset-path]')?.dataset.assetPath ?? selectedDir.path;
+    selected.current = path;
+    setContextMenu({ x: event.clientX, y: event.clientY, items: [...transferMenu(path, element.closest<HTMLElement>('[data-asset-path]')?.dataset.assetDirectory === 'true' || !element.closest('[data-asset-path]')), ...items] });
   };
   const importInputRef = useRef<HTMLInputElement>(null);
   const importDirRef = useRef("assets");
@@ -95,6 +129,8 @@ export function AssetManagerPanel({
   useEffect(() => {
     if (!findDir(tree, selectedPath)) setSelectedPath("assets");
   }, [tree, selectedPath]);
+
+  useEffect(() => { setClipboard(null); selected.current = null; }, [project.id]);
 
   const requestImport = (dir: string) => {
     importDirRef.current = dir;
@@ -115,7 +151,39 @@ export function AssetManagerPanel({
   const crumbs = selectedDir.path.split("/");
 
   return (
-    <section className="asset-manager">
+    <TransferContext.Provider value={{ menu: transferMenu, select: path => { selected.current = path; } }}>
+    <section className="asset-manager" tabIndex={0} aria-busy={busy}
+      onDropCapture={event => {
+        if (!event.ctrlKey) return;
+        const raw = event.dataTransfer.getData('application/x-hanshu-drag');
+        if (!raw) return;
+        try {
+          const source = JSON.parse(raw) as DragSource;
+          if (source.kind !== 'asset' || source.packageId !== project.id) return;
+          const folder = (event.target as Element).closest<HTMLElement>('[data-asset-directory=true]')?.dataset.assetPath ?? selectedDir.path;
+          event.preventDefault(); event.stopPropagation(); endDrag();
+          void run(() => onTransfer(project.id, source.path, folder, false));
+        } catch { /* unrelated external drag */ }
+      }}
+      onCopy={event => {
+        const path = selected.current;
+        if (!path || path === 'assets' || (event.target instanceof Element && event.target.closest('input,textarea,[contenteditable=true]'))) return;
+        event.preventDefault(); setClipboard({ path, cut: false, projectId: project.id });
+        event.clipboardData.setData('application/x-hanshu-asset', JSON.stringify({path, projectId: project.id}));
+      }}
+      onCut={event => {
+        const path = selected.current;
+        if (!path || path === 'assets' || (event.target instanceof Element && event.target.closest('input,textarea,[contenteditable=true]'))) return;
+        event.preventDefault(); setClipboard({ path, cut: true, projectId: project.id });
+        event.clipboardData.setData('application/x-hanshu-asset', JSON.stringify({path, projectId: project.id}));
+      }}
+      onPaste={event => {
+        if (event.target instanceof Element && event.target.closest('input,textarea,[contenteditable=true]')) return;
+        const files = Array.from(event.clipboardData.files);
+        if (files.length) { event.preventDefault(); onImportAssets(project.id, files, selectedDir.path); }
+        else if ((event.clipboardData.types.includes('application/x-hanshu-asset') || !event.clipboardData.types.length) && clipboard?.projectId === project.id) { event.preventDefault(); void paste(selectedDir.path); }
+      }}>
+
       <header className={`asset-manager-heading${dock.onTitlePointerDown ? " is-draggable" : ""}`}>
         <div className="asset-manager-heading-sources">
           <strong
@@ -154,6 +222,7 @@ export function AssetManagerPanel({
               );
             })}
           </nav>
+          <button type="button" disabled={busy || clipboard?.projectId !== project.id} onClick={() => { void paste(selectedDir.path); }}>粘贴</button>
           <div className="asset-manager-view-toggle" role="group" aria-label="浏览视图">
             <button
               type="button"
@@ -185,7 +254,7 @@ export function AssetManagerPanel({
             depth={0}
             selectedPath={selectedDir.path}
             isDirCollapsed={(path) => Boolean(collapsedDirs[path])}
-            onSelect={setSelectedPath}
+            onSelect={(path) => { selected.current = path; setSelectedPath(path); }}
             onToggleDir={toggleDir}
             onNewAssetFolder={onNewAssetFolder}
             onDeleteAssetFolder={onDeleteAssetFolder}
@@ -202,7 +271,7 @@ export function AssetManagerPanel({
             dir={selectedDir}
             view={browserView}
             activeAssetId={activeAssetId ?? null}
-            onSelectFolder={setSelectedPath}
+            onSelectFolder={(path) => { selected.current = path; setSelectedPath(path); }}
             onOpenAsset={onOpenAsset}
             onDeleteAsset={onDeleteAsset}
             onDeleteAssetFolder={onDeleteAssetFolder}
@@ -235,6 +304,7 @@ export function AssetManagerPanel({
         />
       )}
     </section>
+    </TransferContext.Provider>
   );
 }
 
@@ -331,6 +401,8 @@ function FolderTree({
 
   return (
     <div
+      data-asset-path={dir.path}
+      data-asset-directory="true"
       className={`asset-manager-folder${dirDrop.active ? " is-drop-target" : ""}`}
       style={{ paddingLeft: depth === 0 ? undefined : 10 }}
       {...dirDrop.handlers}
@@ -484,6 +556,8 @@ function AssetBrowser({
           {childDirs.map((child) => (
             <li key={`dir:${child.path}`}>
               <div
+                data-asset-path={child.path}
+                data-asset-directory="true"
                 className={`asset-manager-entry is-folder${icons ? " is-tile" : " explorer-row explorer-file-row"}`}
                 onContextMenu={(event) => {
                   showContext(
@@ -584,10 +658,27 @@ function AssetRow({
   onDelete: () => void;
   showContext: (event: ReactMouseEvent, items: ExplorerContextItem[]) => void;
 }) {
+  const transfer = useContext(TransferContext);
+  const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
+  useEffect(() => {
+    let disposed = false;
+    let url: string | undefined;
+    const client = getProjectSession().binding?.handle.client;
+    void (async () => {
+      const blob = await getAssetBlob(packageId, asset.path) ?? (client?.entry(asset.path) ? await client.read(asset.path) : null);
+      if (disposed || !blob) return;
+      url = URL.createObjectURL(blob); setDownloadUrl(url);
+    })().catch(() => {});
+    return () => { disposed = true; if (url) URL.revokeObjectURL(url); };
+  }, [packageId, asset.path, asset.updatedAt]);
   const icons = view === "icons";
   const name = assetFileName(asset.path);
   const openMenu = (event: ReactMouseEvent) => {
     showContext(event, [
+      { id: 'download', label: '下载', disabled: !downloadUrl, onSelect: () => {
+        if (!downloadUrl) return;
+        const link = document.createElement('a'); link.href = downloadUrl; link.download = name; link.click();
+      } },
       ...(onOpen
         ? [
             {
@@ -611,18 +702,22 @@ function AssetRow({
   return (
     <li>
       <div
+        data-asset-path={asset.path}
+        onClick={() => { transfer?.select(asset.path); }}
         className={`asset-manager-entry${icons ? " is-tile" : " explorer-row explorer-file-row explorer-asset-row"}${
           active ? " active" : ""
         }`}
         draggable
         onContextMenu={openMenu}
         onDragStart={(e) => {
+          transfer?.select(asset.path);
           writeDragPayload(e.dataTransfer, {
             kind: "asset",
             packageId,
             assetId: asset.id,
             path: asset.path,
           });
+          if (downloadUrl) e.dataTransfer.setData('DownloadURL', `${asset.mime || 'application/octet-stream'}:${name}:${downloadUrl}`);
         }}
         onDragEnd={() => endDrag()}
       >
