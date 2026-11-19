@@ -1,38 +1,30 @@
 /**
- * Stageplay 工作区的 AgentHost 实现（PR1 过渡层）。
+ * Agent 插件的领域宿主（PR2）。
  *
- * 从 StageplayWorkspace.tsx 整体搬出：语言/配音目标解析、读写草稿、parse/unparse、
- * 导出检查与保存闸门都不在这里改行为；依赖由 `createStageplayAgentHost(deps)`
- * 显式传入（refs / 回调 / 当前语言），便于后续替换成插件宿主。
+ * 所有工程文本读写都走平台的 `ProjectHost`（编辑器缓冲 → 本地草稿 → 已保存内容），
+ * 不再依赖 StageplayWorkspace 的 refs / 回调；package / 语言 / 配音 / 导出预检等
+ * 只读元数据来自平台工程会话（`getProjectSession`）与领域库。
  */
-import type { Dispatch, RefObject, SetStateAction } from 'react'
-import type { AgentHost, AgentOpResult, LangEntry } from '../../agent/tools'
-import type { AgentDiffSnapshot } from '../../plugins/agent/ui/AgentDiffModal'
-import type { TextMap } from '../../i18n/textMap'
-import type { BoundProject } from '../../project'
-import type { Workspace } from '../../workspace'
-
-import { sourceNameFromLangAssetPath } from './agentLockTargets'
-import { indexForeignHsInjects } from '../../hanshu/injectIndex'
-import { parseTextSpans } from '../../monaco/textSpans'
-import { assessLangValueRisks, type InlineContext } from '../../hanshu/inlineText'
+import type { AgentHost, AgentOpResult, LangEntry } from '../core/tools'
+import type { ProjectHost } from '../../../plugin-sdk/types'
+import type { Project, SourceFile, Workspace } from '../../../workspace'
+import { getProjectHost, getProjectSession } from '../../../platform'
+import { indexForeignHsInjects } from '../../../hanshu/injectIndex'
+import { parseTextSpans } from '../../../monaco/textSpans'
+import { assessLangValueRisks, type InlineContext } from '../../../hanshu/inlineText'
 import {
   ALLOWED_EXTENSIONS_LABEL,
-  createScript,
   findScript,
   findScriptByName,
   normalizeResourceName,
-  removeAssetMeta,
-} from '../../workspace'
-import { getProjectSession } from '../../project/projectSession'
-import { flushProjectEditors } from '../../project/editorFlush'
-import { normalizeSourcePath, parseLocaleAssetPath } from '../../i18n/localeLayout'
-import { buildResourcePackZip } from '../../export/resourcePack'
-import { buildProjectPackZip } from '../../export/projectPack'
-import { deleteAssetBlob, getAssetBlob } from '../../assets/idb'
-import { COMMON_LOCALES, findLocale, resolveLocale, resolveLocaleTag } from '../../i18n/locales'
+  sourceKindOf,
+} from '../../../workspace'
+import { normalizeSourcePath, parseLocaleAssetPath } from '../../../i18n/localeLayout'
+import { buildResourcePackZip } from '../../../export/resourcePack'
+import { buildProjectPackZip } from '../../../export/projectPack'
+import { getAssetBlob } from '../../../assets/idb'
+import { COMMON_LOCALES, findLocale, resolveLocale, resolveLocaleTag } from '../../../i18n/locales'
 import {
-  activeFilePathOf,
   applyTextEdit,
   collectMissingTranslationWarnings,
   collectOrphanKeys,
@@ -42,79 +34,173 @@ import {
   listLocalesOf,
   paginateSource,
   parseSourceText,
-  sourceKindOf,
+  sourceNameFromLangPath,
   sourceOffsetError,
   translateExportWarning,
   unparseSourceText,
   validateLangKeys,
   validateSourceContent,
   voiceStatusOf,
-} from '../../agent/agentOps'
-import { parseTextFile, stringifyTextFile } from '../../i18n/textMap'
-import { discardLangDraft } from '../../i18n/langDraft'
+} from '../core/agentOps'
+import { stringifyTextFile } from '../../../i18n/textMap'
+import { readLangDraft } from '../../../i18n/langDraft'
 
-/** 宿主读取的当前渲染闭包；refs 必须原样传入，宿主内部读 `.current` 才能拿到最新值。 */
-export type StageplayAgentHostDeps = {
-  workspaceRef: RefObject<Workspace>
-  activeIdRef: RefObject<string | null>
-  valueRef: RefObject<string>
-  bufferOwnerRef: RefObject<string | null>
-  projectRef: RefObject<BoundProject | null>
-  agentWrittenContentRef: RefObject<Map<string, string>>
-  textMapRef: RefObject<TextMap | null>
-  textCacheRef: RefObject<string | null>
-  locale: string
-  commitWorkspace: (next: Workspace) => void
-  flushEditorInto: (base: Workspace) => Workspace
-  applyAgentFileWrite: (scriptId: string, content: string) => { file: string } | null
-  agentSourceContent: (scriptId: string) => string | null
-  readLangState: (pkgId: string, path: string) => Promise<{
+/** 插件宿主依赖：只需要当前界面语言；工程内容一律从平台宿主读取。 */
+export type AgentHostDeps = { locale: string }
+
+type AgentScriptHit = { pkg: Project; script: SourceFile }
+
+/** 比较用的路径键：反斜杠转正斜杠、去 `./` 与前导斜杠、忽略大小写 */
+const sourceKeyOf = (path: string): string =>
+  path
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/^\.\//, '')
+    .replace(/^\/+/, '')
+    .toLowerCase()
+
+const baseNameOf = (path: string): string => {
+  const parts = path.trim().replace(/\\/g, '/').split('/')
+  return parts[parts.length - 1] ?? ''
+}
+
+/** 只在 ProjectHost 里存在（工作区还没加载成 SourceFile）时的占位包 */
+const syntheticPackage = (): Project => ({
+  id: '',
+  name: '',
+  collapsed: false,
+  assetsCollapsed: false,
+  scripts: [],
+  assets: [],
+  assetFolders: [],
+})
+
+export function createAgentHost(deps: AgentHostDeps): AgentHost {
+  /**
+   * 界面语言的当前值。宿主是长期对象，而用户可能在运行中切换界面语言，
+   * 所以每次现取 `ProjectHost.getLocale()`，取不到时才退回创建时的快照。
+   */
+  const currentLocale = (): string => getProjectHost()?.getLocale() ?? deps.locale
+
+  /**
+   * 元数据只读快照。工程内容本身**不**从这里读 —— 源码正文、草稿与写入一律走
+   * ProjectHost，这样编辑器缓冲、语言 staged 草稿与 agent 写入始终是同一个世界。
+   */
+  const workspaceRef = {
+    get current(): Workspace {
+      return getProjectSession().workspace
+    },
+  }
+  const hostOf = (): ProjectHost | null => getProjectHost()
+
+  /** 由 `listFiles` 发现、但工作区还没有对应 SourceFile 的路径：逻辑 id → 工程路径 */
+  const hostOnlyPaths = new Map<string, string>()
+  const hostOnlyId = (path: string): string => 'project:' + path
+
+  const hostPathOfScript = (scriptId: string): string => {
+    const hit = findScript(workspaceRef.current, scriptId)
+    return hit?.script.name ?? hostOnlyPaths.get(scriptId) ?? scriptId
+  }
+
+  const agentSourceContent = (scriptId: string): string | null => {
+    const host = hostOf()
+    if (!host) return null
+    const hit = findScript(workspaceRef.current, scriptId)
+    return host.readCurrentText(hostPathOfScript(scriptId)) ?? hit?.script.content ?? null
+  }
+
+  const applyAgentFileWrite = (
+    scriptId: string,
+    content: string,
+  ): { file: string } | null => {
+    const host = hostOf()
+    if (!host) return null
+    const path = hostPathOfScript(scriptId)
+    try {
+      host.writeDraft(path, content)
+      return { file: path }
+    } catch {
+      return null
+    }
+  }
+
+  const removeScriptSilent = (scriptId: string): void => {
+    const host = hostOf()
+    if (host) host.discardDraft(hostPathOfScript(scriptId))
+  }
+
+  const stagedLangText = (path: string): string | undefined =>
+    hostOf()?.stagedAssetText(path)
+
+  /** 已保存版本：绑定工程优先读 S（带内容哈希），读不到退回 ProjectHost 的 saved 视图 */
+  const readLangSaved = async (
+    path: string,
+  ): Promise<{ text: string | null; version: string | null }> => {
+    const binding = getProjectSession().binding
+    const client = binding?.handle.client
+    if (binding && client) {
+      // 工程可能挂在 S 根的子目录下：优先读 resolve 后的真实工程内路径
+      const resolved = binding.handle.resolve(path)
+      const lookup = resolved !== path && client.entry(resolved) ? resolved : path
+      if (client.entry(lookup)) {
+        try {
+          const { file, version } = await client.readSnapshot(lookup, false)
+          return { text: await file.text(), version }
+        } catch {
+          /* 读不到就退回本机缓存，至少不要阻断工具 */
+        }
+      }
+    }
+    const host = hostOf()
+    return { text: host ? await host.readSavedText(path) : null, version: null }
+  }
+
+  const readLangState = async (
+    _pkgId: string,
+    path: string,
+  ): Promise<{
     map: Record<string, string>
     version: string | null
     draft: boolean
     saved: boolean
     hasLocalMirror: boolean
     localDraft: boolean
-  }>
-  stageLangWrite: (
-    pkgId: string,
+  }> => {
+    const state = await readLangDraft(stagedLangText, path, () => readLangSaved(path))
+    return {
+      map: state.map,
+      version: state.savedVersion,
+      draft: state.draft,
+      // R1：saved 只表示「S 里已有已保存版本」，本机镜像不算
+      saved: state.hasSaved,
+      hasLocalMirror: state.hasLocalMirror,
+      localDraft: state.draft,
+    }
+  }
+
+  /** 语言文本写入 = ProjectHost 的资产文本草稿通道（staged + 本机镜像） */
+  const stageLangWrite = async (
+    _pkgId: string,
     path: string,
     map: Record<string, string>,
-    options?: { allowUnwritable?: boolean },
-  ) => Promise<
+    _options?: { allowUnwritable?: boolean },
+  ): Promise<
     | { ok: true; localOnly: boolean; draft: true; saved: false; version: null }
     | { ok: false; error: string }
-  >
-  stagedLangText: (path: string) => string | undefined
-  removeScriptSilent: (scriptId: string) => void
-  pushAgentDiff: (snap: AgentDiffSnapshot) => void
-  setAgentDiffs: Dispatch<SetStateAction<AgentDiffSnapshot[]>>
-  setDiffOpen: Dispatch<SetStateAction<boolean>>
-}
-
-export function createStageplayAgentHost(deps: StageplayAgentHostDeps): AgentHost {
-  const {
-    workspaceRef,
-    activeIdRef,
-    valueRef,
-    bufferOwnerRef,
-    projectRef,
-    agentWrittenContentRef,
-    textMapRef,
-    textCacheRef,
-    locale,
-    commitWorkspace,
-    flushEditorInto,
-    applyAgentFileWrite,
-    agentSourceContent,
-    readLangState,
-    stageLangWrite,
-    stagedLangText,
-    removeScriptSilent,
-    pushAgentDiff,
-    setAgentDiffs,
-    setDiffOpen,
-  } = deps
+  > => {
+    const host = hostOf()
+    if (!host) return { ok: false, error: 'no project is open' }
+    try {
+      await host.stageAssetText(path, stringifyTextFile(map))
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      }
+    }
+    const localOnly = getProjectSession().binding === null
+    return { ok: true, localOnly, draft: true, saved: false, version: null }
+  }
 
   /** 跨包同名时 `findScriptByName` 会抛异常：宿主统一转成稳定的英文错误，不再让异常逃逸 */
   const agentDuplicateNameError = (source: string): AgentOpResult => ({
@@ -124,33 +210,54 @@ export function createStageplayAgentHost(deps: StageplayAgentHostDeps): AgentHos
     hint: 'pass the full project path (with directory) to disambiguate',
   })
 
-  type AgentScriptHit = NonNullable<ReturnType<typeof findScriptByName>>
+  /**
+   * 找源文件：工作区元数据优先；工程树里已有、但工作区还没加载的文件
+   * （`ProjectHost.listFiles` 才看得到）用占位 SourceFile 顶替，正文仍从宿主读。
+   */
   const findAgentScript = (
     source: string,
   ): { hit: AgentScriptHit } | { error: AgentOpResult; notFound?: boolean } => {
     try {
       const hit = findScriptByName(workspaceRef.current, source)
-      return hit
-        ? { hit }
-        : {
-            error: {
-              ok: false,
-              reason: 'not_found',
-              error: `file not found: ${source}`,
-            },
-            notFound: true,
-          }
+      if (hit) return { hit }
     } catch {
       return { error: agentDuplicateNameError(source) }
     }
+    const wanted = sourceKeyOf(source)
+    const file = hostOf()
+      ?.listFiles()
+      .find(
+        (item) =>
+          item.kind === 'source' &&
+          (sourceKeyOf(item.path) === wanted || sourceKeyOf(baseNameOf(item.path)) === wanted),
+      )
+    if (file) {
+      const id = hostOnlyId(file.path)
+      hostOnlyPaths.set(id, file.path)
+      return {
+        hit: {
+          pkg: workspaceRef.current.packages[0] ?? syntheticPackage(),
+          script: { id, name: baseNameOf(file.path), content: '', updatedAt: 0 },
+        },
+      }
+    }
+    return {
+      error: {
+        ok: false,
+        reason: 'not_found',
+        error: `file not found: ${source}`,
+      },
+      notFound: true,
+    }
   }
+
 
   /** 语言工具的目标：源文件 + 语言 → 所属包、资产路径与当前译文表 */
   const langTargetOf = async (sourceName: string, localeArg?: string) => {
     const found = findAgentScript(sourceName)
     if ('error' in found) return found
     const hit = found.hit
-    const lang = localeArg?.trim() || locale
+    const lang = localeArg?.trim() || currentLocale()
     const path = langAssetPathFor(hit.script.name, lang)
     const state = await readLangState(hit.pkg.id, path)
     return {
@@ -229,7 +336,7 @@ export function createStageplayAgentHost(deps: StageplayAgentHostDeps): AgentHos
   const resolveAgentLocale = (
     raw?: string,
   ): { locale: string; note?: string } | { error: AgentOpResult } => {
-    const requested = (raw ?? '').trim() || locale
+    const requested = (raw ?? '').trim() || currentLocale()
     const projectLocales = listLocalesOf(workspaceRef.current).map(
       (item) => item.locale,
     )
@@ -357,19 +464,45 @@ export function createStageplayAgentHost(deps: StageplayAgentHostDeps): AgentHos
     },
     listSources: (packageName) => {
       const filter = packageName?.trim().toLowerCase()
-      const files = workspaceRef.current.packages
-        .filter((pkg) => !filter || pkg.name.toLowerCase() === filter)
-        .flatMap((pkg) =>
-          pkg.scripts.map((script) => ({
-            package: pkg.name,
-            source: script.name,
-            kind: sourceKindOf(script.name, script.srcKind),
-            bytes: script.content.length,
-            updatedAt: script.updatedAt,
+      const workspace = workspaceRef.current
+      const metadata = new Map<string, { pkg: Project; script: SourceFile }>()
+      for (const pkg of workspace.packages) {
+        for (const script of pkg.scripts) {
+          metadata.set(sourceKeyOf(script.name), { pkg, script })
+        }
+      }
+      const host = hostOf()
+      const paths = host
+        ? host.listFiles().filter((item) => item.kind === 'source').map((item) => item.path)
+        : [...metadata.values()].map((item) => item.script.name)
+      const files = paths
+        .map((path) => {
+          const meta = metadata.get(sourceKeyOf(path))
+          const packageName = meta?.pkg.name ?? ''
+          return {
+            package: packageName,
+            source: meta?.script.name ?? path,
+            kind: sourceKindOf(meta?.script.name ?? path, meta?.script.srcKind),
+            bytes: meta?.script.content.length ?? 0,
+            updatedAt: meta?.script.updatedAt ?? 0,
             /** 已从工程移除、只剩本机恢复草稿的文件：可读，但不能再写 */
-            detached: script.detached === true,
-          })),
+            detached: meta?.script.detached === true,
+            order: meta?.pkg.id ?? '',
+          }
+        })
+        .filter((file) => !filter || file.package.toLowerCase() === filter)
+        .sort((a, b) =>
+          a.order === b.order
+            ? a.source < b.source
+              ? -1
+              : a.source > b.source
+                ? 1
+                : 0
+            : a.order < b.order
+              ? -1
+              : 1,
         )
+        .map(({ order: _order, ...file }) => file)
       return {
         ok: true,
         files,
@@ -417,26 +550,11 @@ export function createStageplayAgentHost(deps: StageplayAgentHostDeps): AgentHos
     isHumanDirty: (source) => {
       const normalized = normalizeSourcePath(source)
       if (parseLocaleAssetPath(normalized)?.kind === 'text') {
-        const project = projectRef.current
-        const client = project?.handle.client
-        if (!project || !client) return false
-        // 事务里的 key 可能是 `handle.resolve()` 之后的工程内路径（带子目录前缀），
-        // 两种形态都查，避免因为路径规范化差异漏掉草稿。
-        const candidates = new Set([normalized, project.handle.resolve(normalized)])
-        return [...candidates].some((path) => client.transactions.hasDraft(path))
+        return hostOf()?.isHumanDirty?.(normalized) ?? false
       }
-      const hit = (() => {
-        try {
-          return findScriptByName(workspaceRef.current, source)
-        } catch {
-          return null
-        }
-      })()
-      if (!hit) return false
-      return (
-        hit.script.id === bufferOwnerRef.current &&
-        valueRef.current !== hit.script.content
-      )
+      const found = findAgentScript(source)
+      if ('error' in found) return false
+      return hostOf()?.isHumanDirty?.(hostPathOfScript(found.hit.script.id)) ?? false
     },
     createSource: (source, content) => {
       // A2：`../evil.hs` / 带目录的名字一律 invalid_arguments，不能抛异常落到 host_error
@@ -461,33 +579,20 @@ export function createStageplayAgentHost(deps: StageplayAgentHostDeps): AgentHos
           hint: 'Use write_source to overwrite the existing file, or edit_source for a partial edit.',
         }
       }
-      const pkgId =
-        findScript(workspaceRef.current, activeIdRef.current)?.pkg.id ??
-        workspaceRef.current.packages[0]?.id
-      if (!pkgId) {
-        return { ok: false, reason: 'host_error', error: 'no project package available' }
-      }
+      const host = hostOf()
+      if (!host) return { ok: false, reason: 'host_error', error: 'no project is open' }
 
-      let base = flushEditorInto(workspaceRef.current)
-      const script = createScript(checked.name, content)
+      // 新建草稿走平台的写草稿通道：ProjectHost 负责把它挂进当前工程
+      try {
+        host.writeDraft(checked.name, content)
+      } catch (error) {
+        return {
+          ok: false,
+          reason: 'write_failed',
+          error: error instanceof Error ? error.message : 'could not create the file',
+        }
+      }
       // 新建**不切换**当前打开的文件：agent 造文件不该动用户正在看的东西
-      commitWorkspace({
-        packages: base.packages.map((pkg) =>
-          pkg.id === pkgId
-            ? { ...pkg, collapsed: false, scripts: [...pkg.scripts, script] }
-            : pkg,
-        ),
-        activeScriptId: base.activeScriptId,
-        activeAssetId: base.activeAssetId,
-      })
-      pushAgentDiff({
-        fileName: checked.name,
-        before: '',
-        after: content,
-        created: true,
-      })
-      // 新建正文同样算程序化写入：内容未改前不要自动成键
-      agentWrittenContentRef.current.set(checked.name, content)
       return { ok: true, source: checked.name, created: true, changed: true, activeUnchanged: true }
     },
     writeSource: (source, content) => {
@@ -574,14 +679,7 @@ export function createStageplayAgentHost(deps: StageplayAgentHostDeps): AgentHos
     discardDraftSource: (source) => {
       const found = findAgentScript(source)
       if ('error' in found) return
-      const hit = found.hit
-      removeScriptSilent(hit.script.id)
-      // 刚被撤销的新建不该继续留在「Agent 修改」待审列表里
-      setAgentDiffs((previous) => {
-        const next = previous.filter((item) => item.fileName !== hit.script.name)
-        if (next.length === 0) setDiffOpen(false)
-        return next
-      })
+      removeScriptSilent(found.hit.script.id)
     },
     validateSource: (source) => {
       const found = findAgentScript(source)
@@ -617,19 +715,21 @@ export function createStageplayAgentHost(deps: StageplayAgentHostDeps): AgentHos
       }
     },
     getActiveFilePath: () => {
-      const active = activeFilePathOf(workspaceRef.current, activeIdRef.current)
-      if (!active) return { ok: false, error: 'no file is currently open' }
+      const path = hostOf()?.getActivePath() ?? null
+      if (!path) return { ok: false, error: 'no file is currently open' }
+      const found = findAgentScript(path)
+      const localeAsset = parseLocaleAssetPath(path)
       return {
         ok: true,
-        source: active.name,
-        kind: active.kind,
-        path: active.path,
+        source: 'hit' in found ? found.hit.script.name : baseNameOf(path),
+        kind: localeAsset ? 'asset' : sourceKindOf(path),
+        path,
         hint: 'path is informational only; tool arguments still use the logical source name',
       }
     },
     listLocales: () => ({
       ok: true,
-      active: locale,
+      active: currentLocale(),
       locales: listLocalesOf(workspaceRef.current).map((item) => {
         const entry = resolveLocale(item.locale)
         return {
@@ -673,7 +773,7 @@ export function createStageplayAgentHost(deps: StageplayAgentHostDeps): AgentHos
         for (const requested of locales) push(requested)
       } else {
         for (const tag of projectLocales) push(tag)
-        if (locale) push(locale)
+        if (currentLocale()) push(currentLocale())
       }
       return tags.map((tag) => ({ locale: tag, path: langAssetPathFor(hit.script.name, tag) }))
     },
@@ -683,8 +783,14 @@ export function createStageplayAgentHost(deps: StageplayAgentHostDeps): AgentHos
       // 否则写后版本会和锁表锚点对不上（下一轮误判 version_stale）。
       const staged = stagedLangText(path)
       if (staged !== undefined) return staged
-      const client = projectRef.current?.handle.client
-      if (client?.entry(path)) {
+      const binding = getProjectSession().binding
+      const client = binding?.handle.client
+      // 未绑定工程：工程内容只存在于本机通道，直接读宿主 saved 视图（不碰 IDB）
+      if (!binding || !client) {
+        const host = hostOf()
+        return host ? host.readSavedText(path) : null
+      }
+      if (client.entry(path)) {
         try {
           const { file } = await client.readSnapshot(path, false)
           return await file.text()
@@ -693,12 +799,15 @@ export function createStageplayAgentHost(deps: StageplayAgentHostDeps): AgentHos
         }
       }
       const packageId =
-        client?.assetPackageId ??
-        projectRef.current?.manifest.id ??
+        client.assetPackageId ??
+        binding.manifest.id ??
         workspaceRef.current.packages[0]?.id
-      if (!packageId) return null
-      const blob = await getAssetBlob(packageId, path)
-      return blob ? blob.text() : null
+      if (packageId) {
+        const blob = await getAssetBlob(packageId, path)
+        if (blob) return blob.text()
+      }
+      const host = hostOf()
+      return host ? host.readSavedText(path) : null
     },
     /**
      * 撤销日志回放「语言草稿」（D3 / 阶段 4）：
@@ -710,55 +819,29 @@ export function createStageplayAgentHost(deps: StageplayAgentHostDeps): AgentHos
      */
     writeLangDraft: async (path, content) => {
       const normalized = normalizeSourcePath(path)
-      const project = projectRef.current
-      const client = project?.handle.client ?? null
-      const pkgId =
-        client?.assetPackageId ??
-        project?.manifest.id ??
-        workspaceRef.current.packages[0]?.id
-      if (!pkgId) {
+      const host = hostOf()
+      if (!host) {
         throw new Error(`language draft replay failed: no project available (${normalized})`)
       }
 
       if (content === null) {
-        // staged key 可能是原始资产路径，也可能是 handle.resolve() 后的工程内路径
-        if (client && project) {
-          try {
-            discardLangDraft(client.transactions, [
-              normalized,
-              project.handle.resolve(normalized),
-            ])
-          } catch (error) {
-            throw new Error(
-              `language draft replay failed: ${error instanceof Error ? error.message : String(error)}`,
-            )
-          }
-        }
-        const existing = workspaceRef.current.packages
-          .flatMap((pkg) => pkg.assets)
-          .find((asset) => normalizeSourcePath(asset.path) === normalized)
-        if (!existing) return
-        await deleteAssetBlob(pkgId, existing.path)
-        if (projectRef.current?.handle.client !== client) {
-          throw new Error('language draft replay failed: project switched')
-        }
-        client?.assetEpochs.delete(existing.path)
-        commitWorkspace(removeAssetMeta(workspaceRef.current, existing.id))
-        if (textMapRef.current?.fileName.toLowerCase() === existing.path.toLowerCase()) {
-          textCacheRef.current = ''
-          textMapRef.current.load()
+        // 撤掉 staged 草稿；清镜像 / 工作区资产由 bridge 的 discardAssetText 负责
+        try {
+          await host.discardAssetText?.(normalized)
+        } catch (error) {
+          throw new Error(
+            `language draft replay failed: ${error instanceof Error ? error.message : String(error)}`,
+          )
         }
         return
       }
 
-      const staged = await stageLangWrite(pkgId, normalized, parseTextFile(content), {
-        // 回放只动本地草稿：断线 / 暂时只读时也应允许恢复，否则失败后反而回滚不了
-        allowUnwritable: true,
-      })
-      if (!staged.ok) throw new Error(`language draft replay failed: ${staged.error}`)
-      if (textMapRef.current?.fileName.toLowerCase() === normalized.toLowerCase()) {
-        textCacheRef.current = content
-        textMapRef.current.load()
+      try {
+        await host.stageAssetText(normalized, content)
+      } catch (error) {
+        throw new Error(
+          `language draft replay failed: ${error instanceof Error ? error.message : String(error)}`,
+        )
       }
     },
     listLangKeys: async (source, localeArg, offset, limit) => {
@@ -815,7 +898,7 @@ export function createStageplayAgentHost(deps: StageplayAgentHostDeps): AgentHos
         /** 工程语言表里是否有该语言（其它源文件有该语言资产也算） */
         localeInProject,
         /** 是否是编辑器当前正在编辑的语言 */
-        active: target.lang.toLowerCase() === locale.toLowerCase(),
+        active: target.lang.toLowerCase() === currentLocale().toLowerCase(),
         path: target.path,
         /** 已保存工程文件里的内容哈希；null = S 里没有已保存版本 */
         version: target.version,
@@ -981,10 +1064,6 @@ export function createStageplayAgentHost(deps: StageplayAgentHostDeps): AgentHos
         writtenPaths.push(path)
         writtenTotal += written.length
         if (staged.localOnly) localOnly = true
-        if (textMapRef.current?.fileName.toLowerCase() === path.toLowerCase()) {
-          textCacheRef.current = stringifyTextFile(next)
-          textMapRef.current.load()
-        }
         results.push({
           locale,
           path,
@@ -1130,12 +1209,6 @@ export function createStageplayAgentHost(deps: StageplayAgentHostDeps): AgentHos
           hint: 'check write permission / network and retry',
         }
       }
-      if (
-        textMapRef.current?.fileName.toLowerCase() === target.path.toLowerCase()
-      ) {
-        textCacheRef.current = stringifyTextFile(next)
-        textMapRef.current.load()
-      }
       return {
         ok: true,
         source: target.hit.script.name,
@@ -1274,10 +1347,6 @@ export function createStageplayAgentHost(deps: StageplayAgentHostDeps): AgentHos
           hint: 'the source text was not changed; check write permission / network and retry',
         }
       }
-      if (textMapRef.current?.fileName.toLowerCase() === path.toLowerCase()) {
-        textCacheRef.current = stringifyTextFile(next)
-        textMapRef.current.load()
-      }
 
       const written = applyAgentFileWrite(
         hit.script.id,
@@ -1369,7 +1438,7 @@ export function createStageplayAgentHost(deps: StageplayAgentHostDeps): AgentHos
       }
     },
     checkExport: async () => {
-      flushProjectEditors()
+      hostOf()?.flushEditors()
       const workspace = getProjectSession().workspace
       let pak: Awaited<ReturnType<typeof buildResourcePackZip>>
       try {
@@ -1428,7 +1497,7 @@ export function createStageplayAgentHost(deps: StageplayAgentHostDeps): AgentHos
         for (const asset of pkg.assets) {
           const parsed = parseLocaleAssetPath(asset.path)
           if (!parsed || parsed.kind !== 'text') continue
-          const sourceName = sourceNameFromLangAssetPath(asset.path)
+          const sourceName = sourceNameFromLangPath(asset.path)
           if (!sourceName) continue
           // 跨包同名时 findScriptByName 会抛：这里只是统计，不能让预检整体失败
           const sourceHit = (() => {

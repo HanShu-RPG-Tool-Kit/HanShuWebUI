@@ -9,6 +9,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ComponentType,
 } from 'react'
 import Editor, { type OnMount } from '@monaco-editor/react'
 import { StageplayExplorer } from './stageplay/StageplayExplorer'
@@ -148,8 +149,8 @@ import {
   getAssetBlob,
   putAssetBlob,
 } from '../assets/idb'
-import type { AgentHost } from '../agent/tools'
-import { createStageplayAgentHost } from './stageplay/agentHost'
+import { createStageplayFileBridge } from './stageplay/fileBridge'
+import { registerWorkspaceFileBridge, type WorkspaceFileBridge } from '../project/projectHost'
 import {
   isValidLocaleTag,
 } from '../i18n/locales'
@@ -157,19 +158,12 @@ import {
   deleteSourceAssets,
   listLocalesOf,
   writeLangAsset,
-} from '../agent/agentOps'
+} from '../i18n/langAssets'
 import { MarkdownPreview } from '../MarkdownPreview'
 import { HscPreview } from '../HscPreview'
 import { AssetPreview } from '../AssetPreview'
-import { AgentPanel } from '../plugins/agent/ui/AgentPanel'
-import { createAgentRuntime } from '../agent/pi/facade'
-import { claimWindowId } from '../agent/store/windowId'
-import { getAgentApiKey, getAgentModelId } from '../agent/config'
-import type { AgentRuntime, AgentRuntimeView } from '../agent/contracts'
-import {
-  AgentDiffModal,
-  type AgentDiffSnapshot,
-} from '../plugins/agent/ui/AgentDiffModal'
+import { activateBuiltinPlugins, pluginLoader } from '../app/pluginLoader'
+import type { PanelContribution, PanelHostProps } from '../plugin-sdk'
 import {
   type BoundProject,
   removeSourceFromDisk,
@@ -192,10 +186,7 @@ import {
   textAssetPath,
 } from '../i18n/textMap'
 import { createTextSink } from '../i18n/textSink'
-import {
-  readLangDraft,
-  writeLangDraft,
-} from '../i18n/langDraft'
+import { writeLangDraft } from '../i18n/langDraft'
 import {
   createVoiceLibrary,
   type VoiceLibrary,
@@ -325,36 +316,11 @@ export const StageplayWorkspace = forwardRef<
     assignViewFlag(scriptViewFlags, 'agent', next)
   }
 
-  /** Agent 运行时（pi-durable facade）：只在面板打开且工程就绪时创建 */
-  const [agentRuntime, setAgentRuntime] = useState<AgentRuntime | null>(null)
-  /** 订阅到的会话视图：Run 状态、锁列表、流式条目都从这里来 */
-  const [agentView, setAgentView] = useState<AgentRuntimeView | null>(null)
-  /** 面板里改了网关/模型 → 重建运行时（Key 是惰性读的，不需要重建） */
-  const [agentRuntimeNonce, setAgentRuntimeNonce] = useState(0)
-  const agentRuntimeRef = useRef<AgentRuntime | null>(null)
-  const agentHostRef = useRef<AgentHost | null>(null)
-  /**
-   * 稳定宿主代理：运行时只创建一次，但工具调用要拿到**当前渲染**的宿主实现
-   * （宿主方法里会读 locale、活动文件这类每次渲染都可能变的值）。
-   */
-  const agentHostProxyRef = useRef<AgentHost | null>(null)
-  if (!agentHostProxyRef.current) {
-    agentHostProxyRef.current = new Proxy({} as AgentHost, {
-      get: (_target, property) => {
-        const host = agentHostRef.current as unknown as
-          | Record<PropertyKey, unknown>
-          | null
-        const value = host?.[property]
-        return typeof value === 'function'
-          ? (value as (...args: unknown[]) => unknown).bind(host)
-          : value
-      },
-    })
-  }
-  /** Run 活跃：保存按钮/快捷键/自动保存全部禁用（文档 §7 双向互斥） */
-  const agentRunning = agentView?.runState === 'running'
-  const [agentDiffs, setAgentDiffs] = useState<AgentDiffSnapshot[]>([])
-  const [diffOpen, setDiffOpen] = useState(false)
+  /** Agent 运行时由插件自行管理；工作区只接收「Run 活跃」与「锁定路径」两个信号 */
+  const [agentRunning, setAgentRunning] = useState(false)
+  const [agentLockedPaths, setAgentLockedPaths] = useState<readonly string[]>([])
+  /** 当前工作区的插件面板贡献点（经 loader 获取，不 import 插件组件） */
+  const [pluginPanels, setPluginPanels] = useState<PanelContribution[]>([])
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null)
   const rolesRef = useRef(roles)
   const valueRef = useRef(value)
@@ -381,7 +347,11 @@ export const StageplayWorkspace = forwardRef<
    * 这是内容级抑制 —— 解锁 / 编辑器重挂载 / 刷新都不会把 agent 刚写出的正文再成键一遍。
    */
   const agentWrittenContentRef = useRef<Map<string, string>>(new Map())
+  /** 平台文件通道（插件通过它读写本工作区的工程文本） */
+  const projectHostBridgeRef = useRef<WorkspaceFileBridge | null>(null)
   const projectRef = useRef(project)
+  /** 最新界面语言：bridge / 插件宿主通过 ref 读取，避免重建 */
+  const localeRef = useRef('')
   rolesRef.current = roles
   valueRef.current = value
   workspaceRef.current = workspace
@@ -432,7 +402,7 @@ export const StageplayWorkspace = forwardRef<
    * 拆分口径与反解布局都在 `stageplay/agentLockTargets.ts`（纯函数，有单测）。
    */
   const agentLockTargets = splitAgentLockPaths(
-    agentView?.lockedPaths ?? [],
+    agentLockedPaths,
     (candidate) => findScriptByName(workspaceRef.current, candidate)?.script.name ?? null,
   )
   const agentLockedSourceNames = agentLockTargets.sourceNames
@@ -532,6 +502,7 @@ export const StageplayWorkspace = forwardRef<
   }, [])
 
   const [locale, setLocale] = useState(loadLocale)
+  localeRef.current = locale
   const [langEdit, setLangEdit] = useState<{
     id: number
     request: TextEditRequest
@@ -689,7 +660,7 @@ export const StageplayWorkspace = forwardRef<
   const handleSaveTextAsset = async (content: string) => {
     const hit = activeAssetHit
     if (!hit) return
-    if (agentRuntimeRef.current?.view().runState === 'running') {
+    if (agentRunning) {
       void alertDialog('Agent 运行中，暂不可保存。等这一轮结束（或点停止）再保存。')
       return
     }
@@ -1831,8 +1802,6 @@ export const StageplayWorkspace = forwardRef<
     const text = hit?.script.content ?? ''
     loadEditorContent(hit?.script.id ?? null, text, hit?.script.updatedAt ?? null)
     setDiskSavedAt(nowStamp())
-    setAgentDiffs([])
-    setDiffOpen(false)
     if (hit && isHanshuFile(hit.script.name)) {
       syncRolesFromText(text)
     } else {
@@ -1883,15 +1852,9 @@ export const StageplayWorkspace = forwardRef<
       setProject(saved)
       setBoundProject(saved)
       setDiskSavedAt(Date.now())
-      // ② 文件已确认提交 → 才把段的新增条目追加进快照库。
-      // 失败只告警、不回滚文件：档案是本机副本，文件才是服务端权威（文档 §9「保存路径」）
-      try {
-        await agentRuntimeRef.current?.archive()
-      } catch (error) {
-        void alertDialog(
-          `文件已保存，但对话快照未落盘：${error instanceof Error ? error.message : String(error)}。下次保存会补写。`,
-        )
-      }
+      // 已提交到服务端：插件侧草稿视为已保存（清掉本地镜像与「有未保存改动」标记）。
+      // 会话归档由 agent 插件订阅 onSaved 自行完成（本工作区不接触运行时）。
+      projectHostBridgeRef.current?.notifySaved()
     } finally {
       setProjectBusy(false)
     }
@@ -1919,7 +1882,7 @@ export const StageplayWorkspace = forwardRef<
 
   const persistNow = () => {
     // 文档 §7：Run 活跃 → 保存按钮、快捷键、自动保存全部禁用
-    if (agentRuntimeRef.current?.view().runState === 'running') {
+    if (agentRunning) {
       void alertDialog('Agent 运行中，暂不可保存。等这一轮结束（或点停止）再保存。')
       return
     }
@@ -2682,36 +2645,6 @@ export const StageplayWorkspace = forwardRef<
     }
   }
 
-  const pushAgentDiff = (snap: AgentDiffSnapshot) => {
-    setAgentDiffs((prev) => {
-      const idx = prev.findIndex((item) => item.fileName === snap.fileName)
-      if (idx < 0) return [...prev, snap]
-      // 同一文件多次写入：保留最初 before，只更新 after
-      const next = [...prev]
-      const old = next[idx]
-      next[idx] = {
-        ...old,
-        after: snap.after,
-        created: old.created || snap.created,
-      }
-      return next
-    })
-    setDiffOpen(true)
-  }
-
-  const removeAgentDiffAt = (index: number) => {
-    setAgentDiffs((prev) => {
-      const next = prev.filter((_, i) => i !== index)
-      if (next.length === 0) setDiffOpen(false)
-      return next
-    })
-  }
-
-  const clearAgentDiffs = () => {
-    setAgentDiffs([])
-    setDiffOpen(false)
-  }
-
   /** 静默删除剧本（用于撤销 Agent 新建，不弹 confirm） */
   const removeScriptSilent = (scriptId: string) => {
     const nextPackages = workspaceRef.current.packages.map((pkg) => ({
@@ -2742,77 +2675,6 @@ export const StageplayWorkspace = forwardRef<
     }
   }
 
-  const restoreFileContent = (fileName: string, content: string) => {
-    const hit = findScriptByName(workspaceRef.current, fileName)
-    if (!hit) return false
-    const next = updateScriptContent(
-      workspaceRef.current,
-      hit.script.id,
-      content,
-    )
-    commitWorkspace(next)
-    if (hit.script.id === bufferOwnerRef.current) {
-      loadEditorContent(hit.script.id, content)
-    }
-    return true
-  }
-
-  const currentContentOf = (fileName: string) => {
-    const hit = findScriptByName(workspaceRef.current, fileName)
-    if (!hit) return null
-    // "当前打开的文件以编辑器内容为准" —— 判据是**正文的归属**，不是活动 id
-    if (hit.script.id === bufferOwnerRef.current) return valueRef.current
-    return hit.script.content
-  }
-
-  const undoAgentDiff = async (index: number) => {
-    const snap = agentDiffs[index]
-    if (!snap) return
-
-    const current = currentContentOf(snap.fileName)
-    if (
-      current != null &&
-      current !== snap.after &&
-      current !== snap.before &&
-      !(await confirmDialog(`「${snap.fileName}」在 Agent 写入后又有改动，仍要撤销到修改前？`))
-    ) {
-      return
-    }
-
-    if (snap.created) {
-      const hit = findScriptByName(workspaceRef.current, snap.fileName)
-      if (hit) removeScriptSilent(hit.script.id)
-    } else {
-      restoreFileContent(snap.fileName, snap.before)
-    }
-    removeAgentDiffAt(index)
-  }
-
-  const acceptAgentDiff = (index: number) => {
-    removeAgentDiffAt(index)
-  }
-
-  const undoAllAgentDiffs = async () => {
-    if (agentDiffs.length === 0) return
-    if (!(await confirmDialog(`撤销全部 ${agentDiffs.length} 处 Agent 修改？`))) return
-
-    // 从后往前，避免索引错位；新建删除与内容恢复互不依赖顺序
-    for (let i = agentDiffs.length - 1; i >= 0; i -= 1) {
-      const snap = agentDiffs[i]
-      if (snap.created) {
-        const hit = findScriptByName(workspaceRef.current, snap.fileName)
-        if (hit) removeScriptSilent(hit.script.id)
-      } else {
-        restoreFileContent(snap.fileName, snap.before)
-      }
-    }
-    clearAgentDiffs()
-  }
-
-  const acceptAllAgentDiffs = () => {
-    clearAgentDiffs()
-  }
-
   /** Agent 写入已有文件：并回编辑器、记 diff；工程历史由 S 在提交成功时记录。 */
   const applyAgentFileWrite = (
     scriptId: string,
@@ -2829,7 +2691,6 @@ export const StageplayWorkspace = forwardRef<
     if (inEditor) {
       loadEditorContent(scriptId, content)
     }
-    pushAgentDiff({ fileName: hit.script.name, before, after: content })
     // 内容级成键抑制：这份正文是程序化写入的，用户没改之前不要自动成键
     agentWrittenContentRef.current.set(hit.script.name, content)
     return { file: hit.script.name }
@@ -2857,59 +2718,6 @@ export const StageplayWorkspace = forwardRef<
     if (!project) return undefined
     const resolved = project.handle.resolve(path)
     return resolved === path ? undefined : client.transactions.stagedText(resolved)
-  }
-
-  /** 已保存版本：绑定工程优先读 S（带内容哈希），读不到退回本机镜像（无版本） */
-  const readLangSaved = async (
-    pkgId: string,
-    path: string,
-  ): Promise<{ text: string | null; version: string | null }> => {
-    const project = projectRef.current
-    const client = project?.handle.client
-    // 工程可能挂在 S 根的子目录下：优先读 resolve 后的真实工程内路径
-    const resolved = project ? project.handle.resolve(path) : path
-    const lookup = resolved !== path && client?.entry(resolved) ? resolved : path
-    if (client?.entry(lookup)) {
-      try {
-        const { file, version } = await client.readSnapshot(lookup, false)
-        return { text: await file.text(), version }
-      } catch {
-        /* 读不到就退回本机缓存，至少不要阻断工具 */
-      }
-    }
-    const blob = await getAssetBlob(pkgId, path)
-    return { text: blob ? await blob.text() : null, version: null }
-  }
-
-  /**
-   * 语言文本的权威读取：**本地草稿优先**（与编辑器手改同一通道），其次工程文件 / 本机镜像。
-   *
-   * `version` 只在读到 S 的已保存版本时有值；`draft=true` 表示读到的是尚未保存的草稿，
-   * 工具层必须据此标注（D1：不把草稿伪装成已保存）。
-   */
-  const readLangState = async (
-    pkgId: string,
-    path: string,
-  ): Promise<{
-    map: Record<string, string>
-    version: string | null
-    draft: boolean
-    saved: boolean
-    /** R1：本机有镜像但 S 无已保存版本（常见于新建工程渲染过当前语言） */
-    hasLocalMirror: boolean
-    /** 兼容旧字段名：等价于 draft */
-    localDraft: boolean
-  }> => {
-    const state = await readLangDraft(stagedLangText, path, () => readLangSaved(pkgId, path))
-    return {
-      map: state.map,
-      version: state.savedVersion,
-      draft: state.draft,
-      // B8/R1：saved 只表示“S 里已有已保存版本”，本机镜像不算
-      saved: state.hasSaved,
-      hasLocalMirror: state.hasLocalMirror,
-      localDraft: state.draft,
-    }
   }
 
   /**
@@ -2952,83 +2760,57 @@ export const StageplayWorkspace = forwardRef<
     })
   }
 
-  /** AgentHost 实现已抽到 ./stageplay/agentHost；这里只组装当前渲染的依赖，行为与搬迁前一致 */
-  const agentHost: AgentHost = createStageplayAgentHost({
-    workspaceRef,
-    activeIdRef,
-    valueRef,
-    bufferOwnerRef,
-    projectRef,
-    agentWrittenContentRef,
-    textMapRef,
-    textCacheRef,
-    locale,
-    commitWorkspace,
-    flushEditorInto,
-    applyAgentFileWrite,
-    agentSourceContent,
-    readLangState,
-    stageLangWrite,
-    stagedLangText,
-    removeScriptSilent,
-    pushAgentDiff,
-    setAgentDiffs,
-    setDiffOpen,
-  })
-
-  // 工具派发时读最新宿主：runtime 只创建一次，宿主随渲染更新（避免每次渲染重建运行时）
-  agentHostRef.current = agentHost
-
   const agentScope = project?.manifest.id ?? workspace.packages[0]?.id ?? 'local'
 
-  useEffect(() => {
-    if (!agentOpen || !agentHostRef.current) return
-    let disposed = false
-    let cleanup: (() => void) | null = null
-
-    void (async () => {
-      try {
-        const windowId = await claimWindowId()
-        // 每个窗口一个独立段库（文档 §9）：windowId 跨刷新稳定，复制标签页会拿到新 id
-        const runtime = createAgentRuntime({
-          scope: agentScope,
-          windowId,
-          host: agentHostProxyRef.current as AgentHost,
-          apiKey: getAgentApiKey(),
-          model: getAgentModelId(),
-          // 文档 §7：保存事务进行中禁止启动 Run
-          canStartRun: () => !projectBusyRef.current,
-        })
-        await runtime.open()
-        if (disposed) {
-          await runtime.close()
-          return
-        }
-        agentRuntimeRef.current = runtime
-        setAgentRuntime(runtime)
-        setAgentView(runtime.view())
-        const unsubscribe = runtime.subscribe((next) => setAgentView(next))
-        cleanup = () => {
-          unsubscribe()
-          agentRuntimeRef.current = null
-          void runtime.close()
-        }
-      } catch (error) {
-        if (!disposed) {
-          console.warn('[hanshu] Agent 运行时启动失败', error)
-        }
-      }
-    })()
-
-    return () => {
-      disposed = true
-      if (cleanup) cleanup()
-      setAgentRuntime(null)
-      setAgentView(null)
-    }
-    // 宿主与配置都通过 ref/闭包读取，不重建运行时；只有工程 scope 变了才换段库
+  /**
+   * 平台文件通道：工作区只暴露「路径 → 文本」，插件据此读写工程文本。
+   * 依赖全部经 ref / 稳定回调读取，bridge 只创建一次（订阅不会因重渲染丢失）。
+   */
+  const fileBridge = useMemo(
+    () =>
+      createStageplayFileBridge({
+        workspaceRef,
+        activeIdRef,
+        valueRef,
+        bufferOwnerRef,
+        projectRef,
+        commitWorkspace,
+        flushEditorInto,
+        applyAgentFileWrite,
+        agentSourceContent,
+        stageLangWrite,
+        stagedLangText,
+        removeScriptSilent,
+        onAssetTextStaged: (path, text) => {
+          if (textMapRef.current?.fileName.toLowerCase() === path.toLowerCase()) {
+            textCacheRef.current = text
+            textMapRef.current.load()
+          }
+        },
+        getLocale: () => localeRef.current,
+        setReadOnlyPaths: (paths) => setAgentLockedPaths(paths),
+        setRunActive: (active) => setAgentRunning(active),
+        isSaveBusy: () => projectBusyRef.current,
+      }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agentOpen, agentScope, agentRuntimeNonce])
+    [],
+  )
+  projectHostBridgeRef.current = fileBridge
+  useEffect(
+    () => registerWorkspaceFileBridge(fileBridge, agentScope),
+    [fileBridge, agentScope],
+  )
+
+  // 插件面板：工作区只从 loader 取贡献点，面板自己管理运行时（项目级单例）。
+  useEffect(() => {
+    const update = () => setPluginPanels(pluginLoader.panelsFor('stageplay'))
+    update()
+    const unsubscribe = pluginLoader.subscribe(update)
+    void activateBuiltinPlugins().then(update).catch((error) => {
+      console.warn('[hanshu] 插件激活失败', error)
+    })
+    return unsubscribe
+  }, [])
 
   useImperativeHandle(ref, () => ({
     handleMenuAction,
@@ -3114,27 +2896,36 @@ export const StageplayWorkspace = forwardRef<
           />
       ),
     },
-    {
-      id: 'agent',
-      title: 'Agent',
-      visible: agentOpen,
-      defaultPlacement: 'left' as const,
-      defaultSize: 360,
-      minSize: 220,
-      render: (dock) => (
-        <AgentPanel
-          open={agentOpen}
-          runtime={agentRuntime}
-          onClose={() => setAgentOpen(false)}
-          saveBlockedByRun={agentRunning}
-          contextLabel={titleName}
-          onConfigChanged={() => setAgentRuntimeNonce((value) => value + 1)}
-          placement={dock.placement}
-          onTitlePointerDown={dock.onTitlePointerDown}
-          onRedock={dock.onRedock}
-        />
-      ),
-    },
+    ...pluginPanels.map((panel): DockPanelSpec => {
+      const Panel = panel.component as ComponentType<
+        PanelHostProps & {
+          contextLabel?: string
+          onRunningChange?: (running: boolean) => void
+        }
+      >
+      const isAgent = panel.id === 'agent'
+      return {
+        id: panel.id,
+        title: panel.title,
+        visible: isAgent ? agentOpen : (panel.defaultOpen ?? true),
+        defaultPlacement: panel.placement ?? 'left',
+        defaultSize: panel.defaultSize ?? 360,
+        minSize: panel.minSize ?? 220,
+        maxSize: panel.maxSize,
+        render: (dock) => (
+          <Panel
+            open={isAgent ? agentOpen : true}
+            onClose={() => {
+              if (isAgent) setAgentOpen(false)
+            }}
+            contextLabel={titleName}
+            placement={dock.placement}
+            onTitlePointerDown={dock.onTitlePointerDown}
+            onRedock={dock.onRedock}
+          />
+        ),
+      }
+    }),
     {
       id: 'roles',
       title: '备选角色',
@@ -3549,17 +3340,6 @@ export const StageplayWorkspace = forwardRef<
         />
       )}
 
-      {diffOpen && agentDiffs.length > 0 && (
-        <AgentDiffModal
-          diffs={agentDiffs}
-          onClose={() => setDiffOpen(false)}
-          onAccept={acceptAgentDiff}
-          onUndo={undoAgentDiff}
-          onAcceptAll={acceptAllAgentDiffs}
-          onUndoAll={undoAllAgentDiffs}
-        />
-      )}
-
       <StatusBarSlots
         active={isActive}
         left={
@@ -3580,22 +3360,6 @@ export const StageplayWorkspace = forwardRef<
                 {diskSavedAt
                   ? `已落盘 ${new Date(diskSavedAt).toLocaleTimeString()}`
                   : '工程未写入'}
-              </span>
-            )}
-            {agentDiffs.length > 0 && (
-              <span
-                className="status-on"
-                onClick={() => setDiffOpen(true)}
-                title="查看 Agent 修改对比"
-                role="button"
-                tabIndex={0}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter' || event.key === ' ') {
-                    setDiffOpen(true)
-                  }
-                }}
-              >
-                Diff×{agentDiffs.length}
               </span>
             )}
           </>
