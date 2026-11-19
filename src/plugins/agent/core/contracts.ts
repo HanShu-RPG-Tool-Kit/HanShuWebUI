@@ -660,6 +660,12 @@ export type AgentRuntime = {
   rollbackFromRun: (runKey: string, options?: ManualRollbackOptions) => Promise<AgentRollbackResult>
   /** 手动回滚**整个活跃段**的全部可回滚 Run（从新到旧逐轮回放）；`force` 语义同上 */
   rollbackAll: (options?: ManualRollbackOptions) => Promise<AgentRollbackResult>
+  /**
+   * 当前活跃段里被 Agent 改动过的工程路径（源码为逻辑文件名、语言文件为工程相对路径）。
+   * 已回滚的 Run 也包含在内——是否仍与已保存内容不同，由调用方对比草稿与已保存文本判断。
+   * 封存/归档段返回空数组（归档部分一律按修改前内容看待）。
+   */
+  changedPaths: () => string[]
   /** 保存路径调用：把段自上次归档之后的新增条目追加进归档段库，产出一条归档记录 */
   archive: (title?: string) => Promise<SnapshotInfo | null>
   /** 归档段列表 */

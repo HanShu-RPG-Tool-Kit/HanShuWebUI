@@ -41,7 +41,7 @@ import {
   getAgentThinkingLevel,
 } from '../config'
 import { AGENT_RULES } from '../rules'
-import syntaxDocs from '../../help/docs/hanshu-syntax.md?raw'
+import syntaxDocs from '../../../../help/docs/hanshu-syntax.md?raw'
 import { createFileWorld, RuntimeArbiter } from './arbiter'
 import { buildModels, normalizeModelId } from './models'
 import { buildAgentTools } from './tools'
@@ -1398,6 +1398,18 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
 
     async rollbackAll(options?: ManualRollbackOptions): Promise<AgentRollbackResult> {
       return runManualRollback([...runRollbacks.keys()], options)
+    },
+
+    changedPaths(): string[] {
+      if (segmentId && metaStore[segmentId]?.sealed) return []
+      const paths = new Set<string>()
+      for (const record of runRollbacks.values()) {
+        for (const entry of record.entries) paths.add(entry.path)
+      }
+      if (pendingRunKey && undo.has(pendingRunKey)) {
+        for (const entry of undo.entriesOf(pendingRunKey)) paths.add(entry.path)
+      }
+      return [...paths].sort()
     },
 
     async retryRollback(): Promise<{

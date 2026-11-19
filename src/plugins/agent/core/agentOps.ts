@@ -5,49 +5,51 @@
  * React 侧（`StageplayWorkspace`）只负责：调用这里 → 提交工作区 → 刷新 TextMap → 记历史。
  */
 
-import { getAssetBlob, deleteAssetBlob, putAssetBlob } from '../assets/idb'
-import { HsCompileError, compileHsToHsc, type HsCompileErrorCode } from '../hanshu/compiler'
-import { stopParseLineOf } from '../hanshu/directives'
-import { escapeHsText, splitHsLines } from '../hanshu/hsSyntaxRules'
-import { collectInjectDefinitions, collectJumpTargets } from '../hanshu/injectRefs'
-import { unsafeInlineReason, type InlineContext, type UnsafeInlineReason } from '../hanshu/inlineText'
-import { collectSourceKeys, suspectKeySpans, type SourceKeyEntry } from '../hanshu/sourceKeys'
+import { getAssetBlob } from '../../../assets/idb'
+import { HsCompileError, compileHsToHsc, type HsCompileErrorCode } from '../../../hanshu/compiler'
+import { stopParseLineOf } from '../../../hanshu/directives'
+import { escapeHsText, splitHsLines } from '../../../hanshu/hsSyntaxRules'
+import { collectInjectDefinitions, collectJumpTargets } from '../../../hanshu/injectRefs'
+import { unsafeInlineReason, type InlineContext, type UnsafeInlineReason } from '../../../hanshu/inlineText'
+import { collectSourceKeys, suspectKeySpans, type SourceKeyEntry } from '../../../hanshu/sourceKeys'
 import {
   TEXT_ASSET_EXTENSION,
   parseLocaleAssetPath,
-  sourceExtension,
   textAssetPath,
-} from '../i18n/localeLayout'
+} from '../../../i18n/localeLayout'
 import {
-  TEXT_ASSET_MIME,
   createLocaleKeyFromText,
   isLocaleKey,
   normalizeLocaleKey,
   parseTextFile,
-  stringifyTextFile,
   type TextFile,
-} from '../i18n/textMap'
-import { inspectOggBytes, isMonoVorbisOgg } from '../i18n/voiceBytes'
-import { resolveVoiceBindingFor, voiceAssetDir } from '../i18n/voiceMap'
+} from '../../../i18n/textMap'
+import { inspectOggBytes, isMonoVorbisOgg } from '../../../i18n/voiceBytes'
+import { resolveVoiceBindingFor } from '../../../i18n/voiceMap'
+/** 语言资产读写的平台实现（同时被剧本/游戏性工作区直接使用） */
+export {
+  deleteSourceAssets,
+  listLocalesOf,
+  sourceAssetPathsOf,
+  writeLangAsset,
+  type LocaleSummary,
+} from '../../../i18n/langAssets'
 import {
   analyzeCharDiagnostics,
   type CharDiagnostic,
-} from '../monaco/charDiagnostics'
-import { parseCharTextSpans } from '../monaco/charTextSpans'
-import { analyzeHsDiagnostics, type HsDiagnostic } from '../monaco/hsDiagnostics'
-import { parseTextSpans, type TextSpan } from '../monaco/textSpans'
-import { keyReplacementFor } from '../monaco/textKeyRules'
+} from '../../../monaco/charDiagnostics'
+import { parseCharTextSpans } from '../../../monaco/charTextSpans'
+import { analyzeHsDiagnostics, type HsDiagnostic } from '../../../monaco/hsDiagnostics'
+import { parseTextSpans, type TextSpan } from '../../../monaco/textSpans'
+import { keyReplacementFor } from '../../../monaco/textKeyRules'
 import {
   getExtension,
   isCharFile,
   isHanshuFile,
-  registerAsset,
-  removeAssetFolder,
-  removeAssetMeta,
   sourceKindOf,
   sourceRelativePath,
   type Workspace,
-} from '../workspace'
+} from '../../../workspace'
 
 function localizedSpans(content: string, sourceName?: string): TextSpan[] {
   if (sourceName && getExtension(sourceName) === '.char') {
@@ -480,25 +482,6 @@ export async function readLangAsset(
   return parseTextFile(await blob.text())
 }
 
-/** 写语言文本：blob → 登记进工作区（父目录 + 元数据），顺序与界面里的资产写入一致 */
-export async function writeLangAsset(
-  workspace: Workspace,
-  packageId: string,
-  path: string,
-  data: TextFile,
-): Promise<Workspace> {
-  const blob = new Blob([stringifyTextFile(data)], { type: TEXT_ASSET_MIME })
-  await putAssetBlob(packageId, path, blob)
-  const result = registerAsset(
-    workspace,
-    packageId,
-    path,
-    TEXT_ASSET_MIME,
-    blob.size,
-  )
-  return result?.workspace ?? workspace
-}
-
 export type MissingTranslationSummary = {
   locale: string
   /** 该语言缺少译文的键数 */
@@ -601,103 +584,6 @@ export function translateExportWarning(message: string): TranslatedExportWarning
     group: 'other',
     message: 'export warning (details are only available in the export log)',
   }
-}
-
-export type LocaleSummary = { locale: string; langFiles: number; voiceFiles: number }
-
-/** 工程里真实存在过的语言（`assets/<locale>/lang_*` 与 `voice_*`） */
-export function listLocalesOf(workspace: Workspace): LocaleSummary[] {
-  const map = new Map<string, LocaleSummary>()
-  const bump = (locale: string, field: 'langFiles' | 'voiceFiles') => {
-    const hit = map.get(locale) ?? { locale, langFiles: 0, voiceFiles: 0 }
-    hit[field] += 1
-    map.set(locale, hit)
-  }
-  for (const pkg of workspace.packages) {
-    for (const asset of pkg.assets) {
-      const parts = asset.path.replace(/\\/g, '/').split('/')
-      const locale = parts[1]
-      if (parts[0]?.toLowerCase() !== 'assets' || !locale) continue
-      if (/^lang_[a-z0-9]+$/i.test(parts[2] ?? '')) bump(locale.toLowerCase(), 'langFiles')
-      else if (/^voice_[a-z0-9]+$/i.test(parts[2] ?? '')) {
-        bump(locale.toLowerCase(), 'voiceFiles')
-      }
-    }
-  }
-  return [...map.values()].sort((a, b) => a.locale.localeCompare(b.locale))
-}
-
-/** 某个源文件在**所有语言**下的本地化资产（语言文本 + 配音目录） */
-export function sourceAssetPathsOf(
-  workspace: Workspace,
-  sourceName: string,
-): { paths: string[]; voiceDirs: string[] } {
-  const ext = sourceExtension(sourceName)
-  const paths: string[] = []
-  const voiceDirs: string[] = []
-  for (const pkg of workspace.packages) {
-    const locales = new Set<string>()
-    for (const asset of pkg.assets) {
-      const parts = asset.path.replace(/\\/g, '/').split('/')
-      const locale = parts[1]
-      if (parts[0]?.toLowerCase() === 'assets' && locale) {
-        locales.add(locale.toLowerCase())
-      }
-    }
-    for (const locale of locales) {
-      const textPath = textAssetPath(locale, sourceName)
-      if (
-        pkg.assets.some(
-          (asset) => asset.path.toLowerCase() === textPath.toLowerCase(),
-        )
-      ) {
-        paths.push(textPath)
-      }
-      const dir = voiceAssetDir(locale, sourceName, ext)
-      if (
-        pkg.assets.some((asset) =>
-          asset.path.toLowerCase().startsWith(`${dir.toLowerCase()}/`),
-        )
-      ) {
-        voiceDirs.push(dir)
-      }
-    }
-  }
-  return { paths, voiceDirs }
-}
-
-/**
- * 删除某个源文件在所有语言下的本地化资产：blob、元数据，以及清空后的配音目录。
- * 删除剧本时若不清这些，`assets/<locale>/lang_<ext>/xx.lang` 会变成永久孤儿。
- */
-export async function deleteSourceAssets(
-  workspace: Workspace,
-  sourceName: string,
-): Promise<{ workspace: Workspace; removed: string[] }> {
-  const { paths, voiceDirs } = sourceAssetPathsOf(workspace, sourceName)
-  let next = workspace
-  const removed: string[] = []
-  for (const pkg of workspace.packages) {
-    const targets = [
-      ...pkg.assets.filter((asset) =>
-        paths.some((path) => path.toLowerCase() === asset.path.toLowerCase()),
-      ),
-      ...pkg.assets.filter((asset) =>
-        voiceDirs.some((dir) =>
-          asset.path.toLowerCase().startsWith(`${dir.toLowerCase()}/`),
-        ),
-      ),
-    ]
-    for (const asset of targets) {
-      await deleteAssetBlob(pkg.id, asset.path)
-      next = removeAssetMeta(next, asset.id)
-      removed.push(asset.path)
-    }
-    for (const dir of voiceDirs) {
-      next = removeAssetFolder(next, pkg.id, dir).workspace
-    }
-  }
-  return { workspace: next, removed }
 }
 
 export type VoiceState = 'ok' | 'missing' | 'not-ogg' | 'not-mono' | 'invalid' | 'ref'
