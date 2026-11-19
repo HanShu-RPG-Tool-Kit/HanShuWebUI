@@ -10,6 +10,7 @@ import type { BoundProject } from '../../project'
 import type { Workspace } from '../../workspace'
 import type { ProjectFileInfo } from '../../plugin-sdk/types'
 import type { WorkspaceFileBridge } from '../../project/projectHost'
+import { notifyProjectSaved } from '../../project/projectHost'
 import { getProjectClient } from '../../project/serviceClient'
 import { discardLangDraft } from '../../i18n/langDraft'
 import {
@@ -252,6 +253,7 @@ export function createStageplayFileBridge(deps: StageplayFileBridgeDeps): Worksp
     notifySaved: (paths = []) => {
       for (const path of paths) draftPaths.delete(path)
       for (const listener of savedListeners) listener(paths)
+      notifyProjectSaved(paths)
       notify()
     },
   }

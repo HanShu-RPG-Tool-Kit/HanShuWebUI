@@ -6,6 +6,10 @@
  * `WorkspaceFileBridge`，不需要 import 任何插件代码；打开哪个工程、哪个窗口，
  * 由平台的工程会话决定。
  *
+ * 多个工作区会同时挂载（隐藏的也保留编辑器状态），因此注册表按 workspaceId
+ * 保存多个 bridge；插件访问时用「当前激活工作区」的 bridge，没有匹配才退回
+ * 第一个注册的 bridge。
+ *
  * 设计约束（见 src/help/docs/agent-runtime.md 与设计文档「插件解耦」）：
  * - 平台只认 `plugin-sdk` 里的中立类型，**不得** import src/plugins。
  * - 插件的所有写入都只是本地草稿；用户保存时由工作区统一提交。
@@ -55,42 +59,74 @@ export type WorkspaceFileBridge = {
   notifySaved(paths?: string[]): void
 }
 
-let bridge: WorkspaceFileBridge | null = null
-let bridgeScope: string | null = null
+type RegisteredBridge = { bridge: WorkspaceFileBridge; scope: string }
+
+const bridges = new Map<string, RegisteredBridge>()
 const listeners = new Set<() => void>()
+const savedListeners = new Set<(paths: string[]) => void>()
+let activeWorkspaceId: string | null = null
 let host: ProjectHost | null = null
+
+/** 工程级保存通知：所有工作区的保存都从这里广播，插件不需要知道是哪一个工作区保存的。 */
+export function onProjectSaved(
+  listener: (paths: string[]) => void,
+): () => void {
+  savedListeners.add(listener)
+  return () => savedListeners.delete(listener)
+}
+
+export function notifyProjectSaved(paths: string[]): void {
+  for (const listener of savedListeners) listener(paths)
+}
 
 function emit() {
   for (const listener of listeners) listener()
 }
 
+function currentBridge(): RegisteredBridge | null {
+  if (activeWorkspaceId) {
+    const active = bridges.get(activeWorkspaceId)
+    if (active) return active
+  }
+  return bridges.values().next().value ?? null
+}
+
 /**
- * 注册/替换当前工程的文件通道。返回注销函数（只有仍是同一个 bridge 时才真正清空，
- * 避免切工作区时旧的清理函数把新 bridge 摘掉）。
+ * 注册/替换一个工作区的文件通道。返回注销函数（只有仍是同一个 bridge 时才真正
+ * 移除，避免切工作区时旧的清理函数把新 bridge 摘掉）。
  */
 export function registerWorkspaceFileBridge(
   next: WorkspaceFileBridge,
   scope: string,
 ): () => void {
-  bridge = next
-  bridgeScope = scope
+  bridges.set(next.workspaceId, { bridge: next, scope })
   host = null
   emit()
   return () => {
-    if (bridge !== next) return
-    bridge = null
-    bridgeScope = null
+    const current = bridges.get(next.workspaceId)
+    if (current?.bridge !== next) return
+    bridges.delete(next.workspaceId)
     host = null
     emit()
   }
 }
 
+/** 工作区切换后调用：插件读写落到当前激活工作区的 bridge。 */
+export function setProjectHostWorkspace(workspaceId: string | null): void {
+  if (activeWorkspaceId === workspaceId) return
+  activeWorkspaceId = workspaceId
+  host = null
+  emit()
+}
+
 export function getWorkspaceFileBridge(): WorkspaceFileBridge | null {
-  return bridge
+  return currentBridge()?.bridge ?? null
 }
 
 /** 当前工程的作用域标识（agent 数据库 / 会话按它隔离） */
 export function projectScopeOf(): string {
+  const current = currentBridge()
+  if (current?.scope) return current.scope
   const session = getProjectSession()
   return (
     session.binding?.manifest.id ??
@@ -105,42 +141,39 @@ export function notifyProjectFiles(): void {
 }
 
 export function getProjectHost(): ProjectHost | null {
-  if (!bridge) return null
+  const current = currentBridge()
+  if (!current) return null
   if (host) return host
-  const current = bridge
-  const scope = bridgeScope ?? projectScopeOf()
+  const { bridge, scope } = current
   host = {
-    scope,
-    listFiles: () => current.listFiles(),
-    readCurrentText: (path) => current.readCurrentText(path),
-    readSavedText: (path) => current.readSavedText(path),
-    hasDraft: (path) => current.hasDraft(path),
-    listDraftPaths: () => current.listDraftPaths(),
-    writeDraft: (path, text) => current.writeDraft(path, text),
-    discardDraft: (path) => current.discardDraft(path),
-    stageAssetText: (path, text) => current.stageAssetText(path, text),
-    stagedAssetText: (path) => current.stagedAssetText(path),
-    discardAssetText: (path) => current.discardAssetText?.(path),
-    isHumanDirty: (path) => current.isHumanDirty?.(path) ?? false,
-    setReadOnlyPaths: (paths) => current.setReadOnlyPaths?.(paths),
-    setRunActive: (active) => current.setRunActive?.(active),
-    isSaveBusy: () => current.isSaveBusy?.() ?? false,
-    getActivePath: () => current.getActivePath(),
-    getLocale: () => current.getLocale(),
-    flushEditors: () => current.flushEditors(),
+    scope: scope || projectScopeOf(),
+    listFiles: () => bridge.listFiles(),
+    readCurrentText: (path) => bridge.readCurrentText(path),
+    readSavedText: (path) => bridge.readSavedText(path),
+    hasDraft: (path) => bridge.hasDraft(path),
+    listDraftPaths: () => bridge.listDraftPaths(),
+    writeDraft: (path, text) => bridge.writeDraft(path, text),
+    discardDraft: (path) => bridge.discardDraft(path),
+    stageAssetText: (path, text) => bridge.stageAssetText(path, text),
+    stagedAssetText: (path) => bridge.stagedAssetText(path),
+    discardAssetText: (path) => bridge.discardAssetText?.(path),
+    isHumanDirty: (path) => bridge.isHumanDirty?.(path) ?? false,
+    setReadOnlyPaths: (paths) => bridge.setReadOnlyPaths?.(paths),
+    setRunActive: (active) => bridge.setRunActive?.(active),
+    isSaveBusy: () => bridge.isSaveBusy?.() ?? false,
+    getActivePath: () => bridge.getActivePath(),
+    getLocale: () => bridge.getLocale(),
+    flushEditors: () => bridge.flushEditors(),
     subscribe: (listener) => {
-      const offBridge = current.subscribe(listener)
-      const offFiles = (() => {
-        const wrapped = () => listener()
-        listeners.add(wrapped)
-        return () => listeners.delete(wrapped)
-      })()
+      const offBridge = bridge.subscribe(listener)
+      const wrapped = () => listener()
+      listeners.add(wrapped)
       return () => {
         offBridge()
-        offFiles()
+        listeners.delete(wrapped)
       }
     },
-    onSaved: (listener) => current.onSaved(listener),
+    onSaved: (listener) => onProjectSaved(listener),
   }
   return host
 }

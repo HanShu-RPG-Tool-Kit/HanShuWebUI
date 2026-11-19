@@ -13,6 +13,7 @@ import {
   saveActiveWorkspaceId,
 } from './workspaces/activeWorkspace.ts'
 import { APP_WORKSPACES } from './workspaces/registry.ts'
+import { setProjectHostWorkspace } from './project/projectHost'
 import { McSkinWorkspace } from './workspaces/McSkinWorkspace.tsx'
 import { AudiovisualWorkspace, type AudiovisualWorkspaceHandle } from './workspaces/AudiovisualWorkspace.tsx'
 import { GameplayWorkspace, type GameplayWorkspaceHandle } from './workspaces/GameplayWorkspace.tsx'
@@ -112,6 +113,12 @@ function App() {
   useEffect(() => {
     applyUiScale(uiScale)
   }, [uiScale])
+
+  /** 插件文件通道按「当前激活工作区」选择：所有工作区都挂载，只有一个是激活的。 */
+  useEffect(() => {
+    setProjectHostWorkspace(activeWorkspaceId)
+    return () => setProjectHostWorkspace(null)
+  }, [activeWorkspaceId])
 
   useEffect(() => {
     if (!isDesktopShell) return

@@ -17,7 +17,10 @@ export {
   projectScopeOf,
   registerWorkspaceFileBridge,
   notifyProjectFiles,
+  setProjectHostWorkspace,
 } from '../project/projectHost'
+export { createProjectFileBridge } from '../project/projectFileBridge'
+export type { ProjectFileBridgeDeps } from '../project/projectFileBridge'
 export type { WorkspaceFileBridge } from '../project/projectHost'
 export { flushProjectEditors, registerProjectEditorFlush } from '../project/editorFlush'
 export { confirmDialog, chooseDialog } from '../ui/dialogs/dialogStore'
