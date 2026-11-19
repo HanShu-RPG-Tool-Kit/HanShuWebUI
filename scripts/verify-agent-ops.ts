@@ -37,7 +37,7 @@ import {
   validateLangKeys,
   validateSourceContent,
   voiceFormatNote,
-} from '../src/agent/agentOps'
+} from '../src/plugins/agent/core/agentOps'
 import { suspectKeySpans } from '../src/hanshu/sourceKeys'
 
 /* ── ① 分页 ── */

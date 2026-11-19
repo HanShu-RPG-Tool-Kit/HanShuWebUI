@@ -21,7 +21,7 @@ import {
   isStructuralLine,
 } from '../src/hanshu/hsSyntaxRules.ts'
 import { analyzeHsDiagnostics } from '../src/monaco/hsDiagnostics.ts'
-import { parseSourceText, unparseSourceText } from '../src/agent/agentOps.ts'
+import { parseSourceText, unparseSourceText } from '../src/plugins/agent/core/agentOps.ts'
 import { stopParseLineOf } from '../src/hanshu/directives.ts'
 import { collectSourceKeys } from '../src/hanshu/sourceKeys.ts'
 import { parseTextSpans } from '../src/monaco/textSpans.ts'

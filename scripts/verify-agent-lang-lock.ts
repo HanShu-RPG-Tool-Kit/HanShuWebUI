@@ -21,9 +21,9 @@
 
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { collectMissingTranslationWarnings } from '../src/agent/agentOps'
-import { executeAgentTool, type AgentToolCall } from '../src/agent/tools'
-import type { AgentHost, AgentToolArbiter } from '../src/agent/contracts'
+import { collectMissingTranslationWarnings } from '../src/plugins/agent/core/agentOps'
+import { executeAgentTool, type AgentToolCall } from '../src/plugins/agent/core/tools'
+import type { AgentHost, AgentToolArbiter } from '../src/plugins/agent/core/contracts'
 
 const SOURCE = '阿拉丁神灯.hs'
 const LANGS = ['zh_cn', 'en_us']

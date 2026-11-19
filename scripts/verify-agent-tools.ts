@@ -23,8 +23,8 @@ import {
   executeAgentTool,
   normalizeFailure,
   type AgentToolCall,
-} from '../src/agent/tools'
-import type { AgentHost, AgentToolArbiter } from '../src/agent/contracts'
+} from '../src/plugins/agent/core/tools'
+import type { AgentHost, AgentToolArbiter } from '../src/plugins/agent/core/contracts'
 
 /** 内容哈希：真实运行时是 SHA 内容哈希，这里用短哈希便于断言 */
 const hash = (content: string) =>

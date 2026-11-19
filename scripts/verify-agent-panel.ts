@@ -12,18 +12,26 @@
 import assert from 'node:assert/strict'
 import { Fragment, createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { MessageList, RollbackNoticeDetails, RunMetaLine } from '../src/agent/view/MessageList'
+import { MessageList, RollbackNoticeDetails, RunMetaLine } from '../src/plugins/agent/core/view/MessageList'
 import {
   AgentPanel,
   ForkButton,
   MANUAL_ROLLBACK_MESSAGE,
   ManualRollbackFailureCard,
+  NO_AGENT_CHANGES_MESSAGE,
   RollbackCard,
   SegmentSealedHint,
   forkAfterRun,
   forkCurrentSegment,
   runAfterInheritingArchive,
+  viewChangesPrompt,
 } from '../src/plugins/agent/ui/AgentPanel'
+import {
+  ViewChangesFileList,
+  ViewChangesModal,
+  diffChangedPaths,
+  type ChangedPathDiff,
+} from '../src/plugins/agent/ui/ViewChangesModal'
 import {
   STORAGE_DANGER_BYTES,
   STORAGE_WARN_BYTES,
@@ -46,7 +54,7 @@ import {
   storageUsageLevel,
   storageUsagePercent,
   summarizeUndo,
-} from '../src/agent/view/derive'
+} from '../src/plugins/agent/core/view/derive'
 import type {
   AgentRunResult,
   AgentRuntime,
@@ -55,7 +63,7 @@ import type {
   ForkSegmentOptions,
   SegmentInfo,
   UndoOutcome,
-} from '../src/agent/contracts'
+} from '../src/plugins/agent/core/contracts'
 
 /* ── 视图行派生：1:1 保持 id 与顺序，流式/工具语义不丢 ── */
 const items: AgentViewItem[] = [
@@ -327,25 +335,37 @@ assert.ok(
 )
 
 /* ── 输入区「回滚」按钮：在发送左边；没有可回滚 Run / 已封存时禁用 ── */
-const makeView = (items: AgentViewItem[], segmentSealed = false): AgentRuntimeView => ({
+const makeView = (
+  items: AgentViewItem[],
+  segmentSealed = false,
+  runState: AgentRuntimeView['runState'] = 'idle',
+): AgentRuntimeView => ({
   segmentId: 'seg-1',
   runId: null,
-  runState: 'idle',
+  runState,
   items,
   status: '',
   lockedPaths: [],
   segmentSealed,
 })
-const makeRuntime = (items: AgentViewItem[], segmentSealed = false): AgentRuntime =>
+const makeRuntime = (
+  items: AgentViewItem[],
+  segmentSealed = false,
+  runState: AgentRuntimeView['runState'] = 'idle',
+): AgentRuntime =>
   ({
-    view: () => makeView(items, segmentSealed),
+    view: () => makeView(items, segmentSealed, runState),
     subscribe: () => () => {},
   }) as unknown as AgentRuntime
-const renderPanel = (items: AgentViewItem[], segmentSealed = false): string =>
+const renderPanel = (
+  items: AgentViewItem[],
+  segmentSealed = false,
+  runState: AgentRuntimeView['runState'] = 'idle',
+): string =>
   renderToStaticMarkup(
     createElement(AgentPanel, {
       open: true,
-      runtime: makeRuntime(items, segmentSealed),
+      runtime: makeRuntime(items, segmentSealed, runState),
       onClose: () => {},
       saveBlockedByRun: false,
     }),
@@ -886,6 +906,138 @@ await assert.rejects(
   '继承失败时错误向上抛出',
 )
 assert.deepEqual(forkFailureOrder, ['fork'], '继承失败时不会在旧活跃段里 run')
+
+/* ── 「查看变更」只读入口：按钮位置/启用条件、空列表提示、纯路径比较 ── */
+const viewChangesPanelHtml = renderPanel([])
+assert.ok(
+  viewChangesPanelHtml.includes('class="agent-view-changes"'),
+  '输入区提供「查看变更」按钮',
+)
+assert.ok(
+  viewChangesPanelHtml.includes('>查看变更</button>'),
+  '按钮文案为「查看变更」',
+)
+const viewChangesButtonTag =
+  viewChangesPanelHtml.match(/<button[^>]*agent-view-changes[^>]*>/)?.[0] ?? ''
+assert.ok(
+  viewChangesButtonTag.length > 0 && !viewChangesButtonTag.includes('disabled'),
+  '有运行时时「查看变更」可点击（运行中也可查看）',
+)
+const runningViewChangesTag =
+  renderPanel([], false, 'running').match(
+    /<button[^>]*agent-view-changes[^>]*>/,
+  )?.[0] ?? ''
+assert.ok(
+  runningViewChangesTag.length > 0 && !runningViewChangesTag.includes('disabled'),
+  '运行中「查看变更」仍可点击',
+)
+assert.ok(
+  viewChangesPanelHtml.indexOf('class="agent-fork"') <
+    viewChangesPanelHtml.indexOf('class="agent-view-changes"') &&
+    viewChangesPanelHtml.indexOf('class="agent-view-changes"') <
+      viewChangesPanelHtml.indexOf('class="agent-manual-rollback"'),
+  '「查看变更」位于分支之后、回滚之前',
+)
+assert.equal(
+  viewChangesPrompt([]),
+  NO_AGENT_CHANGES_MESSAGE,
+  '没有改动时给出明确提示',
+)
+assert.equal(NO_AGENT_CHANGES_MESSAGE, '当前没有未保存的 Agent 改动')
+assert.equal(viewChangesPrompt(['a.hs']), '', '有改动时不显示空提示')
+
+const currentTexts = new Map<string, string>([
+  ['same.hs', '同一份'],
+  ['changed.hs', '新内容'],
+  ['new.hs', '刚创建'],
+])
+const savedTexts = new Map<string, string>([
+  ['same.hs', '同一份'],
+  ['changed.hs', '旧内容'],
+  ['deleted.hs', '已删除'],
+])
+const fakeChangeHost = {
+  readCurrentText: (path: string): string | null => currentTexts.get(path) ?? null,
+  readSavedText: async (path: string): Promise<string | null> =>
+    savedTexts.get(path) ?? null,
+}
+const changedDiffs: ChangedPathDiff[] = await diffChangedPaths(fakeChangeHost, [
+  'same.hs',
+  'changed.hs',
+  'new.hs',
+  'missing.hs',
+  'deleted.hs',
+  'changed.hs',
+])
+assert.deepEqual(
+  changedDiffs.map((diff) => diff.path),
+  ['changed.hs', 'new.hs', 'deleted.hs'],
+  '跳过相同/不存在路径、去重并保持传入顺序',
+)
+assert.deepEqual(
+  changedDiffs[0],
+  { path: 'changed.hs', before: '旧内容', after: '新内容', kind: 'modified' },
+  '内容不同标记为修改并带前后文本',
+)
+assert.deepEqual(
+  changedDiffs[1],
+  { path: 'new.hs', before: '', after: '刚创建', kind: 'created' },
+  '仅当前存在标记为新建',
+)
+assert.deepEqual(
+  changedDiffs[2],
+  { path: 'deleted.hs', before: '已删除', after: '', kind: 'deleted' },
+  '仅已保存存在标记为删除',
+)
+
+const fileListHtml = renderToStaticMarkup(
+  createElement(ViewChangesFileList, {
+    diffs: changedDiffs,
+    selected: 'changed.hs',
+    onSelect: () => {},
+  }),
+)
+assert.ok(fileListHtml.includes('aria-label="变更文件列表"'), '变更有文件列表')
+assert.ok(fileListHtml.includes('changed.hs'), '列表显示路径')
+assert.ok(
+  fileListHtml.includes('view-changes-item active'),
+  '当前查看的文件高亮',
+)
+assert.ok(
+  fileListHtml.includes('view-changes-kind modified">修改<'),
+  '修改类型有中文标签',
+)
+assert.ok(
+  fileListHtml.includes('view-changes-kind created">新建<'),
+  '新建类型有中文标签',
+)
+assert.ok(
+  fileListHtml.includes('view-changes-kind deleted">删除<'),
+  '删除类型有中文标签',
+)
+
+const viewChangesModalHtml = renderToStaticMarkup(
+  createElement(ViewChangesModal, {
+    open: true,
+    paths: [],
+    onClose: () => {},
+  }),
+)
+assert.ok(
+  viewChangesModalHtml.includes('aria-label="查看 Agent 变更"'),
+  '只读面板以对话框呈现',
+)
+assert.ok(viewChangesModalHtml.includes('查看变更'), '面板标题为「查看变更」')
+assert.ok(viewChangesModalHtml.includes('>关闭</button>'), '面板只有关闭操作')
+assert.equal(
+  (viewChangesModalHtml.match(/<button/g) ?? []).length,
+  1,
+  '面板没有接受/拒绝等额外操作按钮',
+)
+assert.ok(
+  viewChangesModalHtml.includes('正在读取变更…'),
+  '首帧显示读取中（SSR 不触发读取）',
+)
 
 console.log(
   '通过：Agent 面板视图派生（行 id/流式/工具状态、失败记录与回滚摘要、占用阈值、Key 掩码、时间与文案）',

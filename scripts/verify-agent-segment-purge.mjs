@@ -83,7 +83,7 @@ try {
     const chord = await mod('/@id/@earendil-works/chord/context')
     const piAi = await mod('/@id/@earendil-works/pi-ai')
     const fauxModule = await mod('/@id/@earendil-works/pi-ai/providers/faux')
-    const purge = await mod('/src/agent/store/segmentPurge.ts')
+    const purge = await mod('/src/plugins/agent/core/store/segmentPurge.ts')
 
     const ctx = chord.BACKGROUND_CONTEXT
     await indexeddb.IndexedDbStorage.delete(dbName).catch(() => undefined)

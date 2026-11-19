@@ -24,7 +24,7 @@ import {
   isValidModelId,
   isValidThinkingLevel,
   setAgentModelIds,
-} from '../src/agent/config'
+} from '../src/plugins/agent/core/config'
 
 /* ── 模型 id 校验：允许常见厂商写法，挡掉 URL / 空值 / 超长 ── */
 assert.equal(isValidModelId('deepseek-v4-pro'), true)

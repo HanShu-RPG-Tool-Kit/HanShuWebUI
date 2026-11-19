@@ -8,11 +8,11 @@
  */
 
 import assert from 'node:assert/strict'
-import { RuntimeArbiter } from '../src/agent/pi/arbiter'
-import { LockTable } from '../src/agent/runtime/lockTable'
-import { RunUndoLog } from '../src/agent/runtime/runUndo'
-import { contentVersion } from '../src/agent/runtime/version'
-import type { AgentFileWorld, AgentHost } from '../src/agent/contracts'
+import { RuntimeArbiter } from '../src/plugins/agent/core/pi/arbiter'
+import { LockTable } from '../src/plugins/agent/core/runtime/lockTable'
+import { RunUndoLog } from '../src/plugins/agent/core/runtime/runUndo'
+import { contentVersion } from '../src/plugins/agent/core/runtime/version'
+import type { AgentFileWorld, AgentHost } from '../src/plugins/agent/core/contracts'
 
 /** 源文件（逻辑名 → 正文）与派生语言资产（工程相对路径 → 正文）分开存 */
 const sources = new Map<string, string>()

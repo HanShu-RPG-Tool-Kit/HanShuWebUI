@@ -7,9 +7,9 @@
  */
 
 import assert from 'node:assert/strict'
-import { RunUndoLog } from '../src/agent/runtime/runUndo'
-import { contentVersion } from '../src/agent/runtime/version'
-import type { AgentFileWorld, UndoEntry } from '../src/agent/contracts'
+import { RunUndoLog } from '../src/plugins/agent/core/runtime/runUndo'
+import { contentVersion } from '../src/plugins/agent/core/runtime/version'
+import type { AgentFileWorld, UndoEntry } from '../src/plugins/agent/core/contracts'
 
 type WorldWrite = { path: string; content: string | null }
 

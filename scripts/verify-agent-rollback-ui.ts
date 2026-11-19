@@ -22,7 +22,7 @@ import {
   executeRollbackAction,
   formatRollbackFailures,
 } from '../src/plugins/agent/ui/AgentPanel'
-import type { PendingRollback, UndoConflict, UndoOutcome } from '../src/agent/contracts'
+import type { PendingRollback, UndoConflict, UndoOutcome } from '../src/plugins/agent/core/contracts'
 
 const CONFLICTS: UndoConflict[] = [
   { path: '序章.hs', channel: 'source', reason: 'human_editing' },

@@ -13,8 +13,8 @@
  */
 import assert from 'node:assert/strict'
 import type { ConversationView, EntryRecord, LiveState } from '@earendil-works/pi-durable'
-import type { AgentViewItem } from '../src/agent/contracts'
-import { entriesToItems, entryRecordsToItems, liveToItems } from '../src/agent/pi/view'
+import type { AgentViewItem } from '../src/plugins/agent/core/contracts'
+import { entriesToItems, entryRecordsToItems, liveToItems } from '../src/plugins/agent/core/pi/view'
 
 let checks = 0
 const failures: string[] = []

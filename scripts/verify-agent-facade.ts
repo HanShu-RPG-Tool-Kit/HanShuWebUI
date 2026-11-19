@@ -27,20 +27,20 @@ import assert from 'node:assert/strict'
 import { MemoryStorage, createSession, type EntryRecord, type Storage } from '@earendil-works/pi-durable'
 import { IndexedDbStorage } from '@earendil-works/pi-durable/storage/indexeddb'
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context'
-import { createAgentRuntime } from '../src/agent/pi/facade'
-import { RunUndoLog } from '../src/agent/runtime/runUndo'
-import { contentVersion } from '../src/agent/runtime/version'
+import { createAgentRuntime } from '../src/plugins/agent/core/pi/facade'
+import { RunUndoLog } from '../src/plugins/agent/core/runtime/runUndo'
+import { contentVersion } from '../src/plugins/agent/core/runtime/version'
 import {
   IndexedDbUndoJournalBackend,
   undoJournalKey,
   type UndoJournalRecord,
-} from '../src/agent/store/undoJournal'
+} from '../src/plugins/agent/core/store/undoJournal'
 import {
   IndexedDbRunRollbackBackend,
   runRollbackKey,
   type RunRollbackSegmentRecord,
-} from '../src/agent/store/runRollbackStore'
-import type { AgentFileWorld, AgentHost, AgentRuntime } from '../src/agent/contracts'
+} from '../src/plugins/agent/core/store/runRollbackStore'
+import type { AgentFileWorld, AgentHost, AgentRuntime } from '../src/plugins/agent/core/contracts'
 
 let checks = 0
 const failures: string[] = []

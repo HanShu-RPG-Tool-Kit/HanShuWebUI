@@ -13,14 +13,14 @@ import type {
   LockResult,
   SnapshotInfo,
   VersionedFile,
-} from '../src/agent/contracts'
-import { contentVersion } from '../src/agent/runtime/version'
-import { LockTable } from '../src/agent/runtime/lockTable'
-import { RunUndoLog } from '../src/agent/runtime/runUndo'
-import { archiveDbName, segmentDbName } from '../src/agent/store/dbNames'
-import { MemorySnapshotBackend, SnapshotStore } from '../src/agent/store/snapshotStore'
-import { claimWindowId } from '../src/agent/store/windowId'
-import { descendantSnapshotIds, forkEntryDrafts } from '../src/agent/store/archiveGraph'
+} from '../src/plugins/agent/core/contracts'
+import { contentVersion } from '../src/plugins/agent/core/runtime/version'
+import { LockTable } from '../src/plugins/agent/core/runtime/lockTable'
+import { RunUndoLog } from '../src/plugins/agent/core/runtime/runUndo'
+import { archiveDbName, segmentDbName } from '../src/plugins/agent/core/store/dbNames'
+import { MemorySnapshotBackend, SnapshotStore } from '../src/plugins/agent/core/store/snapshotStore'
+import { claimWindowId } from '../src/plugins/agent/core/store/windowId'
+import { descendantSnapshotIds, forkEntryDrafts } from '../src/plugins/agent/core/store/archiveGraph'
 
 let checks = 0
 const failures: string[] = []

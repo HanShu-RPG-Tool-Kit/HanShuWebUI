@@ -19,9 +19,9 @@ import {
   serializeRunRollback,
   type RunRollbackRecord,
   type RunRollbackSegmentRecord,
-} from '../src/agent/store/runRollbackStore'
-import { undoJournalKey } from '../src/agent/store/undoJournal'
-import type { UndoEntry } from '../src/agent/contracts'
+} from '../src/plugins/agent/core/store/runRollbackStore'
+import { undoJournalKey } from '../src/plugins/agent/core/store/undoJournal'
+import type { UndoEntry } from '../src/plugins/agent/core/contracts'
 
 let checks = 0
 const failures: string[] = []

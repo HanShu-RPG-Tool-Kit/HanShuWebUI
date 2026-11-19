@@ -73,9 +73,9 @@ try {
 
   const result = await page.evaluate(async (scope) => {
     const mod = (path) => import(path)
-    const facade = await mod('/src/agent/pi/facade.ts')
-    const ids = await mod('/src/agent/store/dbNames.ts')
-    const snapshotModule = await mod('/src/agent/store/snapshotStore.ts')
+    const facade = await mod('/src/plugins/agent/core/pi/facade.ts')
+    const ids = await mod('/src/plugins/agent/core/store/dbNames.ts')
+    const snapshotModule = await mod('/src/plugins/agent/core/store/snapshotStore.ts')
 
     // 领域工具宿主：本验收不调模型、不改工程文件，全部给"不可用"即可
     const deny = () => ({ ok: false, error: '验收未实现该工具' })

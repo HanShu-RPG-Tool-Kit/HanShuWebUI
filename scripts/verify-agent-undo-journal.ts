@@ -16,9 +16,9 @@ import {
   serializeUndoJournal,
   undoJournalKey,
   type UndoJournalRecord,
-} from '../src/agent/store/undoJournal'
-import { undoJournalDbName } from '../src/agent/store/dbNames'
-import type { UndoEntry } from '../src/agent/contracts'
+} from '../src/plugins/agent/core/store/undoJournal'
+import { undoJournalDbName } from '../src/plugins/agent/core/store/dbNames'
+import type { UndoEntry } from '../src/plugins/agent/core/contracts'
 
 let checks = 0
 const failures: string[] = []

@@ -15,16 +15,16 @@ import assert from 'node:assert/strict'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { AgentPanel, SegmentSealedHint } from '../src/plugins/agent/ui/AgentPanel'
-import { SegmentBar, normalizeSegmentTitle } from '../src/agent/view/SegmentBar'
-import { SnapshotList } from '../src/agent/view/SnapshotList'
-import { segmentOptionLabel } from '../src/agent/view/derive'
+import { SegmentBar, normalizeSegmentTitle } from '../src/plugins/agent/core/view/SegmentBar'
+import { SnapshotList } from '../src/plugins/agent/core/view/SnapshotList'
+import { segmentOptionLabel } from '../src/plugins/agent/core/view/derive'
 import type {
   AgentRuntime,
   AgentRuntimeView,
   AgentViewItem,
   SegmentInfo,
   SnapshotInfo,
-} from '../src/agent/contracts'
+} from '../src/plugins/agent/core/contracts'
 
 const SEGMENT: SegmentInfo = {
   id: 'seg-1',
