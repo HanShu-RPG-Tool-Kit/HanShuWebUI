@@ -701,7 +701,35 @@ export function AudiovisualWorkspace({
                     : 'Ctrl+S 保存到工程目录'}
           </span>
         }
-        right={<span>视听效果 · BOSS血条</span>}
+        right={
+          <>
+            <span
+              className={agentOpen ? 'agent-status-toggle status-on' : 'agent-status-toggle'}
+              role="button"
+              tabIndex={0}
+              title="开关 Agent 面板"
+              onClick={() => {
+                setAgentOpen((previous) => {
+                  const next = !previous
+                  saveAgentOpen(next)
+                  return next
+                })
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return
+                event.preventDefault()
+                setAgentOpen((previous) => {
+                  const next = !previous
+                  saveAgentOpen(next)
+                  return next
+                })
+              }}
+            >
+              Agent
+            </span>
+            <span>视听效果 · BOSS血条</span>
+          </>
+        }
       />
     </section>
   )
