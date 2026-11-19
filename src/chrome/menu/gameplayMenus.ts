@@ -45,6 +45,15 @@ export const gameplayMenuContribution: MenuContribution = {
       id: 'view',
       label: '查看',
       items: [
+        cmd('agent-panel', 'Agent 面板', {
+          checked: () => {
+            try {
+              return localStorage.getItem('hanshu.agentOpen.gameplay') === 'true'
+            } catch {
+              return false
+            }
+          },
+        }),
         cmd('editor-layout', '编辑器布局'),
       ],
     },

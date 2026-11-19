@@ -20,6 +20,7 @@ let opening: Promise<AgentRuntime | null> | null = null
 let scope: string | null = null
 let unsubscribeView: (() => void) | null = null
 let unsubscribeSaved: (() => void) | null = null
+let unsubscribeHost: (() => void) | null = null
 let disposed = false
 
 const listeners = new Set<RuntimeListener>()
@@ -64,6 +65,12 @@ async function create(): Promise<AgentRuntime | null> {
     })
   }) ?? null
   view = next.view()
+  // 工作区切换时重新把锁与运行态推给新的当前工作区（锁是项目级事实）。
+  unsubscribeHost = host.subscribe(() => {
+    if (!view) return
+    getProjectHost()?.setReadOnlyPaths?.(view.lockedPaths)
+    getProjectHost()?.setRunActive?.(view.runState === 'running')
+  })
   getProjectHost()?.setReadOnlyPaths?.(view.lockedPaths)
   getProjectHost()?.setRunActive?.(view.runState === 'running')
   emit()
@@ -110,6 +117,8 @@ export async function closeAgentRuntime(): Promise<void> {
   unsubscribeView = null
   unsubscribeSaved?.()
   unsubscribeSaved = null
+  unsubscribeHost?.()
+  unsubscribeHost = null
   getProjectHost()?.setReadOnlyPaths?.([])
   getProjectHost()?.setRunActive?.(false)
   emit()

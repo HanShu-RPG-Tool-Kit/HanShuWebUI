@@ -16,7 +16,7 @@ export const agentPlugin: Plugin = {
       id: 'agent',
       title: 'Agent',
       component: AgentPanelHost,
-      workspaces: ['stageplay'],
+      workspaces: ['stageplay', 'gameplay', 'audiovisual'],
       defaultOpen: false,
       placement: 'left',
       defaultSize: 360,

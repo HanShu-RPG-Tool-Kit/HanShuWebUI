@@ -33,6 +33,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ComponentType,
   type Ref,
 } from "react";
 import { createPortal } from "react-dom";
@@ -70,7 +71,7 @@ import { ProgressGraph } from "./gameplay/ProgressGraph";
 import { FlowDocumentProperties } from "./gameplay/FlowDocumentProperties";
 import { FlowExplorer } from "./gameplay/FlowExplorer";
 import { PanelDock, resetPanelDock, type DockPanelSpec } from "../ui/PanelDock";
-import { confirmDialog } from "../ui/dialogs";
+import { alertDialog, confirmDialog } from "../ui/dialogs";
 import { EditorDock, resetEditorDock } from "../ui/EditorDock";
 import {
   closeInGroup,
@@ -228,6 +229,13 @@ import {
 } from "../project/projectSession";
 import { setBoundProject } from "../project/bindingBus";
 import { saveProjectToDirectory } from "../project/projectFs";
+import { createProjectFileBridge } from "../project/projectFileBridge";
+import {
+  registerWorkspaceFileBridge,
+  type WorkspaceFileBridge,
+} from "../project/projectHost";
+import { activateBuiltinPlugins, pluginLoader } from "../app/pluginLoader";
+import type { PanelContribution, PanelHostProps } from "../plugin-sdk";
 import { deleteSourceAssets } from "../i18n/langAssets";
 import { randomId } from "../project/crypto";
 import { FilePresenceBar } from "../project/FilePresenceBar";
@@ -250,6 +258,23 @@ import "./GameplayWorkspace.css";
 
 const GAMEPLAY_DOCK_KEY = "hanshu.panelDock.gameplay";
 const GAMEPLAY_EDITOR_DOCK_KEY = "hanshu.gameplayEditorDock.v1";
+const AGENT_OPEN_KEY = "hanshu.agentOpen.gameplay";
+
+function loadAgentOpen(): boolean {
+  try {
+    return localStorage.getItem(AGENT_OPEN_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function saveAgentOpen(open: boolean) {
+  try {
+    localStorage.setItem(AGENT_OPEN_KEY, String(open));
+  } catch {
+    /* 无痕模式只保留内存 */
+  }
+}
 
 export type GameplayWorkspaceHandle = {
   handleMenuAction: (item: string) => void;
@@ -270,6 +295,13 @@ export function GameplayWorkspace({
   const editorFontSize = useEditorFontSize();
   const [ui, setUi] = useState(loadProgressUiState);
   const [locale, setLocale] = useState(loadLocale);
+  const localeRef = useRef(locale);
+  localeRef.current = locale;
+  const [agentOpen, setAgentOpen] = useState(loadAgentOpen);
+  const [agentRunning, setAgentRunning] = useState(false);
+  const [agentLockedPaths, setAgentLockedPaths] = useState<readonly string[]>([]);
+  const [pluginPanels, setPluginPanels] = useState<PanelContribution[]>([]);
+  const projectHostBridgeRef = useRef<WorkspaceFileBridge | null>(null);
   const [localeTick, setLocaleTick] = useState(0);
   const textMapRef = useRef<TextMap | null>(null);
   const textMapClientRef = useRef(client);
@@ -638,6 +670,8 @@ export function GameplayWorkspace({
   };
   const [selection, setSelection] = useState<FlowSelection>({ kind: "flow" });
   const [busy, setBusy] = useState(false);
+  const busyRef = useRef(busy);
+  busyRef.current = busy;
   const [showIssues, setShowIssues] = useState(false);
   const [cycleAlert, setCycleAlert] = useState<string | null>(null);
   const [propertiesKey, setPropertiesKey] = useState<string | null>(null);
@@ -736,6 +770,44 @@ export function GameplayWorkspace({
     presenceSource && !presenceSource.detached
       ? sourcePathOf(presenceSource)
       : null;
+
+  const activeAgentPathRef = useRef<string | null>(null);
+  activeAgentPathRef.current = doc ? documentSourcePath(doc) : null;
+  const agentScope =
+    session.binding?.manifest.id ?? session.workspace.packages[0]?.id ?? "local";
+  /**
+   * 平台文件通道：把当前工程的文件树/草稿/保存快照适配成 WorkspaceFileBridge。
+   * 依赖都经 ref 读取，bridge 只创建一次，订阅不会因重渲染丢失。
+   */
+  const gameplayFileBridge = useMemo(
+    () =>
+      createProjectFileBridge({
+        workspaceId: "gameplay",
+        getLocale: () => localeRef.current,
+        isSaveBusy: () => busyRef.current,
+        getActivePath: () => activeAgentPathRef.current,
+        setReadOnlyPaths: (paths) => setAgentLockedPaths(paths),
+        setRunActive: (active) => setAgentRunning(active),
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+  projectHostBridgeRef.current = gameplayFileBridge;
+  useEffect(
+    () => registerWorkspaceFileBridge(gameplayFileBridge, agentScope),
+    [gameplayFileBridge, agentScope],
+  );
+
+  // 插件面板：工作区只从 loader 取贡献点，面板自己管理运行时（项目级单例）。
+  useEffect(() => {
+    const update = () => setPluginPanels(pluginLoader.panelsFor("gameplay"));
+    update();
+    const unsubscribe = pluginLoader.subscribe(update);
+    void activateBuiltinPlugins().then(update).catch((error) => {
+      console.warn("[hanshu] 插件激活失败", error);
+    });
+    return unsubscribe;
+  }, []);
   const navigationDoc = doc ? isNavigationDocument(doc) : false;
   const levelDoc = doc ? isLevelDocument(doc) : false;
   const itemTableDoc = doc ? isLibraryTableKey(doc.key) : false;
@@ -2025,6 +2097,12 @@ export function GameplayWorkspace({
     });
   }
   async function saveDraft() {
+    if (agentRunning) {
+      void alertDialog(
+        "Agent 正在运行，暂时不能保存。等这一轮结束（或点停止）再保存。",
+      );
+      return;
+    }
     if (locked || busy) return;
     // 先让当前输入失焦，把 defaultValue/草稿类字段刷进文档，再落盘（否则 Ctrl+S 会存旧值）。
     const focused = document.activeElement;
@@ -2066,6 +2144,8 @@ export function GameplayWorkspace({
       failedSaveRef.current = null;
       setStorageError("");
       setNotice("");
+      // 已提交到服务端：插件侧草稿视为已保存（清掉本地镜像与「有未保存改动」标记）。
+      projectHostBridgeRef.current?.notifySaved();
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       const failed = client.transactions
@@ -2101,6 +2181,14 @@ export function GameplayWorkspace({
   }
   useImperativeHandle(workspaceRef, () => ({
     handleMenuAction(item) {
+      if (item === "agent-panel") {
+        setAgentOpen((previous) => {
+          const next = !previous;
+          saveAgentOpen(next);
+          return next;
+        });
+        return;
+      }
       if (item === "editor-layout") {
         void confirmDialog({
           title: "编辑器布局",
@@ -2311,11 +2399,13 @@ export function GameplayWorkspace({
     );
     // 同一文档可同时开在两组，画布交互只交给焦点组
     const graphLive = paneDoc.key === focusedKey;
+    const paneAgentLocked = agentLockedPaths.includes(documentSourcePath(paneDoc));
     const disabledPane =
       Boolean(paneDoc.detached) ||
       locked ||
       busy ||
       readOnly ||
+      paneAgentLocked ||
       (paneProgress && !graphLive);
 
     if (paneScriptLoad) {
@@ -2999,6 +3089,39 @@ export function GameplayWorkspace({
         />
       ),
     },
+    ...pluginPanels.map((panel): DockPanelSpec => {
+      const Panel = panel.component as ComponentType<
+        PanelHostProps & {
+          contextLabel?: string
+          onRunningChange?: (running: boolean) => void
+        }
+      >
+      const isAgent = panel.id === 'agent'
+      return {
+        id: panel.id,
+        title: panel.title,
+        visible: isAgent ? agentOpen : (panel.defaultOpen ?? true),
+        defaultPlacement: panel.placement ?? 'left',
+        defaultSize: panel.defaultSize ?? 360,
+        minSize: panel.minSize ?? 220,
+        maxSize: panel.maxSize,
+        render: (dock) => (
+          <Panel
+            open={isAgent ? agentOpen : true}
+            onClose={() => {
+              if (isAgent) {
+                setAgentOpen(false)
+                saveAgentOpen(false)
+              }
+            }}
+            contextLabel={doc?.name ?? ''}
+            placement={dock.placement}
+            onTitlePointerDown={dock.onTitlePointerDown}
+            onRedock={dock.onRedock}
+          />
+        ),
+      }
+    }),
   ];
 
   const editorPages = [

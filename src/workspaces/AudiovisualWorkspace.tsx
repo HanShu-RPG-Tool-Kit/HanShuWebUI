@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ComponentType,
   type Ref,
 } from 'react'
 import { StatusBarSlots } from '../chrome'
@@ -28,12 +29,20 @@ import { emptyOrganization } from '../project/explorerOrganization'
 import { FilePresenceBar } from '../project/FilePresenceBar'
 import { setBoundProject } from '../project/bindingBus'
 import { saveProjectToDirectory } from '../project/projectFs'
+import { createProjectFileBridge } from '../project/projectFileBridge'
+import {
+  registerWorkspaceFileBridge,
+  type WorkspaceFileBridge,
+} from '../project/projectHost'
+import { activateBuiltinPlugins, pluginLoader } from '../app/pluginLoader'
+import type { PanelContribution, PanelHostProps } from '../plugin-sdk'
+import { loadLocale } from '../storage'
 import {
   getProjectSession,
   setProjectSession,
   useProjectSession,
 } from '../project/projectSession'
-import { confirmDialog } from '../ui/dialogs'
+import { alertDialog, confirmDialog } from '../ui/dialogs'
 import { EditorDock, resetEditorDock } from '../ui/EditorDock'
 import { PanelDock, resetPanelDock, type DockPanelSpec } from '../ui/PanelDock'
 import {
@@ -53,6 +62,23 @@ const DOCK_KEY = 'hanshu.audiovisualDock.v1'
 const EDITOR_DOCK_KEY = 'hanshu.audiovisualEditorDock.v1'
 const UI_KEY = 'hanshu.audiovisualUi.v1'
 const BOSSBAR_EXT = '.bossbar'
+const AGENT_OPEN_KEY = 'hanshu.agentOpen.audiovisual'
+
+function loadAgentOpen(): boolean {
+  try {
+    return localStorage.getItem(AGENT_OPEN_KEY) === 'true'
+  } catch {
+    return false
+  }
+}
+
+function saveAgentOpen(open: boolean) {
+  try {
+    localStorage.setItem(AGENT_OPEN_KEY, String(open))
+  } catch {
+    /* 无痕模式只保留内存 */
+  }
+}
 
 type UiState = {
   openKeys: string[]
@@ -124,6 +150,15 @@ export function AudiovisualWorkspace({
   const viewerOnly = client?.snapshot.role === 'viewer'
   const [ui, setUi] = useState(loadUi)
   const [busy, setBusy] = useState(false)
+  const busyRef = useRef(busy)
+  busyRef.current = busy
+  const [agentOpen, setAgentOpen] = useState(loadAgentOpen)
+  const [agentRunning, setAgentRunning] = useState(false)
+  const [agentLockedPaths, setAgentLockedPaths] = useState<readonly string[]>([])
+  const [pluginPanels, setPluginPanels] = useState<PanelContribution[]>([])
+  const localeRef = useRef(loadLocale())
+  const activeAgentPathRef = useRef<string | null>(null)
+  const projectHostBridgeRef = useRef<WorkspaceFileBridge | null>(null)
   const structuralPendingRef = useRef(false)
   const saveAttemptRef = useRef(0)
   const tabsHydratedRef = useRef(false)
@@ -382,6 +417,10 @@ export function AudiovisualWorkspace({
   )
 
   const saveDraft = useCallback(async () => {
+    if (agentRunning) {
+      void alertDialog('Agent 正在运行，暂时不能保存。等这一轮结束（或点停止）再保存。')
+      return
+    }
     const live = getProjectSession()
     if (!live.binding) {
       notify('请先打开工程', { kind: 'error' })
@@ -396,6 +435,7 @@ export function AudiovisualWorkspace({
       if (getProjectSession().binding?.handle.client !== saveClient) return
       setProjectSession({ binding: saved })
       setBoundProject(saved)
+      projectHostBridgeRef.current?.notifySaved()
       notify('已保存到工程', { kind: 'success' })
     } catch (error) {
       notify('保存失败', {
@@ -405,12 +445,20 @@ export function AudiovisualWorkspace({
     } finally {
       if (attempt === saveAttemptRef.current) setBusy(false)
     }
-  }, [])
+  }, [agentRunning])
 
   useImperativeHandle(
     workspaceRef,
     () => ({
       handleMenuAction(item) {
+        if (item === 'agent-panel') {
+          setAgentOpen((previous) => {
+            const next = !previous
+            saveAgentOpen(next)
+            return next
+          })
+          return
+        }
         if (item === 'save') {
           void saveDraft()
           return
@@ -449,6 +497,40 @@ export function AudiovisualWorkspace({
   const presencePath =
     active && client && activeFile && !activeFile.detached ? sourcePathOf(activeFile) : null
 
+  activeAgentPathRef.current =
+    activeFile && !activeFile.detached ? sourcePathOf(activeFile) : null
+  const agentScope = session.binding?.manifest.id ?? project?.id ?? 'local'
+  /** 平台文件通道：视听工作区只需向 Agent 暴露工程文本文件。 */
+  const avFileBridge = useMemo(
+    () =>
+      createProjectFileBridge({
+        workspaceId: 'audiovisual',
+        getLocale: () => localeRef.current,
+        isSaveBusy: () => busyRef.current,
+        getActivePath: () => activeAgentPathRef.current,
+        setReadOnlyPaths: (paths) => setAgentLockedPaths(paths),
+        setRunActive: (active) => setAgentRunning(active),
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  )
+  projectHostBridgeRef.current = avFileBridge
+  useEffect(
+    () => registerWorkspaceFileBridge(avFileBridge, agentScope),
+    [avFileBridge, agentScope],
+  )
+
+  // 插件面板：工作区只从 loader 取贡献点，面板自己管理运行时（项目级单例）。
+  useEffect(() => {
+    const update = () => setPluginPanels(pluginLoader.panelsFor('audiovisual'))
+    update()
+    const unsubscribe = pluginLoader.subscribe(update)
+    void activateBuiltinPlugins().then(update).catch((error) => {
+      console.warn('[hanshu] 插件激活失败', error)
+    })
+    return unsubscribe
+  }, [])
+
   const dockPanels: DockPanelSpec[] = [
     {
       id: 'explorer',
@@ -480,6 +562,39 @@ export function AudiovisualWorkspace({
         />
       ),
     },
+    ...pluginPanels.map((panel): DockPanelSpec => {
+      const Panel = panel.component as ComponentType<
+        PanelHostProps & {
+          contextLabel?: string
+          onRunningChange?: (running: boolean) => void
+        }
+      >
+      const isAgent = panel.id === 'agent'
+      return {
+        id: panel.id,
+        title: panel.title,
+        visible: isAgent ? agentOpen : (panel.defaultOpen ?? true),
+        defaultPlacement: panel.placement ?? 'left',
+        defaultSize: panel.defaultSize ?? 360,
+        minSize: panel.minSize ?? 220,
+        maxSize: panel.maxSize,
+        render: (dock) => (
+          <Panel
+            open={isAgent ? agentOpen : true}
+            onClose={() => {
+              if (isAgent) {
+                setAgentOpen(false)
+                saveAgentOpen(false)
+              }
+            }}
+            contextLabel={activeFile?.name ?? '视听效果'}
+            placement={dock.placement}
+            onTitlePointerDown={dock.onTitlePointerDown}
+            onRedock={dock.onRedock}
+          />
+        ),
+      }
+    }),
   ]
 
   const editorPages = ui.openKeys.flatMap((id) => {
@@ -531,6 +646,7 @@ export function AudiovisualWorkspace({
               renderPage={(id) => {
                 const file = fileById.get(id)
                 if (!file) return null
+                const agentLocked = agentLockedPaths.includes(sourcePathOf(file))
                 return (
                   <div
                     className="av-editor-pane"
@@ -549,11 +665,11 @@ export function AudiovisualWorkspace({
                           fileId={file.id}
                           fileName={file.name}
                           content={file.content}
-                          readOnly={viewerOnly || Boolean(file.detached)}
+                          readOnly={viewerOnly || Boolean(file.detached) || agentLocked}
                           projectId={project?.id ?? 'unbound'}
                           active={active && ui.activeKey === file.id}
                           onChange={(content) => {
-                            if (!viewerOnly && !file.detached) changeSource(file.id, content)
+                            if (!viewerOnly && !file.detached && !agentLocked) changeSource(file.id, content)
                           }}
                         />
                       </div>
