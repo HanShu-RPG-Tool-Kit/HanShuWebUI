@@ -18,6 +18,7 @@ export {
   registerWorkspaceFileBridge,
   notifyProjectFiles,
   setProjectHostWorkspace,
+  subscribeProjectHost,
 } from '../project/projectHost'
 export { createProjectFileBridge } from '../project/projectFileBridge'
 export type { ProjectFileBridgeDeps } from '../project/projectFileBridge'

@@ -1039,6 +1039,61 @@ assert.ok(
   '首帧显示读取中（SSR 不触发读取）',
 )
 
+/* ── 启动失败/未绑定工程：给出可操作提示而不是永远“正在启动…” ── */
+function withStoredApiKey<T>(run: () => T): T {
+  const holder = globalThis as { localStorage?: Storage }
+  const previous = holder.localStorage
+  const values = new Map<string, string>([['hanshu.agent.apiKey', 'sk-test']])
+  holder.localStorage = {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      values.set(key, value)
+    },
+    removeItem: (key: string) => {
+      values.delete(key)
+    },
+    clear: () => values.clear(),
+    key: () => null,
+    get length() {
+      return values.size
+    },
+  } as unknown as Storage
+  try {
+    return run()
+  } finally {
+    if (previous) holder.localStorage = previous
+    else delete holder.localStorage
+  }
+}
+
+const startingHtml = withStoredApiKey(() =>
+  renderToStaticMarkup(
+    createElement(AgentPanel, {
+      open: true,
+      runtime: null,
+      onClose: () => {},
+      saveBlockedByRun: false,
+    }),
+  ),
+)
+assert.ok(startingHtml.includes('正在启动…'), '没有运行时且无错误时显示启动中')
+const startupErrorHtml = withStoredApiKey(() =>
+  renderToStaticMarkup(
+    createElement(AgentPanel, {
+      open: true,
+      runtime: null,
+      onClose: () => {},
+      saveBlockedByRun: false,
+      startupError: '请先在工程目录中打开或新建工程，再使用 Agent。',
+      onRetryStart: () => undefined,
+    }),
+  ),
+)
+assert.ok(startupErrorHtml.includes('Agent 启动失败'), '启动失败时标题不再显示“正在启动”')
+assert.ok(startupErrorHtml.includes('请先在工程目录中打开或新建工程'), '展示可操作的失败原因')
+assert.ok(startupErrorHtml.includes('>重试</button>'), '失败态提供重试按钮')
+assert.ok(!startupErrorHtml.includes('正在启动…'), '失败态不保留无限加载文案')
+
 console.log(
   '通过：Agent 面板视图派生（行 id/流式/工具状态、失败记录与回滚摘要、占用阈值、Key 掩码、时间与文案）',
 )

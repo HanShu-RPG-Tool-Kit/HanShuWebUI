@@ -13,7 +13,7 @@
 |---|---|---|
 | 插件装配 | `src/plugins/agent/index.ts`、`src/app/pluginLoader.ts` | 插件定义与唯一装配点；Agent 面板作为插件贡献点注册，主体不直接 import 插件 UI |
 | UI | `src/plugins/agent/ui/AgentPanel.tsx`、`src/plugins/agent/ui/` | 只渲染 `AgentRuntimeView`，不持有对话状态；样式独立在 `agent.css` |
-| 面板外壳 | `src/plugins/agent/ui/AgentPanelHost.tsx`、`src/plugins/agent/runtimeManager.ts` | 项目 + 窗口级运行时单例；面板挂载时确保运行时、订阅视图、上报 Run 状态；保存后由插件归档 |
+| 面板外壳 | `src/plugins/agent/ui/AgentPanelHost.tsx`、`src/plugins/agent/runtimeManager.ts` | 项目 + 窗口级运行时单例；运行时跟随「工程绑定」创建/重建，面板挂载时确保可用、订阅视图、上报 Run 状态并处理启动失败重试；保存后由插件归档 |
 | 适配（唯一 import PI 的层） | `src/plugins/agent/core/pi/` | `facade` 装配 Harness / 活跃段 / 归档段库；`models` 注入本机密钥；`tools` 把工具包成 `defineTool`；`arbiter` 接锁与撤销日志；`view` 把 PI 视图映射成面板视图 |
 | 宿主实现 | `src/plugins/agent/host/agentHost.ts` | 用平台 `ProjectHost` + `src/platform` 纯领域库实现全部 AgentHost 方法（读写草稿、语言资产、校验、导出预检） |
 | 平台桥 | `src/project/projectHost.ts`、`src/workspaces/stageplay/fileBridge.ts`、`src/project/projectFileBridge.ts` | 每个工作区注册自己的 `WorkspaceFileBridge`；`getProjectHost()` 按当前激活工作区汇总共享的工程读写能力 |
@@ -28,6 +28,13 @@
 **插件边界**：工作区只通过 `pluginLoader` 取面板贡献点并渲染，不直接 import `src/plugins/agent/**`；插件可 import `src/platform` 与平台领域库。Agent 的运行状态（锁、Run 中）由 `runtimeManager` 通过 `ProjectHost.setReadOnlyPaths` / `setRunActive` 推回工作区；保存由工作区完成，插件在 `onSaved` 后归档封段（保存=放弃回滚）。
 
 **多工作区**：剧本、游戏性、视听工作区会同时挂载并各自注册 `WorkspaceFileBridge`：剧本工作区走模型文档（编辑器缓冲 + `.lang` staged 草稿），其余工作区走通用文本文件通道（`src/project/projectFileBridge.ts`）。Agent 是**项目 + 窗口级**：在任意工作区打开面板，看到的都是同一段对话、同一份锁与同一份归档；插件通过「当前激活工作区」的 bridge 读写，切换工作区后锁与运行态会重新推给新的当前工作区。游戏性/视听目前只提供文件级读写（不解析其领域模型），保存仍是各工作区自己的保存动作。
+
+**运行时生命周期（跟随工程，不跟随面板/插件激活）**：`src/plugins/agent/runtimeManager.ts` 通过平台 `subscribeProjectHost()` 观察「文件通道注册 / 激活工作区切换 / 工程会话变化」，因此：
+
+- 应用刚启动、只加载了本机缓存工作区（未绑定工程目录）时**不创建运行时**；打开工程后自动创建；
+- 关闭工程 → 运行时销毁；切换工程 / 重新绑定 → 以新 scope 重建（不会先建一个 `local` 再关掉后无人重建）；
+- 面板开关、工作区切换都不重建运行时；运行中工程被关闭/切换时旧运行时被安全关闭；
+- 创建失败（数据库、IndexedDB 等异常）会被记录并在面板显示「Agent 启动失败：…」+「重试」；未绑定工程时提示「请先在工程目录中打开或新建工程」。面板常驻挂载，所以打开面板本身不能作为唯一的重试入口。
 
 ## 存储
 

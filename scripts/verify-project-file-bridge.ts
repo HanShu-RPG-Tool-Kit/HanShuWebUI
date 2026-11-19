@@ -26,6 +26,7 @@ import {
   projectScopeOf,
   registerWorkspaceFileBridge,
   setProjectHostWorkspace,
+  subscribeProjectHost,
   type WorkspaceFileBridge,
 } from '../src/project/projectHost'
 import { setProjectSession } from '../src/project/projectSession'
@@ -595,6 +596,31 @@ await test('deps 转发：语言标签 / 当前文档 / 保存忙碌 / 只读与
   } finally {
     offFlush()
     setProjectClient(null)
+  }
+})
+
+/* ───────────────────────── 宿主变化订阅 ───────────────────────── */
+
+await test('subscribeProjectHost：首次订阅立即回调；注册/激活切换/注销触发，文件内容变化不触发', async () => {
+  cleanupHost()
+  const events: string[] = []
+  const off = subscribeProjectHost(() => events.push('host'))
+  assert.equal(events.length, 1, '订阅时立即回调一次，用于启动早期同步运行时')
+  try {
+    const gameplay = makeBridge('gameplay')
+    const offBridge = registerWorkspaceFileBridge(gameplay, 'scope-a')
+    assert.equal(events.length, 2, '工作区注册 bridge = 宿主可用')
+    setProjectHostWorkspace('gameplay')
+    assert.equal(events.length, 3, '切换激活工作区 = 宿主变化')
+    notifyProjectFiles()
+    assert.equal(events.length, 3, '文件内容变化不应该触发宿主重建')
+    setProjectHostWorkspace(null)
+    assert.equal(events.length, 4)
+    offBridge()
+    assert.equal(events.length, 5, '注销 bridge 后宿主失效')
+  } finally {
+    off()
+    cleanupHost()
   }
 })
 

@@ -105,6 +105,10 @@ export type AgentPanelProps = {
    * 运行时是由工作区拿着配置构造的，面板改完 localStorage 必须让工作区重建才能生效。
    */
   onConfigChanged?: (config: { apiKey: string; baseUrl: string }) => void
+  /** 启动失败/被阻塞的原因；非空且 runtime 为空时显示错误与重试 */
+  startupError?: string | null
+  /** 点击「重试」重新尝试创建运行时 */
+  onRetryStart?: () => void
 }
 
 const PLACEMENT_HINT: Record<NonNullable<AgentPanelProps['placement']>, string> = {
@@ -458,6 +462,8 @@ export function AgentPanel({
   onTitlePointerDown,
   onRedock,
   onConfigChanged,
+  startupError,
+  onRetryStart,
 }: AgentPanelProps) {
   const [view, setView] = useState<AgentRuntimeView | null>(() => runtime?.view() ?? null)
   const [segments, setSegments] = useState<SegmentInfo[]>([])
@@ -1221,9 +1227,18 @@ export function AgentPanel({
 
   const emptyState = (
     <div className="agent-empty">
-      <div className="agent-empty-title">{runtime ? '有什么可以帮你' : '正在启动…'}</div>
+      <div className="agent-empty-title">
+        {runtime ? '有什么可以帮你' : startupError ? 'Agent 启动失败' : '正在启动…'}
+      </div>
       {runtime ? (
         <p>对话只在本机。运行期间不能保存工程，被修改的文件会暂时只读。</p>
+      ) : startupError ? (
+        <>
+          <p>{startupError}</p>
+          <button type="button" className="agent-empty-action" onClick={onRetryStart}>
+            重试
+          </button>
+        </>
       ) : (
         <p>若长时间没有反应，关闭面板后重新打开。</p>
       )}

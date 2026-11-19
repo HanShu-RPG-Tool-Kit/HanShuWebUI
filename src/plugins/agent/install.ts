@@ -6,6 +6,7 @@ import { activateBuiltinPlugins, registerBuiltinPlugin } from '../../app/pluginL
 import { getProjectHost } from '../../project/projectHost'
 import { subscribeProjectSession } from '../../project/projectSession'
 import { agentPlugin } from './index'
+import { ensureAgentRuntime } from './runtimeManager'
 
 registerBuiltinPlugin(() => agentPlugin)
 
@@ -13,6 +14,10 @@ function activateWhenReady(): void {
   if (!getProjectHost()) return
   void activateBuiltinPlugins().catch((error) => {
     console.warn('[hanshu] Agent 插件激活失败', error)
+  })
+  // 插件只需要激活一次；但运行时要跟随工程绑定重建，所以这里每次就绪都补一次。
+  void ensureAgentRuntime().catch((error) => {
+    console.warn('[hanshu] Agent 运行时启动失败', error)
   })
 }
 

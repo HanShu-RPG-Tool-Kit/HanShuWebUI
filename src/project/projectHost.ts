@@ -63,6 +63,7 @@ type RegisteredBridge = { bridge: WorkspaceFileBridge; scope: string }
 
 const bridges = new Map<string, RegisteredBridge>()
 const listeners = new Set<() => void>()
+const hostListeners = new Set<() => void>()
 const savedListeners = new Set<(paths: string[]) => void>()
 let activeWorkspaceId: string | null = null
 let host: ProjectHost | null = null
@@ -81,6 +82,23 @@ export function notifyProjectSaved(paths: string[]): void {
 
 function emit() {
   for (const listener of listeners) listener()
+}
+
+function emitHost() {
+  for (const listener of hostListeners) listener()
+}
+
+/**
+ * 订阅「工程文件通道 / 当前工作区 / 工程会话」的变化。
+ *
+ * 插件用它决定何时创建、重建运行时：工程没绑定前不启动，工程切换后必须重建。
+ * 与 `getProjectHost()?.subscribe` 不同，这里只在宿主身份变化时触发，不会因文件
+ * 内容或草稿变化而频繁回调。
+ */
+export function subscribeProjectHost(listener: () => void): () => void {
+  hostListeners.add(listener)
+  listener()
+  return () => hostListeners.delete(listener)
 }
 
 function currentBridge(): RegisteredBridge | null {
@@ -102,12 +120,14 @@ export function registerWorkspaceFileBridge(
   bridges.set(next.workspaceId, { bridge: next, scope })
   host = null
   emit()
+  emitHost()
   return () => {
     const current = bridges.get(next.workspaceId)
     if (current?.bridge !== next) return
     bridges.delete(next.workspaceId)
     host = null
     emit()
+    emitHost()
   }
 }
 
@@ -117,6 +137,7 @@ export function setProjectHostWorkspace(workspaceId: string | null): void {
   activeWorkspaceId = workspaceId
   host = null
   emit()
+  emitHost()
 }
 
 export function getWorkspaceFileBridge(): WorkspaceFileBridge | null {
@@ -125,14 +146,12 @@ export function getWorkspaceFileBridge(): WorkspaceFileBridge | null {
 
 /** 当前工程的作用域标识（agent 数据库 / 会话按它隔离） */
 export function projectScopeOf(): string {
-  const current = currentBridge()
-  if (current?.scope) return current.scope
   const session = getProjectSession()
-  return (
-    session.binding?.manifest.id ??
-    session.workspace.packages[0]?.id ??
-    'local'
-  )
+  const sessionScope =
+    session.binding?.manifest.id ?? session.workspace.packages[0]?.id
+  if (sessionScope) return sessionScope
+  const current = currentBridge()
+  return current?.scope ?? 'local'
 }
 
 /** 通知插件：工程文件或草稿发生了变化（工作区在内容变化后调用） */
@@ -144,9 +163,9 @@ export function getProjectHost(): ProjectHost | null {
   const current = currentBridge()
   if (!current) return null
   if (host) return host
-  const { bridge, scope } = current
+  const { bridge } = current
   host = {
-    scope: scope || projectScopeOf(),
+    scope: projectScopeOf(),
     listFiles: () => bridge.listFiles(),
     readCurrentText: (path) => bridge.readCurrentText(path),
     readSavedText: (path) => bridge.readSavedText(path),
@@ -182,4 +201,5 @@ export function getProjectHost(): ProjectHost | null {
 subscribeProjectSession(() => {
   host = null
   emit()
+  emitHost()
 })

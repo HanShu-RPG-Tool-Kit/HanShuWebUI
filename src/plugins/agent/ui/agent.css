@@ -852,6 +852,21 @@
   margin: 0 0 8px;
 }
 
+.agent-empty-action {
+  font: inherit;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--border-soft);
+  border-radius: 4px;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+
+.agent-empty-action:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 /* 用户气泡靠右；最左侧留一个回滚图标位，assistant 保持整宽以便 Markdown 排版 */
 .agent-msg.user {
   display: flex;
