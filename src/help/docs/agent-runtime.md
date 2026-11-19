@@ -16,7 +16,7 @@
 | 面板外壳 | `src/plugins/agent/ui/AgentPanelHost.tsx`、`src/plugins/agent/runtimeManager.ts` | 项目 + 窗口级运行时单例；面板挂载时确保运行时、订阅视图、上报 Run 状态；保存后由插件归档 |
 | 适配（唯一 import PI 的层） | `src/plugins/agent/core/pi/` | `facade` 装配 Harness / 活跃段 / 归档段库；`models` 注入本机密钥；`tools` 把工具包成 `defineTool`；`arbiter` 接锁与撤销日志；`view` 把 PI 视图映射成面板视图 |
 | 宿主实现 | `src/plugins/agent/host/agentHost.ts` | 用平台 `ProjectHost` + `src/platform` 纯领域库实现全部 AgentHost 方法（读写草稿、语言资产、校验、导出预检） |
-| 平台桥 | `src/project/projectHost.ts`、`src/workspaces/stageplay/fileBridge.ts` | 工作区注册 `WorkspaceFileBridge`；`getProjectHost()` 汇总所有工作区共享的工程读写能力 |
+| 平台桥 | `src/project/projectHost.ts`、`src/workspaces/stageplay/fileBridge.ts`、`src/project/projectFileBridge.ts` | 每个工作区注册自己的 `WorkspaceFileBridge`；`getProjectHost()` 按当前激活工作区汇总共享的工程读写能力 |
 | 运行时支撑 | `src/plugins/agent/core/runtime/` | `version`（内容哈希）· `lockTable`（锁）· `runUndo`（Run 撤销日志） |
 | 本地存储 | `src/plugins/agent/core/store/` | `dbNames`（库命名）· `windowId`（窗口认领）· `snapshotStore`（归档段库）· `segmentPurge`（删除活跃段） |
 | 领域工具 | `src/plugins/agent/core/tools.ts` | 19 个工具按 read / lock / write 三类语义派发 |
@@ -26,6 +26,8 @@
 **不变量：`@earendil-works/*` 只允许出现在 `src/plugins/agent/core/pi/`。** UI、工作区、工具层都不直接依赖 PI。
 
 **插件边界**：工作区只通过 `pluginLoader` 取面板贡献点并渲染，不直接 import `src/plugins/agent/**`；插件可 import `src/platform` 与平台领域库。Agent 的运行状态（锁、Run 中）由 `runtimeManager` 通过 `ProjectHost.setReadOnlyPaths` / `setRunActive` 推回工作区；保存由工作区完成，插件在 `onSaved` 后归档封段（保存=放弃回滚）。
+
+**多工作区**：剧本、游戏性、视听工作区会同时挂载并各自注册 `WorkspaceFileBridge`：剧本工作区走模型文档（编辑器缓冲 + `.lang` staged 草稿），其余工作区走通用文本文件通道（`src/project/projectFileBridge.ts`）。Agent 是**项目 + 窗口级**：在任意工作区打开面板，看到的都是同一段对话、同一份锁与同一份归档；插件通过「当前激活工作区」的 bridge 读写，切换工作区后锁与运行态会重新推给新的当前工作区。游戏性/视听目前只提供文件级读写（不解析其领域模型），保存仍是各工作区自己的保存动作。
 
 ## 存储
 
