@@ -23,7 +23,7 @@ import {
   forkAfterRun,
   forkCurrentSegment,
   runAfterInheritingArchive,
-} from '../src/AgentPanel'
+} from '../src/plugins/agent/ui/AgentPanel'
 import {
   STORAGE_DANGER_BYTES,
   STORAGE_WARN_BYTES,

@@ -21,7 +21,7 @@ import {
   describeManualRollbackFailure,
   executeRollbackAction,
   formatRollbackFailures,
-} from '../src/AgentPanel'
+} from '../src/plugins/agent/ui/AgentPanel'
 import type { PendingRollback, UndoConflict, UndoOutcome } from '../src/agent/contracts'
 
 const CONFLICTS: UndoConflict[] = [

@@ -14,7 +14,7 @@
 import assert from 'node:assert/strict'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { AgentPanel, SegmentSealedHint } from '../src/AgentPanel'
+import { AgentPanel, SegmentSealedHint } from '../src/plugins/agent/ui/AgentPanel'
 import { SegmentBar, normalizeSegmentTitle } from '../src/agent/view/SegmentBar'
 import { SnapshotList } from '../src/agent/view/SnapshotList'
 import { segmentOptionLabel } from '../src/agent/view/derive'

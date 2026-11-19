@@ -26,6 +26,7 @@ import {
   type CSSProperties,
   type PointerEvent as ReactPointerEvent,
 } from 'react'
+import './agent.css'
 import type {
   AgentRunResult,
   AgentRuntime,
@@ -36,8 +37,8 @@ import type {
   SnapshotInfo,
   UndoConflict,
   UndoOutcome,
-} from './agent/contracts'
-import { chooseDialog, confirmDialog } from './ui/dialogs'
+} from '../../../agent/contracts'
+import { chooseDialog, confirmDialog } from '../../../ui/dialogs'
 import {
   clearAgentApiKey,
   getAgentApiKey,
@@ -53,15 +54,15 @@ import {
   setAgentModelIds,
   setAgentThinkingLevels,
   setUsePro,
-} from './agent/config'
-import { ApiKeyForm, type ApiConfigDraft } from './agent/view/ApiKeyForm'
-import { MessageList } from './agent/view/MessageList'
-import { SegmentBar } from './agent/view/SegmentBar'
+} from '../../../agent/config'
+import { ApiKeyForm, type ApiConfigDraft } from '../../../agent/view/ApiKeyForm'
+import { MessageList } from '../../../agent/view/MessageList'
+import { SegmentBar } from '../../../agent/view/SegmentBar'
 import {
   SnapshotList,
   type OpenedArchive,
   type PersistState,
-} from './agent/view/SnapshotList'
+} from '../../../agent/view/SnapshotList'
 import {
   appendRunFailure,
   contextReference,
@@ -69,13 +70,13 @@ import {
   describeError,
   maskApiKey,
   runStateLabel,
-} from './agent/view/derive'
+} from '../../../agent/view/derive'
 import {
   normalizeSourcePath,
   parseLocaleAssetPath,
   sourceLogicalPath,
   TEXT_ASSET_EXTENSION,
-} from './i18n/localeLayout'
+} from '../../../i18n/localeLayout'
 
 export type AgentPanelProps = {
   open: boolean

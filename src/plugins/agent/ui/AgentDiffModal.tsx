@@ -3,9 +3,9 @@ import { useEffect, useState } from 'react'
 import {
   CHAR_THEME_ID,
   registerCharLanguage,
-} from './monaco/charLanguage'
-import { HANSHU_THEME_ID, registerHanshuLanguage } from './monaco/hanshuLanguage'
-import { editorLanguageForFile, isCharFile } from './workspace'
+} from '../../../monaco/charLanguage'
+import { HANSHU_THEME_ID, registerHanshuLanguage } from '../../../monaco/hanshuLanguage'
+import { editorLanguageForFile, isCharFile } from '../../../workspace'
 
 export type AgentDiffSnapshot = {
   fileName: string
