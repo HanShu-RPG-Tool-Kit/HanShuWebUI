@@ -11,14 +11,21 @@
 
 | 层 | 位置 | 职责 |
 |---|---|---|
-| UI | `src/AgentPanel.tsx`、`src/agent/view/` | 只渲染 `AgentRuntimeView`，不持有对话状态 |
-| 适配（唯一 import PI 的层） | `src/agent/pi/` | `facade` 装配 Harness / 活跃段 / 归档段库；`models` 注入本机密钥；`tools` 把工具包成 `defineTool`；`arbiter` 接锁与撤销日志；`view` 把 PI 视图映射成面板视图 |
-| 运行时支撑 | `src/agent/runtime/` | `version`（内容哈希）· `lockTable`（锁）· `runUndo`（Run 撤销日志） |
-| 本地存储 | `src/agent/store/` | `dbNames`（库命名）· `windowId`（窗口认领）· `snapshotStore`（归档段库）· `segmentPurge`（删除活跃段） |
-| 领域工具 | `src/agent/tools.ts` | 19 个工具按 read / lock / write 三类语义派发 |
-| 契约 | `src/agent/contracts.ts` | 上述各层之间唯一的类型耦合面 |
+| 插件装配 | `src/plugins/agent/index.ts`、`src/app/pluginLoader.ts` | 插件定义与唯一装配点；Agent 面板作为插件贡献点注册，主体不直接 import 插件 UI |
+| UI | `src/plugins/agent/ui/AgentPanel.tsx`、`src/plugins/agent/ui/` | 只渲染 `AgentRuntimeView`，不持有对话状态；样式独立在 `agent.css` |
+| 面板外壳 | `src/plugins/agent/ui/AgentPanelHost.tsx`、`src/plugins/agent/runtimeManager.ts` | 项目 + 窗口级运行时单例；面板挂载时确保运行时、订阅视图、上报 Run 状态；保存后由插件归档 |
+| 适配（唯一 import PI 的层） | `src/plugins/agent/core/pi/` | `facade` 装配 Harness / 活跃段 / 归档段库；`models` 注入本机密钥；`tools` 把工具包成 `defineTool`；`arbiter` 接锁与撤销日志；`view` 把 PI 视图映射成面板视图 |
+| 宿主实现 | `src/plugins/agent/host/agentHost.ts` | 用平台 `ProjectHost` + `src/platform` 纯领域库实现全部 AgentHost 方法（读写草稿、语言资产、校验、导出预检） |
+| 平台桥 | `src/project/projectHost.ts`、`src/workspaces/stageplay/fileBridge.ts` | 工作区注册 `WorkspaceFileBridge`；`getProjectHost()` 汇总所有工作区共享的工程读写能力 |
+| 运行时支撑 | `src/plugins/agent/core/runtime/` | `version`（内容哈希）· `lockTable`（锁）· `runUndo`（Run 撤销日志） |
+| 本地存储 | `src/plugins/agent/core/store/` | `dbNames`（库命名）· `windowId`（窗口认领）· `snapshotStore`（归档段库）· `segmentPurge`（删除活跃段） |
+| 领域工具 | `src/plugins/agent/core/tools.ts` | 19 个工具按 read / lock / write 三类语义派发 |
+| 契约 | `src/plugins/agent/core/contracts.ts` | 上述各层之间唯一的类型耦合面 |
+| 插件契约 | `src/plugin-sdk/` | `ProjectHost` / `UiServices` / `PanelContribution` / `Plugin` 与注册表；不得 import 工作区或 agent |
 
-**不变量：`@earendil-works/*` 只允许出现在 `src/agent/pi/`。** UI、工作区、工具层都不直接依赖 PI。
+**不变量：`@earendil-works/*` 只允许出现在 `src/plugins/agent/core/pi/`。** UI、工作区、工具层都不直接依赖 PI。
+
+**插件边界**：工作区只通过 `pluginLoader` 取面板贡献点并渲染，不直接 import `src/plugins/agent/**`；插件可 import `src/platform` 与平台领域库。Agent 的运行状态（锁、Run 中）由 `runtimeManager` 通过 `ProjectHost.setReadOnlyPaths` / `setRunActive` 推回工作区；保存由工作区完成，插件在 `onSaved` 后归档封段（保存=放弃回滚）。
 
 ## 存储
 
@@ -240,7 +247,7 @@ submit(input) → 多轮模型回合（工具调用）→ 最终答案 = 一个 
   归档段**永不自动删除**（删活跃段不会删归档；删归档段才动归档，且只按谱系级联）。
 
 > 删除会话的实现：pi-durable 1.5.0 没有「删单个会话」的 API，`IndexedDbStorage.delete()` 删的是整库。
-> 所以先关 Harness，再按 1.5.0 的库结构逐条删除会话的记录（`src/agent/store/segmentPurge.ts`）；
+> 所以先关 Harness，再按 1.5.0 的库结构逐条删除会话的记录（`src/plugins/agent/core/store/segmentPurge.ts`）；
 > 删除归档段就是「先按谱系算出要删的归档与段，再删段、再从叶子往根删归档」。
 > **升级 PI 时必须重新核对 `dist/storage/indexeddb.js` 的 STORES / INDEXES**；结构不符会 fail-closed。
 
