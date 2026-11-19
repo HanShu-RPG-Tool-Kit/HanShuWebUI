@@ -3067,6 +3067,7 @@ export function GameplayWorkspace({
         const project = session.workspace.packages[0];
         return project ? (
           <AssetManagerPanel
+            onTransfer={assetActions.transfer}
             project={project}
             activeAssetId={session.workspace.activeAssetId}
             onOpenAsset={openAssetPage}

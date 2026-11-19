@@ -39,6 +39,7 @@ export type StageplayDockHost = {
     onGeneratePlaceholderVoice: (scriptId: string) => void
   }
   assets: {
+    onTransfer: import('../assetManager/assetActions').AssetActions['transfer']
     activeAssetId: string | null
     onOpen: (assetId: string) => void
     onDelete: (assetId: string) => void
@@ -137,6 +138,7 @@ export function stageplayDockPanels(host: StageplayDockHost): DockPanelSpec[] {
       render: (dock) =>
         project ? (
           <AssetManagerPanel
+            onTransfer={host.assets.onTransfer}
             project={project}
             activeAssetId={host.assets.activeAssetId}
             onOpenAsset={host.assets.onOpen}

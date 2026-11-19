@@ -3168,6 +3168,7 @@ export const StageplayWorkspace = forwardRef<
       },
     },
     assets: {
+      onTransfer: assetActions.transfer,
       activeAssetId: workspace.activeAssetId,
       onOpen: assetActions.openAsset,
       onDelete: assetActions.deleteAsset,

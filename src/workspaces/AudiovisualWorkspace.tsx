@@ -542,6 +542,7 @@ export function AudiovisualWorkspace({
       render: (dock) =>
         project ? (
           <AssetManagerPanel
+            onTransfer={assetActions.transfer}
             project={project}
             activeAssetId={session.workspace.activeAssetId}
             onOpenAsset={openAssetPage}
