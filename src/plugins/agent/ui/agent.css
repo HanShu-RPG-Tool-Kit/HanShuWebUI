@@ -337,6 +337,18 @@
   color: var(--text);
 }
 
+/* 输入区「查看变更」：与分支/回滚同排，只读入口 */
+.agent-input-actions .agent-view-changes {
+  margin-right: 6px;
+  font-size: 12px;
+  padding: 3px 7px;
+  color: var(--text-dim);
+}
+
+.agent-input-actions .agent-view-changes:hover:not(:disabled) {
+  color: var(--text);
+}
+
 /* ── Agent 面板：视图化改造新增（段条 / 快照 / 连接配置 / 工具行 / 明示条） ──
    只改 agent- 前缀段落。颜色一律用主题变量，避免深色主题下再补一份硬编码。 */
 .agent-header-actions button:disabled {
@@ -1710,4 +1722,164 @@ body.is-panel-dragging .agent-header.is-draggable {
 
 .diff-btn-danger:hover {
   background: rgba(244, 135, 113, 0.12);
+}
+
+/* —— 查看变更（只读，不复用旧 DiffModal 的接受/拒绝入口） —— */
+.view-changes-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.view-changes-modal {
+  width: min(1200px, 96vw);
+  height: min(780px, 90vh);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.view-changes-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.view-changes-title {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.view-changes-count {
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.view-changes-close {
+  appearance: none;
+  border: 1px solid var(--border-soft);
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  padding: 4px 12px;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.view-changes-close:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.view-changes-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.view-changes-list {
+  width: 270px;
+  flex: none;
+  min-height: 0;
+  overflow: auto;
+  padding: 8px;
+  border-right: 1px solid var(--border);
+  background: #252526;
+}
+
+.view-changes-item {
+  appearance: none;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.view-changes-item:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.view-changes-item.active {
+  background: rgba(78, 201, 176, 0.12);
+  border-color: rgba(78, 201, 176, 0.5);
+}
+
+.view-changes-path {
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: Consolas, monospace;
+  font-size: 12px;
+}
+
+.view-changes-kind {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.view-changes-kind.created {
+  color: #4ec9b0;
+}
+
+.view-changes-kind.modified {
+  color: #d7ba7d;
+}
+
+.view-changes-kind.deleted {
+  color: #f48771;
+}
+
+.view-changes-diff {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.view-changes-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  color: var(--text-dim);
+  font-size: 13px;
+  text-align: center;
+}
+
+.view-changes-error {
+  color: #f48771;
+}
+
+.view-changes-footer {
+  flex-shrink: 0;
+  padding: 8px 14px;
+  border-top: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 12px;
+  line-height: 1.4;
 }

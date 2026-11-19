@@ -37,7 +37,7 @@ import type {
   SnapshotInfo,
   UndoConflict,
   UndoOutcome,
-} from '../../../agent/contracts'
+} from '../core/contracts'
 import { chooseDialog, confirmDialog } from '../../../ui/dialogs'
 import {
   clearAgentApiKey,
@@ -54,15 +54,15 @@ import {
   setAgentModelIds,
   setAgentThinkingLevels,
   setUsePro,
-} from '../../../agent/config'
-import { ApiKeyForm, type ApiConfigDraft } from '../../../agent/view/ApiKeyForm'
-import { MessageList } from '../../../agent/view/MessageList'
-import { SegmentBar } from '../../../agent/view/SegmentBar'
+} from '../core/config'
+import { ApiKeyForm, type ApiConfigDraft } from '../core/view/ApiKeyForm'
+import { MessageList } from '../core/view/MessageList'
+import { SegmentBar } from '../core/view/SegmentBar'
 import {
   SnapshotList,
   type OpenedArchive,
   type PersistState,
-} from '../../../agent/view/SnapshotList'
+} from '../core/view/SnapshotList'
 import {
   appendRunFailure,
   contextReference,
@@ -70,13 +70,22 @@ import {
   describeError,
   maskApiKey,
   runStateLabel,
-} from '../../../agent/view/derive'
+} from '../core/view/derive'
 import {
   normalizeSourcePath,
   parseLocaleAssetPath,
   sourceLogicalPath,
   TEXT_ASSET_EXTENSION,
 } from '../../../i18n/localeLayout'
+import { ViewChangesModal } from './ViewChangesModal'
+
+/** 没有 Agent 改动时点击「查看变更」的提示（导出供测试断言） */
+export const NO_AGENT_CHANGES_MESSAGE = '当前没有未保存的 Agent 改动'
+
+/** 「查看变更」前置判断：空路径返回提示文案，否则返回空串。 */
+export function viewChangesPrompt(paths: readonly string[]): string {
+  return paths.length === 0 ? NO_AGENT_CHANGES_MESSAGE : ''
+}
 
 export type AgentPanelProps = {
   open: boolean
@@ -458,6 +467,9 @@ export function AgentPanel({
   const [snapshotsLoading, setSnapshotsLoading] = useState(false)
   const [snapshotError, setSnapshotError] = useState('')
   const [snapshotOpen, setSnapshotOpen] = useState(false)
+  /** 「查看变更」只读面板：打开时冻结一份路径列表，避免运行中 changedPaths 变动导致闪动 */
+  const [viewChangesOpen, setViewChangesOpen] = useState(false)
+  const [viewChangesPaths, setViewChangesPaths] = useState<string[]>([])
   const [usageBytes, setUsageBytes] = useState<number | null>(null)
   const [persistState, setPersistState] = useState<PersistState>('idle')
   const [runFailure, setRunFailure] = useState<AgentRunResult | null>(null)
@@ -503,6 +515,23 @@ export function AgentPanel({
     }
   }, [runtime])
 
+  const openViewChanges = useCallback(() => {
+    if (!runtime) return
+    setPanelError('')
+    try {
+      const paths = runtime.changedPaths()
+      const notice = viewChangesPrompt(paths)
+      if (notice) {
+        setPanelInfo(notice)
+        return
+      }
+      setViewChangesPaths(paths)
+      setViewChangesOpen(true)
+    } catch (error: unknown) {
+      setPanelError(`读取变更失败：${describeError(error)}。`)
+    }
+  }, [runtime])
+
   const loadSnapshots = useCallback(async () => {
     if (!runtime) {
       setSnapshots([])
@@ -536,6 +565,8 @@ export function AgentPanel({
       setUsageBytes(null)
       setOpenedArchive(null)
       setRunFailure(null)
+      setViewChangesOpen(false)
+      setViewChangesPaths([])
       return
     }
     let active = true
@@ -545,6 +576,8 @@ export function AgentPanel({
     setSnapshotOpen(false)
     setOpenedArchive(null)
     setApiOpen(false)
+    setViewChangesOpen(false)
+    setViewChangesPaths([])
     setPanelError('')
     const unsubscribe = runtime.subscribe((next) => {
       if (active) setView(next)
@@ -1401,6 +1434,15 @@ export function AgentPanel({
           />
           <button
             type="button"
+            className="agent-view-changes"
+            disabled={!runtime}
+            title="只读查看当前活跃段里 Agent 改过的文件；运行中也可以查看"
+            onClick={openViewChanges}
+          >
+            查看变更
+          </button>
+          <button
+            type="button"
             className="agent-manual-rollback"
             disabled={manualRollbackBlocked}
             title={
@@ -1433,6 +1475,11 @@ export function AgentPanel({
           )}
         </div>
       </form>
+      <ViewChangesModal
+        open={viewChangesOpen}
+        paths={viewChangesPaths}
+        onClose={() => setViewChangesOpen(false)}
+      />
     </section>
   )
 }
