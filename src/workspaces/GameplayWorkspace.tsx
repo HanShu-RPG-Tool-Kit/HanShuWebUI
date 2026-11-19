@@ -1,4 +1,6 @@
-import { ExplorerIcon, sourceIconKind } from "../explorerIcons";
+import { ExplorerIcon, fileIconKind, sourceIconKind } from "../explorerIcons";
+import { AssetPreview } from "../AssetPreview";
+import { assetFileName } from "../assets/paths";
 import { ServiceError } from "../collab/protocol";
 import {
   EXPLORER_ORGANIZATION_PATH,
@@ -74,6 +76,7 @@ import { confirmDialog } from "../ui/dialogs";
 import { useViewFlags } from "../ui/viewFlags";
 import { AssetManagerPanel } from "./assetManager/AssetManagerPanel";
 import { createAssetActions } from "./assetManager/assetActions";
+import { assetPageKey, parseAssetPageKey } from "./assetManager/assetPage";
 import { gameplayViewFlags } from "./gameplay/viewFlags";
 import { EditorDock, resetEditorDock } from "../ui/EditorDock";
 import {
@@ -238,7 +241,7 @@ import { FilePresenceBar } from "../project/FilePresenceBar";
 import { notify } from "../activity";
 import { StatusBarSlots } from "../chrome";
 import { renameScriptAssets } from "../workspaceMove";
-import { getExtension, registerAsset, saveWorkspace, sourcePathOf } from "../workspace";
+import { findAsset, getExtension, registerAsset, saveWorkspace, sourcePathOf } from "../workspace";
 import { deleteAssetBlob, getAssetBlob, putAssetBlob } from "../assets/idb";
 import { TextMap, TEXT_ASSET_MIME } from "../i18n/textMap";
 import { textAssetPath } from "../i18n/localeLayout";
@@ -736,8 +739,12 @@ export function GameplayWorkspace({
           .flatMap((pkg) => pkg.scripts)
           .find((script) => progressDocumentMatchesSource(doc, script))
       : null;
-  const presencePath =
-    presenceSource && !presenceSource.detached
+  const activeAssetHit = session.workspace.activeAssetId
+    ? findAsset(session.workspace, session.workspace.activeAssetId)
+    : null;
+  const presencePath = activeAssetHit
+    ? activeAssetHit.asset.path
+    : presenceSource && !presenceSource.detached
       ? sourcePathOf(presenceSource)
       : null;
   const navigationDoc = doc ? isNavigationDocument(doc) : false;
@@ -1349,6 +1356,12 @@ export function GameplayWorkspace({
     return true;
   }
   function selectDocument(key: string, group: GroupId = focusedGroup) {
+    const live = getProjectSession();
+    if (live.workspace.activeAssetId) {
+      setProjectSession({
+        workspace: { ...live.workspace, activeAssetId: null },
+      });
+    }
     updateGroups((previous) => openInGroup(previous, group, key));
     setProgressSourceKey(null);
     setNotice("");
@@ -2941,6 +2954,34 @@ export function GameplayWorkspace({
     projectRef: { current: session.binding },
     commitWorkspace: (next) => setProjectSession({ workspace: next }),
   });
+  /** 资产页签与文档 openKeys 分开：文档模型不认 asset: 前缀。 */
+  const [openAssetIds, setOpenAssetIds] = useState<string[]>([]);
+  useEffect(() => {
+    const activeId = session.workspace.activeAssetId;
+    if (!activeId || !findAsset(session.workspace, activeId)) return;
+    setOpenAssetIds((previous) =>
+      previous.includes(activeId) ? previous : [...previous, activeId],
+    );
+  }, [session.workspace]);
+  useEffect(() => {
+    setOpenAssetIds((previous) => {
+      const next = previous.filter((id) => findAsset(session.workspace, id));
+      return next.length === previous.length ? previous : next;
+    });
+  }, [session.workspace]);
+  const openAssetPage = (assetId: string) => {
+    assetActions.openAsset(assetId);
+    setOpenAssetIds((previous) =>
+      previous.includes(assetId) ? previous : [...previous, assetId],
+    );
+  };
+  const clearActiveAsset = () => {
+    const live = getProjectSession();
+    if (!live.workspace.activeAssetId) return;
+    setProjectSession({
+      workspace: { ...live.workspace, activeAssetId: null },
+    });
+  };
 
   const dockPanels: DockPanelSpec[] = [
     {
@@ -3019,15 +3060,16 @@ export function GameplayWorkspace({
       id: "asset-manager",
       title: "资产管理器",
       visible: viewFlags.assetManager,
-      defaultPlacement: "left",
-      defaultSize: 300,
-      minSize: 220,
+      defaultPlacement: "bottom",
+      defaultSize: 260,
+      minSize: 160,
       render: (dock) => {
         const project = session.workspace.packages[0];
         return project ? (
           <AssetManagerPanel
             project={project}
-            onToggleRoot={() => assetActions.toggleAssets(project.id)}
+            activeAssetId={session.workspace.activeAssetId}
+            onOpenAsset={openAssetPage}
             onDeleteAsset={assetActions.deleteAsset}
             onNewAssetFolder={assetActions.newFolder}
             onDeleteAssetFolder={assetActions.deleteFolder}
@@ -3046,7 +3088,7 @@ export function GameplayWorkspace({
     },
   ];
 
-  const editorPages = [
+  const documentPages = [
     ...readGroup(state, 0).openKeys,
     ...(state.split?.group.openKeys ?? []),
   ]
@@ -3067,6 +3109,28 @@ export function GameplayWorkspace({
           : `${isBuiltinScriptDocumentKey(key) ? '内置 · ' : ''}${sourcePathOf({ name: item.name, srcKind: type })}`;
       return [{ id: item.key, title: item.name, tooltip, icon: <span className="editor-dock-file-icon"><ExplorerIcon kind={kind} />{isLibraryTableKey(key) && <small aria-hidden="true">▦</small>}</span> }];
     });
+  const assetPages = openAssetIds.flatMap((assetId) => {
+    const hit = findAsset(session.workspace, assetId);
+    if (!hit) return [];
+    const name = assetFileName(hit.asset.path);
+    return [
+      {
+        id: assetPageKey(assetId),
+        title: name,
+        tooltip: hit.asset.path,
+        icon: (
+          <span className="editor-dock-file-icon">
+            <ExplorerIcon kind={fileIconKind(hit.asset.path)} />
+          </span>
+        ),
+      },
+    ];
+  });
+  const editorPages = [...documentPages, ...assetPages];
+  const activeEditorId = session.workspace.activeAssetId
+    && openAssetIds.includes(session.workspace.activeAssetId)
+    ? assetPageKey(session.workspace.activeAssetId)
+    : focusedKey;
 
   return (
     <section className="gameplay-workspace" aria-label="游戏性工作区">
@@ -3089,29 +3153,88 @@ export function GameplayWorkspace({
               client={client}
               path={presencePath}
               mode="optimistic"
-              label={doc?.name}
+              label={
+                activeAssetHit
+                  ? assetFileName(activeAssetHit.asset.path)
+                  : doc?.name
+              }
             />
           )}
           {editorPages.length ? (
             <EditorDock
               storageKey={GAMEPLAY_EDITOR_DOCK_KEY}
               pages={editorPages}
-              activeId={focusedKey}
-              onActivate={(id) => selectDocument(id)}
-              onClose={(id) => closeGameplayPages([id])}
-              onCloseMany={closeGameplayPages}
+              activeId={activeEditorId}
+              onActivate={(id) => {
+                const assetId = parseAssetPageKey(id);
+                if (assetId) {
+                  openAssetPage(assetId);
+                  return;
+                }
+                clearActiveAsset();
+                selectDocument(id);
+              }}
+              onClose={(id) => {
+                const assetId = parseAssetPageKey(id);
+                if (assetId) {
+                  setOpenAssetIds((previous) => previous.filter((item) => item !== assetId));
+                  if (session.workspace.activeAssetId === assetId) clearActiveAsset();
+                  return;
+                }
+                closeGameplayPages([id]);
+              }}
+              onCloseMany={(ids, nextActiveId) => {
+                const assetIds = ids.flatMap((id) => {
+                  const assetId = parseAssetPageKey(id);
+                  return assetId ? [assetId] : [];
+                });
+                const docIds = ids.filter((id) => !parseAssetPageKey(id));
+                if (assetIds.length) {
+                  setOpenAssetIds((previous) => previous.filter((item) => !assetIds.includes(item)));
+                  if (session.workspace.activeAssetId && assetIds.includes(session.workspace.activeAssetId)) {
+                    clearActiveAsset();
+                  }
+                }
+                if (docIds.length) closeGameplayPages(docIds, nextActiveId && !parseAssetPageKey(nextActiveId) ? nextActiveId : undefined);
+                if (nextActiveId) {
+                  const nextAssetId = parseAssetPageKey(nextActiveId);
+                  if (nextAssetId) openAssetPage(nextAssetId);
+                }
+              }}
               beforeChange={canLeaveLevelEditor}
               enableTabMenu
               initialPinnedIds={[...(state.pinnedKeys ?? []), ...(state.split?.group.pinnedKeys ?? [])]}
               onPinnedChange={syncPagePins}
               renderPage={(id) => {
+                const assetId = parseAssetPageKey(id);
+                if (assetId) {
+                  const hit = findAsset(session.workspace, assetId);
+                  if (!hit) return null;
+                  return (
+                    <div
+                      className="flow-group-body asset-mode"
+                      onPointerDownCapture={() => {
+                        if (session.workspace.activeAssetId !== assetId) openAssetPage(assetId);
+                      }}
+                    >
+                      <AssetPreview
+                        packageId={hit.pkg.id}
+                        asset={hit.asset}
+                        onSaveText={(content) => assetActions.saveTextAsset(assetId, content)}
+                      />
+                    </div>
+                  );
+                }
                 const paneDoc = docByKey.get(id) ?? null;
                 if (!paneDoc) return null;
                 return (
                   <div
                     className="flow-group-body"
                     onPointerDownCapture={() => {
-                      if (paneDoc.key !== focusedKey) selectDocument(paneDoc.key);
+                      if (paneDoc.key !== focusedKey) {
+                        clearActiveAsset();
+                        selectDocument(paneDoc.key);
+                      }
                     }}
                   >
           {paneDoc.detached && (

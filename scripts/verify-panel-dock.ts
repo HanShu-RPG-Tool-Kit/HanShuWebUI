@@ -103,6 +103,12 @@ for (const file of ['../src/workspaces/StageplayWorkspace.tsx', '../src/workspac
   const source = await readFile(new URL(file, import.meta.url), 'utf8')
   assert.match(source, /assetManager\/assetActions/, `${file} 用共享的 assets 能力模块`)
 }
+assert.match(sharedAssets, /saveTextAsset/, '文本资产保存也在共享能力里')
+for (const file of ['../src/workspaces/GameplayWorkspace.tsx', '../src/workspaces/AudiovisualWorkspace.tsx']) {
+  const source = await readFile(new URL(file, import.meta.url), 'utf8')
+  assert.match(source, /onOpenAsset=\{/, `${file} 接到打开资产`)
+  assert.match(source, /AssetPreview/, `${file} 用 AssetPreview 呈现资产`)
+}
 for (const handler of ['handleImportAssets', 'handleDeleteAsset', 'handleNewAssetFolder', 'handleDeleteAssetFolder', 'applyAssetMove']) {
   assert.ok(
     !stageplayWorkspace.includes(`const ${handler} `) && !stageplayWorkspace.includes(`const ${handler} =`),

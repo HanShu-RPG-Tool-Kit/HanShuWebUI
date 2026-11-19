@@ -38,6 +38,8 @@ export type AssetActionDeps = {
 export type AssetActions = {
   toggleAssets: (projectId: string) => void
   openAsset: (assetId: string) => void
+  /** 文本 / JSON 资产（`.lang` 等）写回 IndexedDB；语言文本另走 stageWrite 合批保存。 */
+  saveTextAsset: (assetId: string, content: string) => Promise<void>
   deleteAsset: (assetId: string) => void
   newFolder: (projectId: string, parentPath: string) => void
   deleteFolder: (projectId: string, folderPath: string) => void
@@ -57,6 +59,29 @@ export function createAssetActions(deps: AssetActionDeps): AssetActions {
     if (!findAsset(deps.workspaceRef.current, assetId)) return
     const base = deps.flushEditorInto ? deps.flushEditorInto(deps.workspaceRef.current) : deps.workspaceRef.current
     deps.commitWorkspace({ ...base, activeAssetId: assetId })
+  }
+
+  const saveTextAsset = async (assetId: string, content: string) => {
+    const hit = findAsset(deps.workspaceRef.current, assetId)
+    if (!hit) return
+    const { pkg, asset } = hit
+    const mime = asset.mime || 'application/json'
+    const blob = new Blob([content], { type: mime })
+    const sourceClient = clientOf()
+    const mirror = async () => {
+      if (clientOf() !== sourceClient) throw new Error('工程已切换，原语言草稿保留在原工程')
+      await putAssetBlob(pkg.id, asset.path, blob)
+      if (clientOf() !== sourceClient) throw new Error('工程已切换，原语言草稿保留在原工程')
+      // 不传 refTarget：保留原有引用字段；配音四态刷新由宿主 onAssetsChanged 负责。
+      const result = registerAsset(deps.workspaceRef.current, pkg.id, asset.path, mime, blob.size)
+      if (result) deps.commitWorkspace(result.workspace)
+      deps.onAssetsChanged?.()
+    }
+    if (sourceClient && /^assets\/[^/]+\/lang_/.test(asset.path)) {
+      await sourceClient.transactions.stageWrite({ op: 'write', path: asset.path, data: content }, mirror)
+    } else {
+      await mirror()
+    }
   }
 
   /**
@@ -195,5 +220,5 @@ export function createAssetActions(deps: AssetActionDeps): AssetActions {
     })
   }
 
-  return { toggleAssets, openAsset, deleteAsset, newFolder, deleteFolder, importAssets, moveAsset }
+  return { toggleAssets, openAsset, saveTextAsset, deleteAsset, newFolder, deleteFolder, importAssets, moveAsset }
 }

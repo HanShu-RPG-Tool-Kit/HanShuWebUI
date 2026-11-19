@@ -4,7 +4,6 @@ import type { AssetFile } from './workspace'
 import { editorLanguageForFile } from './workspace'
 import {
   assetFileName,
-  formatBytes,
   isAudioAsset,
   isImageAsset,
   isJsonAsset,
@@ -54,6 +53,9 @@ export function AssetPreview({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const urlRef = useRef<string | null>(null)
+  const draftRef = useRef<string | null>(null)
+  const textRef = useRef<string | null>(null)
+  const savingRef = useRef(false)
 
   const json = isJsonAsset(asset.path, asset.mime)
   const texty = isTextAsset(asset.path, asset.mime)
@@ -108,14 +110,22 @@ export function AssetPreview({
   const current = draft ?? text ?? ''
   const dirty = draft !== null && draft !== text
   const syntaxError = dirty ? jsonErrorOf(current, json) : null
+  draftRef.current = draft
+  textRef.current = text
+  savingRef.current = saving
 
   const save = async () => {
-    if (!onSaveText || !dirty || syntaxError) return
+    if (!onSaveText || savingRef.current) return
+    const next = draftRef.current
+    const baseline = textRef.current
+    if (next === null || next === baseline) return
+    const err = jsonErrorOf(next, json)
+    if (err) return
     setSaving(true)
     try {
-      await onSaveText(current)
+      await onSaveText(next)
       // 保存成功后以草稿为准，避免 updatedAt 变化触发的重读把光标跳走
-      setText(current)
+      setText(next)
       setDraft(null)
     } finally {
       setSaving(false)
@@ -130,70 +140,49 @@ export function AssetPreview({
 
   return (
     <div className="asset-preview">
-      <header className="asset-preview-header">
-        <h2>{name}</h2>
-        <p className="asset-preview-meta">
-          <code>{asset.path}</code>
-          <span>{formatBytes(asset.size)}</span>
-          <span>{asset.mime || 'unknown'}</span>
-          {editable && (
-            <button
-              type="button"
-              className="asset-preview-save"
-              disabled={!dirty || saving || syntaxError != null}
-              onClick={() => void save()}
-            >
-              {saving ? '保存中…' : dirty ? '保存' : '已保存'}
-            </button>
-          )}
+      {error && <p className="asset-preview-error">{error}</p>}
+      {!error && !url && <p className="asset-preview-loading">加载中…</p>}
+      {url && audio && (
+        <audio className="asset-preview-audio" controls src={url} />
+      )}
+      {url && image && (
+        <img className="asset-preview-image" src={url} alt={name} />
+      )}
+      {url && syntaxError && (
+        <p className="asset-preview-error">JSON 语法错误：{syntaxError}</p>
+      )}
+      {url && !audio && !image && editable && (
+        <div className="asset-preview-editor">
+          <Editor
+            height="100%"
+            language={editorLanguageForFile(asset.path)}
+            theme={HANSHU_THEME_ID}
+            beforeMount={registerHanshuLanguage}
+            value={current}
+            onChange={(next) => setDraft(next ?? '')}
+            onMount={handleMount}
+            options={{
+              readOnly: false,
+              minimap: { enabled: false },
+              fontSize: 13,
+              scrollBeyondLastLine: false,
+              tabSize: 2,
+              automaticLayout: true,
+              wordWrap: 'on',
+            }}
+          />
+        </div>
+      )}
+      {url && !audio && !image && !editable && texty && (
+        <pre className="asset-preview-text">
+          {json ? formatJsonText(text ?? '') : text ?? ''}
+        </pre>
+      )}
+      {url && !audio && !image && !texty && (
+        <p className="asset-preview-hint">
+          已存入包内资产。此类型暂无预览，导出工程包时会原样带上。
         </p>
-      </header>
-
-      <div className="asset-preview-body">
-        {error && <p className="asset-preview-error">{error}</p>}
-        {!error && !url && <p className="asset-preview-loading">加载中…</p>}
-        {url && audio && (
-          <audio className="asset-preview-audio" controls src={url} />
-        )}
-        {url && image && (
-          <img className="asset-preview-image" src={url} alt={name} />
-        )}
-        {url && syntaxError && (
-          <p className="asset-preview-error">JSON 语法错误：{syntaxError}</p>
-        )}
-        {url && !audio && !image && editable && (
-          <div className="asset-preview-editor">
-            <Editor
-              height="100%"
-              language={editorLanguageForFile(asset.path)}
-              theme={HANSHU_THEME_ID}
-              beforeMount={registerHanshuLanguage}
-              value={current}
-              onChange={(next) => setDraft(next ?? '')}
-              onMount={handleMount}
-              options={{
-                readOnly: false,
-                minimap: { enabled: false },
-                fontSize: 13,
-                scrollBeyondLastLine: false,
-                tabSize: 2,
-                automaticLayout: true,
-                wordWrap: 'on',
-              }}
-            />
-          </div>
-        )}
-        {url && !audio && !image && !editable && texty && (
-          <pre className="asset-preview-text">
-            {json ? formatJsonText(text ?? '') : text ?? ''}
-          </pre>
-        )}
-        {url && !audio && !image && !texty && (
-          <p className="asset-preview-hint">
-            已存入包内资产。此类型暂无预览，导出工程包时会原样带上。
-          </p>
-        )}
-      </div>
+      )}
     </div>
   )
 }

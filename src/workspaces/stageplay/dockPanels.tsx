@@ -40,7 +40,6 @@ export type StageplayDockHost = {
   }
   assets: {
     activeAssetId: string | null
-    onToggleRoot: (projectId: string) => void
     onOpen: (assetId: string) => void
     onDelete: (assetId: string) => void
     onNewFolder: (projectId: string, parentPath: string) => void
@@ -132,15 +131,14 @@ export function stageplayDockPanels(host: StageplayDockHost): DockPanelSpec[] {
       id: 'asset-manager',
       title: '资产管理器',
       visible: host.view.assetManager,
-      defaultPlacement: 'left',
-      defaultSize: 300,
-      minSize: 220,
+      defaultPlacement: 'bottom',
+      defaultSize: 260,
+      minSize: 160,
       render: (dock) =>
         project ? (
           <AssetManagerPanel
             project={project}
             activeAssetId={host.assets.activeAssetId}
-            onToggleRoot={() => host.assets.onToggleRoot(project.id)}
             onOpenAsset={host.assets.onOpen}
             onDeleteAsset={host.assets.onDelete}
             onNewAssetFolder={host.assets.onNewFolder}

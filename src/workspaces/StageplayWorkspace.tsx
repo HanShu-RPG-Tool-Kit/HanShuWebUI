@@ -3169,7 +3169,6 @@ export const StageplayWorkspace = forwardRef<
     },
     assets: {
       activeAssetId: workspace.activeAssetId,
-      onToggleRoot: assetActions.toggleAssets,
       onOpen: assetActions.openAsset,
       onDelete: assetActions.deleteAsset,
       onNewFolder: assetActions.newFolder,

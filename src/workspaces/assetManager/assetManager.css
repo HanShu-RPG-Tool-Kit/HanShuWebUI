@@ -4,7 +4,7 @@
  * 三条约束都是踩过的坑，改之前先看完：
  *
  * 1. 令牌定义在自己身上，不向宿主祖先借。此前这里用的是 `.explorer-shell` 上的 `--xs-*`；
- *    面板挂进工作区自己的停靠栏后（不在资源管理器内部），`--xs-icon` 无定义，
+ *    面板挂进工作区自己的停靠栏后（不在 .explorer-shell 内）时 `--xs-icon` 无定义，
  *    `width: var(--xs-icon)` 在计算值阶段整条失效，`svg` 退回 100% 宽 —— 一行被 244px
  *    的图标撑满，观感就是「渲染完全不对」。
  *
@@ -20,6 +20,7 @@
   --am-font-xs: calc(12px * var(--am-s));
   --am-icon: calc(16px * var(--am-s));
   --am-row-h: calc(24px * var(--am-s));
+  --am-sources-w: calc(200px * var(--am-s));
   --am-panel: var(--fl-panel, #303030);
   --am-panel-2: var(--fl-panel-2, #232323);
   --am-head: var(--fl-head, #383838);
@@ -32,7 +33,6 @@
   --am-text: var(--text, #e6e6e6);
   --am-text-dim: var(--text-dim, #b0b0b0);
   --am-text-bright: var(--text-bright, #ffffff);
-  /* 面板本身不滚动：标题栏是工具栏，只有目录树滚动，拖动手柄永远留在顶上 */
   display: flex;
   flex-direction: column;
   height: 100%;
@@ -52,33 +52,54 @@
   font-size: var(--am-font-sm);
 }
 
-/* ---- 标题条：拖动手柄 + 导入 ---- */
+/* ---- 标题条与正文同两列：左标题对齐左栏，右面包屑对齐右栏 ---- */
 .asset-manager .asset-manager-heading {
   flex: none;
   display: flex;
-  align-items: center;
-  gap: 6px;
+  align-items: stretch;
   min-height: calc(28px * var(--am-s));
-  padding: 0 6px 0 9px;
-  background: var(--am-head);
+  padding: 0;
+  background: var(--am-panel);
   border-bottom: 1px solid var(--am-border);
-  color: var(--am-text-bright);
+  color: var(--am-text);
   font-size: var(--am-font-sm);
   user-select: none;
 }
 
-.asset-manager .asset-manager-heading strong {
+.asset-manager .asset-manager-heading-sources,
+.asset-manager .asset-manager-sources {
+  flex: none;
+  width: var(--am-sources-w);
+  min-width: 120px;
+  max-width: 42%;
+  border-right: 1px solid var(--am-border);
+  background: var(--am-panel-2);
+  box-sizing: border-box;
+}
+
+.asset-manager .asset-manager-heading-sources {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px 0 9px;
+}
+
+.asset-manager .asset-manager-heading-sources strong {
   flex: 1;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-weight: 600;
+  font-size: var(--am-font-sm);
+  font-weight: 400;
+  color: var(--am-text);
 }
 
-.asset-manager .asset-manager-heading.is-draggable strong { cursor: grab; }
+.asset-manager .asset-manager-heading.is-draggable .asset-manager-heading-sources strong {
+  cursor: grab;
+}
 
-.asset-manager .asset-manager-heading button {
+.asset-manager .asset-manager-heading-sources > button {
   flex: none;
   appearance: none;
   min-height: calc(20px * var(--am-s));
@@ -95,26 +116,226 @@
   cursor: pointer;
 }
 
-.asset-manager .asset-manager-heading button:hover { background: var(--am-hover); }
+.asset-manager .asset-manager-heading-sources > button:hover {
+  background: var(--am-hover);
+}
 
-/* ---- 目录树：唯一滚动容器，目录之间嵌套 ---- */
-.asset-manager > .explorer-assets {
+.asset-manager .asset-manager-heading-browser,
+.asset-manager .asset-manager-browser {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  background: var(--am-panel-2);
+  box-sizing: border-box;
+}
+
+.asset-manager .asset-manager-heading-browser {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+}
+
+.asset-manager .asset-manager-view-toggle {
+  flex: none;
+  display: flex;
+  gap: 2px;
+}
+
+.asset-manager .asset-manager-view-toggle button {
+  appearance: none;
+  min-height: calc(20px * var(--am-s));
+  margin: 0;
+  padding: 0 6px;
+  background: transparent;
+  border: 1px solid var(--am-border-soft);
+  border-radius: 0;
+  color: var(--am-text-dim);
+  font: inherit;
+  font-size: var(--am-font-xs);
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.asset-manager .asset-manager-view-toggle button:hover {
+  background: var(--am-hover);
+  color: var(--am-text);
+}
+
+.asset-manager .asset-manager-view-toggle button.is-active {
+  background: var(--am-active);
+  color: var(--am-text-bright);
+  border-color: var(--am-accent);
+}
+
+/* ---- 左文件夹 / 右浏览器 ---- */
+.asset-manager .asset-manager-body {
   flex: 1;
   min-height: 0;
+  min-width: 0;
+  display: flex;
+  overflow: hidden;
+  background: var(--am-panel);
+}
+
+.asset-manager .asset-manager-sources {
   overflow: auto;
 }
 
-.asset-manager .explorer-assets { margin: 0; }
-
-.asset-manager .explorer-assets-row,
-.asset-manager .explorer-asset-files {
-  padding-left: 0;
+.asset-manager .asset-manager-browser {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
 }
 
-.asset-manager .explorer-files {
+.asset-manager .asset-manager-crumbs {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.asset-manager .asset-manager-crumb {
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.asset-manager .asset-manager-crumb-sep {
+  margin: 0 2px;
+  color: var(--am-faint);
+}
+
+.asset-manager .asset-manager-crumb button {
+  appearance: none;
+  max-width: 12em;
+  margin: 0;
+  padding: 0 4px;
+  overflow: hidden;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--am-text-dim);
+  font: inherit;
+  font-size: var(--am-font-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.asset-manager .asset-manager-crumb button:hover:not(:disabled) {
+  color: var(--am-text-bright);
+  background: var(--am-hover);
+}
+
+.asset-manager .asset-manager-crumb button.is-current,
+.asset-manager .asset-manager-crumb button:disabled {
+  color: var(--am-text);
+  cursor: default;
+}
+
+.asset-manager .asset-manager-view {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  /* 与标题行面包屑同一左起点 */
+  padding: 0 8px;
+  box-sizing: border-box;
+}
+
+.asset-manager .asset-manager-folder { margin: 0; }
+
+.asset-manager .asset-manager-entries {
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+.asset-manager .asset-manager-entries.is-icons {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(calc(88px * var(--am-s)), 1fr));
+  gap: 8px;
+  padding: 8px 0;
+  align-content: start;
+}
+
+.asset-manager .asset-manager-entry.is-tile {
+  min-width: 0;
+}
+
+.asset-manager .asset-manager-entry.is-tile.active .asset-manager-tile,
+.asset-manager .asset-manager-entry.is-tile.active .asset-manager-tile-preview {
+  outline: 1px solid var(--am-accent);
+  background: rgba(71, 114, 179, 0.22);
+}
+
+.asset-manager .asset-manager-tile {
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin: 0;
+  padding: 8px 6px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  color: var(--am-text);
+  font: inherit;
+  font-size: var(--am-font-xs);
+  text-align: center;
+  cursor: pointer;
+}
+
+.asset-manager .asset-manager-tile:hover {
+  background: var(--am-hover);
+}
+
+.asset-manager .asset-manager-tile-preview {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(64px * var(--am-s));
+  height: calc(64px * var(--am-s));
+  background: var(--am-panel);
+  border: 1px solid var(--am-border);
+  overflow: hidden;
+}
+
+.asset-manager .asset-manager-entries.is-list .asset-manager-tile-preview {
+  display: contents;
+}
+
+.asset-manager .asset-manager-tile-preview .explorer-icon {
+  width: calc(28px * var(--am-s));
+  height: calc(28px * var(--am-s));
+}
+
+.asset-manager .asset-manager-entries.is-list .asset-manager-tile-preview .explorer-icon {
+  width: var(--am-icon);
+  height: var(--am-icon);
+}
+
+.asset-manager .asset-manager-thumb {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.asset-manager .asset-manager-entries.is-icons .explorer-name {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: normal;
+  word-break: break-all;
+  line-height: 1.25;
+  max-height: 2.5em;
 }
 
 .asset-manager .explorer-row {
@@ -127,13 +348,21 @@
 }
 
 .asset-manager .explorer-row:hover { background: var(--am-hover); }
-.asset-manager .explorer-file-row.active { background: var(--am-active); }
-.asset-manager .explorer-row.explorer-file-row.active .explorer-label { color: var(--am-text-bright); }
-.asset-manager .explorer-file-row { padding-left: 8px; }
+.asset-manager .asset-manager-folder-row.is-selected,
+.asset-manager .explorer-file-row.active {
+  background: var(--am-active);
+}
+.asset-manager .asset-manager-folder-row.is-selected .explorer-label,
+.asset-manager .explorer-row.explorer-file-row.active .explorer-label {
+  color: var(--am-text-bright);
+}
 
 .asset-manager .explorer-row .explorer-twist {
   appearance: none;
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: calc(18px * var(--am-s));
   height: var(--am-row-h);
   margin: 0;
@@ -144,6 +373,11 @@
   font-size: var(--am-font-xs);
   line-height: 1;
   cursor: pointer;
+}
+
+.asset-manager .explorer-row .explorer-twist.is-spacer {
+  cursor: default;
+  visibility: hidden;
 }
 
 .asset-manager .explorer-row .explorer-label {
@@ -169,7 +403,6 @@
   cursor: pointer;
 }
 
-/* 文件行没有预览区时标签是 `span`，不该有按钮光标 */
 .asset-manager .explorer-row span.explorer-label { cursor: default; }
 
 .asset-manager .explorer-row .explorer-icon {
@@ -187,24 +420,21 @@
   text-overflow: ellipsis;
 }
 
-.asset-manager .explorer-row .explorer-count {
+.asset-manager .asset-manager-entry-meta {
   flex: none;
-  margin-left: calc(6px * var(--am-s));
+  margin-left: 8px;
   color: var(--am-faint);
   font-size: var(--am-font-xs);
+  white-space: nowrap;
 }
 
 .asset-manager .explorer-empty {
   margin: 0;
-  padding: 4px 14px 4px 32px;
+  padding: 12px 14px;
   color: var(--am-faint);
   font-size: var(--am-font-xs);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
-/* ---- 行内动作：悬停才出现 ---- */
 .asset-manager .explorer-row .explorer-row-actions {
   display: none;
   flex: none;
@@ -213,8 +443,7 @@
 
 .asset-manager .explorer-row:hover .explorer-row-actions { display: flex; }
 
-.asset-manager .explorer-row .explorer-row-actions button,
-.asset-manager .explorer-row .explorer-upload {
+.asset-manager .explorer-row .explorer-row-actions button {
   appearance: none;
   margin: 0;
   padding: 4px 6px;
@@ -229,14 +458,13 @@
   cursor: pointer;
 }
 
-.asset-manager .explorer-row .explorer-row-actions button:hover,
-.asset-manager .explorer-row .explorer-upload:hover {
+.asset-manager .explorer-row .explorer-row-actions button:hover {
   background: rgba(255, 255, 255, 0.1);
   color: var(--am-text);
 }
 
-/* 投放高亮：框式（只动 outline，不和选中 / 悬停态混淆） */
-.asset-manager .is-drop-target > .explorer-row {
+.asset-manager .is-drop-target > .explorer-row,
+.asset-manager .asset-manager-view.is-drop-target {
   background: rgba(71, 114, 179, 0.28);
   outline: 1px solid var(--am-accent);
   outline-offset: -1px;
