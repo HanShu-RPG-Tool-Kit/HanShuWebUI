@@ -228,7 +228,7 @@ import {
 } from "../project/projectSession";
 import { setBoundProject } from "../project/bindingBus";
 import { saveProjectToDirectory } from "../project/projectFs";
-import { deleteSourceAssets } from "../agent/agentOps";
+import { deleteSourceAssets } from "../i18n/langAssets";
 import { randomId } from "../project/crypto";
 import { FilePresenceBar } from "../project/FilePresenceBar";
 import { notify } from "../activity";

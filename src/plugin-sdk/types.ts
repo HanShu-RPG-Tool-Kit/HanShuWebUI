@@ -25,22 +25,38 @@ export type ProjectFileInfo = {
  * documents gets the same view no matter which workspace the user is currently in.
  */
 export type ProjectHost = {
+  /** Stable per-project scope; plugin storage is isolated by it. */
   readonly scope: string
-  readonly windowId: string
   /** All files that currently exist in the opened project. */
   listFiles(): ProjectFileInfo[]
   /** Latest text: unsaved editor buffer, then local draft, then saved project content. */
-  readCurrentText(path: string): Promise<string | null>
+  readCurrentText(path: string): string | null
   /** Last saved text. This is the baseline for change review and rollback. */
   readSavedText(path: string): Promise<string | null>
   hasDraft(path: string): boolean
   /** Paths with an unsaved local draft created by a plugin. */
   listDraftPaths(): string[]
-  /** Stage a local draft. The project itself is only written when the user saves. */
-  writeDraft(path: string, text: string): Promise<void>
-  discardDraft(path: string): Promise<void>
+  /** Stage a document draft. The project itself is only written when the user saves. */
+  writeDraft(path: string, text: string): void
+  discardDraft(path: string): void
+  /** Stage an asset text draft (for example a `.lang` file). */
+  stageAssetText(path: string, text: string): Promise<void>
+  /** Staged asset text, if any. */
+  stagedAssetText(path: string): string | undefined
+  /** Drop a staged asset text draft (used when rolling back a newly created language file). */
+  discardAssetText?(path: string): void
+  /** Whether the user has unsaved edits to this path (editor buffer, not plugin drafts). */
+  isHumanDirty?(path: string): boolean
+  /** Push the set of paths the active plugin currently locks (shell renders them read-only). */
+  setReadOnlyPaths?(paths: readonly string[]): void
+  /** Tell the shell whether a plugin run is active (save is blocked while true). */
+  setRunActive?(active: boolean): void
+  /** Whether the shell is currently committing/saving (plugin must not start a run). */
+  isSaveBusy?(): boolean
   /** Path of the document the user is currently looking at, if any. */
   getActivePath(): string | null
+  /** Locale tag currently selected in the workspace (for language tools). */
+  getLocale(): string
   /** Flush every workspace editor buffer into the shared project session. */
   flushEditors(): void
   /** Notify when project content or drafts changed. */

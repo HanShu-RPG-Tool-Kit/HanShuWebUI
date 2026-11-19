@@ -12,6 +12,13 @@ export {
 } from '../project/projectSession'
 export type { Workspace, SourceFile, Project, AssetFile } from '../workspace'
 export { getProjectClient, normalizeProjectPath } from '../project/serviceClient'
+export {
+  getProjectHost,
+  projectScopeOf,
+  registerWorkspaceFileBridge,
+  notifyProjectFiles,
+} from '../project/projectHost'
+export type { WorkspaceFileBridge } from '../project/projectHost'
 export { flushProjectEditors, registerProjectEditorFlush } from '../project/editorFlush'
 export { confirmDialog, chooseDialog } from '../ui/dialogs/dialogStore'
 export { normalizeResourceName, getExtension, editorLanguageForFile } from '../workspace'
@@ -19,7 +26,11 @@ export {
   parseLocaleAssetPath,
   normalizeSourcePath,
   voiceRootDir,
+  textAssetPath,
 } from '../i18n/localeLayout'
+export { buildResourcePackZip } from '../export/resourcePack'
+export { buildProjectPackZip } from '../export/projectPack'
+export { getAssetBlob, putAssetBlob, deleteAssetBlob, assetCacheEpoch } from '../assets/idb'
 export {
   collectSourceKeys,
   suspectKeySpans,
