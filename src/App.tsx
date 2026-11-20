@@ -8,6 +8,7 @@ import {
   useState,
   type Ref,
 } from 'react'
+import { PanelDockBottomTarget } from './ui/panelDockBottomTarget'
 import {
   loadActiveWorkspaceId,
   saveActiveWorkspaceId,
@@ -105,6 +106,7 @@ function App() {
   const [splashPreviewKey, setSplashPreviewKey] = useState(0)
   const splashPreview = !isDesktopShell
   const stageplayRef = useRef<StageplayWorkspaceHandle>(null)
+  const statusBarRef = useRef<HTMLElement>(null)
   const gameplayRef = useRef<GameplayWorkspaceHandle>(null)
   const audiovisualRef = useRef<AudiovisualWorkspaceHandle>(null)
 
@@ -312,25 +314,27 @@ function App() {
       {gameDevOpen && <GameDevServerPanel onClose={closeGameDev} />}
       {javaLibraryOpen && <JavaLibraryDialog close={()=>setJavaLibraryOpen(false)} />}
       <div className="app-body">
-        <div
-          className={`app-workspace-pane${
-            activeWorkspaceId === 'stageplay' ? ' active' : ''
-          }`}
-        >
-          <StageplayWorkspace ref={stageplayRef} isActive={activeWorkspaceId === 'stageplay'} />
-        </div>
-        {APP_WORKSPACES.filter((w) => w.id !== 'stageplay').map((ws) => (
+        <PanelDockBottomTarget.Provider value={statusBarRef}>
           <div
-            key={ws.id}
             className={`app-workspace-pane${
-              activeWorkspaceId === ws.id ? ' active' : ''
+              activeWorkspaceId === 'stageplay' ? ' active' : ''
             }`}
           >
-            {renderToolWorkspace(ws.id, activeWorkspaceId === ws.id, gameplayRef, audiovisualRef)}
+            <StageplayWorkspace ref={stageplayRef} isActive={activeWorkspaceId === 'stageplay'} />
           </div>
-        ))}
+          {APP_WORKSPACES.filter((w) => w.id !== 'stageplay').map((ws) => (
+            <div
+              key={ws.id}
+              className={`app-workspace-pane${
+                activeWorkspaceId === ws.id ? ' active' : ''
+              }`}
+            >
+              {renderToolWorkspace(ws.id, activeWorkspaceId === ws.id, gameplayRef, audiovisualRef)}
+            </div>
+          ))}
+        </PanelDockBottomTarget.Provider>
       </div>
-      <AppStatusBar />
+      <AppStatusBar ref={statusBarRef} />
       {helpTopicId && (
         <HelpModal
           topicId={helpTopicId}

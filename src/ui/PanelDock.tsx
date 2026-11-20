@@ -1,4 +1,5 @@
 import {
+  useContext,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -43,6 +44,7 @@ import {
   sizeForDock,
   syncFloatGroup,
   tabsOf,
+  workspaceBottomHit,
   type DockEdge,
   type DockHit,
   type DockLayout,
@@ -51,6 +53,7 @@ import {
   type DockSash,
   type FloatRect,
 } from "./panelDockModel"
+import { PanelDockBottomTarget } from "./panelDockBottomTarget"
 
 export type { DockEdge, DockPlacement }
 
@@ -197,7 +200,7 @@ function dockOrphans(layout: DockLayout) {
   let changed = false
   for (const [id, panel] of Object.entries(layout.panels)) {
     if (panel.placement === "float" || findCell(layout, id)) continue
-    dockToEdge(layout, id, panel.placement, panel.size, "inner")
+    dockToEdge(layout, id, panel.placement, panel.size, "inner", panel.lastFullWidth)
     changed = true
   }
   return changed
@@ -373,6 +376,7 @@ export function PanelDock({
   children: ReactNode
   storageKey?: string
 }) {
+  const statusBarRef = useContext(PanelDockBottomTarget)
   const [layout, setLayout] = useState(() => readLayout(storageKey, panels))
   const layoutRef = useRef<DockLayout>(copyLayout(layout))
   const specsRef = useRef(panels)
@@ -632,11 +636,20 @@ export function PanelDock({
   }
 
   const hitAt = (clientX: number, clientY: number, panelId?: string) => {
-    const rect = rootRef.current?.getBoundingClientRect()
+    const root = rootRef.current
+    const rect = root?.getBoundingClientRect()
     const frame = applyGeometry()
     if (!rect || !frame) return { kind: "float", preview: null, line: false } as DockHit
     const floats: Record<string, DockRect> = {}
     const mover = panelId ? layoutRef.current.panels[panelId] : undefined
+    const statusBar = statusBarRef?.current
+    // Editor-local docks do not own the app's status bar drop target.
+    if (mover && panelId && statusBar && !root?.parentElement?.closest(".panel-dock")) {
+      const bar = statusBar.getBoundingClientRect()
+      if (bar.height > 0 && clientY >= bar.top && clientY < bar.bottom && clientX >= bar.left && clientX < bar.right) {
+        return workspaceBottomHit(layoutRef.current, rect, visibleRef.current, sizeForDock(mover, "bottom", specOf(panelId)))
+      }
+    }
     if (panelId) {
       const group =
         sessionRef.current?.kind === "title" && !sessionRef.current.activateOnClick
@@ -1000,25 +1013,26 @@ export function PanelDock({
     const rect = rootRef.current?.getBoundingClientRect()
     const frame = rect ? layoutFrame(layoutRef.current, rect, visibleRef.current) : null
     const shown = lane?.cells.filter((cell) => tabsOf(cell).some((id) => visibleRef.current.has(id))) ?? []
-    const first = shown[0]
-    const band = first ? frame?.bands[bandId(first, visibleRef.current) ?? ""] : undefined
+    const slotFor = (cell: (typeof shown)[number] | undefined) => cell && frame?.slots[bandId(cell, visibleRef.current) ?? ""]
+    const first = slotFor(shown[0])
     let startA = 0
     let startB = 0
-    let startCross = rect ? (isVertical(sash.edge) ? frame?.main.w ?? rect.width : rect.height) : 0
+    let startCross = 0
     if (sash.cellIndex != null && lane) {
       const a = lane.cells[sash.cellIndex]
       const bIndex = lane.cells.findIndex((cell, index) => index > sash.cellIndex! && tabsOf(cell).some((id) => visibleRef.current.has(id)))
       const b = lane.cells[bIndex]
-      const aBox = a ? frame?.bands[bandId(a, visibleRef.current) ?? ""] : undefined
-      const bBox = b ? frame?.bands[bandId(b, visibleRef.current) ?? ""] : undefined
+      const aBox = slotFor(a)
+      const bBox = slotFor(b)
       const verticalCells = sash.edge === "left" || sash.edge === "right"
       startA = verticalCells ? aBox?.h ?? 0 : aBox?.w ?? 0
       startB = verticalCells ? bBox?.h ?? 0 : bBox?.w ?? 0
-      startCross = verticalCells ? rect?.height ?? 0 : frame?.main.w ?? 0
+      const last = slotFor(shown.at(-1))
+      if (first && last) startCross = verticalCells ? last.y + last.h - first.y : last.x + last.w - first.x
     }
     const limits = limitsFor(specOf(sash.panelId), sash.edge)
     const slack = frame ? Math.max(0, (isVertical(sash.edge) ? frame.main.h - MIN_CENTER_H : frame.main.w - MIN_CENTER_W)) : 0
-    const displayed = band ? (isVertical(sash.edge) ? band.h : band.w) : lane?.size ?? limits.min
+    const displayed = first ? (isVertical(sash.edge) ? first.h : first.w) : lane?.size ?? limits.min
     startSession(
       {
         kind: "sash",
@@ -1082,7 +1096,7 @@ export function PanelDock({
     const panel = layoutRef.current.panels[panelId]
     if (!panel) return
     const next = copyLayout(layoutRef.current)
-    dockToEdge(next, panelId, panel.lastEdge, sizeForDock(panel, panel.lastEdge, specOf(panelId)), "inner")
+    dockToEdge(next, panelId, panel.lastEdge, sizeForDock(panel, panel.lastEdge, specOf(panelId)), "inner", panel.lastFullWidth)
     publish(next)
   }
 
