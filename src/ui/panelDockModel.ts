@@ -4,12 +4,13 @@ export type DockRect = { x: number; y: number; w: number; h: number }
 export type FloatRect = DockRect
 
 export type DockCell = { id: string; tabs?: string[]; weight: number }
-export type DockLane = { size: number; cells: DockCell[] }
+export type DockLane = { size: number; cells: DockCell[]; fullWidth?: true }
 export type DockTabGroup = { tabs: string[]; active: string }
 
 export type DockPanelRecord = {
   placement: DockPlacement
   lastEdge: DockEdge
+  lastFullWidth?: true
   size: number
   floatRect: FloatRect
   z: number
@@ -36,7 +37,7 @@ export type DockSpec = {
 
 export type DockHit =
   | { kind: "float"; preview: null; line: false }
-  | { kind: "window"; edge: DockEdge; preview: DockRect; line: boolean }
+  | { kind: "window"; edge: DockEdge; preview: DockRect; line: boolean; fullWidth?: true }
   | { kind: "panel"; panelId: string; side: DockEdge; preview: DockRect; line: boolean }
   | { kind: "tabs"; panelId: string; preview: DockRect; line: false; place?: "before" | "after" | "end" }
 
@@ -177,7 +178,7 @@ export function copyLayout(layout: DockLayout): DockLayout {
 
 function copyLane(lane: DockLane): DockLane {
   return {
-    size: lane.size,
+    ...lane,
     cells: lane.cells.map((cell) => ({ id: cell.id, weight: cell.weight, tabs: tabsOf(cell) })),
   }
 }
@@ -267,16 +268,30 @@ export function detach(layout: DockLayout, id: string) {
   if (panel) panel.placement = "float"
 }
 
-export function dockToEdge(layout: DockLayout, id: string, edge: DockEdge, size: number, where: "outer" | "inner" = "outer") {
+function rememberLane(panel: DockPanelRecord, edge: DockEdge, lane: DockLane) {
+  panel.placement = edge
+  panel.lastEdge = edge
+  panel.size = lane.size
+  if (edge === "bottom" && lane.fullWidth) panel.lastFullWidth = true
+  else delete panel.lastFullWidth
+}
+
+export function dockToEdge(
+  layout: DockLayout,
+  id: string,
+  edge: DockEdge,
+  size: number,
+  where: "outer" | "inner" = "outer",
+  fullWidth?: true,
+) {
   const panel = layout.panels[id]
   if (!panel) return
   removePanel(layout, id)
-  const lane = { size, cells: [{ id, weight: 1 }] }
+  const lane: DockLane = { size, cells: [{ id, weight: 1 }] }
+  if (edge === "bottom" && fullWidth) lane.fullWidth = true
   if (where === "outer") layout.lanes[edge].unshift(lane)
   else layout.lanes[edge].push(lane)
-  panel.placement = edge
-  panel.lastEdge = edge
-  panel.size = size
+  rememberLane(panel, edge, lane)
 }
 
 export function dockBeside(layout: DockLayout, id: string, targetId: string, side: DockEdge, size: number) {
@@ -285,14 +300,15 @@ export function dockBeside(layout: DockLayout, id: string, targetId: string, sid
   removePanel(layout, id)
   const loc = findCell(layout, targetId)
   if (!loc) return false
-  const lane = layout.lanes[loc.edge][loc.laneIndex]
+  let lane = layout.lanes[loc.edge][loc.laneIndex]
   const alongLane =
     loc.edge === "left" || loc.edge === "right" ? side === "left" || side === "right" : side === "top" || side === "bottom"
   if (alongLane) {
     const towardStart = side === "left" || side === "top"
     const before = loc.edge === "left" || loc.edge === "top" ? towardStart : !towardStart
     const index = before ? loc.laneIndex : loc.laneIndex + 1
-    layout.lanes[loc.edge].splice(index, 0, { size, cells: [{ id, weight: 1 }] })
+    lane = { ...lane, size, cells: [{ id, weight: 1 }] }
+    layout.lanes[loc.edge].splice(index, 0, lane)
   } else {
     const towardStart = side === "top" || side === "left"
     const index = towardStart ? loc.cellIndex : loc.cellIndex + 1
@@ -300,9 +316,7 @@ export function dockBeside(layout: DockLayout, id: string, targetId: string, sid
     lane.cells.splice(index, 0, { id, weight })
     syncLaneSize(layout, loc.edge, loc.laneIndex)
   }
-  panel.placement = loc.edge
-  panel.lastEdge = loc.edge
-  panel.size = alongLane ? size : lane.size
+  rememberLane(panel, loc.edge, lane)
   return true
 }
 
@@ -321,9 +335,7 @@ export function activateTab(layout: DockLayout, id: string) {
     for (const tab of tabsOf(cell)) {
       const member = layout.panels[tab]
       if (!member) continue
-      member.placement = loc.edge
-      member.lastEdge = loc.edge
-      member.size = lane.size
+      rememberLane(member, loc.edge, lane)
     }
     return true
   }
@@ -404,7 +416,8 @@ export function mergeTabs(
   removePanel(layout, id)
   const loc = findCell(layout, targetId)
   if (!loc) return false
-  const cell = layout.lanes[loc.edge][loc.laneIndex].cells[loc.cellIndex]
+  const lane = layout.lanes[loc.edge][loc.laneIndex]
+  const cell = lane.cells[loc.cellIndex]
   const tabs = tabsOf(cell).filter((tab) => tab !== id)
   const at = tabs.indexOf(targetId)
   if (place === "before" && at >= 0) tabs.splice(at, 0, id)
@@ -412,10 +425,7 @@ export function mergeTabs(
   else tabs.push(id)
   cell.tabs = tabs
   cell.id = id
-  const size = layout.lanes[loc.edge][loc.laneIndex].size
-  panel.placement = loc.edge
-  panel.lastEdge = loc.edge
-  panel.size = size
+  rememberLane(panel, loc.edge, lane)
   return true
 }
 
@@ -445,6 +455,8 @@ export function mergeFloatTabs(
   target.placement = "float"
   panel.placement = "float"
   panel.lastEdge = target.lastEdge
+  if (target.lastFullWidth) panel.lastFullWidth = true
+  else delete panel.lastFullWidth
   panel.floatRect = { ...target.floatRect }
   panel.z = target.z
   return true
@@ -456,7 +468,7 @@ export function applyStick(layout: DockLayout, id: string, hit: DockHit, size: n
     return
   }
   if (hit.kind === "window") {
-    dockToEdge(layout, id, hit.edge, size, "outer")
+    dockToEdge(layout, id, hit.edge, size, "outer", hit.fullWidth)
     return
   }
   if (hit.kind === "tabs") {
@@ -467,12 +479,12 @@ export function applyStick(layout: DockLayout, id: string, hit: DockHit, size: n
       return
     }
     if (!mergeTabs(layout, id, hit.panelId, place)) {
-      dockToEdge(layout, id, target?.lastEdge ?? "left", size, "outer")
+      dockToEdge(layout, id, target?.lastEdge ?? "left", size, "outer", target?.lastFullWidth)
     }
     return
   }
   const target = layout.panels[hit.panelId]
-  if (target?.placement === "float") dockToEdge(layout, hit.panelId, target.lastEdge, target.size, "outer")
+  if (target?.placement === "float") dockToEdge(layout, hit.panelId, target.lastEdge, target.size, "outer", target.lastFullWidth)
   if (!dockBeside(layout, id, hit.panelId, hit.side, size)) dockToEdge(layout, id, hit.side, size, "outer")
 }
 
@@ -483,7 +495,7 @@ function restoreGroupOrder(layout: DockLayout, ordered: readonly string[], ancho
   const floating = anchor.placement === "float" || !!floatGroupFor(layout, anchorId)
   for (const tab of others) {
     if (floating) mergeFloatTabs(layout, tab, anchorId, "end")
-    else if (!mergeTabs(layout, tab, anchorId, "end")) dockToEdge(layout, tab, anchor.lastEdge, anchor.size, "outer")
+    else if (!mergeTabs(layout, tab, anchorId, "end")) dockToEdge(layout, tab, anchor.lastEdge, anchor.size, "outer", anchor.lastFullWidth)
   }
   if (floating) {
     const group = floatGroupFor(layout, anchorId)
@@ -513,9 +525,7 @@ function restoreGroupOrder(layout: DockLayout, ordered: readonly string[], ancho
   for (const tab of next) {
     const panel = layout.panels[tab]
     if (!panel) continue
-    panel.placement = loc.edge
-    panel.lastEdge = loc.edge
-    panel.size = lane.size
+    rememberLane(panel, loc.edge, lane)
   }
 }
 
@@ -569,14 +579,14 @@ export function normalize(layout: DockLayout) {
       }
       if (cells.length === 0) continue
       const size = finite(lane.size, isVertical(edge) ? DOCK_DEFAULT_H : DOCK_DEFAULT_W)
-      next.push({ size, cells })
+      const normalized: DockLane = { size, cells }
+      if (edge === "bottom" && lane.fullWidth === true) normalized.fullWidth = true
+      next.push(normalized)
       for (const cell of cells) {
         for (const id of tabsOf(cell)) {
           const panel = layout.panels[id]
           if (!panel) continue
-          panel.placement = edge
-          panel.lastEdge = edge
-          panel.size = size
+          rememberLane(panel, edge, normalized)
         }
       }
     }
@@ -588,7 +598,10 @@ export function normalize(layout: DockLayout) {
       continue
     }
     if (!seen.has(id)) {
-      layout.lanes[panel.placement].push({ size: panel.size, cells: [{ id, tabs: [id], weight: 1 }] })
+      const lane: DockLane = { size: panel.size, cells: [{ id, tabs: [id], weight: 1 }] }
+      if (panel.placement === "bottom" && panel.lastFullWidth) lane.fullWidth = true
+      layout.lanes[panel.placement].push(lane)
+      rememberLane(panel, panel.placement, lane)
       seen.add(id)
     }
   }
@@ -659,6 +672,7 @@ function readPanel(_id: string, raw: Partial<DockPanelRecord> | undefined): Dock
   return {
     placement,
     lastEdge: raw.lastEdge === "right" || raw.lastEdge === "top" || raw.lastEdge === "bottom" ? raw.lastEdge : "left",
+    ...(raw.lastEdge === "bottom" && raw.lastFullWidth === true ? { lastFullWidth: true } : {}),
     size: finite(raw.size, DOCK_DEFAULT_W),
     z: finite(raw.z, 1),
     floatRect:
@@ -702,6 +716,7 @@ export function layoutFromSaved(saved: unknown): DockLayout | null {
     for (const edge of DOCK_EDGES) {
       layout.lanes[edge] = (raw.lanes[edge] ?? []).map((lane) => ({
         size: finite(lane?.size, isVertical(edge) ? DOCK_DEFAULT_H : DOCK_DEFAULT_W),
+        ...(edge === "bottom" && lane?.fullWidth === true ? { fullWidth: true } : {}),
         cells: (lane?.cells ?? [])
           .filter((cell) => cell && typeof cell.id === "string")
           .map((cell) => ({
@@ -756,6 +771,34 @@ function scaleSizes(sizes: number[], available: number) {
   let leftover = available - floors.reduce((value, size) => value + size, 0)
   for (let index = 0; leftover > 0; index += 1, leftover -= 1) floors[index % floors.length] += 1
   return floors
+}
+
+function verticalLaneSizes(height: number, sizes: number[]) {
+  return scaleSizes(sizes, Math.max(0, height - MIN_CENTER_H - sizes.length * DOCK_SASH))
+}
+
+export function workspaceBottomHit(
+  layout: DockLayout,
+  root: { width: number; height: number },
+  visible: ReadonlySet<string>,
+  size: number,
+): DockHit {
+  const top = visibleLanes(layout.lanes.top, visible)
+  const bottom = visibleLanes(layout.lanes.bottom, visible)
+  const sizes = verticalLaneSizes(root.height, [
+    ...top.map((lane) => lane.size),
+    size,
+    ...bottom.filter((lane) => lane.fullWidth).map((lane) => lane.size),
+    ...bottom.filter((lane) => !lane.fullWidth).map((lane) => lane.size),
+  ])
+  const h = sizes[top.length]
+  return {
+    kind: "window",
+    edge: "bottom",
+    fullWidth: true,
+    preview: { x: 0, y: root.height - h, w: root.width, h },
+    line: false,
+  }
 }
 
 function placeCells(
@@ -813,6 +856,33 @@ export function layoutFrame(layout: DockLayout, root: { width: number; height: n
   const slots: Record<string, DockRect> = {}
   const sashes: DockSash[] = []
   const tabBars: DockTabBar[] = []
+  const top = visibleLanes(layout.lanes.top, visible)
+  const bottom = visibleLanes(layout.lanes.bottom, visible)
+  const fullBottom = bottom.filter((lane) => lane.fullWidth)
+  const centerBottom = bottom.filter((lane) => !lane.fullWidth)
+  const endSizes = verticalLaneSizes(root.height, [...top, ...fullBottom, ...centerBottom].map((lane) => lane.size))
+  let bottomCursor = root.height
+  const placeBottom = (lanes: typeof bottom, sizeOffset: number, x: number, w: number) => {
+    lanes.forEach((lane, index) => {
+      const height = endSizes[sizeOffset + index] ?? 0
+      bottomCursor -= height
+      placeCells("bottom", lane.laneIndex, lane.cells, { x, y: bottomCursor, w, h: height }, bands, slots, sashes, tabBars)
+      bottomCursor -= DOCK_SASH
+      sashes.push({
+        key: "lane:bottom:" + lane.laneIndex,
+        axis: "y",
+        invert: true,
+        edge: "bottom",
+        laneIndex: lane.laneIndex,
+        cellIndex: null,
+        panelId: lane.cells[0]?.id ?? "",
+        rect: { x, y: bottomCursor, w, h: DOCK_SASH },
+      })
+    })
+  }
+  // Workspace-wide lanes sit outside the side columns; normal bottom lanes stay inside them.
+  placeBottom(fullBottom, top.length, 0, root.width)
+  const sideHeight = Math.max(0, bottomCursor)
   const left = visibleLanes(layout.lanes.left, visible)
   const right = visibleLanes(layout.lanes.right, visible)
   const sideSash = (left.length + right.length) * DOCK_SASH
@@ -823,7 +893,7 @@ export function layoutFrame(layout: DockLayout, root: { width: number; height: n
   let x = 0
   left.forEach((lane, index) => {
     const width = leftSizes[index] ?? 0
-    placeCells("left", lane.laneIndex, lane.cells, { x, y: 0, w: width, h: root.height }, bands, slots, sashes, tabBars)
+    placeCells("left", lane.laneIndex, lane.cells, { x, y: 0, w: width, h: sideHeight }, bands, slots, sashes, tabBars)
     x += width
     sashes.push({
       key: `lane:left:${lane.laneIndex}`,
@@ -833,7 +903,7 @@ export function layoutFrame(layout: DockLayout, root: { width: number; height: n
       laneIndex: lane.laneIndex,
       cellIndex: null,
       panelId: lane.cells[0]?.id ?? "",
-      rect: { x, y: 0, w: DOCK_SASH, h: root.height },
+      rect: { x, y: 0, w: DOCK_SASH, h: sideHeight },
     })
     x += DOCK_SASH
   })
@@ -841,7 +911,7 @@ export function layoutFrame(layout: DockLayout, root: { width: number; height: n
   right.forEach((lane, index) => {
     const width = rightSizes[index] ?? 0
     rightCursor -= width
-    placeCells("right", lane.laneIndex, lane.cells, { x: rightCursor, y: 0, w: width, h: root.height }, bands, slots, sashes, tabBars)
+    placeCells("right", lane.laneIndex, lane.cells, { x: rightCursor, y: 0, w: width, h: sideHeight }, bands, slots, sashes, tabBars)
     rightCursor -= DOCK_SASH
     sashes.push({
       key: `lane:right:${lane.laneIndex}`,
@@ -851,21 +921,14 @@ export function layoutFrame(layout: DockLayout, root: { width: number; height: n
       laneIndex: lane.laneIndex,
       cellIndex: null,
       panelId: lane.cells[0]?.id ?? "",
-      rect: { x: rightCursor, y: 0, w: DOCK_SASH, h: root.height },
+      rect: { x: rightCursor, y: 0, w: DOCK_SASH, h: sideHeight },
     })
   })
   const centerX = x
   const centerW = Math.max(0, rightCursor - centerX)
-  const top = visibleLanes(layout.lanes.top, visible)
-  const bottom = visibleLanes(layout.lanes.bottom, visible)
-  const endSash = (top.length + bottom.length) * DOCK_SASH
-  const endRoom = Math.max(0, root.height - MIN_CENTER_H - endSash)
-  const endSizes = scaleSizes([...top.map((lane) => lane.size), ...bottom.map((lane) => lane.size)], endRoom)
-  const topSizes = endSizes.slice(0, top.length)
-  const bottomSizes = endSizes.slice(top.length)
   let y = 0
   top.forEach((lane, index) => {
-    const height = topSizes[index] ?? 0
+    const height = endSizes[index] ?? 0
     placeCells("top", lane.laneIndex, lane.cells, { x: centerX, y, w: centerW, h: height }, bands, slots, sashes, tabBars)
     y += height
     sashes.push({
@@ -880,23 +943,7 @@ export function layoutFrame(layout: DockLayout, root: { width: number; height: n
     })
     y += DOCK_SASH
   })
-  let bottomCursor = root.height
-  bottom.forEach((lane, index) => {
-    const height = bottomSizes[index] ?? 0
-    bottomCursor -= height
-    placeCells("bottom", lane.laneIndex, lane.cells, { x: centerX, y: bottomCursor, w: centerW, h: height }, bands, slots, sashes, tabBars)
-    bottomCursor -= DOCK_SASH
-    sashes.push({
-      key: `lane:bottom:${lane.laneIndex}`,
-      axis: "y",
-      invert: true,
-      edge: "bottom",
-      laneIndex: lane.laneIndex,
-      cellIndex: null,
-      panelId: lane.cells[0]?.id ?? "",
-      rect: { x: centerX, y: bottomCursor, w: centerW, h: DOCK_SASH },
-    })
-  })
+  placeBottom(centerBottom, top.length + fullBottom.length, centerX, centerW)
   return {
     bands,
     slots,

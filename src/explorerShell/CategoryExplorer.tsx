@@ -715,6 +715,7 @@ export function CategoryExplorer({
       </div>
       {menu && (
         <NodeContextMenu
+          key={`${menu.node ? nodeId(menu.node) : 'blank'}:${menu.x}:${menu.y}`}
           x={menu.x}
           y={menu.y}
           title={menu.node ? rows.find(row => nodeId(row.node) === nodeId(menu.node!))?.name ?? label : label}
