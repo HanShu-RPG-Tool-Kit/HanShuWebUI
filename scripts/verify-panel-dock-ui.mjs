@@ -28,7 +28,6 @@ try {
   assert.equal(await root.getByRole('region', { name: '录音棚', exact: true }).isVisible(), true)
   await menu('查看', '录音棚')
   console.log('PASS view menu toggles Explorer and Recording Studio')
-
   const header = root.locator('.stageplay-explorer .explorer-shell-heading')
   const from = await header.boundingBox()
   const dock = await root.locator('.panel-dock').boundingBox()
@@ -39,6 +38,20 @@ try {
   await root.locator('.panel-dock-band.is-float .stageplay-explorer').waitFor()
   const saved = await page.evaluate(() => localStorage.getItem('hanshu.panelDock'))
   assert.equal(JSON.parse(saved).panels.explorer.placement, 'float')
+  // 一个视图一份布局：在剧本里浮起的资源管理器，不该把游戏性也变成浮窗。
+  // （用上面已经浮起的 explorer 验证，不再多拖一次，避免依赖拖拽落点。）
+  await page.getByRole('tab', { name: '游戏性', exact: true }).click()
+  const gameplay = page.locator('.app-workspace-pane.active')
+  const gameplayExplorer = gameplay.locator('.panel-dock-band[data-panel-id="explorer"]')
+  await gameplayExplorer.waitFor()
+  assert.equal(await gameplay.locator('.panel-dock-band.is-float[data-panel-id="explorer"]').count(), 0, '游戏性不能继承剧本里浮起的资源管理器')
+  // 游戏性也有资产管理器，但默认关着：别的视图的「打开/浮起」状态不跟过来
+  assert.equal(await gameplay.locator('.panel-dock-band[data-panel-id="asset-manager"]').isVisible(), false, '游戏性的资产管理器默认不显示')
+  assert.equal(await page.evaluate(() => localStorage.getItem('hanshu.panelDock.gameplay')), null, '游戏性还没改布局，不该凭空写一份')
+  assert.equal(JSON.parse(await page.evaluate(() => localStorage.getItem('hanshu.panelDock'))).panels.explorer.placement, 'float', '剧本自己的布局不受影响')
+  await page.getByRole('tab', { name: '剧本', exact: true }).click()
+  await root.locator('.panel-dock-band.is-float .stageplay-explorer').waitFor()
+  console.log('PASS each workspace keeps its own dock layout; floating in one view does not leak into another')
   await page.reload()
   await waitProject(page, '统一工程验收')
   await page.getByRole('tab', { name: '剧本', exact: true }).click()
@@ -87,18 +100,32 @@ try {
   await menu('查看', '资产管理器')
   const dockRoot = root.locator('.panel-dock').first()
   const assetBand = dockRoot.locator(':scope > .panel-dock-band[data-panel-id="asset-manager"]')
-  const assetHeader = assetBand.locator('.stageplay-asset-manager-heading')
+  const assetHeader = assetBand.locator('.asset-manager-heading')
   const status = page.getByRole('contentinfo', { name: '状态栏' })
   const workspace = await dockRoot.boundingBox()
   const footer = await status.boundingBox()
-  const moveAsset = async (x, y) => {
+  const startAssetDrag = async () => {
     const title = await assetHeader.locator('strong').boundingBox()
-    await page.mouse.move(title.x + title.width / 2, title.y + title.height / 2)
+    const grab = { x: title.x + Math.min(20, title.width / 2), y: title.y + title.height / 2 }
+    await page.mouse.move(grab.x, grab.y)
     await page.mouse.down()
+    return grab
+  }
+  const moveAsset = async (x, y) => {
+    await startAssetDrag()
     await page.mouse.move(x, y)
   }
   const floatAsset = async () => {
-    await moveAsset(workspace.x + workspace.width * 0.62, workspace.y + workspace.height * 0.44)
+    const grab = await startAssetDrag()
+    const pointer = { x: grab.x + 12, y: grab.y - 12 }
+    await page.mouse.move(pointer.x, pointer.y)
+    await assetBand.and(dockRoot.locator('.is-float')).waitFor()
+    const floating = await assetBand.boundingBox()
+    const editor = await dockRoot.locator(':scope > .panel-dock-main').boundingBox()
+    await page.mouse.move(
+      editor.x + (editor.width - floating.width) / 2 + pointer.x - floating.x,
+      editor.y + (editor.height - floating.height) / 2 + pointer.y - floating.y,
+    )
     await page.mouse.up()
     await assetBand.and(dockRoot.locator('.is-float')).waitFor()
   }

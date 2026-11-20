@@ -11,14 +11,14 @@ import {
   useState,
 } from 'react'
 import Editor, { type OnMount } from '@monaco-editor/react'
-import { StageplayExplorer } from './stageplay/StageplayExplorer'
-import { AssetManagerPanel } from './stageplay/AssetManagerPanel'
+import { stageplayDockPanels, type StageplayDockHost } from './stageplay/dockPanels'
+import { createAssetActions } from './assetManager/assetActions'
 import { commitOrganization, placeSource, relocatedExplorer, withExplorer } from '../explorerShell'
 import { emptyOrganization } from '../project/explorerOrganization'
 import { sourcePathKnownToServer } from '../project/projectFs'
 import { notify } from '../activity'
 import { ServiceError } from '../collab/protocol'
-import { PanelDock, resetPanelDock, type DockPanelSpec } from '../ui/PanelDock'
+import { PanelDock, resetPanelDock } from '../ui/PanelDock'
 import { EditorDock, resetEditorDock } from '../ui/EditorDock'
 import {
   editorPageKey,
@@ -30,6 +30,8 @@ import {
 } from './stageplay/EditorTabs'
 import { SecondaryDockPage } from './stageplay/SecondaryDockPage'
 
+/** 剧本自己的停靠布局。历史默认键，别的视图不要复用。 */
+const STAGEPLAY_DOCK_KEY = 'hanshu.panelDock'
 const STAGEPLAY_EDITOR_DOCK_KEY = 'hanshu.stageplayEditorDock.v1'
 import {
   alertDialog,
@@ -78,14 +80,11 @@ import { bindTaggedCommentHotkeys } from '../monaco/taggedComment'
 import { bindChoiceInsertHotkeys } from '../monaco/choiceInsert'
 import { bindCopyDialogueHotkey } from '../monaco/copyDialogue'
 import {
-  SPEAKER_SLOT_COUNT,
   applySpeakerInsert,
   bindSpeakerHotkeys,
   createDefaultRoles,
   extractSpeakersFromText,
   fillRolesFromSpeakers,
-  numpadHint,
-  numpadLabel,
 } from '../monaco/speakerInsert'
 import {
   createScript,
@@ -104,13 +103,10 @@ import {
   isStageplayExplorerSource,
   registerAsset,
   removeAssetMeta,
-  removeAssetFolder,
   saveWorkspace,
   getExtension,
   sourcePathOf,
-  toggleAssetsCollapsed,
   updateScriptContent,
-  ensureAssetFolder,
   isVoiceMapFile,
   type Workspace,
 } from '../workspace'
@@ -134,12 +130,8 @@ import { createVoiceOps, type VoiceOps } from '../i18n/voiceOps'
 import { voiceRootDir } from '../i18n/localeLayout'
 import { buildResourcePackZip } from '../export/resourcePack'
 import { buildProjectPackZip } from '../export/projectPack'
-import { assetFileName, normalizeAssetPath, normalizeFolderPath } from '../assets/paths'
-import {
-  moveAssetToDir,
-  moveScriptToPackage,
-  renameScriptAssets,
-} from '../workspaceMove'
+import { assetFileName } from '../assets/paths'
+import { moveScriptToPackage, renameScriptAssets } from '../workspaceMove'
 import {
   deleteAssetBlob,
   getAssetBlob,
@@ -172,7 +164,6 @@ import {
 import { MarkdownPreview } from '../MarkdownPreview'
 import { HscPreview } from '../HscPreview'
 import { AssetPreview } from '../AssetPreview'
-import { AgentPanel } from '../AgentPanel'
 import {
   AgentDiffModal,
   type AgentDiffSnapshot,
@@ -216,7 +207,6 @@ import { createVoiceDiskSink } from '../project/voiceDiskSink'
 import type { DragSource } from '../drag/dragPayload'
 import { TextUnitMenu, type TextUnitMenuItem } from '../TextUnitMenu'
 import {
-  RecordingStudio,
   type StudioMode,
   type StudioSourceMode,
   type StudioTtsStatus,
@@ -1072,37 +1062,6 @@ export const StageplayWorkspace = forwardRef<
   }
 
   /** 资产换目录（blob 与元数据一起搬；模型变换走 workspaceMove 的纯函数） */
-  const applyAssetMove = (
-    assetId: string,
-    targetPackageId: string,
-    targetDir: string,
-  ) => {
-    const result = moveAssetToDir(
-      workspaceRef.current,
-      assetId,
-      targetPackageId,
-      targetDir,
-    )
-    if (!result) return
-    const client = projectRef.current?.handle.client
-    void (async () => {
-      const blob = await getAssetBlob(result.fromPackageId, result.fromPath)
-      if (!blob) return
-      if (client) {
-        if (client.transactions.stagedWrites().some(edit => edit.path === result.fromPath)) throw new Error('该资产还有未保存的修改，请先保存再移动')
-        await client.apply([
-          ...(client.entry(result.fromPath) ? [{ op: 'move' as const, path: result.fromPath, destination: result.toPath }] : []),
-          { op: 'write', path: result.toPath, data: blob },
-        ], '移动资产及当前内容')
-      }
-      if (projectRef.current?.handle.client !== client) return
-      await putAssetBlob(result.toPackageId, result.toPath, blob)
-      await deleteAssetBlob(result.fromPackageId, result.fromPath)
-      const current = moveAssetToDir(workspaceRef.current, assetId, targetPackageId, targetDir)
-      if (current) commitWorkspace(current.workspace)
-    })().catch(e => void alertDialog(`移动资产失败：${String(e)}`))
-  }
-
   const handleDropIntoFolder = (
     targetPackageId: string,
     targetDir: string,
@@ -1113,7 +1072,7 @@ export const StageplayWorkspace = forwardRef<
       return
     }
     if (source.kind !== 'asset') return
-    applyAssetMove(source.assetId, targetPackageId, targetDir)
+    assetActions.moveAsset(source.assetId, targetPackageId, targetDir)
   }
 
   /**
@@ -1143,6 +1102,22 @@ export const StageplayWorkspace = forwardRef<
       confirm: (message) => confirmDialog(message),
       alert: (message) => alertDialog(message),
     })
+
+  /**
+   * `assets/` 的写操作住在 `stageplay/assetActions.ts`：这里只注入工作区投影、工程句柄与
+   * 配音资产连带删除，面板拿到的是一份能力对象。每次渲染重建闭包，和原先的内联写法一致。
+   */
+  const assetActions = createAssetActions({
+    workspaceRef,
+    projectRef,
+    commitWorkspace,
+    flushEditorInto,
+    // 配音库与文本绑定跟着资产集合走：删掉一份音频，录音棚的列表要立刻反映
+    onAssetsChanged: () => {
+      voiceLibraryRef.current?.notifyAssetsChanged()
+      textBindingRef.current?.refreshVoice()
+    },
+  })
 
   // ——————————————————————————————————————————————————————————————
   //  录音棚接线
@@ -1858,16 +1833,6 @@ export const StageplayWorkspace = forwardRef<
     setRoles(createDefaultRoles())
   }
 
-  const openAsset = (assetId: string) => {
-    const hit = findAsset(workspaceRef.current, assetId)
-    if (!hit) return
-    // 先落盘当前剧本
-    commitWorkspace({
-      ...flushEditorInto(workspaceRef.current),
-      activeAssetId: assetId,
-    })
-  }
-
   const visibleEditorPage = (ws: Workspace): EditorPage | null => {
     if (ws.activeAssetId && findAsset(ws, ws.activeAssetId)) return { kind: 'asset', id: ws.activeAssetId }
     if (ws.activeScriptId && findScript(ws, ws.activeScriptId)) return { kind: 'script', id: ws.activeScriptId }
@@ -1898,7 +1863,7 @@ export const StageplayWorkspace = forwardRef<
 
   const selectEditorPage = (page: EditorPage) => {
     if (page.kind === 'script') openScript(page.id)
-    else openAsset(page.id)
+    else assetActions.openAsset(page.id)
   }
 
   /**
@@ -2056,10 +2021,6 @@ export const StageplayWorkspace = forwardRef<
       // 预设声明过固定音色表时才预填音色（如 [OI]）；否则留空由方案表单要
       firstVoiceId: firstService?.preset?.voices?.[0] ?? null,
     }
-  }
-
-  const handleToggleAssets = (packageId: string) => {
-    commitWorkspace(toggleAssetsCollapsed(workspaceRef.current, packageId))
   }
 
   /**
@@ -2257,111 +2218,6 @@ export const StageplayWorkspace = forwardRef<
     }
   }
 
-  const handleDeleteAsset = (assetId: string) => {
-    const hit = findAsset(workspaceRef.current, assetId)
-    if (!hit) return
-    void confirmDialog({ message: `删除资产「${hit.asset.path}」？`, danger: true }).then(async (ok) => {
-      if (!ok) return
-      try {
-        await voiceOps().removeAssetEverywhere(hit.pkg.id, [hit.asset.path])
-      } catch (error) {
-        await alertDialog(`资产未删除：${String(error)}`)
-      }
-    })
-  }
-
-  const handleNewAssetFolder = (packageId: string, parentPath: string) => {
-    void promptDialog({
-      title: '新建文件夹',
-      message: '文件夹名不能包含 \\ / : * ? " < > |',
-      defaultValue: 'voice',
-      validate: (value) => {
-        if (!value.trim()) return '名字不能为空'
-        if (/[\\/:*?"<>|]/.test(value.trim())) return '文件夹名不能包含 \\ / : * ? " < > |'
-        return null
-      },
-    }).then((name) => {
-      if (!name?.trim()) return
-      const folder = normalizeFolderPath(`${parentPath}/${name.trim()}`)
-      if (!folder || folder === 'assets') {
-        void alertDialog('文件夹路径无效')
-        return
-      }
-      const client = projectRef.current?.handle.client
-      if (client) void client.apply([{ op: 'mkdir', path: folder }]).then(() => commitWorkspace(ensureAssetFolder(workspaceRef.current, packageId, folder))).catch((error) => { void alertDialog(String(error)) })
-    })
-  }
-
-  const handleDeleteAssetFolder = (packageId: string, folderPath: string) => {
-    if (folderPath === 'assets') return
-    void confirmDialog({ message: `删除文件夹「${folderPath}」及其下全部资产？`, danger: true }).then((ok) => {
-      if (!ok) return
-      const client = projectRef.current?.handle.client
-      void (async () => {
-        if (client?.transactions.stagedWrites().some((edit) => edit.path.startsWith(`${folderPath}/`))) throw new Error('文件夹内还有未保存的修改，请先保存或处理提交记录')
-        if (client?.entry(folderPath)) await client.apply([{ op: 'remove', path: folderPath }], '删除资产文件夹')
-        if (projectRef.current?.handle.client !== client) return
-        const { workspace: next, removed } = removeAssetFolder(workspaceRef.current, packageId, folderPath)
-        for (const asset of removed) await deleteAssetBlob(packageId, asset.path)
-        commitWorkspace(next)
-      })().catch((error) => { void alertDialog(`删除文件夹未完成：${String(error)}`) })
-    })
-  }
-
-  const handleImportAssets = async (
-    packageId: string,
-    files: FileList | File[],
-    targetDir = 'assets',
-  ) => {
-    const list = Array.from(files)
-    if (list.length === 0) return
-
-    const baseDir = normalizeFolderPath(targetDir) ?? 'assets'
-    let next = ensureAssetFolder(workspaceRef.current, packageId, baseDir)
-    let lastAssetId: string | null = null
-    const failed: string[] = []
-
-    for (const file of list) {
-      const withPath = file as File & { webkitRelativePath?: string }
-      const rel =
-        withPath.webkitRelativePath && withPath.webkitRelativePath.length > 0
-          ? withPath.webkitRelativePath
-          : file.name
-      const path = normalizeAssetPath(`${baseDir}/${rel}`)
-      if (!path) {
-        failed.push(file.name)
-        continue
-      }
-      try {
-        await putAssetBlob(packageId, path, file)
-        const result = registerAsset(
-          next,
-          packageId,
-          path,
-          file.type || 'application/octet-stream',
-          file.size,
-        )
-        if (!result) {
-          failed.push(file.name)
-          continue
-        }
-        next = result.workspace
-        lastAssetId = result.asset.id
-      } catch {
-        failed.push(file.name)
-      }
-    }
-
-    commitWorkspace({
-      ...next,
-      activeAssetId: lastAssetId ?? next.activeAssetId,
-    })
-
-    if (failed.length > 0) {
-      void alertDialog(`部分文件导入失败：\n${failed.join('\n')}`)
-    }
-  }
-
   const handleGeneratePlaceholderVoice = async (scriptId: string) => {
     const hit = findScript(workspaceRef.current, scriptId)
     if (!hit || !isVoiceMapFile(hit.script.name)) {
@@ -2495,7 +2351,7 @@ export const StageplayWorkspace = forwardRef<
           confirmLabel: '恢复',
         }).then((ok) => {
           if (ok) {
-            resetPanelDock()
+            resetPanelDock(STAGEPLAY_DOCK_KEY)
             resetEditorDock(STAGEPLAY_EDITOR_DOCK_KEY)
           }
         })
@@ -3283,213 +3139,84 @@ export const StageplayWorkspace = forwardRef<
     })
   }, [titleName, packageName, project?.folderName, projectBusy, onChromeInfo])
 
-  const dockPanels: DockPanelSpec[] = [
-    {
-      id: 'explorer',
-      title: '资源管理器',
-      visible: view.explorer,
-      defaultPlacement: 'left' as const,
-      defaultSize: 280,
-      render: (dock) => (
-          <StageplayExplorer
-            project={workspace.packages[0] ?? null}
-            organization={project && workspace.packages[0] ? (workspace.packages[0].explorer ?? emptyOrganization()) : null}
-            readOnly={!workspace.packages[0] || serviceSession.binding?.handle.client.snapshot.role === 'viewer'}
-            activeScriptId={workspace.activeScriptId}
-            newFileMenuRequest={newFileMenuRequest}
-            renameRequest={renameRequest}
-            onOpenScript={openScript}
-            onCreate={handleExplorerCreate}
-            onRename={handleShellRename}
-            onDelete={(ids) => {
-              void handleDeleteScripts(ids)
-            }}
-            onOrganize={(next, label) => {
-              void commitOrganization(next).catch((error) =>
-                notify(
-                  error instanceof ServiceError && error.code === 'commit_uncertain' ? `${label}结果待确认` : `${label}未提交`,
-                  { kind: 'error', detail: String(error) },
-                ),
-              )
-            }}
-            onGeneratePlaceholderVoice={(scriptId) => {
-              void handleGeneratePlaceholderVoice(scriptId)
-            }}
-            dock={dock}
-          />
-      ),
+  /* 面板声明搬进 stageplay/dockPanels.tsx：这里只把当前状态整理成显式 host。
+     以前面板是这份闭包的一部分，别的宿主拿不到，也就没法用同一套 Layout。 */
+  const dockHost: StageplayDockHost = {
+    view,
+    project: workspace.packages[0] ?? null,
+    readOnly: !workspace.packages[0] || serviceSession.binding?.handle.client.snapshot.role === 'viewer',
+    explorer: {
+      activeScriptId: workspace.activeScriptId,
+      newFileMenuRequest,
+      renameRequest,
+      onOpenScript: openScript,
+      onCreate: handleExplorerCreate,
+      onRename: handleShellRename,
+      onDelete: (ids) => {
+        void handleDeleteScripts(ids)
+      },
+      onOrganize: (next, label) => {
+        void commitOrganization(next).catch((error) =>
+          notify(
+            error instanceof ServiceError && error.code === 'commit_uncertain' ? `${label}结果待确认` : `${label}未提交`,
+            { kind: 'error', detail: String(error) },
+          ),
+        )
+      },
+      onGeneratePlaceholderVoice: (scriptId) => {
+        void handleGeneratePlaceholderVoice(scriptId)
+      },
     },
-    {
-      id: 'asset-manager',
-      title: '资产管理器',
-      visible: view.assetManager,
-      defaultPlacement: 'left' as const,
-      defaultSize: 300,
-      minSize: 220,
-      render: (dock) => workspace.packages[0] ? (
-        <AssetManagerPanel
-          project={workspace.packages[0]}
-          activeAssetId={workspace.activeAssetId}
-          onToggleRoot={() => handleToggleAssets(workspace.packages[0]!.id)}
-          onOpenAsset={openAsset}
-          onDeleteAsset={handleDeleteAsset}
-          onNewAssetFolder={handleNewAssetFolder}
-          onDeleteAssetFolder={handleDeleteAssetFolder}
-          onImportAssets={(packageId, files, targetDir) => { void handleImportAssets(packageId, files, targetDir) }}
-          onDropIntoFolder={handleDropIntoFolder}
-          dock={dock}
-        />
-      ) : <div className="stageplay-asset-manager-empty">请先打开工程</div>,
+    assets: {
+      onTransfer: assetActions.transfer,
+      activeAssetId: workspace.activeAssetId,
+      onOpen: assetActions.openAsset,
+      onDelete: assetActions.deleteAsset,
+      onNewFolder: assetActions.newFolder,
+      onDeleteFolder: assetActions.deleteFolder,
+      onImport: (packageId, files, targetDir) => {
+        void assetActions.importAssets(packageId, files, targetDir)
+      },
+      onDropIntoFolder: handleDropIntoFolder,
     },
-    {
-      id: 'agent',
-      title: 'Agent',
-      visible: agentOpen,
-      defaultPlacement: 'left' as const,
-      defaultSize: 360,
-      minSize: 220,
-      render: (dock) => (
-        <AgentPanel
-          open={agentOpen}
-          host={agentHost}
-          onClose={() => setAgentOpen(false)}
-          placement={dock.placement}
-          onTitlePointerDown={dock.onTitlePointerDown}
-          onRedock={dock.onRedock}
-          getContext={() => ({
-            packageName,
-            fileName: titleName,
-            content: valueRef.current,
-            selection: getEditorSelection(),
-          })}
-        />
-      ),
+    agent: {
+      open: agentOpen,
+      host: agentHost,
+      packageName,
+      fileName: titleName,
+      content: () => valueRef.current,
+      selection: getEditorSelection,
+      onClose: () => setAgentOpen(false),
     },
-    {
-      id: 'roles',
-      title: '备选角色',
-      visible: view.roles && editingHanshu,
-      defaultPlacement: 'right' as const,
-      defaultSize: 190,
-      minSize: 140,
-      maxSize: 420,
-      render: (dock) => (
-          <aside className="role-panel" aria-label="备选角色栏">
-            <div
-              className="role-panel-header is-draggable"
-              onPointerDown={(event) => {
-                if (
-                  event.target instanceof Element &&
-                  event.target.closest('button, input, label, a, textarea, select')
-                ) {
-                  return
-                }
-                dock.onTitlePointerDown(event)
-              }}
-            >
-              <span
-                className="role-panel-title"
-                title={dock.placement === 'float' ? '拖动标题可停靠到边缘；松手在中间则保持弹层' : '拖动标题可停靠到左、右、上、下，拖到中间变成弹层'}
-              >
-                备选角色
-              </span>
-              {dock.onRedock && (
-                <button
-                  type="button"
-                  className="panel-dock-redock"
-                  title="停靠回上次的边缘"
-                  onClick={dock.onRedock}
-                >
-                  停靠
-                </button>
-              )}
-            </div>
-            <ul className="role-list">
-              {Array.from({ length: SPEAKER_SLOT_COUNT }, (_, index) => (
-                <li key={index} className="role-slot">
-                  <button
-                    type="button"
-                    className="role-index"
-                    title={
-                      roles[index].trim()
-                        ? `${numpadHint(index)} · 插入`
-                        : numpadHint(index)
-                    }
-                    disabled={!roles[index].trim()}
-                    onClick={() => insertRole(index)}
-                  >
-                    {numpadLabel(index)}
-                  </button>
-                  <input
-                    className="role-input"
-                    value={roles[index]}
-                    placeholder="空"
-                    spellCheck={false}
-                    onChange={(event) =>
-                      updateRole(index, event.target.value)
-                    }
-                    onKeyDown={(event) => {
-                      if (event.key === 'Enter') {
-                        event.preventDefault()
-                        insertRole(index)
-                      }
-                    }}
-                  />
-                </li>
-              ))}
-            </ul>
-          </aside>
-      ),
+    roles: {
+      values: roles,
+      enabled: editingHanshu,
+      onInsert: insertRole,
+      onChange: updateRole,
     },
-    {
-      id: 'studio',
-      title: '录音棚',
-      visible: studioOpen,
-      defaultPlacement: 'right' as const,
-      defaultSize: (() => {
-        try {
-          const saved = Number(localStorage.getItem('hanshu.studioWidth'))
-          if (Number.isFinite(saved) && saved >= 280 && saved <= 760) return saved
-        } catch {
-          /* keep the built-in width */
-        }
-        return 420
-      })(),
-      minSize: 280,
-      maxSize: 760,
-      render: (dock) => (
-        <RecordingStudio
-          mode={studioMode}
-          sourceMode={studioSourceMode}
-          selectedKeys={studioSelection}
-          library={
-            editingLocalizable
-              ? (voiceRuntime ?? voiceLibraryRef.current)
-              : null
-          }
-          /*
-            台词取自当前语言的文本映射（和 TTS 合成用的是同一份）：
-            录音的人要照着念的，就是编辑器里显示的那一句。
-          */
-          textFor={(key) => textMapRef.current?.get(key) ?? null}
-          onClose={() => toggleStudio()}
-          onModeChange={setStudioMode}
-          onSourceModeChange={setStudioSourceMode}
-          onClearSelection={() => setStudioSelection([])}
-          onClearVoice={(keys) => voiceOps().deleteVoices(keys)}
-          onImport={handleStudioImport}
-          onReference={handleStudioReference}
-          tts={studioTts}
-          onTitlePointerDown={dock.onTitlePointerDown}
-          onRedock={dock.onRedock}
-        />
-      ),
+    studio: {
+      open: studioOpen,
+      mode: studioMode,
+      sourceMode: studioSourceMode,
+      selectedKeys: studioSelection,
+      librable: editingLocalizable,
+      library: voiceRuntime ?? voiceLibraryRef.current,
+      textFor: (key) => textMapRef.current?.get(key) ?? null,
+      tts: studioTts,
+      onClose: toggleStudio,
+      onModeChange: setStudioMode,
+      onSourceModeChange: setStudioSourceMode,
+      onClearSelection: () => setStudioSelection([]),
+      onClearVoice: (keys) => voiceOps().deleteVoices(keys),
+      onImport: handleStudioImport,
+      onReference: handleStudioReference,
     },
-  ]
+  }
+  const dockPanels = stageplayDockPanels(dockHost)
 
   return (
     <div className="stageplay-workspace">
-      <PanelDock panels={dockPanels}>
+      <PanelDock storageKey={STAGEPLAY_DOCK_KEY} panels={dockPanels}>
           <EditorDock
             storageKey={STAGEPLAY_EDITOR_DOCK_KEY}
             pages={openPages.map((page) => ({ id: editorPageKey(page), ...editorPageLabel(page) }))}

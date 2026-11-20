@@ -456,7 +456,10 @@ assert.deepEqual(
 assert.deepEqual(AUDIOVISUAL_CATEGORIES.ui.types, [])
 assert.deepEqual(AUDIOVISUAL_CATEGORIES.overhead.types, [])
 assert.deepEqual(AUDIOVISUAL_CATEGORY_ORDER.slice(0, 3), ['ui', 'bossbar', 'overhead'])
-assert.equal(AUDIOVISUAL_CATEGORY_ORDER.length, 16)
+assert.equal(AUDIOVISUAL_CATEGORIES.action.name, '人形动作')
+assert.equal(AUDIOVISUAL_CATEGORY_ORDER.length, 14)
+assert.ok(!('appearance' in AUDIOVISUAL_CATEGORIES))
+assert.ok(!('expression' in AUDIOVISUAL_CATEGORIES))
 for (const id of AUDIOVISUAL_CATEGORY_ORDER) {
   assert.ok(
     (EXPLORER_ICON_KINDS as readonly string[]).includes(AUDIOVISUAL_CATEGORIES[id].icon),

@@ -8,7 +8,9 @@ import {
   type Ref,
 } from 'react'
 import { StatusBarSlots } from '../chrome'
-import { ExplorerIcon } from '../explorerIcons'
+import { AssetPreview } from '../AssetPreview'
+import { assetFileName } from '../assets/paths'
+import { ExplorerIcon, fileIconKind } from '../explorerIcons'
 import {
   allocateNewFileBase,
   findNewFileType,
@@ -34,15 +36,21 @@ import {
   useProjectSession,
 } from '../project/projectSession'
 import { confirmDialog } from '../ui/dialogs'
+import { useViewFlags } from '../ui/viewFlags'
 import { EditorDock, resetEditorDock } from '../ui/EditorDock'
 import { PanelDock, resetPanelDock, type DockPanelSpec } from '../ui/PanelDock'
 import {
   createScript,
+  findAsset,
   saveWorkspace,
   sourcePathOf,
   type SourceFile,
   type Workspace,
 } from '../workspace'
+import { AssetManagerPanel } from './assetManager/AssetManagerPanel'
+import { createAssetActions } from './assetManager/assetActions'
+import { assetPageKey, parseAssetPageKey } from './assetManager/assetPage'
+import { audiovisualViewFlags } from './audiovisual/viewFlags'
 import { AudiovisualExplorer } from './audiovisual/AudiovisualExplorer'
 import { audiovisualSources } from './audiovisual/explorerCategories'
 import { BossbarDesignView } from './audiovisual/bossbar/editor/BossbarDesignView'
@@ -173,6 +181,10 @@ export function AudiovisualWorkspace({
 
   const openFile = useCallback(
     (id: string) => {
+      const live = getProjectSession()
+      if (live.workspace.activeAssetId) {
+        setProjectSession({ workspace: { ...live.workspace, activeAssetId: null } })
+      }
       updateUi((previous) => ({
         ...previous,
         openKeys: previous.openKeys.includes(id) ? previous.openKeys : [...previous.openKeys, id],
@@ -415,6 +427,10 @@ export function AudiovisualWorkspace({
           void saveDraft()
           return
         }
+        if (item === 'asset-manager-panel') {
+          audiovisualViewFlags.toggle('assetManager')
+          return
+        }
         if (item === 'editor-layout') {
           void confirmDialog({
             title: '编辑器布局',
@@ -444,10 +460,46 @@ export function AudiovisualWorkspace({
     return () => window.removeEventListener('keydown', onKey)
   }, [active, saveDraft])
 
+  const view = useViewFlags(audiovisualViewFlags)
+  /** assets/ 的写操作与剧本共用同一个能力模块（见 workspaces/assetManager）。 */
+  const assetActions = createAssetActions({
+    workspaceRef: { current: session.workspace },
+    projectRef: { current: session.binding },
+    commitWorkspace: (next) => setProjectSession({ workspace: next }),
+  })
+  const [openAssetIds, setOpenAssetIds] = useState<string[]>([])
+  useEffect(() => {
+    const activeId = session.workspace.activeAssetId
+    if (!activeId || !findAsset(session.workspace, activeId)) return
+    setOpenAssetIds((previous) => (previous.includes(activeId) ? previous : [...previous, activeId]))
+  }, [session.workspace])
+  useEffect(() => {
+    setOpenAssetIds((previous) => {
+      const next = previous.filter((id) => findAsset(session.workspace, id))
+      return next.length === previous.length ? previous : next
+    })
+  }, [session.workspace])
+  const openAssetPage = (assetId: string) => {
+    assetActions.openAsset(assetId)
+    setOpenAssetIds((previous) => (previous.includes(assetId) ? previous : [...previous, assetId]))
+  }
+  const clearActiveAsset = () => {
+    const live = getProjectSession()
+    if (!live.workspace.activeAssetId) return
+    setProjectSession({ workspace: { ...live.workspace, activeAssetId: null } })
+  }
   const project = session.workspace.packages[0] ?? null
   const activeFile = ui.activeKey ? fileById.get(ui.activeKey) ?? null : null
-  const presencePath =
-    active && client && activeFile && !activeFile.detached ? sourcePathOf(activeFile) : null
+  const activeAssetHit = session.workspace.activeAssetId
+    ? findAsset(session.workspace, session.workspace.activeAssetId)
+    : null
+  const presencePath = active && client
+    ? activeAssetHit
+      ? activeAssetHit.asset.path
+      : activeFile && !activeFile.detached
+        ? sourcePathOf(activeFile)
+        : null
+    : null
 
   const dockPanels: DockPanelSpec[] = [
     {
@@ -480,9 +532,38 @@ export function AudiovisualWorkspace({
         />
       ),
     },
+    {
+      id: 'asset-manager',
+      title: '资产管理器',
+      visible: view.assetManager,
+      defaultPlacement: 'bottom',
+      defaultSize: 260,
+      minSize: 160,
+      render: (dock) =>
+        project ? (
+          <AssetManagerPanel
+            onTransfer={assetActions.transfer}
+            project={project}
+            activeAssetId={session.workspace.activeAssetId}
+            onOpenAsset={openAssetPage}
+            onDeleteAsset={assetActions.deleteAsset}
+            onNewAssetFolder={assetActions.newFolder}
+            onDeleteAssetFolder={assetActions.deleteFolder}
+            onImportAssets={(packageId, files, targetDir) => {
+              void assetActions.importAssets(packageId, files, targetDir)
+            }}
+            onDropIntoFolder={(_pkgId, dir, source) => {
+              if (source.kind === 'asset') assetActions.moveAsset(source.assetId, _pkgId, dir)
+            }}
+            dock={dock}
+          />
+        ) : (
+          <div className="asset-manager-empty">请先打开工程</div>
+        ),
+    },
   ]
 
-  const editorPages = ui.openKeys.flatMap((id) => {
+  const filePages = ui.openKeys.flatMap((id) => {
     const file = fileById.get(id)
     if (!file) return []
     return [
@@ -498,6 +579,27 @@ export function AudiovisualWorkspace({
       },
     ]
   })
+  const assetPages = openAssetIds.flatMap((assetId) => {
+    const hit = findAsset(session.workspace, assetId)
+    if (!hit) return []
+    return [
+      {
+        id: assetPageKey(assetId),
+        title: assetFileName(hit.asset.path),
+        tooltip: hit.asset.path,
+        icon: (
+          <span className="editor-dock-file-icon">
+            <ExplorerIcon kind={fileIconKind(hit.asset.path)} />
+          </span>
+        ),
+      },
+    ]
+  })
+  const editorPages = [...filePages, ...assetPages]
+  const activeEditorId =
+    session.workspace.activeAssetId && openAssetIds.includes(session.workspace.activeAssetId)
+      ? assetPageKey(session.workspace.activeAssetId)
+      : ui.activeKey
 
   return (
     <section className="audiovisual-workspace" aria-label="视听效果工作区">
@@ -509,17 +611,58 @@ export function AudiovisualWorkspace({
               client={client!}
               path={presencePath}
               mode="optimistic"
-              label={activeFile?.name}
+              label={
+                activeAssetHit
+                  ? assetFileName(activeAssetHit.asset.path)
+                  : activeFile?.name
+              }
             />
           )}
           {editorPages.length ? (
             <EditorDock
               storageKey={EDITOR_DOCK_KEY}
               pages={editorPages}
-              activeId={ui.activeKey}
-              onActivate={(id) => openFile(id)}
-              onClose={(id) => closePages([id])}
-              onCloseMany={closePages}
+              activeId={activeEditorId}
+              onActivate={(id) => {
+                const assetId = parseAssetPageKey(id)
+                if (assetId) {
+                  openAssetPage(assetId)
+                  return
+                }
+                openFile(id)
+              }}
+              onClose={(id) => {
+                const assetId = parseAssetPageKey(id)
+                if (assetId) {
+                  setOpenAssetIds((previous) => previous.filter((item) => item !== assetId))
+                  if (session.workspace.activeAssetId === assetId) clearActiveAsset()
+                  return
+                }
+                closePages([id])
+              }}
+              onCloseMany={(ids, nextActiveId) => {
+                const assetIds = ids.flatMap((id) => {
+                  const assetId = parseAssetPageKey(id)
+                  return assetId ? [assetId] : []
+                })
+                const fileIds = ids.filter((id) => !parseAssetPageKey(id))
+                if (assetIds.length) {
+                  setOpenAssetIds((previous) => previous.filter((item) => !assetIds.includes(item)))
+                  if (session.workspace.activeAssetId && assetIds.includes(session.workspace.activeAssetId)) {
+                    clearActiveAsset()
+                  }
+                }
+                if (fileIds.length) {
+                  closePages(
+                    fileIds,
+                    nextActiveId && !parseAssetPageKey(nextActiveId) ? nextActiveId : undefined,
+                  )
+                }
+                if (nextActiveId) {
+                  const nextAssetId = parseAssetPageKey(nextActiveId)
+                  if (nextAssetId) openAssetPage(nextAssetId)
+                }
+              }}
               enableTabMenu
               initialPinnedIds={ui.pinnedKeys}
               onPinnedChange={(ids) =>
@@ -529,6 +672,25 @@ export function AudiovisualWorkspace({
                 }))
               }
               renderPage={(id) => {
+                const assetId = parseAssetPageKey(id)
+                if (assetId) {
+                  const hit = findAsset(session.workspace, assetId)
+                  if (!hit) return null
+                  return (
+                    <div
+                      className="av-editor-pane asset-mode"
+                      onPointerDownCapture={() => {
+                        if (session.workspace.activeAssetId !== assetId) openAssetPage(assetId)
+                      }}
+                    >
+                      <AssetPreview
+                        packageId={hit.pkg.id}
+                        asset={hit.asset}
+                        onSaveText={(content) => assetActions.saveTextAsset(assetId, content)}
+                      />
+                    </div>
+                  )
+                }
                 const file = fileById.get(id)
                 if (!file) return null
                 return (

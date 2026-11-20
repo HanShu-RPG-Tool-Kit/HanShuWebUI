@@ -2770,7 +2770,14 @@ export function bindText(
     const stopLine = stopParseLineOf(model.getValue())
 
     const used = new Set<string>()
-    for (const [key] of map.entries()) used.add(key)
+    // 同文本复用已有键（只收合法 8 位小写十六进制；map 里同文本第一个键胜出）。
+    // 编辑器自动成键必须遵守“同一段文本永远得到同一个键”，否则同文件重复台词会生成
+    // 两个不同键、在 `.lang` 里留下两条同文本条目。
+    const byText = new Map<string, string>()
+    for (const [key, text] of map.entries()) {
+      used.add(key)
+      if (!byText.has(text) && /^[0-9a-f]{8}$/.test(key)) byText.set(text, key)
+    }
 
     const caretLine = options?.skipEditing
       ? (ed.getPosition()?.lineNumber ?? null)
@@ -2803,10 +2810,13 @@ export function bindText(
         const range = statementLineRange(span, next)
         if (caretLine >= range.from && caretLine <= range.to) continue
       }
-      const key = createLocaleKeyFromText(span.value, (candidate) =>
-        used.has(candidate),
-      )
-      used.add(key)
+      const existing = byText.get(span.value)
+      const key =
+        existing ??
+        createLocaleKeyFromText(span.value, (candidate) => used.has(candidate))
+      // 新分配的键才登记占用；复用键本来就在 used 里（同文件重复文本共用同一个键）
+      if (existing === undefined) used.add(key)
+      byText.set(span.value, key)
       plan.push({
         span,
         key,

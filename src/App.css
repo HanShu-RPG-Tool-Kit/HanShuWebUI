@@ -1943,34 +1943,11 @@ body.is-resizing .monaco-editor {
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  padding: 24px 28px;
+  padding: 12px 14px;
   background: var(--bg);
   color: var(--text);
-  overflow: auto;
+  overflow: hidden;
   flex: 1;
-}
-
-.asset-preview-header h2 {
-  margin: 0 0 8px;
-  font-size: 18px;
-  font-weight: 600;
-}
-
-.asset-preview-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin: 0;
-  font-size: 12px;
-  color: var(--text-dim);
-}
-
-.asset-preview-meta code {
-  color: #9cdcfe;
-}
-
-.asset-preview-body {
-  margin-top: 28px;
 }
 
 .asset-preview-audio {
@@ -1979,7 +1956,7 @@ body.is-resizing .monaco-editor {
 
 .asset-preview-image {
   max-width: min(720px, 100%);
-  max-height: 60vh;
+  max-height: 100%;
   object-fit: contain;
   border: 1px solid var(--border);
 }
@@ -1988,8 +1965,8 @@ body.is-resizing .monaco-editor {
 .asset-preview-text {
   margin: 0;
   padding: 12px 14px;
-  max-width: 100%;
-  max-height: 60vh;
+  flex: 1;
+  min-height: 0;
   overflow: auto;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -1998,28 +1975,13 @@ body.is-resizing .monaco-editor {
   tab-size: 2;
 }
 
-/* 可写的 JSON 编辑器（`.lang` / `.voice`） */
+/* 可写的 JSON 编辑器（`.lang` / `.voice`）；保存走 Ctrl+S */
 .asset-preview-editor {
-  height: 60vh;
-  min-height: 320px;
+  flex: 1;
+  min-height: 0;
   border: 1px solid var(--border);
   border-radius: 6px;
   overflow: hidden;
-}
-
-.asset-preview-save {
-  padding: 2px 10px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: transparent;
-  color: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-
-.asset-preview-save:disabled {
-  opacity: 0.5;
-  cursor: default;
 }
 
 /* 资源管理器里的 `src/<kind>/` 分组标题 */
@@ -2650,21 +2612,8 @@ body.is-resizing .stageplay-workspace .split-handle { background: var(--accent);
 .stageplay-workspace .tab-action:hover { background: var(--sw-hover); border-color: var(--border-soft); color: var(--text-bright); }
 .stageplay-workspace .tab-action.on { background: rgba(74, 108, 247, 0.16); border-color: var(--border-soft); color: #9db4f0; }
 
-/* 资源管理器：主树由通用壳（explorerShell.css，游戏性同款观感）绘制；以下只服务 assets/ 附加件与右键菜单 */
-.stageplay-workspace .explorer-row:hover { background: var(--sw-hover); }
-.stageplay-workspace .explorer-file-row.active { background: var(--sw-active); }
-.stageplay-workspace .explorer-file-row.active .explorer-label { color: var(--text-bright); }
-.stageplay-workspace .explorer-label { font-size: var(--sw-font-sm); }
-.stageplay-workspace .explorer-asset-row .explorer-label { font-size: var(--sw-font-sm); }
-.stageplay-workspace .explorer-twist { width: 14px; font-size: var(--sw-font-xs); color: #9a9aa5; }
-.stageplay-workspace .explorer-file-row { padding-left: 18px; }
-.stageplay-workspace .explorer-icon { width: calc(16px * var(--sw-s)); height: calc(16px * var(--sw-s)); }
-.stageplay-workspace .explorer-count { font-size: var(--sw-font-xs); color: #888888; }
-.stageplay-workspace .explorer-empty { font-size: var(--sw-font-xs); color: #888888; }
-.stageplay-workspace .explorer-row-actions button,
-.stageplay-workspace .explorer-upload { border-radius: 0; font-size: var(--sw-font-xs); }
-.stageplay-workspace .explorer-row-actions button:hover,
-.stageplay-workspace .explorer-upload:hover { background: rgba(255, 255, 255, 0.1); }
+/* 资源管理器：主树与 assets/ 目录都由通用壳绘制（explorerShell.css / workspaces/assetManager/assetManager.css，
+   游戏性与剧本同款观感）；这里只剩右键菜单的剧本配色。 */
 .stageplay-workspace .explorer-context-menu { padding: 4px; background: var(--sw-panel-2); border: 1px solid var(--border); box-shadow: 0 10px 32px rgba(0, 0, 0, 0.55); font-size: var(--sw-font-sm); }
 .stageplay-workspace .explorer-context-menu li button { padding: 5px 10px; }
 .stageplay-workspace .explorer-context-menu li button:hover { background: var(--sw-hover); }
@@ -2682,8 +2631,7 @@ body.is-resizing .stageplay-workspace .split-handle { background: var(--accent);
 
 /* 编辑区 */
 .stageplay-workspace .asset-preview-text,
-.stageplay-workspace .asset-preview-editor,
-.stageplay-workspace .asset-preview-save { border-radius: 0; }
+.stageplay-workspace .asset-preview-editor { border-radius: 0; }
 
 /* 状态栏：中性灰，替换原来的蓝条 */
 .stageplay-workspace .statusbar { background: var(--sw-head); color: var(--text-dim); font-size: var(--sw-font-xs); }
