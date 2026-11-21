@@ -141,6 +141,18 @@ export function ViewChangesModal({ open, paths, onClose }: ViewChangesModalProps
     }
   }, [open, paths])
 
+  useEffect(() => {
+    if (!open) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      event.preventDefault()
+      onClose()
+    }
+    // 用捕获阶段，避免 Monaco 编辑器先消费 Escape 导致弹窗关不掉。
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
+  }, [open, onClose])
+
   if (!open) return null
 
   const active =
