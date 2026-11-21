@@ -1,6 +1,7 @@
 /* oxlint-disable react/only-export-components, react/set-state-in-effect */
 import { DiffEditor } from '@monaco-editor/react'
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import type { ProjectHost } from '../../../plugin-sdk/types'
 import { getProjectHost } from '../../../project/projectHost'
 import { editorLanguageForFile } from '../../../workspace'
@@ -145,7 +146,7 @@ export function ViewChangesModal({ open, paths, onClose }: ViewChangesModalProps
   const active =
     diffs.find((diff) => diff.path === selected) ?? diffs[0] ?? null
 
-  return (
+  const content = (
     <div
       className="view-changes-backdrop"
       role="dialog"
@@ -219,4 +220,10 @@ export function ViewChangesModal({ open, paths, onClose }: ViewChangesModalProps
       </div>
     </div>
   )
+
+  // 面板本身在停靠容器里可能处于较低的层叠上下文，直接渲染会被编辑器里的
+  // 键名/布局边界等浮层盖住；挂到 body 并配高 z-index 才能保证对话框在最上层。
+  // SSR（验收脚本用 renderToStaticMarkup）没有 document，退回内联渲染。
+  if (typeof document === 'undefined') return content
+  return createPortal(content, document.body)
 }

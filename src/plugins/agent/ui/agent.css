@@ -1743,7 +1743,7 @@ body.is-panel-dragging .agent-header.is-draggable {
 .view-changes-backdrop {
   position: fixed;
   inset: 0;
-  z-index: 120;
+  z-index: 10000;
   background: rgba(0, 0, 0, 0.55);
   display: flex;
   align-items: center;
