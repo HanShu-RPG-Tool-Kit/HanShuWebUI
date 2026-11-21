@@ -23,6 +23,7 @@ import {
   SegmentSealedHint,
   forkAfterRun,
   forkCurrentSegment,
+  panelInfoAfterRun,
   runAfterInheritingArchive,
   viewChangesPrompt,
 } from '../src/plugins/agent/ui/AgentPanel'
@@ -1093,6 +1094,10 @@ assert.ok(startupErrorHtml.includes('Agent 启动失败'), '启动失败时标�
 assert.ok(startupErrorHtml.includes('请先在工程目录中打开或新建工程'), '展示可操作的失败原因')
 assert.ok(startupErrorHtml.includes('>重试</button>'), '失败态提供重试按钮')
 assert.ok(!startupErrorHtml.includes('正在启动…'), '失败态不保留无限加载文案')
+
+assert.equal(panelInfoAfterRun('正在停止…', true), '正在停止…', '运行中保留停止提示')
+assert.equal(panelInfoAfterRun('正在停止…', false), '', 'Run 结束后清掉停止提示')
+assert.equal(panelInfoAfterRun('已停止。', false), '已停止。', '不影响其它提示')
 
 console.log(
   '通过：Agent 面板视图派生（行 id/流式/工具状态、失败记录与回滚摘要、占用阈值、Key 掩码、时间与文案）',

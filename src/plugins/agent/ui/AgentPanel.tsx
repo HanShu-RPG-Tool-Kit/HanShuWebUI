@@ -87,6 +87,11 @@ export function viewChangesPrompt(paths: readonly string[]): string {
   return paths.length === 0 ? NO_AGENT_CHANGES_MESSAGE : ''
 }
 
+/** Run 结束后清掉本地「正在停止…」提示（导出供测试断言） */
+export function panelInfoAfterRun(info: string, running: boolean): string {
+  return !running && info === '正在停止…' ? '' : info
+}
+
 export type AgentPanelProps = {
   open: boolean
   /** 由工作区构造并 open 过的运行时；null = 尚未就绪（显示加载 / 未配置） */
@@ -508,6 +513,12 @@ export function AgentPanel({
 
   const running = view?.runState === 'running'
   const modelLabel = useProState ? 'Pro' : 'Flash'
+
+  // 「正在停止…」是本地提示：Run 结束后清掉，避免一直挂在面板底部
+  useEffect(() => {
+    if (running) return
+    setPanelInfo((current) => panelInfoAfterRun(current, false))
+  }, [running])
 
   const refreshSegments = useCallback(async () => {
     if (!runtime) return
@@ -992,6 +1003,7 @@ export function AgentPanel({
     if (!runtime) return
     setPanelInfo('正在停止…')
     void runtime.abort().catch((error: unknown) => {
+      setPanelInfo('')
       setPanelError(`停止失败：${describeError(error)}。可重试。`)
     })
   }, [runtime])

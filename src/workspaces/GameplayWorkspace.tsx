@@ -3114,7 +3114,7 @@ export function GameplayWorkspace({
                 saveAgentOpen(false)
               }
             }}
-            contextLabel={doc?.name ?? ''}
+            contextLabel={doc?.name ?? '游戏性'}
             placement={dock.placement}
             onTitlePointerDown={dock.onTitlePointerDown}
             onRedock={dock.onRedock}
